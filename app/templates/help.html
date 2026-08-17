@@ -13,7 +13,7 @@
     <a href="#safety">Embedding safety</a> ·
     <a href="#bundles">Bundles &amp; the P2P plane</a> ·
     <a href="#collections">Adding a collection</a> ·
-    <a href="#acquire">Acquisition &amp; licenses</a> ·
+    <a href="#acquire">Acquisition, profiles &amp; licenses</a> ·
     <a href="#config">Configuration tiers</a> ·
     <a href="#cli">CLI reference</a> ·
     <a href="#api">HTTP API</a> ·
@@ -210,7 +210,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
 </div>
 
 <div class="panel" id="acquire">
-  <h2>Acquisition &amp; licenses</h2>
+  <h2>Acquisition, profiles &amp; licenses</h2>
   <p class="note">
     Collections can fetch their own corpus (opt-in per collection). Sources
     have license classes; a <i>yellow</i>-class source requires a recorded
@@ -218,6 +218,40 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     the first byte moves. All transfers draw from one node-wide bandwidth
     budget with an optional schedule — there are no per-tool rate limits,
     and the Network page's override is temporary by construction.
+  </p>
+  <h2 style="margin-top:14px">What a profile is</h2>
+  <p class="note">
+    A <b>profile</b> is a named corpus-size preset defined by the source's
+    acquisition spec — a filter (file patterns, max files, max bytes) with a
+    size estimate. It controls <i>how much of the source</i> this node
+    fetches and keeps; it changes nothing about processing. Every current
+    source defines the same four:
+  </p>
+  <table>
+    <tr><th>profile</th><th>meaning</th><th>gutenberg (est.)</th><th>pubmed (est.)</th></tr>
+    <tr><td><b>demo</b></td><td>a couple of files — proves the pipeline end-to-end in minutes</td>
+      <td>~2 MB (3 files)</td><td>~5 MB (2 files)</td></tr>
+    <tr><td><b>starter</b></td><td>a useful small corpus</td>
+      <td>500 files / ~2 GB</td><td>50 files / ~500 MB</td></tr>
+    <tr><td><b>recent</b></td><td>a substantial slice</td>
+      <td>5,000 files / ~20 GB</td><td>200 files / ~5 GB</td></tr>
+    <tr><td><b>full</b></td><td>everything the source offers</td>
+      <td>~80 GB</td><td>~150 GB</td></tr>
+  </table>
+  <p class="note">
+    <b>Changing it afterwards: yes, any time.</b> Use the collection card's
+    <i>grow profile…</i> button (it previews files/bytes/ETA as a dry run
+    before fetching) or <code>corpus grow &lt;name&gt; --profile
+    recent</code>. Acquisition is resumable and only fetches what's missing,
+    so growing demo → starter → full costs no re-downloading. Also update
+    <code>profile</code> in the collection's TOML — that's what the worker's
+    periodic acquisition maintains from then on. Two honest caveats:
+    profiles aren't ordered in the type system ("grow" names the intent, it
+    doesn't enforce bigger-than-before), and switching to a <i>smaller</i>
+    profile stops future fetching but never deletes files already on disk —
+    pruning a corpus is a manual, deliberate act. Hand-populated collections
+    (<code>acquire_enabled = false</code>) ignore profiles entirely; the
+    Library card shows theirs as <i>(hand-populated)</i>.
   </p>
 </div>
 

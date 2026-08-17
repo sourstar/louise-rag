@@ -106,6 +106,7 @@ def test_help_page_is_open_and_documents_the_platform(client):
     assert r.status_code == 200
     for anchor in ("Embedding safety", "backend gate", "EMBED_BATCH=1",
                     "Adding a collection", "collections/", "license_ack",
+                    "What a profile is", "starter", "grow profile",
                     "CLI reference", "Troubleshooting"):
         assert anchor in r.text, f"help page must document: {anchor}"
 
