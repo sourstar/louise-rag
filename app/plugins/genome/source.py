@@ -77,14 +77,20 @@ class GenomeSource:
                         if p.is_file() and p.name.endswith(_FASTA_SUFFIXES))
         for fasta in fastas:
             st = fasta.stat()
-            for ordinal, name, seq in _records(fasta):
-                if not seq:
-                    continue
-                yield DocRef(
-                    source_id=self.source_id, native_id=str(ordinal),
-                    locator=f"{fasta}{_LOCATOR_SEP}{ordinal}",
-                    mtime=int(st.st_mtime), size=len(seq),
-                    extra={"contig": name, "assembly": fasta.name})
+            try:
+                for ordinal, name, seq in _records(fasta):
+                    if not seq:
+                        continue
+                    yield DocRef(
+                        source_id=self.source_id, native_id=str(ordinal),
+                        locator=f"{fasta}{_LOCATOR_SEP}{ordinal}",
+                        mtime=int(st.st_mtime), size=len(seq),
+                        extra={"contig": name, "assembly": fasta.name})
+            except Exception as e:  # noqa: BLE001 — truncated/corrupt FASTA:
+                # one error ref, never a dead scan
+                yield DocRef(source_id=self.source_id, native_id=fasta.name,
+                             locator=str(fasta),
+                             error=f"unreadable FASTA: {type(e).__name__}: {e}"[:200])
 
     def fetch(self, ref: DocRef) -> RawDoc:
         fasta, ordinal = split_locator(ref.locator)

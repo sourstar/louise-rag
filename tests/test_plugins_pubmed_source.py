@@ -43,6 +43,24 @@ def test_worker_stages_run_via_the_protocol_fallback(tmp_path, isolated_config):
     assert chunks[0]["id"].startswith("pubmed:30000006:")
 
 
+def test_corrupt_container_costs_one_error_ref_not_the_scan(tmp_path):
+    """With acquisition in the background, discovery can meet a truncated or
+    checksum-failed container on disk — the scan must survive it (observed
+    live: a zlib error killed the whole pubmed discovery)."""
+    import gzip as gzip_mod
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    shutil.copy(FIXTURE_CORPUS / "pubmed25n0001.xml", corpus / "pubmed25n0001.xml")
+    (corpus / "pubmed25n9999.xml.gz").write_bytes(
+        gzip_mod.compress(b"<PubmedArticleSet>")[:20])   # truncated mid-stream
+
+    refs = list(SOURCE.discover(DiscoverState(corpus_root=corpus)))
+    errors = [r for r in refs if r.error and "unparseable" in r.error]
+    good = [r for r in refs if r.error is None]
+    assert len(errors) == 1 and errors[0].native_id == "pubmed25n9999.xml.gz"
+    assert good, "the healthy container must still be discovered"
+
+
 def _collection(tmp_path) -> collections_mod.Collection:
     return collections_mod.Collection(
         name="pubmed", plugin="pubmed", profile=None, embed_mode_default=None,

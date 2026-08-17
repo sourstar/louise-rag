@@ -63,20 +63,27 @@ class WikipediaSource:
             # stream's end (= the next distinct offset)
             pending: list[tuple[int, str, str]] = []
             last_offset = -1
-            with bz2.open(index, "rt", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    offset_s, _, rest = line.rstrip("\n").partition(":")
-                    page_id, _, title = rest.partition(":")
-                    if not offset_s.isdigit() or not page_id.isdigit():
-                        continue
-                    offset = int(offset_s)
-                    if offset != last_offset and pending:
-                        yield from self._flush(pending, offset, dump, st, lang)
-                        pending = []
-                    last_offset = offset
-                    if _SKIP_TITLE.match(title):
-                        continue
-                    pending.append((offset, page_id, title))
+            try:
+                with bz2.open(index, "rt", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        offset_s, _, rest = line.rstrip("\n").partition(":")
+                        page_id, _, title = rest.partition(":")
+                        if not offset_s.isdigit() or not page_id.isdigit():
+                            continue
+                        offset = int(offset_s)
+                        if offset != last_offset and pending:
+                            yield from self._flush(pending, offset, dump, st, lang)
+                            pending = []
+                        last_offset = offset
+                        if _SKIP_TITLE.match(title):
+                            continue
+                        pending.append((offset, page_id, title))
+            except Exception as e:  # noqa: BLE001 — truncated/corrupt index: one
+                # error ref, never a dead scan (same rule as pubmed containers)
+                yield DocRef(source_id=self.source_id, native_id=dump.name,
+                             locator=str(dump),
+                             error=f"unreadable index: {type(e).__name__}: {e}"[:200])
+                continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
 
