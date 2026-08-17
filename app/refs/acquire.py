@@ -67,6 +67,41 @@ def _clinvar_transform(raw: Path, final: Path) -> None:
     tmp.replace(final)
 
 
+def _gnomad_transform(raw: Path, final: Path) -> None:
+    """lof_metrics.by_gene.txt.bgz (bgz = gzip-compatible) → the seven-column
+    gnomad_constraint.tsv the ref source reads. Values 'NA' become empty
+    (SQLite NULL-ish empty strings would poison REAL columns — skip genes
+    with no pLI at all, they carry no constraint signal)."""
+    seen: set[str] = set()
+    tmp = final.with_suffix(".tsv.tmp")
+    with gzip.open(raw, "rt", encoding="utf-8", errors="replace") as src, \
+            open(tmp, "w", newline="", encoding="utf-8") as out:
+        reader = csv.DictReader(src, delimiter="\t")
+        writer = csv.DictWriter(
+            out, fieldnames=("gene_symbol", "transcript", "pli", "loeuf",
+                              "oe_mis", "obs_lof", "exp_lof"), delimiter="\t")
+        writer.writeheader()
+        for row in reader:
+            gene = row.get("gene") or ""
+            pli = row.get("pLI") or ""
+            if not gene or gene in seen or pli in ("", "NA"):
+                continue
+            seen.add(gene)
+            def _num(key):
+                v = row.get(key) or ""
+                return v if v not in ("", "NA") else "0"
+            writer.writerow({
+                "gene_symbol": gene,
+                "transcript": row.get("transcript") or "",
+                "pli": pli,
+                "loeuf": _num("oe_lof_upper"),
+                "oe_mis": _num("oe_mis"),
+                "obs_lof": _num("obs_lof"),
+                "exp_lof": _num("exp_lof"),
+            })
+    tmp.replace(final)
+
+
 REF_DUMPS: tuple[RefDump, ...] = (
     RefDump(
         source_id="hgnc",
@@ -82,6 +117,16 @@ REF_DUMPS: tuple[RefDump, ...] = (
         raw_name="variant_summary.txt.gz",
         final_name="clinvar_mini.tsv",
         transform=_clinvar_transform,
+    ),
+    RefDump(
+        source_id="gnomad-constraint",
+        base_url=("https://storage.googleapis.com/gcp-public-data--gnomad/"
+                   "release/2.1.1/constraint"),
+        rel_path="gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz",
+        raw_name="gnomad.lof_metrics.by_gene.txt.bgz",
+        final_name="gnomad_constraint.tsv",
+        max_age_days=365,     # v2.1.1 is a frozen release; refetch is hygiene
+        transform=_gnomad_transform,
     ),
 )
 

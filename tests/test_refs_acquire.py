@@ -21,6 +21,9 @@ class FakeTransport:
 
     def fetch_one(self, endpoint, remote, dest, resume_from):
         self.calls.append(remote.rel_path)
+        if remote.rel_path not in self.files:
+            from app.acquire.spec import TransportError
+            raise TransportError(f"404: {remote.rel_path}")
         data = self.files[remote.rel_path]
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
@@ -65,10 +68,28 @@ def _clinvar_gz() -> bytes:
     return gzip.compress("".join(rows).encode())
 
 
+GNOMAD_HEADER = ("gene\ttranscript\tobs_mis\texp_mis\toe_mis\tpLI\toe_lof\t"
+                  "oe_lof_upper\tobs_lof\texp_lof\n")
+
+
+def _gnomad_bgz() -> bytes:
+    rows = [
+        GNOMAD_HEADER,
+        "BRCA2\tENST00000380152\t1000\t1100\t0.91\t0.00\t0.51\t0.57\t80\t156.9\n",
+        "PRRT2\tENST00000358758\t200\t210\t0.95\t0.98\t0.05\t0.21\t2\t40.1\n",
+        # duplicate gene: first row wins
+        "BRCA2\tENST00000544455\t900\t950\t0.94\t0.10\t0.60\t0.70\t70\t120.0\n",
+        # NA pLI: no constraint signal, skipped
+        "FAKE1\tENST00000000001\t5\t6\t0.8\tNA\tNA\tNA\t0\t0.5\n",
+    ]
+    return gzip.compress("".join(rows).encode())
+
+
 @pytest.fixture
 def fake_transport():
     return FakeTransport({"hgnc_complete_set.txt": HGNC_TSV,
-                           "variant_summary.txt.gz": _clinvar_gz()})
+                           "variant_summary.txt.gz": _clinvar_gz(),
+                           "gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz": _gnomad_bgz()})
 
 
 def test_fetch_all_downloads_transforms_and_is_freshness_gated(tmp_path, fake_transport):
@@ -122,6 +143,31 @@ def test_refreshed_dump_resyncs_without_a_version_bump(tmp_path, fake_transport)
     assert results["hgnc"]["skipped"] is not True
     gene = con.execute("SELECT location FROM hgnc_gene WHERE symbol='BRCA2'").fetchone()
     assert gene["location"] == "13q13.2"
+
+
+def test_gnomad_constraint_transforms_and_syncs(tmp_path, fake_transport):
+    results = fetch_all(tmp_path, transport=fake_transport)
+    assert results["gnomad-constraint"]["status"] == "fetched"
+
+    lines = (tmp_path / "gnomad_constraint.tsv").read_text().splitlines()
+    assert lines[0] == "gene_symbol\ttranscript\tpli\tloeuf\toe_mis\tobs_lof\texp_lof"
+    assert len(lines) == 3, "duplicate gene collapses; NA-pLI gene is dropped"
+
+    con = connect(tmp_path / "refs.db")
+    sync = refs_store.sync_all(con, tmp_path)
+    assert sync["gnomad-constraint"]["rows"] == 2
+    row = con.execute(
+        "SELECT * FROM gnomad_constraint WHERE gene_symbol='PRRT2'").fetchone()
+    assert row["pli"] == pytest.approx(0.98)
+    assert row["loeuf"] == pytest.approx(0.21)
+    brca2 = con.execute(
+        "SELECT transcript FROM gnomad_constraint WHERE gene_symbol='BRCA2'").fetchone()
+    assert brca2["transcript"] == "ENST00000380152", "first (canonical) row wins"
+    # link column indexed like clinvar's
+    plan = con.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM gnomad_constraint WHERE gene_symbol='X'"
+    ).fetchall()
+    assert plan   # PK lookup — always indexed
 
 
 def test_one_unreachable_origin_does_not_block_the_other(tmp_path):

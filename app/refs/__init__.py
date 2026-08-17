@@ -1,5 +1,6 @@
 """Reference source registry + shared entity resolver + refs.db access."""
 from .clinvar_mini import ClinvarMiniSource
+from .gnomad import GnomadConstraintSource
 from .hgnc import HgncSource
 from .resolver import DictResolver
 from .store import RefStore, connect, ensure_schema
@@ -7,6 +8,7 @@ from .store import RefStore, connect, ensure_schema
 REFS_REGISTRY = {
     "hgnc": HgncSource(),
     "clinvar-mini": ClinvarMiniSource(),
+    "gnomad-constraint": GnomadConstraintSource(),
 }
 
 RESOLVER = DictResolver()
