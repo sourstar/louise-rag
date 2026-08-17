@@ -5,28 +5,33 @@
 # a config mount (collections/*.toml, platform.toml, node key, space
 # artifacts), admin auth for the librarian pages, and the bundle machinery.
 #
-# BEFORE FIRST START — four one-time steps, in order (NAS shell):
+# DATA LAYOUT. The platform runs on its own dataset, /mnt/ssd4/apps/louise-rag
+# (NVMe gen4, 2 TB): data/ holds the manifest + fts + lancedb COPIED from the
+# legacy app on 2026-08-17, config/ holds the node key and TOML config. The
+# original at /mnt/ssd5/apps/gutenberg-rag is NEVER mounted or written by
+# this app — it stays pristine as the offline fallback, together with the
+# stopped gutenberg-rag app. Every step below operates on the copy only.
+#
+# BEFORE FIRST START — three one-time steps, in order (NAS shell):
 #
 #   1. Build the image (from a checkout of this repo on the NAS):
 #        docker build -t louise-rag:local .
 #
-#   2. Create the config dataset and the node key:
-#        mkdir -p /mnt/ssd5/apps/louise-rag-config
-#        docker run --rm -v /mnt/ssd5/apps/louise-rag-config:/config \
+#   2. Create the node key (config/ already exists on the dataset):
+#        docker run --rm -v /mnt/ssd4/apps/louise-rag/config:/config \
 #          louise-rag:local python -m app.cli bundle keygen /config/node.key
 #
-#   3. Migrate the legacy manifest (books -> documents; idempotent, verified
-#      against a copy of this exact manifest on 2026-08-18 — keeps all 79k
-#      discovery/FTS rows and makes a backup before touching the original):
-#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data \
+#   3. Migrate the copied manifest (books -> documents; idempotent, verified
+#      against a copy of this exact manifest on 2026-08-16 — keeps all 79k
+#      discovery/FTS rows and makes a backup first), then reset the 714
+#      corrupted books so the worker re-embeds them (verified boundary
+#      2026-07-21 12:56 UTC — exactly 714 books; delete-then-insert makes
+#      the redo safe):
+#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data \
 #          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db --dry-run
-#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data \
+#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data \
 #          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db
-#
-#   4. Reset the 714 corrupted books so the worker re-embeds them (see the
-#      vector-forensics note below; verified boundary 2026-07-21 12:56 UTC —
-#      exactly 714 books, delete-then-insert makes the redo safe):
-#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data louise-rag:local \
+#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data louise-rag:local \
 #          python -c "import sqlite3; c=sqlite3.connect('/data/manifest.db'); \
 #          print(c.execute(\"UPDATE documents SET embed_done=0 WHERE embed_done=1 \
 #          AND updated_at <= strftime('%s','2026-07-21 12:56:00')\").rowcount); \
@@ -38,7 +43,7 @@
 # cos >= 0.9999. The first 714 books (embedded 2026-07-20 20:12 ->
 # 2026-07-21 12:53 UTC, before a 12:58 restart) are degenerate — an entire
 # book collapses into one cone (pairwise cos ~0.97) — and must be redone
-# (step 4). Root cause, reproduced on demand: llama-server corrupts long
+# (step 3's reset). Root cause, reproduced on demand: llama-server corrupts long
 # sequences when a single /v1/embeddings request carries MULTIPLE texts
 # (batch of 8 -> cos 0.32 vs the same text alone; deterministic per batch
 # shape), and its prompt cache can then replay the corrupted result even for
@@ -93,14 +98,14 @@ services:
       CHUNK_OVERLAP: '120'
       CHUNK_VERSION: '1'
       FTS_VERSION: '1'
-      EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset in step 4 re-embed
+      EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset in step 3 re-embed
       DISCOVER_INTERVAL_MIN: '360'
       # ── platform ──
       ADMIN_TOKEN: 'CHANGE-ME-BEFORE-INSTALL'
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
-      - /mnt/ssd5/apps/gutenberg-rag:/data
-      - /mnt/ssd5/apps/louise-rag-config:/config
+      - /mnt/ssd4/apps/louise-rag/data:/data
+      - /mnt/ssd4/apps/louise-rag/config:/config
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://localhost:8742/healthz']
       interval: 30s
@@ -115,6 +120,6 @@ services:
     environment: *env
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
-      - /mnt/ssd5/apps/gutenberg-rag:/data
-      - /mnt/ssd5/apps/louise-rag-config:/config
+      - /mnt/ssd4/apps/louise-rag/data:/data
+      - /mnt/ssd4/apps/louise-rag/config:/config
     stop_grace_period: 120s
