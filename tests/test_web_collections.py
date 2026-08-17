@@ -25,7 +25,7 @@ def client(isolated_config, monkeypatch):
         yield c
 
 
-def test_create_writes_isolated_toml_and_collection_appears(client):
+def test_create_writes_isolated_toml_and_collection_appears(client, isolated_config):
     r = client.post("/admin/library/new/create",
                     json={"name": "pubmed2", "plugin": "pubmed"})
     assert r.status_code == 200
@@ -40,6 +40,13 @@ def test_create_writes_isolated_toml_and_collection_appears(client):
 
     names = [c.name for c in collections_mod.load_all()]
     assert "pubmed2" in names
+    # creating the FIRST TOML must not disown the synthesized default: its
+    # definition gets materialized alongside (observed live: a test TOML
+    # silently hid 79k books)
+    assert "gutenberg" in names
+    assert collections_mod.config_toml_path("gutenberg").is_file()
+    gutenberg = collections_mod.by_name("gutenberg")
+    assert gutenberg.manifest_path == isolated_config.DATA_DIR / "manifest.db"
 
 
 def test_create_rejects_bad_names_dup_and_unknown_plugin(client):

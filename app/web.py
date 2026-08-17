@@ -301,6 +301,28 @@ def new_collection_preview(body: NewCollectionBody):
 _COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
+def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
+                            acquire_enabled: bool, corpus_dir: Path,
+                            manifest: Path, fts: Path, lancedb: Path) -> None:
+    lines = [f'plugin = "{plugin}"']
+    if profile:
+        lines.append(f'profile = "{profile}"')
+    if acquire_enabled:
+        lines.append("acquire_enabled = true")
+    lines += [
+        f'corpus_dir = "{corpus_dir.as_posix()}"',
+        "",
+        "[paths]",
+        f'manifest = "{manifest.as_posix()}"',
+        f'fts = "{fts.as_posix()}"',
+        f'lancedb = "{lancedb.as_posix()}"',
+        "",
+    ]
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text("\n".join(lines), encoding="utf-8")
+    tmp.replace(path)
+
+
 class CreateCollectionBody(BaseModel):
     name: str
     plugin: str
@@ -325,23 +347,31 @@ def new_collection_create(body: CreateCollectionBody):
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")
 
-    base = config.DATA_DIR / body.name
-    lines = [
-        f'plugin = "{body.plugin}"',
-        f'profile = "{body.profile}"',
-        f"acquire_enabled = {'true' if body.acquire_enabled else 'false'}",
-        f'corpus_dir = "{(config.CORPUS_DIR / body.name).as_posix()}"',
-        "",
-        "[paths]",
-        f'manifest = "{(base / "manifest.db").as_posix()}"',
-        f'fts = "{(base / "fts").as_posix()}"',
-        f'lancedb = "{(base / "lancedb").as_posix()}"',
-        "",
-    ]
     toml_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = toml_path.with_suffix(".toml.tmp")
-    tmp.write_text("\n".join(lines), encoding="utf-8")
-    tmp.replace(toml_path)
+
+    # Writing the FIRST TOML flips load_all() from synthesized-default mode
+    # to TOML-only mode — without this, creating an empty new collection
+    # would silently disown the default collection and everything in it
+    # (observed live: 79k books vanished behind a test 'pubmed' TOML).
+    # Materialize the currently-synthesized collections so what exists
+    # keeps existing.
+    if not any(toml_path.parent.glob("*.toml")):
+        for existing in collections_mod.load_all():
+            _write_collection_toml(
+                collections_mod.config_toml_path(existing.name),
+                plugin=existing.plugin, profile=existing.profile,
+                acquire_enabled=existing.acquire_enabled,
+                corpus_dir=existing.corpus_dir,
+                manifest=existing.manifest_path, fts=existing.fts_dir,
+                lancedb=existing.lance_dir)
+
+    base = config.DATA_DIR / body.name
+    _write_collection_toml(
+        toml_path, plugin=body.plugin, profile=body.profile,
+        acquire_enabled=body.acquire_enabled,
+        corpus_dir=config.CORPUS_DIR / body.name,
+        manifest=base / "manifest.db", fts=base / "fts",
+        lancedb=base / "lancedb")
 
     con = db.connect()
     db.log_event(con, "info", "control",
