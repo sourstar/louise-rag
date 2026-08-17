@@ -71,11 +71,22 @@ A **collection** = (plugin, corpus snapshot, pipeline versions, embedding space)
 
 ```
 space_id = hash(embed_model_file_hash,   # weights digest, not the name
-                dim, dtype, normalization, pooling,
+                dtype, normalization, pooling,
                 CHUNK_VERSION, text_cleaning_version,
                 truncation/ctx policy,
                 query_encoder_hash)      # bi-encoder pairs (MedCPT) differ here
 ```
+
+*(Amended after Phase-1 integration.)* Two things the hash deliberately does
+**not** cover, with the compensating checks import must therefore make:
+`dim` is only observable once vectors exist, so it is pinned and compared
+**separately** — bundle header vs parquet width vs the pinned space row vs the
+live table, all four ways. And chunk *geometry* (`CHUNK_TOKENS`,
+`CHUNK_OVERLAP`) is not part of the recipe — only `CHUNK_VERSION` is — so two
+honest nodes at the same version can chunk differently; import compensates by
+requiring the bundle's chunk-id set to exactly equal the locally re-derived
+one, which also catches cleaning drift for free. Any implementation that skips
+either compensating check has silently reintroduced mixed-space corruption.
 
 Collections in the same space *may* share a physical vector table; different spaces *must* stay separate — cosine distance across models is meaningless. **Default: separated storage, federated querying.** The `space_id` is also the namespace for network artifacts: a bundle only imports into a matching space, which mechanically prevents mixed-model corruption.
 
@@ -126,13 +137,32 @@ Two planes, deliberately separate.
 
 ```
 bundle/
-  header.json     space_id, collection, uid list/range, chunk counts,
-                  producer pubkey, backend fingerprint, challenge embeddings (§6 T2)
-  vectors.parquet uid, chunk_seq, vector[dim]        ← no text
-  MANIFEST.sig    Ed25519 over header + parquet digest
+  header.json      space_id, collection, uid list, chunk count, dim/dtype,
+                   producer pubkey, backend fingerprint, content digest,
+                   challenge embeddings slot (§6 T2)
+  vectors.parquet  chunk_id, vector[dim]             ← no text, ever
+  possession.json  uid → producer's raw_hash          ← added in Phase 1
+  MANIFEST.sig     exactly 64 raw bytes: Ed25519 over a domain-separated,
+                   length-framed payload of the header's wire bytes + the
+                   sha256 of each sidecar
 ```
 
+*(Amended after Phase-1 integration.)* `possession.json` was added so vectors
+bind to a specific text **revision** — Gutenberg re-issues books and PubMed
+revises records, and without per-uid hashes, revision-A vectors attach
+silently to revision-B text. It is a sidecar rather than header fields so it
+is parsed only *after* the signature verifies. The signature domain prefix
+exists because the same node key also signs snapshot manifests and space
+artifacts; nothing else binds a signature to "bundle".
+
 Import is a new implementation of the `embed` stage: verify → space match → confirm local `raw_hash` (possession binding) → verification ladder → bulk add → set `embed_done`. Parquet keeps the wire format engine-neutral.
+
+**Delivery channel** *(previously unspecified — the upload half was defined in
+§7 but no retrieval path existed)*: a consumer receives bundles into a
+per-collection **inbox directory** its worker drains — filled by hand, by a
+sync of the coordinator's artifact store, or by the HF-repo/torrent transports
+below. There is deliberately no `GET /bundles/{id}` on the coordinator: it
+"holds no bulk data", and a download endpoint would quietly make it a CDN.
 
 **Reference tables** need only the raw plane — they are copies of public data, not derived work, so content-addressing suffices and no trust ladder applies.
 
@@ -206,14 +236,37 @@ Watermarking in the strict sense cannot work here: anyone with the model produce
 | Tier | Check | Cost | Catches |
 |---|---|---|---|
 | **T0 algebraic** | dim/dtype match space; unit-norm within f16 tolerance; no NaN/dupes; per-dim moments and pairwise-cosine distribution inside the space envelope (embedding spaces are strongly anisotropic — foreign vectors betray themselves statistically) | ~10⁸ FLOPs, tens of ms CPU | missing normalization (the most common incompetence bug), random/foreign vectors |
-| **T1 geometric** | cosine profile against a signed probe set (~512 reference texts embedded once by the space author); **overlap invariant** — consecutive chunks share ~120 tokens, so cos(vₖ,vₖ₊₁) must sit in a predictable band; semantic triangles against probes | ~10¹⁰ FLOPs, ~0.1–1 s CPU | wrong model, perturbation. Faking the overlap band requires actually modelling the text — at which point honest embedding is cheaper |
-| **T2 challenge** | golden (text, vector, per-backend tolerance) triples; producer embeds beacon-derived challenge texts into the bundle header | +1.3 s producer, ~0 verifier | misconfiguration — "proof of correct oven, not each loaf" |
+| **T1 geometric** | cosine profile against a signed probe set (~512 reference texts embedded once by the space author); **overlap invariant** — consecutive chunks share ~120 tokens, so cos(vₖ,vₖ₊₁) must sit in a predictable band, keyed on the *measured* overlap of the local text (config-independent, survives a lying producer); probe-triangle Gram check *(corrected — see amendment)* | ~10¹⁰ FLOPs, ~0.1–1 s CPU | wrong model, perturbation. Faking the overlap band requires actually modelling the text — at which point honest embedding is cheaper |
+| **T2 challenge** | golden (text, vector, per-backend tolerance) triples; producer embeds beacon-derived challenge texts into the bundle header. The beacon is HMAC-epoch over a root published *inside the signed space artifact* — offline-verifiable, no network service | +1.3 s producer, ~0 verifier | misconfiguration — "proof of correct oven, not each loaf". **Not a security control**: the root is public, so the golden bank is precomputable by a determined producer. Resist "hardening" it into beacon-*generated* challenge texts — the author then cannot pre-publish golden vectors, the verifier must embed them itself, and the free check becomes a GPU call (it becomes T3) |
 | **T3 spot recompute** | n≈16 chunks, **private per-verifier randomness** (never a bundle-digest seed — that is grindable: corrupt fraction f, re-roll the nonce until the derived sample misses, expected (1−f)⁻ⁿ tries), sequential test, τ from the space's cross-backend calibration table (~0.999; the gap to a different model is 0.3–0.7, so the test is sharp) | ~3–5 s GPU = **0.16%** of production | bulk poisoning. Per importer (1−f)ⁿ survives; 10 independent importers at f=5% → 3×10⁻⁴ |
 | **T4 verify-on-use** | a poisoned vector is inert until retrieval surfaces it — so recompute exactly the cited chunks, async via the existing lazy queue. Pass → mark verified forever. Fail → proof of forgery (text, claimed, recomputed), quarantine the key, re-embed locally | ~2–3 s GPU per answer, once per chunk ever cited; ~2% lifetime (query distributions are Zipfian — the hot set verifies in days, cold chunks never cost) | **targeted poisoning**, which random sampling cannot find |
 
 **Complements:** ~5% deliberate overlap in work allocation so independent producers cover common chunks (disagreement localizes the liar without trusting either); trust-proportional sampling with new keys in probation; blocking mode for high-stakes deployments (verify before answering, ~2–3 s first-touch latency).
 
 **Honest limits.** Exact-hash verification is impossible — the same weights on different GPUs/drivers/batch sizes yield different floats, hence the backend fingerprint and tolerance τ. The tolerance window is also the adversary's perturbation budget, so keep τ as tight as the fingerprint allows and treat "always passing just above τ" as a reputation flag. T4 is async: the first answer touching poison may already be wrong. But detection at first use is ~1, so the attacker trades one degraded answer for a permanently burned key — expected value negative.
+
+*(Phase-1 amendments to this section.)*
+- **"Semantic triangles" cannot prove fabrication for this wire format.** The
+  Gram/PSD realizability condition (det G ≥ 0 over vector-probe-probe triples)
+  holds *automatically* for any real vectors — the Gram matrix is XᵀX,
+  positive semi-definite by construction; measured minimum over 200k random
+  real triples was +0.12. It would discriminate only if bundles transmitted
+  per-probe *cosines*, which a marginal-matching forger cannot make jointly
+  consistent. Since bundles carry vectors, the check is kept as a cheap
+  **integrity canary** (wrong-dtype/endianness decodes, arithmetic bugs) and
+  must not be counted as anti-forgery coverage.
+- **T3's n≈16 is a sampling *budget*, not an acceptance boundary.** At n=16
+  against f=5%, the achievable per-importer miss probability is 0.95¹⁶ ≈ 0.44
+  — and the row above *depends* on that (0.44¹⁰ ≈ 3×10⁻⁴ is exactly its
+  ten-importer figure). The network argument carries the safety, not one
+  importer's β. Implementations must report *delivered* error rates (exact
+  enumeration over the truncated sequential test's lattice), never Wald's
+  design targets, which ignore overshoot and truncation.
+- **The overlap invariant is untestable against synthetic embeddings.** A
+  deterministic text→vector mock cannot reproduce adjacent-chunk similarity,
+  so end-to-end suites exercise every tier *except* the overlap band; only
+  calibration against recorded vectors from a real model covers it. A known
+  gap, not a discovered one.
 
 **Net economics.** Honest-path import ≈ 1 s CPU + 5 s GPU ≈ **0.2% of producing the bundle** — verification is ~1/500th of production. Network total for M=50 consumers: everyone-embeds-locally = 50 units; shared = 1 + 0.05 overlap + 50×0.002 ≈ 1.15 (≈2.2 worst-case including lifetime T4) → **20–40× network saving**. That ratio is the justification for the whole design.
 
@@ -238,7 +291,14 @@ Leases can be advisory precisely because the work is idempotent: an expired-and-
 - `lazy-p2p` — a query first asks the swarm, computes only on miss, publishes the result. Queries *feed* the network.
 - `contribute` — `all` pointed at the network's demand-set. The overnight mode for strong GPUs; ranked by (demanded-but-unprovided) > (unprovided) > (low provider count), tie-broken by rendezvous hashing `h(peer_id, uid)` so peers spread without coordination.
 
-**Distribution:** push accepted bundles to a versioned Hugging Face dataset repo per collection — free hosting, global CDN, and how NCBI and Upstash already ship vectors. The P2P swarm then becomes an *alternative transport*, not a prerequisite — which is why community sharing can land in Phase 1.
+*(Amended after Phase-1 integration.)* `embed_mode` governs what the worker
+**spends** — lazy enqueueing, backfill — never what retrieval **uses**. Dense
+search runs over whatever vectors exist regardless of mode. This sentence
+exists because the two were once conflated: a consumer-role node (§14:
+import-only, `embed_mode=off` *because* its vectors arrive from the network)
+was the one node type that refused to search the vectors it imported.
+
+**Distribution:** push accepted bundles to a versioned Hugging Face dataset repo per collection — free hosting, global CDN, and how NCBI and Upstash already ship vectors. The P2P swarm then becomes an *alternative transport*, not a prerequisite — which is why community sharing can land in Phase 1. *(Amended: the consumer side of every transport is the per-collection inbox directory defined in §5 — the coordinator itself never serves bundle bytes.)*
 
 **Incentives v1:** credit ledger + leaderboard (BOINC's screenshots were half its marketing) and one functional perk — contributors' demand-sets get scheduling priority, so giving GPU-hours makes your own queries faster.
 
@@ -439,3 +499,33 @@ They are not two databases doing one job; they are three engines (with Tantivy) 
 | Role here | stage flags, doc_keys, bundles ledger, ClinVar/gnomAD lookups | embedding storage + dense search | per-language BM25, catalog FTS |
 
 The manifest needs what SQLite is: real transactions (delete-then-insert idempotence *is* a transaction pattern), crash-safe WAL, sub-ms key lookups at hundreds of millions of rows — and §4's rule that lookups are facts-by-key makes ClinVar/gnomAD natural SQLite tables. Vectors need what Lance is: columnar storage where a million 1024-d f16 vectors are a compact scan target, ANN indexing, zero-copy Arrow in/out — which is also why bundles are Parquet: import is a columnar append, not row-by-row INSERTs. Storing vectors as SQLite blobs forfeits ANN, vectorized scans, and memory-mapping; storing workflow state in Lance forfeits transactions and fast point updates. The split is also the P2P boundary: **SQLite state is local truth and never travels; Lance content is derived work and is exactly what travels** (as Parquet). One store optimized for both would be optimized for neither — the "one database" that remains is the query planner's illusion, delivered by RRF + the entity layer.
+
+---
+
+## 17. Phase-1 amendments
+
+This document was corrected in place after the Phase-1 integration pass; the
+amendments are marked *(Amended after Phase-1 integration)* at the point of
+change. Index, with the evidence behind each in
+[`phase1-integration-notes.md`](phase1-integration-notes.md):
+
+1. **§5** — bundle format gains `possession.json` (per-uid raw hashes: vectors
+   bind to a text *revision*); signature is domain-separated and length-framed;
+   the consumer-side **delivery channel** (inbox directory) is now named — the
+   coordinator never serves bundle bytes.
+2. **§3** — `space_id` does not hash `dim` or chunk geometry; the compensating
+   import checks (four-way dim comparison, chunk-id set equality) are now part
+   of the spec.
+3. **§6 T1** — the "semantic triangles" claim corrected: Gram/PSD holds
+   automatically for transmitted *vectors*; kept as an integrity canary, not
+   anti-forgery coverage. Overlap band keyed on *measured* local overlap.
+4. **§6 T2** — the beacon is defined (HMAC-epoch over a root in the signed
+   space artifact) and explicitly labeled not-a-security-control, with the
+   warning against "hardening" it into T3.
+5. **§6 T3** — n≈16 is a budget, not an acceptance boundary (β≈0.44 at f=5%);
+   report delivered error rates, never Wald's design targets.
+6. **§7** — `embed_mode` governs worker *spending*, never retrieval *use*.
+7. **§6 honest limits** — the overlap invariant is untestable against
+   synthetic embeddings; recorded-real-vector calibration is the only cover.
+8. **CLAUDE.md invariant 2** — sub-document checkpoint granularity
+   acknowledged (mid-file acquisition, mid-bundle import).

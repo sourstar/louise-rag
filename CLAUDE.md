@@ -12,6 +12,10 @@
    REFUSE-TO-BOOT error, never a warning or auto-migration.
 2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id. Every stage
    is resumable and safe to re-run. SIGTERM = finish current document, commit, exit 0.
+   (Amended, Phase 1: for stages whose unit cannot be finished on request the
+   resumable unit may be smaller — acquisition checkpoints mid-file at byte
+   granularity with Range resume; bundle import stops between documents
+   mid-bundle. Lossless and truthful checkpoints, exit 0, always.)
 3. DETERMINISM. Chunking is a pure function of cleaned text. Any change to chunking or
    cleaning bumps CHUNK_VERSION / cleaning version explicitly. Never silently.
 4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the LLM context
