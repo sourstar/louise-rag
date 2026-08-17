@@ -1,0 +1,56 @@
+{
+  "calibration": {
+    "backend_classes": [
+      {
+        "id": "http://192.168.178.10:30436"
+      },
+      {
+        "id": "http://192.168.178.10:30439"
+      }
+    ],
+    "detect_target": {
+      "f1": 0.05
+    },
+    "model_substitution_reference": {
+      "p50": 0.5,
+      "p99": 0.5
+    },
+    "pairs": [
+      {
+        "cos": {
+          "mean": 0.9999996765299005,
+          "min": 0.9999949845425248,
+          "p0001": 0.9999951385142674,
+          "p001": 0.9999965242599506,
+          "p01": 0.9999990364008261,
+          "p50": 0.9999997212400283,
+          "sd": 2.5963245026846354e-07
+        },
+        "n_pairs_measured": 512,
+        "p_exact_match": 0.0,
+        "p_miss_honest": 0.0,
+        "producer_class": "http://192.168.178.10:30439",
+        "storage_dtype_penalty": {
+          "f16": 0.00035,
+          "f32": 0.0
+        },
+        "tau": 0.9999942056451739,
+        "verifier_class": "http://192.168.178.10:30436"
+      }
+    ],
+    "storage_dtype_penalty": {
+      "f16": 0.00035,
+      "f32": 0.0
+    },
+    "tau_default": 0.9999942056451739
+  },
+  "recommendation": {
+    "detect_5pct_at_n": 0.5598733313482347,
+    "false_reject_at_n": 1.599999988000001e-08,
+    "guard": 7.788973508053907e-07,
+    "margin_to_other_model_p99": 0.49999420564517394,
+    "n_t3": 16,
+    "p_miss_honest": 0.0,
+    "tau": 0.9999942056451739
+  }
+}

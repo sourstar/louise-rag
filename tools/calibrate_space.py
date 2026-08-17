@@ -175,12 +175,25 @@ def cosine_stats(cosines: np.ndarray) -> dict:
 
 def classify(backends: dict[str, np.ndarray]) -> tuple[str, dict, dict, dict]:
     """Split recorded lanes by their name prefix into the three populations
-    §6's margin analysis compares."""
-    reference_key = next(k for k in backends if k.startswith("reference/"))
-    same = {k: v for k, v in backends.items() if k.startswith("same/")}
-    quant = {k: v for k, v in backends.items() if k.startswith("quant/")}
-    other = {k: v for k, v in backends.items() if k.startswith("othermodel/")}
-    return reference_key, same, quant, other
+    §6's margin analysis compares.
+
+    Live recordings (record_live) key lanes by ENDPOINT URL, not by the
+    synthetic prefix convention — there the first endpoint is the reference
+    and every other endpoint is a same-model/different-backend lane, which
+    is precisely what pointing --live at two servers of the same weights
+    means. (Found on the first real run: classify() only knew the synthetic
+    names and crashed after both endpoints had already been recorded.)"""
+    prefixed = [k for k in backends if k.startswith("reference/")]
+    if prefixed:
+        reference_key = prefixed[0]
+        same = {k: v for k, v in backends.items() if k.startswith("same/")}
+        quant = {k: v for k, v in backends.items() if k.startswith("quant/")}
+        other = {k: v for k, v in backends.items() if k.startswith("othermodel/")}
+        return reference_key, same, quant, other
+    keys = list(backends)
+    if len(keys) < 2:
+        raise SystemExit("calibration needs at least two recorded lanes")
+    return keys[0], {k: backends[k] for k in keys[1:]}, {}, {}
 
 
 def recommend_tau(same_cosines: np.ndarray, other_cosines: np.ndarray,
@@ -349,14 +362,19 @@ def write_report(result: dict, backends: dict[str, np.ndarray], path: Path) -> N
         lines.append(f"- `{key}`: worst cosine {floor:.6f} — {verdict}")
     lines += ["",
               "## Different model — the chasm", ""]
-    other_cos = np.concatenate([rowwise_cosine(reference, v) for v in other.values()])
-    lines += ["```", *histogram(other_cos, -0.2, 1.0), "```",
-              "",
-              f"p50 {float(np.quantile(other_cos, 0.5)):.3f}, "
-              f"p99 {float(np.quantile(other_cos, 0.99)):.3f} — nowhere near tau; "
-              f"model substitution is not a marginal call at any plausible "
-              f"tolerance.",
-              "",
+    if other:
+        other_cos = np.concatenate([rowwise_cosine(reference, v) for v in other.values()])
+        lines += ["```", *histogram(other_cos, -0.2, 1.0), "```",
+                  "",
+                  f"p50 {float(np.quantile(other_cos, 0.5)):.3f}, "
+                  f"p99 {float(np.quantile(other_cos, 0.99)):.3f} — nowhere near tau; "
+                  f"model substitution is not a marginal call at any plausible "
+                  f"tolerance.", ""]
+    else:
+        lines += ["_No different-model lane in this recording (a live run "
+                  "measures same-weights backends); the chasm reference in "
+                  "the calibration block is the labeled placeholder._", ""]
+    lines += ["",
               "## The adversary's perturbation budget", "",
               "Largest epsilon whose perturbed vectors still pass at tau "
               "(p01 of the perturbed cosine above tau):", "",

@@ -27,6 +27,30 @@ def result(recorded):
     return calibrate_space.calibrate(backends, meta)
 
 
+def test_live_recordings_classify_by_endpoint_order(tmp_path):
+    """Live recordings key lanes by URL, not the synthetic prefix names —
+    the first endpoint is the reference, the rest are same-weights lanes.
+    Regression for the first real run, which recorded both endpoints and
+    then crashed in classify(); the report writer must also survive the
+    absence of a different-model lane."""
+    rng = np.random.default_rng(7)
+    base = rng.normal(size=(64, 32))
+    base /= np.linalg.norm(base, axis=1, keepdims=True)
+    jitter = base + rng.normal(scale=1e-5, size=base.shape)
+    jitter /= np.linalg.norm(jitter, axis=1, keepdims=True)
+    backends = {"http://gpu:1": base, "http://cpu:2": jitter}
+
+    ref, same, quant, other = calibrate_space.classify(backends)
+    assert ref == "http://gpu:1"
+    assert list(same) == ["http://cpu:2"] and not quant and not other
+
+    result = calibrate_space.calibrate(backends, {"synthetic": False})
+    assert result["recommendation"]["tau"] > 0.999
+    report = tmp_path / "r.md"
+    calibrate_space.write_report(result, backends, report)
+    assert "Different model" in report.read_text(encoding="utf-8")
+
+
 # ─────────────── reproducibility: the constraint itself ───────────────
 
 def test_fixtures_regenerate_byte_identically(tmp_path, recorded):
