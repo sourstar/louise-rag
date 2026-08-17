@@ -36,7 +36,7 @@ def test_create_writes_isolated_toml_and_collection_appears(client):
     # collection's manifest/fts/lance defaults
     assert "pubmed2/manifest.db" in text
     assert "pubmed2/fts" in text and "pubmed2/lancedb" in text
-    assert "RESTART THE WORKER" in r.json()["note"]
+    assert "no restart" in r.json()["note"]
 
     names = [c.name for c in collections_mod.load_all()]
     assert "pubmed2" in names

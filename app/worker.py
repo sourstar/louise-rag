@@ -258,6 +258,51 @@ def _run_one_step(con, collection, last_idle_log: dict) -> bool:
         db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
     return True
 
+def _sync_collections(all_collections, cons, last_discover):
+    """Hot-reload collections each round: a collections/*.toml added or
+    removed while the worker runs takes effect within one round — no restart.
+
+    A new collection is boot-validated in isolation; failing validation
+    skips it (logged, retried next round once the TOML is fixed) instead of
+    crashing the worker. Removal closes the connection and stops ingestion;
+    data on disk is untouched, matching the admin UI's removal semantics.
+    Existing collections are refreshed by name (profile/acquire toggles
+    apply immediately); renaming a collection's data PATHS mid-run is the
+    one thing that still needs a restart.
+    """
+    current = collections_mod.load_all()
+    known = {c.name for c in all_collections}
+    now_names = {c.name for c in current}
+
+    for added in [c for c in current if c.name not in known]:
+        try:
+            spaces.validate_boot([added])
+        except spaces.BootValidationError as e:
+            if cons:
+                db.log_event(next(iter(cons.values())), "error", "worker",
+                             f"new collection {added.name!r} failed boot "
+                             f"validation — skipped until fixed: {e}"[:500])
+            continue
+        cons[added.name] = db.connect(added)
+        db.log_event(cons[added.name], "info", "worker",
+                     f"collection {added.name!r} added — discovering")
+        stale = bundle_ledger.sweep_stale(cons[added.name])
+        if stale:
+            db.log_event(cons[added.name], "warn", "bundle",
+                         f"{len(stale)} stale bundle import(s) swept")
+        _discover(cons[added.name], added, "added")
+        last_discover[added.name] = time.time()
+
+    for gone in sorted(known - now_names):
+        db.log_event(cons[gone], "info", "worker",
+                     f"collection {gone!r} removed — ingestion stopped, data kept")
+        cons[gone].close()
+        del cons[gone]
+        last_discover.pop(gone, None)
+
+    return [c for c in current if c.name in cons]
+
+
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -265,7 +310,6 @@ def run_forever():
     spaces.validate_boot(all_collections)
 
     cons = {c.name: db.connect(c) for c in all_collections}
-    control_con = cons[all_collections[0].name]   # the single global pause/resume gate
 
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker started")
@@ -283,9 +327,17 @@ def run_forever():
 
     last_discover = {c.name: time.time() for c in all_collections}
     last_idle_log: dict[str, float] = {}
+    control_con = cons[all_collections[0].name]
 
     while not _stop.is_set():
         try:
+            all_collections = _sync_collections(all_collections, cons, last_discover)
+            if not all_collections:
+                time.sleep(config.WORKER_IDLE_SLEEP)
+                continue
+            # re-resolved each round: the previous control collection may
+            # have been removed mid-run
+            control_con = cons[all_collections[0].name]
             # Tier-3 "boost bandwidth tonight" reaches the byte-moving process
             # here: the web process writes it to the control table, the worker
             # applies it. Re-read each round so it takes effect within one
@@ -308,7 +360,12 @@ def run_forever():
             if not any_work:
                 time.sleep(config.WORKER_IDLE_SLEEP)
         except Exception:
-            db.log_event(control_con, "error", "worker", traceback.format_exc()[:1500])
+            try:
+                db.log_event(control_con, "error", "worker", traceback.format_exc()[:1500])
+            except Exception:
+                # control_con may point at a just-removed collection — the
+                # loop must survive even when its logger is gone
+                print(traceback.format_exc()[:1500], flush=True)
             time.sleep(5)
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")

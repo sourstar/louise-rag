@@ -347,10 +347,10 @@ def new_collection_create(body: CreateCollectionBody):
     db.log_event(con, "info", "control",
                  f"collection {body.name!r} created via admin UI ({toml_path})")
     return {"ok": True, "toml_path": str(toml_path),
-            "note": "The web process sees it immediately; RESTART THE WORKER "
-                     "to start ingestion (collections load at worker startup). "
-                     "If your config dir is versioned, commit the new file. "
-                     "A yellow-class source still needs its license ack before "
+            "note": "Live now: the web process sees it immediately and the "
+                     "worker picks it up within one round (no restart). If "
+                     "your config dir is versioned, commit the new file. A "
+                     "yellow-class source still needs its license ack before "
                      "acquisition (corpus add --ack-terms)."}
 
 
@@ -377,8 +377,9 @@ def collection_remove(name: str):
             "data_kept": {"manifest": str(collection.manifest_path),
                            "fts": str(collection.fts_dir),
                            "lancedb": str(collection.lance_dir)},
-            "note": "Restart the worker to stop ingesting it. To restore, "
-                     "rename the retired file back to " + toml_path.name + "."}
+            "note": "The worker stops ingesting it within one round (no "
+                     "restart). To restore, rename the retired file back to "
+                     + toml_path.name + "."}
 
 
 class BundleExportBody(BaseModel):

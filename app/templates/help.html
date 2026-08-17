@@ -180,9 +180,11 @@ manifest = "/data/pubmed/manifest.db"   # defaults point at the first
 fts      = "/data/pubmed/fts"           # collection's paths — never share
 lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
   <p class="note">
-    <b>3. Restart the app</b> — collections are read at startup. The new
-    collection appears on the Library page and in Ask's collection chips;
-    its embedding space is pinned on first boot.
+    <b>3. It goes live on its own</b> — the web pages read collections per
+    request, and the worker hot-reloads them each round: a created
+    collection starts discovering within seconds, no restart. It appears on
+    the Library page and in Ask's collection chips; its embedding space is
+    pinned on first contact.
   </p>
   <p class="note">
     <b>4. Fill it.</b> Either point <code>corpus_dir</code> at documents you
@@ -205,7 +207,8 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     delivery, never trust); <i>remove…</i> — retire the collection's TOML
     (renamed aside, restorable) while its manifest, index and vectors stay
     on disk untouched. Removing the synthesized default collection isn't
-    possible from the UI; worker restarts apply create/remove to ingestion.
+    possible from the UI. Create and remove both take effect live — the
+    worker hot-reloads collections every round.
   </p>
 </div>
 

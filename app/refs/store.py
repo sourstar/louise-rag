@@ -31,19 +31,34 @@ def ensure_schema(con: sqlite3.Connection, schema: RefSchema) -> None:
             f"{c.name} {c.type}" + (" PRIMARY KEY" if c.name == table.primary_key else "")
             for c in table.columns)
         con.execute(f"CREATE TABLE IF NOT EXISTS {table.name} ({col_defs})")
+    # Link columns are traversed on every entity expansion; at fixture scale a
+    # scan was free, at real-dump scale (ClinVar's ~3M variants) it is a full
+    # table scan per query. Index both ends of every declared link.
+    for link in schema.links:
+        con.execute(f"CREATE INDEX IF NOT EXISTS idx_{link.from_table}_{link.from_column} "
+                    f"ON {link.from_table}({link.from_column})")
 
 
 def sync_source(con: sqlite3.Connection, source: ReferenceSource, state: RefSyncState) -> dict:
     """Idempotent by primary key (INSERT OR REPLACE, invariant 2); short-
-    circuits if ref_version already matches what's pinned — bump
-    source.ref_version to force reprocessing, mirroring CHUNK_VERSION/
-    FTS_VERSION's convention."""
+    circuits if ref_version already matches what's pinned AND no file under
+    ref_root is newer than the last sync — a refreshed dump (refs/acquire.py)
+    reprocesses without a version bump, mirroring the mtime/size gate the
+    corpus pipeline uses for discovery."""
     schema = source.schema()
     ensure_schema(con, schema)
     row = con.execute(
-        "SELECT ref_version FROM ref_meta WHERE source_id=?", (source.source_id,)).fetchone()
+        "SELECT ref_version, synced_at FROM ref_meta WHERE source_id=?",
+        (source.source_id,)).fetchone()
     if row is not None and row["ref_version"] == source.ref_version:
-        return {"skipped": True, "rows": 0}
+        # only the TSV dumps sources read — never refs.db/-wal, which may
+        # share the directory and are always newer than their own sync
+        newest = max((f.stat().st_mtime for f in state.ref_root.glob("*.tsv")),
+                     default=0)
+        # int() both sides: synced_at is stored truncated, so a float mtime
+        # from the same second would otherwise always look "newer"
+        if int(newest) <= (row["synced_at"] or 0):
+            return {"skipped": True, "rows": 0}
 
     valid_tables = {t.name for t in schema.tables}
     n = 0
@@ -54,7 +69,12 @@ def sync_source(con: sqlite3.Connection, source: ReferenceSource, state: RefSync
                 raise ValueError(f"{source.source_id}: unknown table {batch.table!r}")
             if not batch.rows:
                 continue
-            cols = list(batch.rows[0].keys())
+            # Project to the DECLARED columns: real dumps carry dozens of
+            # extra fields (HGNC's complete set has ~50), and a source's
+            # sync() may hand rows through unfiltered. Extra keys are
+            # ignored; a MISSING declared column is still an error.
+            table_schema = next(t for t in schema.tables if t.name == batch.table)
+            cols = [c.name for c in table_schema.columns]
             placeholders = ", ".join("?" for _ in cols)
             col_list = ", ".join(cols)
             for r in batch.rows:
