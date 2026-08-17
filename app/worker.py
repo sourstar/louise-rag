@@ -273,6 +273,23 @@ def _sync_collections(all_collections, cons, last_discover):
     current = collections_mod.load_all()
     known = {c.name for c in all_collections}
     now_names = {c.name for c in current}
+    previous_by_name = {c.name: c for c in all_collections}
+
+    # A config change that alters what the worker should DO with a
+    # collection (license acknowledged, acquisition toggled, profile grown)
+    # triggers an immediate discover+acquire pass — otherwise an ack
+    # recorded via the UI would sit inert until the next interval scan.
+    for kept in current:
+        prev = previous_by_name.get(kept.name)
+        if prev is None or kept.name not in cons:
+            continue
+        if (prev.acquire_enabled, prev.license_ack, prev.profile) != \
+                (kept.acquire_enabled, kept.license_ack, kept.profile):
+            db.log_event(cons[kept.name], "info", "worker",
+                         f"collection {kept.name!r} config changed "
+                         f"(acquire/license/profile) — re-discovering")
+            _discover(cons[kept.name], kept, "config-changed")
+            last_discover[kept.name] = time.time()
 
     for added in [c for c in current if c.name not in known]:
         try:

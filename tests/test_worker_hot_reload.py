@@ -63,6 +63,28 @@ def test_removed_collection_leaves_and_its_con_closes(isolated_config, config_di
         db_con.execute("SELECT 1")          # ...but closed cons raise
 
 
+def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir,
+                                                      quiet_discover, monkeypatch):
+    """An ack recorded (or acquisition toggled) on an EXISTING collection
+    must not sit inert until the interval scan — the round's hot-reload
+    notices and re-discovers immediately."""
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    _write_toml(config_dir, "pm")
+    start = collections_mod.load_all()
+    cons = {c.name: db.connect(c) for c in start}
+    last_discover = {c.name: 0.0 for c in start}
+
+    # unchanged config: no discover fires
+    result = worker._sync_collections(start, cons, last_discover)
+    assert quiet_discover == []
+
+    _write_toml(config_dir, "pm",
+                 extra='acquire_enabled = true\nlicense_ack = "2026-01-01T00:00:00Z/abc"\n')
+    result = worker._sync_collections(result, cons, last_discover)
+    assert ("pm", "config-changed") in quiet_discover
+    assert last_discover["pm"] > 0
+
+
 def test_invalid_new_collection_is_skipped_not_fatal(isolated_config, config_dir,
                                                       quiet_discover, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
