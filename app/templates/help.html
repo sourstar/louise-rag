@@ -157,10 +157,27 @@
   <p class="note">
     <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
     panel: pick a name, a plugin (e.g. <code>gutenberg</code>,
-    <code>pubmed</code>) and a profile. <i>Preview</i> shows the source's
-    license class (and terms text, if acknowledgement is required) plus the
-    exact TOML; <i>Create on this node</i> writes that TOML for you, with
-    per-collection data paths already isolated.
+    <code>pubmed</code>), a profile, and optionally a dedicated corpus
+    folder (a container path like <code>/corpus-pubmed</code>).
+    <i>Preview</i> shows the source's license class (and terms text, if
+    acknowledgement is required) plus the exact TOML; <i>Create on this
+    node</i> writes that TOML for you, with per-collection data paths
+    already isolated.
+  </p>
+  <p class="note">
+    <b>Corpus folder mapping (TrueNAS).</b> A dedicated corpus folder must
+    exist INSIDE the container, which means a volume mapping in the app's
+    YAML. Create the dataset on the host, then edit the louise-rag app and
+    add to <i>both</i> services (web and worker):
+  </p>
+  <pre class="cli">volumes:
+  - /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpus-&lt;name&gt;:ro   # add this line
+  ...</pre>
+  <p class="note">
+    Saving the edit restarts the app with the mount. If you create the
+    collection before the mapping exists, nothing breaks: the collection is
+    live, discovery just reports <i>corpus dir not found</i> until the
+    mount appears — the create dialog tells you the exact line to add.
   </p>
   <p class="note">
     <b>2. (By hand, alternatively)</b> save it yourself as

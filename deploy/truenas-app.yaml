@@ -65,6 +65,13 @@
 #
 # The external TrueNAS rsync task feeding /corpus stays exactly as it is —
 # the worker rescans at startup and every DISCOVER_INTERVAL_MIN minutes.
+#
+# ADDING A COLLECTION WITH ITS OWN CORPUS: create a dataset for it, then add
+# a volume to BOTH services below, e.g.
+#     - /mnt/<pool>/<dataset>:/corpus-<name>:ro
+# and give the collection that container path as its corpus folder (the
+# Library page's create dialog has the field and echoes this exact line).
+# Collections themselves hot-reload — only the mount needs this app edit.
 
 services:
   web:

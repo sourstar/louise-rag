@@ -59,7 +59,12 @@
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
+    <div><label>Corpus folder (container path)</label>
+      <input id="nc_corpus" placeholder="/corpus-<name> — empty = default"></div>
   </div>
+  <div class="note">A dedicated corpus folder must be mapped into the container:
+    on TrueNAS, add <code>- /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpus-&lt;name&gt;:ro</code>
+    to both services in the app's YAML. The create result shows the exact line.</div>
   <div class="actions">
     <button class="primary" onclick="previewNewCollection()">Preview</button>
     <button onclick="createCollection()">Create on this node</button>
@@ -142,12 +147,16 @@ async function createCollection(){
   const name=document.getElementById('nc_name').value.trim();
   const plugin=document.getElementById('nc_plugin').value;
   const profile=document.getElementById('nc_profile').value.trim()||'demo';
+  const corpus_dir=document.getElementById('nc_corpus').value.trim();
   if(!name){toast('name required');return}
   try{
-    const d=await postJSON('/admin/library/new/create',{name,plugin,profile});
+    const d=await postJSON('/admin/library/new/create',{name,plugin,profile,corpus_dir});
+    const mountWarn=d.corpus_mounted?''
+      :`<div class="note" style="color:var(--err)">corpus folder not mounted yet</div>`;
     showModal(`<h2>Collection created</h2>
-      <div class="note">Written to <b>${esc(d.toml_path)}</b></div>
-      <div class="note">${esc(d.note)}</div>
+      <div class="note">Written to <b>${esc(d.toml_path)}</b> — corpus: <b>${esc(d.corpus_dir)}</b></div>
+      ${mountWarn}
+      <pre class="cli" style="white-space:pre-wrap">${esc(d.note)}</pre>
       <div class="actions"><button class="primary" onclick="hideModal();location.reload()">OK</button></div>`);
   }catch(e){toast('create failed: '+e)}
 }

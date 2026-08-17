@@ -328,6 +328,7 @@ class CreateCollectionBody(BaseModel):
     plugin: str
     profile: str = "demo"
     acquire_enabled: bool = False
+    corpus_dir: str = ""     # container path; empty = CORPUS_DIR/<name>
 
 
 @admin_router.post("/library/new/create")
@@ -365,23 +366,47 @@ def new_collection_create(body: CreateCollectionBody):
                 manifest=existing.manifest_path, fts=existing.fts_dir,
                 lancedb=existing.lance_dir)
 
+    if body.corpus_dir:
+        raw = body.corpus_dir.strip()
+        # container-absolute, no traversal — this string lands in a config
+        # file and later in bind-relative filesystem walks
+        if not raw.startswith("/") or ".." in raw.split("/"):
+            raise HTTPException(400, "corpus_dir must be an absolute container "
+                                      "path without '..'")
+        corpus_dir = Path(raw)
+    else:
+        corpus_dir = config.CORPUS_DIR / body.name
+
     base = config.DATA_DIR / body.name
     _write_collection_toml(
         toml_path, plugin=body.plugin, profile=body.profile,
         acquire_enabled=body.acquire_enabled,
-        corpus_dir=config.CORPUS_DIR / body.name,
+        corpus_dir=corpus_dir,
         manifest=base / "manifest.db", fts=base / "fts",
         lancedb=base / "lancedb")
 
     con = db.connect()
     db.log_event(con, "info", "control",
                  f"collection {body.name!r} created via admin UI ({toml_path})")
+    note = ("Live now: the web process sees it immediately and the worker "
+            "picks it up within one round (no restart). If your config dir "
+            "is versioned, commit the new file. A yellow-class source still "
+            "needs its license ack before acquisition (corpus add --ack-terms).")
+    corpus_mounted = corpus_dir.is_dir()
+    if not corpus_mounted:
+        # The app cannot create host mounts for itself — that is deployment
+        # config the operator owns. Hand back the exact line instead of a
+        # vague error; discovery logs (not crashes) until the mount appears.
+        note = (f"CORPUS PATH NOT PRESENT IN THE CONTAINER: {corpus_dir} does "
+                 f"not exist yet. On TrueNAS, edit the louise-rag app and add "
+                 f"this volume to BOTH services (web and worker), then save "
+                 f"(the app restarts with the mount):\n"
+                 f"  - /mnt/<pool>/<dataset>:{corpus_dir.as_posix()}:ro\n"
+                 f"Until then the collection exists but discovery will report "
+                 f"'corpus dir not found'. ") + note
     return {"ok": True, "toml_path": str(toml_path),
-            "note": "Live now: the web process sees it immediately and the "
-                     "worker picks it up within one round (no restart). If "
-                     "your config dir is versioned, commit the new file. A "
-                     "yellow-class source still needs its license ack before "
-                     "acquisition (corpus add --ack-terms)."}
+            "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
+            "note": note}
 
 
 @admin_router.post("/library/{name}/remove")
