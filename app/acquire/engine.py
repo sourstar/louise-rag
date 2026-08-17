@@ -389,6 +389,21 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
             else:
                 _upsert_failed(con, spec.source_id, r.remote, r.endpoint_url,
                                 r.bytes_now, profile, r.error or "unknown error")
+                if r.error and "sidecar mismatch" in r.error:
+                    # A checksum failure can mean the DATA is bad — but also
+                    # that the local SIDECAR is stale or corrupt, in which
+                    # case a clean re-download "mismatches" forever (observed
+                    # live: identical wrong digest on every retry). Invalidate
+                    # BOTH sides so the next attempt re-fetches the pair.
+                    dest = collection.corpus_dir / r.remote.rel_path
+                    dest.unlink(missing_ok=True)
+                    if spec.checksums.kind == "sidecar" and spec.checksums.sidecar_suffix:
+                        sidecar_rel = r.remote.rel_path + spec.checksums.sidecar_suffix
+                        (collection.corpus_dir / sidecar_rel).unlink(missing_ok=True)
+                        con.execute(
+                            "UPDATE fetch_files SET fetch_done=0, error=NULL "
+                            "WHERE source_id=? AND rel_path=?",
+                            (spec.source_id, sidecar_rel))
             counters[r.status] += 1
 
     workers = min(manager.platform.transfer.workers, max(1, len(items)))

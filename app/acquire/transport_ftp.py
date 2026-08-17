@@ -63,7 +63,23 @@ class FtpTransport:
                     f.flush()
                     os.fsync(f.fileno())
                     budget.acquire_bytes(len(chunk))
-                ftp.retrbinary(f"RETR {remote.rel_path}", _write, rest=resume_from or None)
+                try:
+                    ftp.retrbinary(f"RETR {remote.rel_path}", _write,
+                                   rest=resume_from or None)
+                except ftplib.error_perm as e:
+                    # "554 invalid REST argument": the server rejects our
+                    # resume offset — typically a .part poisoned past the
+                    # remote size by an earlier bad append. Retrying with the
+                    # same offset fails forever (observed live, retries=7);
+                    # the only honest move is to discard the partial and pull
+                    # the file whole.
+                    if resume_from and str(e).startswith(("554", "501")):
+                        f.seek(0)
+                        f.truncate()
+                        resume_from = 0
+                        ftp.retrbinary(f"RETR {remote.rel_path}", _write)
+                    else:
+                        raise
             clean_exit = True
         except ftplib.all_errors as e:
             raise TransportError(f"{endpoint.url}/{remote.rel_path}: {e}") from e
