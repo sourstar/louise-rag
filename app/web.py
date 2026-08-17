@@ -186,6 +186,7 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         freshness = "never scanned"
 
     return {
+        "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
         "profile": collection.profile or "(hand-populated)",
         "space_id": ((space_row["space_id"][:10] + "…") if space_row and space_row["space_id"]
@@ -509,6 +510,28 @@ def collection_remove(name: str):
             "note": "The worker stops ingesting it within one round (no "
                      "restart). To restore, rename the retired file back to "
                      + toml_path.name + "."}
+
+
+class EmbedModeBody(BaseModel):
+    mode: str
+
+
+@admin_router.post("/library/{name}/embed-mode")
+def collection_embed_mode(name: str, body: EmbedModeBody):
+    """Per-collection GPU-spending control (off | lazy | all) — each
+    collection's manifest carries its own scope, so pausing gutenberg's
+    backfill never touches pubmed's, and vice versa. The worker re-reads
+    scope every round."""
+    if body.mode not in ("off", "lazy", "all"):
+        raise HTTPException(400, "mode must be off | lazy | all")
+    collection = _collection_or_404(name)
+    con = db.connect(collection)
+    scope = db.get_scope(con)
+    scope["embed_mode"] = body.mode
+    db.set_scope(con, scope)
+    db.log_event(con, "info", "control",
+                 f"embed mode -> {body.mode!r} for {name!r} via admin UI")
+    return {"ok": True, "embed_mode": body.mode}
 
 
 @admin_router.get("/library/{name}/terms")

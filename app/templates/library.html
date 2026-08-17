@@ -38,6 +38,14 @@
   <div class="note">
     delta freshness: {{ c.last_discover_text }} · lazy-embed queue: {{ c.queue }} pending
   </div>
+  <div class="row" style="align-items:center;margin-top:6px">
+    <div style="flex:0 1 auto"><label style="margin:0 0 2px">Embed mode (GPU spending)</label>
+      <select onchange="setEmbedMode('{{ c.name }}', this.value)">
+        {% for m in ['off','lazy','all'] %}
+        <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>
+        {% endfor %}
+      </select></div>
+  </div>
   <div class="actions">
     <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
     <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
@@ -119,6 +127,11 @@ async function rescanAll(){
 async function libDiscover(name,quiet){
   try{await postJSON('/admin/library/'+name+'/discover',{})}catch(e){toast('rescan failed: '+e);return}
   if(!quiet){toast('rescanned '+name);location.reload()}
+}
+async function setEmbedMode(name,mode){
+  try{await postJSON('/admin/library/'+name+'/embed-mode',{mode});
+    toast(name+': embed mode → '+mode+' (worker applies within a round)')}
+  catch(e){toast('embed mode failed: '+e);location.reload()}
 }
 async function libReset(name,stage){
   try{await postJSON('/admin/library/'+name+'/reset',{stage});toast('reset '+stage+' on '+name);location.reload()}

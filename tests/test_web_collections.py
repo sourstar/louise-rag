@@ -240,6 +240,27 @@ def test_ack_endpoint_records_license_for_existing_collection(client):
     assert stamp.endswith("Z") and len(digest) == 64
 
 
+def test_embed_mode_is_a_per_collection_control(client):
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
+    assert r.status_code == 200
+
+    # written to the COLLECTION's own manifest scope
+    collection = collections_mod.default_collection()
+    assert db.get_scope(db.connect(collection))["embed_mode"] == "all"
+
+    # another collection keeps its own default — no cross-talk
+    client.post("/admin/library/new/create", json={"name": "other", "plugin": "pubmed"})
+    other = collections_mod.by_name("other")
+    assert db.get_scope(db.connect(other))["embed_mode"] == "lazy"
+
+    assert client.post("/admin/library/gutenberg/embed-mode",
+                       json={"mode": "sideways"}).status_code == 400
+
+    # the card renders the selector with the live value
+    page = client.get("/admin/library")
+    assert "Embed mode" in page.text and "setEmbedMode" in page.text
+
+
 def test_collection_management_requires_admin(client):
     del client.headers["X-Admin-Token"]
     for path in ("/admin/library/new/create", "/admin/library/gutenberg/remove",

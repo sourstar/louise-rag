@@ -1,11 +1,30 @@
 # louise-rag — a P2P RAG platform
 
 A self-hosted, plugin-based RAG platform that grew out of a single-corpus
-Gutenberg app. One node ingests corpora (Project Gutenberg, PubMed, your own
-plugin), indexes them lexically and densely, and answers questions with `[n]`
-citations — and nodes can **share the expensive part**: embedding vectors
-travel between peers as signed, verifiable bundles, so a network of N
-consumers pays for GPU work roughly once instead of N times.
+Gutenberg app. One node ingests corpora (Project Gutenberg, PubMed,
+Wikipedia, your own plugin), indexes them lexically and densely, and answers
+questions with `[n]` citations — and nodes can **share the expensive part**:
+embedding vectors travel between peers as signed, verifiable bundles, so a
+network of N consumers pays for GPU work roughly once instead of N times.
+
+Three properties do the heavy lifting:
+
+- **Per-collection embedding spaces.** Each collection declares its own
+  encoder (`[embed]` block: endpoint, model, dtype, even a separate query
+  encoder for bi-encoder pairs like MedCPT) and is pinned to it — a node can
+  hold a Qwen3-space book corpus and a MedCPT-space PubMed side by side, and
+  mixing spaces is a refuse-to-boot error, never a silent corruption.
+- **Reuse of published embeddings (genesis import).** If someone already
+  paid the GPU-hours — NCBI's MedCPT vectors for all of PubMed, or any
+  parquet of `(id, vector)` rows — the platform admits it instead of
+  re-embedding: possession-scoped, converted on import, and *proven to be
+  the same function* as the collection's own encoder by sample re-encoding
+  before a single row lands. The flip side is publishing: any collection
+  exports as a signed bundle other nodes (and other projects) can verify.
+- **A behavioral backend gate.** Endpoints drift — a moving Docker tag once
+  silently corrupted 714 books on the reference deployment. Every collection
+  records probe vectors on first use, and the worker refuses to write
+  vectors whenever the live endpoint stops reproducing them.
 
 The design is documented in [`docs/architecture-v2.md`](docs/architecture-v2.md);
 the build order and per-task contracts in
@@ -71,7 +90,7 @@ docker build -t louise-rag:dev .
 docker run --rm -v "$PWD:/srv" -w /srv louise-rag:dev python -m pytest tests/ -q
 ```
 
-572 tests, no live model needed anywhere in the suite.
+660+ tests, no live model needed anywhere in the suite.
 
 The end-to-end two-node flow (producer → coordinator → consumer → verified
 answer, mocked embed endpoint as the only fake):
@@ -137,6 +156,10 @@ python -m app.cli bundle import gutenberg /path/bundle  # verify & apply
 python -m app.cli bundle status gutenberg               # producers, ledger
 python -m app.cli bundle trust  gutenberg <pubkey> [--quarantine]
 python -m app.cli contribute gutenberg http://coordinator:8750
+
+# reuse published embeddings (same-function-verified; see /help in the UI):
+python -m app.cli genesis import pubmed --archive medcpt-pubmed
+python -m app.cli genesis import mycoll --parquet data.parquet --uid-prefix "pubmed:"
 ```
 
 Bundles carry **no text, ever** — importing requires holding the same raw
