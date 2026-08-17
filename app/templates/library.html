@@ -41,9 +41,15 @@
     <button onclick="libReset('{{ c.name }}','fts')">reprocess lexical index</button>
     <button onclick="libDiscover('{{ c.name }}')">rescan</button>
   </div>
+  <div class="actions">
+    <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
+    <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
+    <button onclick="removeCollection('{{ c.name }}')">remove…</button>
+  </div>
 </div>
 {% endfor %}
 </div>
+<input type="file" id="bundle-file" accept=".tar.gz,.tgz,application/gzip" style="display:none">
 
 <div class="panel">
   <h2>Add a collection</h2>
@@ -54,7 +60,10 @@
     </div>
     <div><label>Profile</label><input id="nc_profile" value="demo"></div>
   </div>
-  <div class="actions"><button class="primary" onclick="previewNewCollection()">Preview</button></div>
+  <div class="actions">
+    <button class="primary" onclick="previewNewCollection()">Preview</button>
+    <button onclick="createCollection()">Create on this node</button>
+  </div>
   <div id="nc_preview"></div>
 </div>
 {% endblock %}
@@ -103,6 +112,63 @@ async function previewGrow(name){
 async function runGrow(name,profile){
   try{await postJSON('/admin/library/'+name+'/grow/run',{profile});toast('grow started for '+name);hideModal();location.reload()}
   catch(e){toast('grow failed: '+e)}
+}
+async function createCollection(){
+  const name=document.getElementById('nc_name').value.trim();
+  const plugin=document.getElementById('nc_plugin').value;
+  const profile=document.getElementById('nc_profile').value.trim()||'demo';
+  if(!name){toast('name required');return}
+  try{
+    const d=await postJSON('/admin/library/new/create',{name,plugin,profile});
+    showModal(`<h2>Collection created</h2>
+      <div class="note">Written to <b>${esc(d.toml_path)}</b></div>
+      <div class="note">${esc(d.note)}</div>
+      <div class="actions"><button class="primary" onclick="hideModal();location.reload()">OK</button></div>`);
+  }catch(e){toast('create failed: '+e)}
+}
+async function removeCollection(name){
+  showModal(`<h2>Remove ${esc(name)}?</h2>
+    <div class="note">The collection's TOML is retired (renamed aside, restorable);
+      its manifest, lexical index and vectors stay on disk untouched.
+      Type the collection name to confirm.</div>
+    <input id="rm_confirm" placeholder="${esc(name)}">
+    <div class="actions">
+      <button class="primary" onclick="doRemove('${esc(name)}')">Remove</button>
+      <button onclick="hideModal()">Cancel</button>
+    </div>`);
+}
+async function doRemove(name){
+  if(document.getElementById('rm_confirm').value.trim()!==name){toast('name does not match');return}
+  try{
+    const d=await postJSON('/admin/library/'+name+'/remove',{});
+    toast('removed; TOML retired to '+d.retired_toml);hideModal();location.reload();
+  }catch(e){toast('remove failed: '+e)}
+}
+async function exportBundle(name){
+  toast('building bundle for '+name+'…');
+  const r=await fetch('/admin/library/'+name+'/bundle/export',
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:100})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));toast('export failed: '+(d.detail||r.statusText));return}
+  const blob=await r.blob();
+  const cd=r.headers.get('Content-Disposition')||'';
+  const m=cd.match(/filename="?([^\";]+)/);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=(m&&m[1])||('bundle-'+name+'.tar.gz');
+  a.click();URL.revokeObjectURL(a.href);
+}
+function importBundle(name){
+  const input=document.getElementById('bundle-file');
+  input.onchange=async()=>{
+    const f=input.files[0];input.value='';
+    if(!f)return;
+    toast('uploading '+f.name+'…');
+    const r=await fetch('/admin/library/'+name+'/bundle/import?filename='+encodeURIComponent(f.name),
+      {method:'POST',headers:{'Content-Type':'application/gzip'},body:f});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast('import failed: '+(d.detail||r.statusText));return}
+    toast('queued as '+d.entry+' — the worker verifies and imports it next round');
+  };
+  input.click();
 }
 async function previewNewCollection(){
   const name=document.getElementById('nc_name').value.trim();

@@ -22,16 +22,21 @@ one-click calls with no CLI-equivalent string in their modal, rather than
 fabricating one.
 """
 import json
+import re
 import secrets
+import shutil
+import tarfile
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from . import (auth, collections as collections_mod, config, db, discovery,
                 platform_config, query_service, spaces)
@@ -247,6 +252,192 @@ def new_collection_preview(body: NewCollectionBody):
                          "then run the CLI command below to see real size/ETA estimates.",
         "cli": f"python -m app.cli corpus add {body.name} --profile {body.profile} --dry-run",
     }
+
+
+# ---------------- collection management (create / remove / bundle I/O) ----
+
+_COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+class CreateCollectionBody(BaseModel):
+    name: str
+    plugin: str
+    profile: str = "demo"
+    acquire_enabled: bool = False
+
+
+@admin_router.post("/library/new/create")
+def new_collection_create(body: CreateCollectionBody):
+    """Writes the collection's Tier-2 TOML — the same file an operator would
+    save by hand from the preview. Paths are auto-isolated per collection
+    (DATA_DIR/<name>/...) because the TOML defaults deliberately point at the
+    FIRST collection's paths, and two collections must never share a
+    manifest or vector table (one embedding space per table, invariant 1)."""
+    if not _COLLECTION_NAME.match(body.name):
+        raise HTTPException(400, "collection name must be [a-z0-9][a-z0-9_-]{0,63}")
+    if body.plugin not in collections_mod.PLUGIN_REGISTRY:
+        raise HTTPException(400, f"unknown plugin: {body.plugin!r}")
+    if collections_mod.by_name(body.name) is not None:
+        raise HTTPException(409, f"collection {body.name!r} already exists")
+    toml_path = collections_mod.config_toml_path(body.name)
+    if toml_path.exists():
+        raise HTTPException(409, f"{toml_path} already exists")
+
+    base = config.DATA_DIR / body.name
+    lines = [
+        f'plugin = "{body.plugin}"',
+        f'profile = "{body.profile}"',
+        f"acquire_enabled = {'true' if body.acquire_enabled else 'false'}",
+        f'corpus_dir = "{(config.CORPUS_DIR / body.name).as_posix()}"',
+        "",
+        "[paths]",
+        f'manifest = "{(base / "manifest.db").as_posix()}"',
+        f'fts = "{(base / "fts").as_posix()}"',
+        f'lancedb = "{(base / "lancedb").as_posix()}"',
+        "",
+    ]
+    toml_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = toml_path.with_suffix(".toml.tmp")
+    tmp.write_text("\n".join(lines), encoding="utf-8")
+    tmp.replace(toml_path)
+
+    con = db.connect()
+    db.log_event(con, "info", "control",
+                 f"collection {body.name!r} created via admin UI ({toml_path})")
+    return {"ok": True, "toml_path": str(toml_path),
+            "note": "The web process sees it immediately; RESTART THE WORKER "
+                     "to start ingestion (collections load at worker startup). "
+                     "If your config dir is versioned, commit the new file. "
+                     "A yellow-class source still needs its license ack before "
+                     "acquisition (corpus add --ack-terms)."}
+
+
+@admin_router.post("/library/{name}/remove")
+def collection_remove(name: str):
+    """Removing = retiring the TOML (renamed aside with a timestamp, never
+    deleted). Data on disk is NEVER touched — the manifest, FTS index and
+    vector table stay where they are and are reported back, so removal is
+    reversible by renaming the file back."""
+    collection = _collection_or_404(name)
+    toml_path = collections_mod.config_toml_path(name)
+    if not toml_path.exists():
+        raise HTTPException(
+            400, f"{name!r} is the synthesized default collection (no TOML file) — "
+                 f"it exists as long as no collections/ directory defines others, "
+                 f"and cannot be removed from the UI")
+    retired = toml_path.with_name(f"{name}.toml.removed-{int(time.time())}")
+    toml_path.rename(retired)
+    con = db.connect()
+    db.log_event(con, "info", "control",
+                 f"collection {name!r} removed via admin UI (TOML retired to "
+                 f"{retired.name}; data kept on disk)")
+    return {"ok": True, "retired_toml": str(retired),
+            "data_kept": {"manifest": str(collection.manifest_path),
+                           "fts": str(collection.fts_dir),
+                           "lancedb": str(collection.lance_dir)},
+            "note": "Restart the worker to stop ingesting it. To restore, "
+                     "rename the retired file back to " + toml_path.name + "."}
+
+
+class BundleExportBody(BaseModel):
+    uids: list[str] = []
+    limit: int = 100
+
+
+@admin_router.post("/library/{name}/bundle/export")
+def collection_bundle_export(name: str, body: BundleExportBody):
+    """Same code path as `python -m app.cli bundle export`, delivered as a
+    tar.gz download. The bundle is built in a scratch dir beside the
+    collection's data (same filesystem, no /tmp assumptions) and cleaned up
+    after the response streams out."""
+    from .bundles import export as bundle_export
+    collection = _collection_or_404(name)
+    con = db.connect(collection)
+    uids = body.uids or [r["uid"] for r in con.execute(
+        "SELECT uid FROM documents WHERE in_scope=1 AND embed_done=1 "
+        "ORDER BY CAST(native_id AS INTEGER) LIMIT ?", (max(1, body.limit),))]
+    if not uids:
+        raise HTTPException(400, "no embedded documents to export")
+
+    scratch = Path(tempfile.mkdtemp(
+        prefix="bundle-export-", dir=collection.manifest_path.parent))
+    try:
+        result = bundle_export.export_bundle(con, collection, uids,
+                                              scratch / "bundle")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        tar_path = scratch / f"bundle-{name}-{stamp}.tar.gz"
+        with tarfile.open(tar_path, "w:gz") as tar:
+            tar.add(scratch / "bundle", arcname=f"bundle-{name}-{stamp}")
+    except Exception as e:
+        shutil.rmtree(scratch, ignore_errors=True)
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(400, f"{type(e).__name__}: {e}")
+    db.log_event(con, "info", "bundle",
+                 f"exported {result['chunks']} chunks / {result['uids']} docs "
+                 f"via admin UI ({result['bundle_id'][:16]}…)")
+    return FileResponse(
+        tar_path, media_type="application/gzip", filename=tar_path.name,
+        background=BackgroundTask(shutil.rmtree, scratch, ignore_errors=True))
+
+
+@admin_router.post("/library/{name}/bundle/import")
+async def collection_bundle_import(name: str, request: Request,
+                                    filename: str = "upload.tar.gz"):
+    """Accepts a bundle tar.gz as the raw request body (no multipart — no new
+    dependency) and drops it into the collection's inbox, where the worker's
+    existing drain imports it with the full verification ladder next round.
+    The UI upload is just a delivery mechanism: admission stays the
+    importer's job, identical to a bundle arriving by hand or coordinator."""
+    from .bundles import importer as bundle_importer
+    collection = _collection_or_404(name)
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).stem) or "upload"
+    inbox = bundle_importer.inbox_dir(collection)
+    entry = inbox / f"{safe_stem}-{int(time.time())}"
+
+    limit = 4 << 30
+    received = 0
+    with tempfile.NamedTemporaryFile(dir=str(inbox.parent) if inbox.parent.is_dir()
+                                      else None, delete=False, suffix=".tar.gz") as spool:
+        spool_path = Path(spool.name)
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > limit:
+                spool.close()
+                spool_path.unlink(missing_ok=True)
+                raise HTTPException(413, "bundle upload exceeds 4 GiB")
+            spool.write(chunk)
+    if received == 0:
+        spool_path.unlink(missing_ok=True)
+        raise HTTPException(400, "empty upload")
+
+    try:
+        with tarfile.open(spool_path, "r:gz") as tar:
+            entry.mkdir(parents=True, exist_ok=True)
+            # filter="data" (3.12) refuses path traversal, links, devices
+            tar.extractall(entry, filter="data")
+    except tarfile.TarError as e:
+        shutil.rmtree(entry, ignore_errors=True)
+        raise HTTPException(400, f"not a valid bundle tar.gz: {e}")
+    finally:
+        spool_path.unlink(missing_ok=True)
+
+    # a tar of the bundle DIRECTORY has one wrapping folder — unwrap it so
+    # the entry itself holds header.json etc., as the importer expects
+    children = list(entry.iterdir())
+    if len(children) == 1 and children[0].is_dir():
+        inner = children[0]
+        for item in inner.iterdir():
+            item.rename(entry / item.name)
+        inner.rmdir()
+
+    con = db.connect(collection)
+    db.log_event(con, "info", "bundle",
+                 f"bundle uploaded via admin UI -> inbox/{entry.name} "
+                 f"({received} bytes); worker imports it next round")
+    return {"queued": True, "entry": entry.name,
+            "note": "The worker verifies and imports it within one round; "
+                     "watch the System log for the verdict."}
 
 
 # ---------------- Network ----------------

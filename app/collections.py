@@ -88,6 +88,13 @@ def _load_one(path: Path) -> Collection:
     )
 
 
+def config_toml_path(name: str) -> Path:
+    """Where a collection's Tier-2 definition file lives (whether or not it
+    exists yet). The file existing IS the collection existing — creation and
+    removal act on this path, never on a database row."""
+    return _config_dir() / "collections" / f"{name}.toml"
+
+
 def load_all() -> list[Collection]:
     cfg_dir = _config_dir() / "collections"
     tomls = sorted(cfg_dir.glob("*.toml")) if cfg_dir.is_dir() else []

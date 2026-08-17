@@ -157,13 +157,15 @@
   <p class="note">
     <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
     panel: pick a name, a plugin (e.g. <code>gutenberg</code>,
-    <code>pubmed</code>) and a profile, then <i>Preview</i>. It shows the
-    source's license class (and terms text, if acknowledgement is required)
-    plus the exact TOML to save.
+    <code>pubmed</code>) and a profile. <i>Preview</i> shows the source's
+    license class (and terms text, if acknowledgement is required) plus the
+    exact TOML; <i>Create on this node</i> writes that TOML for you, with
+    per-collection data paths already isolated.
   </p>
   <p class="note">
-    <b>2. Save it</b> as <code>collections/&lt;name&gt;.toml</code> under the
-    node's CONFIG_DIR (on this deployment:
+    <b>2. (By hand, alternatively)</b> save it yourself as
+    <code>collections/&lt;name&gt;.toml</code> under the node's CONFIG_DIR
+    (on this deployment:
     <code>/mnt/ssd4/apps/louise-rag/config/collections/</code>), and commit
     it if the config is versioned. A minimal file:
   </p>
@@ -193,6 +195,17 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     prints the <code>license_ack</code> line for the TOML). Then grow it
     later with <code>corpus grow &lt;name&gt; --profile full</code> or the
     Library page's <i>grow profile…</i> button.
+  </p>
+  <p class="note">
+    <b>Managing it.</b> Each collection card also offers:
+    <i>export bundle</i> — download this collection's vectors as a signed
+    bundle (tar.gz) another node can import; <i>import bundle…</i> — upload
+    a bundle into the collection's inbox, where the worker verifies and
+    imports it next round (the full admission ladder applies — an upload is
+    delivery, never trust); <i>remove…</i> — retire the collection's TOML
+    (renamed aside, restorable) while its manifest, index and vectors stay
+    on disk untouched. Removing the synthesized default collection isn't
+    possible from the UI; worker restarts apply create/remove to ingestion.
   </p>
 </div>
 
