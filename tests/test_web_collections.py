@@ -240,6 +240,41 @@ def test_ack_endpoint_records_license_for_existing_collection(client):
     assert stamp.endswith("Z") and len(digest) == 64
 
 
+def test_grow_run_declares_the_profile_and_preserves_the_whole_toml(client):
+    """Growing must NOT download inside the web request (a multi-GB fetch
+    hung the modal live) — it declares the profile in the TOML and the
+    worker's hot-reload acquires. The rewrite must carry every field:
+    dropping [embed] would flip the collection back to the env recipe."""
+    client.post("/admin/library/new/create",
+                json={"name": "pm", "plugin": "pubmed",
+                       "acquire_enabled": True, "acknowledge_terms": True})
+    created = collections_mod.by_name("pm")
+    toml_path = collections_mod.config_toml_path("pm")
+    toml_path.write_text(
+        f'plugin = "pubmed"\nprofile = "demo"\nacquire_enabled = true\n'
+        f'license_ack = "{created.license_ack}"\n'
+        f'genesis_archive = "medcpt-pubmed"\n'
+        f'corpus_dir = "{created.corpus_dir.as_posix()}"\n\n'
+        f'[embed]\nurl = "http://enc:1"\nmodel = "medcpt"\ndim = 768\n'
+        f'query_url = "http://enc:2"\n\n'
+        f'[paths]\nmanifest = "{created.manifest_path.as_posix()}"\n'
+        f'fts = "{created.fts_dir.as_posix()}"\n'
+        f'lancedb = "{created.lance_dir.as_posix()}"\n', encoding="utf-8")
+
+    r = client.post("/admin/library/pm/grow/run", json={"profile": "recent"})
+    assert r.status_code == 200
+    assert "worker" in r.json()["note"]
+
+    refreshed = collections_mod.by_name("pm")
+    assert refreshed.profile == "recent"
+    assert refreshed.acquire_enabled and refreshed.license_ack
+    assert refreshed.genesis_archive == "medcpt-pubmed"
+    assert refreshed.embed is not None and refreshed.embed.query_url == "http://enc:2"
+
+    assert client.post("/admin/library/pm/grow/run",
+                       json={"profile": "gigantic"}).status_code == 400
+
+
 def test_embed_mode_is_a_per_collection_control(client):
     r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
     assert r.status_code == 200

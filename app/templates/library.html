@@ -183,7 +183,8 @@ async function previewGrow(name){
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 async function runGrow(name,profile){
-  try{await postJSON('/admin/library/'+name+'/grow/run',{profile});toast('grow started for '+name);hideModal();location.reload()}
+  try{const d=await postJSON('/admin/library/'+name+'/grow/run',{profile});
+    toast(d.note||('profile set to '+profile));hideModal();location.reload()}
   catch(e){toast('grow failed: '+e)}
 }
 async function ackLicense(name){

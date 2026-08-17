@@ -270,17 +270,35 @@ def grow_plan(name: str, body: GrowBody):
 
 @admin_router.post("/library/{name}/grow/run")
 def grow_run(name: str, body: GrowBody):
+    """Growing = declaring the new profile (Tier-2 TOML). The WORKER then
+    acquires: its hot-reload treats a profile change as re-discover+acquire
+    within one round, with the download budgeted, resumable, and in the
+    byte-moving process. Running the acquisition inside this web request —
+    the previous implementation — blocked the response for the duration of
+    a multi-GB download (observed live: the grow modal never closed) and
+    moved corpus bytes in the wrong process."""
     collection = _collection_or_404(name)
     spec = _spec_or_400(collection)
+    if body.profile not in spec.profiles:
+        raise HTTPException(400, f"unknown profile {body.profile!r} — "
+                                  f"known: {', '.join(spec.profiles)}")
+    toml_path = collections_mod.config_toml_path(name)
+    if not toml_path.exists():
+        raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
+                                  f"default) — declare it before growing")
+    _write_collection_toml(
+        toml_path, plugin=collection.plugin, profile=body.profile,
+        acquire_enabled=True, corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=collection.license_ack,
+        genesis_archive=collection.genesis_archive, embed=collection.embed)
     con = db.connect(collection)
-    try:
-        result = acquire_engine.run_acquisition(con, collection, spec, body.profile)
-    except LicenseAckRequiredError as e:
-        raise HTTPException(409, str(e))
-    except DiskPreflightError as e:
-        raise HTTPException(507, str(e))
-    db.log_event(con, "info", "control", f"grow to profile {body.profile!r} via admin UI")
-    return result
+    db.log_event(con, "info", "control",
+                 f"profile -> {body.profile!r} via admin UI; the worker "
+                 f"acquires within a round")
+    return {"ok": True, "profile": body.profile,
+            "note": "Profile declared; the worker starts fetching within one "
+                     "round (watch the System log / the fetched bar)."}
 
 
 class LibraryResetBody(BaseModel):
@@ -346,7 +364,8 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             acquire_enabled: bool, corpus_dir: Path,
                             manifest: Path, fts: Path, lancedb: Path,
                             license_ack: str | None = None,
-                            genesis_archive: str | None = None) -> None:
+                            genesis_archive: str | None = None,
+                            embed=None) -> None:
     lines = [f'plugin = "{plugin}"']
     if profile:
         lines.append(f'profile = "{profile}"')
@@ -356,8 +375,19 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
         lines.append(f'license_ack = "{license_ack}"')
     if genesis_archive:
         lines.append(f'genesis_archive = "{genesis_archive}"')
+    lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
+    if embed is not None:
+        # any rewrite must carry the [embed] block forward — dropping it
+        # would silently flip the collection back to the env recipe, which
+        # the space pin would then refuse at the next boot
+        lines += ["", "[embed]", f'url = "{embed.url}"',
+                  f'api = "{embed.api}"', f'model = "{embed.model}"',
+                  f'dtype = "{embed.dtype}"', f"ctx = {embed.ctx}"]
+        if embed.dim is not None:
+            lines.append(f"dim = {embed.dim}")
+        if embed.query_url:
+            lines.append(f'query_url = "{embed.query_url}"')
     lines += [
-        f'corpus_dir = "{corpus_dir.as_posix()}"',
         "",
         "[paths]",
         f'manifest = "{manifest.as_posix()}"',
@@ -451,7 +481,8 @@ def new_collection_create(body: CreateCollectionBody):
                 acquire_enabled=existing.acquire_enabled,
                 corpus_dir=existing.corpus_dir,
                 manifest=existing.manifest_path, fts=existing.fts_dir,
-                lancedb=existing.lance_dir)
+                lancedb=existing.lance_dir, license_ack=existing.license_ack,
+                genesis_archive=existing.genesis_archive, embed=existing.embed)
 
     if body.corpus_dir:
         mounts = _corpus_mounts()
@@ -596,7 +627,8 @@ def collection_ack(name: str):
         toml_path, plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=True, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=ack)
+        lancedb=collection.lance_dir, license_ack=ack,
+        genesis_archive=collection.genesis_archive, embed=collection.embed)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "
