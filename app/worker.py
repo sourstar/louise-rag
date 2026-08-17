@@ -137,22 +137,77 @@ def _next_book(con, scope, embed_allowed=True):
 
 STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
 
+# Acquisition runs in a BACKGROUND THREAD per collection (§5.2's "download ∥
+# checksum ∥ parse" axis). Observed live: a `grow full` on PubMed put a
+# multi-hour 45 GB fetch inside the round loop and froze every collection's
+# pipeline for the duration — the single-threaded worker must keep rounding
+# while bytes move. One thread per collection at most; run_acquisition gets
+# its OWN manifest connection (its threading contract: the calling thread
+# owns the con exclusively; SQLite WAL + busy_timeout handle cross-connection
+# writes). Completion raises a flag the main loop turns into a discovery
+# scan, so newly fetched files enter the pipeline without waiting for the
+# next interval.
+_acquire_threads: dict[str, threading.Thread] = {}
+_acquire_done: set = set()
+_acquire_lock = threading.Lock()
+
+
+def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
+    con = db.connect(collection)
+    try:
+        result = acquire_engine.run_acquisition(con, collection, spec, profile,
+                                                 stop=_stop)
+        db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
+    except (LicenseAckRequiredError, DiskPreflightError) as e:
+        db.log_event(con, "error", "acquire", str(e))
+    except Exception as e:   # noqa: BLE001 — a fetch must never kill its thread silently
+        db.log_event(con, "error", "acquire",
+                     f"corpus fetch ({reason}) failed: {type(e).__name__}: {e}"[:400])
+    finally:
+        con.close()
+        with _acquire_lock:
+            _acquire_done.add(collection.name)
+
+
 def _acquire(con, collection, reason: str) -> None:
-    """Runs the acquisition engine (app/acquire/) before each discover pass,
-    when a collection has opted in. Off by default (Collection.acquire_enabled
-    defaults False) so an existing hand-populated deployment sees zero
-    behavior change and no surprise outbound network access on restart."""
+    """Starts (or skips, if one is already running) the background fetch for
+    a collection that has opted in. Off by default (acquire_enabled False) so
+    a hand-populated deployment sees no surprise outbound traffic."""
     if not collection.acquire_enabled:
         return
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
         return
-    profile = collection.profile or "demo"
-    try:
-        result = acquire_engine.run_acquisition(con, collection, spec, profile, stop=_stop)
-        db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
-    except (LicenseAckRequiredError, DiskPreflightError) as e:
-        db.log_event(con, "error", "acquire", str(e))
+    with _acquire_lock:
+        existing = _acquire_threads.get(collection.name)
+        if existing is not None and existing.is_alive():
+            return
+        thread = threading.Thread(
+            target=_acquire_worker,
+            args=(collection, spec, collection.profile or "demo", reason),
+            name=f"acquire-{collection.name}", daemon=True)
+        _acquire_threads[collection.name] = thread
+    db.log_event(con, "info", "acquire",
+                 f"corpus fetch ({reason}) started in the background")
+    thread.start()
+
+
+def _finish_completed_acquires(cons, all_collections, last_discover) -> None:
+    """Turn finished background fetches into discovery scans on the main
+    thread (which owns the per-collection cons)."""
+    with _acquire_lock:
+        done = {name for name in _acquire_done}
+        _acquire_done.clear()
+    for collection in all_collections:
+        if collection.name in done and collection.name in cons:
+            db.log_event(cons[collection.name], "info", "discover",
+                         "background fetch finished — scanning")
+            stats = discovery.sync_collection(cons[collection.name], collection)
+            if stats.get("added") or stats.get("changed"):
+                db.log_event(cons[collection.name], "info", "discover",
+                             f"picked up {stats.get('added', 0)} new, "
+                             f"{stats.get('changed', 0)} changed books")
+            last_discover[collection.name] = time.time()
 
 def _drain_bundle_inbox(con, collection) -> int:
     """Import any bundles waiting in this collection's inbox.
@@ -362,6 +417,7 @@ def run_forever():
     while not _stop.is_set():
         try:
             all_collections = _sync_collections(all_collections, cons, last_discover)
+            _finish_completed_acquires(cons, all_collections, last_discover)
             if not all_collections:
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue

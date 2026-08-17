@@ -42,11 +42,51 @@ def test_acquire_runs_when_enabled_and_spec_registered(tmp_path, monkeypatch):
     collection = _collection(tmp_path, acquire_enabled=True)
     con = db.connect(collection)
     worker._acquire(con, collection, "test")
+    worker._acquire_threads[collection.name].join(timeout=10)   # async now
     profile, stop = called[0]
     assert profile == "demo"    # defaults to "demo" when Collection.profile is unset
     # P0.7: the worker's stop event must reach acquisition, or a SIGTERM
     # during a long fetch is invisible until the whole run finishes.
     assert stop is worker._stop
+    # completion raised the flag the main loop turns into a discovery scan
+    with worker._acquire_lock:
+        assert collection.name in worker._acquire_done
+        worker._acquire_done.discard(collection.name)
+
+
+def test_slow_acquisition_does_not_block_the_worker(tmp_path, monkeypatch):
+    """The live incident: a 45 GB `grow full` fetch inside the round loop
+    froze every collection for hours. The fetch must run beside the rounds."""
+    import threading as threading_mod
+    import time as time_mod
+    release = threading_mod.Event()
+
+    def slow_run(con, collection, spec, profile, stop=None):
+        release.wait(timeout=30)
+        return {"fetched": 1, "skipped": 0, "failed": 0, "aborted": 0, "total": 1}
+    monkeypatch.setattr(worker.acquire_engine, "run_acquisition", slow_run)
+
+    spec = AcquisitionSpec(source_id="gutenberg", transport=Transport.HTTPS, endpoints=(),
+                            layout="single-file", profiles={"demo": Filter()},
+                            estimated_bytes={"demo": 1})
+    monkeypatch.setitem(worker.ACQUIRE_REGISTRY, "gutenberg", spec)
+    collection = _collection(tmp_path, acquire_enabled=True)
+    con = db.connect(collection)
+
+    t0 = time_mod.time()
+    worker._acquire(con, collection, "test")
+    assert time_mod.time() - t0 < 5, "_acquire must return while the fetch runs"
+
+    # a second call while one is in flight is a no-op, not a second download
+    worker._acquire(con, collection, "again")
+    alive = [t for t in [worker._acquire_threads[collection.name]] if t.is_alive()]
+    assert len(alive) == 1
+
+    release.set()
+    worker._acquire_threads[collection.name].join(timeout=10)
+    with worker._acquire_lock:
+        assert collection.name in worker._acquire_done
+        worker._acquire_done.discard(collection.name)
 
 
 def test_acquire_noop_when_no_spec_registered(tmp_path, monkeypatch):
