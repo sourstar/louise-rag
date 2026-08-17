@@ -211,20 +211,20 @@ def test_chunk_abstract_missing_abstract_still_yields_title_chunk():
 # ---------------- generic orchestrator (app/discovery.py, reused from P0.1) ----------------
 
 def test_ingest_via_generic_orchestrator(tmp_path):
-    """The orchestrator de-duplicates by uid within one discover() pass,
-    keeping the LAST ref seen (see app/discovery.py) — so a fresh ingest
-    converges straight to current truth: 30000001 is inserted once holding
-    the updatefile's (revised) content, not inserted-then-updated; 30000002/
-    30000003 never gain a live article row at all because their
-    DeleteCitation ref (later in file order) wins before any write happens.
+    """The orchestrator STREAMS refs in arrival order with last-write-wins
+    (see app/discovery.py — the buffered de-dup had to go at full-PubMed
+    scale): 30000001 is inserted from the baseline and then REVISED when the
+    updatefile's ref arrives; 30000002/30000003 are inserted and then
+    tombstoned by their later DeleteCitation refs. The stats count events in
+    order; the FINAL STATE is identical to the old buffered semantics.
     """
     collection = _collection(tmp_path)
     con = db.connect(collection)
 
     stats = discovery.sync_collection(con, collection)
     assert stats["seen"] == 19          # 17 article refs + 2 delete refs, raw scan count
-    assert stats["added"] == 14         # 16 PMIDs minus the 2 that are delete-only
-    assert stats["changed"] == 0        # nothing pre-existed to change on a fresh ingest
+    assert stats["added"] == 16         # every distinct PMID's first article ref
+    assert stats["changed"] == 1        # 30000001's updatefile revision applied in-stream
     assert stats["missing_txt"] == 2    # the 2 DeleteCitation refs processed
 
     rows = {r["uid"]: r for r in con.execute("SELECT uid, error, txt_hash FROM documents")}
@@ -235,11 +235,13 @@ def test_ingest_via_generic_orchestrator(tmp_path):
     assert tombstoned == {"pubmed:30000002", "pubmed:30000003"}
     assert live == {f"pubmed:{n}" for n in range(30000001, 30000017)} - tombstoned
 
-    # A freshly-`added` row never gets its hash computed (fetch() only runs
-    # on the change-detection path) — same pre-existing quirk verified for
-    # Gutenberg's golden fixture. See test_revision_overwrites_across_
-    # separate_sync_runs below for the genuine changed-row hash proof.
-    assert rows["pubmed:30000001"]["txt_hash"] is None
+    # the in-stream revision ran the change gate, so the revised doc's hash
+    # IS computed on a fresh ingest now — and it must be the updatefile's
+    revised = SOURCE.parse(SOURCE.fetch(next(
+        r for r in SOURCE.discover(DiscoverState(corpus_root=FIXTURE_CORPUS))
+        if r.native_id == "30000001" and "n0002" in r.locator
+        and r.extra.get("kind") == "article")))
+    assert rows["pubmed:30000001"]["txt_hash"] == revised.raw_hash
 
     # idempotence: re-running sync against the same, unchanged fixture is a no-op.
     stats2 = discovery.sync_collection(con, collection)

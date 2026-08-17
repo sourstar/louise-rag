@@ -22,28 +22,22 @@ def sync_collection(con, collection) -> dict:
     state = DiscoverState(corpus_root=root,
                            state_dir=collection.manifest_path.parent)
     seen = 0
-    # De-duplicate by uid, keeping the LAST ref seen: a source may legitimately
-    # yield the same uid more than once within one discover() sweep (e.g.
-    # PubMed's updatefiles revising a baseline record, or a delete tombstone
-    # arriving after the record it retracts). Comparing every duplicate
-    # against a gate the previous duplicate just rewrote thrashes forever and
-    # breaks idempotence (CLAUDE.md invariant 2); processing containers in
-    # sorted/chronological order and keeping the last ref per uid gives
-    # correct "last write wins" delta semantics instead. For Gutenberg this
-    # is a no-op — one document never appears twice in one pass.
-    #
-    # Trade-off, honestly noted: this buffers every ref for the pass before
-    # writing anything, so a very large discover() (millions of records)
-    # holds them all in memory and commits no progress until the whole scan
-    # finishes. Acceptable at fixture/dev scale; revisit if/when the
-    # acquisition layer (P0.4) needs true streaming delta sync.
-    by_uid: dict[str, DocRef] = {}
-    for ref in plugin.discover(state):
-        seen += 1
-        by_uid[f"{ref.source_id}:{ref.native_id}"] = ref
-
+    # STREAMING with last-write-wins BY ORDER. A source may yield the same
+    # uid more than once in one sweep (PubMed updatefiles revising a baseline
+    # record; a delete tombstone after the record it retracts) — plugins
+    # enumerate containers in sorted/chronological order, so applying refs in
+    # arrival order gives the same final state the old buffered de-dup did:
+    # the later ref hits the ordinary mtime/size→hash change gate and wins.
+    # The buffer itself had to go: a cold-cursor scan of full PubMed is ~26M
+    # refs — the "revisit at millions of records" moment the previous
+    # docstring named, arrived. Progress now commits as the scan streams
+    # (WAL autocommit), which also makes an interrupted giant scan resumable
+    # in effect: rows written so far stand, the cursor file is only advanced
+    # by the plugin for containers it finished enumerating.
     added = changed = missing = 0
-    for i, (uid, ref) in enumerate(by_uid.items(), start=1):
+    for i, ref in enumerate(plugin.discover(state), start=1):
+        seen += 1
+        uid = f"{ref.source_id}:{ref.native_id}"
         if ref.error:
             missing += 1
             con.execute(
