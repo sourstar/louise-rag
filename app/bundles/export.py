@@ -164,7 +164,7 @@ def export_bundle(con, collection, uids: list[str], dest: Path, *,
         dim=dim,
         dtype=dtype,
         producer_pubkey=public_key_hex(key),
-        backend_fingerprint=backend_fingerprint or _backend_fingerprint(),
+        backend_fingerprint=backend_fingerprint or _backend_fingerprint(collection),
         content_digest=content_digest(rows, dim, dtype),
         parquet_bytes=len(parquet_bytes),
         possession_bytes=len(possession_bytes),
@@ -190,10 +190,12 @@ def export_bundle(con, collection, uids: list[str], dest: Path, *,
     }
 
 
-def _backend_fingerprint() -> str:
+def _backend_fingerprint(collection=None) -> str:
     """Coarse identification of the embedding backend that produced these
     vectors (architecture-v2.md §6: "the same weights on different GPUs/drivers/
     batch sizes yield different floats, hence the backend fingerprint"). It is
     advisory metadata for a later tolerance decision, never a trust input, and
     it deliberately carries no host identity."""
-    return f"{config.EMBED_API}/{config.EMBED_MODEL}/{config.EMBED_DTYPE}"
+    from ..collections import recipe_for
+    recipe = recipe_for(collection)
+    return f"{recipe.api}/{recipe.model}/{recipe.dtype}"

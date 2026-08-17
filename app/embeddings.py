@@ -34,16 +34,17 @@ def _conn(collection=None):
         _dbs[key] = lancedb.connect(str(collection.lance_dir))
     return _dbs[key]
 
-def _request_vectors(batch: list[str], timeout: float) -> list[list[float]]:
-    if config.EMBED_API == "openai":
-        r = httpx.post(f"{config.EMBED_URL}/v1/embeddings",
-                       json={"model": config.EMBED_MODEL, "input": batch},
+def _request_vectors(batch: list[str], timeout: float,
+                     recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
+    if recipe.api == "openai":
+        r = httpx.post(f"{recipe.url}/v1/embeddings",
+                       json={"model": recipe.model, "input": batch},
                        timeout=timeout)
         r.raise_for_status()
         data = sorted(r.json()["data"], key=lambda d: d["index"])
         return [d["embedding"] for d in data]
-    r = httpx.post(f"{config.EMBED_URL}/api/embed",
-                   json={"model": config.EMBED_MODEL, "input": batch},
+    r = httpx.post(f"{recipe.url}/api/embed",
+                   json={"model": recipe.model, "input": batch},
                    timeout=timeout)
     r.raise_for_status()
     return r.json()["embeddings"]
@@ -51,19 +52,20 @@ def _request_vectors(batch: list[str], timeout: float) -> list[list[float]]:
 def _invalid(v) -> bool:
     return not v or any(x is None or not math.isfinite(x) for x in v)
 
-def _embed_batch(batch: list[str], timeout: float) -> list[list[float]]:
+def _embed_batch(batch: list[str], timeout: float,
+                 recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
     - null/NaN vectors (intermittent SYCL corruption) -> plain retry
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
       truncation underestimates tokens for CJK/dense scripts) -> halve the
       char budget and retry until it fits.
     Other HTTP errors surface with the server's actual message."""
-    budget = config.EMBED_CTX * 4
+    budget = recipe.ctx * 4
     n_bad = 0
     for attempt in range(6):
         cut = [t[:budget] for t in batch]
         try:
-            vecs = _request_vectors(cut, timeout)
+            vecs = _request_vectors(cut, timeout, recipe)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400 and budget > 1024:
                 budget //= 2
@@ -83,16 +85,32 @@ def _embed_batch(batch: list[str], timeout: float) -> list[list[float]]:
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
 
-def embed_texts(texts: list[str], timeout: float = 300) -> list[list[float]]:
-    """EMBED_CONCURRENCY sub-batches in flight; result order matches input."""
+def embed_texts(texts: list[str], timeout: float = 300, *,
+                recipe: "collections_mod.EmbedRecipe | None" = None,
+                query: bool = False) -> list[list[float]]:
+    """EMBED_CONCURRENCY sub-batches in flight; result order matches input.
+
+    `recipe` selects the embedding backend (per-collection [embed] block via
+    collections.recipe_for(); None = the Tier-1 env recipe, which keeps every
+    pre-multi-space caller working unchanged). `query=True` routes through
+    the recipe's query encoder when one is declared — bi-encoder pairs like
+    MedCPT embed documents and queries with DIFFERENT models, and a query
+    embedded with the article encoder would search a coherent-looking wrong
+    neighborhood. EMBED_BATCH/EMBED_CONCURRENCY stay node-level throughput
+    knobs, deliberately not part of the recipe (they change no vector)."""
+    recipe = recipe or collections_mod.env_recipe()
+    if query and recipe.query_url:
+        recipe = collections_mod.EmbedRecipe(
+            url=recipe.query_url, api=recipe.api, model=recipe.model,
+            dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim)
     batches = [texts[i:i + config.EMBED_BATCH]
                for i in range(0, len(texts), config.EMBED_BATCH)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = list(ex.map(lambda b: _embed_batch(b, timeout), batches))
+            results = list(ex.map(lambda b: _embed_batch(b, timeout, recipe), batches))
     else:
-        results = [_embed_batch(b, timeout) for b in batches]
+        results = [_embed_batch(b, timeout, recipe) for b in batches]
     return [v for part in results for v in part]
 
 def _np_dtype_of_table(tbl):
@@ -104,8 +122,8 @@ def _np_dtype_of_table(tbl):
         pass
     return np.float32
 
-def _np_dtype_from_config():
-    return np.float16 if config.EMBED_DTYPE == "f16" else np.float32
+def _np_dtype_of_recipe(recipe):
+    return np.float16 if recipe.dtype == "f16" else np.float32
 
 def _book_filter(book_id) -> str:
     """Build a Lance filter for one document.
@@ -133,10 +151,11 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     # Embedding happens OUTSIDE the lock: it is the slow part, it touches the
     # network, and holding a cross-process write lock across it would serialize
     # every writer on the slowest endpoint call.
-    vectors = embed_texts([c["text"] for c in chunks])
+    recipe = collections_mod.recipe_for(collection)
+    vectors = embed_texts([c["text"] for c in chunks], recipe=recipe)
     db = _conn(collection)
     exists = TABLE in db.table_names()
-    dtype = _np_dtype_of_table(db.open_table(TABLE)) if exists else _np_dtype_from_config()
+    dtype = _np_dtype_of_table(db.open_table(TABLE)) if exists else _np_dtype_of_recipe(recipe)
     rows = [{
         "id": c["id"], "book_id": book_id, "lang": lang or "und",
         "seq": c["seq"], "chapter": c["chapter"] or "",
@@ -186,7 +205,10 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
     if TABLE not in db.table_names():
         return []
     tbl = db.open_table(TABLE)
-    qvec = np.asarray(embed_texts([query])[0], dtype=_np_dtype_of_table(tbl))
+    qvec = np.asarray(
+        embed_texts([query], recipe=collections_mod.recipe_for(collection),
+                    query=True)[0],
+        dtype=_np_dtype_of_table(tbl))
     q = tbl.search(qvec).limit(k)
     if langs:
         # Lance filters are strings, so a lang containing a quote would break

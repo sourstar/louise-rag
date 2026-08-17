@@ -59,7 +59,7 @@ def node(con, collection, monkeypatch):
     # deterministic stand-in for the embed endpoint
     counter = {"calls": 0}
 
-    def fake_embed(texts):
+    def fake_embed(texts, **kwargs):
         counter["calls"] += 1
         return unit_vectors(len(texts), seed=len(texts))
     monkeypatch.setattr(embeddings, "embed_texts", fake_embed)

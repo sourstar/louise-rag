@@ -79,9 +79,13 @@ class BackendUnavailable(RuntimeError):
     """The endpoint could not be reached — says nothing about its identity."""
 
 
-def _default_embed_fn():
+def _default_embed_fn(collection=None):
+    """The COLLECTION'S recipe, not the node's — a multi-space node gates
+    each collection against its own endpoint (doc amendment 9)."""
     from .. import embeddings
-    return embeddings.embed_texts
+    from ..collections import recipe_for
+    recipe = recipe_for(collection)
+    return lambda texts: embeddings.embed_texts(texts, recipe=recipe)
 
 
 def baseline_path(collection) -> Path:
@@ -110,7 +114,9 @@ def _embed_single(embed_fn, text: str) -> list[float]:
 
 
 def record_baseline(collection, embed_fn=None) -> dict:
-    embed_fn = embed_fn or _default_embed_fn()
+    from ..collections import recipe_for
+    embed_fn = embed_fn or _default_embed_fn(collection)
+    recipe = recipe_for(collection)
     probes = {}
     for name, text in PROBES.items():
         vec = _embed_single(embed_fn, text)
@@ -119,9 +125,9 @@ def record_baseline(collection, embed_fn=None) -> dict:
     baseline = {
         "version": 1,
         "recorded_at": int(time.time()),
-        "embed_url": config.EMBED_URL,
-        "embed_api": config.EMBED_API,
-        "embed_model": config.EMBED_MODEL,
+        "embed_url": recipe.url,
+        "embed_api": recipe.api,
+        "embed_model": recipe.model,
         "dim": len(next(iter(probes.values()))["vector"]),
         "probes": probes,
     }
@@ -164,7 +170,7 @@ def check(collection, embed_fn=None) -> dict:
     """Raises BackendGateError (mismatch — terminal until operator action) or
     BackendUnavailable (endpoint down — retry later). Returns a summary dict
     on pass; records the baseline on first use."""
-    embed_fn = embed_fn or _default_embed_fn()
+    embed_fn = embed_fn or _default_embed_fn(collection)
     path = baseline_path(collection)
     if not path.exists():
         baseline = record_baseline(collection, embed_fn)

@@ -97,7 +97,12 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
     if not targets:
         return {"checked": 0, "verified": 0, "failed": 0, "quarantined": []}
 
-    embed = embed_fn if embed_fn is not None else embeddings.embed_texts
+    if embed_fn is not None:
+        embed = embed_fn
+    else:
+        from ..collections import recipe_for
+        recipe = recipe_for(collection)
+        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
     try:
         recomputed = embed([stored[cid][0] for cid in targets])
     except Exception:

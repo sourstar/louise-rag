@@ -20,7 +20,7 @@ PRODUCER_KEY = signing.SigningKey(bytes(range(32)))
 ATTACKER_KEY = signing.SigningKey(bytes(range(64, 96)))
 
 
-def model_embed(texts, *, salt="model-A"):
+def model_embed(texts, *, salt="model-A", **kwargs):
     """The 'recorded vectors' model: deterministic text->unit vector.
 
     Two nodes calling this with the same salt behave exactly like two nodes

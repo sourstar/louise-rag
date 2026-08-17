@@ -164,7 +164,7 @@ def test_verify_chunks_reports_which_floor_it_used(con, collection, monkeypatch)
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
     outcome = verify_on_use.verify_chunks(
         con, collection, [r["id"] for r in rows],
-        embed_fn=lambda batch: [by_text[t] for t in batch])
+        embed_fn=lambda batch, **kw: [by_text[t] for t in batch])
     assert outcome["floor"] == verify_on_use.VERIFY_FLOOR
     assert outcome["floor_source"] == "coarse-fallback"
 
@@ -180,7 +180,7 @@ def under_verified(con, collection, producer_key, monkeypatch, tmp_path):
                       signing_key=producer_key)
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
     monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda batch: [by_text[t] for t in batch])
+                        lambda batch, **kw: [by_text[t] for t in batch])
     result = importer.import_bundle(con, collection, tmp_path / "b")
     assert result["ok"]
     assert ledger.bundles_below_tier(con, 3), "premise: bundle is under-verified"
@@ -191,7 +191,7 @@ def test_resweep_promotes_a_clean_bundle_to_tier_3(under_verified, monkeypatch):
     con, collection, rows, by_text = under_verified
     monkeypatch.setattr(importer, "find_space_artifact", lambda space_id: None)
     outcome = verify_on_use.resweep(
-        con, collection, embed_fn=lambda batch: [by_text[t] for t in batch])
+        con, collection, embed_fn=lambda batch, **kw: [by_text[t] for t in batch])
     assert outcome == {"swept": 1, "promoted": 1, "failed": []}
     assert ledger.bundles_below_tier(con, 3) == []
     states = ledger.verification_states(con, [r["id"] for r in rows])

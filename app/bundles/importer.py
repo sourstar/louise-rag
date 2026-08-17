@@ -75,8 +75,17 @@ def _read_part(directory: Path, name: str, declared: int, limit_note: str) -> by
     return path.read_bytes()
 
 
-def _local_space(con) -> tuple[str, int | None, bool]:
-    components = spaces.gather_components()
+def _collection_embed_fn(collection):
+    """The default re-embed function for verification: the COLLECTION'S own
+    recipe, not the node's env recipe — verifying MedCPT vectors with the
+    Qwen3 endpoint would fail every honest bundle."""
+    from ..collections import recipe_for
+    recipe = recipe_for(collection)
+    return lambda texts: embeddings.embed_texts(texts, recipe=recipe)
+
+
+def _local_space(con, collection=None) -> tuple[str, int | None, bool]:
+    components = spaces.gather_components(collection)
     return spaces.compute_space_id(components), None, components.weak
 
 
@@ -88,7 +97,7 @@ def _check_space(con, collection, header) -> bool:
     include it (§3 says it should; the implementation omits it), so a matching
     space_id is not evidence of a matching width.
     """
-    local_space_id, _, weak = _local_space(con)
+    local_space_id, _, weak = _local_space(con, collection)
     if weak:
         raise SpaceUnconfirmedError(
             "the local embedding space could not be confirmed (the embed endpoint "
@@ -214,7 +223,7 @@ def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed
         return ladder.run_ladder(
             chunk_ids, vectors, dim=header.dim, dtype=header.dtype,
             artifact=space_artifact, header=header, texts=texts,
-            embed_fn=embed_fn if embed_fn is not None else embeddings.embed_texts,
+            embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection),
             uid_of=uid_of, seq_of=seq_of,
             corpus_tag=space_artifact.raw.get("reference_corpus", {}).get("tag"),
             chunking_profile="book")
@@ -388,7 +397,7 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_
     verdict = run_admission_checks(
         chunk_id_list, vector_list, header.dim, header.dtype,
         uid_of=uid_of, seq_of=seq_of, texts=texts,
-        embed_fn=embed_fn if embed_fn is not None else embeddings.embed_texts)
+        embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection))
     verdict.raise_if_failed()
     if ladder_verdict is not None:
         verdict = _merge_summaries(verdict, ladder_verdict)

@@ -725,6 +725,9 @@ def _effective_config() -> dict:
         "collection": c.name, "plugin": c.plugin, "profile": c.profile,
         "embed_mode": c.embed_mode_default, "acquire_enabled": c.acquire_enabled,
         "license_ack": "(recorded)" if c.license_ack else "(none)",
+        "embed_recipe": (f"{c.embed.model} @ {c.embed.url}"
+                          + (" (+query encoder)" if c.embed.query_url else "")
+                          if c.embed else "(node default)"),
     } for c in collections_mod.load_all()]
 
     # platform.toml is the OTHER Tier-2 file (architecture-v2.md §14). Shown
@@ -770,6 +773,13 @@ def _health_pings() -> list[dict]:
     endpoints.setdefault(config.EMBED_URL, []).append("EMBED_URL")
     if config.RERANK_URL:
         endpoints.setdefault(config.RERANK_URL, []).append("RERANK_URL")
+    # per-collection [embed] recipes (doc amendment 9): each declared
+    # endpoint — including a bi-encoder's query side — is pinged too
+    for c in collections_mod.load_all():
+        if c.embed is not None:
+            endpoints.setdefault(c.embed.url, []).append(f"{c.name}.embed")
+            if c.embed.query_url:
+                endpoints.setdefault(c.embed.query_url, []).append(f"{c.name}.query")
     return [{"names": names, "url": url, "ok": _ping(url)} for url, names in endpoints.items()]
 
 

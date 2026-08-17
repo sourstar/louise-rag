@@ -25,7 +25,7 @@ def imported(con, collection, producer_key, monkeypatch):
 
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
     monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda batch: [by_text[t] for t in batch])
+                        lambda batch, **kw: [by_text[t] for t in batch])
     assert worker._drain_bundle_inbox(con, collection) == 1
     return rows, by_text
 

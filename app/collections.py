@@ -24,6 +24,40 @@ PLUGIN_REGISTRY: dict[str, CorpusSource] = {
 
 
 @dataclass(frozen=True)
+class EmbedRecipe:
+    """A collection's embedding recipe — architecture-v2.md §14 amendment 9.
+
+    Declared per collection in the TOML's [embed] block; a collection
+    without one uses the node's Tier-1 env recipe (fallback, not override).
+    Immutability is NOT this dataclass's job: the pinned space_id and boot
+    validation decide whether the vectors on disk agree with the declared
+    recipe (invariant 1)."""
+    url: str
+    api: str                     # openai | ollama
+    model: str
+    dtype: str                   # f32 | f16
+    ctx: int
+    dim: int | None = None       # declared width; checked against the table
+    query_url: str | None = None  # bi-encoder pairs (MedCPT); None = symmetric
+
+
+def env_recipe() -> EmbedRecipe:
+    """The Tier-1 fallback, built at call time so env/monkeypatched config
+    changes are always honored."""
+    return EmbedRecipe(url=config.EMBED_URL, api=config.EMBED_API,
+                        model=config.EMBED_MODEL, dtype=config.EMBED_DTYPE,
+                        ctx=config.EMBED_CTX)
+
+
+def recipe_for(collection) -> EmbedRecipe:
+    """THE way to resolve a collection's embedding recipe. None (or a
+    collection without an [embed] block) falls back to the env recipe."""
+    if collection is not None and getattr(collection, "embed", None) is not None:
+        return collection.embed
+    return env_recipe()
+
+
+@dataclass(frozen=True)
 class Collection:
     name: str
     plugin: str
@@ -38,6 +72,7 @@ class Collection:
     # behavior change and no surprise outbound network access on restart.
     acquire_enabled: bool = False
     license_ack: str | None = None   # "<iso8601>/<sha256-of-terms-text>", Tier-2 only (invariant 10)
+    embed: EmbedRecipe | None = None  # [embed] block; None = env fallback
 
     def plugin_instance(self) -> CorpusSource:
         return PLUGIN_REGISTRY[self.plugin]
@@ -74,6 +109,26 @@ def _load_one(path: Path) -> Collection:
         return Path(value) if value else default
 
     corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
+
+    embed = None
+    if isinstance(raw.get("embed"), dict):
+        e = raw["embed"]
+        try:
+            embed = EmbedRecipe(
+                url=str(e["url"]).rstrip("/"),
+                api=str(e.get("api", "openai")),
+                model=str(e["model"]),
+                dtype=str(e.get("dtype", "f16")),
+                ctx=int(e.get("ctx", 512)),
+                dim=int(e["dim"]) if e.get("dim") is not None else None,
+                query_url=(str(e["query_url"]).rstrip("/")
+                            if e.get("query_url") else None),
+            )
+        except KeyError as missing:
+            raise ValueError(
+                f"{path}: [embed] block requires url and model "
+                f"(missing {missing})") from None
+
     return Collection(
         name=name,
         plugin=plugin,
@@ -85,6 +140,7 @@ def _load_one(path: Path) -> Collection:
         lance_dir=_resolve("lancedb", config.DATA_DIR / "lancedb"),
         acquire_enabled=bool(raw.get("acquire_enabled", False)),
         license_ack=raw.get("license_ack"),
+        embed=embed,
     )
 
 

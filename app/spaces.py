@@ -40,38 +40,60 @@ class SpaceComponents:
     query_encoder_hash: str
 
 
-def resolve_embed_model_hash() -> tuple[str, bool]:
+def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
     """(hash, weak). weak=True means the hash could not be confirmed against
     actual model weights (non-Ollama backend, or the endpoint was
     unreachable) — boot validation treats a weak hash as unconfirmable, never
-    as a mismatch, so process startup never couples to embed-server liveness."""
-    if config.EMBED_API == "ollama":
+    as a mismatch, so process startup never couples to embed-server liveness.
+
+    `recipe=None` reads the Tier-1 env recipe. Callers resolving a
+    collection with its own [embed] block pass that recipe; env-fallback
+    callers keep the no-arg form (which also keeps every existing
+    monkeypatched zero-arg stub working)."""
+    from . import collections as collections_mod
+    recipe = recipe or collections_mod.env_recipe()
+    if recipe.api == "ollama":
         try:
             with httpx.Client(timeout=10) as client:
-                r = client.post(f"{config.EMBED_URL}/api/show",
-                                 json={"model": config.EMBED_MODEL})
+                r = client.post(f"{recipe.url}/api/show",
+                                 json={"model": recipe.model})
                 r.raise_for_status()
                 digest = r.json().get("digest")
                 if digest:
                     return digest, False
         except Exception:
             pass
-    weak_hash = hashlib.sha256(f"model-name:{config.EMBED_MODEL}".encode()).hexdigest()[:16]
+    weak_hash = hashlib.sha256(f"model-name:{recipe.model}".encode()).hexdigest()[:16]
     return weak_hash, True
 
 
-def gather_components() -> SpaceComponents:
-    model_hash, weak = resolve_embed_model_hash()
+def gather_components(collection=None) -> SpaceComponents:
+    from . import collections as collections_mod
+    recipe = collections_mod.recipe_for(collection)
+    own_block = collection is not None and getattr(collection, "embed", None) is not None
+    # env-fallback path calls with NO argument on purpose — existing tests
+    # (and any operator tooling) stub resolve_embed_model_hash as a zero-arg
+    # callable, and the env recipe is exactly what the no-arg form reads
+    model_hash, weak = (resolve_embed_model_hash(recipe) if own_block
+                        else resolve_embed_model_hash())
+    if recipe.query_url:
+        # bi-encoder pair (MedCPT): the query side is a DIFFERENT model, so
+        # its identity must move the space_id (§3's query_encoder_hash)
+        query_hash = hashlib.blake2b(
+            f"query-encoder:{recipe.query_url}:{recipe.model}".encode(),
+            digest_size=8).hexdigest()
+    else:
+        query_hash = model_hash                  # symmetric embedder
     return SpaceComponents(
         embed_model_hash=model_hash,
         weak=weak,
-        dtype=config.EMBED_DTYPE,
+        dtype=recipe.dtype,
         normalization="l2-client",       # embeddings.py always L2-normalizes client-side
         pooling="server-default",        # not independently observable over HTTP
         chunk_version=config.CHUNK_VERSION,
         cleaning_version=config.CLEANING_VERSION,
-        truncation_policy=f"ctx={config.EMBED_CTX}",
-        query_encoder_hash=model_hash,   # symmetric embedder for Gutenberg
+        truncation_policy=f"ctx={recipe.ctx}",
+        query_encoder_hash=query_hash,
     )
 
 
@@ -182,7 +204,7 @@ def report_boot_status(collections: list) -> list[dict]:
 
 
 def _validate_one(con, collection) -> None:
-    components = gather_components()
+    components = gather_components(collection)
     computed_id = compute_space_id(components)
     computed_config_id = _config_id(components)
     observed_dim = known_lance_dim(collection.lance_dir)

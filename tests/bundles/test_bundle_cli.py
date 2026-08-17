@@ -61,7 +61,7 @@ def test_export_then_import_round_trip(wired, con, tmp_path, capsys, monkeypatch
     con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (UID,))
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
     monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda batch: [by_text[t] for t in batch])
+                        lambda batch, **kw: [by_text[t] for t in batch])
 
     assert cli.main(["bundle", "import", collection.name, str(dest)]) == 0
     out = capsys.readouterr().out
