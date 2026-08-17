@@ -59,12 +59,21 @@
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
-    <div><label>Corpus folder (container path)</label>
-      <input id="nc_corpus" placeholder="/corpus-<name> — empty = default"></div>
+    <div><label>Corpus folder</label>
+      <select id="nc_corpus">
+        <option value="">(default — under the shared corpus root)</option>
+        {% for m in corpus_mounts %}
+        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
+        {% endfor %}
+      </select></div>
   </div>
-  <div class="note">A dedicated corpus folder must be mapped into the container:
-    on TrueNAS, add <code>- /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpus-&lt;name&gt;:ro</code>
-    to both services in the app's YAML. The create result shows the exact line.</div>
+  <div class="note">Dedicated corpus folders are the datasets mapped under
+    <code>{{ corpus_mounts_dir }}</code>{% if not corpus_mounts %} (none mapped yet){% endif %}.
+    To offer a new one, add
+    <code>- /mnt/&lt;pool&gt;/&lt;dataset&gt;:{{ corpus_mounts_dir }}/&lt;name&gt;</code>
+    to both services in the TrueNAS app YAML and save (use <code>:ro</code> when an
+    external process feeds it, read-write when the platform acquires into it).
+    A folder already used by another collection cannot be selected.</div>
   <div class="actions">
     <button class="primary" onclick="previewNewCollection()">Preview</button>
     <button onclick="createCollection()">Create on this node</button>

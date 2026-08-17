@@ -165,19 +165,21 @@
     already isolated.
   </p>
   <p class="note">
-    <b>Corpus folder mapping (TrueNAS).</b> A dedicated corpus folder must
-    exist INSIDE the container, which means a volume mapping in the app's
-    YAML. Create the dataset on the host, then edit the louise-rag app and
-    add to <i>both</i> services (web and worker):
+    <b>Dedicated corpus folders (TrueNAS).</b> Corpus datasets are mapped
+    under one well-known root inside the container, <code>/corpora</code>
+    (env <code>CORPUS_MOUNTS_DIR</code>) — you never type arbitrary
+    container paths. Create the dataset on the host, edit the louise-rag
+    app, and add to <i>both</i> services (web and worker):
   </p>
   <pre class="cli">volumes:
-  - /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpus-&lt;name&gt;:ro   # add this line
+  - /mnt/tank/data/pubmed:/corpora/pubmed        # example: rw, platform acquires into it
+  - /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpora/&lt;name&gt;:ro    # ro when an external process feeds it
   ...</pre>
   <p class="note">
-    Saving the edit restarts the app with the mount. If you create the
-    collection before the mapping exists, nothing breaks: the collection is
-    live, discovery just reports <i>corpus dir not found</i> until the
-    mount appears — the create dialog tells you the exact line to add.
+    Saving the edit restarts the app with the mount; the folder then appears
+    in the create dialog's corpus dropdown. A folder already claimed by
+    another collection is shown but not selectable — one corpus, one
+    collection.
   </p>
   <p class="note">
     <b>2. (By hand, alternatively)</b> save it yourself as

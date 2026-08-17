@@ -209,6 +209,8 @@ def library_page(request: Request):
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
         "plugin_profiles": {p: _profile_order(p)
                              for p in collections_mod.PLUGIN_REGISTRY},
+        "corpus_mounts": _corpus_mounts(),
+        "corpus_mounts_dir": str(config.CORPUS_MOUNTS_DIR),
         "worker_state": db.worker_state(con),
     })
 
@@ -323,12 +325,28 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
     tmp.replace(path)
 
 
+def _corpus_mounts() -> list[dict]:
+    """The candidate corpus folders: whatever the deployment mounted under
+    CORPUS_MOUNTS_DIR, each marked with the collection already using it (a
+    corpus can belong to at most one collection). Operators pick from real
+    mounts — arbitrary container paths are not accepted."""
+    used = {c.corpus_dir.as_posix(): c.name for c in collections_mod.load_all()}
+    mounts = []
+    root = config.CORPUS_MOUNTS_DIR
+    if root.is_dir():
+        for entry in sorted(root.iterdir()):
+            if entry.is_dir():
+                mounts.append({"path": entry.as_posix(),
+                                "used_by": used.get(entry.as_posix())})
+    return mounts
+
+
 class CreateCollectionBody(BaseModel):
     name: str
     plugin: str
     profile: str = "demo"
     acquire_enabled: bool = False
-    corpus_dir: str = ""     # container path; empty = CORPUS_DIR/<name>
+    corpus_dir: str = ""     # a CORPUS_MOUNTS_DIR entry; empty = CORPUS_DIR/<name>
 
 
 @admin_router.post("/library/new/create")
@@ -367,13 +385,23 @@ def new_collection_create(body: CreateCollectionBody):
                 lancedb=existing.lance_dir)
 
     if body.corpus_dir:
-        raw = body.corpus_dir.strip()
-        # container-absolute, no traversal — this string lands in a config
-        # file and later in bind-relative filesystem walks
-        if not raw.startswith("/") or ".." in raw.split("/"):
-            raise HTTPException(400, "corpus_dir must be an absolute container "
-                                      "path without '..'")
-        corpus_dir = Path(raw)
+        mounts = _corpus_mounts()
+        chosen = next((m for m in mounts if m["path"] == body.corpus_dir.strip()),
+                      None)
+        if chosen is None:
+            available = ", ".join(m["path"] for m in mounts) or "(none)"
+            raise HTTPException(
+                400, f"corpus folder must be one of the mounted entries under "
+                     f"{config.CORPUS_MOUNTS_DIR} — available: {available}. "
+                     f"Map your dataset there first (TrueNAS: add "
+                     f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
+                     f"<name>' to both services in the app YAML)")
+        if chosen["used_by"]:
+            raise HTTPException(
+                409, f"{chosen['path']} already belongs to collection "
+                     f"{chosen['used_by']!r} — a corpus folder can serve only "
+                     f"one collection")
+        corpus_dir = Path(chosen["path"])
     else:
         corpus_dir = config.CORPUS_DIR / body.name
 
@@ -394,16 +422,16 @@ def new_collection_create(body: CreateCollectionBody):
             "needs its license ack before acquisition (corpus add --ack-terms).")
     corpus_mounted = corpus_dir.is_dir()
     if not corpus_mounted:
-        # The app cannot create host mounts for itself — that is deployment
-        # config the operator owns. Hand back the exact line instead of a
-        # vague error; discovery logs (not crashes) until the mount appears.
+        # only reachable via the default path (chosen mounts exist by
+        # construction) — the operator either creates that folder or maps a
+        # dataset under the mounts root and re-creates the collection
         note = (f"CORPUS PATH NOT PRESENT IN THE CONTAINER: {corpus_dir} does "
-                 f"not exist yet. On TrueNAS, edit the louise-rag app and add "
-                 f"this volume to BOTH services (web and worker), then save "
-                 f"(the app restarts with the mount):\n"
-                 f"  - /mnt/<pool>/<dataset>:{corpus_dir.as_posix()}:ro\n"
-                 f"Until then the collection exists but discovery will report "
-                 f"'corpus dir not found'. ") + note
+                 f"not exist yet. Either create it, or map a dedicated dataset "
+                 f"under {config.CORPUS_MOUNTS_DIR} (TrueNAS: add "
+                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/<name>' "
+                 f"to BOTH services in the app YAML, save, and pick it in the "
+                 f"corpus dropdown). Until then discovery reports 'corpus dir "
+                 f"not found'. ") + note
     return {"ok": True, "toml_path": str(toml_path),
             "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
             "note": note}

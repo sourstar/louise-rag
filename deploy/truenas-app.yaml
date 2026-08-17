@@ -66,11 +66,13 @@
 # The external TrueNAS rsync task feeding /corpus stays exactly as it is —
 # the worker rescans at startup and every DISCOVER_INTERVAL_MIN minutes.
 #
-# ADDING A COLLECTION WITH ITS OWN CORPUS: create a dataset for it, then add
-# a volume to BOTH services below, e.g.
-#     - /mnt/<pool>/<dataset>:/corpus-<name>:ro
-# and give the collection that container path as its corpus folder (the
-# Library page's create dialog has the field and echoes this exact line).
+# ADDING A COLLECTION WITH ITS OWN CORPUS: corpus datasets are mapped under
+# ONE well-known root, /corpora (env CORPUS_MOUNTS_DIR). Create the dataset,
+# then add a volume to BOTH services below, e.g.
+#     - /mnt/tank/data/pubmed:/corpora/pubmed        # rw: platform acquires into it
+#     - /mnt/<pool>/<dataset>:/corpora/<name>:ro     # ro: external process feeds it
+# After the app restarts with the mount, the folder appears in the Library
+# page's corpus dropdown (folders in use by a collection are not selectable).
 # Collections themselves hot-reload — only the mount needs this app edit.
 
 services:

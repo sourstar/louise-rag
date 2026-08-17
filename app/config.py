@@ -4,6 +4,11 @@ from pathlib import Path
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 CORPUS_DIR = Path(os.getenv("CORPUS_DIR", "/corpus"))  # gutenberg-epub root (one dir per book id)
+# The well-known root where per-collection corpus datasets are mounted
+# (deployment maps e.g. /mnt/tank/data/pubmed -> /corpora/pubmed). The
+# collection-create UI offers exactly the folders present here — operators
+# choose from real mounts instead of typing arbitrary container paths.
+CORPUS_MOUNTS_DIR = Path(os.getenv("CORPUS_MOUNTS_DIR", "/corpora"))
 
 DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"

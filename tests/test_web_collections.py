@@ -49,31 +49,38 @@ def test_create_writes_isolated_toml_and_collection_appears(client, isolated_con
     assert gutenberg.manifest_path == isolated_config.DATA_DIR / "manifest.db"
 
 
-def test_create_with_dedicated_corpus_dir(client, tmp_path):
-    mounted = tmp_path / "corpus-x"
-    mounted.mkdir()
+def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
+    mounts_root = tmp_path / "corpora"
+    (mounts_root / "pubmed").mkdir(parents=True)
+    (mounts_root / "spare").mkdir()
+    monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", mounts_root)
+
+    chosen = (mounts_root / "pubmed").as_posix()
     r = client.post("/admin/library/new/create",
                     json={"name": "withdir", "plugin": "pubmed",
-                           "corpus_dir": str(mounted.as_posix())})
+                           "corpus_dir": chosen})
     assert r.status_code == 200
     assert r.json()["corpus_mounted"] is True
-    assert collections_mod.by_name("withdir").corpus_dir == mounted
+    assert collections_mod.by_name("withdir").corpus_dir.as_posix() == chosen
 
-    # an unmounted container path is accepted but honestly flagged, with the
-    # exact volume line the operator must add
+    # one corpus, one collection: the claimed mount is refused for another
     r = client.post("/admin/library/new/create",
-                    json={"name": "unmounted", "plugin": "pubmed",
-                           "corpus_dir": "/corpus-unmounted"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["corpus_mounted"] is False
-    assert "/mnt/<pool>/<dataset>:/corpus-unmounted:ro" in body["note"]
+                    json={"name": "second", "plugin": "pubmed",
+                           "corpus_dir": chosen})
+    assert r.status_code == 409
+    assert "withdir" in r.json()["detail"]
 
-    # traversal and relative paths are refused
-    for bad in ("../etc", "relative/path", "/ok/../../etc"):
+    # arbitrary container paths are NOT accepted — mounts-root entries only
+    for bad in ("/somewhere/else", "../etc", str(tmp_path / "outside")):
         r = client.post("/admin/library/new/create",
                         json={"name": "bad", "plugin": "pubmed", "corpus_dir": bad})
         assert r.status_code == 400, bad
+        assert "available" in r.json()["detail"]
+
+    # the library page offers the mounts, marking the claimed one
+    page = client.get("/admin/library")
+    assert (mounts_root / "spare").as_posix() in page.text
+    assert "in use by withdir" in page.text
 
 
 def test_create_rejects_bad_names_dup_and_unknown_plugin(client):
