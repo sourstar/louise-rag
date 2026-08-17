@@ -58,7 +58,7 @@
     <div><label>Plugin</label>
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
     </div>
-    <div><label>Profile</label><input id="nc_profile" value="demo"></div>
+    <div><label>Profile</label><select id="nc_profile"></select></div>
   </div>
   <div class="actions">
     <button class="primary" onclick="previewNewCollection()">Preview</button>
@@ -70,6 +70,20 @@
 {% block scripts %}
 <script>
 let WORKER_STATE="{{ worker_state }}";
+const GROW_OPTIONS={};
+const PLUGIN_PROFILES={{ plugin_profiles|tojson }};
+{% for c in shelves %}GROW_OPTIONS["{{ c.name }}"]={{ c.grow_options|tojson }};
+{% endfor %}
+function fillProfileSelect(){
+  const plugin=document.getElementById('nc_plugin').value;
+  const sel=document.getElementById('nc_profile');
+  const opts=PLUGIN_PROFILES[plugin]||[];
+  sel.innerHTML=opts.length
+    ? opts.map(o=>`<option value="${esc(o.name)}">${esc(o.label)}</option>`).join('')
+    : '<option value="demo">demo</option>';
+}
+document.getElementById('nc_plugin').addEventListener('change',fillProfileSelect);
+fillProfileSelect();
 async function toggleWorker(){
   const next=WORKER_STATE==='running'?'paused':'running';
   await postJSON('/api/control',{state:next}); location.reload();
@@ -87,8 +101,19 @@ async function libReset(name,stage){
   catch(e){toast('reset failed: '+e)}
 }
 function openGrow(name){
+  // server-filtered: current profile and larger only — profiles are
+  // incremental, rolling back would misdescribe a corpus that only grows
+  const opts=GROW_OPTIONS[name]||[];
+  if(!opts.length){
+    showModal(`<h2>Grow ${esc(name)}</h2>
+      <div class="note">This collection's plugin declares no acquisition profiles
+        (hand-populated corpus) — grow does not apply.</div>
+      <div class="actions"><button onclick="hideModal()">Close</button></div>`);
+    return;
+  }
+  const options=opts.map((o,i)=>`<option value="${esc(o.name)}" ${i===Math.min(1,opts.length-1)?'selected':''}>${esc(o.label)}</option>`).join('');
   showModal(`<h2>Grow ${esc(name)}</h2>
-    <label>Target profile</label><input id="grow_profile" value="full">
+    <label>Target profile</label><select id="grow_profile">${options}</select>
     <div class="actions">
       <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
       <button onclick="hideModal()">Cancel</button>

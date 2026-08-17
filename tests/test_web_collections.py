@@ -125,6 +125,35 @@ def test_bundle_export_400_when_nothing_embedded(client):
     assert "no embedded documents" in r.json()["detail"]
 
 
+def test_library_page_offers_profile_dropdowns_with_estimates(client):
+    r = client.get("/admin/library")
+    assert r.status_code == 200
+    # the Add panel's per-plugin profile data, ordered by size
+    assert "PLUGIN_PROFILES" in r.text
+    for profile in ("demo", "starter", "recent", "full"):
+        assert profile in r.text
+    assert "~80 GB" in r.text     # gutenberg full estimate reaches the UI
+
+
+def test_grow_options_never_offer_a_rollback(client):
+    client.post("/admin/library/new/create",
+                json={"name": "pm-recent", "plugin": "pubmed", "profile": "recent"})
+    from app import web as web_mod
+    collection = collections_mod.by_name("pm-recent")
+    names = [o["name"] for o in web_mod._grow_options(collection)]
+    assert names == ["recent", "full"], "smaller profiles must not be offered"
+    assert "current" in web_mod._grow_options(collection)[0]["label"]
+
+    # a collection whose profile isn't a known preset (hand-populated) gets
+    # the full ordered list — nothing to roll back from
+    hand = collections_mod.Collection(
+        name="hand", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=collection.corpus_dir, manifest_path=collection.manifest_path,
+        fts_dir=collection.fts_dir, lance_dir=collection.lance_dir)
+    assert [o["name"] for o in web_mod._grow_options(hand)] == \
+        ["demo", "starter", "recent", "full"]
+
+
 def test_collection_management_requires_admin(client):
     del client.headers["X-Admin-Token"]
     for path in ("/admin/library/new/create", "/admin/library/gutenberg/remove",

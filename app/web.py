@@ -120,6 +120,45 @@ def login(body: LoginBody, response: Response):
 
 # ---------------- Library ----------------
 
+def _human_bytes(n: int | None) -> str:
+    if not n:
+        return "?"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000:
+            return f"{n:.0f} {unit}"
+        n /= 1000
+    return f"{n:.0f} PB"
+
+
+def _profile_order(plugin: str) -> list[dict]:
+    """A plugin's profiles ordered by estimated size — the data-driven
+    ordering behind 'profiles are incremental'. Profiles without an estimate
+    keep their spec-declared position at the end."""
+    spec = ACQUIRE_REGISTRY.get(plugin)
+    if spec is None:
+        return []
+    names = list(spec.profiles)
+    names.sort(key=lambda n: (spec.estimated_bytes.get(n) is None,
+                               spec.estimated_bytes.get(n, 0)))
+    return [{"name": n,
+             "label": f"{n} (~{_human_bytes(spec.estimated_bytes.get(n))})"}
+            for n in names]
+
+
+def _grow_options(collection: collections_mod.Collection) -> list[dict]:
+    """Current profile and larger — never smaller: acquisition only adds
+    files, so 'rolling back' a profile wouldn't shrink anything and would
+    only misdescribe the corpus. The current profile stays offered as a
+    re-sync/top-up."""
+    order = _profile_order(collection.plugin)
+    current = collection.profile
+    names = [o["name"] for o in order]
+    if current in names:
+        order = order[names.index(current):]
+        order[0] = {**order[0], "label": order[0]["label"] + " — current, re-sync"}
+    return order
+
+
 def _collection_shelf(collection: collections_mod.Collection) -> dict:
     con = db.connect(collection)
     counts = con.execute("""
@@ -156,6 +195,7 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "rdf_done": counts["rdf_done"] or 0, "fts_done": counts["fts_done"] or 0,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
+        "grow_options": _grow_options(collection),
     }
 
 
@@ -167,6 +207,8 @@ def library_page(request: Request):
         "active": "library",
         "shelves": [_collection_shelf(c) for c in collections],
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
+        "plugin_profiles": {p: _profile_order(p)
+                             for p in collections_mod.PLUGIN_REGISTRY},
         "worker_state": db.worker_state(con),
     })
 
