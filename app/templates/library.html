@@ -19,6 +19,9 @@
   <div>
     <span class="badge brass">profile: {{ c.profile }}</span>
     <span class="badge lapis">space: {{ c.space_id }}</span>
+    {% if c.license.class %}
+    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}">license: {{ c.license.class }}{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ack_recorded else '') }}</span>
+    {% endif %}
   </div>
   {% if c.fetched %}
   <div class="stage"><div class="lbl"><span>fetched</span><span>{{ c.fetched.done }} / {{ c.fetched.total }}</span></div>
@@ -42,6 +45,9 @@
     <button onclick="libDiscover('{{ c.name }}')">rescan</button>
   </div>
   <div class="actions">
+    {% if c.license.needs_ack %}
+    <button class="primary" onclick="ackLicense('{{ c.name }}')">acknowledge license…</button>
+    {% endif %}
     <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
     <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
     <button onclick="removeCollection('{{ c.name }}')">remove…</button>
@@ -59,6 +65,10 @@
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
+    <div><label>Acquisition</label>
+      <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
+        <input type="checkbox" id="nc_acquire" style="width:auto"> fetch corpus from the source
+      </label></div>
     <div><label>Corpus folder</label>
       <select id="nc_corpus">
         <option value="">(default — under the shared corpus root)</option>
@@ -152,14 +162,40 @@ async function runGrow(name,profile){
   try{await postJSON('/admin/library/'+name+'/grow/run',{profile});toast('grow started for '+name);hideModal();location.reload()}
   catch(e){toast('grow failed: '+e)}
 }
-async function createCollection(){
+async function ackLicense(name){
+  let terms;
+  try{terms=await getJSON('/admin/library/'+name+'/terms')}
+  catch(e){toast('could not load terms: '+e);return}
+  showModal(`<h2>License terms — ${esc(name)}</h2>
+    <div class="note">This source is license-class <b>${esc(terms.license_class)}</b>:
+      acquisition requires a recorded acknowledgement of these terms
+      (timestamp + hash — the license gate, never bypassed).</div>
+    <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(no terms text shipped)')}</pre>
+    <div class="actions">
+      <button class="primary" onclick="doAck('${esc(name)}')">I acknowledge — enable acquisition</button>
+      <button onclick="hideModal()">Cancel</button>
+    </div>`);
+}
+async function doAck(name){
+  try{
+    const d=await postJSON('/admin/library/'+name+'/ack',{});
+    toast('acknowledged; acquisition enabled');hideModal();location.reload();
+  }catch(e){toast('ack failed: '+e)}
+}
+async function getJSON(url){
+  const r=await fetch(url);const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw (d.detail||r.statusText);return d;
+}
+async function createCollection(retryWithAck){
   const name=document.getElementById('nc_name').value.trim();
   const plugin=document.getElementById('nc_plugin').value;
   const profile=document.getElementById('nc_profile').value.trim()||'demo';
   const corpus_dir=document.getElementById('nc_corpus').value.trim();
+  const acquire_enabled=document.getElementById('nc_acquire').checked;
   if(!name){toast('name required');return}
   try{
-    const d=await postJSON('/admin/library/new/create',{name,plugin,profile,corpus_dir});
+    const d=await postJSON('/admin/library/new/create',
+      {name,plugin,profile,corpus_dir,acquire_enabled,acknowledge_terms:!!retryWithAck});
     const mountWarn=d.corpus_mounted?''
       :`<div class="note" style="color:var(--err)">corpus folder not mounted yet</div>`;
     showModal(`<h2>Collection created</h2>
@@ -167,7 +203,24 @@ async function createCollection(){
       ${mountWarn}
       <pre class="cli" style="white-space:pre-wrap">${esc(d.note)}</pre>
       <div class="actions"><button class="primary" onclick="hideModal();location.reload()">OK</button></div>`);
-  }catch(e){toast('create failed: '+e)}
+  }catch(e){
+    if(String(e).startsWith('terms-acknowledgement-required')){
+      // show the source's terms; confirming retries the create with consent
+      let terms;
+      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile})}
+      catch(_){terms={}}
+      showModal(`<h2>License terms — ${esc(plugin)}</h2>
+        <div class="note">This source requires acknowledging its terms before
+          the platform fetches a single byte.</div>
+        <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
+        <div class="actions">
+          <button class="primary" onclick="hideModal();createCollection(true)">I acknowledge — create</button>
+          <button onclick="hideModal()">Cancel</button>
+        </div>`);
+      return;
+    }
+    toast('create failed: '+e)
+  }
 }
 async function removeCollection(name){
   showModal(`<h2>Remove ${esc(name)}?</h2>

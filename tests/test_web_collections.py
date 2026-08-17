@@ -195,6 +195,51 @@ def test_grow_options_never_offer_a_rollback(client):
         ["demo", "starter", "recent", "full"]
 
 
+def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
+    # pubmed is yellow-class: create with acquisition but WITHOUT
+    # acknowledgement must refuse with the retry marker
+    r = client.post("/admin/library/new/create",
+                    json={"name": "pm", "plugin": "pubmed",
+                           "acquire_enabled": True})
+    assert r.status_code == 409
+    assert r.json()["detail"].startswith("terms-acknowledgement-required")
+
+    # with explicit consent, the ack is computed server-side into the TOML
+    r = client.post("/admin/library/new/create",
+                    json={"name": "pm", "plugin": "pubmed",
+                           "acquire_enabled": True, "acknowledge_terms": True})
+    assert r.status_code == 200
+    text = collections_mod.config_toml_path("pm").read_text()
+    assert "acquire_enabled = true" in text
+    assert 'license_ack = "' in text
+    assert collections_mod.by_name("pm").license_ack
+
+    # green sources (gutenberg) need no acknowledgement
+    r = client.post("/admin/library/new/create",
+                    json={"name": "gb2", "plugin": "gutenberg",
+                           "acquire_enabled": True})
+    assert r.status_code == 200
+
+
+def test_ack_endpoint_records_license_for_existing_collection(client):
+    # created WITHOUT acquisition: no ack recorded, card should offer it
+    client.post("/admin/library/new/create", json={"name": "pm2", "plugin": "pubmed"})
+    assert collections_mod.by_name("pm2").license_ack is None
+
+    r = client.get("/admin/library/pm2/terms")
+    assert r.status_code == 200
+    assert r.json()["license_class"] == "yellow"
+    assert r.json()["terms_text"]
+
+    r = client.post("/admin/library/pm2/ack")
+    assert r.status_code == 200
+    refreshed = collections_mod.by_name("pm2")
+    assert refreshed.license_ack and refreshed.acquire_enabled
+    # the ack format matches what the acquisition engine verifies
+    stamp, _, digest = refreshed.license_ack.partition("/")
+    assert stamp.endswith("Z") and len(digest) == 64
+
+
 def test_collection_management_requires_admin(client):
     del client.headers["X-Admin-Token"]
     for path in ("/admin/library/new/create", "/admin/library/gutenberg/remove",

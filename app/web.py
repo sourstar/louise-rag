@@ -196,6 +196,22 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
         "grow_options": _grow_options(collection),
+        "license": _license_state(collection),
+    }
+
+
+def _license_state(collection: collections_mod.Collection) -> dict:
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    return {
+        "class": spec.license_class.value if spec else None,
+        "ack_recorded": bool(collection.license_ack),
+        "acquire_enabled": collection.acquire_enabled,
+        # the ack button applies when acquisition is gated: yellow class,
+        # no recorded ack, and a TOML to write it into
+        "needs_ack": bool(
+            spec and spec.license_class.value == "yellow"
+            and not collection.license_ack
+            and collections_mod.config_toml_path(collection.name).exists()),
     }
 
 
@@ -305,12 +321,15 @@ _COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             acquire_enabled: bool, corpus_dir: Path,
-                            manifest: Path, fts: Path, lancedb: Path) -> None:
+                            manifest: Path, fts: Path, lancedb: Path,
+                            license_ack: str | None = None) -> None:
     lines = [f'plugin = "{plugin}"']
     if profile:
         lines.append(f'profile = "{profile}"')
     if acquire_enabled:
         lines.append("acquire_enabled = true")
+    if license_ack:
+        lines.append(f'license_ack = "{license_ack}"')
     lines += [
         f'corpus_dir = "{corpus_dir.as_posix()}"',
         "",
@@ -347,6 +366,30 @@ class CreateCollectionBody(BaseModel):
     profile: str = "demo"
     acquire_enabled: bool = False
     corpus_dir: str = ""     # a CORPUS_MOUNTS_DIR entry; empty = CORPUS_DIR/<name>
+    acknowledge_terms: bool = False   # yellow-class sources: explicit consent
+
+
+def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
+                          acknowledged: bool) -> str | None:
+    """Returns the license_ack to record, None when none is needed, or
+    raises 409 when acquisition of a yellow-class source was requested
+    without explicit acknowledgement — the client then shows the terms and
+    retries with acknowledge_terms=true. The ack itself is computed
+    server-side from the shipped terms text, identical to
+    `corpus add --ack-terms`."""
+    spec = ACQUIRE_REGISTRY.get(plugin)
+    if not acquire_enabled or spec is None:
+        return None
+    if spec.license_class.value != "yellow":
+        return None
+    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
+        raise HTTPException(500, f"{plugin}: yellow-class source ships no terms text")
+    if not acknowledged:
+        raise HTTPException(
+            409, "terms-acknowledgement-required: this source's license "
+                 "requires explicit acknowledgement before acquisition "
+                 "(license gate, never bypassed)")
+    return acquire_engine.make_ack(spec.terms_text_path)
 
 
 @admin_router.post("/library/new/create")
@@ -405,13 +448,16 @@ def new_collection_create(body: CreateCollectionBody):
     else:
         corpus_dir = config.CORPUS_DIR / body.name
 
+    ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
+                                body.acknowledge_terms)
+
     base = config.DATA_DIR / body.name
     _write_collection_toml(
         toml_path, plugin=body.plugin, profile=body.profile,
         acquire_enabled=body.acquire_enabled,
         corpus_dir=corpus_dir,
         manifest=base / "manifest.db", fts=base / "fts",
-        lancedb=base / "lancedb")
+        lancedb=base / "lancedb", license_ack=ack)
 
     con = db.connect()
     db.log_event(con, "info", "control",
@@ -463,6 +509,46 @@ def collection_remove(name: str):
             "note": "The worker stops ingesting it within one round (no "
                      "restart). To restore, rename the retired file back to "
                      + toml_path.name + "."}
+
+
+@admin_router.get("/library/{name}/terms")
+def collection_terms(name: str):
+    """The source's terms text, for the acknowledgement modal."""
+    collection = _collection_or_404(name)
+    spec = _spec_or_400(collection)
+    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
+        return {"license_class": spec.license_class.value, "terms_text": None}
+    return {"license_class": spec.license_class.value,
+            "terms_text": spec.terms_text_path.read_text()[:8000]}
+
+
+@admin_router.post("/library/{name}/ack")
+def collection_ack(name: str):
+    """Record the license acknowledgement for an EXISTING collection and
+    enable acquisition — the UI path to what `corpus add --ack-terms` +
+    hand-editing the TOML does. Rewrites the collection's TOML with
+    license_ack and acquire_enabled=true; the worker hot-reloads it."""
+    collection = _collection_or_404(name)
+    spec = _spec_or_400(collection)
+    toml_path = collections_mod.config_toml_path(name)
+    if not toml_path.exists():
+        raise HTTPException(400, f"{name!r} has no TOML file to record the ack in")
+    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
+        raise HTTPException(400, f"{collection.plugin}: no terms text shipped — "
+                                  f"nothing to acknowledge")
+    ack = acquire_engine.make_ack(spec.terms_text_path)
+    _write_collection_toml(
+        toml_path, plugin=collection.plugin, profile=collection.profile,
+        acquire_enabled=True, corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=ack)
+    con = db.connect(collection)
+    db.log_event(con, "info", "control",
+                 f"license terms acknowledged for {name!r} via admin UI "
+                 f"({ack.split('/')[0]}); acquisition enabled")
+    return {"ok": True, "license_ack": ack,
+            "note": "Recorded in the TOML; acquisition is enabled and the "
+                     "worker picks it up within one round."}
 
 
 class BundleExportBody(BaseModel):
