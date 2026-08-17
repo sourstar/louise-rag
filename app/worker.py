@@ -28,6 +28,7 @@ from . import chunking, collections as collections_mod, config, db, discovery, e
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
+from .bundles import genesis as bundle_genesis
 from .bundles import importer as bundle_importer
 from .bundles import ledger as bundle_ledger
 from .verify import backend_gate
@@ -224,6 +225,19 @@ def _run_one_step(con, collection, last_idle_log: dict) -> bool:
     # the embed stage was about to pick up.
     if _drain_bundle_inbox(con, collection):
         return True
+    # Same economics, declarative source: a collection with a genesis
+    # archive declared (genesis_archive in its TOML) reuses published
+    # vectors before any GPU-hour is spent. One shard per round; failures
+    # are ledgered and backed off inside drain_next_shard, never fatal.
+    if collection.genesis_archive:
+        try:
+            result = bundle_genesis.drain_next_shard(con, collection, stop=_stop)
+        except Exception as e:   # noqa: BLE001 — an archive must never crash the worker
+            db.log_event(con, "error", "genesis",
+                         f"unexpected genesis failure: {type(e).__name__}: {e}"[:400])
+            result = None
+        if result is not None:
+            return True
     scope = db.get_scope(con)
     stage, row = _next_book(con, scope)
     if stage == "embed" and not backend_gate.embed_allowed(con, collection):

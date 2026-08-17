@@ -164,6 +164,15 @@
     archive lacks (newer documents) through the same endpoint, so the space
     stays coherent forever.
   </p>
+  <p class="note">
+    <b>Default-on.</b> A collection whose TOML declares
+    <code>genesis_archive = "medcpt-pubmed"</code> (written automatically by
+    the create dialog when the plugin has a known archive; delete the line
+    to opt out) is drained by the worker on its own — one shard per round,
+    before any local GPU embedding — and the Library card shows the
+    coverage: shards applied and documents served by pre-embedded data. The
+    CLI does the same thing on demand:
+  </p>
   <pre class="cli"># NCBI MedCPT vectors into the pubmed collection (resumable):
 python -m app.cli genesis import pubmed --archive medcpt-pubmed
 

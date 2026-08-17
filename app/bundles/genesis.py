@@ -77,6 +77,58 @@ ARCHIVES: dict[str, GenesisArchive] = {
     "medcpt-pubmed": MEDCPT_PUBMED,
 }
 
+# The default-on wiring: creating a collection for one of these plugins
+# declares its archive in the TOML unless the operator removes the line.
+DEFAULT_ARCHIVE_BY_PLUGIN: dict[str, str] = {
+    "pubmed": "medcpt-pubmed",
+}
+
+
+def drain_next_shard(con, collection, *, stop=None) -> dict | None:
+    """The worker's automatic path: import the next pending shard of the
+    collection's declared archive, if there is embed work it could satisfy.
+    Returns the shard result, or None when there is nothing to do (no
+    declaration, no candidates, all shards applied, a shard was rejected —
+    a systematically incompatible archive must not be retried forever — or
+    a retryable failure is inside its backoff window)."""
+    archive = ARCHIVES.get(collection.genesis_archive or "")
+    if archive is None:
+        return None
+    candidates = con.execute(
+        "SELECT 1 FROM documents WHERE fts_done=1 AND embed_done=0 "
+        "AND error IS NULL LIMIT 1").fetchone()
+    if candidates is None:
+        return None
+    # Wait for the collection's rdf/fts backlog to settle: a shard applies
+    # ONCE, and running it while most documents are not yet eligible would
+    # permanently strand them on the local-GPU path. Post-settle growth is
+    # fine — appended corpora land in later, still-pending shards, and any
+    # stragglers gap-fill locally into the same proven space.
+    backlog = con.execute(
+        "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
+        "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
+    if backlog is not None:
+        return None
+    rows = {r["shard"]: r for r in con.execute(
+        "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
+        (archive.archive_id,))}
+    if any(r["state"] == "rejected" for r in rows.values()):
+        return None
+    now = int(time.time())
+    for shard in archive.shards:
+        row = rows.get(shard)
+        if row is None or row["state"] not in ("applied",):
+            if row is not None and row["state"] == "skipped" \
+                    and now - (row["updated_at"] or 0) < 600:
+                return None            # retryable failure: back off 10 min
+            try:
+                return import_shard(con, collection, archive, shard)
+            except GenesisUnavailable:
+                return None            # recorded as skipped; retried later
+            except GenesisError:
+                return None            # recorded as rejected; never retried
+    return None
+
 
 # ---------------- adapters: shard -> iterator of (uid, vector) -------------
 

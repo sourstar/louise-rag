@@ -38,6 +38,17 @@
   <div class="note">
     delta freshness: {{ c.last_discover_text }} · lazy-embed queue: {{ c.queue }} pending
   </div>
+  {% if c.genesis %}
+  <div class="note">
+    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.docs else '') }}">{{ c.genesis.archive }}</span>
+    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
+    {% elif not c.genesis.known %} — unknown archive id
+    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shards,
+      {{ c.genesis.docs }} documents covered without GPU work; the worker
+      drains the rest automatically and gap-fills locally
+    {% endif %}
+  </div>
+  {% endif %}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto"><label style="margin:0 0 2px">Embed mode (GPU spending)</label>
       <select onchange="setEmbedMode('{{ c.name }}', this.value)">

@@ -74,6 +74,9 @@ class Collection:
     acquire_enabled: bool = False
     license_ack: str | None = None   # "<iso8601>/<sha256-of-terms-text>", Tier-2 only (invariant 10)
     embed: EmbedRecipe | None = None  # [embed] block; None = env fallback
+    # Declarative reuse of published embeddings (§8 genesis): the worker
+    # drains this archive automatically before spending GPU on backfill.
+    genesis_archive: str | None = None
 
     def plugin_instance(self) -> CorpusSource:
         return PLUGIN_REGISTRY[self.plugin]
@@ -142,6 +145,7 @@ def _load_one(path: Path) -> Collection:
         acquire_enabled=bool(raw.get("acquire_enabled", False)),
         license_ack=raw.get("license_ack"),
         embed=embed,
+        genesis_archive=raw.get("genesis_archive"),
     )
 
 

@@ -198,6 +198,28 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "queue": queue, "last_discover_text": freshness,
         "grow_options": _grow_options(collection),
         "license": _license_state(collection),
+        "genesis": _genesis_state(con, collection),
+    }
+
+
+def _genesis_state(con, collection) -> dict | None:
+    """Provenance visibility for pre-embedded data: is a genesis archive
+    declared, and how much of the collection did it cover?"""
+    if not collection.genesis_archive:
+        return None
+    from .bundles.genesis import ARCHIVES
+    archive = ARCHIVES.get(collection.genesis_archive)
+    totals = con.execute(
+        "SELECT COUNT(*) shards, SUM(state='applied') applied, SUM(docs) docs, "
+        "SUM(state='rejected') rejected FROM genesis_imports WHERE archive=?",
+        (collection.genesis_archive,)).fetchone()
+    return {
+        "archive": collection.genesis_archive,
+        "known": archive is not None,
+        "shard_total": len(archive.shards) if archive else 0,
+        "applied": totals["applied"] or 0,
+        "docs": totals["docs"] or 0,
+        "rejected": bool(totals["rejected"]),
     }
 
 
@@ -323,7 +345,8 @@ _COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             acquire_enabled: bool, corpus_dir: Path,
                             manifest: Path, fts: Path, lancedb: Path,
-                            license_ack: str | None = None) -> None:
+                            license_ack: str | None = None,
+                            genesis_archive: str | None = None) -> None:
     lines = [f'plugin = "{plugin}"']
     if profile:
         lines.append(f'profile = "{profile}"')
@@ -331,6 +354,8 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
         lines.append("acquire_enabled = true")
     if license_ack:
         lines.append(f'license_ack = "{license_ack}"')
+    if genesis_archive:
+        lines.append(f'genesis_archive = "{genesis_archive}"')
     lines += [
         f'corpus_dir = "{corpus_dir.as_posix()}"',
         "",
@@ -452,13 +477,20 @@ def new_collection_create(body: CreateCollectionBody):
     ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
                                 body.acknowledge_terms)
 
+    # default ON: a plugin with a known published-embeddings archive gets it
+    # declared, so the worker reuses pre-embedded data before spending GPU.
+    # Operators opt out by deleting the line from the TOML.
+    from .bundles.genesis import DEFAULT_ARCHIVE_BY_PLUGIN
+    genesis_archive = DEFAULT_ARCHIVE_BY_PLUGIN.get(body.plugin)
+
     base = config.DATA_DIR / body.name
     _write_collection_toml(
         toml_path, plugin=body.plugin, profile=body.profile,
         acquire_enabled=body.acquire_enabled,
         corpus_dir=corpus_dir,
         manifest=base / "manifest.db", fts=base / "fts",
-        lancedb=base / "lancedb", license_ack=ack)
+        lancedb=base / "lancedb", license_ack=ack,
+        genesis_archive=genesis_archive)
 
     con = db.connect()
     db.log_event(con, "info", "control",

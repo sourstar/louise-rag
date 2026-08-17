@@ -8,7 +8,7 @@ import json
 import numpy as np
 import pytest
 
-from app import collections as collections_mod, config, db, embeddings, fts
+from app import collections as collections_mod, config, db, embeddings
 from app.bundles import genesis
 from app.bundles.genesis import GenesisArchive, GenesisError, GenesisUnavailable
 
@@ -181,6 +181,62 @@ def test_dim_mismatch_rejects(collection):
         genesis.import_shard(con, collection, _archive(["0"]), "0",
                               embed_fn=_same_function_embed,
                               fetch=_fake_fetch(cache))
+
+
+def test_worker_drains_a_declared_archive_automatically(collection, monkeypatch):
+    """The default-on path: genesis_archive in the TOML → the worker imports
+    a shard per round with no operator action, backs off on unavailability,
+    and never retries a rejected (wrong-encoder) archive."""
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _archive(["0"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    # patch the network seams the worker path uses
+    monkeypatch.setattr(genesis, "_https_fetcher", lambda a: _fake_fetch(cache))
+    calls = []
+
+    def fake_embed(texts, timeout=300, recipe=None, query=False):
+        calls.append(len(texts))
+        return _same_function_embed(texts)
+    monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+
+    result = genesis.drain_next_shard(con, declared)
+    assert result is not None and result["docs"] == 10
+    assert calls, "the same-function proof ran through the collection recipe"
+
+    # all shards applied + nothing to embed -> nothing more to do
+    assert genesis.drain_next_shard(con, declared) is None
+
+    # undeclared collections never touch archives
+    assert genesis.drain_next_shard(con, collection) is None
+
+
+def test_drain_never_retries_a_rejected_archive(collection, monkeypatch):
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _archive(["0"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(genesis, "_https_fetcher", lambda a: _fake_fetch(cache))
+    monkeypatch.setattr(
+        embeddings, "embed_texts",
+        lambda texts, timeout=300, recipe=None, query=False:
+            _different_model_embed(texts))
+    declared = replace(collection, genesis_archive="test-arc")
+
+    assert genesis.drain_next_shard(con, declared) is None   # rejected inside
+    assert con.execute("SELECT state FROM genesis_imports").fetchone()["state"] == "rejected"
+
+    fetches = []
+    monkeypatch.setattr(genesis, "_https_fetcher",
+                         lambda a: lambda n, d: fetches.append(n))
+    assert genesis.drain_next_shard(con, declared) is None
+    assert fetches == [], "a rejected archive must never be re-downloaded"
 
 
 def test_multi_chunk_documents_are_skipped_not_half_embedded(collection, monkeypatch):
