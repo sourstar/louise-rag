@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS bundles (
   parquet_sha256 TEXT,
   content_digest TEXT,
   space_weak INTEGER DEFAULT 0,     -- local model hash unconfirmed at import time
+  tier_reached INTEGER,             -- highest ladder tier that RAN and passed;
+                                    -- NULL = only coarse checks (no artifact)
   verdict TEXT,                     -- admission-check evidence summary
   error TEXT,
   created_at INTEGER,               -- the producer's claim
@@ -139,6 +141,17 @@ CREATE TABLE IF NOT EXISTS providers (
   note TEXT,
   first_seen INTEGER,
   last_seen INTEGER
+);
+
+-- Full verification evidence, one blob per bundle, separate from the bundles
+-- row deliberately: the ladder's evidence includes per-chunk claimed and
+-- recomputed vectors — §6's "proof of forgery" — and truncating it into a
+-- summary column would amputate exactly the parts a third party needs to
+-- recompute the verdict. Local truth, never travels.
+CREATE TABLE IF NOT EXISTS bundle_evidence (
+  bundle_id TEXT PRIMARY KEY,
+  evidence TEXT NOT NULL,
+  created_at INTEGER
 );
 
 -- Per-chunk verification state for imported vectors (architecture-v2.md §6
@@ -195,6 +208,10 @@ def connect(collection=None) -> sqlite3.Connection:
         con.execute("ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # column already exists — no reusable "add column" migration tool for this
+    try:
+        con.execute("ALTER TABLE bundles ADD COLUMN tier_reached INTEGER")
+    except sqlite3.OperationalError:
+        pass  # same defensive pattern: pre-hardening manifests lack the column
     return con
 
 # ---------------- control ----------------

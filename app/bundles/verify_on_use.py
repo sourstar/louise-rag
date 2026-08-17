@@ -27,11 +27,32 @@ import numpy as np
 from .. import embeddings
 from . import ledger, trust
 
-# Deliberately the same coarse gate as import-time sample re-embed, and for the
-# same reason: it separates "same model on different hardware" (>=0.999) from
-# "different model or tampered vector" (0.3-0.7) without pretending to a
-# calibrated precision it does not have. P1.2's tau supersedes it.
+# The fallback when no space artifact is available: coarse, same as import-time
+# sample re-embed — it separates "same model on different hardware" (>=0.999)
+# from "different model or tampered vector" (0.3-0.7) without pretending to a
+# calibrated precision it does not have. When an artifact IS available,
+# _verify_floor() uses its calibrated tau through t3's tighten-only path, so an
+# untrusted artifact can raise this bar but never lower it.
 VERIFY_FLOOR = 0.95
+
+
+def _verify_floor(con) -> tuple[float, str]:
+    """(threshold, source) for this collection's space. Never raises — a
+    missing or malformed artifact degrades to the coarse floor, because a
+    verification pass must not be able to break the query that triggered it."""
+    try:
+        from ..verify.t3 import _tau_for
+        from .importer import find_space_artifact
+        row = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
+        if not row or not row["space_id"]:
+            return VERIFY_FLOOR, "coarse-fallback"
+        artifact = find_space_artifact(row["space_id"])
+        if artifact is None:
+            return VERIFY_FLOOR, "coarse-fallback"
+        tau, _f0, _f1, source = _tau_for(artifact, "", "f32")
+        return tau, source
+    except Exception:
+        return VERIFY_FLOOR, "coarse-fallback"
 
 
 def _texts_and_vectors(collection, chunk_ids: list[str]) -> dict[str, tuple]:
@@ -85,6 +106,7 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
         return {"checked": 0, "verified": 0, "failed": 0, "quarantined": [],
                 "unavailable": True}
 
+    floor, floor_source = _verify_floor(con)
     states = ledger.verification_states(con, targets)
     verified = failed = 0
     culprits: set[str] = set()
@@ -93,7 +115,7 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
         claimed = stored[cid][1]
         denominator = float(np.linalg.norm(fresh) * np.linalg.norm(claimed))
         cosine = 0.0 if denominator == 0 else float(np.dot(fresh, claimed) / denominator)
-        passed = cosine >= VERIFY_FLOOR
+        passed = cosine >= floor
         ledger.set_verified(con, cid, cosine, passed)
         if passed:
             verified += 1
@@ -122,7 +144,8 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
             # deliberately against making those documents unsearchable now.
             requeued.update(_requeue_for_local_embed(con, affected))
     return {"checked": len(targets), "verified": verified, "failed": failed,
-            "quarantined": quarantined, "requeued": sorted(requeued)}
+            "quarantined": quarantined, "requeued": sorted(requeued),
+            "floor": floor, "floor_source": floor_source}
 
 
 def _requeue_for_local_embed(con, affected: dict[str, int]) -> list[str]:
@@ -135,6 +158,42 @@ def _requeue_for_local_embed(con, affected: dict[str, int]) -> list[str]:
             "ON CONFLICT(uid) DO UPDATE SET priority=100, ts=excluded.ts",
             (uid, now))
     return list(affected)
+
+
+def resweep(con, collection, *, embed_fn=None) -> dict:
+    """Re-verify bundles that were admitted with less than full verification.
+
+    The ledger records tier_reached and space_weak precisely so that a bundle
+    imported while the embed endpoint was down (T3 skipped) or while the local
+    space was unconfirmed can be re-checked once conditions improve. This is
+    that check: every still-'imported' chunk of each under-verified bundle is
+    recomputed against the local model. A clean bundle is promoted to
+    tier_reached=3; a dirty one goes through the normal failure path —
+    quarantine, re-queue for local embedding.
+
+    Safe to run any time: verified chunks are skipped (verification is
+    permanent per chunk), so a second sweep costs nothing.
+    """
+    swept, promoted, failed_bundles = 0, 0, []
+    for bundle in ledger.bundles_below_tier(con, 3):
+        chunk_rows = con.execute(
+            "SELECT chunk_id FROM chunk_verification WHERE bundle_id=?",
+            (bundle["bundle_id"],)).fetchall()
+        chunk_ids = [r["chunk_id"] for r in chunk_rows]
+        if not chunk_ids:
+            continue
+        swept += 1
+        outcome = verify_chunks(con, collection, chunk_ids, embed_fn=embed_fn)
+        if outcome.get("unavailable"):
+            # the endpoint is still down; leave the bundle for the next sweep
+            swept -= 1
+            continue
+        if outcome["failed"] == 0:
+            ledger.set_tier_reached(con, bundle["bundle_id"], 3)
+            promoted += 1
+        else:
+            failed_bundles.append(bundle["bundle_id"])
+    return {"swept": swept, "promoted": promoted, "failed": failed_bundles}
 
 
 def annotate(con, hits: list[dict]) -> None:

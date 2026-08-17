@@ -219,6 +219,21 @@ def cmd_bundle_trust(args) -> int:
     return 0
 
 
+def cmd_bundle_resweep(args) -> int:
+    """Re-verify bundles admitted at less than full verification — e.g. while
+    the embed endpoint was down (T3 skipped) or the local space unconfirmed."""
+    from .bundles import verify_on_use
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    result = verify_on_use.resweep(con, collection)
+    print(f"swept {result['swept']} bundle(s): {result['promoted']} promoted to "
+          f"tier 3, {len(result['failed'])} failed")
+    for bundle_id in result["failed"]:
+        print(f"  FAILED {bundle_id[:16]}… — producer quarantined, affected "
+              f"documents re-queued for local embedding")
+    return 1 if result["failed"] else 0
+
+
 def cmd_bundle_status(args) -> int:
     from .bundles import ledger as bundle_ledger, trust as bundle_trust
     collection = _collection_by_name(args.collection)
@@ -313,6 +328,10 @@ def main(argv=None) -> int:
     b_status.add_argument("collection")
     b_status.add_argument("--limit", type=int, default=20)
     b_status.set_defaults(func=cmd_bundle_status)
+
+    b_resweep = bundle.add_parser("resweep")
+    b_resweep.add_argument("collection")
+    b_resweep.set_defaults(func=cmd_bundle_resweep)
 
     corpus_parser = top.add_parser("corpus")
     corpus = corpus_parser.add_subparsers(dest="verb", required=True)

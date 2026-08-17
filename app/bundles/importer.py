@@ -175,6 +175,26 @@ def _artifact_search_dirs() -> list[Path]:
     return [Path(os.getenv("CONFIG_DIR", ".")) / "spaces"]
 
 
+def _trusted_space_authors() -> list[str]:
+    """platform.toml's [trust] space_authors — the pubkeys whose signed
+    artifacts are fully trusted. Everyone else's artifacts load as ADVISORY,
+    and t2/t3's tighten-only rule keeps them from loosening any tolerance.
+    Read per call, matching platform_config.load()'s no-caching convention."""
+    try:
+        from .. import platform_config
+        return list(platform_config.load().trust.space_authors)
+    except Exception:
+        return []
+
+
+def find_space_artifact(space_id: str):
+    """The one place bundle code resolves an artifact, so trust plumbing
+    cannot be forgotten at a call site."""
+    from ..verify import artifact as artifact_mod
+    return artifact_mod.find(space_id, _artifact_search_dirs(),
+                              trusted_authors=_trusted_space_authors())
+
+
 def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed_fn):
     """Run the calibrated ladder when this node has an artifact for the space.
 
@@ -188,8 +208,7 @@ def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed
     """
     try:
         from .. import verify as ladder
-        from ..verify import artifact as artifact_mod
-        space_artifact = artifact_mod.find(header.space_id, _artifact_search_dirs())
+        space_artifact = find_space_artifact(header.space_id)
         if space_artifact is None:
             return None
         return ladder.run_ladder(
@@ -421,7 +440,15 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_
         ledger.mark_imported(con, ids, uid, header.producer_pubkey, bundle_id)
         written[uid] = len(ids)
 
-    ledger.record_applied(con, bundle_id, written, verdict.summary())
+    ladder_tier = (int(ladder_verdict.tier_reached)
+                   if ladder_verdict is not None and ladder_verdict.tier_reached is not None
+                   else None)
+    ledger.record_applied(con, bundle_id, written, verdict.summary(),
+                           tier_reached=ladder_tier)
+    if ladder_verdict is not None:
+        # The FULL evidence, untruncated, into its own blob — the summary
+        # column alone cannot prove anything to a third party.
+        ledger.record_evidence(con, bundle_id, ladder_verdict.evidence())
     return {"ok": True, "bundle_id": bundle_id, "producer": header.producer_pubkey,
             "admission": admission, "uids": len(written),
             "chunks": sum(written.values()), "verdict": verdict.summary()}

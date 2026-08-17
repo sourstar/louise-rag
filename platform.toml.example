@@ -28,6 +28,16 @@ reserve_interactive = "20%"
 # Wall-clock local time, so DST shifts them as an operator would expect.
 schedule = "01:00-07:00 full; else 30%"
 
+[trust]
+# Pubkeys whose SIGNED space artifacts are fully trusted — their calibrated
+# tolerances apply as measured. Anyone else's artifact loads as ADVISORY: it
+# may tighten verification but can never loosen a tolerance below the built-in
+# coarse floor. Deliberately not trust-on-first-use: an artifact defines what
+# "honest vectors" means, so trusting one on sight would hand an attacker the
+# definition. (Producer keys for BUNDLES are separate and are trusted on first
+# use per collection — see `python -m app.cli bundle trust`.)
+# space_authors = ["<64-hex ed25519 pubkey>"]
+
 [transfer]
 # Global fetch workers across all endpoints.
 workers = 8

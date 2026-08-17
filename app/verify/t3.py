@@ -148,18 +148,41 @@ class Sprt:
 def _tau_for(artifact, backend_fingerprint: str, dtype: str) -> tuple[float, float, float, str]:
     """(tau, f0, f1, source). Falls back to a coarse floor when no artifact is
     available, and LABELS it so a degraded pass is never mistaken for a clean
-    one."""
+    one.
+
+    TIGHTEN-ONLY FOR UNTRUSTED ARTIFACTS. An artifact defines what "honest"
+    means, so an unsigned or unrecognised one is advisory: it may make this
+    check STRICTER than the built-in coarse floor, never looser. Concretely a
+    hostile artifact publishing tau=0.1, f0=0.5 or f1=1e-9 would otherwise
+    wave anything through — so for untrusted artifacts tau is floored at the
+    coarse gate, f0 capped at the coarse honest-miss rate, and f1 floored at
+    the coarse detection target. A TRUSTED author (platform.toml
+    [trust] space_authors, signature verified) may set whatever its
+    measurements support, including tolerances below the coarse floor for a
+    genuinely noisy backend pair.
+    """
     if artifact is None:
         return COARSE_TAU, 1e-4, 0.05, "coarse-fallback"
     calibration = artifact.calibration()
     f1 = float((calibration.get("detect_target") or {}).get("f1", 0.05))
+    tau, f0, source = None, 1e-4, "tau_default"
     for pair in calibration.get("pairs") or []:
         if pair.get("producer_class") and pair["producer_class"] in (backend_fingerprint or ""):
             penalty = float((pair.get("storage_dtype_penalty") or {}).get(dtype, 0.0))
-            return (float(pair.get("tau", 0.995)) - penalty,
-                    float(pair.get("p_miss_honest", 1e-4)), f1, "calibration_pair")
-    default = float(calibration.get("tau_default", 0.995))
-    return default, 1e-4, f1, "tau_default"
+            tau = float(pair.get("tau", 0.995)) - penalty
+            f0 = float(pair.get("p_miss_honest", 1e-4))
+            source = "calibration_pair"
+            break
+    if tau is None:
+        tau = float(calibration.get("tau_default", 0.995))
+    if not getattr(artifact, "trusted", False):
+        clamped_tau = max(tau, COARSE_TAU)
+        clamped_f0 = min(f0, 1e-4)
+        clamped_f1 = max(f1, 0.05)
+        if (clamped_tau, clamped_f0, clamped_f1) != (tau, f0, f1):
+            source += "+advisory-floor"
+        tau, f0, f1 = clamped_tau, clamped_f0, clamped_f1
+    return tau, f0, f1, source
 
 
 def check_spot_recompute(chunk_ids, vectors, artifact, *, texts, embed_fn,

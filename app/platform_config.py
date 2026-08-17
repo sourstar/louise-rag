@@ -53,9 +53,24 @@ class TransferConfig:
 
 
 @dataclass(frozen=True)
+class TrustConfig:
+    """architecture-v2.md §14's `[trust]` block, the part P1.2 needs.
+
+    `space_authors` are the pubkeys whose SIGNED space artifacts are fully
+    trusted. This is deliberately Tier-2 file config and deliberately NOT
+    trust-on-first-use: an artifact defines what "honest vectors" means, so
+    trusting one on sight would hand an attacker the definition. An artifact
+    from anyone else still loads — as ADVISORY, allowed to tighten checks but
+    never to loosen a tolerance below the built-in coarse floor.
+    """
+    space_authors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
+    trust: TrustConfig = TrustConfig()
     source_path: Path | None = None          # None = defaults (no file on disk)
 
 
@@ -115,6 +130,22 @@ def _load_one(path: Path) -> PlatformConfig:
         raw: dict[str, Any] = tomllib.load(f)
     bw_raw = raw.get("bandwidth", {}) or {}
     tr_raw = raw.get("transfer", {}) or {}
+    trust_raw = raw.get("trust", {}) or {}
+
+    authors_raw = trust_raw.get("space_authors", [])
+    if not isinstance(authors_raw, list):
+        raise schedule_mod.ScheduleError("trust.space_authors must be a list of pubkeys")
+    authors = []
+    for value in authors_raw:
+        if not isinstance(value, str) or len(value) != 64:
+            raise schedule_mod.ScheduleError(
+                f"trust.space_authors entries must be 64-hex pubkeys, got {value!r}")
+        try:
+            bytes.fromhex(value)
+        except ValueError:
+            raise schedule_mod.ScheduleError(
+                f"trust.space_authors entry is not hex: {value!r}") from None
+        authors.append(value.lower())
 
     schedule_text = (bw_raw.get("schedule") or "").strip()
     bandwidth = BandwidthConfig(
@@ -140,7 +171,9 @@ def _load_one(path: Path) -> PlatformConfig:
         per_endpoint=_positive_int(tr_raw, "per_endpoint", DEFAULT_PER_ENDPOINT),
         segments_per_file=segments,
     )
-    return PlatformConfig(bandwidth=bandwidth, transfer=transfer, source_path=path)
+    return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
+                          trust=TrustConfig(space_authors=tuple(authors)),
+                          source_path=path)
 
 
 def load() -> PlatformConfig:

@@ -153,11 +153,19 @@ def _tau_for(artifact, backend_fingerprint: str, dtype: str) -> tuple[float, str
     f16 bundle false-rejects."""
     calibration = artifact.calibration()
     default = float(calibration.get("tau_default", 0.995))
+    tau, source = None, "tau_default"
     for pair in calibration.get("pairs") or []:
         globs = pair.get("producer_class", "")
         if globs and globs in (backend_fingerprint or ""):
-            tau = float(pair.get("tau", default))
             penalty = float((pair.get("storage_dtype_penalty") or {}).get(dtype, 0.0))
-            return tau - penalty, "calibration_pair"
-    penalty = float((calibration.get("storage_dtype_penalty") or {}).get(dtype, 0.0))
-    return default - penalty, "tau_default"
+            tau, source = float(pair.get("tau", default)) - penalty, "calibration_pair"
+            break
+    if tau is None:
+        penalty = float((calibration.get("storage_dtype_penalty") or {}).get(dtype, 0.0))
+        tau = default - penalty
+    # Tighten-only for untrusted artifacts (same rule as t3._tau_for): an
+    # advisory artifact publishing a permissive tolerance must not be able to
+    # wave a wrong-oven producer through the challenge check.
+    if not getattr(artifact, "trusted", False) and tau < 0.95:
+        tau, source = 0.95, source + "+advisory-floor"
+    return tau, source

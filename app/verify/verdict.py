@@ -89,10 +89,13 @@ class Verdict:
     def summary(self) -> str:
         return "; ".join(f"{r.tier.name}={r.outcome}" for r in self.results)
 
-    def evidence(self) -> str:
-        """Serialized for the bundles ledger. Compact, but complete enough that
-        a later reader can re-derive why a bundle was accepted or refused."""
-        return json.dumps({
+    def evidence(self, limit: int | None = None) -> str:
+        """Serialized evidence. `limit=None` is the FULL payload for the
+        bundle_evidence blob — truncating it would amputate exactly the
+        per-chunk vectors and Gram triples that make a forgery provable to a
+        third party. Pass a limit only for display columns, never for the
+        stored record."""
+        payload = json.dumps({
             "space_id": self.space_id,
             "artifact_version": self.artifact_version,
             "tier_reached": int(self.tier_reached) if self.tier_reached is not None else None,
@@ -102,7 +105,8 @@ class Verdict:
                  "statistics": r.statistics}
                 for r in self.results
             ],
-        }, sort_keys=True, separators=(",", ":"), default=float)[:8000]
+        }, sort_keys=True, separators=(",", ":"), default=float)
+        return payload if limit is None else payload[:limit]
 
     def raise_if_failed(self, exc_type) -> None:
         if self.failed:

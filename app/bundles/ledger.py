@@ -51,12 +51,14 @@ def record_applying(con, *, bundle_id: str, producer_pubkey: str, space_id: str,
 
 
 def record_applied(con, bundle_id: str, uids_written: dict[str, int],
-                   verdict_summary: str) -> None:
+                   verdict_summary: str, tier_reached: int | None = None) -> None:
     con.execute(
-        "UPDATE bundles SET state=?,uids=?,chunk_count=?,verdict=?,error=NULL,"
-        "imported_at=? WHERE bundle_id=?",
+        "UPDATE bundles SET state=?,uids=?,chunk_count=?,verdict=?,tier_reached=?,"
+        "error=NULL,imported_at=? WHERE bundle_id=?",
         (APPLIED, json.dumps(uids_written, sort_keys=True),
-         sum(uids_written.values()), verdict_summary, int(time.time()), bundle_id))
+         sum(uids_written.values()), verdict_summary,
+         None if tier_reached is None else int(tier_reached),
+         int(time.time()), bundle_id))
     row = get(con, bundle_id)
     if row:
         _bump_provider(con, row["producer_pubkey"], accepted=1)
@@ -81,6 +83,37 @@ def record_rejected(con, *, bundle_id: str | None, producer_pubkey: str | None,
          verdict_summary, reason[:1000], int(time.time())))
     if producer_pubkey:
         _bump_provider(con, producer_pubkey, rejected=1)
+
+
+def record_evidence(con, bundle_id: str, evidence: str) -> None:
+    """The FULL verification evidence, stored beside (not inside) the bundles
+    row. Untruncated on purpose — see the bundle_evidence schema comment."""
+    con.execute(
+        "INSERT INTO bundle_evidence(bundle_id,evidence,created_at) VALUES(?,?,?) "
+        "ON CONFLICT(bundle_id) DO UPDATE SET evidence=excluded.evidence,"
+        "created_at=excluded.created_at",
+        (bundle_id, evidence, int(time.time())))
+
+
+def get_evidence(con, bundle_id: str) -> str | None:
+    row = con.execute("SELECT evidence FROM bundle_evidence WHERE bundle_id=?",
+                       (bundle_id,)).fetchone()
+    return row["evidence"] if row else None
+
+
+def set_tier_reached(con, bundle_id: str, tier: int) -> None:
+    con.execute("UPDATE bundles SET tier_reached=? WHERE bundle_id=?",
+                (int(tier), bundle_id))
+
+
+def bundles_below_tier(con, tier: int) -> list[dict]:
+    """Applied bundles admitted with less verification than `tier` — the
+    resweep worklist. space_weak counts as below any tier: it means the local
+    space was unconfirmed when the bundle landed."""
+    return [dict(r) for r in con.execute(
+        "SELECT * FROM bundles WHERE state=? AND "
+        "(tier_reached IS NULL OR tier_reached < ? OR space_weak=1) "
+        "ORDER BY imported_at", (APPLIED, int(tier)))]
 
 
 def sweep_stale(con) -> list[str]:
