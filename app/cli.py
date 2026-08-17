@@ -284,6 +284,69 @@ def cmd_contribute(args) -> int:
     return 0
 
 
+def cmd_genesis_import(args) -> int:
+    """Admit a published vector archive (or any compatible parquet of
+    id+vector rows) into a collection's space — reuse of already-paid
+    GPU-hours, verified as the same function before a single row lands."""
+    from .bundles import genesis
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+
+    if args.parquet:
+        archive = genesis.GenesisArchive(
+            archive_id=args.archive_id or f"parquet:{Path(args.parquet).name}",
+            base_url="", adapter="parquet",
+            shards=(str(Path(args.parquet).resolve()),),
+            uid_prefix=args.uid_prefix or f"{collection.plugin}:")
+        import shutil
+        fetch = lambda name, dest: shutil.copyfile(name, dest)  # noqa: E731 — local file, no network
+    else:
+        archive = genesis.ARCHIVES.get(args.archive or "")
+        if archive is None:
+            known = ", ".join(sorted(genesis.ARCHIVES))
+            raise SystemExit(f"unknown archive {args.archive!r} — known: {known}; "
+                             f"or use --parquet for a local file")
+        fetch = None
+
+    shards = args.shards.split(",") if args.shards else None
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
+    try:
+        result = genesis.import_archive(con, collection, archive, shards=shards,
+                                         fetch=fetch, stop=_stop,
+                                         keep_cache=args.keep_cache)
+    except genesis.GenesisError as e:
+        print(f"REJECTED: {e}", file=sys.stderr)
+        return 1
+    except genesis.GenesisUnavailable as e:
+        print(f"UNAVAILABLE (retry later): {e}", file=sys.stderr)
+        return 2
+    print(f"imported {result['chunks']} vectors across {result['docs']} documents "
+          f"({len(result['shards'])} shard(s))")
+    for r in result["shards"]:
+        print(f"  {r['shard']}: {r['state']}"
+              + (f" docs={r['docs']} skipped_absent={r['skipped_absent']} "
+                 f"skipped_shape={r['skipped_shape']}" if "docs" in r else ""))
+    return 0
+
+
+def cmd_genesis_status(args) -> int:
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    rows = con.execute(
+        "SELECT archive, shard, state, docs, chunks, detail FROM genesis_imports "
+        "ORDER BY archive, shard").fetchall()
+    if not rows:
+        print("no genesis imports recorded")
+        return 0
+    for r in rows:
+        line = f"{r['archive']}/{r['shard']}: {r['state']} docs={r['docs']} chunks={r['chunks']}"
+        if r["detail"]:
+            line += f" — {r['detail']}"
+        print(line)
+    return 0
+
+
 def cmd_backend_check(args) -> int:
     from .verify import backend_gate
     collection = _collection_by_name(args.collection)
@@ -376,6 +439,24 @@ def main(argv=None) -> int:
     b_resweep = bundle.add_parser("resweep")
     b_resweep.add_argument("collection")
     b_resweep.set_defaults(func=cmd_bundle_resweep)
+
+    genesis_parser = top.add_parser("genesis", help="import published vector archives")
+    genesis_sub = genesis_parser.add_subparsers(dest="verb", required=True)
+
+    g_import = genesis_sub.add_parser("import")
+    g_import.add_argument("collection")
+    g_import.add_argument("--archive", help="known archive id (e.g. medcpt-pubmed)")
+    g_import.add_argument("--parquet", help="local parquet file with id+vector columns")
+    g_import.add_argument("--archive-id", help="provenance label for --parquet imports")
+    g_import.add_argument("--uid-prefix", help="id -> uid prefix (default: '<plugin>:')")
+    g_import.add_argument("--shards", help="comma-separated shard subset")
+    g_import.add_argument("--keep-cache", action="store_true",
+                           help="keep downloaded shard files after applying")
+    g_import.set_defaults(func=cmd_genesis_import)
+
+    g_status = genesis_sub.add_parser("status")
+    g_status.add_argument("collection")
+    g_status.set_defaults(func=cmd_genesis_status)
 
     backend_parser = top.add_parser("backend", help="embedding backend gate")
     backend = backend_parser.add_subparsers(dest="verb", required=True)

@@ -143,6 +143,23 @@ CREATE TABLE IF NOT EXISTS providers (
   last_seen INTEGER
 );
 
+-- Genesis imports (architecture-v2.md §8, amendment 10): published vector
+-- archives admitted shard by shard. One row per (archive, shard) is the
+-- resume cursor AND the provenance record — quarantine and re-audit work on
+-- genesis imports exactly as on bundles.
+CREATE TABLE IF NOT EXISTS genesis_imports (
+  archive TEXT NOT NULL,            -- archive identifier (e.g. medcpt-pubmed)
+  shard TEXT NOT NULL,              -- shard name within the archive
+  source_url TEXT,
+  content_digest TEXT,              -- sha256 of the shard bytes as fetched
+  state TEXT NOT NULL,              -- applying | applied | rejected | skipped
+  docs INTEGER DEFAULT 0,
+  chunks INTEGER DEFAULT 0,
+  detail TEXT,
+  updated_at INTEGER,
+  PRIMARY KEY (archive, shard)
+);
+
 -- Full verification evidence, one blob per bundle, separate from the bundles
 -- row deliberately: the ladder's evidence includes per-chunk claimed and
 -- recomputed vectors — §6's "proof of forgery" — and truncating it into a
