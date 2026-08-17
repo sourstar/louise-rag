@@ -30,6 +30,7 @@ from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .bundles import importer as bundle_importer
 from .bundles import ledger as bundle_ledger
+from .verify import backend_gate
 from .transfer.manager import get_manager
 
 # A threading.Event rather than a bool, because it now has to be *observed* by
@@ -95,9 +96,9 @@ def stage_embed(con, row, collection) -> None:
         (config.EMBED_VERSION, int(time.time()), row["uid"]))
     db.log_event(con, "info", "embed", f"embedded {n} chunks", row["uid"])
 
-def _next_book(con, scope):
+def _next_book(con, scope, embed_allowed=True):
     # 1. priority embeds (lazy queue), regardless of backfill mode
-    if scope["embed_mode"] in ("lazy", "all"):
+    if embed_allowed and scope["embed_mode"] in ("lazy", "all"):
         r = con.execute("""
             SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
             WHERE d.in_scope=1 AND d.rdf_done=1
@@ -124,7 +125,7 @@ def _next_book(con, scope):
     if r:
         return "fts", r
     # 4. dense backfill only in 'all' mode (non-English first: rarest knowledge)
-    if scope["embed_mode"] == "all":
+    if embed_allowed and scope["embed_mode"] == "all":
         r = con.execute(
             "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
             "AND retries<? AND (embed_done=0 OR embed_version<?) "
@@ -226,6 +227,12 @@ def _run_one_step(con, collection, last_idle_log: dict) -> bool:
         return True
     scope = db.get_scope(con)
     stage, row = _next_book(con, scope)
+    if stage == "embed" and not backend_gate.embed_allowed(con, collection):
+        # The endpoint failed its behavioral baseline (or is down). Embedding
+        # pauses — the document is untouched, never errored — while rdf/fts
+        # work continues. embed_allowed() logged the transition and caches the
+        # verdict, so this costs nothing per round until the TTL expires.
+        stage, row = _next_book(con, scope, embed_allowed=False)
     if row is None:
         now = time.time()
         if now - last_idle_log.get(collection.name, 0.0) > 300:

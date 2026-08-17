@@ -18,8 +18,19 @@ RERANK_URL = os.getenv("RERANK_URL", "")  # optional TEI-style /rerank endpoint;
 
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
-EMBED_BATCH = int(os.getenv("EMBED_BATCH", "8"))
+# Default 1 on purpose: llama-server corrupts long sequences when one
+# /v1/embeddings request carries multiple texts (verified live 2026-08-17;
+# deterministic per batch shape, and its prompt cache can replay the corrupted
+# result for later single-text requests). Raise only for backends verified to
+# batch correctly. Parallel single-text requests are safe — use
+# EMBED_CONCURRENCY for throughput instead.
+EMBED_BATCH = int(os.getenv("EMBED_BATCH", "1"))
 EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "1"))  # parallel embed requests in flight
+# Behavioral backend gate (app/verify/backend_gate.py): before writing any
+# vectors the worker verifies the endpoint still reproduces its recorded
+# probe baseline — the check the weak (name-derived) model hash cannot do.
+# "off" disables it; there is deliberately no per-collection toggle.
+BACKEND_GATE = os.getenv("BACKEND_GATE", "on")
 EMBED_DTYPE = os.getenv("EMBED_DTYPE", "f32")  # f32 | f16 (halves vector storage)
 EMBED_API = os.getenv("EMBED_API", "ollama")  # ollama (/api/embed) | openai (/v1/embeddings, e.g. llama-server)
 EMBED_CTX = int(os.getenv("EMBED_CTX", "8192"))

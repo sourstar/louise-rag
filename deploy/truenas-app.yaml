@@ -5,7 +5,7 @@
 # a config mount (collections/*.toml, platform.toml, node key, space
 # artifacts), admin auth for the librarian pages, and the bundle machinery.
 #
-# BEFORE FIRST START — three one-time steps, in order (NAS shell):
+# BEFORE FIRST START — four one-time steps, in order (NAS shell):
 #
 #   1. Build the image (from a checkout of this repo on the NAS):
 #        docker build -t louise-rag:local .
@@ -23,15 +23,36 @@
 #        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data \
 #          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db
 #
-# EMBED_VERSION is 3 ON PURPOSE. Verification on 2026-08-18 proved the stored
-# vectors (embedded as v2) are ORTHOGONAL (cos ~0.1) to what the current
-# llama-embed endpoint produces for the same text — the embedder's model or
-# pooling changed after the v2 run, and with EMBED_API=openai the space pin
-# hashes only the model NAME, so nothing could catch it automatically. The
-# bump makes the worker re-embed every stale book against the model queries
-# will actually use. Expect a long backfill for the ~10.5k embedded books
-# (set the dashboard scope's embed mode to `all` to do it eagerly, or leave
-# `lazy` to rebuild around real usage).
+#   4. Reset the 714 corrupted books so the worker re-embeds them (see the
+#      vector-forensics note below; verified boundary 2026-07-21 12:56 UTC —
+#      exactly 714 books, delete-then-insert makes the redo safe):
+#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data louise-rag:local \
+#          python -c "import sqlite3; c=sqlite3.connect('/data/manifest.db'); \
+#          print(c.execute(\"UPDATE documents SET embed_done=0 WHERE embed_done=1 \
+#          AND updated_at <= strftime('%s','2026-07-21 12:56:00')\").rowcount); \
+#          c.commit()"
+#
+# VECTOR FORENSICS (verified live against the production NAS, 2026-08-16/17).
+# The stored v2 vectors are CORRECT for 9,847 of the 10,561 embedded books:
+# re-embedding their text on the current llama-embed reproduces them at
+# cos >= 0.9999. The first 714 books (embedded 2026-07-20 20:12 ->
+# 2026-07-21 12:53 UTC, before a 12:58 restart) are degenerate — an entire
+# book collapses into one cone (pairwise cos ~0.97) — and must be redone
+# (step 4). Root cause, reproduced on demand: llama-server corrupts long
+# sequences when a single /v1/embeddings request carries MULTIPLE texts
+# (batch of 8 -> cos 0.32 vs the same text alone; deterministic per batch
+# shape), and its prompt cache can then replay the corrupted result even for
+# a later single-text request. Hence EMBED_BATCH=1 below is LOAD-BEARING —
+# never raise it while the backend is llama-server. Concurrent single-text
+# requests are verified safe (cos >= 0.9999), so EMBED_CONCURRENCY=2 keeps
+# the -np 4 server busy. EMBED_VERSION stays 2: the surviving vectors are
+# valid for the exact model the queries will use.
+#
+# Pin the llama-embed app's image by digest (or its per-build tag, e.g.
+# server-intel-b10450) — the moving :server-intel tag is what turned this
+# into a forensic exercise: the image changed multiple times mid-run and
+# nothing could tell. The platform's space pinning + verify-on-use exists
+# for exactly this, but only helps once vectors are made under it.
 #
 # Set ADMIN_TOKEN before installing: it gates the Library/Network/System
 # pages and the mutating API. Unset = those areas are locked out entirely
@@ -61,9 +82,10 @@ services:
       EMBED_MODEL: embed
       EMBED_CTX: '8192'
       EMBED_DTYPE: f16
-      # llama-embed runs -np 4; batch x concurrency should reach it
-      # (the legacy 1x1 left three slots idle)
-      EMBED_BATCH: '4'
+      # EMBED_BATCH=1 is LOAD-BEARING: llama-server corrupts long sequences
+      # in multi-text embedding requests (see header). Parallel single-text
+      # requests are verified safe — concurrency drives the -np 4 slots.
+      EMBED_BATCH: '1'
       EMBED_CONCURRENCY: '2'
       RERANK_URL: ''
       # ── pipeline versions ──
@@ -71,7 +93,7 @@ services:
       CHUNK_OVERLAP: '120'
       CHUNK_VERSION: '1'
       FTS_VERSION: '1'
-      EMBED_VERSION: '3'          # see header: stored v2 vectors mismatch the live model
+      EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset in step 4 re-embed
       DISCOVER_INTERVAL_MIN: '360'
       # ── platform ──
       ADMIN_TOKEN: 'CHANGE-ME-BEFORE-INSTALL'

@@ -284,6 +284,50 @@ def cmd_contribute(args) -> int:
     return 0
 
 
+def cmd_backend_check(args) -> int:
+    from .verify import backend_gate
+    collection = _collection_by_name(args.collection)
+    try:
+        result = backend_gate.check(collection)
+    except backend_gate.BackendUnavailable as e:
+        print(f"UNAVAILABLE: {e}", file=sys.stderr)
+        return 2
+    except backend_gate.BackendGateError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 1
+    if result.get("recorded"):
+        print(f"baseline recorded (dim {result['dim']}) — trust-on-first-use; "
+              f"future checks compare against it")
+    else:
+        detail = " ".join(f"{k}={v:.4f}" for k, v in result["cosines"].items())
+        print(f"PASS: endpoint reproduces its baseline ({detail})")
+    return 0
+
+
+def cmd_backend_rebaseline(args) -> int:
+    """Explicit operator acceptance of a CHANGED backend. Existing vectors
+    were made by the old one — accepting means planning their re-embed."""
+    from .verify import backend_gate
+    collection = _collection_by_name(args.collection)
+    path = backend_gate.baseline_path(collection)
+    existed = path.exists()
+    if existed and not args.yes:
+        print("A baseline already exists. Re-recording declares the CURRENT "
+              "endpoint authoritative; vectors embedded under the old backend "
+              "become foreign to every future query. Re-run with --yes if that "
+              "is intended (and plan a re-embed).", file=sys.stderr)
+        return 1
+    try:
+        baseline = backend_gate.record_baseline(collection)
+    except backend_gate.BackendUnavailable as e:
+        print(f"UNAVAILABLE: {e}", file=sys.stderr)
+        return 2
+    backend_gate.reset_cache()
+    print(f"{'re-recorded' if existed else 'recorded'} baseline "
+          f"(dim {baseline['dim']}, {len(baseline['probes'])} probes) at {path}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="app.cli")
     top = p.add_subparsers(dest="command", required=True)
@@ -332,6 +376,19 @@ def main(argv=None) -> int:
     b_resweep = bundle.add_parser("resweep")
     b_resweep.add_argument("collection")
     b_resweep.set_defaults(func=cmd_bundle_resweep)
+
+    backend_parser = top.add_parser("backend", help="embedding backend gate")
+    backend = backend_parser.add_subparsers(dest="verb", required=True)
+
+    be_check = backend.add_parser("check", help="verify the endpoint against its baseline")
+    be_check.add_argument("collection")
+    be_check.set_defaults(func=cmd_backend_check)
+
+    be_rebase = backend.add_parser("rebaseline",
+                                    help="accept the current endpoint as the new baseline")
+    be_rebase.add_argument("collection")
+    be_rebase.add_argument("--yes", action="store_true")
+    be_rebase.set_defaults(func=cmd_backend_rebaseline)
 
     corpus_parser = top.add_parser("corpus")
     corpus = corpus_parser.add_subparsers(dest="verb", required=True)
