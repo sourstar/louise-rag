@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "seed": 20260817,
+  "dim": 256,
+  "texts": 512,
+  "generated_by": "tools/calibrate_space.py --synth",
+  "note": "stand-in backends; regenerate identically with the recorded seed",
+  "created_at": 1786944657
+}

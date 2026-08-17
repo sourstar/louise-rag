@@ -1,0 +1,131 @@
+{
+  "calibration": {
+    "backend_classes": [
+      {
+        "id": "reference/cuda/f16"
+      },
+      {
+        "id": "same/sycl/f16"
+      },
+      {
+        "id": "same/cpu/f32"
+      },
+      {
+        "id": "quant/cuda/q8"
+      },
+      {
+        "id": "quant/cuda/q4"
+      },
+      {
+        "id": "othermodel/cuda/f16"
+      }
+    ],
+    "detect_target": {
+      "f1": 0.05
+    },
+    "model_substitution_reference": {
+      "p50": 0.10899973341730197,
+      "p99": 0.25799663999377187
+    },
+    "pairs": [
+      {
+        "cos": {
+          "mean": 0.9999948965170651,
+          "min": 0.9999933174020768,
+          "p0001": 0.9999933274940279,
+          "p001": 0.9999934183215888,
+          "p01": 0.9999936600775872,
+          "p50": 0.9999949145254394,
+          "sd": 4.649205300750017e-07
+        },
+        "n_pairs_measured": 512,
+        "p_exact_match": 0.0,
+        "p_miss_honest": 0.0,
+        "producer_class": "same/sycl/f16",
+        "storage_dtype_penalty": {
+          "f16": 0.00035,
+          "f32": 0.0
+        },
+        "tau": 0.9999868141313404,
+        "verifier_class": "reference/cuda/f16"
+      },
+      {
+        "cos": {
+          "mean": 0.999999180577219,
+          "min": 0.9999989557404284,
+          "p0001": 0.9999989568854621,
+          "p001": 0.9999989671907652,
+          "p01": 0.9999989916418112,
+          "p50": 0.9999991813405011,
+          "sd": 7.485492826792053e-08
+        },
+        "n_pairs_measured": 512,
+        "p_exact_match": 0.0,
+        "p_miss_honest": 0.0,
+        "producer_class": "same/cpu/f32",
+        "storage_dtype_penalty": {
+          "f16": 0.00035,
+          "f32": 0.0
+        },
+        "tau": 0.9999868141313404,
+        "verifier_class": "reference/cuda/f16"
+      },
+      {
+        "cos": {
+          "mean": 0.9999999785636213,
+          "min": 0.9999999698134243,
+          "p0001": 0.9999999698962654,
+          "p001": 0.9999999706418348,
+          "p01": 0.9999999724809877,
+          "p50": 0.9999999787068317,
+          "sd": 2.4228866869716037e-09
+        },
+        "n_pairs_measured": 512,
+        "p_exact_match": 0.0,
+        "p_miss_honest": 0.0,
+        "producer_class": "quant/cuda/q8",
+        "storage_dtype_penalty": {
+          "f16": 0.00035,
+          "f32": 0.0
+        },
+        "tau": 0.9999868141313404,
+        "verifier_class": "reference/cuda/f16"
+      },
+      {
+        "cos": {
+          "mean": 0.9979647597768906,
+          "min": 0.9973607844132332,
+          "p0001": 0.9973628848819357,
+          "p001": 0.9973817891002582,
+          "p01": 0.9975514065248409,
+          "p50": 0.9979659157286929,
+          "sd": 0.00017743616155052534
+        },
+        "n_pairs_measured": 512,
+        "p_exact_match": 0.0,
+        "p_miss_honest": 1.0,
+        "producer_class": "quant/cuda/q4",
+        "storage_dtype_penalty": {
+          "f16": 0.00035,
+          "f32": 0.0
+        },
+        "tau": 0.9999868141313404,
+        "verifier_class": "reference/cuda/f16"
+      }
+    ],
+    "storage_dtype_penalty": {
+      "f16": 0.00035,
+      "f32": 0.0
+    },
+    "tau_default": 0.9999868141313404
+  },
+  "recommendation": {
+    "detect_5pct_at_n": 0.5598733313482347,
+    "false_reject_at_n": 1.599999988000001e-08,
+    "guard": 6.503270736377471e-06,
+    "margin_to_other_model_p99": 0.7419901741375685,
+    "n_t3": 16,
+    "p_miss_honest": 0.0,
+    "tau": 0.9999868141313404
+  }
+}

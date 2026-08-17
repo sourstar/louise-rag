@@ -132,7 +132,20 @@ def _pair_stats(matrix, ids, rng, samples=PAIR_SAMPLES):
     return out
 
 
-def build(collection, out_dir: Path, *, replicates: int, signing_key=None) -> dict:
+def load_calibration(path: Path) -> dict:
+    """A calibration block produced by tools/calibrate_space.py — measured
+    tolerances replacing this writer's placeholder defaults (F2's deliverable:
+    the harness output feeds the artifact, the artifact feeds t3)."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    block = payload.get("calibration", payload)
+    if not block.get("pairs"):
+        raise SystemExit(f"{path} has no calibration pairs — run "
+                          f"tools/calibrate_space.py first")
+    return block
+
+
+def build(collection, out_dir: Path, *, replicates: int, signing_key=None,
+          calibration: dict | None = None) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(20260817)
@@ -207,7 +220,9 @@ def build(collection, out_dir: Path, *, replicates: int, signing_key=None) -> di
         "overlap": {"by_phi": {"bins": [], "z_tail_threshold": -3.0,
                                 "aggregate_null_by_bucket": []},
                     "min_pairs": 8},
-        "calibration": {
+        "calibration": calibration if calibration is not None else {
+            # placeholder defaults — replaced wholesale by a measured block
+            # from tools/calibrate_space.py via --calibration
             "tau_default": 0.995,
             "detect_target": {"f1": 0.05},
             "pairs": [],
@@ -252,6 +267,8 @@ def main(argv=None) -> int:
     parser.add_argument("out_dir")
     parser.add_argument("--replicates", type=int, default=DEFAULT_REPLICATES)
     parser.add_argument("--key", help="node key path; unsigned if omitted")
+    parser.add_argument("--calibration", type=Path,
+                        help="calibration.json from tools/calibrate_space.py")
     args = parser.parse_args(argv)
 
     collection = collections_mod.by_name(args.collection)
@@ -261,8 +278,9 @@ def main(argv=None) -> int:
     if args.key:
         from app.bundles.keys import load_signing_key
         signing_key = load_signing_key(Path(args.key))
+    calibration = load_calibration(args.calibration) if args.calibration else None
     result = build(collection, Path(args.out_dir), replicates=args.replicates,
-                   signing_key=signing_key)
+                   signing_key=signing_key, calibration=calibration)
     print(f"wrote artifact for space {result['space_id'][:16]}… to {result['path']}")
     print(f"  {result['chunks']} chunks across {result['documents']} documents, "
           f"dim {result['dim']}")
