@@ -317,6 +317,30 @@ Two of three flagship collections can start from existing public artifacts:
 
 Catch-up arithmetic: PubMed 2023→2026 ≈ 3M records ≈ 300 work units ≈ 135 GPU-h — a dozen volunteers over a weekend. Then ~20k records/week ≈ **<1 GPU-h/week** to stay current. That asymmetry is the pitch: the backfill was already paid by NCBI; sustaining it costs a coffee break.
 
+*(Amended after Phase-1 integration — MedCPT.)* The genesis import is now
+specified, not just named. It is **admission, not trust** — a published
+archive gets the same skepticism as a peer bundle, minus the signature it
+never had:
+
+1. **Scoped by possession:** import only vectors whose PMIDs the collection
+   actually holds (RAG needs the text; §8's pointer-only rule covers the
+   rest). The importer keeps a cursor over the archive shards, so a corpus
+   grown later re-sweeps only the new PMIDs.
+2. **Convert on import:** f32 → f16 (§5.1's ~100→55 GB), L2-normalized
+   client-side like every other vector in the store — the archive's raw
+   layout never dictates storage.
+3. **Admission checks:** T0 structural (dim=768, unit-norm, NaN/dupes,
+   moment envelope) plus a **sample re-encode** of n texts through the
+   collection's own `[embed]` endpoint at cosine ≥ the calibrated τ —
+   proving the local encoder and the archive are the *same function*, which
+   is precisely what makes gap-filling coherent. An archive that fails is
+   refused whole, not partially imported.
+4. **Provenance recorded:** the ledger rows carry the archive URL, shard,
+   and content digest — quarantine works on genesis imports exactly as on
+   bundles. The catch-up loop (local encoder over post-snapshot records) is
+   ordinary embed-stage work in the same space; nothing about it is
+   special-cased.
+
 **License gating, per source and per plane** (`license_class` + `privacy_class` enforce it mechanically):
 
 - **Green (public domain / CC0):** GRCh38 & T2T reference, RefSeq, ClinVar, dbSNP, gnomAD (recent releases), MedCPT vectors, HGNC. Model-organism references and MGI/FlyBase/ZFIN annotations.
@@ -431,7 +455,34 @@ ZLUDA (CUDA-on-AMD) does not rescue Evo 2 — PyTorch support is still blocked o
 plugin="pubmed"  profile="recent"  space="medcpt@sha256:…"
 embed_mode="lazy-p2p"  share_raw=true  share_vectors=true
 delta="daily@03:00"  license_ack="2026-08-16T…/sha256-of-terms"
+
+[embed]                              # (Amended after Phase-1: MedCPT integration)
+url="http://nas:30440"  api="openai"  model="medcpt-article"
+dtype="f16"  ctx="512"  dim=768
+query_url="http://nas:30441"         # bi-encoder pairs: queries use the OTHER encoder
 ```
+
+*(Amended after Phase-1 integration — MedCPT.)* The per-collection `[embed]`
+block realizes what §3's "collection = (…, embedding space)" already implied
+but Tier 1's single global `EMBED_URL` made unconfigurable: a node holding a
+Qwen3-space Gutenberg **and** a MedCPT-space PubMed needs one embedding
+recipe *per collection*. Semantics:
+
+- **Fallback, not override:** a collection without an `[embed]` block uses
+  the Tier-1 env recipe unchanged — existing single-space deployments are
+  untouched. With the block present, every field is read from the TOML and
+  the env plays no part for that collection.
+- **Immutability is still the pin's job** (§3, invariant 1): the block
+  states desired identity; the pinned `space_id` + boot validation decide
+  whether the vectors on disk agree, and refuse to boot when they don't.
+  Editing the block is exactly as consequential as editing `EMBED_MODEL`
+  always was — the pin catches it, never silence.
+- **`query_url` names the bi-encoder asymmetry** (MedCPT: article encoder
+  for documents, query encoder for queries — `query_encoder_hash` was in
+  the `space_id` recipe from day one). Symmetric spaces omit it.
+- **The behavioral backend gate baselines per collection** against that
+  collection's endpoint — a swapped MedCPT container is caught exactly like
+  a swapped llama.cpp build, independently per space.
 
 `role` is the UX multiplier — one word presets a dozen knobs (solo = network off; consumer = import-only; contributor = seed + contribute mode; archivist = seed everything, replication-biased) and maps 1:1 onto the go-to-market personas. Onboarding = "pick your role."
 
@@ -529,3 +580,20 @@ change. Index, with the evidence behind each in
    synthetic embeddings; recorded-real-vector calibration is the only cover.
 8. **CLAUDE.md invariant 2** — sub-document checkpoint granularity
    acknowledged (mid-file acquisition, mid-bundle import).
+
+Amended again for the MedCPT integration (multi-space nodes), evidence in
+the live NAS deployment:
+
+9. **§14 Tier 2** — collections gain a per-collection `[embed]` block
+   (endpoint, api, model, dtype, ctx, dim, and `query_url` for bi-encoder
+   pairs); Tier-1 env stays the fallback for collections that declare none.
+   The single global `EMBED_URL` could not express one node holding a
+   Qwen3-space collection and a MedCPT-space collection at once. The space
+   pin and boot validation still own immutability; the backend gate
+   baselines per collection.
+10. **§8** — the genesis import (NCBI MedCPT archive) is specified as
+    admission-not-trust: possession-scoped (held PMIDs only, cursor for
+    later growth), f32→f16 + L2 on import, T0 + sample re-encode against
+    the collection's own encoder (same-function proof), refused whole on
+    failure, ledger-recorded with archive provenance. Catch-up embedding of
+    post-snapshot records is ordinary embed-stage work in the same space.
