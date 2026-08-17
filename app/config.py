@@ -89,6 +89,11 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
+# Per-collection time budget per worker round (seconds). Cheap stages (a
+# pubmed rdf parse is ~0.1s) process many documents per round; an expensive
+# stage (a 60s embed) still runs exactly once — fairness bounded by time,
+# not by document count.
+WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
 # Rescan the corpus for new/changed books: always at worker startup, then every
 # N minutes while running (0 = only at startup / manual rescan).
 DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))

@@ -371,8 +371,20 @@ def run_forever():
                         time.time() - last_discover[collection.name] > config.DISCOVER_INTERVAL_MIN * 60):
                     _discover(con, collection, "interval")
                     last_discover[collection.name] = time.time()
-                if _run_one_step(con, collection, last_idle_log):
+                # Time-budgeted round: each collection works until the budget
+                # elapses, not exactly one document. One-doc rounds starved
+                # cheap stages behind expensive neighbors (observed live: a
+                # 0.1s pubmed rdf step per 30-90s gutenberg embed = 10 days
+                # for 30k articles). An expensive single step still exceeds
+                # the budget after one iteration, so fairness is unchanged
+                # where it mattered; the stop event is honored per step.
+                round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
+                while not _stop.is_set():
+                    if not _run_one_step(con, collection, last_idle_log):
+                        break
                     any_work = True
+                    if time.time() >= round_deadline:
+                        break
             if not any_work:
                 time.sleep(config.WORKER_IDLE_SLEEP)
         except Exception:

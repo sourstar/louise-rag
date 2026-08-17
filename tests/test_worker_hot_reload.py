@@ -3,7 +3,7 @@ runs take effect within one round, no restart.
 """
 import pytest
 
-from app import collections as collections_mod, db, spaces, worker
+from app import collections as collections_mod, config, db, spaces, worker
 
 
 def _write_toml(config_dir, name, extra=""):
@@ -61,6 +61,45 @@ def test_removed_collection_leaves_and_its_con_closes(isolated_config, config_di
         db_con = db.connect(cons_b_probe)   # fresh con is fine...
         db_con.close()
         db_con.execute("SELECT 1")          # ...but closed cons raise
+
+
+def test_round_budget_lets_cheap_stages_batch(isolated_config, monkeypatch):
+    """The time-budgeted round: many cheap steps per round, but a step that
+    exhausts the budget ends the round after itself."""
+    from app import worker as worker_mod
+    calls = {"n": 0}
+
+    monkeypatch.setattr(config, "WORKER_ROUND_BUDGET_S", 0.2)
+
+    def cheap_step(con, collection, last_idle_log):
+        calls["n"] += 1
+        return calls["n"] < 500          # pretend work runs out eventually
+
+    # simulate the loop body's budget logic directly
+    import time as time_mod
+    monkeypatch.setattr(worker_mod, "_run_one_step", cheap_step)
+    deadline = time_mod.time() + config.WORKER_ROUND_BUDGET_S
+    while not worker_mod._stop.is_set():
+        if not worker_mod._run_one_step(None, None, None):
+            break
+        if time_mod.time() >= deadline:
+            break
+    assert calls["n"] > 10, "cheap steps must batch within one round"
+
+    calls["n"] = 0
+
+    def slow_step(con, collection, last_idle_log):
+        calls["n"] += 1
+        time_mod.sleep(0.3)              # single step exceeds the budget
+        return True
+    monkeypatch.setattr(worker_mod, "_run_one_step", slow_step)
+    deadline = time_mod.time() + config.WORKER_ROUND_BUDGET_S
+    while not worker_mod._stop.is_set():
+        if not worker_mod._run_one_step(None, None, None):
+            break
+        if time_mod.time() >= deadline:
+            break
+    assert calls["n"] == 1, "an expensive step still runs exactly once per round"
 
 
 def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir,
