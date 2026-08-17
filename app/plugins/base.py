@@ -71,9 +71,12 @@ class CanonicalDoc:
 class DiscoverState:
     """Whatever a CorpusSource needs to enumerate its documents. The
     orchestrator constructs and supplies this; Gutenberg only reads
-    `corpus_root` today. Reserved for future incremental sources (e.g. a
-    PubMed baseline+updatefiles cursor)."""
+    `corpus_root`. `state_dir` (the collection's data directory, beside its
+    manifest) is where an incremental source keeps its scan cursor — the
+    "PubMed baseline+updatefiles cursor" this field was reserved for; None
+    means stateless full scans (tests, ad-hoc calls)."""
     corpus_root: Path
+    state_dir: Path | None = None
 
 
 class CorpusSource(Protocol):

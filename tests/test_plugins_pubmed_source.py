@@ -43,6 +43,34 @@ def test_worker_stages_run_via_the_protocol_fallback(tmp_path, isolated_config):
     assert chunks[0]["id"].startswith("pubmed:30000006:")
 
 
+def test_scan_cursor_skips_unchanged_containers(tmp_path):
+    """Incremental discovery: with a state_dir, an unchanged container is
+    never re-opened — at full-PubMed scale that is the difference between an
+    hour of XML parsing per scan and a stat pass. A touched container
+    re-enumerates; without a state_dir behavior is the old full scan."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    shutil.copy(FIXTURE_CORPUS / "pubmed25n0001.xml", corpus / "pubmed25n0001.xml")
+    state_dir = tmp_path / "data"
+    state_dir.mkdir()
+
+    state = DiscoverState(corpus_root=corpus, state_dir=state_dir)
+    first = list(SOURCE.discover(state))
+    assert first, "first scan enumerates"
+    assert (state_dir / "pubmed_scan_cursor.json").is_file()
+
+    assert list(SOURCE.discover(state)) == [], "unchanged container skipped"
+
+    # a content change (new mtime/size) re-enumerates
+    import os
+    path = corpus / "pubmed25n0001.xml"
+    os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 5))
+    assert list(SOURCE.discover(state)), "touched container re-enumerates"
+
+    # stateless calls keep full-scan behavior
+    assert list(SOURCE.discover(DiscoverState(corpus_root=corpus)))
+
+
 def test_corrupt_container_costs_one_error_ref_not_the_scan(tmp_path):
     """With acquisition in the background, discovery can meet a truncated or
     checksum-failed container on disk — the scan must survive it (observed

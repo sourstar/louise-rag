@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from .. import cursor
 from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
 from . import wikitext
 
@@ -51,12 +52,15 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
+        scan = cursor.load(state.state_dir, self.source_id)
         for dump in sorted(root.rglob(f"*{_DUMP_SUFFIX}")):
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
                 yield DocRef(source_id=self.source_id, native_id=dump.name,
                              locator=str(dump), error="multistream index missing")
                 continue
+            if cursor.unchanged(scan, dump) and cursor.unchanged(scan, index):
+                continue     # already enumerated at this (mtime, size)
             st = dump.stat()
             lang = _lang_of(dump.name)
             # group index lines by stream offset so each page knows its
@@ -86,6 +90,9 @@ class WikipediaSource:
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
+            cursor.mark(scan, dump)
+            cursor.mark(scan, index)
+        cursor.save(state.state_dir, self.source_id, scan)
 
     def _flush(self, pending, end_offset, dump, st, lang):
         for offset, page_id, title in pending:

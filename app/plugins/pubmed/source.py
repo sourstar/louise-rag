@@ -20,6 +20,7 @@ from xml.etree import ElementTree as ET
 
 from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
+from .. import cursor
 from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
 from . import medline
 
@@ -91,7 +92,10 @@ class PubmedSource:
         containers = sorted(
             p for p in root.iterdir()
             if p.is_file() and (p.name.endswith(".xml") or p.name.endswith(".xml.gz")))
+        scan = cursor.load(state.state_dir, self.source_id)
         for container in containers:
+            if cursor.unchanged(scan, container):
+                continue     # already enumerated at this (mtime, size)
             st = container.stat()
             try:
                 root_el = _parse_container(container)
@@ -121,6 +125,8 @@ class PubmedSource:
                                      mtime=int(st.st_mtime), size=st.st_size,
                                      error=DELETE_MARKER,
                                      extra={"record_index": i, "kind": "delete"})
+            cursor.mark(scan, container)   # enumerated cleanly at this signature
+        cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:
         if ref.extra.get("kind") == "delete":

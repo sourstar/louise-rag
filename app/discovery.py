@@ -19,7 +19,8 @@ def sync_collection(con, collection) -> dict:
         db.log_event(con, "error", "discover", f"corpus dir not found: {root}")
         return {"error": f"corpus dir not found: {root}"}
 
-    state = DiscoverState(corpus_root=root)
+    state = DiscoverState(corpus_root=root,
+                           state_dir=collection.manifest_path.parent)
     seen = 0
     # De-duplicate by uid, keeping the LAST ref seen: a source may legitimately
     # yield the same uid more than once within one discover() sweep (e.g.

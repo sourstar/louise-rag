@@ -23,6 +23,7 @@ import gzip
 import hashlib
 from pathlib import Path
 
+from .. import cursor
 from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
 
 _LOCATOR_SEP = "::"
@@ -75,7 +76,10 @@ class GenomeSource:
             return
         fastas = sorted(p for p in root.rglob("*")
                         if p.is_file() and p.name.endswith(_FASTA_SUFFIXES))
+        scan = cursor.load(state.state_dir, self.source_id)
         for fasta in fastas:
+            if cursor.unchanged(scan, fasta):
+                continue     # already enumerated at this (mtime, size)
             st = fasta.stat()
             try:
                 for ordinal, name, seq in _records(fasta):
@@ -91,6 +95,9 @@ class GenomeSource:
                 yield DocRef(source_id=self.source_id, native_id=fasta.name,
                              locator=str(fasta),
                              error=f"unreadable FASTA: {type(e).__name__}: {e}"[:200])
+                continue
+            cursor.mark(scan, fasta)
+        cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:
         fasta, ordinal = split_locator(ref.locator)
