@@ -12,6 +12,7 @@
     <a href="#scope">Scope &amp; embed modes</a> ·
     <a href="#safety">Embedding safety</a> ·
     <a href="#bundles">Bundles &amp; the P2P plane</a> ·
+    <a href="#collections">Adding a collection</a> ·
     <a href="#acquire">Acquisition &amp; licenses</a> ·
     <a href="#config">Configuration tiers</a> ·
     <a href="#cli">CLI reference</a> ·
@@ -143,6 +144,55 @@
     local model) records evidence for every decision, and
     <code>bundle resweep</code> re-checks earlier imports after a trust or
     calibration change.
+  </p>
+</div>
+
+<div class="panel" id="collections">
+  <h2>Adding a collection</h2>
+  <p class="note">
+    A collection is defined by one versioned TOML file — that file existing
+    is what makes the collection exist (config tier 2, never a database
+    write). The workflow:
+  </p>
+  <p class="note">
+    <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
+    panel: pick a name, a plugin (e.g. <code>gutenberg</code>,
+    <code>pubmed</code>) and a profile, then <i>Preview</i>. It shows the
+    source's license class (and terms text, if acknowledgement is required)
+    plus the exact TOML to save.
+  </p>
+  <p class="note">
+    <b>2. Save it</b> as <code>collections/&lt;name&gt;.toml</code> under the
+    node's CONFIG_DIR (on this deployment:
+    <code>/mnt/ssd4/apps/louise-rag/config/collections/</code>), and commit
+    it if the config is versioned. A minimal file:
+  </p>
+  <pre class="cli">plugin = "pubmed"
+profile = "demo"
+acquire_enabled = true            # omit for a hand-populated corpus
+# license_ack = "&lt;from corpus add --ack-terms&gt;"   # yellow-class sources only
+
+corpus_dir = "/corpus-pubmed"     # where the documents live (or will land)
+[paths]                           # REQUIRED for a second collection:
+manifest = "/data/pubmed/manifest.db"   # defaults point at the first
+fts      = "/data/pubmed/fts"           # collection's paths — never share
+lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
+  <p class="note">
+    <b>3. Restart the app</b> — collections are read at startup. The new
+    collection appears on the Library page and in Ask's collection chips;
+    its embedding space is pinned on first boot.
+  </p>
+  <p class="note">
+    <b>4. Fill it.</b> Either point <code>corpus_dir</code> at documents you
+    already have (the worker discovers them on its next scan), or — with
+    <code>acquire_enabled = true</code> — fetch from the source:
+    <code>python -m app.cli corpus add &lt;name&gt; --profile demo --dry-run</code>
+    to see size/ETA, then without <code>--dry-run</code> to run. A
+    yellow-class source refuses to fetch until its terms are acknowledged
+    (<code>corpus add &lt;name&gt; --ack-terms &lt;terms-file&gt;</code>
+    prints the <code>license_ack</code> line for the TOML). Then grow it
+    later with <code>corpus grow &lt;name&gt; --profile full</code> or the
+    Library page's <i>grow profile…</i> button.
   </p>
 </div>
 
