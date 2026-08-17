@@ -1,0 +1,98 @@
+# louise-rag — TrueNAS SCALE custom app (Install via YAML)
+#
+# Successor to the legacy gutenberg-rag app: same two-container shape
+# (web + worker), same corpus/data mounts, plus the platform's additions —
+# a config mount (collections/*.toml, platform.toml, node key, space
+# artifacts), admin auth for the librarian pages, and the bundle machinery.
+#
+# BEFORE FIRST START — three one-time steps, in order (NAS shell):
+#
+#   1. Build the image (from a checkout of this repo on the NAS):
+#        docker build -t louise-rag:local .
+#
+#   2. Create the config dataset and the node key:
+#        mkdir -p /mnt/ssd5/apps/louise-rag-config
+#        docker run --rm -v /mnt/ssd5/apps/louise-rag-config:/config \
+#          louise-rag:local python -m app.cli bundle keygen /config/node.key
+#
+#   3. Migrate the legacy manifest (books -> documents; idempotent, verified
+#      against a copy of this exact manifest on 2026-08-18 — keeps all 79k
+#      discovery/FTS rows and makes a backup before touching the original):
+#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data \
+#          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db --dry-run
+#        docker run --rm -v /mnt/ssd5/apps/gutenberg-rag:/data \
+#          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db
+#
+# EMBED_VERSION is 3 ON PURPOSE. Verification on 2026-08-18 proved the stored
+# vectors (embedded as v2) are ORTHOGONAL (cos ~0.1) to what the current
+# llama-embed endpoint produces for the same text — the embedder's model or
+# pooling changed after the v2 run, and with EMBED_API=openai the space pin
+# hashes only the model NAME, so nothing could catch it automatically. The
+# bump makes the worker re-embed every stale book against the model queries
+# will actually use. Expect a long backfill for the ~10.5k embedded books
+# (set the dashboard scope's embed mode to `all` to do it eagerly, or leave
+# `lazy` to rebuild around real usage).
+#
+# Set ADMIN_TOKEN before installing: it gates the Library/Network/System
+# pages and the mutating API. Unset = those areas are locked out entirely
+# (fail-closed), while Ask/search stay LAN-open read-only.
+#
+# The external TrueNAS rsync task feeding /corpus stays exactly as it is —
+# the worker rescans at startup and every DISCOVER_INTERVAL_MIN minutes.
+
+services:
+  web:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - '30042:8742'
+    environment: &env
+      # ── paths ──
+      DATA_DIR: /data
+      CORPUS_DIR: /corpus
+      CONFIG_DIR: /config
+      NODE_KEY_PATH: /config/node.key
+      # ── model endpoints (unchanged from the legacy app) ──
+      OLLAMA_URL: http://192.168.178.10:30068
+      CHAT_MODEL: qwen3:8b
+      EMBED_URL: http://192.168.178.10:30436
+      EMBED_API: openai
+      EMBED_MODEL: embed
+      EMBED_CTX: '8192'
+      EMBED_DTYPE: f16
+      # llama-embed runs -np 4; batch x concurrency should reach it
+      # (the legacy 1x1 left three slots idle)
+      EMBED_BATCH: '4'
+      EMBED_CONCURRENCY: '2'
+      RERANK_URL: ''
+      # ── pipeline versions ──
+      CHUNK_TOKENS: '1000'
+      CHUNK_OVERLAP: '120'
+      CHUNK_VERSION: '1'
+      FTS_VERSION: '1'
+      EMBED_VERSION: '3'          # see header: stored v2 vectors mismatch the live model
+      DISCOVER_INTERVAL_MIN: '360'
+      # ── platform ──
+      ADMIN_TOKEN: 'CHANGE-ME-BEFORE-INSTALL'
+    volumes:
+      - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
+      - /mnt/ssd5/apps/gutenberg-rag:/data
+      - /mnt/ssd5/apps/louise-rag-config:/config
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://localhost:8742/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    command: ['python', '-m', 'app.worker']
+    environment: *env
+    volumes:
+      - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
+      - /mnt/ssd5/apps/gutenberg-rag:/data
+      - /mnt/ssd5/apps/louise-rag-config:/config
+    stop_grace_period: 120s

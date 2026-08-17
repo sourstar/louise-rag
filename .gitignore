@@ -25,3 +25,6 @@ build/
 .vscode/
 .idea/
 .DS_Store
+
+# local deployment reference material (LAN IPs, host paths) - never pushed
+deploy/reference/
