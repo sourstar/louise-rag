@@ -1,7 +1,7 @@
 """Web process — dashboard UI, control plane, stats, and the RAG API.
 
 The /v1/chat/completions endpoint is OpenAI-compatible so Open WebUI can use
-this app as a model provider ("gutenberg-rag").
+this app as a model provider ("louise-rag").
 
 /api/search and /v1/chat/completions federate across collections (P0.5,
 app/retrieval.py::federated_search) via an optional `collections` request
@@ -26,10 +26,13 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from urllib.parse import quote
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import auth, collections as collections_mod, query_service, web
 from . import config, db, discovery, retrieval, llm, summarize, embeddings, fts, spaces
 
@@ -44,7 +47,7 @@ async def lifespan(app: FastAPI):
         sys.exit(1)
     yield
 
-app = FastAPI(title="gutenberg-rag", lifespan=lifespan)
+app = FastAPI(title="louise-rag", lifespan=lifespan)
 
 def _con():
     # one connection per request keeps things simple; SQLite WAL handles it
@@ -82,9 +85,27 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 # ---------------- UI ----------------
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def index():
-    return (STATIC / "index.html").read_text()
+    """The legacy self-contained dashboard used to live here; it's retired —
+    the stopped gutenberg-rag app keeps its own copy. Ask is the platform's
+    front door."""
+    return RedirectResponse("/ask")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _unauthenticated_page_to_login(request: Request, exc: StarletteHTTPException):
+    """A browser hitting an admin PAGE without a token gets the login page
+    (with a return path), not a bare 401. Only plain page navigation is
+    redirected: JSON/API clients (no text/html Accept) and htmx fragment
+    polling (HX-Request) still get the honest 401, so nothing programmatic
+    ever sees a 303 masquerading as auth failure."""
+    if (exc.status_code == 401 and request.method == "GET"
+            and "text/html" in request.headers.get("accept", "")
+            and "hx-request" not in request.headers):
+        return RedirectResponse(
+            f"/admin/login?next={quote(request.url.path)}", status_code=303)
+    return await http_exception_handler(request, exc)
 
 @app.get("/healthz")
 def healthz():

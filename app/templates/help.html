@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}Help — louise-rag{% endblock %}
+{% block content %}
+<h1>Help</h1>
+
+<div class="panel">
+  <b>Contents</b>
+  <div class="note">
+    <a href="#overview">What this is</a> ·
+    <a href="#pages">The pages</a> ·
+    <a href="#pipeline">Ingestion pipeline</a> ·
+    <a href="#scope">Scope &amp; embed modes</a> ·
+    <a href="#safety">Embedding safety</a> ·
+    <a href="#bundles">Bundles &amp; the P2P plane</a> ·
+    <a href="#acquire">Acquisition &amp; licenses</a> ·
+    <a href="#config">Configuration tiers</a> ·
+    <a href="#cli">CLI reference</a> ·
+    <a href="#api">HTTP API</a> ·
+    <a href="#trouble">Troubleshooting</a>
+  </div>
+</div>
+
+<div class="panel" id="overview">
+  <h2>What this is</h2>
+  <p class="note">
+    louise-rag is a peer-to-peer RAG platform: each node ingests document
+    collections (Project Gutenberg, PubMed, …), indexes them lexically
+    (tantivy FTS) and densely (embeddings in LanceDB), and answers questions
+    over them with a local LLM. Nodes can exchange <i>signed vector
+    bundles</i> so one node's GPU-hours serve many — with cryptographic
+    verification instead of trust. Two processes run per node: the
+    <b>web</b> process (this UI, the JSON API, the OpenAI-compatible
+    endpoint) and the <b>worker</b> (ingestion pipeline). Both operate on the
+    same SQLite manifest and Lance vector store; state never travels, vectors
+    do.
+  </p>
+</div>
+
+<div class="panel" id="pages">
+  <h2>The pages</h2>
+  <table>
+    <tr><th>page</th><th>access</th><th>what it does</th></tr>
+    <tr><td><b>Ask</b></td><td>LAN-open, read-only</td>
+      <td>Search and question-answering across every collection in scope.
+      Hybrid retrieval (FTS + dense + RRF fusion), with per-passage
+      provenance badges: <b>local ✓</b> (computed here), <b>imported ◌</b>
+      (from a bundle, unverified), <b>verified ✓</b> (spot-checked against
+      the local model), <b>⚠ failed</b> (verification failed).</td></tr>
+    <tr><td><b>Library</b></td><td>admin</td>
+      <td>Per-collection ingestion progress (fetched / parsed / indexed /
+      embedded), worker pause-resume, corpus rescans, stage resets, profile
+      growth, adding collections.</td></tr>
+    <tr><td><b>Network</b></td><td>admin</td>
+      <td>Live bandwidth per transfer class and the temporary "boost
+      bandwidth tonight" override (a runtime verb with an expiry — it is
+      never written into config).</td></tr>
+    <tr><td><b>System</b></td><td>admin</td>
+      <td>Effective configuration by tier, boot-validation report (embedding
+      space pin), model-endpoint health, and the live event log.</td></tr>
+  </table>
+  <p class="note">
+    Admin pages need the node's <b>ADMIN_TOKEN</b> (an environment variable
+    set at install). Enter it once at <a href="/admin/login">/admin/login</a>
+    — a 30-day cookie keeps the browser session authenticated. If the token
+    is unset, admin areas are locked entirely (fail-closed); Ask keeps
+    working regardless. Navigating to an admin page without a session simply
+    brings you to the login form and returns you afterwards.
+  </p>
+</div>
+
+<div class="panel" id="pipeline">
+  <h2>Ingestion pipeline</h2>
+  <p class="note">
+    Per document, in order: <b>discover</b> (corpus scan; also at startup and
+    every DISCOVER_INTERVAL_MIN) → <b>rdf</b> (metadata) → <b>fts</b>
+    (chunking, lexical index, entity tagging) → <b>embed</b> (dense vectors,
+    when the embed mode says so). Every write is delete-then-insert keyed on
+    the document uid, so any stage can be interrupted and re-run safely; a
+    worker stop (SIGTERM) finishes the current document, commits, and exits
+    cleanly. Each stage carries a version (CHUNK_VERSION, FTS_VERSION,
+    ENTITY_VERSION, EMBED_VERSION); bumping one re-processes exactly the
+    documents behind it — never silently.
+  </p>
+</div>
+
+<div class="panel" id="scope">
+  <h2>Scope &amp; embed modes</h2>
+  <p class="note">
+    The scope (languages, explicit ids, caps) decides which documents are
+    in play. The <b>embed mode</b> decides GPU spending:
+    <b>off</b> — never embed; <b>lazy</b> — embed only what queries actually
+    touch (a priority queue fed by search misses); <b>all</b> — background-
+    backfill everything in scope. The priority queue always outranks the
+    backfill, so a user-requested document embeds first. Set the mode via
+    <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
+  </p>
+</div>
+
+<div class="panel" id="safety">
+  <h2>Embedding safety</h2>
+  <p class="note">
+    Vectors are only comparable inside one <b>embedding space</b>: same
+    model weights, dtype, normalization, pooling, chunking and cleaning
+    versions. The space is pinned per collection at first boot and checked
+    on every boot — a confirmed mismatch <b>refuses to boot</b> rather than
+    silently mixing spaces.
+  </p>
+  <p class="note">
+    Because an HTTP embedding endpoint can change behind a stable name, the
+    worker additionally runs a <b>behavioral backend gate</b>: on first use
+    it embeds fixed probe texts and records the vectors; before writing any
+    new vectors it re-embeds the probes and requires cosine ≥ 0.995 against
+    that baseline. If the endpoint stops reproducing itself (model swap,
+    build change, pooling change), embedding pauses — documents are never
+    marked errored, search and lexical indexing continue — until an operator
+    fixes the endpoint or accepts the new backend with
+    <code>backend rebaseline</code> (which implies re-embedding).
+  </p>
+  <p class="note">
+    <b>EMBED_BATCH=1 is load-bearing.</b> llama-server corrupts long
+    sequences when a single embeddings request carries multiple texts
+    (verified live 2026-08-17: batch-of-8 → cosine 0.32 against the same
+    text embedded alone), and its prompt cache can replay corrupted results
+    afterwards. Parallel <i>single-text</i> requests are verified safe — use
+    EMBED_CONCURRENCY for throughput, never EMBED_BATCH. Also pin the
+    embedding server's image by digest: a moving tag is how a backend
+    changes identity silently.
+  </p>
+</div>
+
+<div class="panel" id="bundles">
+  <h2>Bundles &amp; the P2P plane</h2>
+  <p class="note">
+    A <b>bundle</b> is a signed, portable set of vectors: header +
+    Parquet vectors + per-document possession hashes, Ed25519-signed by the
+    producing node's key. Importing one lets a document reach
+    <i>embedded</i> without local GPU work. Every import passes admission
+    checks regardless of who signed it (structure, isotropy, chunk-overlap
+    invariant, sample re-embedding, degenerate-vector detection), producer
+    keys are trusted on first use and quarantinable, and imported chunks can
+    be verified on use — each verification is permanent per chunk. The
+    verification ladder (T0 structural → T3 spot recompute against the
+    local model) records evidence for every decision, and
+    <code>bundle resweep</code> re-checks earlier imports after a trust or
+    calibration change.
+  </p>
+</div>
+
+<div class="panel" id="acquire">
+  <h2>Acquisition &amp; licenses</h2>
+  <p class="note">
+    Collections can fetch their own corpus (opt-in per collection). Sources
+    have license classes; a <i>yellow</i>-class source requires a recorded
+    acknowledgement of its terms (timestamp + hash of the terms text) before
+    the first byte moves. All transfers draw from one node-wide bandwidth
+    budget with an optional schedule — there are no per-tool rate limits,
+    and the Network page's override is temporary by construction.
+  </p>
+</div>
+
+<div class="panel" id="config">
+  <h2>Configuration tiers</h2>
+  <table>
+    <tr><th>tier</th><th>where</th><th>meaning</th></tr>
+    <tr><td>1 — identity</td><td>environment variables</td>
+      <td>who this node is: paths, endpoints, ADMIN_TOKEN, NODE_KEY_PATH,
+      pipeline versions. Set in the deployment (compose/app YAML).</td></tr>
+    <tr><td>2 — desired state</td><td>collections/*.toml, platform.toml</td>
+      <td>versioned files: collection definitions, bandwidth policy,
+      transfer tuning, trusted space authors.</td></tr>
+    <tr><td>3 — runtime</td><td>control table (DB)</td>
+      <td>pause/resume, scope, temporary overrides. Never survives as
+      desired state; never written back into files.</td></tr>
+  </table>
+  <p class="note">Secrets are referenced by filesystem path only (e.g. the
+    node key) — never in env values, config values, logs, or error
+    messages.</p>
+</div>
+
+<div class="panel" id="cli">
+  <h2>CLI reference</h2>
+  <pre class="cli">python -m app.cli corpus add &lt;collection&gt; [--profile P] [--dry-run] [--ack-terms FILE]
+python -m app.cli corpus grow &lt;collection&gt; --profile P
+python -m app.cli corpus status [collection]
+
+python -m app.cli bundle keygen &lt;path&gt;            # node signing key (prints PUBLIC key only)
+python -m app.cli bundle export &lt;collection&gt; &lt;dest&gt; [--uid U]... [--limit N]
+python -m app.cli bundle import &lt;collection&gt; &lt;path&gt; [--no-first-use]
+python -m app.cli bundle trust &lt;collection&gt; &lt;pubkey&gt; [--quarantine --reason R]
+python -m app.cli bundle status &lt;collection&gt;
+python -m app.cli bundle resweep &lt;collection&gt;
+
+python -m app.cli backend check &lt;collection&gt;      # gate: endpoint vs baseline
+python -m app.cli backend rebaseline &lt;collection&gt; --yes
+
+python -m app.cli contribute &lt;collection&gt; &lt;coordinator-url&gt; [--count N]
+python -m tools.migrate_manifest --db /data/manifest.db [--dry-run]
+python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</pre>
+</div>
+
+<div class="panel" id="api">
+  <h2>HTTP API</h2>
+  <table>
+    <tr><th>endpoint</th><th>auth</th><th>purpose</th></tr>
+    <tr><td>GET /api/status</td><td>open</td><td>worker state, scope, pipeline counts, config summary</td></tr>
+    <tr><td>POST /api/search</td><td>open</td><td>retrieval without generation</td></tr>
+    <tr><td>POST /v1/chat/completions</td><td>open</td><td>OpenAI-compatible RAG chat (usable as a model provider)</td></tr>
+    <tr><td>POST /api/control</td><td>admin</td><td><code>{"state": "running"|"paused"}</code> — the worker toggle</td></tr>
+    <tr><td>POST /api/scope</td><td>admin</td><td>set languages/limits/<b>embed_mode</b>; send the full scope object (read it from /api/status first)</td></tr>
+    <tr><td>POST /api/reset</td><td>admin</td><td>re-run a stage: <code>{"stage": "rdf"|"fts"|"embed"|"errors", "book_ids": []}</code></td></tr>
+    <tr><td>POST /api/discover</td><td>admin</td><td>rescan the corpus now</td></tr>
+  </table>
+  <p class="note">Admin calls take the token as an <code>X-Admin-Token</code>
+    header, or ride the login cookie in a browser session.</p>
+</div>
+
+<div class="panel" id="trouble">
+  <h2>Troubleshooting</h2>
+  <table>
+    <tr><th>symptom</th><th>likely cause / fix</th></tr>
+    <tr><td>worker shows <b>paused</b>, nothing processes</td>
+      <td>the control-table toggle — press <i>start</i> on the Library page.</td></tr>
+    <tr><td>event log: <b>embedding PAUSED</b> (backend-gate)</td>
+      <td>the embedding endpoint stopped reproducing its baseline. Check
+      what changed (image tag? model file? pooling flags?). Restore it, or
+      accept the new backend with <code>backend rebaseline --yes</code> and
+      plan a re-embed.</td></tr>
+    <tr><td>process exits with <b>BOOT VALIDATION FAILED</b></td>
+      <td>the pinned embedding space mismatches current config (invariant:
+      never mix spaces silently). Restore the previous config, or wipe the
+      collection's Lance directory and re-embed under the new recipe.</td></tr>
+    <tr><td>401 on admin API calls</td>
+      <td>missing/wrong X-Admin-Token header, or ADMIN_TOKEN unset on the
+      node (fail-closed).</td></tr>
+    <tr><td>documents with errors like <i>missing txt</i></td>
+      <td>corpus entries without a usable text file — counted, skipped, and
+      harmless. "clear errors &amp; retry" on the Library page re-attempts
+      after a corpus update.</td></tr>
+    <tr><td>a book answers with stale/odd passages</td>
+      <td>ask with <code>verify: true</code> or POST its chunk ids to
+      /api/verify — failed verification quarantines the producing key and
+      re-queues honest re-embedding.</td></tr>
+  </table>
+</div>
+{% endblock %}

@@ -75,6 +75,13 @@ def ask_page(request: Request):
         "active": "ask", "collections": collections_mod.load_all(), "result": None})
 
 
+@ask_router.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    """Platform + UI documentation. Open like Ask: help must be readable
+    BEFORE login (it explains how login works)."""
+    return TEMPLATES.TemplateResponse(request, "help.html", {"active": "help"})
+
+
 @ask_router.post("/ask/query", response_class=HTMLResponse)
 def ask_query(request: Request, body: AskQueryBody):
     result = query_service.run_search(body.collections, body.query, 12, body.mode, True)

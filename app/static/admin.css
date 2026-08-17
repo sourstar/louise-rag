@@ -1,12 +1,15 @@
 /* Shared minimal styling for the server-rendered Ask/Library/Network/System
    pages (P0.6). Deliberately plain — architecture-v2.md §15's own build
-   note: "nothing here requires a frontend framework." index.html keeps its
-   own inline styles untouched; this file is new and only used by /ask and
-   /admin/*. */
+   note: "nothing here requires a frontend framework."
+   Palette: cool slate + verdigris, deliberately DISTINCT from the legacy
+   gutenberg-rag dashboard's parchment-and-brass so the two UIs can never be
+   confused. Variable names are kept (templates reference them inline);
+   only their values changed: --brass is now the teal accent, --lapis the
+   violet secondary, --ivory the cool porcelain text. */
 :root{
-  --ink:#171310; --panel:#201a13; --panel2:#241d15; --line:#382b1c;
-  --ivory:#eae0cc; --muted:#9c8e76; --brass:#c9a227; --lapis:#7d9bc9;
-  --ok:#7fa06a; --err:#c25b4a; --mono:'IBM Plex Mono',monospace,monospace;
+  --ink:#0e141b; --panel:#151d26; --panel2:#1a2530; --line:#2a3947;
+  --ivory:#dbe4ea; --muted:#7f909d; --brass:#43bfb4; --lapis:#9d8cff;
+  --ok:#6fbf73; --err:#e06c5a; --mono:'IBM Plex Mono',monospace,monospace;
 }
 *{box-sizing:border-box;margin:0}
 html{background:var(--ink)}
@@ -34,7 +37,7 @@ label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;l
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;
   letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line)}
-td{padding:6px 8px;border-bottom:1px solid #2a2117;vertical-align:top}
+td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
 .badge{display:inline-block;padding:1px 7px;border:1px solid var(--line);border-radius:10px;
   font-size:10px;color:var(--muted);margin-right:5px}
 .badge.brass{color:var(--brass);border-color:var(--brass)}
@@ -44,14 +47,14 @@ td{padding:6px 8px;border-bottom:1px solid #2a2117;vertical-align:top}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--line);
   border-radius:14px;font-size:11px;color:var(--muted);margin:0 6px 6px 0}
 .chip.on{color:var(--brass);border-color:var(--brass)}
-.spine{height:14px;background:#2a2117;border-radius:2px;position:relative;overflow:hidden;display:flex}
+.spine{height:14px;background:#233240;border-radius:2px;position:relative;overflow:hidden;display:flex}
 .spine span{height:100%}
 .stage{margin:6px 0}
 .stage .lbl{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:3px}
-.fact-card{border:1px solid var(--brass);border-radius:3px;padding:10px;margin:8px 0;background:#241d10}
+.fact-card{border:1px solid var(--brass);border-radius:3px;padding:10px;margin:8px 0;background:#14262a}
 .hit{border:1px solid var(--line);border-radius:3px;padding:10px;margin:8px 0;background:var(--panel2)}
 .hit .head{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:5px}
-.hit .snip{color:#cbbfa8;font-size:12px;line-height:1.5}
+.hit .snip{color:#b9c8d2;font-size:12px;line-height:1.5}
 details.drawer{margin-top:6px;font-size:11px;color:var(--muted)}
 details.drawer summary{cursor:pointer;color:var(--lapis)}
 .note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.5}

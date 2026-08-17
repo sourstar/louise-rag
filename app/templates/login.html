@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}admin login — gutenberg-rag{% endblock %}
+{% block title %}admin login — louise-rag{% endblock %}
 {% block content %}
 <div class="panel" style="max-width:420px;margin:40px auto">
   <h2>Librarian login</h2>
@@ -24,7 +24,10 @@ async function doLogin(){
   const token=document.getElementById('token').value;
   try{
     await postJSON('/admin/login',{token});
-    location.href=new URLSearchParams(location.search).get('next')||'/admin/library';
+    // same-site paths only: "next" comes from the URL, so "//evil" or a full
+    // URL must never become a post-login destination
+    const next=new URLSearchParams(location.search).get('next');
+    location.href=(next && next.startsWith('/') && !next.startsWith('//'))?next:'/admin/library';
   }catch(e){document.getElementById('err').textContent='login failed: '+e}
 }
 document.getElementById('token') && document.getElementById('token').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});

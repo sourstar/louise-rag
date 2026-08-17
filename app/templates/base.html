@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}gutenberg-rag{% endblock %}</title>
+<title>{% block title %}louise-rag{% endblock %}</title>
 <link rel="stylesheet" href="/static/admin.css">
 <script src="/static/vendor/htmx.min.js"></script>
 </head>
 <body>
 <nav>
-  <span class="brand">gutenberg-rag</span>
+  <span class="brand">louise-rag</span>
   <a href="/ask" class="{{ 'active' if active=='ask' else '' }}">Ask</a>
   <a href="/admin/library" class="{{ 'active' if active=='library' else '' }}">Library</a>
   <a href="/admin/network" class="{{ 'active' if active=='network' else '' }}">Network</a>
   <a href="/admin/system" class="{{ 'active' if active=='system' else '' }}">System</a>
-  <span style="margin-left:auto"><a href="/" style="color:var(--muted);font-size:11px">legacy dashboard →</a></span>
+  <a href="/help" class="{{ 'active' if active=='help' else '' }}">Help</a>
 </nav>
 <main>
 {% block content %}{% endblock %}
@@ -32,7 +32,7 @@ async function postJSON(url,body){
   return d;
 }
 function toast(m){const e=document.createElement('div');e.textContent=m;
-  e.style.cssText='position:fixed;bottom:20px;right:20px;background:#2a2117;border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:420px;font-family:var(--mono);color:var(--ivory)';
+  e.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--panel2);border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:420px;font-family:var(--mono);color:var(--ivory)';
   document.body.appendChild(e);setTimeout(()=>e.remove(),4200)}
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 </script>

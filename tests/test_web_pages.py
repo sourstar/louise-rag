@@ -76,6 +76,46 @@ def test_ask_query_shows_hit_with_local_verification_badge(client):
     assert "lighthouse" in r.text.lower()
 
 
+def test_browser_page_navigation_redirects_to_login_not_401(client):
+    """A human hitting an admin PAGE without a session gets the login form
+    with a return path — only clients that accept text/html, so the API
+    contract (bare 401) is untouched."""
+    r = client.get("/admin/library", headers={"Accept": "text/html"},
+                   follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin/login?next=/admin/library"
+
+
+def test_htmx_fragment_polling_still_gets_401_not_a_redirect(client):
+    # htmx would happily swap the login page into a log fragment — it must
+    # see the honest 401 instead
+    r = client.get("/admin/system/log",
+                   headers={"Accept": "text/html", "HX-Request": "true"},
+                   follow_redirects=False)
+    assert r.status_code == 401
+
+
+def test_legacy_dashboard_is_gone_root_goes_to_ask(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == "/ask"
+
+
+def test_help_page_is_open_and_documents_the_platform(client):
+    r = client.get("/help")
+    assert r.status_code == 200
+    for anchor in ("Embedding safety", "backend gate", "EMBED_BATCH=1",
+                    "CLI reference", "Troubleshooting"):
+        assert anchor in r.text, f"help page must document: {anchor}"
+
+
+def test_ui_is_rebranded_no_legacy_name_or_link(client):
+    r = client.get("/ask")
+    assert "louise-rag" in r.text
+    assert "gutenberg-rag" not in r.text
+    assert "legacy dashboard" not in r.text
+
+
 def test_admin_routes_require_token(client):
     r = client.get("/admin/library")
     assert r.status_code == 401
