@@ -7,7 +7,7 @@ collection. Multi-collection summary lookups are P0.5's job.
 import json
 import time
 from pathlib import Path
-from . import collections as collections_mod, config, db, llm
+from . import collections as collections_mod, config, db, llm, plugin_io
 
 MAP_PROMPT = (
     "Summarize this chapter of the book \"{title}\" in 4-6 sentences, in English, "
@@ -34,7 +34,7 @@ def summarize_book(con, book_id: int, force: bool = False) -> dict:
     if row is None:
         raise ValueError(f"book {book_id} not in manifest")
     plugin = collections_mod.default_collection().plugin_instance()
-    text = plugin.read_text(Path(row["path"]), book_id)
+    text = plugin_io.full_text(plugin, row)
     title = row["title"] or f"Book #{book_id}"
     authors = row["authors"] or "unknown"
 

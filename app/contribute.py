@@ -28,7 +28,7 @@ from pathlib import Path
 
 import httpx
 
-from . import chunking, config, db, embeddings
+from . import chunking, config, db, embeddings, plugin_io
 from .bundles import export as bundle_export
 from .bundles.keys import load_signing_key, public_key_hex
 from .transfer.bucket import Priority
@@ -74,7 +74,7 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
         try:
             plugin = collection.plugin_instance()
             native_id = int(row["native_id"])
-            chapters = plugin.read_chapters(Path(row["path"]), native_id)
+            chapters = plugin_io.sections(plugin, row)
             chunks = list(chunking.chunk_book(uid, native_id, chapters))
             if not chunks:
                 continue

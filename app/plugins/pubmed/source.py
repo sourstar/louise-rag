@@ -26,20 +26,56 @@ from . import medline
 DELETE_MARKER = "deleted (DeleteCitation)"
 _MD5_SIDECAR = ChecksumSource(kind="sidecar", sidecar_suffix=".md5", sidecar_algo="md5")
 
+# Locator format: "<container path>::<record index>". §2 makes the locator
+# opaque outside the owning plugin, and the manifest persists it — so the
+# record's position inside the container survives into every later stage
+# without any schema addition (DocRef.extra does NOT survive discovery).
+_LOCATOR_SEP = "::"
+
+
+def split_locator(locator: str) -> tuple[Path, int | None]:
+    path, sep, idx = locator.rpartition(_LOCATOR_SEP)
+    if sep and idx.isdigit():
+        return Path(path), int(idx)
+    return Path(locator), None
+
 
 def _open_container(path: Path):
     return gzip.open(path, "rb") if path.name.endswith(".gz") else open(path, "rb")
 
 
+# One-slot caches: the worker is single-threaded and walks documents in
+# PMID order, which is container order — without this, EVERY record access
+# would re-verify and re-parse a ~16 MB container (observed live: 30k
+# records per container file).
+_parsed_cache: dict = {}
+_verified_cache: set = set()
+
+
 def _parse_container(path: Path) -> ET.Element:
-    with _open_container(path) as f:
-        return ET.parse(f).getroot()
+    key = (str(path), path.stat().st_mtime_ns)
+    if _parsed_cache.get("key") != key:
+        with _open_container(path) as f:
+            _parsed_cache.clear()
+        # parse outside the dict mutation for exception-safety
+        with _open_container(path) as f:
+            root = ET.parse(f).getroot()
+        _parsed_cache["key"] = key
+        _parsed_cache["root"] = root
+    return _parsed_cache["root"]
 
 
 def _verify_md5_sidecar(container: Path) -> None:
     """Delegates to the shared app/acquire/checksum.py helper (same logic
-    P0.4's acquisition engine uses for origin sidecar verification)."""
+    P0.4's acquisition engine uses for origin sidecar verification).
+    Verified once per (path, mtime) — the container is immutable between
+    mtime changes, and per-record re-hashing of a multi-MB file is pure
+    waste."""
+    key = (str(container), container.stat().st_mtime_ns)
+    if key in _verified_cache:
+        return
     verify_sidecar(container, _MD5_SIDECAR)
+    _verified_cache.add(key)
 
 
 class PubmedSource:
@@ -70,12 +106,14 @@ class PubmedSource:
                     if not pmid:
                         continue
                     yield DocRef(source_id=self.source_id, native_id=pmid,
-                                 locator=str(container), mtime=int(st.st_mtime), size=st.st_size,
+                                 locator=f"{container}{_LOCATOR_SEP}{i}",
+                                 mtime=int(st.st_mtime), size=st.st_size,
                                  extra={"record_index": i, "kind": "article"})
                 elif child.tag == "DeleteCitation":
                     for pmid in medline.parse_delete_pmids(child):
                         yield DocRef(source_id=self.source_id, native_id=pmid,
-                                     locator=str(container), mtime=int(st.st_mtime), size=st.st_size,
+                                     locator=f"{container}{_LOCATOR_SEP}{i}",
+                                     mtime=int(st.st_mtime), size=st.st_size,
                                      error=DELETE_MARKER,
                                      extra={"record_index": i, "kind": "delete"})
 
@@ -83,10 +121,17 @@ class PubmedSource:
         if ref.extra.get("kind") == "delete":
             raise ValueError("fetch() must not be called on a DeleteCitation ref "
                               "(the orchestrator skips fetch()/parse() for errored refs)")
-        container = Path(ref.locator)
+        # index comes from the LOCATOR (which the manifest persists), with
+        # extra["record_index"] as the discovery-time shortcut; a ref
+        # reconstructed from a manifest row has only the locator
+        container, index = split_locator(ref.locator)
+        if index is None:
+            index = ref.extra.get("record_index")
+        if index is None:
+            raise ValueError(f"pubmed locator carries no record index: {ref.locator!r}")
         _verify_md5_sidecar(container)
         root_el = _parse_container(container)
-        elem = root_el[ref.extra["record_index"]]
+        elem = root_el[index]
         data = ET.tostring(elem, encoding="unicode").encode("utf-8")
         h = hashlib.blake2b(data, digest_size=16)
         return RawDoc(ref=ref, raw_hash=h.hexdigest(), data=data)

@@ -35,7 +35,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .. import chunking, config, embeddings, spaces
+from .. import chunking, config, embeddings, plugin_io, spaces
 from . import ledger, possession, trust
 from .checks import BundleVerificationError, VerificationUnavailable, run_admission_checks
 from .export import (HEADER_NAME, POSSESSION_NAME, SIGNATURE_NAME, VECTORS_NAME)
@@ -148,7 +148,7 @@ def _local_chunks(collection, row) -> dict[str, str]:
     """
     plugin = collection.plugin_instance()
     native_id = int(row["native_id"])
-    chapters = plugin.read_chapters(Path(row["path"]), native_id)
+    chapters = plugin_io.sections(plugin, row)
     return {c["id"]: c["text"]
             for c in chunking.chunk_book(row["uid"], native_id, chapters)}
 

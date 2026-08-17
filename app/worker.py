@@ -24,7 +24,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import chunking, collections as collections_mod, config, db, discovery, embeddings, entities, fts, refs, spaces
+from . import chunking, collections as collections_mod, config, db, discovery, embeddings, entities, fts, plugin_io, refs, spaces
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -53,13 +53,12 @@ def _handle_sigterm(signum, frame):
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
     native_id = int(row["native_id"])
-    chapters = plugin.read_chapters(Path(row["path"]), native_id)
+    chapters = plugin_io.sections(plugin, row)
     return list(chunking.chunk_book(row["uid"], native_id, chapters))
 
 def stage_rdf(con, row, collection) -> None:
     plugin = collection.plugin_instance()
-    native_id = int(row["native_id"])
-    meta = plugin.read_metadata(Path(row["path"]), native_id)
+    meta = plugin_io.metadata(plugin, row)
     con.execute(
         "UPDATE documents SET title=?,authors=?,lang=?,subjects=?,bookshelves=?,"
         "rdf_done=1,updated_at=? WHERE uid=?",

@@ -15,9 +15,32 @@ import pytest
 from app import chunking, collections as collections_mod, config, db, discovery
 from app.plugins.base import DiscoverState
 from app.plugins.pubmed import SOURCE
-from app.plugins.pubmed.source import DELETE_MARKER
+from app.plugins.pubmed.source import DELETE_MARKER, split_locator
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "pubmed-mini"
+
+
+def test_worker_stages_run_via_the_protocol_fallback(tmp_path, isolated_config):
+    """Regression for the live 30k-article failure: worker.stage_rdf and
+    _load_chunks assumed gutenberg's read_metadata/read_chapters helpers.
+    A protocol-only plugin (pubmed) must flow through fetch→parse from a
+    manifest row — including the record index round-tripping through the
+    persisted locator."""
+    from app import worker
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    discovery.sync_collection(con, collection)
+
+    row = con.execute("SELECT * FROM documents WHERE uid='pubmed:30000006'").fetchone()
+    assert row is not None and "::" in row["path"], "locator must carry the record index"
+    worker.stage_rdf(con, row, collection)
+    refreshed = con.execute(
+        "SELECT * FROM documents WHERE uid='pubmed:30000006'").fetchone()
+    assert refreshed["rdf_done"] == 1 and refreshed["title"]
+
+    chunks = worker._load_chunks(refreshed, collection)
+    assert chunks and chunks[0]["text"]
+    assert chunks[0]["id"].startswith("pubmed:30000006:")
 
 
 def _collection(tmp_path) -> collections_mod.Collection:
@@ -32,7 +55,7 @@ def _collection(tmp_path) -> collections_mod.Collection:
 
 def _fetch_parse(native_id: str, container_name: str):
     ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=FIXTURE_CORPUS))
-               if r.native_id == native_id and Path(r.locator).name == container_name
+               if r.native_id == native_id and split_locator(r.locator)[0].name == container_name
                and r.extra.get("kind") == "article")
     raw = SOURCE.fetch(ref)
     return SOURCE.parse(raw), raw
@@ -56,7 +79,7 @@ def test_discover_yields_articles_and_deletes():
 
     revised = [r for r in articles if r.native_id == "30000001"]
     assert len(revised) == 2
-    assert {Path(r.locator).name for r in revised} == {
+    assert {split_locator(r.locator)[0].name for r in revised} == {
         "pubmed25n0001.xml", "pubmed25n0002.xml"}
 
 
