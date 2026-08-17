@@ -231,7 +231,8 @@ def embed_allowed(con, collection, embed_fn=None) -> bool:
     if allowed != was_allowed:
         level = "info" if allowed else "error"
         db.log_event(con, level, "backend-gate",
-                     (f"embedding {'enabled' if allowed else 'PAUSED'}: {reason}")[:500])
+                     (f"[{collection.name}] embedding "
+                      f"{'enabled' if allowed else 'PAUSED'}: {reason}")[:500])
     return allowed
 
 

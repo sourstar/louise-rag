@@ -119,6 +119,37 @@ def test_recipe_ctx_bounds_the_char_budget(isolated_config, monkeypatch):
     assert len(calls[0]["json"]["input"][0]) == 512 * 4
 
 
+def test_413_from_bert_class_servers_halves_the_budget(isolated_config, monkeypatch):
+    """TEI (MedCPT et al.) answers over-long input with 413 and does not
+    auto-truncate; the client must shrink and retry exactly as it does for
+    llama-server's 400."""
+    import httpx as httpx_mod
+    attempts = []
+
+    class Resp:
+        def __init__(self, status):
+            self.status_code = status
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx_mod.HTTPStatusError(
+                    "too long", request=httpx_mod.Request("POST", "http://x"),
+                    response=httpx_mod.Response(self.status_code))
+        def json(self):
+            return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(len(json["input"][0]))
+        return Resp(413 if len(json["input"][0]) > 1000 else 200)
+    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+
+    recipe = collections_mod.EmbedRecipe(
+        url="http://tei:1", api="openai", model="medcpt", dtype="f16", ctx=512)
+    out = embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    assert len(out) == 1
+    assert attempts[0] == 2048 and attempts[-1] <= 1024, \
+        "budget must halve until the server accepts"
+
+
 def test_space_components_come_from_the_recipe(isolated_config, config_dir):
     _write_toml(config_dir, "medcpt", MEDCPT_TOML)
     c = collections_mod.by_name("medcpt")

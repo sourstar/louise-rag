@@ -67,7 +67,10 @@ def _embed_batch(batch: list[str], timeout: float,
         try:
             vecs = _request_vectors(cut, timeout, recipe)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400 and budget > 1024:
+            # 400: llama-server's over-budget answer. 413: TEI's (BERT-class
+            # servers enforce their 512-token window and do not auto-truncate
+            # unless started with --auto-truncate). Same remedy either way.
+            if e.response.status_code in (400, 413) and budget > 256:
                 budget //= 2
                 continue
             detail = e.response.text[:200].replace("\n", " ")
