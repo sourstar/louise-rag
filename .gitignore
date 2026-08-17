@@ -1,0 +1,27 @@
+# ── runtime state: never in git (restore = git clone + compose up + acquisition) ──
+/data/
+/corpus/
+
+# ── secrets & node identity ──
+.env
+*.env
+*.key
+*.pem
+node.key*
+
+# ── python ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# ── editors / OS ──
+.vscode/
+.idea/
+.DS_Store

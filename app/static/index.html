@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gutenberg RAG — corpus control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#171310; --panel:#201a13; --panel2:#241d15; --line:#382b1c;
+  --ivory:#eae0cc; --muted:#9c8e76; --brass:#c9a227; --lapis:#7d9bc9;
+  --ok:#7fa06a; --err:#c25b4a; --serif:'Fraunces',serif; --mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;margin:0}
+html{background:var(--ink)}
+body{font-family:var(--mono);font-size:13px;color:var(--ivory);
+  background:radial-gradient(1200px 500px at 20% -10%, #221a10 0%, var(--ink) 60%);
+  min-height:100vh;padding:22px 26px 60px}
+a{color:var(--lapis)}
+h1{font-family:var(--serif);font-weight:700;font-size:30px;letter-spacing:.5px}
+h2{font-family:var(--serif);font-weight:600;font-size:16px;color:var(--brass);
+  margin-bottom:10px;letter-spacing:.4px}
+.masthead{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  border-bottom:2px solid var(--line);padding-bottom:14px}
+.masthead .sub{color:var(--muted)}
+.state{margin-left:auto;display:flex;gap:10px;align-items:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.running{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.dot.paused{background:var(--brass)}
+button{font-family:var(--mono);font-size:12px;background:var(--panel2);
+  color:var(--ivory);border:1px solid var(--line);padding:6px 14px;cursor:pointer;
+  border-radius:3px;transition:border-color .15s}
+button:hover{border-color:var(--brass)}
+button.primary{border-color:var(--brass);color:var(--brass)}
+button:disabled{opacity:.4;cursor:default}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px}
+.panel.wide{grid-column:1/-1}
+.bignums{display:flex;gap:26px;flex-wrap:wrap;margin:14px 0 4px}
+.bignum b{font-family:var(--serif);font-size:34px;font-weight:600;display:block;line-height:1}
+.bignum span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px}
+label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;
+  letter-spacing:.8px;margin:10px 0 3px}
+input,select,textarea{font-family:var(--mono);font-size:13px;width:100%;
+  background:var(--ink);border:1px solid var(--line);color:var(--ivory);
+  padding:7px 9px;border-radius:3px}
+input:focus,select:focus,textarea:focus{outline:1px solid var(--brass)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;
+  font-size:10px;letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line);
+  position:sticky;top:0;background:var(--panel);z-index:1}
+td{padding:6px 8px;border-bottom:1px solid #2a2117;vertical-align:top}
+tr:hover td{background:#251e15}
+.shelf{margin:7px 0}
+.shelf .lbl{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:3px}
+.spine{height:16px;background:#2a2117;border-radius:2px;position:relative;overflow:hidden}
+.spine .fts,.spine .emb{position:absolute;top:0;bottom:0;left:0}
+.spine .fts{background:repeating-linear-gradient(90deg,var(--brass) 0 7px,#a8871f 7px 8px);opacity:.9}
+.spine .emb{background:repeating-linear-gradient(90deg,var(--lapis) 0 7px,#647fa6 7px 8px);
+  opacity:.95;height:5px;top:auto}
+.badge{display:inline-block;padding:1px 7px;border:1px solid var(--line);
+  border-radius:10px;font-size:10px;color:var(--muted);margin-right:5px}
+.badge.brass{color:var(--brass);border-color:var(--brass)}
+.badge.lapis{color:var(--lapis);border-color:var(--lapis)}
+.badge.err{color:var(--err);border-color:var(--err)}
+.hit{border:1px solid var(--line);border-radius:3px;padding:10px;margin:8px 0;background:var(--panel2)}
+.hit .head{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:5px}
+.hit .title{font-family:var(--serif);font-size:14px;color:var(--ivory);cursor:pointer}
+.hit .title:hover{color:var(--brass)}
+.hit .snip{color:#cbbfa8;font-size:12px;line-height:1.5;max-height:78px;overflow:hidden}
+#answer{white-space:pre-wrap;line-height:1.6;font-size:13px;color:#e2d7c0;
+  border-left:3px solid var(--brass);padding:4px 0 4px 14px;margin-top:12px;display:none}
+#log{font-size:11px;line-height:1.7}
+.panel.fill{display:flex;flex-direction:column}
+.panel.fill>h2,.panel.fill>.bignums{flex:0 0 auto}
+.scrollbox{overflow-y:auto;overscroll-behavior:contain}
+@media (min-width:701px){
+  .panel.fill{max-height:calc(100vh - 48px)}
+  .scrollbox{flex:1 1 0;min-height:200px}
+}
+@media (max-width:700px){
+  .scrollbox{flex:0 0 auto;height:300px}
+}
+#log .err{color:var(--err)} #log .warn{color:var(--brass)} #log .t{color:var(--muted)}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.qbar{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.qbar select{flex:1;min-width:130px}
+.qbar button{flex:0 0 auto;padding:8px 20px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.5}
+#bookmodal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:9}
+#bookmodal .inner{background:var(--panel);border:1px solid var(--brass);border-radius:4px;
+  max-width:720px;width:92%;max-height:84vh;overflow-y:auto;padding:22px}
+@media (max-width:700px){body{padding:14px}.bignums{gap:16px}}
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Gutenberg RAG</h1>
+  <span class="sub">corpus control · MYNASS-DE</span>
+  <span class="sub"><a href="/ask">→ new dashboard (Ask / Library / Network / System)</a></span>
+  <div class="state">
+    <span class="dot" id="workerdot"></span>
+    <span id="workerstate">…</span>
+    <button id="toggle" onclick="toggleWorker()">start</button>
+    <button onclick="post('/api/discover').then(r=>toast('Discovery: '+JSON.stringify(r)))">rescan corpus</button>
+  </div>
+</div>
+
+<div class="bignums" id="bignums"></div>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>Scope — what gets ingested</h2>
+    <label>Languages (ISO codes, comma-sep — empty = all)</label>
+    <input id="sc_langs" placeholder="e.g. it, la, grc">
+    <div class="row">
+      <div><label>Limit (total books, 0 = ∞)</label><input id="sc_limit" type="number" value="0"></div>
+      <div><label>Sample per language</label><input id="sc_sample" type="number" value="0"></div>
+    </div>
+    <label>Explicit book IDs (comma-sep, empty = all)</label>
+    <input id="sc_ids" placeholder="e.g. 1342, 2600, 41537">
+    <label>Dense embeddings</label>
+    <select id="sc_embed">
+      <option value="lazy">lazy — embed books as they surface in queries</option>
+      <option value="all">all — backfill everything (non-English first)</option>
+      <option value="off">off — lexical + catalog only</option>
+    </select>
+    <div class="actions">
+      <button class="primary" onclick="applyScope()">Apply scope</button>
+      <button onclick="setScopePreset()">Test preset: 30 books/lang</button>
+    </div>
+    <div class="note">Scope only marks books in/out — nothing already indexed is deleted, so widening scope later just resumes where things left off.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Pipeline</h2>
+    <table id="pipeline"></table>
+    <div class="actions">
+      <button onclick="reset('errors')">Clear errors &amp; retry</button>
+      <button onclick="reset('fts')">Re-run lexical index</button>
+      <button onclick="reset('embed')">Re-run embeddings</button>
+    </div>
+    <div class="note" id="cfgnote"></div>
+  </div>
+
+  <div class="panel wide">
+    <h2>Shelves — per-language progress</h2>
+    <div style="margin-bottom:8px">
+      <span class="badge brass">lexical index</span>
+      <span class="badge lapis">embedded</span>
+    </div>
+    <div id="shelves"></div>
+  </div>
+
+  <div class="panel wide">
+    <h2>Playground — query &amp; debug</h2>
+    <textarea id="q" rows="3" style="resize:vertical;line-height:1.5"
+      placeholder="Ask across all 60+ languages… e.g. 'siege tactics in renaissance Italy'&#10;Ctrl/Cmd+Enter to search"
+      onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();runSearch()}"></textarea>
+    <div class="qbar">
+      <select id="mode">
+        <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
+        <option value="dense">dense only</option><option value="catalog">catalog only</option>
+      </select>
+      <button class="primary" onclick="runSearch()">Search</button>
+      <button onclick="ask()">Ask (RAG)</button>
+    </div>
+    <div id="timings" style="margin-top:10px"></div>
+    <div id="answer"></div>
+    <div id="hits"></div>
+  </div>
+
+  <div class="panel fill">
+    <h2>Usage</h2>
+    <div class="bignums" id="usage"></div>
+    <div class="scrollbox"><table id="recent"></table></div>
+  </div>
+
+  <div class="panel fill">
+    <h2>Worker log</h2>
+    <div id="log" class="scrollbox"></div>
+  </div>
+
+</div>
+
+<div id="bookmodal" onclick="if(event.target===this)this.style.display='none'">
+  <div class="inner" id="bookinner"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const fmt=n=>n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':(n??0);
+const bytes=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(0)+' MB':fmt(n)+' B';
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):'{}'});return r.json()}
+function toast(m){const e=document.createElement('div');e.textContent=m;
+  e.style.cssText='position:fixed;bottom:20px;right:20px;background:#2a2117;border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:420px';
+  document.body.appendChild(e);setTimeout(()=>e.remove(),4200)}
+
+let ST=null;
+async function refreshStatus(){
+  try{ST=await (await fetch('/api/status')).json()}catch(e){return}
+  const s=ST.worker_state;
+  $('workerstate').textContent=s;
+  $('workerdot').className='dot '+s;
+  $('toggle').textContent=s==='running'?'pause':'start';
+  const c=ST.counts;
+  $('bignums').innerHTML=[
+    ['in scope',fmt(c.in_scope)+' / '+fmt(c.total)],['chunks',fmt(c.chunks)],
+    ['tokens',fmt(c.tokens)],['vectors',fmt(ST.vectors)],
+    ['embed queue',fmt(ST.embed_queue)],['errors',fmt(c.errors)]
+  ].map(([l,v])=>`<div class="bignum"><b>${v}</b><span>${l}</span></div>`).join('');
+  const rows=[['metadata (rdf)',c.rdf_done],['lexical (tantivy)',c.fts_done],
+              ['embedded (lancedb)',c.embed_done],['summaries cached',c.summaries]];
+  $('pipeline').innerHTML='<tr><th>stage</th><th>done</th><th>of</th><th></th></tr>'+
+    rows.map(([n,v])=>{const pct=c.in_scope?Math.round(100*v/c.in_scope):0;
+      return `<tr><td>${n}</td><td>${fmt(v)}</td><td>${fmt(c.in_scope)}</td><td style="color:var(--muted)">${pct}%</td></tr>`}).join('');
+  $('cfgnote').textContent=`embed: ${ST.config.embed_model} · chat: ${ST.config.chat_model} · chunk ${ST.config.chunk_tokens} tok · versions c${ST.config.versions.chunk}/f${ST.config.versions.fts}/e${ST.config.versions.embed}`;
+  const sc=ST.scope;
+  if(document.activeElement.tagName!=='INPUT'){
+    $('sc_langs').value=sc.languages.join(', ');
+    $('sc_limit').value=sc.limit; $('sc_sample').value=sc.sample_per_lang;
+    $('sc_ids').value=sc.book_ids.join(', '); $('sc_embed').value=sc.embed_mode;
+  }
+}
+async function refreshStats(){
+  let d; try{d=await (await fetch('/api/stats')).json()}catch(e){return}
+  const max=Math.max(1,...d.languages.map(l=>l.books));
+  $('shelves').innerHTML=d.languages.map(l=>{
+    const w=100*l.books/max, wf=100*(l.fts_done||0)/max, we=100*(l.embed_done||0)/max;
+    return `<div class="shelf"><div class="lbl"><span>${l.lang} — ${fmt(l.books)} books · ${fmt(l.tokens)} tok</span>
+      <span>${fmt(l.fts_done)} indexed · ${fmt(l.embed_done)} embedded</span></div>
+      <div class="spine" style="width:${Math.max(w,2)}%"><div class="fts" style="width:${100*wf/Math.max(w,0.01)}%"></div>
+      <div class="emb" style="width:${100*we/Math.max(w,0.01)}%"></div></div></div>`}).join('');
+  $('usage').innerHTML=[['queries',fmt(d.usage.queries)],['last 24 h',fmt(d.usage.last24h)],
+    ['avg latency',(d.usage.avg_ms||0).toFixed(0)+' ms'],['fts on disk',bytes(d.disk.fts)],
+    ['vectors on disk',bytes(d.disk.vectors)]]
+    .map(([l,v])=>`<div class="bignum"><b style="font-size:22px">${v}</b><span>${l}</span></div>`).join('');
+  $('recent').innerHTML='<tr><th>query</th><th>mode</th><th>ms</th><th>hits</th></tr>'+
+    d.recent_queries.map(r=>`<tr><td>${esc(r.query)}</td><td>${r.mode}</td><td>${(r.total_ms||0).toFixed(0)}</td><td>${r.n_results}</td></tr>`).join('');
+}
+let lastEvent=0;
+async function refreshEvents(){
+  let d; try{d=await (await fetch('/api/events?after='+lastEvent)).json()}catch(e){return}
+  if(!d.events.length)return;
+  lastEvent=Math.max(lastEvent,...d.events.map(e=>e.id));
+  const html=d.events.reverse().map(e=>{
+    const t=new Date(e.ts*1000).toLocaleTimeString();
+    return `<div class="${e.level}"><span class="t">${t}</span> [${e.stage}${e.book_id?' #'+e.book_id:''}] ${esc(e.message)}</div>`}).join('');
+  $('log').insertAdjacentHTML('afterbegin',html);
+  while($('log').children.length>200)$('log').lastChild.remove();
+}
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function toggleWorker(){
+  const next=ST&&ST.worker_state==='running'?'paused':'running';
+  await post('/api/control',{state:next}); refreshStatus();
+}
+function parseList(v){return v.split(',').map(s=>s.trim()).filter(Boolean)}
+async function applyScope(){
+  const body={languages:parseList($('sc_langs').value),
+    book_ids:parseList($('sc_ids').value).map(Number).filter(n=>!isNaN(n)),
+    limit:+$('sc_limit').value||0, sample_per_lang:+$('sc_sample').value||0,
+    embed_mode:$('sc_embed').value};
+  await post('/api/scope',body); toast('Scope applied'); refreshStatus();
+}
+function setScopePreset(){$('sc_langs').value='';$('sc_sample').value=30;
+  $('sc_limit').value=0;$('sc_ids').value='';$('sc_embed').value='all';applyScope()}
+async function reset(stage){await post('/api/reset',{stage});toast('Reset: '+stage);refreshStatus()}
+
+async function runSearch(){
+  const q=$('q').value.trim(); if(!q)return;
+  $('hits').innerHTML='<div class="note">searching…</div>'; $('answer').style.display='none';
+  const d=await post('/api/search',{query:q,k:12,mode:$('mode').value});
+  $('timings').innerHTML=Object.entries(d.timings).map(([k,v])=>`<span class="badge">${k} ${v} ms</span>`).join('')
+    +(Object.keys(d.translations||{}).length?` <span class="badge lapis">fan-out: ${Object.keys(d.translations).join(', ')}</span>`:'');
+  const cat=d.catalog&&d.catalog.length?`<div class="note">catalog: ${d.catalog.slice(0,5).map(c=>`<a href="#" onclick="openBook(${c.book_id});return false">${esc(c.title)}</a>`).join(' · ')}</div>`:'';
+  $('hits').innerHTML=cat+d.hits.map(h=>`<div class="hit">
+    <div class="head"><span class="title" onclick="openBook(${h.book_id})">${esc(h.title||('#'+h.book_id))}</span>
+    <span class="badge">${esc(h.authors||'')}</span><span class="badge brass">${h.lang}</span>
+    ${(h.sources||[]).map(s=>`<span class="badge ${s==='dense'?'lapis':''}">${s}</span>`).join('')}
+    <span class="badge">${esc(h.chapter||'')}</span></div>
+    <div class="snip">${esc(h.text.slice(0,420))}…</div></div>`).join('')
+    ||'<div class="note">No hits. Is the lexical index built for the languages in scope?</div>';
+}
+async function ask(){
+  const q=$('q').value.trim(); if(!q)return;
+  await runSearch();
+  const a=$('answer'); a.style.display='block'; a.textContent='thinking…';
+  const r=await fetch('/v1/chat/completions',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({messages:[{role:'user',content:q}],stream:true})});
+  const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent='';
+  let buf='';
+  for(;;){const {done,value}=await reader.read(); if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i; while((i=buf.indexOf('\n\n'))>=0){
+      const line=buf.slice(0,i).trim(); buf=buf.slice(i+2);
+      if(!line.startsWith('data:'))continue;
+      const data=line.slice(5).trim(); if(data==='[DONE]')continue;
+      try{const j=JSON.parse(data); a.textContent+=j.choices[0].delta.content||''}catch(e){}
+    }}
+}
+async function openBook(id){
+  const d=await (await fetch('/api/books/'+id)).json();
+  const s=d.summary?`<h2 style="margin-top:14px">Summary</h2><div style="line-height:1.6;white-space:pre-wrap">${esc(d.summary.summary)}</div>`:'';
+  $('bookinner').innerHTML=`<h1 style="font-size:22px">${esc(d.title||'#'+id)}</h1>
+    <div class="note">${esc(d.authors||'')} · ${d.lang} · book #${id} · ${fmt(d.chunks)} chunks · ${fmt(d.tokens)} tokens</div>
+    <div style="margin-top:8px">${(d.subjects||'').split('|').filter(Boolean).map(x=>`<span class="badge">${esc(x.trim())}</span>`).join('')}</div>
+    ${d.error?`<div class="badge err" style="margin-top:8px">error: ${esc(d.error)}</div>`:''}
+    <div class="actions">
+      <button class="primary" onclick="summ(${id},${d.summary?'true':'false'})">${d.summary?'Regenerate summary':'Generate summary'}</button>
+      <button onclick="post('/api/books/${id}/reindex').then(()=>toast('queued for reindex'))">Reindex book</button>
+    </div>${s}<div id="summtarget"></div>`;
+  $('bookmodal').style.display='flex';
+}
+async function summ(id,force){
+  $('summtarget').innerHTML='<div class="note">summarizing in the background — big books take many minutes; you can close this and come back.</div>';
+  try{
+    let d=await post('/api/books/'+id+'/summary'+(force?'?force=true':''));
+    for(let i=0;i<360 && d.status!=='done';i++){
+      if(d.status==='error') throw d.error;
+      await new Promise(r=>setTimeout(r,5000));
+      d=await (await fetch('/api/books/'+id+'/summary')).json();
+    }
+    if(d.status!=='done') throw 'still running — reopen the book later';
+    $('summtarget').innerHTML=`<h2 style="margin-top:14px">Summary</h2><div style="line-height:1.6;white-space:pre-wrap">${esc(d.summary)}</div>`;
+  }catch(e){$('summtarget').innerHTML='<div class="badge err">'+esc(e)+'</div>'}
+}
+
+refreshStatus(); refreshStats(); refreshEvents();
+setInterval(refreshStatus,3000); setInterval(refreshStats,10000); setInterval(refreshEvents,4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Network — gutenberg-rag{% endblock %}
+{% block content %}
+<h1>Network</h1>
+<p class="note">The trust/traffic room. Most of this lands with P0.7 (transfer manager) and
+  P1.1/P1.3 (bundle format + coordinator) — panels below are honest placeholders, not
+  fabricated data.</p>
+
+<div class="panel">
+  <h2>Bandwidth by priority class</h2>
+  <table>
+    <tr><th>class</th><th>down</th><th>up</th></tr>
+    <tr><td>interactive</td><td id="down-interactive">0</td><td id="up-interactive">0</td></tr>
+    <tr><td>delta</td><td id="down-delta">0</td><td id="up-delta">0</td></tr>
+    <tr><td>backfill</td><td id="down-backfill">0</td><td id="up-backfill">0</td></tr>
+    <tr><td>seeding</td><td id="down-seeding">0</td><td id="up-seeding">0</td></tr>
+  </table>
+  <div class="note" id="bw-limits">…</div>
+  <div class="note">Live via SSE from /admin/network/bandwidth/stream. These are this
+    web process's own buckets — acquisition runs in the worker process, so a
+    cross-process rates feed is a later task.</div>
+</div>
+
+<div class="panel">
+  <h2>Boost bandwidth tonight</h2>
+  <div class="note">A Tier-3 runtime override: it expires on its own and is never written
+    to platform.toml, so the file always wins on restart (CLAUDE.md invariant 10).</div>
+  <div class="row">
+    <div><label>Rate (blank = clear)</label><input id="ov_rate" placeholder="e.g. 10Mbit"></div>
+    <div><label>Hours</label><input id="ov_hours" type="number" value="12"></div>
+  </div>
+  <div class="actions"><button class="primary" onclick="setOverride()">Apply override</button></div>
+  <div id="ov_result" class="note"></div>
+</div>
+
+<div class="panel">
+  <h2>Bundle ledger</h2>
+  <div class="note">not yet available — lands with P1.1 (bundle format: app/bundles/) and
+    P1.3 (coordinator, which owns the bundles/credit ledger in its own service DB).</div>
+</div>
+
+<div class="panel">
+  <h2>Seeding table</h2>
+  <div class="note">not yet available — lands with P1.3 (coordinator tracks peer/seeding
+    state; this node has no exchange service yet).</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const rate=n=>{n=Number(n||0);
+  return n>=1e6?(n/1e6).toFixed(2)+' MB/s':n>=1e3?(n/1e3).toFixed(1)+' KB/s':n.toFixed(0)+' B/s'};
+try{
+  const es=new EventSource('/admin/network/bandwidth/stream');
+  es.onmessage=(ev)=>{
+    try{const d=JSON.parse(ev.data);
+      for(const k of ['interactive','delta','backfill','seeding']){
+        const dn=document.getElementById('down-'+k); if(dn) dn.textContent=rate(d.down&&d.down[k]);
+        const up=document.getElementById('up-'+k); if(up) up.textContent=rate(d.up&&d.up[k]);
+      }
+      const lim=d.limits||{};
+      document.getElementById('bw-limits').textContent=
+        'schedule: '+(lim.schedule||'always full')
+        +' (factor '+(lim.schedule_factor??1)+')'
+        +' · effective down: '+(lim.down?rate(lim.down):'unlimited')
+        +' · effective up: '+(lim.up?rate(lim.up):'unlimited')
+        +(lim.override?' · override active: '+rate(lim.override):'');
+    }catch(e){}
+  };
+}catch(e){}
+async function setOverride(){
+  const raw=document.getElementById('ov_rate').value.trim();
+  const hours=parseInt(document.getElementById('ov_hours').value,10)||12;
+  try{
+    const d=await postJSON('/admin/network/bandwidth/override',{rate:raw||null,hours});
+    document.getElementById('ov_result').textContent=
+      d.rate_bps?('override active: '+rate(d.rate_bps)+' for '+d.hours+'h'):'override cleared';
+  }catch(e){document.getElementById('ov_result').textContent='failed: '+e}
+}
+</script>
+{% endblock %}

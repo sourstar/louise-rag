@@ -1,0 +1,65 @@
+{% if result %}
+<div class="note">
+  {% for k,v in result.timings.items() if k != 'per_collection' %}<span class="badge">{{ k }} {{ v }} ms</span>{% endfor %}
+  {% if result.translations %}<span class="badge lapis">fan-out: {{ result.translations.keys()|join(', ') }}</span>{% endif %}
+</div>
+
+{% if result.facts %}
+<div class="panel">
+  <h2>Entity strip — pinned facts (never ranked, never cited with [n])</h2>
+  {% for f in result.facts %}
+  <div class="fact-card">
+    <b>{{ f.label or f.entity_id }}</b> <span class="badge brass">{{ f.entity_id }}</span>
+    <span class="badge">{{ f.kind }}</span>
+    {% if f.fields %}
+    <div class="note">{% for k,v in f.fields.items() %}{{ k }}: {{ v }}<br>{% endfor %}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if result.catalog %}
+<div class="note">catalog matches: {% for c in result.catalog[:5] %}{{ c.title }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+{% endif %}
+
+<div id="hits">
+{% for h in result.hits %}
+<div class="hit">
+  <div class="head">
+    <span><b>{{ h.title or ('#' ~ h.book_id) }}</b></span>
+    <span class="badge">{{ h.authors or '' }}</span>
+    <span class="badge brass">{{ h.lang or '?' }}</span>
+    {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
+    {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
+    <span class="badge">{{ h.chapter or '' }}</span>
+  </div>
+  <div class="snip">[{{ loop.index }}] {{ h.text[:420] }}…</div>
+  <details class="drawer">
+    <summary>provenance</summary>
+    <div>uid: {{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}</div>
+    <div>chunk_id: {{ h.chunk_id }}</div>
+    <div>collection: {{ h.source_collection or (h.chunk_id.split(':')[0]) }}</div>
+    <div>producer:
+      {% if h.producer and h.producer != 'local' %}{{ h.producer[:16] }}…{% else %}local{% endif %}
+    </div>
+    <div>verification:
+      {% if h.verification == 'verified' %}
+        <span class="badge ok">verified ✓</span>
+        {% if h.verification_cosine %}<span class="badge">cos {{ '%.4f'|format(h.verification_cosine) }}</span>{% endif %}
+      {% elif h.verification == 'imported' %}
+        <span class="badge">imported ◌</span>
+      {% elif h.verification == 'failed' %}
+        <span class="badge err">⚠ failed verification</span>
+      {% else %}
+        <span class="badge ok">local ✓</span>
+      {% endif %}
+    </div>
+    <div style="margin-top:6px;white-space:pre-wrap">{{ h.text[:1200] }}</div>
+  </details>
+</div>
+{% else %}
+<div class="note">No hits. Is the lexical index built for the languages in scope?</div>
+{% endfor %}
+</div>
+{% endif %}

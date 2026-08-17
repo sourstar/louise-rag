@@ -1,0 +1,154 @@
+{
+  "books": [
+    {
+      "authors": "Fixture, Ada",
+      "bookshelves": "Test Fixtures Bookshelf",
+      "chunks": 2,
+      "embed_done": 0,
+      "embed_version": 0,
+      "error": null,
+      "fts_done": 1,
+      "fts_version": 1,
+      "id": 10001,
+      "in_scope": 1,
+      "lang": "en",
+      "mtime": 1786876071,
+      "rdf_done": 1,
+      "retries": 0,
+      "size": 1462,
+      "subjects": "Fixtures -- Fiction | Committees -- Fiction",
+      "summary_done": 0,
+      "title": "A Study in Fixtures",
+      "tokens": 176,
+      "txt_hash": null,
+      "txt_name": "pg10001.txt.utf8"
+    },
+    {
+      "authors": "Fixture, Basil",
+      "bookshelves": "Test Fixtures Bookshelf",
+      "chunks": 1,
+      "embed_done": 0,
+      "embed_version": 0,
+      "error": null,
+      "fts_done": 1,
+      "fts_version": 1,
+      "id": 10002,
+      "in_scope": 1,
+      "lang": "en",
+      "mtime": 1786876080,
+      "rdf_done": 1,
+      "retries": 0,
+      "size": 1315,
+      "subjects": "Country life -- Fiction",
+      "summary_done": 0,
+      "title": "A Plain Walk",
+      "tokens": 200,
+      "txt_hash": null,
+      "txt_name": "pg10002.txt.utf8"
+    },
+    {
+      "authors": "Fixture, Camille",
+      "bookshelves": "Test Fixtures Bookshelf",
+      "chunks": 2,
+      "embed_done": 0,
+      "embed_version": 0,
+      "error": null,
+      "fts_done": 1,
+      "fts_version": 1,
+      "id": 10003,
+      "in_scope": 1,
+      "lang": "fr",
+      "mtime": 1786876091,
+      "rdf_done": 1,
+      "retries": 0,
+      "size": 1211,
+      "subjects": "Contes -- Fiction",
+      "summary_done": 0,
+      "title": "Contes de Fixtures",
+      "tokens": 176,
+      "txt_hash": null,
+      "txt_name": "pg10003.txt.utf8"
+    }
+  ],
+  "chunks": {
+    "10001": [
+      {
+        "chapter": "CHAPTER I",
+        "id": "10001:0:1",
+        "seq": 0,
+        "text": "It was a bright and steady morning when the committee first gathered to\ndiscuss the matter of fixtures. The room was small, the coffee was cold,\nand nobody wished to be the first to speak.\n\nNevertheless the chairperson called the session to order and read the\nminutes of the previous meeting aloud, pausing now and then to correct\na date or a name.",
+        "tokens": 87
+      },
+      {
+        "chapter": "CHAPTER II",
+        "id": "10001:1:1",
+        "seq": 1,
+        "text": "By afternoon the discussion had turned, as such discussions often do,\ntoward matters no one had planned to raise. The fixtures themselves sat\npatiently in their crates, indifferent to the debate.\n\nWhen at last a vote was called, the outcome surprised no one who had\nbeen paying attention, and the meeting adjourned before the light\noutside had fully faded.",
+        "tokens": 89
+      }
+    ],
+    "10002": [
+      {
+        "chapter": "Section 1",
+        "id": "10002:0:1",
+        "seq": 0,
+        "text": "The road out of the village ran straight for a while before it began to\nbend gently along the line of the river, and the walker who had set out\nthat morning found no reason to hurry.\n\nFields opened on either side, some freshly turned, some still holding\nthe pale stubble of the last harvest, and a heron stood motionless in\nthe shallows as though it had always been there and always would.\n\nBy the time the sun stood directly overhead the walker had reached the\nold stone bridge, where a peddler had set out a small collection of\nbuttons and thread on a folding table, and where, for a while, nothing\nat all seemed to need doing.\n\nThe return journey took longer than the outward one, as return journeys\noften do, and dusk had settled over the fields by the time the village\nlights came back into view.",
+        "tokens": 200
+      }
+    ],
+    "10003": [
+      {
+        "chapter": "Chapitre I",
+        "id": "10003:0:1",
+        "seq": 0,
+        "text": "Il etait une fois, dans un petit village pres de la riviere, un\nhorloger qui ne reparait plus que des montres arretees. Chaque matin il\nouvrait son atelier avant le lever du soleil et attendait des clients\nqui ne venaient presque jamais.\n\nUn jour, une vieille femme entra et posa sur le comptoir une montre de\npoche tres ancienne, sans un mot d'explication, puis elle repartit\naussitot sans attendre de reponse.",
+        "tokens": 102
+      },
+      {
+        "chapter": "Chapitre II",
+        "id": "10003:1:1",
+        "seq": 1,
+        "text": "L'horloger ouvrit la montre avec precaution et decouvrit a l'interieur\nun petit mot plie, ecrit d'une main tremblante, qu'il lut lentement\npres de la fenetre.\n\nIl ne raconta jamais a personne ce que contenait ce mot, mais a partir\nde ce jour il repara de nouveau des montres qui marchaient encore.",
+        "tokens": 74
+      }
+    ]
+  },
+  "discover_stats": {
+    "added": 3,
+    "changed": 0,
+    "missing_txt": 0,
+    "seen": 3
+  },
+  "search": {
+    "en:bridge": [
+      {
+        "book_id": 10002,
+        "chapter": "Section 1",
+        "chunk_id": "10002:0:1",
+        "lang": "en"
+      }
+    ],
+    "en:committee": [
+      {
+        "book_id": 10001,
+        "chapter": "CHAPTER I",
+        "chunk_id": "10001:0:1",
+        "lang": "en"
+      }
+    ],
+    "fr:horloger": [
+      {
+        "book_id": 10003,
+        "chapter": "Chapitre II",
+        "chunk_id": "10003:1:1",
+        "lang": "fr"
+      },
+      {
+        "book_id": 10003,
+        "chapter": "Chapitre I",
+        "chunk_id": "10003:0:1",
+        "lang": "fr"
+      }
+    ]
+  }
+}

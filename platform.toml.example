@@ -1,0 +1,40 @@
+# Node-level Tier-2 configuration (architecture-v2.md §5.2, §14).
+#
+# Copy to ${CONFIG_DIR:-.}/platform.toml to activate. WITHOUT this file the
+# budget is unlimited and the schedule is always-full, i.e. exactly the
+# behavior of a deployment that predates the transfer manager — so adopting
+# it is opt-in and reversible by deleting the file.
+#
+# This is desired state: versioned, diffable, backupable. It belongs in git
+# next to collections/*.toml. Runtime overrides ("boost bandwidth tonight")
+# are Tier 3, live in the control table, carry an expiry, and never get
+# written back here (CLAUDE.md invariant 10).
+
+[bandwidth]
+# Accepted units: bit/kbit/Mbit/Gbit (SI, /8 to bytes), B/KB/MB/GB (SI),
+# KiB/MiB/GiB (binary). A bare number is bytes/second.
+# Recommended: ~80% of your MEASURED uplink. The uplink is the scarce
+# resource on an asymmetric line — saturating it wrecks the downlink too via
+# ACK starvation and bufferbloat.
+down_max = "400Mbit"
+up_max = "40Mbit"
+
+# Headroom only interactive traffic may draw on, so a query burst preempts a
+# running backfill without waiting for its in-flight chunk to drain.
+reserve_interactive = "20%"
+
+# Cron-style windows; first match wins, "else" covers the rest of the day.
+# Windows may wrap midnight ("22:00-06:00 full"). Factors: full | off | N%.
+# Wall-clock local time, so DST shifts them as an operator would expect.
+schedule = "01:00-07:00 full; else 30%"
+
+[transfer]
+# Global fetch workers across all endpoints.
+workers = 8
+# Per-endpoint ceiling. The effective limit is the minimum of this,
+# Endpoint.max_conns and the spec's RateLimit.max_conns — parallelism never
+# overrides origin etiquette.
+per_endpoint = 4
+# Multi-connection downloads of a SINGLE file. Only 1 is supported; a higher
+# value is refused at load rather than silently ignored.
+segments_per_file = 1

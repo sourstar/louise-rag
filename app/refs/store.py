@@ -1,0 +1,112 @@
+"""SQLite-backed reference store. One global file (config.REFS_DB_PATH),
+independent of any collection: HGNC/ClinVar-mini etc. are standalone lookup
+layers a query plan consults regardless of which corpus collection is being
+searched (architecture-v2.md §4, §9).
+"""
+import sqlite3
+import time
+from pathlib import Path
+
+from .. import config
+from ..plugins.base import RefLink, RefSchema, RefSyncState, ReferenceSource
+
+
+def connect(path: Path | None = None) -> sqlite3.Connection:
+    path = path or config.REFS_DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path, timeout=30, isolation_level=None)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.execute("PRAGMA busy_timeout=15000")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS ref_meta "
+        "(source_id TEXT PRIMARY KEY, ref_version INTEGER, synced_at INTEGER)")
+    return con
+
+
+def ensure_schema(con: sqlite3.Connection, schema: RefSchema) -> None:
+    for table in schema.tables:
+        col_defs = ", ".join(
+            f"{c.name} {c.type}" + (" PRIMARY KEY" if c.name == table.primary_key else "")
+            for c in table.columns)
+        con.execute(f"CREATE TABLE IF NOT EXISTS {table.name} ({col_defs})")
+
+
+def sync_source(con: sqlite3.Connection, source: ReferenceSource, state: RefSyncState) -> dict:
+    """Idempotent by primary key (INSERT OR REPLACE, invariant 2); short-
+    circuits if ref_version already matches what's pinned — bump
+    source.ref_version to force reprocessing, mirroring CHUNK_VERSION/
+    FTS_VERSION's convention."""
+    schema = source.schema()
+    ensure_schema(con, schema)
+    row = con.execute(
+        "SELECT ref_version FROM ref_meta WHERE source_id=?", (source.source_id,)).fetchone()
+    if row is not None and row["ref_version"] == source.ref_version:
+        return {"skipped": True, "rows": 0}
+
+    valid_tables = {t.name for t in schema.tables}
+    n = 0
+    con.execute("BEGIN")
+    try:
+        for batch in source.sync(state):
+            if batch.table not in valid_tables:
+                raise ValueError(f"{source.source_id}: unknown table {batch.table!r}")
+            if not batch.rows:
+                continue
+            cols = list(batch.rows[0].keys())
+            placeholders = ", ".join("?" for _ in cols)
+            col_list = ", ".join(cols)
+            for r in batch.rows:
+                con.execute(
+                    f"INSERT OR REPLACE INTO {batch.table}({col_list}) VALUES({placeholders})",
+                    [r[c] for c in cols])
+                n += 1
+        con.execute(
+            "INSERT INTO ref_meta(source_id,ref_version,synced_at) VALUES(?,?,?) "
+            "ON CONFLICT(source_id) DO UPDATE SET ref_version=excluded.ref_version,"
+            "synced_at=excluded.synced_at",
+            (source.source_id, source.ref_version, int(time.time())))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return {"skipped": False, "rows": n}
+
+
+def sync_all(con: sqlite3.Connection, ref_root: Path) -> dict[str, dict]:
+    from . import REFS_REGISTRY
+    state = RefSyncState(ref_root=ref_root)
+    return {sid: sync_source(con, src, state) for sid, src in REFS_REGISTRY.items()}
+
+
+class RefStore:
+    """Read interface for EntityResolver — implements plugins.base.RefLookup."""
+
+    def __init__(self, con: sqlite3.Connection, schemas: list[RefSchema]):
+        self.con = con
+        self._links: list[RefLink] = [l for s in schemas for l in s.links]
+        self._pk: dict[str, str] = {t.name: t.primary_key for s in schemas for t in s.tables}
+        self._owner: dict[str, str] = {t.name: s.source_id for s in schemas for t in s.tables}
+
+    def rows(self, table: str, where: dict | None = None) -> list[dict]:
+        if where:
+            cond = " AND ".join(f"{k}=?" for k in where)
+            cur = self.con.execute(f"SELECT * FROM {table} WHERE {cond}", list(where.values()))
+        else:
+            cur = self.con.execute(f"SELECT * FROM {table}")
+        return [dict(r) for r in cur.fetchall()]
+
+    def get(self, table: str, pk_value) -> dict | None:
+        row = self.con.execute(
+            f"SELECT * FROM {table} WHERE {self.pk_of(table)}=?", (pk_value,)).fetchone()
+        return dict(row) if row else None
+
+    def links_for(self, table: str) -> list[RefLink]:
+        return [l for l in self._links if l.from_table == table or l.to_table == table]
+
+    def pk_of(self, table: str) -> str:
+        return self._pk[table]
+
+    def owner_of(self, table: str) -> str:
+        return self._owner[table]

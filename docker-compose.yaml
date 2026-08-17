@@ -1,0 +1,50 @@
+# TrueNAS SCALE custom app — Gutenberg RAG
+# Build the image on the NAS first (see README), then paste this as a custom app.
+# pull_policy: never matches the usual TrueNAS duplicate-tag workaround: the
+# image is built/tagged locally and must never be pulled.
+
+services:
+  web:
+    image: gutenberg-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "8742:8742"
+    environment: &env
+      DATA_DIR: /data
+      CORPUS_DIR: /corpus
+      OLLAMA_URL: "http://192.168.178.10:11434"   # <- MYNASS-DE LAN IP (container can't use localhost)
+      EMBED_MODEL: "qwen3-embedding-8k:latest"
+      CHAT_MODEL: "qwen3.6-35b-a3b:latest"        # Oreste
+      RERANK_URL: ""                               # optional TEI /rerank endpoint
+      EMBED_URL: ""                                # optional dedicated embedding Ollama (e.g. http://192.168.178.10:11435); empty = OLLAMA_URL
+      EMBED_CONCURRENCY: "4"                       # embed requests in flight; BATCH x CONCURRENCY should be >= the embed instance's NUM_PARALLEL
+      EMBED_API: "ollama"                          # "openai" to target /v1/embeddings (llama-server or Ollama compat)
+      EMBED_DTYPE: "f16"                           # f16 halves vector storage; changing dtype or model dims requires wiping /data/lancedb
+      CHUNK_TOKENS: "1000"
+      CHUNK_OVERLAP: "120"
+      EMBED_BATCH: "8"
+      CHUNK_VERSION: "1"
+      FTS_VERSION: "1"
+      EMBED_VERSION: "1"
+      DISCOVER_INTERVAL_MIN: "360"  # rescan corpus every 6h while running (0 = startup only)
+      ADMIN_TOKEN: ""                # set to enable the Library/Network/System admin pages (unset = locked out)
+    volumes:
+      - /mnt/tank/gutenberg/cache/epub:/corpus:ro   # <- point at your existing gutenberg-epub folder (synced elsewhere)
+      - /mnt/ssdpool/ssd5/gutenberg-rag:/data       # manifest, tantivy, lancedb (SSD!)
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8742/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: gutenberg-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *env
+    volumes:
+      - /mnt/tank/gutenberg/cache/epub:/corpus:ro
+      - /mnt/ssdpool/ssd5/gutenberg-rag:/data
+    stop_grace_period: 120s   # let a mid-book embed finish its commit

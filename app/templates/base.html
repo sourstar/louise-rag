@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}gutenberg-rag{% endblock %}</title>
+<link rel="stylesheet" href="/static/admin.css">
+<script src="/static/vendor/htmx.min.js"></script>
+</head>
+<body>
+<nav>
+  <span class="brand">gutenberg-rag</span>
+  <a href="/ask" class="{{ 'active' if active=='ask' else '' }}">Ask</a>
+  <a href="/admin/library" class="{{ 'active' if active=='library' else '' }}">Library</a>
+  <a href="/admin/network" class="{{ 'active' if active=='network' else '' }}">Network</a>
+  <a href="/admin/system" class="{{ 'active' if active=='system' else '' }}">System</a>
+  <span style="margin-left:auto"><a href="/" style="color:var(--muted);font-size:11px">legacy dashboard →</a></span>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+<div id="modal-backdrop" onclick="if(event.target===this)this.style.display='none'">
+  <div class="inner" id="modal-inner"></div>
+</div>
+<script>
+function showModal(html){document.getElementById('modal-inner').innerHTML=html;document.getElementById('modal-backdrop').style.display='flex'}
+function hideModal(){document.getElementById('modal-backdrop').style.display='none'}
+async function postJSON(url,body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw (d.detail||r.statusText);
+  return d;
+}
+function toast(m){const e=document.createElement('div');e.textContent=m;
+  e.style.cssText='position:fixed;bottom:20px;right:20px;background:#2a2117;border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:420px;font-family:var(--mono);color:var(--ivory)';
+  document.body.appendChild(e);setTimeout(()=>e.remove(),4200)}
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

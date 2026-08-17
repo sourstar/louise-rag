@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}admin login — gutenberg-rag{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:420px;margin:40px auto">
+  <h2>Librarian login</h2>
+  <p class="note">Librarian areas (Library / Network / System) require the node's admin token.
+    Ask stays open and read-only on the LAN regardless.</p>
+  {% if not admin_token_configured %}
+  <p class="note" style="color:var(--err)">ADMIN_TOKEN is not set on this node — admin routes are
+    disabled until an operator sets it (Tier 1 env var).</p>
+  {% else %}
+  <label>Admin token</label>
+  <input id="token" type="password" autofocus>
+  <div class="actions">
+    <button class="primary" onclick="doLogin()">Log in</button>
+  </div>
+  {% endif %}
+  <div id="err" class="note" style="color:var(--err)"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function doLogin(){
+  const token=document.getElementById('token').value;
+  try{
+    await postJSON('/admin/login',{token});
+    location.href=new URLSearchParams(location.search).get('next')||'/admin/library';
+  }catch(e){document.getElementById('err').textContent='login failed: '+e}
+}
+document.getElementById('token') && document.getElementById('token').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+</script>
+{% endblock %}

@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000001</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Jan</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Effects of widget calibration on throughput.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Baseline calibration reduces throughput variance by a small margin.</AbstractText>
+        </Abstract>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D000001">Widgets</DescriptorName></MeshHeading>
+        <MeshHeading><DescriptorName UI="D000002">Calibration</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000002</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Feb</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A retracted study on gadget fatigue.</ArticleTitle>
+        <Abstract>
+          <AbstractText>This record will be removed by a later DeleteCitation.</AbstractText>
+        </Abstract>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D000003">Gadgets</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000003</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Feb</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Another study later withdrawn.</ArticleTitle>
+        <Abstract>
+          <AbstractText>This record will also be removed, by a different updatefile.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000004</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Mar</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A record with no abstract on file.</ArticleTitle>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D000004">Widgets</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000005</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>Zh Widzhet Issled</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Apr</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Wirkung der Kalibrierung auf Übertragungsraten — эффективность у гаджетов.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Die Kalibrierung verbessert die Übertragungsrate; результаты показывают заметный эффект.</AbstractText>
+        </Abstract>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D000005">Kalibrierung</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000006</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>May</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about widget durability.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Widgets show typical wear after extended use in controlled trials.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000007</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Jun</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about gadget assembly.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Assembly time correlates weakly with final gadget reliability.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000008</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Jul</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about widget supply chains.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Supply disruptions had a measurable but transient effect on output.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000009</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Aug</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about gadget noise levels.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Noise levels were within expected bounds across all tested units.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000010</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Sep</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about widget cost modeling.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Cost models were revised to include maintenance overhead.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000011</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Oct</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A filler record about gadget lifecycle testing.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Lifecycle tests found no significant deviation from prior batches.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>

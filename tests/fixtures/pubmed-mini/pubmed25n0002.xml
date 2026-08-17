@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="2">30000001</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Nov</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Effects of widget calibration on throughput (corrected).</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">The original analysis underestimated calibration drift.</AbstractText>
+          <AbstractText Label="RESULTS">Corrected calibration improves throughput variance substantially.</AbstractText>
+        </Abstract>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D000001">Widgets</DescriptorName></MeshHeading>
+        <MeshHeading><DescriptorName UI="D000002">Calibration</DescriptorName></MeshHeading>
+        <MeshHeading><DescriptorName UI="D000006">Reproducibility of Results</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <DeleteCitation>
+    <PMID Version="1">30000002</PMID>
+  </DeleteCitation>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000012</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Nov</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A new record introduced by the first updatefile.</ArticleTitle>
+        <Abstract>
+          <AbstractText>New submissions continue at a steady weekly rate.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000013</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Nov</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Another new record from the first updatefile.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Cross-batch comparisons remain consistent with the baseline.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000014</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Nov</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A third new record from the first updatefile.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Final acceptance testing completed without incident.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>

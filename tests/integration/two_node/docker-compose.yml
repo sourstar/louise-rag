@@ -1,0 +1,95 @@
+# F1's two-node integration flow (architecture-v2.md §5-§7 end to end):
+# producer node, consumer node, coordinator, mocked embed endpoint.
+#
+#   Build the image once:   docker build -t louise-rag:dev .
+#   Run the flow:           docker compose -f tests/integration/two_node/docker-compose.yml run --rm driver
+#   Run it AGAIN (must also pass — system-level idempotence):
+#                           docker compose -f tests/integration/two_node/docker-compose.yml run --rm driver
+#   Tear down:              docker compose -f tests/integration/two_node/docker-compose.yml down -v --remove-orphans
+#
+# The only fake is the embed endpoint (deterministic text->vector). Everything
+# else — discovery, chunking, signing, upload, verification, import, badges —
+# is the real code path, in separate containers, over the network.
+
+services:
+  mock-embed:
+    image: louise-rag:dev
+    command: ["python", "/srv/tests/integration/two_node/mock_embed.py"]
+    volumes: ["../../..:/srv"]
+    environment: { MOCK_DIM: "64", MOCK_SALT: "model-A" }
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:11434/', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  coordinator:
+    image: louise-rag:dev
+    working_dir: /srv
+    command: ["python", "-m", "app.coordinator.service"]
+    volumes:
+      - ../../..:/srv
+      - coord-state:/state
+      - coord-artifacts:/coord-artifacts
+    environment:
+      COORDINATOR_DB: /state/coordinator.db
+      COORDINATOR_ARTIFACTS: /coord-artifacts
+      COORDINATOR_PORT: "8750"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8750/healthz', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  producer:
+    image: louise-rag:dev
+    working_dir: /srv
+    command: ["python", "/srv/tests/integration/two_node/entry_producer.py"]
+    volumes:
+      - ../../..:/srv
+      - ../../fixtures/gutenberg-mini/corpus:/corpus:ro
+      - producer-data:/data
+    environment: &node_env
+      DATA_DIR: /data
+      CORPUS_DIR: /corpus
+      OLLAMA_URL: http://mock-embed:11434
+      EMBED_MODEL: mock-model
+      EMBED_DTYPE: f32
+      PYTHONPATH: /srv
+    depends_on:
+      mock-embed: { condition: service_healthy }
+      coordinator: { condition: service_healthy }
+
+  consumer:
+    image: louise-rag:dev
+    working_dir: /srv
+    command: ["python", "/srv/tests/integration/two_node/entry_consumer.py"]
+    volumes:
+      - ../../..:/srv
+      - ../../fixtures/gutenberg-mini/corpus:/corpus:ro
+      - consumer-data:/data
+    environment: *node_env
+    depends_on:
+      mock-embed: { condition: service_healthy }
+      coordinator: { condition: service_healthy }
+
+  driver:
+    image: louise-rag:dev
+    working_dir: /srv
+    command: ["python", "/srv/tests/integration/two_node/driver.py"]
+    volumes:
+      - ../../..:/srv
+      - coord-artifacts:/coord-artifacts:ro
+      - consumer-data:/consumer-data
+    environment: { PYTHONPATH: /srv }
+    depends_on:
+      - producer
+      - consumer
+
+volumes:
+  coord-state:
+  coord-artifacts:
+  producer-data:
+  consumer-data:

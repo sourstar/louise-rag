@@ -1,0 +1,14 @@
+PubMed/MEDLINE bulk data — usage terms (operator placeholder)
+
+This file is a stand-in for NLM's actual current PubMed bulk-data terms of
+use. Before enabling real acquisition of the pubmed collection, replace this
+file with the live terms text from https://www.nlm.nih.gov/databases/download/pubmed_medline.html
+(or the current equivalent), then re-run the license-ack CLI verb so the
+recorded acknowledgement hashes the real terms, not this placeholder.
+
+Summary of NLM's public bulk-data policy as of this writing (not a
+substitute for the live text): PubMed/MEDLINE citation data may be
+downloaded and used freely, including for commercial purposes; redistributed
+copies should either be kept reasonably current with NLM's updates or be
+clearly labeled as a static/dated snapshot; NLM's name and logo may not be
+used to imply endorsement of a derived product.

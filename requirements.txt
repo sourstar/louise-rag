@@ -1,0 +1,21 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+pydantic>=2.7
+jinja2>=3.1
+tantivy>=0.24
+lancedb>=0.15
+# Pinned deliberately: P1.1 signs a digest of a Parquet file, and pyarrow's
+# writer output is not byte-stable across versions (`created_by` embeds the
+# Arrow version, and row-group/dictionary/statistics behavior has moved
+# historically). It arrives transitively via lancedb, so without a pin an
+# unrelated upgrade would silently change export bytes.
+pyarrow==25.0.1
+numpy
+# Ed25519 for signed vector bundles (app/bundles/). libsodium bindings with
+# prebuilt wheels; no hand-rolled crypto anywhere.
+pynacl>=1.5
+pytest>=8
+# Property-based generators for the verification ladder's detection matrix
+# (P1.2): honest / wrong-model / perturbed / unnormalized bundles. Test-only.
+hypothesis>=6.100

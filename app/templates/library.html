@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Library — gutenberg-rag{% endblock %}
+{% block content %}
+<h1>Library</h1>
+<div class="panel">
+  <span class="dot {{ worker_state }}"></span> worker: <b>{{ worker_state }}</b>
+  <div class="actions">
+    <button class="primary" onclick="toggleWorker()">{{ 'pause' if worker_state=='running' else 'start' }}</button>
+    <button onclick="rescanAll()">rescan all collections</button>
+  </div>
+  <div class="note">Worker pause/resume is one global toggle today (worker.py round-robins every
+    collection each round) — not yet per-collection; see app/worker.py's own docstring.</div>
+</div>
+
+<div class="grid">
+{% for c in shelves %}
+<div class="panel" data-collection="{{ c.name }}">
+  <h2>{{ c.name }} <span class="badge">{{ c.plugin }}</span></h2>
+  <div>
+    <span class="badge brass">profile: {{ c.profile }}</span>
+    <span class="badge lapis">space: {{ c.space_id }}</span>
+  </div>
+  {% if c.fetched %}
+  <div class="stage"><div class="lbl"><span>fetched</span><span>{{ c.fetched.done }} / {{ c.fetched.total }}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.fetched.done/c.fetched.total)|round(1) if c.fetched.total else 0 }}%;background:var(--brass)"></span></div></div>
+  {% else %}
+  <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
+  {% endif %}
+  <div class="stage"><div class="lbl"><span>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
+  <div class="stage"><div class="lbl"><span>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
+  <div class="stage"><div class="lbl"><span>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+  <div class="note">
+    delta freshness: {{ c.last_discover_text }} · lazy-embed queue: {{ c.queue }} pending
+  </div>
+  <div class="actions">
+    <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
+    <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
+    <button onclick="libReset('{{ c.name }}','fts')">reprocess lexical index</button>
+    <button onclick="libDiscover('{{ c.name }}')">rescan</button>
+  </div>
+</div>
+{% endfor %}
+</div>
+
+<div class="panel">
+  <h2>Add a collection</h2>
+  <div class="row">
+    <div><label>Name</label><input id="nc_name" placeholder="e.g. pubmed"></div>
+    <div><label>Plugin</label>
+      <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
+    </div>
+    <div><label>Profile</label><input id="nc_profile" value="demo"></div>
+  </div>
+  <div class="actions"><button class="primary" onclick="previewNewCollection()">Preview</button></div>
+  <div id="nc_preview"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let WORKER_STATE="{{ worker_state }}";
+async function toggleWorker(){
+  const next=WORKER_STATE==='running'?'paused':'running';
+  await postJSON('/api/control',{state:next}); location.reload();
+}
+async function rescanAll(){
+  {% for c in shelves %}await libDiscover('{{ c.name }}',true);{% endfor %}
+  toast('rescan triggered for every collection');
+}
+async function libDiscover(name,quiet){
+  try{await postJSON('/admin/library/'+name+'/discover',{})}catch(e){toast('rescan failed: '+e);return}
+  if(!quiet){toast('rescanned '+name);location.reload()}
+}
+async function libReset(name,stage){
+  try{await postJSON('/admin/library/'+name+'/reset',{stage});toast('reset '+stage+' on '+name);location.reload()}
+  catch(e){toast('reset failed: '+e)}
+}
+function openGrow(name){
+  showModal(`<h2>Grow ${esc(name)}</h2>
+    <label>Target profile</label><input id="grow_profile" value="full">
+    <div class="actions">
+      <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
+      <button onclick="hideModal()">Cancel</button>
+    </div>
+    <div id="grow_result"></div>`);
+}
+async function previewGrow(name){
+  const profile=document.getElementById('grow_profile').value.trim();
+  const box=document.getElementById('grow_result');
+  box.innerHTML='<div class="note">planning…</div>';
+  try{
+    const d=await postJSON('/admin/library/'+name+'/grow/plan',{profile});
+    box.innerHTML=`<div class="note">files: ${d.plan.files_pending} pending / ${d.plan.files_total} total<br>
+      bytes: ${d.plan.bytes_pending} pending / ${d.plan.bytes_total} total<br>
+      eta: ~${d.plan.eta_seconds}s (placeholder rate — no live bandwidth measurement until the transfer manager lands)<br>
+      license: ${d.plan.license_state}</div>
+      <div class="note">CLI equivalent:</div><pre class="cli">${esc(d.cli)}</pre>
+      <div class="actions"><button class="primary" onclick="runGrow('${esc(name)}','${esc(profile)}')">Confirm &amp; run</button></div>`;
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+async function runGrow(name,profile){
+  try{await postJSON('/admin/library/'+name+'/grow/run',{profile});toast('grow started for '+name);hideModal();location.reload()}
+  catch(e){toast('grow failed: '+e)}
+}
+async function previewNewCollection(){
+  const name=document.getElementById('nc_name').value.trim();
+  const plugin=document.getElementById('nc_plugin').value;
+  const profile=document.getElementById('nc_profile').value.trim()||'demo';
+  const box=document.getElementById('nc_preview');
+  if(!name){toast('name required');return}
+  box.innerHTML='<div class="note">previewing…</div>';
+  try{
+    const d=await postJSON('/admin/library/new/preview',{name,plugin,profile});
+    box.innerHTML=`<div class="note">license class: ${esc(d.license_class)}${d.terms_text?'<br><br>'+esc(d.terms_text.slice(0,600))+'…':''}</div>
+      <div class="note" style="margin-top:8px">Write this to <b>${esc(d.toml_path)}</b>:</div>
+      <pre class="cli">${esc(d.toml)}</pre>
+      <div class="note">${esc(d.instructions)}</div>
+      <pre class="cli">${esc(d.cli)}</pre>`;
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+</script>
+{% endblock %}

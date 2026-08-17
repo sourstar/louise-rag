@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Ask — gutenberg-rag{% endblock %}
+{% block content %}
+<h1>Ask</h1>
+<p class="note">Answers cite sources as [n]; pinned facts (entity lookups) are shown separately —
+they are never ranked and never compete with search hits (CLAUDE.md invariant 4).</p>
+
+<div class="panel">
+  <label>Collection scope</label>
+  <div id="scope-chips">
+    {% for c in collections %}
+    <span class="chip on" data-name="{{ c.name }}" onclick="toggleChip(this)">{{ c.name }}</span>
+    {% endfor %}
+  </div>
+  <label>Question</label>
+  <textarea id="q" rows="3" placeholder="Ask across every collection in scope… Ctrl/Cmd+Enter to ask"
+    onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();ask()}"></textarea>
+  <div class="actions">
+    <select id="mode" style="width:auto">
+      <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
+      <option value="dense">dense only</option><option value="catalog">catalog only</option>
+    </select>
+    <button class="primary" onclick="search()">Search</button>
+    <button onclick="ask()">Ask (RAG)</button>
+  </div>
+</div>
+
+<div id="answer-pane" style="display:none" class="panel">
+  <h2>Answer</h2>
+  <div id="answer" style="white-space:pre-wrap;line-height:1.6"></div>
+</div>
+
+<div id="results">{% include "_ask_results.html" %}</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function toggleChip(el){el.classList.toggle('on')}
+function scopeCollections(){
+  const chips=[...document.querySelectorAll('#scope-chips .chip')];
+  const on=chips.filter(c=>c.classList.contains('on')).map(c=>c.dataset.name);
+  return on.length===chips.length ? null : on;   // null = all enabled (server default)
+}
+async function search(){
+  const q=document.getElementById('q').value.trim(); if(!q)return;
+  document.getElementById('results').innerHTML='<div class="note">searching…</div>';
+  const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value})});
+  document.getElementById('results').innerHTML=await r.text();
+}
+async function ask(){
+  const q=document.getElementById('q').value.trim(); if(!q)return;
+  await search();
+  const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
+  pane.style.display='block'; a.textContent='thinking…';
+  const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections()})});
+  const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
+  for(;;){const {done,value}=await reader.read(); if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i; while((i=buf.indexOf('\n\n'))>=0){
+      const line=buf.slice(0,i).trim(); buf=buf.slice(i+2);
+      if(!line.startsWith('data:'))continue;
+      const data=line.slice(5).trim(); if(data==='[DONE]')continue;
+      try{const j=JSON.parse(data); a.textContent+=j.choices[0].delta.content||''}catch(e){}
+    }}
+}
+</script>
+{% endblock %}

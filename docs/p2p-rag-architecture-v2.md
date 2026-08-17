@@ -1,0 +1,441 @@
+# A General-Purpose, Peer-to-Peer RAG Platform — v2
+
+**Consolidated architecture.** Supersedes v1 (`p2p-rag-architecture-sketch.md`). New in this revision: the verification ladder (§6), the reference/entity layer (§4), the acquisition layer, transfer manager, and preservation failsafe (§5.1–5.3), the community workload protocol (§7), concrete genesis corpora and their licensing (§8), the genomics collection including multi-species (§9), hardware placement (§10), a revised roadmap (§11), the configuration/control plane and web interface (§14–15), and packaging/deployment (§16).
+
+**Goal.** Generalize the single-source `gutenberg-rag` app into a platform where (1) any data source is a plugin, (2) sources live in separate collections federated at query time, (3) both raw corpora and vector artifacts are shareable peer-to-peer, and (4) the embedding workload is split across contributors — with verification strong enough that vectors from strangers are safe to import.
+
+**Framing that emerged and now drives the project:** every public embedding corpus today is a one-shot dump — NCBI's MedCPT PubMed vectors (2023), Cohere's Wikipedia (2023), Upstash's BGE-M3 Wikipedia (June 2024). All frozen, all decaying, none maintained, because no mechanism exists for anyone but the original sponsor to extend them. **This platform is the missing maintenance layer.**
+
+---
+
+## 1. Inherited invariants (do not break these)
+
+Five properties of the existing skeleton are what make the distributed design possible:
+
+- **Manifest-driven resumable ingestion** — per-document stage flags with versions; every write delete-then-insert keyed on document id. Importing a peer's work is therefore just another way to complete a stage, and an import racing a local computation is harmless.
+- **Deterministic versioned chunk ids** — `{uid}:{seq}:{CHUNK_VERSION}`, a pure function of cleaned text. The keystone: **vector bundles carry no text**; the importer re-derives it locally. Small bundles, and vectors are useless to anyone lacking the raw data.
+- **Content hashing in discovery** — blake2 per source file behind an mtime/size gate; the bridge to content-addressed distribution.
+- **Rank-based fusion (RRF)** — ranks only, never scores, so collections with different indexes and different embedding models merge without calibration.
+- **Demand-driven embedding** — the lazy queue is a demand signal, and becomes the network's work scheduler.
+
+**Hard rule:** the app container never touches the GPU. All model work stays behind HTTP (Ollama / OpenAI-compatible / TEI / remote peer). This is what lets peers with incompatible hardware run the same image — and it is what makes §10 work.
+
+---
+
+## 2. Layer 1 — Plugin capabilities
+
+The plugin is not one interface but three composable roles. A source may implement more than one.
+
+```python
+class CorpusSource(Protocol):        # documents → chunks → vectors
+    source_id: str
+    license_class: LicenseClass      # gates P2P sharing per plane (§8)
+    privacy_class: PrivacyClass      # public | restricted | never-share (§9)
+    chunking_profile: str            # book | abstract | article | genomic-window
+    def discover(self, state) -> Iterator[DocRef]
+    def fetch(self, ref) -> RawDoc           # local → swarm → origin
+    def parse(self, raw) -> CanonicalDoc
+
+class ReferenceSource(Protocol):     # lookup tables — no chunking, no vectors
+    source_id: str                   # clinvar, gnomad, hgnc, ensembl-compara
+    ref_version: int
+    def schema(self) -> RefSchema    # tables, primary keys, declared entity links
+    def sync(self, state) -> Iterator[RecordBatch]   # baseline + delta, idempotent
+
+class EntityResolver(Protocol):      # query text → keys
+    def resolve(self, query, refs) -> list[Entity]   # regex + dictionaries
+    def expand(self, entity, refs) -> list[Entity]   # traverse declared links
+```
+
+**Canonical document model:**
+
+```
+CanonicalDoc:
+  uid        = f"{source_id}:{native_id}"      # gutenberg:1342, pubmed:38112345
+  title, creators[], language, date
+  subjects[]   # controlled English vocabulary — LoC headings, MeSH, GO terms.
+               # Keeping this contract preserves free cross-lingual catalog search.
+  keys[]       # EntityIds this doc concerns (§4)
+  extra{}      # source-specific JSON
+  sections[]   # (heading, text)
+  raw_hash
+```
+
+Everything Gutenberg-specific in the current tree lives in three files (`discovery.py`, `pg_text.py`, `rdf.py`); everything else is already generic. Porting Gutenberg onto `CorpusSource` is a refactor, not a rewrite.
+
+---
+
+## 3. Layer 2 — Collections, spaces, topology
+
+A **collection** = (plugin, corpus snapshot, pipeline versions, embedding space) → its own manifest + FTS index + vector table.
+
+```
+space_id = hash(embed_model_file_hash,   # weights digest, not the name
+                dim, dtype, normalization, pooling,
+                CHUNK_VERSION, text_cleaning_version,
+                truncation/ctx policy,
+                query_encoder_hash)      # bi-encoder pairs (MedCPT) differ here
+```
+
+Collections in the same space *may* share a physical vector table; different spaces *must* stay separate — cosine distance across models is meaningless. **Default: separated storage, federated querying.** The `space_id` is also the namespace for network artifacts: a bundle only imports into a matching space, which mechanically prevents mixed-model corruption.
+
+**Rule learned from Cohere:** canonical spaces must pin **open-weights** models only. A space whose encoder is a paid API can be held but not extended or verified, and pooled community GPU-hours would accumulate behind someone else's tollbooth.
+
+Manifest generalization: `books` → `documents(uid, source, native_id, …stage flags…)`, plus `doc_keys(uid, entity_id)`, `bundles`, `providers`, and the reference tables owned by each `ReferenceSource`.
+
+---
+
+## 4. Layer 3 — Entities, references, and the query plan
+
+Not everything should be embedded. ClinVar significance, gnomAD frequencies, HGNC symbols are **lookup tables**: the right answer to "frequency of rs80359351" is an exact key match, not a semantic neighbour. Vectorizing them makes them worse.
+
+**Canonical entity ids**, species-qualified from the start:
+
+```
+hgnc:11998        mgi:98834         # TP53 human / Trp53 mouse — never bare "TP53"
+rs:80359351       pmid:38112034     mesh:D001943
+region:grch38:13:32316461-32316527  # assembly-qualified always
+```
+
+**Query plan** — one new stage before the existing pipeline:
+
+```
+resolve → expand → plan → execute → fuse
+```
+
+- No entities found → plan degenerates to today's pipeline exactly. Full backward compatibility, zero cost on generic queries.
+- Entities found → two distinct execution paths:
+  - **Structured lookups** (ReferenceSource, exact by key) → enter the LLM context as authoritative blocks, **never ranked, never in RRF**.
+  - **Corpus collections** → receive the free-text query *plus* entity filters/boosts; their ranked lists go through RRF as usual.
+
+The category distinction matters: RRF fuses what is *rankable by relevance*; lookups are *facts by key*. Mixing them is a type error.
+
+Entity extraction is cheap (regex + dictionaries). For queries with no explicit identifier ("the Ashkenazi founder variant of BRCA2"), fall back to the LLM already used for translation fan-out — ten lines where `llm.translate_query` lives.
+
+`doc_keys` translates directly into filters the code already has: LanceDB `where entity IN (...)` with prefilter, Tantivy field filter.
+
+---
+
+## 5. Layer 4 — P2P exchange
+
+Two planes, deliberately separate.
+
+**Raw plane** — signed snapshot manifests (`snapshot_id, source_id, [(file, size, blake2)]`) plus content-addressed transfer with origin fallback. BitTorrent v2 recommended (per-file merkle matches the existing one-hash-per-file model; webseeds give origin fallback natively). PubMed maps perfectly: NLM already publishes an immutable yearly baseline plus daily deltas. Every completed download makes the peer a seeder — the entire origin-offload story.
+
+**Derived plane — vector bundles:**
+
+```
+bundle/
+  header.json     space_id, collection, uid list/range, chunk counts,
+                  producer pubkey, backend fingerprint, challenge embeddings (§6 T2)
+  vectors.parquet uid, chunk_seq, vector[dim]        ← no text
+  MANIFEST.sig    Ed25519 over header + parquet digest
+```
+
+Import is a new implementation of the `embed` stage: verify → space match → confirm local `raw_hash` (possession binding) → verification ladder → bulk add → set `embed_done`. Parquet keeps the wire format engine-neutral.
+
+**Reference tables** need only the raw plane — they are copies of public data, not derived work, so content-addressing suffices and no trust ladder applies.
+
+### 5.1 Acquisition layer — declarative specs, generic machinery
+
+The plugin declares *where the bytes live*; the engine implements *how to move them*, once, for everyone.
+
+```python
+class AcquisitionSpec:
+    transport: Literal["rsync","https","ftp","torrent","hf_hub","s3"]
+    endpoints: list[Endpoint]      # ordered: mirrors first, origin last; regions
+    layout: str                    # one-dir-per-doc | container-files | single-file
+    filters: list[str]             # include/exclude, e.g. "*.txt", "!audio/"
+    checksums: ChecksumSource      # origin sidecar (.md5) | manifest | none→blake2
+    delta: DeltaSpec               # updatefiles-dir | dated-dumps | full-resync
+    etiquette: RateLimit           # per-origin max_conns, bandwidth cap, windows
+    profiles: dict[str, Filter]    # demo | starter | recent | full  ← the UX lever
+    estimated_bytes: dict[str,int]
+```
+
+**Profiles** are the biggest ease-of-use win: default install fetches `demo` (minutes), growing later is one command because acquisition is a first-class manifest stage (`fetch_done`, `fetch_version`) — interrupted downloads resume like everything else, and delta sync is the *same code path* as initial acquisition, driven by the existing mtime/size→hash gate. Engine-side, once: resumable transfers, checksum verification, disk-space preflight against `estimated_bytes`, a licence-acknowledgement gate for yellow sources, and **origin etiquette as enforced config rather than folklore** (PG asks for mirrors and rsync; NLM asks for limited concurrency).
+
+Per-source current best forms: Gutenberg → rsync from a listed mirror with text-only excludes; PubMed → FTP baseline + `updatefiles/` with `.md5` sidecars (terms permit redistribution if the copy is kept current *or* labelled stale — the swarm satisfies the first branch by construction); MedCPT vectors → FTP, f32→f16 on import (~100→55 GB); Wikipedia vectors → HF Hub streaming; assemblies/ClinVar/HGNC → HTTPS dumps; gnomAD → public buckets, exomes-only profile ~2 GB.
+
+### 5.2 Transfer manager — bandwidth budgeting and parallelism
+
+Downloading, delta sync, and seeding all compete for one link — usually an asymmetric residential/NAS line where **the uplink is the scarce resource** and saturating it wrecks the downlink too (ACK starvation / bufferbloat). So bandwidth is a single, centrally scheduled budget, not per-tool caps:
+
+- **One token-bucket pair (up/down) shared by every transport** — rsync, HTTPS workers, and the torrent client all draw from the same budget; libtorrent takes programmatic rate limits, CLI tools get wrapped (`--bwlimit`, or trickle) so nothing escapes the scheduler.
+- **Priority classes**, preemptive: interactive queries & `lazy-p2p` fetches → delta sync → backfill acquisition → seeding. Seeding gets *leftover* bandwidth, never reserved bandwidth.
+- **Defaults that protect the household:** upload cap ≈ 80% of measured uplink, a reserved interactive headroom (~20%), and seeding over **uTP/LEDBAT**, the delay-based congestion control built for exactly this — background transfers that yield automatically when the link is busy.
+- **Time windows:** cron-style schedule (`01:00–07:00 full; else 30%`), composing with per-origin etiquette windows from the AcquisitionSpec.
+- **Seeding governance:** global and per-torrent ratio/rate caps; replication-aware throttling (seed harder what has few seeders — ties into §5.3 health metrics).
+
+**Parallelism** attacks the latency of large corpora on three axes, all bounded by the same budget:
+
+1. **Across files** — a pool of M fetch workers pulls from a prioritized queue (PubMed's ~1,200 baseline files are embarrassingly parallel; Gutenberg shards across top-level directories as parallel rsync invocations). Concurrency per endpoint = `min(global_workers, endpoint.max_conns from etiquette)` — parallelism never overrides politeness.
+2. **Across mirrors** — different files from different endpoints simultaneously; per-endpoint throughput tracked as an EWMA so the scheduler learns which mirrors are fast *for this peer* and shifts load accordingly. Torrent transport gets this for free (that is its native mode) — one more argument for the swarm as transport.
+3. **Across pipeline stages** — download ∥ checksum ∥ decompress ∥ parse as overlapping stages, so CPU work hides behind IO instead of following it.
+
+Segmented multi-connection downloads of a *single* file (aria2-style HTTP ranges) are supported but default-off against origins, enabled only where etiquette allows or against swarm/HF endpoints. Config surface:
+
+```
+[bandwidth]  down_max=400Mbit  up_max=40Mbit  reserve_interactive=20%
+             schedule="01:00-07:00 full; else 30%"
+[transfer]   workers=8  per_endpoint=4  segments_per_file=1
+```
+
+Dashboard: live up/down per priority class, per-job ETA, per-endpoint throughput — bandwidth becomes an observable, governed resource instead of whatever the last tool grabbed.
+
+### 5.3 Preservation failsafe — the archive plane
+
+Efficiency was the original motive for P2P; **availability is the stronger one.** PubMed, ClinVar, RefSeq, and the reference assemblies are US federal data — precisely the category that has recently faced politically motivated purges. If the origin disappears, the swarm *is* the corpus. Consequences for the design:
+
+- **Priority inverts:** vectors are reproducible from raw + model; raw is irreplaceable. The failsafe budget goes to the raw plane first — the opposite of the bandwidth argument.
+- **Mirror the model weights.** `space_id` pins a weights hash; if those weights vanish, the space becomes unextendable *and unverifiable* (T1/T3 need the model). Weights are archived beside the corpus — a few GB, cheap insurance.
+- **Snapshots, not just current state.** Delta sync erases history; content-addressing makes retaining old snapshots nearly free (unchanged files shared across snapshots).
+- **Archive origin bytes and schemas,** not just the parse: DTDs, RDF catalogs, GFF annotations. A FASTA without its annotation is a far poorer artifact.
+- **Key continuity:** snapshot manifests signed by multiple keys or a threshold scheme — reconstruction must not depend on one person's key surviving.
+- **Replication health as a first-class metric:** seeders per snapshot on the dashboard, alert below N; seeding scheduler biases toward under-replicated data.
+- **Join, don't duplicate:** SciOp (Safeguarding Research & Culture) already runs a catalog+tracker for at-risk scientific data (~300 TiB, ~9,600 seeders) with RSS torrent feeds the acquisition layer can consume as endpoints, and is extending BitTorrent for evolving multi-origin data — the baseline+deltas problem exactly. Publish snapshots there; consume from there.
+
+The reframing this buys: SciOp preserves bytes, but preserved bytes are inert. This platform is **a preserved corpus that stays queryable** — archive + retrieval + a maintained semantic index.
+
+---
+
+## 6. Verification ladder
+
+Watermarking in the strict sense cannot work here: anyone with the model produces valid embeddings, so a model-derived mark separates nothing; a producer-added mark only duplicates the signature and degrades vectors; zkML costs orders of magnitude more than the embedding. **The embedder's own geometry is the watermark.** Five tiers, cheapest first, each gating the next. Costs below for a reference bundle of 10k chunks × 1k tokens on an 8B embedder (production ≈ 27 GPU-min = 1 unit).
+
+| Tier | Check | Cost | Catches |
+|---|---|---|---|
+| **T0 algebraic** | dim/dtype match space; unit-norm within f16 tolerance; no NaN/dupes; per-dim moments and pairwise-cosine distribution inside the space envelope (embedding spaces are strongly anisotropic — foreign vectors betray themselves statistically) | ~10⁸ FLOPs, tens of ms CPU | missing normalization (the most common incompetence bug), random/foreign vectors |
+| **T1 geometric** | cosine profile against a signed probe set (~512 reference texts embedded once by the space author); **overlap invariant** — consecutive chunks share ~120 tokens, so cos(vₖ,vₖ₊₁) must sit in a predictable band; semantic triangles against probes | ~10¹⁰ FLOPs, ~0.1–1 s CPU | wrong model, perturbation. Faking the overlap band requires actually modelling the text — at which point honest embedding is cheaper |
+| **T2 challenge** | golden (text, vector, per-backend tolerance) triples; producer embeds beacon-derived challenge texts into the bundle header | +1.3 s producer, ~0 verifier | misconfiguration — "proof of correct oven, not each loaf" |
+| **T3 spot recompute** | n≈16 chunks, **private per-verifier randomness** (never a bundle-digest seed — that is grindable: corrupt fraction f, re-roll the nonce until the derived sample misses, expected (1−f)⁻ⁿ tries), sequential test, τ from the space's cross-backend calibration table (~0.999; the gap to a different model is 0.3–0.7, so the test is sharp) | ~3–5 s GPU = **0.16%** of production | bulk poisoning. Per importer (1−f)ⁿ survives; 10 independent importers at f=5% → 3×10⁻⁴ |
+| **T4 verify-on-use** | a poisoned vector is inert until retrieval surfaces it — so recompute exactly the cited chunks, async via the existing lazy queue. Pass → mark verified forever. Fail → proof of forgery (text, claimed, recomputed), quarantine the key, re-embed locally | ~2–3 s GPU per answer, once per chunk ever cited; ~2% lifetime (query distributions are Zipfian — the hot set verifies in days, cold chunks never cost) | **targeted poisoning**, which random sampling cannot find |
+
+**Complements:** ~5% deliberate overlap in work allocation so independent producers cover common chunks (disagreement localizes the liar without trusting either); trust-proportional sampling with new keys in probation; blocking mode for high-stakes deployments (verify before answering, ~2–3 s first-touch latency).
+
+**Honest limits.** Exact-hash verification is impossible — the same weights on different GPUs/drivers/batch sizes yield different floats, hence the backend fingerprint and tolerance τ. The tolerance window is also the adversary's perturbation budget, so keep τ as tight as the fingerprint allows and treat "always passing just above τ" as a reputation flag. T4 is async: the first answer touching poison may already be wrong. But detection at first use is ~1, so the attacker trades one degraded answer for a permanently burned key — expected value negative.
+
+**Net economics.** Honest-path import ≈ 1 s CPU + 5 s GPU ≈ **0.2% of producing the bundle** — verification is ~1/500th of production. Network total for M=50 consumers: everyone-embeds-locally = 50 units; shared = 1 + 0.05 overlap + 50×0.002 ≈ 1.15 (≈2.2 worst-case including lifetime T4) → **20–40× network saving**. That ratio is the justification for the whole design.
+
+---
+
+## 7. Community workload sharing
+
+No standing "BOINC for embeddings" exists; every real instance (LAION, BOINC, Prime Intellect) is the same four verbs: **partition, claim, compute-and-upload, validate-and-aggregate**. Your manifest already *is* the work tracker — the community layer is that state machine exposed over HTTP.
+
+**Coordinator** (per collection+space, ~200 lines FastAPI, holds no bulk data):
+
+```
+GET  /work?space=…&n=1000   → lease of a uid range, TTL 24h (advisory, not a lock)
+POST /bundles               → signed upload, triggers T0–T2 immediately
+GET  /have?space=…          → provided uid ranges (bloom/ranges)
+GET  /demand?space=…        → aggregated lazy-queues of consumers
+```
+
+Leases can be advisory precisely because the work is idempotent: an expired-and-reissued lease wastes one GPU-hour and breaks nothing. That tolerance is what lets you skip BOINC's hardest machinery.
+
+**Embed modes:** `off | lazy | lazy-p2p | all | contribute`.
+- `lazy-p2p` — a query first asks the swarm, computes only on miss, publishes the result. Queries *feed* the network.
+- `contribute` — `all` pointed at the network's demand-set. The overnight mode for strong GPUs; ranked by (demanded-but-unprovided) > (unprovided) > (low provider count), tie-broken by rendezvous hashing `h(peer_id, uid)` so peers spread without coordination.
+
+**Distribution:** push accepted bundles to a versioned Hugging Face dataset repo per collection — free hosting, global CDN, and how NCBI and Upstash already ship vectors. The P2P swarm then becomes an *alternative transport*, not a prerequisite — which is why community sharing can land in Phase 1.
+
+**Incentives v1:** credit ledger + leaderboard (BOINC's screenshots were half its marketing) and one functional perk — contributors' demand-sets get scheduling priority, so giving GPU-hours makes your own queries faster.
+
+---
+
+## 8. Genesis corpora and licensing
+
+Two of three flagship collections can start from existing public artifacts:
+
+| Corpus | Genesis artifact | State | Space |
+|---|---|---|---|
+| **PubMed** | NCBI MedCPT embeddings, all PubMed articles, ~37 × 2.7 GB `.npy` + PMID JSON, **public domain** | frozen Oct–Nov 2023, ~3M records stale | MedCPT, 768-dim, **bi-encoder**: article encoder for docs, query encoder for queries, both open. Cross-encoder reranker also free |
+| **Wikipedia** | `Upstash/wikipedia-2024-06-bge-m3`, ~144M vectors, 11 languages, 1024-dim, text included, **Apache 2.0** | frozen June 2024 | BGE-M3 (MIT), open weights, revision-pinned |
+| **Gutenberg** | none — the existing skeleton | live | operator's choice (qwen3-embedding etc.) |
+| **Genome** | **none exists** — no open precomputed index of the human reference genome anywhere | — | Evo 2 (or DNABERT-2/NTv2, §10) |
+
+Catch-up arithmetic: PubMed 2023→2026 ≈ 3M records ≈ 300 work units ≈ 135 GPU-h — a dozen volunteers over a weekend. Then ~20k records/week ≈ **<1 GPU-h/week** to stay current. That asymmetry is the pitch: the backfill was already paid by NCBI; sustaining it costs a coffee break.
+
+**License gating, per source and per plane** (`license_class` + `privacy_class` enforce it mechanically):
+
+- **Green (public domain / CC0):** GRCh38 & T2T reference, RefSeq, ClinVar, dbSNP, gnomAD (recent releases), MedCPT vectors, HGNC. Model-organism references and MGI/FlyBase/ZFIN annotations.
+- **Yellow (open with conditions):** GO, UniProt, Ensembl, TogoVar (attribution); Wikipedia text (CC BY-SA — share-alike, and whether embeddings are derivative works is unsettled); PubMed abstracts (free bulk download, publisher copyright on text → **raw pointer-only by default, vectors shared**); PMC OA (per-record license flag).
+- **Red:** OMIM, GeneReviews (no redistribution). **Personal genomes — never, on either plane:** GDPR art. 9 special category, and DNA foundation-model embeddings have been shown invertible toward the underlying sequence, so sharing vectors would leak the genome. This is why `privacy_class` exists separately from `license_class`.
+- **Models:** BGE-M3 (MIT), Qwen3-embedding (Apache), MedCPT (public domain) all clear. **Verify Nucleotide Transformer's weights licence before pinning it into a space** — historically non-commercial. A model's licence contaminates the usability of its entire space.
+- **Regulatory:** keep the genomics collection explicitly research/education. Interpreting real patients' variants for clinical decisions would engage IVDR in the EU.
+
+---
+
+## 9. The genomics collection
+
+**Why it fits the architecture almost too well:** a reference assembly is immutable and versioned — the most deterministic corpus imaginable; chunking is fixed overlapping windows, so the chunk id *is* a coordinate (`grch38:chr7:117480025-117481025:v1`); the raw plane is public-domain consortium data.
+
+**First genuinely multi-modal collection.** Dense leg = sequence embeddings queried *by sequence* (Embed-Search-Align showed vector search over a DNA store rivals BWA-MEM for read placement). Catalog/FTS legs = annotation layers queried *by text*. Structured legs = ClinVar/gnomAD by key. Two incompatible embedding spaces plus exact lookups, merged only where merging is meaningful — RRF for the rankable, context blocks for the factual.
+
+**Generation stage changes:** chat LLMs cannot read raw nucleotides usefully. The answer reasons over retrieved regions' *annotations and metadata*, or hands sequences to the DNA model itself for likelihood scoring.
+
+**Worked query.** "What is known about BRCA2 c.658_659del?" → resolve identifier → exact ClinVar + gnomAD lookups → yields gene + coordinates → those keys query the PubMed collection (dense+BM25) and the genome collection (by region) → RRF over the texts → cited answer. Four separate databases, one join at query time. Only the resolution stage is new code.
+
+**Multi-species extension** — the architecture holds; three adjustments, all in the entity layer:
+
+1. **Species-qualified keys** (already shown above) — `TP53`/`Trp53` collide otherwise, coordinates mean nothing without an assembly, rsIDs are human by construction.
+2. **Orthology is a new link type** — "human gene → mouse ortholog → knockout phenotype" is `expand()` fed by a new `ReferenceSource` (Ensembl Compara, HomoloGene, MGI/ZFIN). No orchestrator change.
+3. **Species state in the query** — default human, explicit disambiguation when the resolver finds multiple candidates.
+
+One collection per assembly, same plugin, same space (Evo 2 is trained across all domains of life, so cross-species search works natively — the cross-lingual trick again). Sizing: human 3.1 Gbp is near worst case among common models — mouse 2.7, zebrafish 1.4, **fly 0.14, yeast 0.012**. Fly and yeast cost GPU-minutes and are the right corpora to validate the plugin *before* spending human-scale hours. Licensing improves too: model-organism data is fully open and the privacy class doesn't apply, so non-human collections are *more* shareable. And model-organism communities are small, organized, and compute-poor — exactly who adopts a shared corpus rather than recomputing it.
+
+---
+
+## 10. Hardware placement (heterogeneity is the point)
+
+Reference node: **Intel Arc Pro B70**, 32 GB, 608 GB/s, ~$949, oneAPI/OpenVINO/SYCL.
+
+| Workload | B70? | Notes |
+|---|---|---|
+| MedCPT, BGE-M3, Qwen3-embedding | ✅ | GGUF via Ollama/llama.cpp SYCL backend |
+| Cross-encoder rerank | ✅ | ~100–500 ms for ~40 candidates |
+| Chat generation (20–30B quantized) | ✅ | ~20–40 tok/s → 15–40 s per answer; the real latency bottleneck, not retrieval |
+| Verification T0–T2 | ✅ | CPU-only anyway |
+| Verification T3/T4 on text spaces | ✅ | requires only an embed endpoint |
+| DNABERT-2 / NTv2 sequence embedding | ✅ | ONNX Runtime + OpenVINO EP; 100–500M params; quality below Evo 2 but adequate for "find similar regions" |
+| **Evo 2** | ❌ | Vortex requires CUDA PyTorch + Transformer Engine + Flash Attention, plus optional Triton kernels; StripedHyena 2's implicit convolutions have no ONNX/OpenVINO equivalents. The 7B "light install" is a long-shot worth an afternoon, not an architectural bet |
+
+ZLUDA (CUDA-on-AMD) does not rescue Evo 2 — PyTorch support is still blocked on compiler speed and cuBLAS/cuDNN coverage, and it is AMD-only and back to hobby status since v6 (June 2026). It does mean **AMD peers can run GGUF text embedders at near-native speed via the translated CUDA backend of llama.cpp** — and because verification is tolerance-based, their "slightly different backend" vectors pass by design.
+
+**This is the thesis in miniature:** the platform never requires that every peer can *compute* every space — only that every peer can *verify and use* what it imports. A B70 node is a contributor for three spaces out of four and a verifying consumer for the fourth.
+
+### Cost summary for the aggregated genomics RAG
+
+**Build (one-time):** Evo 2 7B over human 1kb windows ≈ 120–250 GPU-h (~25 GB f16); 40B ≈ 700–1500 GPU-h. gnomAD ingest hours of CPU/IO (30–80 GB; exomes-only: minutes, ~2 GB). ClinVar/RefSeq/HGNC minutes. RefSeq gene summaries in a text space ≈ 2 GPU-h on the B70. ANN index 1–2 h. **Total collection 60–160 GB**, and ~90% of the compute is the one piece delegable to the network.
+
+**Per query:** resolve+expand <5 ms; structured lookups ~1 ms each even at 800M rows; lexical legs tens of ms; dense over 36M PubMed vectors with ANN ~20–50 ms + ~10 ms query encoding; RRF <1 ms; rerank 100–500 ms. Sequence dense leg only when the query contains DNA: 0.1–0.3 s on a CUDA peer or ~1 s via hosted API — the only runtime external dependency. **Multi-source join adds ~0.3–1 s; generation dominates at 15–40 s.**
+
+**Steady state:** genome never changes (new assembly = new collection), ClinVar weekly = seconds, gnomAD ~annual = CPU hours, PubMed <1 GPU-h/week. **Maintaining the whole aggregate costs under an hour of GPU per week, all of it B70-capable.**
+
+---
+
+## 11. Roadmap
+
+**Phase 0 — Generalize (no network).** Extract `CorpusSource`; add collections + `space_id`; port Gutenberg unchanged; implement PubMed as the proving second plugin (37M small records, container files, restrictive licence — stresses everything Gutenberg doesn't); add `ReferenceSource`, `EntityResolver`, `doc_keys`, and the resolve/expand/plan stage; query federation. Standalone value, and it validates every interface the network later depends on.
+
+**Phase 1 — Bundles + community, no P2P.** Signed bundle export/import over HTTPS/Hugging Face. Verification ladder T0–T3. Coordinator with leases and demand-sets. `contribute` mode. **Deliverable that doubles as marketing: revive the PubMed corpus** (135 GPU-h catch-up, then weekly cron) and publish it as a maintained dataset. Two friends splitting a uid range already realize the core benefit.
+
+**Phase 2 — Swarm.** BitTorrent v2 raw plane with signed snapshots and origin webseeds; bundle index with have/demand; `lazy-p2p`; T4 verify-on-use; archive plane live — snapshots + weights published to SciOp, replication-health metrics and under-replication-biased seeding.
+
+*(The acquisition layer with profiles and the transfer manager land earlier: AcquisitionSpec + profiles + delta-as-fetch in Phase 0, since the fetch stage needs them anyway; bandwidth budget, priority classes, and parallel fetch workers in Phase 1, when seeding and bulk catch-up first compete for the link.)*
+
+**Phase 3 — Decentralize and harden.** DHT/gossip replacing the tracker; reputation ledger; cross-producer comparison; community-signed canonical spaces to fight fragmentation.
+
+---
+
+## 12. Go-to-market (realistic)
+
+1. **Be excellent with zero other users.** The app is already a genuinely useful solo NAS tool — that is the escape from the cold-start trap. Nobody installs it *for* the network. Protect this: 10-minute Docker quickstart, TrueNAS catalog entry, polished Open WebUI integration.
+2. **The artifact is the advertisement.** Publish the revived corpus, not the architecture. Upstash's frozen dump pulls ~2,000 downloads/month with no promotion; a *maintained* one wins on the only axis people search. Every dataset page recruits: "kept current by [project] — run one container to help."
+3. **Narrative:** "embedding datasets die the day their sponsor stops paying; here is the first one brought back to life, and the system that keeps it alive." Venues: Show HN, r/selfhosted, r/LocalLLaMA, r/DataHoarder, Ollama/Open WebUI Discords, Academic Torrents, a JOSS paper for citability. Each plugin recruits its own niche (bioNLP, digital humanities, model-organism communities).
+4. **Expectations.** Base rate for OSS infrastructure launches is silence. **Thirty contributors in year one would be a success** — already enough to keep PubMed and Wikipedia current forever. Measure weekly active workers and bundle downloads, not stars. Assume you are the entire community for six months. Don't build the DHT until someone begs.
+5. **Naming:** pick a neutral, searchable project name — "Gutenberg" is a Project Gutenberg trademark; the plugin may carry it, the platform must not.
+
+---
+
+## 13. Open problems
+
+- **Space proliferation** — every new model splits community effort; canonical-space recommendations concentrate it, old spaces age out.
+- **Rerank cost at federation scale** — the latency hot spot; per-collection candidate budgets and rerank-on-demand are the levers.
+- **Incentives** — tit-for-tat doesn't map to small bursty bundles; goodwill + demand-priority for v1, nothing stronger in scope.
+- **ANN indexes are local** — built over imported vectors, never shared; only vectors travel.
+- **Subtle poisoning** — T3+T4+overlap bound it, don't eliminate it.
+- **Churn/NAT** — mitigated by webseeds and tracker-mediated relay.
+- **Legal gray zones** — per-source, per-plane switches with conservative defaults; the underlying questions remain unsettled.
+- **Evo 2 portability** — no non-CUDA path today; either community bundles, hosted API, or accept DNABERT-2/NTv2 as the open sequence space.
+
+---
+
+## 14. Configuration & control plane
+
+**Principle: configuration is desired state, control is operations on running state.** Every knob belongs to exactly one of three tiers, sorted by rate of change.
+
+**Tier 1 — identity & infrastructure** (env vars, restart to change): paths, ports, model endpoints (`CHAT_URL`, `EMBED_URL`, `RERANK_URL`), node key *location* (never key material), coordinator/tracker URLs. The existing `config.py` pattern, unchanged.
+
+**Tier 2 — declarative desired state** (versioned files — diffable, backupable; a node restores from `git clone + compose up`):
+
+```toml
+# platform.toml
+[node]      name="mynas"  role="contributor"   # solo|consumer|contributor|archivist
+[bandwidth] down_max="400Mbit" up_max="40Mbit" schedule="01:00-07:00 full; else 30%"
+[network]   coordinator="…" hf_repo="…" trackers=["sciop","…"]
+[trust]     allowlist=["ncbi.pub","upstash.pub"] probation_t4_rate=1.0
+
+# collections/pubmed.toml
+plugin="pubmed"  profile="recent"  space="medcpt@sha256:…"
+embed_mode="lazy-p2p"  share_raw=true  share_vectors=true
+delta="daily@03:00"  license_ack="2026-08-16T…/sha256-of-terms"
+```
+
+`role` is the UX multiplier — one word presets a dozen knobs (solo = network off; consumer = import-only; contributor = seed + contribute mode; archivist = seed everything, replication-biased) and maps 1:1 onto the go-to-market personas. Onboarding = "pick your role."
+
+**Tier 3 — runtime operations** (DB-backed, ephemeral verbs): pause/resume worker, narrow scope, quarantine a key, boost bandwidth tonight, force-verify a bundle, publish a snapshot. On restart the files win; live overrides display *as* overrides. This kills config drift by construction.
+
+One settings service, three frontends — CLI, dashboard, authenticated `/admin` API (strictly separate from the OpenAI-compatible query endpoint); anything clickable is scriptable. Safety rails from day one: `--dry-run` on every acquisitive/destructive verb; **boot-time validation that refuses to start on inconsistency** (vector-table dim ≠ pinned `space_id` is refuse-to-boot, not a warning — silently mixed spaces are the one unrecoverable corruption); typed confirmation for irreversible drops; licence acknowledgements recorded as timestamp + hash of the terms text.
+
+---
+
+## 15. Web interface design
+
+**One app, two personas, four areas.** The librarian (owns the node) and the reader (asks questions) — often the same person in different moods. The UI splits accordingly: **Ask** for readers; **Library / Network / System** for the librarian. Server-rendered (FastAPI + Jinja + htmx + SSE), no SPA build step — dashboards are state displays, and htmx-over-SSE handles the live parts. Read-only by default on the LAN; librarian areas behind auth (Tier-3 verbs need it, matching the `/admin` API).
+
+**Ask** — chat with receipts. Answer pane with `[n]` citations; a **provenance drawer** per citation (chunk text, uid, collection, producer key, verification badge: ✓ verified / ◌ imported-unverified / ⚠ probation — T4 made trust *visible*, the UI shows it); collection scope chips (`gutenberg ✓ pubmed ✓ genome ✓`); an **entity strip** showing what resolve/expand found (`BRCA2 → hgnc:1101 → 13q13.1`, ClinVar/gnomAD facts as pinned cards above ranked results, visually distinct because lookups are facts, not hits); query-translation fan-out visible on tap. A sequence-paste box switches the genome leg into by-sequence mode.
+
+**Library** — one shelf-card per collection: four stage bars (fetched / parsed / indexed / embedded — acquisition is a first-class stage, so corpus completeness sits beside index completeness), profile and space badges (`recent · medcpt@7f3a…`), delta freshness ("current through yesterday" — the licence disclaimer state, automated), lazy-queue depth. Card actions = Tier-3 verbs with `--dry-run` previews: grow profile, reprocess stage, pause. Add-collection wizard = plugin picker → profile ladder with size/time estimates → licence text with recorded acknowledgement → dry-run summary → go.
+
+**Network** — the trust and traffic room. Bandwidth live-graph by priority class (interactive/delta/backfill/seeding) with the schedule overlaid; seeding table (ratio, peers, replication health, under-replicated highlighted); bundle ledger in/out with per-producer spot-check pass rates and one-click quarantine (typed confirmation); contribution panel (leased ranges, ETA, credit, leaderboard position); demand heatmap of what the network wants that this node could compute.
+
+**System** — config viewer showing *effective* state per tier (file value, env override, live Tier-3 override, each labelled), worker logs, model-endpoint health pings, boot-validation report, backup/restore of the config directory.
+
+**Design rules:** every panel is the state of a manifest table, not a bespoke store — the UI is a *view* over the same state machine the CLI drives (htmx polling/SSE on manifest changes). Every action shows the CLI equivalent in its confirmation dialog, which teaches automation for free and keeps the three frontends honest. Verification state renders as badges everywhere a producer or bundle appears. And the reader's view never requires understanding the librarian's — a guest on the LAN can ask questions and inspect citations without ever seeing a bandwidth graph.
+
+**Build note:** the first version is the existing dashboard plus four pages; nothing here requires a frontend framework, and every widget maps to a table that already exists in the design (documents, bundles, providers, leases, settings).
+
+---
+
+## 16. Packaging & deployment
+
+**The portability contract:** one OCI image (multi-arch amd64+arm64, GHCR), three mounts, env vars. Everything else follows from two prior decisions — the app never touches the GPU (model runtimes are other containers, reached by URL) and all state is embedded files (SQLite, Tantivy, LanceDB, TOML): no database server, no daemon dependencies, no platform hooks.
+
+```yaml
+# docker-compose.yml — the canonical deployment unit
+services:
+  web:      # dashboard + /v1 + /admin
+    image: ghcr.io/PROJECT/app:latest
+    environment: [ CHAT_URL, EMBED_URL, RERANK_URL, PUID, PGID ]
+    volumes:
+      - ${CORPUS}:/corpus:ro
+      - ${DATA}:/data
+      - ${CONFIG}:/config
+    ports: ["8080:8080"]
+    healthcheck: { test: ["CMD","curl","-f","http://localhost:8080/healthz"] }
+  worker:   # ingestion; same image, same mounts, command: worker
+  exchange: # torrent client + bundle store; one forwarded port, UPnP optional
+```
+
+Rules that keep it portable: no privileged mode, no host networking; PUID/PGID honored (the NAS permission convention); **never bake weights or corpora into images** — data arrives via the acquisition layer; compose is the reference artifact (a Helm chart may exist; Kubernetes is not the primary target). Secondary path: `pipx install` for Docker-allergic users — documented, not reference.
+
+**Hard constraint to surface early: `/data` must be a local filesystem.** SQLite WAL and LanceDB do not tolerate SMB/NFS. `/corpus` read-only over NFS is fine. On a NAS this is naturally satisfied; the warning exists for desktop users binding network shares.
+
+**TrueNAS as the worked example (never a dependency):** SCALE ≥24.10 is Docker-native → day one = Apps → Custom App → paste compose; later, a community-catalog entry whose form maps onto the same env vars. Recommended dataset layout: one ZFS dataset per mount — `corpus` with `compression=zstd`, large recordsize (public-domain text compresses superbly); `data` on a snapshot schedule (versioned backup of every index and manifest for free; ZFS replication = personal offsite failsafe, recursing §5.3); `config` tiny and snapshotted. GPU (e.g. Arc via `/dev/dri`) belongs to the Ollama/llama.cpp container, not the app.
+
+**Acceptance criterion for portability:** a node restores from `git clone` of its config + `docker compose up` + re-run of acquisition — on any host.
+
+### 16.1 Why both SQLite and LanceDB
+
+They are not two databases doing one job; they are three engines (with Tantivy) doing three jobs no single embedded store does well:
+
+| Concern | SQLite (manifest + refs) | LanceDB (vectors) | Tantivy (lexical) |
+|---|---|---|---|
+| Data shape | rows, keys, transactions | dense float matrices | inverted term index |
+| Query | exact/by-key, joins, ACID state machine | ANN / brute-force cosine | BM25 ranking |
+| Access pattern | many small transactional writes | bulk append, columnar scan | segment merge, term seek |
+| Role here | stage flags, doc_keys, bundles ledger, ClinVar/gnomAD lookups | embedding storage + dense search | per-language BM25, catalog FTS |
+
+The manifest needs what SQLite is: real transactions (delete-then-insert idempotence *is* a transaction pattern), crash-safe WAL, sub-ms key lookups at hundreds of millions of rows — and §4's rule that lookups are facts-by-key makes ClinVar/gnomAD natural SQLite tables. Vectors need what Lance is: columnar storage where a million 1024-d f16 vectors are a compact scan target, ANN indexing, zero-copy Arrow in/out — which is also why bundles are Parquet: import is a columnar append, not row-by-row INSERTs. Storing vectors as SQLite blobs forfeits ANN, vectorized scans, and memory-mapping; storing workflow state in Lance forfeits transactions and fast point updates. The split is also the P2P boundary: **SQLite state is local truth and never travels; Lance content is derived work and is exactly what travels** (as Parquet). One store optimized for both would be optimized for neither — the "one database" that remains is the query planner's illusion, delivered by RRF + the entity layer.

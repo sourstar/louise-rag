@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dcterms="http://purl.org/dc/terms/"
+         xmlns:pgterms="http://www.gutenberg.org/2009/pgterms/">
+  <pgterms:ebook rdf:about="ebooks/10001">
+    <dcterms:title>A Study in Fixtures</dcterms:title>
+    <dcterms:creator>
+      <pgterms:agent rdf:about="2009/agents/900001">
+        <pgterms:name>Fixture, Ada</pgterms:name>
+      </pgterms:agent>
+    </dcterms:creator>
+    <dcterms:language>
+      <rdf:Description>
+        <rdf:value rdf:datatype="http://purl.org/dc/terms/RFC4646">en</rdf:value>
+      </rdf:Description>
+    </dcterms:language>
+    <dcterms:subject>
+      <rdf:Description>
+        <rdf:value>Fixtures -- Fiction</rdf:value>
+      </rdf:Description>
+    </dcterms:subject>
+    <dcterms:subject>
+      <rdf:Description>
+        <rdf:value>Committees -- Fiction</rdf:value>
+      </rdf:Description>
+    </dcterms:subject>
+    <pgterms:bookshelf>
+      <rdf:Description>
+        <rdf:value>Test Fixtures Bookshelf</rdf:value>
+      </rdf:Description>
+    </pgterms:bookshelf>
+  </pgterms:ebook>
+</rdf:RDF>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <DeleteCitation>
+    <PMID Version="1">30000003</PMID>
+  </DeleteCitation>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000015</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Dec</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A record introduced by the second updatefile.</ArticleTitle>
+        <Abstract>
+          <AbstractText>Second-updatefile records exercise the same code path as baseline.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">30000016</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <ISOAbbreviation>J Widget Res</ISOAbbreviation>
+          <JournalIssue><PubDate><Year>2023</Year><Month>Dec</Month></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>A final record from the second updatefile.</ArticleTitle>
+        <Abstract>
+          <AbstractText>This closes out the fixture corpus at sixteen distinct PMIDs.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>

@@ -1,0 +1,550 @@
+{
+  "gutenberg": {
+    "a peddler with buttons and thread": [
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:1:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      }
+    ],
+    "a plain walk through the village": [
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:1:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      },
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      }
+    ],
+    "bright and steady morning": [
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      },
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      }
+    ],
+    "chapitre deux": [
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:0:1"
+      },
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:1:1"
+      }
+    ],
+    "committee meeting": [
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      }
+    ],
+    "fixtures and calibration": [
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      },
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      }
+    ],
+    "gadget assembly reliability": [],
+    "gadget fatigue study": [],
+    "gadget lifecycle testing": [],
+    "gadget noise levels": [],
+    "heron in the shallows": [
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      }
+    ],
+    "horloger et les montres": [
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:0:1"
+      },
+      {
+        "book_id": 10003,
+        "chunk_id": "gutenberg:10003:1:1"
+      }
+    ],
+    "old stone bridge": [
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      }
+    ],
+    "record with no abstract": [
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      },
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      }
+    ],
+    "reproducibility of results": [
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      }
+    ],
+    "the meeting adjourned before dusk": [
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:1:1"
+      },
+      {
+        "book_id": 10002,
+        "chunk_id": "gutenberg:10002:0:1"
+      },
+      {
+        "book_id": 10001,
+        "chunk_id": "gutenberg:10001:0:1"
+      }
+    ],
+    "widget calibration throughput": [],
+    "widget cost modeling maintenance": [],
+    "widget durability wear": [],
+    "widget supply chain disruption": []
+  },
+  "pubmed": {
+    "a peddler with buttons and thread": [
+      {
+        "book_id": 30000004,
+        "chunk_id": "pubmed:30000004:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000013,
+        "chunk_id": "pubmed:30000013:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      },
+      {
+        "book_id": 30000003,
+        "chunk_id": "pubmed:30000003:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      },
+      {
+        "book_id": 30000009,
+        "chunk_id": "pubmed:30000009:0:1"
+      }
+    ],
+    "a plain walk through the village": [
+      {
+        "book_id": 30000015,
+        "chunk_id": "pubmed:30000015:0:1"
+      },
+      {
+        "book_id": 30000016,
+        "chunk_id": "pubmed:30000016:0:1"
+      },
+      {
+        "book_id": 30000013,
+        "chunk_id": "pubmed:30000013:0:1"
+      },
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      },
+      {
+        "book_id": 30000004,
+        "chunk_id": "pubmed:30000004:0:1"
+      },
+      {
+        "book_id": 30000003,
+        "chunk_id": "pubmed:30000003:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      }
+    ],
+    "bright and steady morning": [
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      }
+    ],
+    "chapitre deux": [],
+    "committee meeting": [],
+    "fixtures and calibration": [
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      },
+      {
+        "book_id": 30000016,
+        "chunk_id": "pubmed:30000016:0:1"
+      }
+    ],
+    "gadget assembly reliability": [
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      },
+      {
+        "book_id": 30000009,
+        "chunk_id": "pubmed:30000009:0:1"
+      }
+    ],
+    "gadget fatigue study": [
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000003,
+        "chunk_id": "pubmed:30000003:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      },
+      {
+        "book_id": 30000009,
+        "chunk_id": "pubmed:30000009:0:1"
+      }
+    ],
+    "gadget lifecycle testing": [
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      },
+      {
+        "book_id": 30000009,
+        "chunk_id": "pubmed:30000009:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      }
+    ],
+    "gadget noise levels": [
+      {
+        "book_id": 30000009,
+        "chunk_id": "pubmed:30000009:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      }
+    ],
+    "heron in the shallows": [
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000013,
+        "chunk_id": "pubmed:30000013:0:1"
+      },
+      {
+        "book_id": 30000015,
+        "chunk_id": "pubmed:30000015:0:1"
+      },
+      {
+        "book_id": 30000016,
+        "chunk_id": "pubmed:30000016:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ],
+    "horloger et les montres": [],
+    "old stone bridge": [],
+    "record with no abstract": [
+      {
+        "book_id": 30000004,
+        "chunk_id": "pubmed:30000004:0:1"
+      },
+      {
+        "book_id": 30000011,
+        "chunk_id": "pubmed:30000011:0:1"
+      },
+      {
+        "book_id": 30000007,
+        "chunk_id": "pubmed:30000007:0:1"
+      },
+      {
+        "book_id": 30000013,
+        "chunk_id": "pubmed:30000013:0:1"
+      },
+      {
+        "book_id": 30000015,
+        "chunk_id": "pubmed:30000015:0:1"
+      },
+      {
+        "book_id": 30000003,
+        "chunk_id": "pubmed:30000003:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000002,
+        "chunk_id": "pubmed:30000002:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      }
+    ],
+    "reproducibility of results": [
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ],
+    "the meeting adjourned before dusk": [
+      {
+        "book_id": 30000013,
+        "chunk_id": "pubmed:30000013:0:1"
+      },
+      {
+        "book_id": 30000015,
+        "chunk_id": "pubmed:30000015:0:1"
+      },
+      {
+        "book_id": 30000016,
+        "chunk_id": "pubmed:30000016:0:1"
+      },
+      {
+        "book_id": 30000014,
+        "chunk_id": "pubmed:30000014:0:1"
+      },
+      {
+        "book_id": 30000012,
+        "chunk_id": "pubmed:30000012:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ],
+    "widget calibration throughput": [
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      },
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      }
+    ],
+    "widget cost modeling maintenance": [
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ],
+    "widget durability wear": [
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ],
+    "widget supply chain disruption": [
+      {
+        "book_id": 30000008,
+        "chunk_id": "pubmed:30000008:0:1"
+      },
+      {
+        "book_id": 30000006,
+        "chunk_id": "pubmed:30000006:0:1"
+      },
+      {
+        "book_id": 30000010,
+        "chunk_id": "pubmed:30000010:0:1"
+      },
+      {
+        "book_id": 30000001,
+        "chunk_id": "pubmed:30000001:0:1"
+      }
+    ]
+  }
+}

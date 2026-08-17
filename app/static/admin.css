@@ -1,0 +1,70 @@
+/* Shared minimal styling for the server-rendered Ask/Library/Network/System
+   pages (P0.6). Deliberately plain — architecture-v2.md §15's own build
+   note: "nothing here requires a frontend framework." index.html keeps its
+   own inline styles untouched; this file is new and only used by /ask and
+   /admin/*. */
+:root{
+  --ink:#171310; --panel:#201a13; --panel2:#241d15; --line:#382b1c;
+  --ivory:#eae0cc; --muted:#9c8e76; --brass:#c9a227; --lapis:#7d9bc9;
+  --ok:#7fa06a; --err:#c25b4a; --mono:'IBM Plex Mono',monospace,monospace;
+}
+*{box-sizing:border-box;margin:0}
+html{background:var(--ink)}
+body{font-family:var(--mono);font-size:13px;color:var(--ivory);background:var(--ink);
+  min-height:100vh;padding:0 0 60px}
+a{color:var(--lapis)}
+h1{font-size:20px;letter-spacing:.4px}
+h2{font-size:14px;color:var(--brass);margin-bottom:10px;letter-spacing:.4px}
+nav{display:flex;gap:2px;border-bottom:2px solid var(--line);padding:14px 22px;align-items:baseline;flex-wrap:wrap}
+nav .brand{font-size:18px;font-weight:600;margin-right:18px}
+nav a{color:var(--muted);text-decoration:none;padding:6px 12px;border-radius:3px}
+nav a.active{color:var(--brass);background:var(--panel2)}
+nav a:hover{color:var(--ivory)}
+main{padding:20px 22px;max-width:1200px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px;margin-bottom:16px}
+button,.btn{font-family:var(--mono);font-size:12px;background:var(--panel2);color:var(--ivory);
+  border:1px solid var(--line);padding:6px 14px;cursor:pointer;border-radius:3px;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{border-color:var(--brass)}
+button.primary{border-color:var(--brass);color:var(--brass)}
+button:disabled{opacity:.4;cursor:default}
+input,select,textarea{font-family:var(--mono);font-size:13px;width:100%;background:var(--ink);
+  border:1px solid var(--line);color:var(--ivory);padding:7px 9px;border-radius:3px}
+label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px;margin:10px 0 3px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;
+  letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid #2a2117;vertical-align:top}
+.badge{display:inline-block;padding:1px 7px;border:1px solid var(--line);border-radius:10px;
+  font-size:10px;color:var(--muted);margin-right:5px}
+.badge.brass{color:var(--brass);border-color:var(--brass)}
+.badge.lapis{color:var(--lapis);border-color:var(--lapis)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}
+.badge.err{color:var(--err);border-color:var(--err)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--line);
+  border-radius:14px;font-size:11px;color:var(--muted);margin:0 6px 6px 0}
+.chip.on{color:var(--brass);border-color:var(--brass)}
+.spine{height:14px;background:#2a2117;border-radius:2px;position:relative;overflow:hidden;display:flex}
+.spine span{height:100%}
+.stage{margin:6px 0}
+.stage .lbl{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:3px}
+.fact-card{border:1px solid var(--brass);border-radius:3px;padding:10px;margin:8px 0;background:#241d10}
+.hit{border:1px solid var(--line);border-radius:3px;padding:10px;margin:8px 0;background:var(--panel2)}
+.hit .head{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:5px}
+.hit .snip{color:#cbbfa8;font-size:12px;line-height:1.5}
+details.drawer{margin-top:6px;font-size:11px;color:var(--muted)}
+details.drawer summary{cursor:pointer;color:var(--lapis)}
+.note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.5}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:160px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;padding:8px 10px;
+  font-size:11px;overflow-x:auto;color:var(--brass)}
+#log{font-size:11px;line-height:1.7;max-height:400px;overflow-y:auto}
+#log .err{color:var(--err)} #log .warn{color:var(--brass)} #log .t{color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.running{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.dot.paused{background:var(--brass)}
+#modal-backdrop{position:fixed;inset:0;background:#000a;display:none;align-items:center;
+  justify-content:center;z-index:9}
+#modal-backdrop .inner{background:var(--panel);border:1px solid var(--brass);border-radius:4px;
+  max-width:640px;width:92%;max-height:84vh;overflow-y:auto;padding:20px}

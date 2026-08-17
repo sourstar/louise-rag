@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}System — gutenberg-rag{% endblock %}
+{% block content %}
+<h1>System</h1>
+
+<div class="panel">
+  <h2>Effective configuration</h2>
+  <div class="note">Tier 1 (env, identity — restart to change):</div>
+  <table><tr><th>key</th><th>value</th></tr>
+    {% for k,v in effective.tier1.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+  <div class="note" style="margin-top:12px">Tier 2 (collections/*.toml, desired state — file value only):</div>
+  <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th></tr>
+    {% for c in effective.tier2 %}
+    <tr><td>{{ c.collection }}</td><td>{{ c.plugin }}</td><td>{{ c.profile or '(default)' }}</td>
+      <td>{{ c.embed_mode or '(default)' }}</td><td>{{ c.acquire_enabled }}</td><td>{{ c.license_ack }}</td></tr>
+    {% endfor %}
+  </table>
+  <div class="note" style="margin-top:12px">Tier 2 (platform.toml, node-level desired state):</div>
+  <table><tr><th>key</th><th>value</th></tr>
+    {% for k,v in effective.tier2_platform.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+  <div class="note" style="margin-top:12px">Tier 3 (control table, runtime override — does NOT survive restart):</div>
+  <table><tr><th>key</th><th>value</th></tr>
+    {% for k,v in effective.tier3.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Boot-validation report</h2>
+  <table><tr><th>collection</th><th>status</th><th>message</th></tr>
+    {% for r in boot_report %}
+    <tr><td>{{ r.collection }}</td>
+      <td><span class="badge {{ 'ok' if r.ok else 'err' }}">{{ 'ok' if r.ok else 'FAIL' }}</span></td>
+      <td>{{ r.message }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Endpoint health</h2>
+  <table><tr><th>endpoint(s)</th><th>url</th><th>status</th></tr>
+    {% for h in health %}
+    <tr><td>{{ h.names|join(', ') }}</td><td>{{ h.url }}</td>
+      <td><span class="badge {{ 'ok' if h.ok else 'err' }}">{{ 'up' if h.ok else 'unreachable' }}</span></td></tr>
+    {% endfor %}
+  </table>
+  <div class="note">best-effort, 1.5s timeout per endpoint — a failed ping here does not affect
+    search (dense search degrades gracefully; see retrieval.py).</div>
+</div>
+
+<div class="panel">
+  <h2>Worker log</h2>
+  <div id="log" hx-get="/admin/system/log" hx-trigger="load, every 4s" hx-swap="innerHTML"></div>
+</div>
+{% endblock %}
