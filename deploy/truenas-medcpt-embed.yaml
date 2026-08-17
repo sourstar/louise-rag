@@ -1,4 +1,5 @@
-# medcpt-embed — TrueNAS SCALE custom app (Install via YAML)
+# MedCPT encoders — TrueNAS SCALE custom app (Install via YAML; installed
+# on the reference NAS under the app name "medcpt-embed")
 #
 # Serves NCBI's MedCPT bi-encoder pair (768-dim, open weights, the space of
 # NCBI's published PubMed embeddings) via HuggingFace text-embeddings-
