@@ -46,13 +46,15 @@ PUBMED_SPEC = AcquisitionSpec(
     checksums=ChecksumSource(kind="sidecar", sidecar_suffix=".md5", sidecar_algo="md5"),
     delta=DeltaSpec(mode="updatefiles-dir", updatefiles_subdir="updatefiles"),
     profiles={
-        "demo": Filter(max_files=2, max_bytes=10_000_000),
+        # one baseline container + its .md5 sidecar; real baseline files run
+        # 9-30 MB (the original 10 MB cap couldn't admit a single one)
+        "demo": Filter(max_files=2, max_bytes=40_000_000),
         "starter": Filter(max_files=50),
         "recent": Filter(max_files=200),
         "full": Filter(),
     },
     estimated_bytes={
-        "demo": 5_000_000, "starter": 500_000_000,
+        "demo": 40_000_000, "starter": 500_000_000,
         "recent": 5_000_000_000, "full": 150_000_000_000,
     },
     license_class=LicenseClass.YELLOW,   # publisher copyright on text; raw is pointer-only (§8)

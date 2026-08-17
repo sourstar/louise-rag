@@ -33,18 +33,28 @@ _DISK_HEADROOM = 1.1                     # refuse unless free space clears the e
 
 def _apply_filters(files: list[RemoteFile], spec_filters: tuple[str, ...],
                     profile_filter: Filter) -> list[RemoteFile]:
+    positive = [p for p in spec_filters if not p.startswith("!")]
+
     def _included(rel_path: str) -> bool:
+        # Negative patterns veto (ALL must miss); positive patterns are
+        # alternatives (ANY may match). The old all-must-match reading made
+        # two positive patterns like ("*.xml.gz", "*.xml.gz.md5") mutually
+        # exclusive and selected NOTHING — observed live on the first real
+        # PubMed fetch (rsync sources never hit it: the mirror pre-filters).
         for pat in spec_filters:
-            if pat.startswith("!"):
-                if fnmatch.fnmatch(rel_path, pat[1:]):
-                    return False
-            elif not fnmatch.fnmatch(rel_path, pat):
+            if pat.startswith("!") and fnmatch.fnmatch(rel_path, pat[1:]):
                 return False
+        if positive and not any(fnmatch.fnmatch(rel_path, p) for p in positive):
+            return False
         included = any(fnmatch.fnmatch(rel_path, p) for p in profile_filter.include)
         excluded = any(fnmatch.fnmatch(rel_path, p) for p in profile_filter.exclude)
         return included and not excluded
 
-    out = [f for f in files if _included(f.rel_path)]
+    # deterministic order: listing order is transport-dependent (FTP returns
+    # arbitrary order), and sorting keeps a data file adjacent to its
+    # checksum sidecar so size/count caps take coherent pairs
+    out = sorted((f for f in files if _included(f.rel_path)),
+                 key=lambda f: f.rel_path)
     if profile_filter.max_bytes is not None:
         kept, total = [], 0
         for f in out:
