@@ -85,11 +85,16 @@ def _gnomad_bgz() -> bytes:
     return gzip.compress("".join(rows).encode())
 
 
+HOMOLOGENE_DATA = ("3\t9606\t34\tACADM\t4557231\tNP_000007.1\n"
+                    "3\t10090\t11364\tAcadm\t6680618\tNP_031408.1\n").encode()
+
+
 @pytest.fixture
 def fake_transport():
     return FakeTransport({"hgnc_complete_set.txt": HGNC_TSV,
                            "variant_summary.txt.gz": _clinvar_gz(),
-                           "gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz": _gnomad_bgz()})
+                           "gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz": _gnomad_bgz(),
+                           "homologene.data": HOMOLOGENE_DATA})
 
 
 def test_fetch_all_downloads_transforms_and_is_freshness_gated(tmp_path, fake_transport):

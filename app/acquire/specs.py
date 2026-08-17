@@ -98,7 +98,40 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
 )
 
 
+GENOME_SPEC = AcquisitionSpec(
+    source_id="genome",
+    transport=Transport.HTTPS,
+    endpoints=(
+        Endpoint(transport=Transport.HTTPS,
+                 url="https://hgdownload.soe.ucsc.edu/goldenPath",
+                 max_conns=2,
+                 static_files=(
+                     RemoteFile(rel_path="sacCer3/bigZips/sacCer3.fa.gz"),
+                     RemoteFile(rel_path="dm6/bigZips/dm6.fa.gz"),
+                     RemoteFile(rel_path="hg38/bigZips/hg38.fa.gz"),
+                 )),
+    ),
+    layout="container-files",
+    filters=("*.fa.gz",),
+    checksums=ChecksumSource(kind="none"),
+    delta=DeltaSpec(mode="full-resync"),     # assemblies are immutable; a new
+                                              # assembly is a NEW collection (§9)
+    profiles={
+        # §9's validation ladder: yeast and fly prove the plugin in
+        # GPU-minutes before anyone spends human-scale hours
+        "demo": Filter(include=("sacCer3/*",)),          # yeast, 12 Mbp
+        "starter": Filter(include=("sacCer3/*", "dm6/*")),  # + fly, 140 Mbp
+        "full": Filter(),                                 # + human GRCh38
+    },
+    estimated_bytes={
+        "demo": 4_000_000, "starter": 50_000_000, "full": 1_050_000_000,
+    },
+    license_class=LicenseClass.GREEN,        # consortium reference data
+)
+
+
 ACQUIRE_REGISTRY: dict[str, AcquisitionSpec] = {
+    "genome": GENOME_SPEC,
     "gutenberg": GUTENBERG_SPEC,
     "pubmed": PUBMED_SPEC,
     "wikipedia": WIKIPEDIA_SPEC,

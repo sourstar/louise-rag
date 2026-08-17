@@ -200,9 +200,12 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
   </p>
   <p class="note">
     <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
-    panel: pick a name, a plugin (e.g. <code>gutenberg</code>,
-    <code>pubmed</code>), a profile, and optionally a dedicated corpus
-    folder (a container path like <code>/corpus-pubmed</code>).
+    panel: pick a name, a plugin (<code>gutenberg</code>,
+    <code>pubmed</code>, <code>wikipedia</code>, or <code>genome</code> —
+    reference assemblies as chromosome documents with deterministic
+    sequence windows; its profiles are assemblies: demo = yeast,
+    starter = + fly, full = + human GRCh38), a profile, and optionally a
+    dedicated corpus folder.
     <i>Preview</i> shows the source's license class (and terms text, if
     acknowledgement is required) plus the exact TOML; <i>Create on this
     node</i> writes that TOML for you, with per-collection data paths

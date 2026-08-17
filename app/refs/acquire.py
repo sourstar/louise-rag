@@ -102,6 +102,27 @@ def _gnomad_transform(raw: Path, final: Path) -> None:
     tmp.replace(final)
 
 
+def _homologene_transform(raw: Path, final: Path) -> None:
+    """homologene.data (headerless TSV: group, taxid, gene_id, symbol,
+    protein_gi, protein_acc) → the five keyed columns the ref source reads.
+    The composite key makes (group, taxid, symbol) unique — TP53 and Trp53
+    stay species-qualified (§9)."""
+    tmp = final.with_suffix(".tsv.tmp")
+    with open(raw, newline="", encoding="utf-8", errors="replace") as src, \
+            open(tmp, "w", newline="", encoding="utf-8") as out:
+        writer = csv.writer(out, delimiter="\t")
+        writer.writerow(("key", "group_id", "taxid", "gene_id", "symbol"))
+        for row in csv.reader(src, delimiter="\t"):
+            if len(row) < 4:
+                continue
+            group, taxid, gene_id, symbol = row[0], row[1], row[2], row[3]
+            if not (group.isdigit() and taxid.isdigit() and symbol):
+                continue
+            writer.writerow((f"{group}:{taxid}:{symbol}", group, taxid,
+                              gene_id, symbol))
+    tmp.replace(final)
+
+
 REF_DUMPS: tuple[RefDump, ...] = (
     RefDump(
         source_id="hgnc",
@@ -117,6 +138,15 @@ REF_DUMPS: tuple[RefDump, ...] = (
         raw_name="variant_summary.txt.gz",
         final_name="clinvar_mini.tsv",
         transform=_clinvar_transform,
+    ),
+    RefDump(
+        source_id="homologene",
+        base_url="https://ftp.ncbi.nih.gov/pub/HomoloGene/build68",
+        rel_path="homologene.data",
+        raw_name="homologene.data",
+        final_name="homologene.tsv",
+        max_age_days=3650,    # build 68 is frozen — refetch is pure hygiene
+        transform=_homologene_transform,
     ),
     RefDump(
         source_id="gnomad-constraint",

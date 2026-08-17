@@ -2,6 +2,7 @@
 from .clinvar_mini import ClinvarMiniSource
 from .gnomad import GnomadConstraintSource
 from .hgnc import HgncSource
+from .homologene import HomologeneSource
 from .resolver import DictResolver
 from .store import RefStore, connect, ensure_schema
 
@@ -9,6 +10,7 @@ REFS_REGISTRY = {
     "hgnc": HgncSource(),
     "clinvar-mini": ClinvarMiniSource(),
     "gnomad-constraint": GnomadConstraintSource(),
+    "homologene": HomologeneSource(),
 }
 
 RESOLVER = DictResolver()
