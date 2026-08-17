@@ -1,0 +1,18 @@
+Wikipedia text is licensed under the Creative Commons Attribution-
+ShareAlike 4.0 International License (CC BY-SA 4.0), with some content
+under compatible terms. https://creativecommons.org/licenses/by-sa/4.0/
+
+By acquiring this corpus you acknowledge:
+
+1. ATTRIBUTION. Reuse of article text must credit Wikipedia (linking the
+   source article satisfies attribution for hyperlinked media).
+2. SHARE-ALIKE. Adaptations of the text you distribute must carry the same
+   license. Whether embedding vectors are derivative works of the text is
+   legally unsettled; this platform classifies Wikipedia text yellow and
+   shares raw text pointer-only by default, following architecture-v2.md
+   §8's conservative reading.
+3. NO ENDORSEMENT. Wikipedia and the Wikimedia Foundation do not endorse
+   this platform or any use of the corpus.
+
+Dumps are fetched from dumps.wikimedia.org; their etiquette asks for at
+most 2 concurrent connections, which the acquisition spec enforces.

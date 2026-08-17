@@ -8,7 +8,8 @@ traffic in tests).
 from pathlib import Path
 
 from ..plugins.base import LicenseClass
-from .spec import AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter, Transport
+from .spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter,
+                   RemoteFile, Transport)
 
 GUTENBERG_SPEC = AcquisitionSpec(
     source_id="gutenberg",
@@ -61,7 +62,44 @@ PUBMED_SPEC = AcquisitionSpec(
     terms_text_path=Path(__file__).parent.parent / "plugins" / "pubmed" / "TERMS.txt",
 )
 
+def _wiki_files(wiki: str) -> tuple[RemoteFile, ...]:
+    """Stable -latest- names per wiki: the multistream dump + its index are
+    the only two files the plugin needs. rel_path is nested (it is also the
+    corpus-relative destination), so multiple wikis coexist in one corpus."""
+    base = f"{wiki}/latest/{wiki}-latest-pages-articles-multistream"
+    return (RemoteFile(rel_path=f"{base}.xml.bz2"),
+            RemoteFile(rel_path=f"{base}-index.txt.bz2"))
+
+
+WIKIPEDIA_SPEC = AcquisitionSpec(
+    source_id="wikipedia",
+    transport=Transport.HTTPS,
+    endpoints=(
+        Endpoint(transport=Transport.HTTPS, url="https://dumps.wikimedia.org",
+                 max_conns=2,   # dumps.wikimedia.org etiquette: max 2 connections
+                 static_files=_wiki_files("simplewiki") + _wiki_files("enwiki")),
+    ),
+    layout="container-files",
+    filters=("*multistream.xml.bz2", "*multistream-index.txt.bz2"),
+    checksums=ChecksumSource(kind="none"),
+    delta=DeltaSpec(mode="full-resync"),
+    profiles={
+        # profiles select WHICH wiki: Simple English is a real, useful,
+        # self-contained corpus at 1/70th of enwiki's size
+        "demo": Filter(include=("simplewiki/*",)),
+        "starter": Filter(include=("simplewiki/*",)),
+        "full": Filter(),                       # simplewiki + enwiki
+    },
+    estimated_bytes={
+        "demo": 350_000_000, "starter": 350_000_000, "full": 23_000_000_000,
+    },
+    license_class=LicenseClass.YELLOW,          # CC BY-SA (§8)
+    terms_text_path=Path(__file__).parent.parent / "plugins" / "wikipedia" / "TERMS.txt",
+)
+
+
 ACQUIRE_REGISTRY: dict[str, AcquisitionSpec] = {
     "gutenberg": GUTENBERG_SPEC,
     "pubmed": PUBMED_SPEC,
+    "wikipedia": WIKIPEDIA_SPEC,
 }

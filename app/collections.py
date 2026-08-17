@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import gutenberg, pubmed
+from .plugins import gutenberg, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "gutenberg": gutenberg.SOURCE,
     "pubmed": pubmed.SOURCE,
+    "wikipedia": wikipedia.SOURCE,
 }
 
 

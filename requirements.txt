@@ -15,6 +15,9 @@ numpy
 # Ed25519 for signed vector bundles (app/bundles/). libsodium bindings with
 # prebuilt wheels; no hand-rolled crypto anywhere.
 pynacl>=1.5
+# Wikitext -> plain text for the wikipedia plugin (user-approved dependency;
+# the de-facto standard MediaWiki markup parser, C-accelerated).
+mwparserfromhell>=0.6
 pytest>=8
 # Property-based generators for the verification ladder's detection matrix
 # (P1.2): honest / wrong-model / perturbed / unnormalized bundles. Test-only.
