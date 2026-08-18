@@ -144,6 +144,31 @@ def test_verbatim_chunking_preserves_producer_boundaries(corpus):
     assert chunks[1]["text"] == huge
 
 
+def test_fetch_uses_the_one_slot_shard_cache(corpus, monkeypatch):
+    """Every per-article fetch re-parsing a ~437 MB shard would make rdf/fts
+    unusable at ~95k articles per shard — consecutive fetches of the same
+    shard must parse it once (pubmed's container-cache lesson)."""
+    import app.plugins.embedded.source as mod
+    mod._shard_cache.clear()
+    real = pq.read_table
+    calls = []
+
+    def counting(path, *a, **k):
+        calls.append(str(path))
+        return real(path, *a, **k)
+    # _shard_rows re-imports pyarrow.parquet at call time, so patching the
+    # module attribute is exactly what it sees
+    monkeypatch.setattr(pq, "read_table", counting)
+
+    src = EmbeddedSource()
+    refs = {r.extra["article"]: r
+            for r in src.discover(DiscoverState(corpus_root=corpus, state_dir=None))}
+    src.fetch(refs["10"])
+    src.fetch(refs["11"])   # same shard — must hit the cache
+    shard_reads = [c for c in calls if c.endswith("000.parquet")]
+    assert len(shard_reads) == 1
+
+
 def test_chunker_dispatch_default_is_unchanged():
     assert chunking.chunker_for(None) is chunking.chunk_book
     assert chunking.chunker_for("book") is chunking.chunk_book

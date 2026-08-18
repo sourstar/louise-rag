@@ -23,6 +23,7 @@ manifest rows rebuild refs with nothing but the locator (plugin_io).
 """
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 from .. import cursor
@@ -30,6 +31,29 @@ from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyCla
 
 _SEG_SEP = "|"
 _LOCATOR_SEP = "::"
+
+# One-slot shard cache for fetch(): the worker walks documents in native_id
+# order, which is shard order, so consecutive fetches hit the same shard —
+# without this, EVERY per-article fetch re-parses a ~437 MB parquet file
+# (~95k articles per shard would make rdf/fts unusable; pubmed hit the same
+# wall and grew the same cache). Only the four text columns are held, never
+# `embedding`. Lock because the parallel embed stage fetches from threads.
+_shard_cache: dict = {}
+_cache_lock = threading.Lock()
+
+
+def _shard_rows(path: str) -> "object":
+    import pyarrow.parquet as pq
+    mtime = Path(path).stat().st_mtime_ns
+    with _cache_lock:
+        hit = _shard_cache.get(path)
+        if hit is not None and hit[0] == mtime:
+            return hit[1]
+    table = pq.read_table(path, columns=["id", "url", "title", "text"])
+    with _cache_lock:
+        _shard_cache.clear()            # one slot: shards read sequentially
+        _shard_cache[path] = (mtime, table)
+    return table
 
 # native_id must be int-castable and unique across languages, so it encodes
 # (language, article id) as ordinal * 10^10 + article_id. FROZEN: these
@@ -161,10 +185,9 @@ class EmbeddedSource:
                    "article": pending["article"]})
 
     def fetch(self, ref: DocRef) -> RawDoc:
-        import pyarrow.parquet as pq
         rows: list[dict] = []
         for path, start, end in split_locator(ref.locator):
-            table = pq.read_table(path, columns=["id", "url", "title", "text"])
+            table = _shard_rows(path)
             for i in range(start, min(end, table.num_rows)):
                 rows.append({
                     "id": table.column("id")[i].as_py(),
