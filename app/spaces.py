@@ -63,6 +63,26 @@ def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
                     return digest, False
         except Exception:
             pass
+    elif recipe.api == "openai":
+        # TEI (the MedCPT/BGE-M3 containers) publishes its LOADED model's
+        # identity on GET /info: model_id plus model_sha, the HF revision of
+        # the weights actually serving. Hash what is SERVED, not what the
+        # recipe asked for — a repointed container changes the hash, which
+        # is the whole point. llama-server also speaks /v1/embeddings but
+        # has no /info route: the 404 falls through to the weak hash,
+        # exactly as before this branch existed.
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(f"{recipe.url}/info")
+                r.raise_for_status()
+                info = r.json()
+                model_id, model_sha = info.get("model_id"), info.get("model_sha")
+                if model_id and model_sha:
+                    digest = hashlib.sha256(
+                        f"tei:{model_id}@{model_sha}".encode()).hexdigest()[:16]
+                    return digest, False
+        except Exception:
+            pass
     weak_hash = hashlib.sha256(f"model-name:{recipe.model}".encode()).hexdigest()[:16]
     return weak_hash, True
 
