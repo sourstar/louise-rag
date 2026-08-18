@@ -207,16 +207,20 @@ def _genesis_state(con, collection) -> dict | None:
     declared, and how much of the collection did it cover?"""
     if not collection.genesis_archive:
         return None
-    from .bundles.genesis import ARCHIVES
+    from .bundles.genesis import ARCHIVES, _local_shards
     archive = ARCHIVES.get(collection.genesis_archive)
     totals = con.execute(
         "SELECT COUNT(*) shards, SUM(state='applied') applied, SUM(docs) docs, "
         "SUM(state='rejected') rejected FROM genesis_imports WHERE archive=?",
         (collection.genesis_archive,)).fetchone()
+    if archive is not None and archive.local:
+        shard_total = len(_local_shards(collection))
+    else:
+        shard_total = len(archive.shards) if archive else 0
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,
-        "shard_total": len(archive.shards) if archive else 0,
+        "shard_total": shard_total,
         "applied": totals["applied"] or 0,
         "docs": totals["docs"] or 0,
         "rejected": bool(totals["rejected"]),

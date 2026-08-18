@@ -149,8 +149,9 @@ def _local_chunks(collection, row) -> dict[str, str]:
     plugin = collection.plugin_instance()
     native_id = int(row["native_id"])
     chapters = plugin_io.sections(plugin, row)
+    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
     return {c["id"]: c["text"]
-            for c in chunking.chunk_book(row["uid"], native_id, chapters)}
+            for c in chunk(row["uid"], native_id, chapters)}
 
 
 def _document_rows(con, uids) -> dict[str, dict]:

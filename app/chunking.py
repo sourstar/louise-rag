@@ -56,6 +56,25 @@ def chunk_abstract(uid: str, native_id, sections: list[tuple[str, str]]):
         return
     yield _mk(uid, native_id, 0, sections[0][0] if sections else "", text)
 
+def chunk_verbatim(uid: str, native_id, sections: list[tuple[str, str]]):
+    """One chunk per SECTION, exactly as the plugin emitted it — no windowing,
+    no merge, no hard-split (amendment 11). This is the pre-embedded corpus
+    profile: the producer already chunked, their embedding input IS the
+    section text, and preserving it 1:1 is what makes the chunk-shape gate a
+    row-count check and the sample re-encode a like-for-like comparison. A
+    section longer than CHUNK_TOKENS stays whole — splitting it would orphan
+    the producer's vector for the tail."""
+    for seq, (label, body) in enumerate(sections):
+        if body:
+            yield _mk(uid, native_id, seq, label or "", body)
+
+def chunker_for(profile: str | None):
+    """Chunking dispatch by the plugin's chunking_profile. Every profile that
+    predates the dispatch keeps chunk_book — byte-identical behavior for all
+    existing collections (invariant 3: no silent chunking change). Only
+    'verbatim' (introduced WITH this dispatch, amendment 11) maps elsewhere."""
+    return chunk_verbatim if profile == "verbatim" else chunk_book
+
 def _mk(uid, native_id, seq, chapter, text):
     return {
         "id": f"{uid}:{seq}:{config.CHUNK_VERSION}",

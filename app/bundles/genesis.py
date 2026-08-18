@@ -54,12 +54,21 @@ class GenesisUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class GenesisArchive:
-    """Where a published embedding set lives and how to read it."""
+    """Where a published embedding set lives and how to read it.
+
+    `local=True` (amendment 11) marks a CORPUS-RESIDENT archive: the vectors
+    live inside the collection's own corpus files (pre-embedded parquet),
+    so shards are discovered on disk rather than declared, nothing is
+    downloaded, corpus files are never deleted after import, and shards are
+    REVISITED (oldest first) because documents become import-eligible
+    gradually as rdf/fts progresses — instead of the once-only,
+    wait-for-settle policy remote archives need."""
     archive_id: str
     base_url: str
-    adapter: str                      # medcpt-npy | parquet
-    shards: tuple[str, ...]           # shard names, adapter-interpreted
+    adapter: str                      # medcpt-npy | parquet | corpus-embedded
+    shards: tuple[str, ...]           # shard names, adapter-interpreted; () + local → on-disk
     uid_prefix: str                   # archive id -> manifest uid
+    local: bool = False
 
 
 # NCBI publishes MedCPT article embeddings for all of PubMed (public
@@ -73,13 +82,27 @@ MEDCPT_PUBMED = GenesisArchive(
     uid_prefix="pubmed:",
 )
 
+# The vectors travel WITH the corpus (format v1: data/{lang}/NNN.parquet
+# rows of id/url/title/text/embedding): each corpus shard is a genesis
+# shard, read in place.
+UPSTASH_WIKIPEDIA = GenesisArchive(
+    archive_id="upstash-wikipedia-2024-06",
+    base_url="https://huggingface.co/datasets/Upstash/wikipedia-2024-06-bge-m3",
+    adapter="corpus-embedded",
+    shards=(),
+    uid_prefix="embedded:",
+    local=True,
+)
+
 ARCHIVES: dict[str, GenesisArchive] = {
     "medcpt-pubmed": MEDCPT_PUBMED,
+    "upstash-wikipedia-2024-06": UPSTASH_WIKIPEDIA,
 }
 
 # The default-on wiring: creating a collection for one of these plugins
 # declares its archive in the TOML unless the operator removes the line.
 DEFAULT_ARCHIVE_BY_PLUGIN: dict[str, str] = {
+    "embedded": "upstash-wikipedia-2024-06",
     "pubmed": "medcpt-pubmed",
 }
 
@@ -99,42 +122,76 @@ def drain_next_shard(con, collection, *, stop=None) -> dict | None:
         "AND error IS NULL LIMIT 1").fetchone()
     if candidates is None:
         return None
-    # Wait for the collection's rdf/fts backlog to settle: a shard applies
-    # ONCE, and running it while most documents are not yet eligible would
-    # permanently strand them on the local-GPU path. Post-settle growth is
-    # fine — appended corpora land in later, still-pending shards, and any
-    # stragglers gap-fill locally into the same proven space.
-    backlog = con.execute(
-        "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
-        "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
-    if backlog is not None:
-        return None
+    if not archive.local:
+        # Wait for the collection's rdf/fts backlog to settle: a REMOTE
+        # shard applies ONCE, and running it while most documents are not
+        # yet eligible would permanently strand them on the local-GPU path.
+        # Post-settle growth is fine — appended corpora land in later,
+        # still-pending shards, and any stragglers gap-fill locally into
+        # the same proven space. A LOCAL archive skips this: its shards are
+        # revisited, so early passes strand nothing (amendment 11).
+        backlog = con.execute(
+            "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
+            "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
+        if backlog is not None:
+            return None
+    shards = _local_shards(collection) if archive.local else archive.shards
     rows = {r["shard"]: r for r in con.execute(
         "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
         (archive.archive_id,))}
     if any(r["state"] == "rejected" for r in rows.values()):
         return None
     now = int(time.time())
-    for shard in archive.shards:
+    for shard in _drain_order(shards, rows, revisit=archive.local):
         row = rows.get(shard)
-        if row is None or row["state"] not in ("applied",):
-            if row is not None and row["state"] == "skipped" \
-                    and now - (row["updated_at"] or 0) < 600:
-                return None            # retryable failure: back off 10 min
-            try:
-                return import_shard(con, collection, archive, shard)
-            except GenesisUnavailable:
-                return None            # recorded as skipped; retried later
-            except GenesisError:
-                return None            # recorded as rejected; never retried
+        if row is not None and row["state"] == "skipped" \
+                and now - (row["updated_at"] or 0) < 600:
+            return None                # retryable failure: back off 10 min
+        try:
+            return import_shard(con, collection, archive, shard,
+                                 revisit=archive.local)
+        except GenesisUnavailable:
+            return None                # recorded as skipped; retried later
+        except GenesisError:
+            return None                # recorded as rejected; never retried
     return None
 
 
-# ---------------- adapters: shard -> iterator of (uid, vector) -------------
+def _drain_order(shards, rows, *, revisit: bool):
+    """Remote archives: pending shards in declared order, applied ones
+    excluded (they applied ONCE, post-settle, and are final). Local
+    archives: pending shards first, then applied ones oldest-first — each
+    revisit picks up documents that became eligible since the last pass,
+    and the cycle starves itself the moment no candidates remain (the
+    caller's candidates gate)."""
+    pending = [s for s in shards
+               if rows.get(s) is None or rows[s]["state"] != "applied"]
+    if not revisit:
+        return pending
+    applied = sorted((s for s in shards
+                      if rows.get(s) is not None and rows[s]["state"] == "applied"),
+                     key=lambda s: rows[s]["updated_at"] or 0)
+    return pending + applied
+
+
+def _local_shards(collection) -> tuple[str, ...]:
+    """Corpus-resident shards, as corpus-relative POSIX paths (stable
+    genesis_imports keys across remounts)."""
+    root = collection.corpus_dir
+    if not root.is_dir():
+        return ()
+    return tuple(sorted(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*.parquet") if p.is_file()))
+
+
+# -------- adapters: shard -> iterator of (uid, [vector, ...] by seq) --------
+# Every adapter yields ONE entry per document with that document's vectors
+# in chunk-seq order; single-chunk archives (medcpt) yield one-element lists.
 
 def _read_medcpt_shard(cache_dir: Path, shard: str,
                         fetch: Callable[[str, Path], None],
-                        uid_prefix: str) -> tuple[Iterator[tuple[str, np.ndarray]], list[Path]]:
+                        uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
     npy = cache_dir / f"embeds_chunk_{shard}.npy"
     ids = cache_dir / f"pmids_chunk_{shard}.json"
     for name, path in ((f"embeds_chunk_{shard}.npy", npy),
@@ -149,13 +206,13 @@ def _read_medcpt_shard(cache_dir: Path, shard: str,
 
     def rows():
         for pmid, vec in zip(pmids, vectors):
-            yield f"{uid_prefix}{pmid}", np.asarray(vec, dtype=np.float32)
+            yield f"{uid_prefix}{pmid}", [np.asarray(vec, dtype=np.float32)]
     return rows(), [npy, ids]
 
 
 def _read_parquet_shard(cache_dir: Path, shard: str,
                          fetch: Callable[[str, Path], None],
-                         uid_prefix: str) -> tuple[Iterator[tuple[str, np.ndarray]], list[Path]]:
+                         uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
     """Generic adapter: any parquet with (id, vector) columns — the
     "bring your own compatible embeddings" path."""
     import pyarrow.parquet as pq
@@ -167,11 +224,50 @@ def _read_parquet_shard(cache_dir: Path, shard: str,
     def rows():
         for rid, vec in zip(table.column("id").to_pylist(),
                              table.column("vector").to_pylist()):
-            yield f"{uid_prefix}{rid}", np.asarray(vec, dtype=np.float32)
+            yield f"{uid_prefix}{rid}", [np.asarray(vec, dtype=np.float32)]
     return rows(), [path]
 
 
-_ADAPTERS = {"medcpt-npy": _read_medcpt_shard, "parquet": _read_parquet_shard}
+def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
+                                 fetch: Callable[[str, Path], None],
+                                 uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
+    """Amendment 11: the corpus IS the archive. `shard` is a corpus-relative
+    parquet path (format v1: data/{lang}/NNN.parquet); rows of one article
+    are consecutive with id "{article}_{seq}". Nothing is fetched and the
+    file is part of the corpus — import_shard never deletes it."""
+    import pyarrow.parquet as pq
+    from ..plugins.embedded.source import LANG_ORDINAL, encode_native_id, split_row_id
+    path = collection.corpus_dir / shard
+    if not path.is_file():
+        raise GenesisUnavailable(f"corpus shard missing: {path}")
+    lang = Path(shard).parts[1] if len(Path(shard).parts) >= 3 else ""
+    if lang not in LANG_ORDINAL:
+        raise GenesisError(f"shard {shard}: unrecognized language directory")
+    pf = pq.ParquetFile(path)
+
+    def rows():
+        # An article straddling two shard files surfaces here with a PARTIAL
+        # vector list (each shard is read independently), fails the
+        # chunk-shape gate, and gap-fills locally instead — ~one article per
+        # shard boundary, and never a wrong import.
+        current: str | None = None
+        vecs: list[np.ndarray] = []
+        for batch in pf.iter_batches(columns=["id", "embedding"], batch_size=1024):
+            for rid, vec in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist()):
+                article, _seq = split_row_id(rid)
+                if article != current:
+                    if current is not None:
+                        yield (f"{uid_prefix}{encode_native_id(lang, int(current))}",
+                               vecs)
+                    current, vecs = article, []
+                vecs.append(np.asarray(vec, dtype=np.float32))
+        if current is not None:
+            yield f"{uid_prefix}{encode_native_id(lang, int(current))}", vecs
+    return rows(), [path]
+
+
+_ADAPTERS = {"medcpt-npy": _read_medcpt_shard, "parquet": _read_parquet_shard,
+             "corpus-embedded": _read_corpus_embedded_shard}
 
 
 # ---------------- import ---------------------------------------------------
@@ -206,8 +302,9 @@ def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
     plugin = collection.plugin_instance()
     native_id = int(row["native_id"])
     sections = plugin_io.sections(plugin, row)
+    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
     return [(c["id"], c["text"])
-            for c in chunking.chunk_book(row["uid"], native_id, sections)]
+            for c in chunk(row["uid"], native_id, sections)]
 
 
 def _sample_re_encode(collection, sampled: list[tuple[str, np.ndarray]], embed_fn) -> None:
@@ -237,12 +334,15 @@ def _sample_re_encode(collection, sampled: list[tuple[str, np.ndarray]], embed_f
 
 
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
-                 embed_fn=None, fetch=None, keep_cache: bool = False) -> dict:
-    """Admit one shard. Idempotent: an applied shard short-circuits."""
+                 embed_fn=None, fetch=None, keep_cache: bool = False,
+                 revisit: bool = False) -> dict:
+    """Admit one shard. Idempotent: an applied shard short-circuits, unless
+    `revisit` (local archives) — re-running only touches documents that
+    became eligible since, via the same delete-then-insert."""
     existing = con.execute(
         "SELECT state FROM genesis_imports WHERE archive=? AND shard=?",
         (archive.archive_id, shard)).fetchone()
-    if existing and existing["state"] == "applied":
+    if existing and existing["state"] == "applied" and not revisit:
         return {"shard": shard, "state": "already-applied"}
 
     recipe = recipe_for(collection)
@@ -253,7 +353,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     rows_iter, files = _ADAPTERS[archive.adapter](cache_dir, shard, fetch,
-                                                    archive.uid_prefix)
+                                                    archive.uid_prefix, collection)
     digest = _digest_files(files)
     con.execute(
         "INSERT INTO genesis_imports(archive,shard,source_url,content_digest,"
@@ -271,6 +371,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     batch_uids: list[str] = []
     header_dim: int | None = None
     checked_structural = False
+    proven = False
 
     def flush():
         nonlocal batch_rows, batch_native, batch_uids
@@ -300,8 +401,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 "WHERE uid=?", (config.EMBED_VERSION, now, uid))
         batch_rows, batch_native, batch_uids = [], [], []
 
+    # Truncation-aware sampling (amendment 11): the local serving stack may
+    # truncate shorter than the producer did, so the same-function proof
+    # samples chunks inside the LOCAL budget — where the two functions must
+    # agree. Over-budget chunks still import: their archived vector is
+    # strictly better than anything the local encoder could produce.
+    sample_char_budget = recipe.ctx * 4
+
     try:
-        for uid, vec in rows_iter:
+        for uid, vecs in rows_iter:
             row = con.execute(
                 "SELECT uid, native_id, path, lang FROM documents "
                 "WHERE uid=? AND error IS NULL AND fts_done=1 AND embed_done=0",
@@ -310,58 +418,81 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 skipped_absent += 1
                 continue
 
-            if header_dim is None:
-                header_dim = int(vec.shape[0])
-                if recipe.dim is not None and header_dim != recipe.dim:
-                    raise GenesisError(
-                        f"archive dim {header_dim} != recipe dim {recipe.dim}")
-            norm = float(np.linalg.norm(vec))
-            if not np.isfinite(vec).all() or norm == 0.0:
-                raise GenesisError(f"{uid}: non-finite or zero archive vector")
-            unit = (vec / norm).astype(np_dtype)
+            units = []
+            for vec in vecs:
+                if header_dim is None:
+                    header_dim = int(vec.shape[0])
+                    if recipe.dim is not None and header_dim != recipe.dim:
+                        raise GenesisError(
+                            f"archive dim {header_dim} != recipe dim {recipe.dim}")
+                norm = float(np.linalg.norm(vec))
+                if not np.isfinite(vec).all() or norm == 0.0:
+                    raise GenesisError(f"{uid}: non-finite or zero archive vector")
+                units.append((vec / norm).astype(np_dtype))
 
             try:
                 chunk_texts = _local_chunk_texts(collection, row)
             except Exception:
                 skipped_absent += 1
                 continue
-            if len(chunk_texts) != 1:
-                # the archive has ONE vector per document; a document that
-                # chunks locally into more would be left half-embedded
+            if len(chunk_texts) != len(vecs):
+                # vectors bind to chunks 1:1; a count mismatch would leave
+                # the document half-embedded (or mis-attached) — skip it,
+                # local gap-fill covers it in the same proven space
                 skipped_shape += 1
                 continue
 
-            chunk_id, text = chunk_texts[0]
-            if len(sample) < RE_ENCODE_SAMPLE:
-                sample.append((text, np.asarray(vec, dtype=np.float64)))
-                if len(sample) == RE_ENCODE_SAMPLE:
-                    _sample_re_encode(collection, sample, embed_fn)
-
-            batch_rows.append({
-                "id": chunk_id, "book_id": int(row["native_id"]),
-                "lang": row["lang"] or "en", "seq": 0, "chapter": "",
-                "text": text, "vector": unit,
-            })
+            for seq, ((chunk_id, text), vec, unit) in enumerate(
+                    zip(chunk_texts, vecs, units)):
+                if not proven and len(sample) < RE_ENCODE_SAMPLE \
+                        and len(text) <= sample_char_budget:
+                    sample.append((text, np.asarray(vec, dtype=np.float64)))
+                    if len(sample) == RE_ENCODE_SAMPLE:
+                        _sample_re_encode(collection, sample, embed_fn)
+                        proven = True
+                batch_rows.append({
+                    "id": chunk_id, "book_id": int(row["native_id"]),
+                    "lang": row["lang"] or "en", "seq": seq, "chapter": "",
+                    "text": text, "vector": unit,
+                })
+                chunks_written += 1
             batch_native.append(int(row["native_id"]))
             batch_uids.append(uid)
             docs += 1
-            chunks_written += 1
             if len(batch_rows) >= APPLY_BATCH_DOCS:
-                # structural admission on the first full batch — cheap, and
-                # a shard failing here has written nothing yet
+                # ALL admission runs before the first flush — "refused
+                # whole" must mean nothing was written. Structural is
+                # cheap; the same-function proof runs here on a partial
+                # sample if the full quota never accumulated (truncation-
+                # aware filter), and an EMPTY sample refuses the shard:
+                # vectors admitted without proof would be trust, not
+                # admission.
                 if not checked_structural:
                     ids = [r["id"] for r in batch_rows]
-                    vecs = [np.asarray(r["vector"], dtype=np.float32)
-                            for r in batch_rows]
-                    for result in (check_structural(ids, vecs, header_dim,
+                    batch_vecs = [np.asarray(r["vector"], dtype=np.float32)
+                                  for r in batch_rows]
+                    for result in (check_structural(ids, batch_vecs, header_dim,
                                                      recipe.dtype),
-                                    check_degenerate(vecs)):
+                                    check_degenerate(batch_vecs)):
                         if not result.passed:
                             raise GenesisError(f"admission: {result.detail}")
                     checked_structural = True
+                if not proven:
+                    if not sample:
+                        raise GenesisError(
+                            "no re-encode sample within the local truncation "
+                            "budget — cannot prove the archive matches this "
+                            "collection's encoder")
+                    _sample_re_encode(collection, sample, embed_fn)
+                    proven = True
                 flush()
-        if sample and len(sample) < RE_ENCODE_SAMPLE:
+        if chunks_written and not proven:
+            if not sample:
+                raise GenesisError(
+                    "no re-encode sample within the local truncation budget — "
+                    "cannot prove the archive matches this collection's encoder")
             _sample_re_encode(collection, sample, embed_fn)
+            proven = True
         flush()
     except GenesisError as e:
         con.execute(
@@ -378,15 +509,25 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             (int(time.time()), archive.archive_id, shard))
         raise
 
-    con.execute(
-        "UPDATE genesis_imports SET state='applied', docs=?, chunks=?, detail=NULL, "
-        "updated_at=? WHERE archive=? AND shard=?",
-        (docs, chunks_written, int(time.time()), archive.archive_id, shard))
+    if revisit:
+        # each revisit pass imports only newly-eligible documents; the
+        # ledger's counters accumulate coverage across passes
+        con.execute(
+            "UPDATE genesis_imports SET state='applied', "
+            "docs=COALESCE(docs,0)+?, chunks=COALESCE(chunks,0)+?, detail=NULL, "
+            "updated_at=? WHERE archive=? AND shard=?",
+            (docs, chunks_written, int(time.time()), archive.archive_id, shard))
+    else:
+        con.execute(
+            "UPDATE genesis_imports SET state='applied', docs=?, chunks=?, detail=NULL, "
+            "updated_at=? WHERE archive=? AND shard=?",
+            (docs, chunks_written, int(time.time()), archive.archive_id, shard))
     db.log_event(con, "info", "genesis",
                  f"{archive.archive_id}/{shard}: imported {chunks_written} vectors "
                  f"across {docs} documents ({skipped_absent} not held locally, "
                  f"{skipped_shape} chunk-shape mismatches)")
-    if not keep_cache:
+    if not keep_cache and not archive.local:
+        # local archives' files ARE the corpus — never delete them
         for p in files:
             p.unlink(missing_ok=True)
     return {"shard": shard, "state": "applied", "docs": docs,
@@ -402,12 +543,15 @@ def import_archive(con, collection, archive: GenesisArchive, *,
     walk — a systematically incompatible archive must not burn 36 more
     downloads to prove itself 36 more times."""
     results = []
-    for shard in (shards or archive.shards):
+    walk = shards or (list(_local_shards(collection)) if archive.local
+                      else archive.shards)
+    for shard in walk:
         if stop is not None and stop.is_set():
             break
         results.append(import_shard(con, collection, archive, shard,
                                      embed_fn=embed_fn, fetch=fetch,
-                                     keep_cache=keep_cache))
+                                     keep_cache=keep_cache,
+                                     revisit=archive.local))
     return {"shards": results,
             "docs": sum(r.get("docs", 0) for r in results),
             "chunks": sum(r.get("chunks", 0) for r in results)}

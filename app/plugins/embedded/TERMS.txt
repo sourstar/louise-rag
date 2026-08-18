@@ -1,0 +1,19 @@
+Pre-embedded Wikipedia corpus (Upstash/wikipedia-2024-06-bge-m3)
+
+The CONTENT of this dataset is Wikipedia article text, which is licensed
+under the Creative Commons Attribution-ShareAlike (CC BY-SA 4.0) license,
+regardless of the license the dataset repository declares for its packaging
+(Apache-2.0). By acknowledging these terms you accept the obligations of
+CC BY-SA for the text this collection stores, indexes and serves:
+
+1. ATTRIBUTION — Wikipedia and its contributors must be credited. Each
+   stored chunk carries its source article URL; answers cite them.
+2. SHARE-ALIKE — redistributions of the text (including bundles exported
+   from this collection) inherit CC BY-SA.
+3. The BGE-M3 embeddings distributed alongside the text were published by
+   Upstash under Apache-2.0. Whether embeddings are derivative works of the
+   text is legally unsettled (architecture-v2.md §8); this platform
+   conservatively gates the whole collection as yellow.
+
+Source dataset: https://huggingface.co/datasets/Upstash/wikipedia-2024-06-bge-m3
+Wikipedia licensing: https://en.wikipedia.org/wiki/Wikipedia:Copyrights

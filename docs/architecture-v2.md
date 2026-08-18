@@ -602,3 +602,51 @@ the live NAS deployment:
     the collection's own encoder (same-function proof), refused whole on
     failure, ledger-recorded with archive provenance. Catch-up embedding of
     post-snapshot records is ordinary embed-stage work in the same space.
+
+Amended again for pre-embedded corpora (Wikipedia/BGE-M3 reuse), evidence
+in the live deployment:
+
+11. **§2/§8 — the pre-embedded corpus plugin (`embedded`) and local genesis
+    archives.** The MedCPT import worked because NCBI's unit (one abstract,
+    one vector) is a unit our own chunker reproduces exactly. A third-party
+    dataset chunked by *someone else's* pipeline over *someone else's*
+    snapshot can never be re-derived from our own cleaning of a different
+    dump — so instead of mirroring a foreign chunker, the archive becomes
+    the corpus. **Format v1** (what a publisher ships to be importable):
+    Parquet shards, columns `id` (string, `"{doc}_{seq}"`, rows of one
+    document consecutive), `url`, `title`, `text` (the chunk text), and
+    `embedding` (fixed-width float list). Text travels WITH vectors, which
+    is what keeps possession, FTS, and RAG-with-citations intact.
+    Consequences, each mechanical:
+    - **`verbatim` chunking profile:** one section = one chunk, no
+      windowing, no merge, no split. Chunk shape equals the producer's *by
+      construction*, so the chunk-shape gate reduces to a row count check.
+      Determinism (invariant 3) holds trivially: chunking is the identity
+      function over an immutable corpus.
+    - **The producer's embedding input IS the chunk text.** Producers that
+      title-prefix their paragraphs (Upstash does) are mirrored by baking
+      the same prefix into the chunk text at parse time — so the sample
+      re-encode compares like for like, local gap-filling stays coherent,
+      and FTS simply also indexes the title per paragraph. Queries are
+      never prefixed (symmetric encoder).
+    - **Local archives:** the genesis adapter reads vectors from the same
+      corpus shards already on disk — no second download, no settle-wait
+      (nothing can be "stranded on the local-GPU path" when corpus and
+      archive are one artifact), and shards are *revisited* (oldest first)
+      instead of applied once, because documents become import-eligible
+      gradually as rdf/fts progresses. Idempotent by the same
+      delete-then-insert as everything else.
+    - **Truncation-aware sampling:** the local serving stack may truncate
+      shorter than the producer did (e.g. a CPU TEI capped at 2048 vs
+      their 8192); re-encode samples are drawn from chunks inside the
+      local budget, where the two functions must agree. Over-budget chunks
+      still import — their archived vector is strictly better than what
+      the local encoder could produce for them.
+    - **License is the CONTENT's license.** A dataset repo's metadata
+      license (Upstash says Apache-2.0) does not relicense the Wikipedia
+      text inside it; the plugin stays CC BY-SA yellow with the ack gate.
+    The admission spine is unchanged and non-negotiable: T0 structural +
+    degenerate checks + sample re-encode through the collection's own
+    `[embed]` recipe, refused whole, ledger-recorded. This amendment is the
+    generalization §8 promised — "any compatible embedded data can join the
+    platform the same way" — now with the format that makes it true.

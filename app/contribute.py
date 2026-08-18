@@ -75,7 +75,8 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
             plugin = collection.plugin_instance()
             native_id = int(row["native_id"])
             chapters = plugin_io.sections(plugin, row)
-            chunks = list(chunking.chunk_book(uid, native_id, chapters))
+            chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
+            chunks = list(chunk(uid, native_id, chapters))
             if not chunks:
                 continue
             embeddings.upsert_book(native_id, row["lang"], chunks, collection,

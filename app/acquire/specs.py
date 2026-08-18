@@ -130,7 +130,49 @@ GENOME_SPEC = AcquisitionSpec(
 )
 
 
+# ~4.4 KB per row (633 GB / 144M rows, dataset card); per-language row
+# counts from the card. Profiles select a LANGUAGE — each is a complete,
+# self-contained corpus, and the pre-embedded vectors make even "en" a
+# disk-bound import rather than a GPU-month.
+_EMBEDDED_LANG_BYTES = {
+    "tr": 9_200_000_000, "fa": 11_500_000_000, "zh": 13_000_000_000,
+    "pt": 26_000_000_000, "ja": 35_000_000_000, "it": 44_000_000_000,
+    "es": 57_000_000_000, "ru": 62_000_000_000, "fr": 79_000_000_000,
+    "de": 88_000_000_000, "en": 207_000_000_000,
+}
+
+EMBEDDED_SPEC = AcquisitionSpec(
+    source_id="embedded",
+    transport=Transport.HF_HUB,
+    endpoints=(
+        Endpoint(transport=Transport.HF_HUB,
+                 url="datasets/Upstash/wikipedia-2024-06-bge-m3",
+                 max_conns=2),   # no static_files: the transport lists the
+                                 # repo tree dynamically (~1,450 shards)
+    ),
+    layout="container-files",
+    filters=("data/*/*.parquet",),
+    checksums=ChecksumSource(kind="none"),   # frozen dataset; blake2 applies
+    delta=DeltaSpec(mode="full-resync"),
+    profiles={
+        # demo = the smallest complete language (Turkish, ~2M chunks)
+        "demo": Filter(include=("data/tr/*",)),
+        **{lang: Filter(include=(f"data/{lang}/*",))
+           for lang in _EMBEDDED_LANG_BYTES},
+        "all": Filter(),
+    },
+    estimated_bytes={
+        "demo": _EMBEDDED_LANG_BYTES["tr"],
+        **_EMBEDDED_LANG_BYTES,
+        "all": 633_000_000_000,
+    },
+    license_class=LicenseClass.YELLOW,       # content is Wikipedia CC BY-SA
+    terms_text_path=Path(__file__).parent.parent / "plugins" / "embedded" / "TERMS.txt",
+)
+
+
 ACQUIRE_REGISTRY: dict[str, AcquisitionSpec] = {
+    "embedded": EMBEDDED_SPEC,
     "genome": GENOME_SPEC,
     "gutenberg": GUTENBERG_SPEC,
     "pubmed": PUBMED_SPEC,
