@@ -10,9 +10,23 @@ def _patch_hash(monkeypatch, value="abc123", weak=False):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: (value, weak))
 
 
-def test_report_boot_status_ok_on_first_pin(isolated_config, monkeypatch):
+def test_report_is_read_only_and_never_pins(isolated_config, monkeypatch):
+    """Observed live: an operator legitimately reset a pin (zero vectors) to
+    switch recipes, opened the UI, and the report re-pinned the half-edited
+    recipe — the next boot refused. A status view must never mutate."""
+    from app import db
     _patch_hash(monkeypatch)
     collection = collections_mod.default_collection()
+
+    report = spaces.report_boot_status([collection])
+    assert report == [{"collection": collection.name, "ok": True,
+                        "message": "space unpinned — pins at next worker boot"}]
+    con = db.connect(collection)
+    assert con.execute("SELECT COUNT(*) FROM space").fetchone()[0] == 0, \
+        "the read-only report must not have created a pin"
+
+    spaces.validate_boot([collection])   # the worker's startup path DOES pin
+    assert con.execute("SELECT COUNT(*) FROM space").fetchone()[0] == 1
     report = spaces.report_boot_status([collection])
     assert report == [{"collection": collection.name, "ok": True,
                         "message": "space pinned & consistent"}]

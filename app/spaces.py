@@ -188,14 +188,21 @@ def validate_boot(collections: list) -> None:
 def report_boot_status(collections: list) -> list[dict]:
     """Non-raising per-collection boot-validation report for the System
     page's UI: same check validate_boot() runs at process startup, but
-    caught and returned as pass/fail rows instead of exiting the process."""
+    caught and returned as pass/fail rows instead of exiting the process.
+
+    READ-ONLY: pin_if_missing=False. A status page must never mutate space
+    state — observed live: an operator reset a pin (legitimately, zero
+    vectors) to switch a collection's recipe, then opened the UI, and this
+    report re-pinned the half-edited recipe behind their back. The next
+    boot refused. Unpinned is a reportable state, not a repair opportunity."""
     report = []
     for collection in collections:
         con = db.connect(collection)
         try:
-            _validate_one(con, collection)
+            pinned = _validate_one(con, collection, pin_if_missing=False)
             report.append({"collection": collection.name, "ok": True,
-                            "message": "space pinned & consistent"})
+                            "message": "space pinned & consistent" if pinned
+                            else "space unpinned — pins at next worker boot"})
         except BootValidationError as e:
             report.append({"collection": collection.name, "ok": False, "message": str(e)})
         finally:
@@ -203,7 +210,7 @@ def report_boot_status(collections: list) -> list[dict]:
     return report
 
 
-def _validate_one(con, collection) -> None:
+def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
     components = gather_components(collection)
     computed_id = compute_space_id(components)
     computed_config_id = _config_id(components)
@@ -211,12 +218,14 @@ def _validate_one(con, collection) -> None:
 
     row = con.execute("SELECT space_id, dim, components FROM space WHERE id=1").fetchone()
     if row is None:
+        if not pin_if_missing:
+            return False
         con.execute(
             "INSERT INTO space(id,space_id,dim,components,pinned_at) VALUES(1,?,?,?,?)",
             (computed_id, observed_dim, json.dumps(asdict(components)), int(time.time())))
         db.log_event(con, "info", "spaces",
                      f"collection '{collection.name}': pinned space {computed_id}")
-        return
+        return True
 
     pinned_dim = row["dim"]
     pinned_components = SpaceComponents(**json.loads(row["components"])) if row["components"] else None
@@ -235,7 +244,10 @@ def _validate_one(con, collection) -> None:
                 f"and re-embed to adopt the new space.")
 
         if pinned_components.embed_model_hash != components.embed_model_hash:
-            if pinned_components.weak and not components.weak:
+            if pinned_components.weak and not components.weak and not pin_if_missing:
+                pass    # legitimate upgrade, but the read-only report never
+                        # writes — the worker performs it at its next boot
+            elif pinned_components.weak and not components.weak:
                 # F1-D4, the boot-order trap: a node whose FIRST boot ran while
                 # the embed endpoint was down pinned a weak, name-derived hash.
                 # When the endpoint came up, the confirmed hash differed from
@@ -278,3 +290,4 @@ def _validate_one(con, collection) -> None:
                 f"pinned dim {pinned_dim}. REFUSE TO BOOT (CLAUDE.md invariant 1).")
         if pinned_dim is None:
             con.execute("UPDATE space SET dim=? WHERE id=1", (observed_dim,))
+    return True
