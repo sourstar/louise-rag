@@ -295,7 +295,12 @@ def grow_run(name: str, body: GrowBody):
         acquire_enabled=True, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive, embed=collection.embed)
+        genesis_archive=collection.genesis_archive,
+        # Tier-2 TOML is DESIRED STATE (invariant 10): every rewrite
+        # materializes the EFFECTIVE recipe, so an env-fallback collection
+        # becomes explicit on its first touch. Byte-equal recipe → same
+        # space id → the pin never notices.
+        embed=collections_mod.recipe_for(collection))
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -391,6 +396,10 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
             lines.append(f"dim = {embed.dim}")
         if embed.query_url:
             lines.append(f'query_url = "{embed.query_url}"')
+        if getattr(embed, "concurrency", 1) > 1:
+            # not space identity, but VERY MUCH desired state: dropping it
+            # on a rewrite silently serialized a CPU collection's embeds
+            lines.append(f"concurrency = {embed.concurrency}")
     lines += [
         "",
         "[paths]",
@@ -486,7 +495,8 @@ def new_collection_create(body: CreateCollectionBody):
                 corpus_dir=existing.corpus_dir,
                 manifest=existing.manifest_path, fts=existing.fts_dir,
                 lancedb=existing.lance_dir, license_ack=existing.license_ack,
-                genesis_archive=existing.genesis_archive, embed=existing.embed)
+                genesis_archive=existing.genesis_archive,
+                embed=collections_mod.recipe_for(existing))
 
     if body.corpus_dir:
         mounts = _corpus_mounts()
@@ -525,7 +535,12 @@ def new_collection_create(body: CreateCollectionBody):
         corpus_dir=corpus_dir,
         manifest=base / "manifest.db", fts=base / "fts",
         lancedb=base / "lancedb", license_ack=ack,
-        genesis_archive=genesis_archive)
+        genesis_archive=genesis_archive,
+        # explicit from birth: the space this collection will pin at its
+        # first validation is written down, not implied by env. Switching
+        # encoders before anything embeds stays a pin reset + TOML edit,
+        # exactly as before — just visible now.
+        embed=collections_mod.env_recipe())
 
     con = db.connect()
     db.log_event(con, "info", "control",
@@ -632,7 +647,8 @@ def collection_ack(name: str):
         acquire_enabled=True, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=ack,
-        genesis_archive=collection.genesis_archive, embed=collection.embed)
+        genesis_archive=collection.genesis_archive,
+        embed=collections_mod.recipe_for(collection))
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

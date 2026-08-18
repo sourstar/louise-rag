@@ -98,6 +98,41 @@ def cmd_grow(args) -> int:
     return cmd_add(args)
 
 
+def cmd_embed_materialize(args) -> int:
+    """Env→TOML migration for the embed recipe (invariant 10: TOML is
+    desired state). Writes the collection's EFFECTIVE recipe into its TOML
+    explicitly. The recipe is byte-equal to what the collection already
+    uses, so the space id — and therefore the pin — does not change; what
+    changes is that a later env edit can no longer silently retarget this
+    collection's space."""
+    collection = _collection_by_name(args.collection)
+    toml_path = collections_mod.config_toml_path(collection.name)
+    if collection.embed is not None:
+        print(f"{collection.name}: [embed] is already explicit in "
+              f"{toml_path} — nothing to do")
+        return 0
+    if not toml_path.exists():
+        print(f"{collection.name}: no TOML file (synthesized default) — "
+              f"declare the collection first (the web UI's create flow, or "
+              f"corpus add)")
+        return 1
+    recipe = collections_mod.recipe_for(collection)
+    from .web import _write_collection_toml
+    _write_collection_toml(
+        toml_path, plugin=collection.plugin, profile=collection.profile,
+        acquire_enabled=collection.acquire_enabled,
+        corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=collection.license_ack,
+        genesis_archive=collection.genesis_archive, embed=recipe)
+    print(f"{collection.name}: materialized the env recipe into {toml_path}")
+    print(f"  model={recipe.model} url={recipe.url} api={recipe.api} "
+          f"dtype={recipe.dtype} ctx={recipe.ctx} dim={recipe.dim}")
+    print("  space id unchanged (byte-equal recipe); hot-reload applies it "
+          "within one round")
+    return 0
+
+
 def cmd_status(args) -> int:
     names = [args.collection] if args.collection else [c.name for c in collections_mod.load_all()]
     for name in names:
@@ -491,6 +526,16 @@ def main(argv=None) -> int:
     p_status = corpus.add_parser("status")
     p_status.add_argument("collection", nargs="?")
     p_status.set_defaults(func=cmd_status)
+
+    embed_parser = top.add_parser("embed", help="embedding recipe management")
+    embed_sub = embed_parser.add_subparsers(dest="verb", required=True)
+    e_mat = embed_sub.add_parser(
+        "materialize",
+        help="write the collection's EFFECTIVE embed recipe into its TOML "
+             "(env→TOML migration: Tier-2 desired state, byte-equal recipe, "
+             "space pin unchanged)")
+    e_mat.add_argument("collection")
+    e_mat.set_defaults(func=cmd_embed_materialize)
 
     args = p.parse_args(argv)
     return args.func(args)
