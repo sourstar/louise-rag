@@ -175,6 +175,26 @@ def test_sidecar_checksum_mismatch_fails_that_file(tmp_path, mock_server):
     assert "mismatch" in row["error"]
 
 
+# ---------------- User-Agent policy ----------------
+
+def test_https_fetch_sends_descriptive_user_agent(tmp_path, mock_server):
+    # dumps.wikimedia.org 403s generic library UAs (Wikimedia User-Agent
+    # policy) — observed live, it stalled the wikipedia collection at zero
+    # bytes. The transport must identify the project, with a contact URL,
+    # on every request.
+    _write_origin_file(mock_server, "a.txt", b"x" * 10)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["fetched"] == 1
+    ua = mock_server.last_user_agent["a.txt"]
+    assert ua.startswith("louise-rag/")
+    assert "https://github.com/sourstar/louise-rag" in ua
+    assert "httpx/" in ua                 # underlying library, per the policy
+
+
 # ---------------- delta gate (idempotence) ----------------
 
 def test_idempotent_rerun_skips_unchanged_files(tmp_path, mock_server):

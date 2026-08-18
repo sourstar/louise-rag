@@ -33,6 +33,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = server.root / name
         with server.lock:
             server.request_counts[name] = server.request_counts.get(name, 0) + 1
+            server.last_user_agent[name] = self.headers.get("User-Agent")
             server.live += 1
             server.peak_concurrency = max(server.peak_concurrency, server.live)
         try:
@@ -103,6 +104,7 @@ class MockServer:
         self.drip_rates: dict[str, float] = {}
         self.request_counts: dict[str, int] = {}
         self.last_range_header: dict[str, str] = {}
+        self.last_user_agent: dict[str, str | None] = {}
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0

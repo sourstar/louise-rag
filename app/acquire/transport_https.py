@@ -22,6 +22,14 @@ from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransportError
 # resumable downloader (wget --continue, aria2, ...) makes.
 _CHUNK_SIZE = 1 << 16
 
+# Wikimedia's User-Agent policy (meta.wikimedia.org/wiki/Policy:User-Agent_policy)
+# returns 403 Forbidden to generic library UAs like httpx's default — observed
+# live against dumps.wikimedia.org. The policy asks for a descriptive product
+# string with a contact URL and the underlying library; other mirrors simply
+# ignore the header, so it is sent unconditionally.
+_USER_AGENT = (f"louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
+               f"httpx/{httpx.__version__}")
+
 
 class HttpsTransport:
     def list_files(self, endpoint: Endpoint, spec: AcquisitionSpec) -> Iterator[RemoteFile]:
@@ -32,7 +40,7 @@ class HttpsTransport:
         part = dest.with_name(dest.name + ".part")
         part.parent.mkdir(parents=True, exist_ok=True)
         url = f"{endpoint.url.rstrip('/')}/{remote.rel_path}"
-        headers = {}
+        headers = {"User-Agent": _USER_AGENT}
         mode = "wb"
         if resume_from > 0 and part.is_file():
             headers["Range"] = f"bytes={resume_from}-"
