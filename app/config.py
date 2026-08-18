@@ -97,6 +97,11 @@ WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
 # Rescan the corpus for new/changed books: always at worker startup, then every
 # N minutes while running (0 = only at startup / manual rescan).
 DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))
+# Per-collection pipeline threads: each collection's rdf/fts stages run on
+# their own thread (one per collection — never two writers on one tantivy
+# index), while the main loop keeps embed (GPU-serial across collections by
+# doctrine), genesis, bundles and control. 0 = legacy single-thread rounds.
+WORKER_PIPELINE_THREADS = int(os.getenv("WORKER_PIPELINE_THREADS", "1"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 

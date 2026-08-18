@@ -136,6 +136,35 @@ def _next_book(con, scope, embed_allowed=True):
             return "embed", r
     return None, None
 
+
+def _next_embed(con, scope):
+    """Embed-stage selection ONLY — the main loop's share of the pipeline
+    when per-collection threads own rdf/fts. Exactly _next_book's parts 1
+    (lazy queue) and 4 (backfill under 'all'), so the two selectors can
+    never claim the same document: a document is embed-eligible only after
+    its fts commit, and a pipeline thread never touches it again after that."""
+    if scope["embed_mode"] not in ("lazy", "all"):
+        return None, None
+    r = con.execute("""
+        SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
+        WHERE d.in_scope=1 AND d.rdf_done=1
+          AND (d.embed_done=0 OR d.embed_version < ?)
+        ORDER BY q.priority DESC, q.ts LIMIT 1""",
+        (config.EMBED_VERSION,)).fetchone()
+    if r:
+        return "embed", r
+    con.execute("DELETE FROM embed_queue WHERE uid NOT IN "
+                "(SELECT uid FROM documents WHERE embed_done=0)")
+    if scope["embed_mode"] == "all":
+        r = con.execute(
+            "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
+            "AND retries<? AND (embed_done=0 OR embed_version<?) "
+            "ORDER BY (lang='en'), CAST(native_id AS INTEGER) LIMIT 1",
+            (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()
+        if r:
+            return "embed", r
+    return None, None
+
 STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
 
 
@@ -356,9 +385,38 @@ def _discover(con, collection, reason: str) -> None:
                      f"picked up {stats.get('added',0)} new, "
                      f"{stats.get('changed',0)} changed books")
 
-def _run_one_step(con, collection, last_idle_log: dict) -> bool:
+def _execute_step(con, collection, stage, row) -> None:
+    """One document's stage, transactional, errors recorded on the row —
+    shared verbatim by the main loop and the per-collection pipeline
+    threads (each caller passes a con its own thread owns)."""
+    t0 = time.time()
+    con.execute("BEGIN")
+    try:
+        STAGES[stage](con, row, collection)
+        if stage == "embed":
+            con.execute("DELETE FROM embed_queue WHERE uid=?", (row["uid"],))
+        con.execute("COMMIT")
+    except Exception as e:
+        con.execute("ROLLBACK")
+        con.execute(
+            "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
+            (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
+        db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
+        return
+    dt = round(time.time() - t0, 2)
+    if stage not in ("rdf", "fts") or int(row["native_id"]) % 500 == 0:
+        db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
+
+
+def _run_one_step(con, collection, last_idle_log: dict,
+                  pipeline_active: bool = False) -> bool:
     """Runs at most one document's worth of work for this collection.
-    Returns True if work was done (so the caller can skip the idle sleep)."""
+    Returns True if work was done (so the caller can skip the idle sleep).
+
+    pipeline_active=True means this collection's rdf/fts stages belong to a
+    dedicated pipeline thread — the main loop then only selects embed work
+    (plus bundles/genesis, which write embed_done and are kept here so the
+    GPU-serial-across-collections doctrine has a single owner)."""
     # Imported vectors are cheaper than computed ones, so drain the inbox
     # before looking for local work: a bundle may satisfy the very document
     # the embed stage was about to pick up.
@@ -378,41 +436,113 @@ def _run_one_step(con, collection, last_idle_log: dict) -> bool:
         if result is not None:
             return True
     scope = db.get_scope(con)
-    stage, row = _next_book(con, scope)
-    if stage == "embed" and not backend_gate.embed_allowed(con, collection):
-        # The endpoint failed its behavioral baseline (or is down). Embedding
-        # pauses — the document is untouched, never errored — while rdf/fts
-        # work continues. embed_allowed() logged the transition and caches the
-        # verdict, so this costs nothing per round until the TTL expires.
-        stage, row = _next_book(con, scope, embed_allowed=False)
+    if pipeline_active:
+        stage, row = _next_embed(con, scope)
+        if stage == "embed" and not backend_gate.embed_allowed(con, collection):
+            return False        # rdf/fts continue on the pipeline thread
+    else:
+        stage, row = _next_book(con, scope)
+        if stage == "embed" and not backend_gate.embed_allowed(con, collection):
+            # The endpoint failed its behavioral baseline (or is down).
+            # Embedding pauses — the document is untouched, never errored —
+            # while rdf/fts work continues. embed_allowed() logged the
+            # transition and caches the verdict, so this costs nothing per
+            # round until the TTL expires.
+            stage, row = _next_book(con, scope, embed_allowed=False)
     if stage == "embed":
         recipe = collections_mod.recipe_for(collection)
         if recipe.concurrency > 1:
             return _embed_parallel(con, collection, recipe)
     if row is None:
         now = time.time()
-        if now - last_idle_log.get(collection.name, 0.0) > 300:
+        if not pipeline_active and \
+                now - last_idle_log.get(collection.name, 0.0) > 300:
             db.log_event(con, "info", "worker", "idle — pipeline is caught up")
             last_idle_log[collection.name] = now
         return False
-    t0 = time.time()
-    con.execute("BEGIN")
+    _execute_step(con, collection, stage, row)
+    return True   # an attempted (even failed) step counts as work this round
+
+# Per-collection pipeline threads (rdf/fts). ONE thread per collection —
+# never two writers on one tantivy index, and every plugin cache that spans
+# collections (pubmed's container cache, embedded's shard cache) is already
+# lock-guarded for the parallel embed stage. Each thread owns its OWN
+# manifest connection (SQLite connections are thread-affine; WAL +
+# busy_timeout arbitrate against the main loop's embed/discovery writes on
+# the same manifest). The main loop keeps embed: GPU-serial ACROSS
+# collections is doctrine, and one owner enforces it.
+_pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
+_paused = threading.Event()          # set = worker paused via the control UI
+
+
+def _pipeline_worker(collection, gone: threading.Event) -> None:
+    con = db.connect(collection)
+    db.log_event(con, "info", "worker",
+                 f"pipeline thread started for {collection.name!r}")
+    last_idle = 0.0
     try:
-        STAGES[stage](con, row, collection)
-        if stage == "embed":
-            con.execute("DELETE FROM embed_queue WHERE uid=?", (row["uid"],))
-        con.execute("COMMIT")
-    except Exception as e:
-        con.execute("ROLLBACK")
-        con.execute(
-            "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
-            (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
-        db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
-        return True   # an attempted (if failed) step still counts as "did work" this round
-    dt = round(time.time() - t0, 2)
-    if stage != "rdf" or int(row["native_id"]) % 500 == 0:
-        db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
-    return True
+        while not _stop.is_set() and not gone.is_set():
+            if _paused.is_set():
+                time.sleep(2)
+                continue
+            try:
+                scope = db.get_scope(con)
+                stage, row = _next_book(con, scope, embed_allowed=False)
+                if row is None:
+                    if time.time() - last_idle > 300:
+                        db.log_event(con, "info", "worker",
+                                     "rdf/fts caught up — pipeline thread idle")
+                        last_idle = time.time()
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                _execute_step(con, collection, stage, row)
+            except Exception:   # noqa: BLE001 — a pipeline thread must outlive any step
+                try:
+                    db.log_event(con, "error", "worker",
+                                 f"pipeline thread error:\n"
+                                 f"{traceback.format_exc()[:1200]}")
+                except Exception:
+                    print(traceback.format_exc()[:1200], flush=True)
+                time.sleep(5)
+        db.log_event(con, "info", "worker",
+                     f"pipeline thread stopped for {collection.name!r}")
+    finally:
+        con.close()
+
+
+def _sync_pipeline_threads(all_collections) -> None:
+    """Reconcile pipeline threads with the live collection set: start one
+    per new collection, signal the thread of a removed collection to stop
+    (it finishes its current document first — invariant 2)."""
+    if not config.WORKER_PIPELINE_THREADS:
+        return
+    live = {c.name: c for c in all_collections}
+    for name in list(_pipeline_threads):
+        thread, gone = _pipeline_threads[name]
+        if name not in live:
+            gone.set()
+            del _pipeline_threads[name]
+        elif not thread.is_alive():
+            del _pipeline_threads[name]     # crashed/finished: restart below
+    for name, collection in live.items():
+        if name not in _pipeline_threads:
+            gone = threading.Event()
+            thread = threading.Thread(target=_pipeline_worker,
+                                       args=(collection, gone),
+                                       name=f"pipeline-{name}", daemon=True)
+            _pipeline_threads[name] = (thread, gone)
+            thread.start()
+
+
+def _join_pipeline_threads(timeout: float = 90.0) -> None:
+    """Shutdown: each thread finishes its current document and exits (the
+    stop event is checked between documents). The deadline is shared, and
+    stragglers are daemon threads — a hung step cannot block SIGTERM's
+    exit-0 contract past the container's grace period."""
+    deadline = time.time() + timeout
+    for thread, _ in list(_pipeline_threads.values()):
+        thread.join(timeout=max(0.0, deadline - time.time()))
+
 
 def _sync_collections(all_collections, cons, last_discover):
     """Hot-reload collections each round: a collections/*.toml added or
@@ -502,6 +632,7 @@ def run_forever():
     last_idle_log: dict[str, float] = {}
     control_con = cons[all_collections[0].name]
 
+    pipeline = bool(config.WORKER_PIPELINE_THREADS)
     while not _stop.is_set():
         try:
             all_collections = _sync_collections(all_collections, cons, last_discover)
@@ -518,8 +649,14 @@ def run_forever():
             # document and expires on its own.
             get_manager().set_override(db.get_bandwidth_override(control_con))
             if db.worker_state(control_con) != "running":
+                _paused.set()       # pipeline threads idle at the same gate
                 time.sleep(2)
                 continue
+            _paused.clear()
+            if pipeline:
+                # after the pause gate: a paused worker starts no threads,
+                # and running ones idle on _paused
+                _sync_pipeline_threads(all_collections)
             any_work = False
             for collection in all_collections:
                 if _stop.is_set():
@@ -536,9 +673,13 @@ def run_forever():
                 # for 30k articles). An expensive single step still exceeds
                 # the budget after one iteration, so fairness is unchanged
                 # where it mattered; the stop event is honored per step.
+                # With pipeline threads on, this loop is the EMBED loop: rdf/
+                # fts run on per-collection threads and the budget only paces
+                # embed work plus bundles/genesis.
                 round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
                 while not _stop.is_set():
-                    if not _run_one_step(con, collection, last_idle_log):
+                    if not _run_one_step(con, collection, last_idle_log,
+                                          pipeline_active=pipeline):
                         break
                     any_work = True
                     if time.time() >= round_deadline:
@@ -553,6 +694,7 @@ def run_forever():
                 # loop must survive even when its logger is gone
                 print(traceback.format_exc()[:1500], flush=True)
             time.sleep(5)
+    _join_pipeline_threads()
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
 
