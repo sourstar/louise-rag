@@ -43,18 +43,104 @@ BUCKETS = [(1, 8), (4, 32), (16, 128), (64, 1024), (256, 4096)]
 QUANTILES = ("0.99", "0.999", "0.9998")
 DEFAULT_REPLICATES = 5000
 PAIR_SAMPLES = 4000
+# The bootstrap operates on a DOCUMENT-sampled subset of the corpus, capped
+# so the writer never holds the whole vector table (34M gutenberg chunks in
+# f64 was ~36 GB — an OOM, not a calibration). The envelope mean/sd still
+# stream over EVERY vector; only the resampling null uses the subset, which
+# is a bootstrap of the same statistic from a uniform document sample.
+SAMPLE_DOCS = 2048
+CAP_CHUNKS = 400_000
 
 
-def _load_vectors(collection):
+def _batches(collection, columns):
+    """Stream the vector table in Arrow batches without materializing it.
+    (query-builder path: table.to_lance() needs the pylance package, which
+    lancedb does not pull in; to_batches on a full-scan query does not.)"""
     conn = embeddings._conn(collection)
     if embeddings.TABLE not in conn.table_names():
         raise SystemExit("this collection has no vector table to calibrate from")
     table = conn.open_table(embeddings.TABLE)
-    arrow = table.search().limit(10_000_000).to_arrow()
-    ids = arrow.column("id").to_pylist()
-    matrix = np.asarray(arrow.column("vector").to_pylist(), dtype=np.float64)
-    matrix = matrix / np.linalg.norm(matrix, axis=1, keepdims=True)
-    return ids, matrix
+    query = table.search().select(columns).limit(max(1, table.count_rows()))
+    yield from query.to_batches(8192)
+
+
+def _sample_documents(collection, rng) -> tuple[set, int, int]:
+    """Pass A — ids only. Uniform reservoir over document RUNS (chunks of a
+    document are written contiguously by the delete-then-insert upsert, so a
+    uid change marks a document boundary; fragmentation can split a document
+    into two runs, which only makes its sampling weight slightly higher —
+    harmless to a bootstrap). Returns (sampled uids, run count, chunk count)."""
+    reservoir: list[str] = []
+    runs = chunks = 0
+    prev = None
+    for batch in _batches(collection, ["id"]):
+        for chunk_id in batch.column("id").to_pylist():
+            chunks += 1
+            uid = uid_of(chunk_id)
+            if uid != prev:
+                prev = uid
+                runs += 1
+                if len(reservoir) < SAMPLE_DOCS:
+                    reservoir.append(uid)
+                else:
+                    j = int(rng.integers(0, runs))
+                    if j < SAMPLE_DOCS:
+                        reservoir[j] = uid
+    return set(reservoir), runs, chunks
+
+
+def _stream_pass(collection, sampled: set, rng):
+    """Pass B — one sequential read of (id, vector) that produces everything
+    the artifact needs at bounded memory:
+      - envelope mean/sd over EVERY vector (f64 accumulators),
+      - probe/golden reservoirs over every vector,
+      - the normalized f32 matrix of the SAMPLED documents' chunks.
+    """
+    total = 0
+    acc_sum = acc_sq = None
+    probe_res: list[np.ndarray] = []
+    golden_res: list[np.ndarray] = []
+    kept_ids: list[str] = []
+    kept_rows: list[np.ndarray] = []
+
+    def _reservoir(res, k, vec, seen):
+        if len(res) < k:
+            res.append(vec.astype("<f4"))
+        else:
+            j = int(rng.integers(0, seen))
+            if j < k:
+                res[j] = vec.astype("<f4")
+
+    for batch in _batches(collection, ["id", "vector"]):
+        ids = batch.column("id").to_pylist()
+        block = np.asarray(batch.column("vector").to_pylist(), dtype=np.float64)
+        norms = np.linalg.norm(block, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        block /= norms
+        if acc_sum is None:
+            acc_sum = np.zeros(block.shape[1], dtype=np.float64)
+            acc_sq = np.zeros(block.shape[1], dtype=np.float64)
+        acc_sum += block.sum(axis=0)
+        acc_sq += (block ** 2).sum(axis=0)
+        for i, chunk_id in enumerate(ids):
+            total += 1
+            _reservoir(probe_res, 512, block[i], total)
+            _reservoir(golden_res, 256, block[i], total)
+            if uid_of(chunk_id) in sampled and len(kept_rows) < CAP_CHUNKS:
+                kept_ids.append(chunk_id)
+                kept_rows.append(block[i].astype(np.float32))
+    if total == 0:
+        raise SystemExit("this collection's vector table is empty")
+    mean = acc_sum / total
+    sd = np.sqrt(np.maximum(acc_sq / total - mean ** 2, 0.0))
+    matrix = np.vstack(kept_rows) if kept_rows else np.zeros((0, len(mean)),
+                                                              dtype=np.float32)
+    return {
+        "mean": mean, "sd": sd, "total_chunks": total,
+        "probes": np.vstack(probe_res) if probe_res else matrix[:0],
+        "goldens": np.vstack(golden_res) if golden_res else matrix[:0],
+        "sample_ids": kept_ids, "sample_matrix": matrix,
+    }
 
 
 def _by_document(ids):
@@ -64,7 +150,7 @@ def _by_document(ids):
     return groups
 
 
-def _moment_null(matrix, groups, mean, sd, replicates, rng):
+def _moment_null(matrix, groups, mean, sd, replicates, rng, mean_chunks=None):
     """Bootstrap the D statistic over DOCUMENT draws, per size bucket.
 
     A bucket describes a bundle with at least min_docs documents AND at least
@@ -74,12 +160,17 @@ def _moment_null(matrix, groups, mean, sd, replicates, rng):
     replicate is discarded, no null is published, and T0's envelope check then
     SKIPS for every bundle — an artifact that looks complete and verifies
     nothing.
+
+    `matrix`/`groups` may be a document-sampled SUBSET of the corpus (the
+    streaming writer's memory bound); `mean_chunks`, when given, is the FULL
+    corpus's chunks-per-document so bucket sizing reflects real documents.
     """
     keys = list(groups)
     if not keys:
         return []
     safe_sd = np.where(sd > 0, sd, np.inf)
-    mean_chunks = max(1.0, matrix.shape[0] / len(keys))
+    if mean_chunks is None:
+        mean_chunks = max(1.0, matrix.shape[0] / len(keys))
     out = []
     for min_docs, min_chunks in BUCKETS:
         # enough documents to satisfy the chunk floor too, with headroom for
@@ -93,7 +184,7 @@ def _moment_null(matrix, groups, mean, sd, replicates, rng):
             rows = [i for k in drawn for i in groups[keys[k]]]
             if len(rows) < min_chunks:
                 continue
-            block = matrix[rows]
+            block = matrix[rows].astype(np.float64, copy=False)
             n = block.shape[0]
             z = np.sqrt(n) * (block.mean(axis=0) - mean) / safe_sd
             samples.append(float(np.sum(z[np.isfinite(z)] ** 2)))
@@ -150,25 +241,36 @@ def build(collection, out_dir: Path, *, replicates: int, signing_key=None,
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(20260817)
 
-    ids, matrix = _load_vectors(collection)
+    # Streaming, memory-bounded: pass A samples documents (ids only), pass B
+    # reads (id, vector) ONCE — envelope over every vector, probe/golden
+    # reservoirs, and the sampled documents' normalized matrix. The whole
+    # table is never materialized (34M gutenberg chunks in f64 was ~36 GB).
+    sampled, runs, _ = _sample_documents(collection, rng)
+    stream = _stream_pass(collection, sampled, rng)
+    ids, matrix = stream["sample_ids"], stream["sample_matrix"]
+    mean, sd = stream["mean"], stream["sd"]
+    total_chunks = stream["total_chunks"]
     groups = _by_document(ids)
-    dim = matrix.shape[1]
-    mean = matrix.mean(axis=0)
-    sd = matrix.std(axis=0)
+    dim = int(mean.shape[0])
+
+    con = db.connect(collection)
+    documents = con.execute(
+        "SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] or runs
 
     np.save(out_dir / artifact_mod.ENVELOPE_NAME,
             np.vstack([mean, sd]).astype("<f4"))
     # Probes: in a real publication these are ~512 author-chosen reference texts
-    # embedded once. Here the corpus's own vectors stand in, which is enough for
-    # the Gram gate (algebraic, corpus-independent) to be meaningful.
-    probe_count = min(512, matrix.shape[0])
-    probe_rows = rng.choice(matrix.shape[0], size=probe_count, replace=False)
-    np.save(out_dir / artifact_mod.PROBES_NAME, matrix[probe_rows].astype("<f4"))
-    golden_count = min(256, matrix.shape[0])
-    golden_rows = rng.choice(matrix.shape[0], size=golden_count, replace=False)
-    np.save(out_dir / artifact_mod.GOLDENS_NAME, matrix[golden_rows].astype("<f4"))
+    # embedded once. Here the corpus's own vectors stand in (a uniform
+    # reservoir over the full stream), which is enough for the Gram gate
+    # (algebraic, corpus-independent) to be meaningful.
+    probe_count = int(stream["probes"].shape[0])
+    np.save(out_dir / artifact_mod.PROBES_NAME, stream["probes"].astype("<f4"))
+    golden_count = int(stream["goldens"].shape[0])
+    np.save(out_dir / artifact_mod.GOLDENS_NAME, stream["goldens"].astype("<f4"))
 
-    moment_null = _moment_null(matrix, groups, mean, sd, replicates, rng)
+    mean_chunks = max(1.0, total_chunks / max(1, documents))
+    moment_null = _moment_null(matrix, groups, mean, sd, replicates, rng,
+                                mean_chunks=mean_chunks)
     if not moment_null:
         # An artifact with no published null makes T0's envelope check SKIP for
         # every bundle. It would load cleanly and verify nothing, which is worse
@@ -179,7 +281,6 @@ def build(collection, out_dir: Path, *, replicates: int, signing_key=None,
             f"{len(groups)} document(s) / {matrix.shape[0]} chunk(s), too few to "
             f"bootstrap any size bucket. Calibrate against a larger reference corpus.")
 
-    con = db.connect(collection)
     space_row = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
     space_id = space_row["space_id"] if space_row else spaces.compute_space_id(
         spaces.gather_components())
@@ -193,9 +294,14 @@ def build(collection, out_dir: Path, *, replicates: int, signing_key=None,
         "space": {"dim": dim, "dtype_reference": "f32", "normalization": "l2"},
         "reference_corpus": {
             "tag": collection.name, "chunking_profile": "book",
-            "documents": len(groups), "chunks": int(matrix.shape[0]),
+            "documents": int(documents), "chunks": int(total_chunks),
             "bootstrap_unit": "document",
             "bootstrap_replicates": replicates,
+            # the null was bootstrapped from this uniform document sample;
+            # the envelope mean/sd cover every vector (loader ignores
+            # unknown keys, so older verifiers read this artifact unchanged)
+            "calibration_sample": {"documents": len(groups),
+                                    "chunks": int(matrix.shape[0])},
             "tail_model": None,
         },
         "envelope": {
@@ -257,8 +363,9 @@ def build(collection, out_dir: Path, *, replicates: int, signing_key=None,
         (out_dir / artifact_mod.SIGNATURE_NAME).write_bytes(
             signing_key.sign(signed).signature)
 
-    return {"path": str(out_dir), "dim": dim, "documents": len(groups),
-            "chunks": int(matrix.shape[0]), "space_id": space_id}
+    return {"path": str(out_dir), "dim": dim, "documents": int(documents),
+            "chunks": int(total_chunks), "space_id": space_id,
+            "sample_documents": len(groups), "sample_chunks": int(matrix.shape[0])}
 
 
 def main(argv=None) -> int:
