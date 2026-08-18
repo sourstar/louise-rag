@@ -51,10 +51,17 @@
 #      Embedding stays OFF until a genesis archive for wikipedia is
 #      registered or the operator flips the Library card selector.
 
+# --max-batch-tokens 2048: TEI warms up with a full-size batch at start;
+# at the default 16384 that is a multi-GB fp32 spike which the kernel
+# OOM-kills on a 30GB host whose ARC yields too slowly (observed live:
+# exit 137 loop at "Warming up model"). 2048 makes warmup trivial. The
+# louise-rag client sends ONE text per request (EMBED_BATCH=1), and an
+# over-long text gets a 413, which the embed client already handles by
+# halving its budget — deterministic truncation, no failures.
 services:
   bge-m3:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
-    command: --model-id BAAI/bge-m3 --pooling cls --port 8080
+    command: --model-id BAAI/bge-m3 --pooling cls --port 8080 --max-batch-tokens 2048
     restart: unless-stopped
     ports:
       - '30442:8080'
