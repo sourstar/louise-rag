@@ -45,25 +45,30 @@ def _open_container(path: Path):
     return gzip.open(path, "rb") if path.name.endswith(".gz") else open(path, "rb")
 
 
-# One-slot caches: the worker is single-threaded and walks documents in
+# One-slot caches keyed on (path, mtime): the worker walks documents in
 # PMID order, which is container order — without this, EVERY record access
 # would re-verify and re-parse a ~16 MB container (observed live: 30k
-# records per container file).
+# records per container file). Guarded by a lock: the parallel embed stage
+# (recipe.concurrency > 1) fetches from multiple threads, and neighbors in
+# PMID order share a container, so one thread parses and the rest reuse.
+import threading
+
+_cache_lock = threading.Lock()
 _parsed_cache: dict = {}
 _verified_cache: set = set()
 
 
 def _parse_container(path: Path) -> ET.Element:
     key = (str(path), path.stat().st_mtime_ns)
-    if _parsed_cache.get("key") != key:
-        with _open_container(path) as f:
-            _parsed_cache.clear()
-        # parse outside the dict mutation for exception-safety
+    with _cache_lock:
+        if _parsed_cache.get("key") == key:
+            return _parsed_cache["root"]
         with _open_container(path) as f:
             root = ET.parse(f).getroot()
+        _parsed_cache.clear()
         _parsed_cache["key"] = key
         _parsed_cache["root"] = root
-    return _parsed_cache["root"]
+        return root
 
 
 def _verify_md5_sidecar(container: Path) -> None:
@@ -73,10 +78,12 @@ def _verify_md5_sidecar(container: Path) -> None:
     mtime changes, and per-record re-hashing of a multi-MB file is pure
     waste."""
     key = (str(container), container.stat().st_mtime_ns)
-    if key in _verified_cache:
-        return
+    with _cache_lock:
+        if key in _verified_cache:
+            return
     verify_sidecar(container, _MD5_SIDECAR)
-    _verified_cache.add(key)
+    with _cache_lock:
+        _verified_cache.add(key)
 
 
 class PubmedSource:

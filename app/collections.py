@@ -41,6 +41,12 @@ class EmbedRecipe:
     ctx: int
     dim: int | None = None       # declared width; checked against the table
     query_url: str | None = None  # bi-encoder pairs (MedCPT); None = symmetric
+    # Documents embedded concurrently by the worker (thread pool of whole
+    # documents, each a single-text request). NOT part of the space identity
+    # — it changes no vector, like EMBED_BATCH. >1 belongs to CPU encoders
+    # (TEI/MedCPT); GPU llama-server stays serial — its multi-sequence
+    # handling is the defect the batch gate exists for.
+    concurrency: int = 1
 
 
 def env_recipe() -> EmbedRecipe:
@@ -128,6 +134,7 @@ def _load_one(path: Path) -> Collection:
                 dim=int(e["dim"]) if e.get("dim") is not None else None,
                 query_url=(str(e["query_url"]).rstrip("/")
                             if e.get("query_url") else None),
+                concurrency=max(1, int(e.get("concurrency", 1))),
             )
         except KeyError as missing:
             raise ValueError(

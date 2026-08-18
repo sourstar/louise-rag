@@ -137,6 +137,89 @@ def _next_book(con, scope, embed_allowed=True):
 
 STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
 
+
+def _embed_candidates(con, scope, limit: int):
+    """Up to `limit` embed-stage candidates, queue priority first — the same
+    two selections _next_book makes, widened for the parallel path."""
+    rows = []
+    if scope["embed_mode"] in ("lazy", "all"):
+        rows += con.execute("""
+            SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
+            WHERE d.in_scope=1 AND d.rdf_done=1
+              AND (d.embed_done=0 OR d.embed_version < ?)
+            ORDER BY q.priority DESC, q.ts LIMIT ?""",
+            (config.EMBED_VERSION, limit)).fetchall()
+    if len(rows) < limit and scope["embed_mode"] == "all":
+        seen = {r["uid"] for r in rows}
+        rows += [r for r in con.execute(
+            "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
+            "AND retries<? AND (embed_done=0 OR embed_version<?) "
+            "ORDER BY (lang='en'), CAST(native_id AS INTEGER) LIMIT ?",
+            (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
+            if r["uid"] not in seen][: limit - len(rows)]
+    return rows
+
+
+def _embed_parallel(con, collection, recipe) -> bool:
+    """CPU-encoder collections (recipe.concurrency > 1) embed several WHOLE
+    DOCUMENTS concurrently. Per-doc request concurrency cannot help a corpus
+    whose documents are single chunks (PubMed abstracts); the unit of
+    parallelism must be the document. Each thread derives chunks and writes
+    vectors on its own manifest connection (the Lance writer lock is a real
+    SQLite lock, cross-connection); manifest row updates and logging happen
+    back on this thread, which owns `con`.
+
+    GPU llama-server collections never come here (concurrency defaults 1) —
+    document-serial embedding is a decision, not an accident: parallel multi-
+    sequence processing is precisely the failure mode the batch gate guards.
+    """
+    scope = db.get_scope(con)
+    rows = _embed_candidates(con, scope, recipe.concurrency * 2)
+    if not rows:
+        return False
+
+    def work(row):
+        if _stop.is_set():
+            return (row["uid"], None, "stopped")
+        try:
+            chunks = _load_chunks(row, collection)
+            tcon = db.connect(collection)
+            try:
+                n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
+                                            chunks, collection, lock_con=tcon)
+            finally:
+                tcon.close()
+            return (row["uid"], n, None)
+        except Exception as e:  # noqa: BLE001 — isolated per document
+            return (row["uid"], None, f"{type(e).__name__}: {e}"[:400])
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
+        results = list(pool.map(work, rows))
+
+    now = int(time.time())
+    done = 0
+    for uid, n, err in results:
+        if err == "stopped":
+            continue
+        if err is None:
+            con.execute(
+                "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
+                "WHERE uid=?", (config.EMBED_VERSION, now, uid))
+            bundle_ledger.clear_verification(con, uid)
+            con.execute("DELETE FROM embed_queue WHERE uid=?", (uid,))
+            done += 1
+        else:
+            con.execute(
+                "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
+                "WHERE uid=?", (f"embed: {err}"[:500], now, uid))
+            db.log_event(con, "error", "embed", err, uid)
+    if done:
+        db.log_event(con, "info", "embed",
+                     f"embedded {done} document(s) at concurrency "
+                     f"{recipe.concurrency}")
+    return True
+
 # Acquisition runs in a BACKGROUND THREAD per collection (§5.2's "download ∥
 # checksum ∥ parse" axis). Observed live: a `grow full` on PubMed put a
 # multi-hour 45 GB fetch inside the round loop and froze every collection's
@@ -301,6 +384,10 @@ def _run_one_step(con, collection, last_idle_log: dict) -> bool:
         # work continues. embed_allowed() logged the transition and caches the
         # verdict, so this costs nothing per round until the TTL expires.
         stage, row = _next_book(con, scope, embed_allowed=False)
+    if stage == "embed":
+        recipe = collections_mod.recipe_for(collection)
+        if recipe.concurrency > 1:
+            return _embed_parallel(con, collection, recipe)
     if row is None:
         now = time.time()
         if now - last_idle_log.get(collection.name, 0.0) > 300:

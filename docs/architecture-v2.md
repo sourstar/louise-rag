@@ -460,6 +460,11 @@ delta="daily@03:00"  license_ack="2026-08-16T…/sha256-of-terms"
 url="http://nas:30440"  api="openai"  model="medcpt-article"
 dtype="f16"  ctx="512"  dim=768
 query_url="http://nas:30441"         # bi-encoder pairs: queries use the OTHER encoder
+concurrency=4                        # documents embedded in parallel — NOT space
+                                     # identity (changes no vector); >1 belongs to
+                                     # CPU encoders; GPU llama-server stays serial
+                                     # (its multi-sequence handling is the defect
+                                     # the batch gate guards against)
 ```
 
 *(Amended after Phase-1 integration — MedCPT.)* The per-collection `[embed]`

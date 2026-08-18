@@ -166,7 +166,12 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     } for j, c in enumerate(chunks)]
 
     with _write_lock(lock_con):
-        if exists:
+        # existence re-checked INSIDE the lock: the pre-lock check picked the
+        # dtype, but two concurrent FIRST writers (the parallel embed stage on
+        # a fresh collection) would otherwise both see "missing" and race
+        # create_table — caught by test_worker_parallel_embed before it could
+        # happen live
+        if TABLE in db.table_names():
             tbl = db.open_table(TABLE)
             tbl.delete(_book_filter(book_id))
             tbl.add(rows)
@@ -179,7 +184,15 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 pa.field("chapter", pa.string()), pa.field("text", pa.string()),
                 pa.field("vector", pa.list_(vt, dim)),
             ])
-            db.create_table(TABLE, data=rows, schema=schema)
+            try:
+                db.create_table(TABLE, data=rows, schema=schema)
+            except ValueError:
+                # lost a create race despite the lock (a writer without
+                # lock_con, or a cross-process writer between our check and
+                # create) — converge on the append path
+                tbl = db.open_table(TABLE)
+                tbl.delete(_book_filter(book_id))
+                tbl.add(rows)
     return len(rows)
 
 @contextmanager
