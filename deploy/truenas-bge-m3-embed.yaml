@@ -39,7 +39,7 @@
 #          api = "openai"
 #          model = "BAAI/bge-m3"
 #          dtype = "f16"
-#          ctx = 8192
+#          ctx = 2048
 #          dim = 1024
 #          concurrency = 4
 #      (no query_url: bge-m3 embeds queries and documents with the same
@@ -51,17 +51,18 @@
 #      Embedding stays OFF until a genesis archive for wikipedia is
 #      registered or the operator flips the Library card selector.
 
-# --max-batch-tokens 2048: TEI warms up with a full-size batch at start;
-# at the default 16384 that is a multi-GB fp32 spike which the kernel
-# OOM-kills on a 30GB host whose ARC yields too slowly (observed live:
-# exit 137 loop at "Warming up model"). 2048 makes warmup trivial. The
-# louise-rag client sends ONE text per request (EMBED_BATCH=1), and an
-# over-long text gets a 413, which the embed client already handles by
-# halving its budget — deterministic truncation, no failures.
+# --max-batch-tokens 2048 --auto-truncate: TEI warms up with a full-size
+# batch at start; at the model's 8192 length that is a multi-GB fp32
+# attention spike which the kernel OOM-kills on a 30GB host whose ARC
+# yields too slowly (observed live: exit 137 loop at "Warming up model").
+# TEI refuses a cap below the model max unless --auto-truncate is set, so
+# 2048 IS this deployment's truncation policy — and the collection's
+# [embed] block must say ctx = 2048 (space identity includes truncation).
+# Wikipedia chunks sit far below 2048 tokens, so nothing real truncates.
 services:
   bge-m3:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
-    command: --model-id BAAI/bge-m3 --pooling cls --port 8080 --max-batch-tokens 2048
+    command: --model-id BAAI/bge-m3 --pooling cls --port 8080 --max-batch-tokens 2048 --auto-truncate
     restart: unless-stopped
     ports:
       - '30442:8080'
