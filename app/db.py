@@ -349,12 +349,22 @@ def log_event(con, level, stage, message, doc_uid=None):
     stamp = time.strftime("%H:%M:%S")
     tag = f" #{doc_uid}" if doc_uid else ""
     print(f"{stamp} [{level}:{stage}{tag}] {message}", flush=True)
-    con.execute(
-        "INSERT INTO events(ts,level,stage,doc_uid,message) VALUES(?,?,?,?,?)",
-        (int(time.time()), level, stage, doc_uid, message[:2000]))
-    # keep the table bounded
-    con.execute(
-        "DELETE FROM events WHERE id < (SELECT COALESCE(MAX(id),0) FROM events) - 5000")
+    try:
+        con.execute(
+            "INSERT INTO events(ts,level,stage,doc_uid,message) VALUES(?,?,?,?,?)",
+            (int(time.time()), level, stage, doc_uid, message[:2000]))
+        # keep the table bounded
+        con.execute(
+            "DELETE FROM events WHERE id < (SELECT COALESCE(MAX(id),0) FROM events) - 5000")
+    except sqlite3.OperationalError as e:
+        # A logger must never crash its caller. Observed live under the
+        # per-collection threads: a multi-minute discovery write stream held
+        # the manifest's write lock past another writer's busy timeout, the
+        # acquire thread's ERROR HANDLER then died in this very function,
+        # and a survivable lock contention became a dead thread with a
+        # stack trace. The stdout line above already carried the message.
+        print(f"{stamp} [warn:db] event not persisted ({e}): "
+              f"[{level}:{stage}] {message[:200]}", flush=True)
 
 def log_query(con, endpoint, query, mode, k, timings, n_results, books):
     con.execute(
