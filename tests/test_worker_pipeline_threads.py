@@ -127,6 +127,64 @@ def test_paused_event_holds_the_pipeline(tmp_path, monkeypatch):
         thread.join(timeout=10)
 
 
+def test_startup_discovery_runs_on_the_pipeline_thread(tmp_path, monkeypatch):
+    """Startup scans used to run serially on the main thread before the loop
+    began, so nothing processed at all until the slowest one finished."""
+    monkeypatch.setattr(config, "WORKER_IDLE_SLEEP", 0.05)
+    corpus = tmp_path / "corpus_alpha"
+    shutil.copytree(FIXTURE_CORPUS, corpus)
+    c = _collection(tmp_path, "alpha", corpus)
+    con = db.connect(c)                      # schema only — NOT discovered
+
+    worker._request_discovery("alpha", "startup")
+    gone = threading.Event()
+    thread = threading.Thread(target=worker._pipeline_worker, args=(c, gone))
+    thread.start()
+    try:
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            n = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            if n == 3:
+                break
+            time.sleep(0.1)
+        assert n == 3, "the thread must run its own collection's startup scan"
+        assert worker._take_discovery_request("alpha") is None, "request consumed"
+    finally:
+        gone.set()
+        thread.join(timeout=10)
+
+
+def test_discovery_requests_keep_the_first_reason(tmp_path):
+    worker._take_discovery_request("x")      # clear
+    worker._request_discovery("x", "startup")
+    worker._request_discovery("x", "interval")
+    assert worker._take_discovery_request("x") == "startup"
+    assert worker._take_discovery_request("x") is None
+
+
+def test_removed_collection_drops_its_pending_scan(isolated_config, config_dir,
+                                                    monkeypatch):
+    """A scan queued for a collection that is then removed must not run —
+    its connection is closed and its data is no longer the worker's."""
+    from app import collections as collections_mod, spaces
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(worker, "_discover", lambda con, c, reason: None)
+    d = config_dir / "collections"
+    d.mkdir(parents=True, exist_ok=True)
+    for name in ("keep", "drop"):
+        (d / f"{name}.toml").write_text('plugin = "gutenberg"\nprofile = "demo"\n',
+                                         encoding="utf-8")
+    start = collections_mod.load_all()
+    cons = {c.name: db.connect(c) for c in start}
+
+    worker._request_discovery("drop", "interval")
+    (d / "drop.toml").unlink()
+    worker._sync_collections(start, cons, {c.name: 0.0 for c in start}, pipeline=True)
+
+    assert worker._take_discovery_request("drop") is None, \
+        "a removed collection's queued scan must be discarded"
+
+
 def test_sync_pipeline_threads_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "WORKER_IDLE_SLEEP", 0.05)
     monkeypatch.setattr(config, "WORKER_PIPELINE_THREADS", 1)

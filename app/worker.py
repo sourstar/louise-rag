@@ -305,12 +305,18 @@ def _acquire(con, collection, reason: str) -> None:
     thread.start()
 
 
-def _finish_completed_acquires(cons, all_collections, last_discover) -> None:
-    """Turn finished background fetches into discovery scans on the main
-    thread (which owns the per-collection cons)."""
+def _finish_completed_acquires(cons, all_collections, last_discover,
+                                pipeline: bool = False) -> None:
+    """Turn finished background fetches into discovery scans: on the
+    collection's pipeline thread when one exists, otherwise inline on the
+    main thread (which owns the per-collection cons)."""
     with _acquire_lock:
         done = {name for name in _acquire_done}
         _acquire_done.clear()
+    if pipeline:
+        for name in done:
+            _request_discovery(name, "background fetch finished")
+        return
     for collection in all_collections:
         if collection.name in done and collection.name in cons:
             db.log_event(cons[collection.name], "info", "discover",
@@ -474,6 +480,35 @@ def _run_one_step(con, collection, last_idle_log: dict,
 _pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
 _paused = threading.Event()          # set = worker paused via the control UI
 
+# Discovery requests, drained by the owning collection's pipeline thread.
+#
+# Startup discovery used to run SERIALLY ON THE MAIN THREAD for every
+# collection before the round loop began — so after each restart nothing
+# processed (no rdf, no fts, no embed, no pipeline threads at all) until
+# the slowest scan finished. Observed live at five collections, two of
+# them ~19M documents: minutes of dead time per restart, and it defeated
+# the point of per-collection threads. Now the main loop only REQUESTS a
+# scan and each thread runs its own, so a slow scan costs its own
+# collection and nobody else.
+_discover_requests: dict[str, str] = {}
+_discover_req_lock = threading.Lock()
+# When each collection was last scanned; module-level because both the
+# main loop (interval trigger) and the pipeline threads (completion) write
+# it. run_forever passes this same object to _sync_collections.
+_last_discover: dict[str, float] = {}
+
+
+def _request_discovery(name: str, reason: str) -> None:
+    """First reason wins: a queued 'startup' must not be relabeled by a
+    later 'interval' before the thread has run it."""
+    with _discover_req_lock:
+        _discover_requests.setdefault(name, reason)
+
+
+def _take_discovery_request(name: str) -> str | None:
+    with _discover_req_lock:
+        return _discover_requests.pop(name, None)
+
 
 def _pipeline_worker(collection, gone: threading.Event) -> None:
     con = db.connect(collection)
@@ -486,6 +521,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 time.sleep(2)
                 continue
             try:
+                # this collection's scans belong to this thread: acquisition
+                # kickoff, startup scan, interval rescans and post-fetch
+                # rescans all arrive as requests from the main loop
+                reason = _take_discovery_request(collection.name)
+                if reason:
+                    _discover(con, collection, reason)
+                    _last_discover[collection.name] = time.time()
+                    continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)
                 if row is None:
@@ -544,7 +587,7 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
         thread.join(timeout=max(0.0, deadline - time.time()))
 
 
-def _sync_collections(all_collections, cons, last_discover):
+def _sync_collections(all_collections, cons, last_discover, pipeline: bool = False):
     """Hot-reload collections each round: a collections/*.toml added or
     removed while the worker runs takes effect within one round — no restart.
 
@@ -574,7 +617,10 @@ def _sync_collections(all_collections, cons, last_discover):
             db.log_event(cons[kept.name], "info", "worker",
                          f"collection {kept.name!r} config changed "
                          f"(acquire/license/profile) — re-discovering")
-            _discover(cons[kept.name], kept, "config-changed")
+            if pipeline:
+                _request_discovery(kept.name, "config-changed")
+            else:
+                _discover(cons[kept.name], kept, "config-changed")
             last_discover[kept.name] = time.time()
 
     for added in [c for c in current if c.name not in known]:
@@ -593,7 +639,10 @@ def _sync_collections(all_collections, cons, last_discover):
         if stale:
             db.log_event(cons[added.name], "warn", "bundle",
                          f"{len(stale)} stale bundle import(s) swept")
-        _discover(cons[added.name], added, "added")
+        if pipeline:
+            _request_discovery(added.name, "added")
+        else:
+            _discover(cons[added.name], added, "added")
         last_discover[added.name] = time.time()
 
     for gone in sorted(known - now_names):
@@ -602,6 +651,7 @@ def _sync_collections(all_collections, cons, last_discover):
         cons[gone].close()
         del cons[gone]
         last_discover.pop(gone, None)
+        _take_discovery_request(gone)   # never scan a removed collection
 
     return [c for c in current if c.name in cons]
 
@@ -630,18 +680,28 @@ def run_forever():
             db.log_event(cons[c.name], "warn", "bundle",
                          f"{len(stale)} bundle import(s) interrupted by a previous "
                          f"shutdown; affected documents will be re-embedded")
+    pipeline = bool(config.WORKER_PIPELINE_THREADS)
+    # restart = new documents are considered. With pipeline threads this is
+    # QUEUED rather than run here: scanning five collections serially before
+    # the loop starts meant nothing processed at all until the slowest scan
+    # finished (minutes, at 19M-document collections).
     for c in all_collections:
-        _discover(cons[c.name], c, "startup")   # restart = new documents are considered
+        if pipeline:
+            _request_discovery(c.name, "startup")
+        else:
+            _discover(cons[c.name], c, "startup")
 
-    last_discover = {c.name: time.time() for c in all_collections}
+    last_discover = _last_discover
+    last_discover.update({c.name: time.time() for c in all_collections})
     last_idle_log: dict[str, float] = {}
     control_con = cons[all_collections[0].name]
 
-    pipeline = bool(config.WORKER_PIPELINE_THREADS)
     while not _stop.is_set():
         try:
-            all_collections = _sync_collections(all_collections, cons, last_discover)
-            _finish_completed_acquires(cons, all_collections, last_discover)
+            all_collections = _sync_collections(all_collections, cons, last_discover,
+                                                 pipeline=pipeline)
+            _finish_completed_acquires(cons, all_collections, last_discover,
+                                        pipeline=pipeline)
             if not all_collections:
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue
@@ -668,9 +728,16 @@ def run_forever():
                     break
                 con = cons[collection.name]
                 if (config.DISCOVER_INTERVAL_MIN > 0 and
-                        time.time() - last_discover[collection.name] > config.DISCOVER_INTERVAL_MIN * 60):
-                    _discover(con, collection, "interval")
-                    last_discover[collection.name] = time.time()
+                        time.time() - last_discover.get(collection.name, 0.0)
+                        > config.DISCOVER_INTERVAL_MIN * 60):
+                    if pipeline:
+                        _request_discovery(collection.name, "interval")
+                        # stamped at REQUEST time so a long scan cannot
+                        # queue a second request behind itself
+                        last_discover[collection.name] = time.time()
+                    else:
+                        _discover(con, collection, "interval")
+                        last_discover[collection.name] = time.time()
                 # Time-budgeted round: each collection works until the budget
                 # elapses, not exactly one document. One-doc rounds starved
                 # cheap stages behind expensive neighbors (observed live: a
