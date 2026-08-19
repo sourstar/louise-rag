@@ -93,8 +93,9 @@ class GenomeSource:
             except Exception as e:  # noqa: BLE001 — truncated/corrupt FASTA:
                 # one error ref, never a dead scan
                 yield DocRef(source_id=self.source_id, native_id=fasta.name,
-                             locator=str(fasta),
-                             error=f"unreadable FASTA: {type(e).__name__}: {e}"[:200])
+                             locator=str(fasta), scope="container",
+                             error=f"unreadable FASTA {fasta.name}: "
+                                    f"{type(e).__name__}: {e}"[:200])
                 continue
             cursor.mark(scan, fasta)
         cursor.save(state.state_dir, self.source_id, scan)

@@ -74,7 +74,16 @@
   </div>
   {% endif %}
   <div class="row" style="align-items:center;margin-top:6px">
-    <div style="flex:0 1 auto"><label style="margin:0 0 2px">Embed mode (GPU spending)</label>
+    <div style="flex:0 1 auto">
+      <label style="margin:0 0 2px">Embed mode —
+        {# which processor this collection's encoder actually spends: the
+           GPU is the scarce, contended one; CPU encoders run beside it #}
+        <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
+              title="{{ 'the shared GPU encoder — one collection at a time, serial by design'
+                        if c.embed_device == 'gpu'
+                        else 'a CPU encoder container — runs alongside the GPU without competing' }}">
+          {{ c.embed_device|upper }} spending</span>
+      </label>
       <select onchange="setEmbedMode('{{ c.name }}', this.value)">
         {% for m in ['off','lazy','all'] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>

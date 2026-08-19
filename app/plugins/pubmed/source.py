@@ -112,8 +112,9 @@ class PubmedSource:
                 # error ref, never the whole scan — observed live once
                 # acquisition moved off the round loop
                 yield DocRef(source_id=self.source_id, native_id=container.name,
-                             locator=str(container),
-                             error=f"unparseable container: {type(e).__name__}: {e}"[:200])
+                             locator=str(container), scope="container",
+                             error=f"unparseable container {container.name}: "
+                                    f"{type(e).__name__}: {e}"[:200])
                 continue
             for i, child in enumerate(root_el):
                 if child.tag == "PubmedArticle":

@@ -105,6 +105,46 @@ def test_gate_records_its_verdict_for_the_web_process(isolated_config, monkeypat
     assert state and state["allowed"] is False and state["reason"]
 
 
+def test_embed_mode_names_the_processor_it_spends(client, isolated_config,
+                                                   config_dir, monkeypatch):
+    """"Embed mode (GPU spending)" was hardcoded, but three of five
+    collections run CPU encoder containers — flipping them on costs
+    nothing on the contended GPU, and the card said otherwise."""
+    d = config_dir / "collections"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "gpuone.toml").write_text(
+        'plugin = "gutenberg"\n\n[embed]\nurl = "http://gpu:1"\n'
+        'model = "qwen3"\nctx = 8192\n', encoding="utf-8")
+    (d / "cputwo.toml").write_text(
+        'plugin = "gutenberg"\n\n[embed]\nurl = "http://tei:2"\n'
+        'model = "bge-m3"\nctx = 2048\nconcurrency = 4\n', encoding="utf-8")
+
+    import re
+    page = re.sub(r"\s+", " ", client.get("/admin/library").text)
+    assert "GPU spending" in page and "CPU spending" in page
+    # the two cases must be visually DISTINCT, not just worded differently
+    assert re.search(r'badge lapis"[^>]*>\s*GPU spending', page)
+    assert re.search(r'badge brass"[^>]*>\s*CPU spending', page)
+
+
+def test_device_can_be_declared_explicitly(isolated_config, config_dir):
+    """Inference from concurrency is a default, not a straitjacket: a
+    CPU encoder run serially must still be labelled CPU."""
+    from app import collections as cm
+    d = config_dir / "collections"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "serialcpu.toml").write_text(
+        'plugin = "gutenberg"\n\n[embed]\nurl = "http://tei:2"\n'
+        'model = "bge-m3"\nctx = 2048\ndevice = "cpu"\n', encoding="utf-8")
+    c = [x for x in cm.load_all() if x.name == "serialcpu"][0]
+    assert c.embed.concurrency == 1 and c.embed.spends == "cpu"
+    # and the inference still applies when nothing is declared
+    assert cm.EmbedRecipe(url="u", api="openai", model="m", dtype="f16",
+                          ctx=512, concurrency=4).spends == "cpu"
+    assert cm.EmbedRecipe(url="u", api="openai", model="m", dtype="f16",
+                          ctx=512).spends == "gpu"
+
+
 def test_system_log_merges_every_collection(client, isolated_config, tmp_path):
     """One collection's events out of five made the System page look calm
     while another collection was stuck."""

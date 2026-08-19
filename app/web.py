@@ -213,6 +213,9 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "queue": queue, "last_discover_text": freshness,
         "blocked": blocked, "embed_ready": embed_ready,
         "gate": backend_gate.gate_state(con),
+        # which processor this collection's encoder spends — the GPU is the
+        # scarce one, so "turn embedding on" means something different here
+        "embed_device": collections_mod.recipe_for(collection).spends,
         "grow_options": _grow_options(collection),
         "license": _license_state(collection),
         "genesis": _genesis_state(con, collection),
@@ -417,6 +420,8 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
             # not space identity, but VERY MUCH desired state: dropping it
             # on a rewrite silently serialized a CPU collection's embeds
             lines.append(f"concurrency = {embed.concurrency}")
+        if getattr(embed, "device", None):
+            lines.append(f'device = "{embed.device}"')
     lines += [
         "",
         "[paths]",

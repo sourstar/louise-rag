@@ -7,7 +7,7 @@ across every current and future CorpusSource / ReferenceSource / EntityResolver.
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Any, Iterator, Literal, Protocol
 
 
 class LicenseClass(str, Enum):
@@ -32,6 +32,25 @@ class DocRef:
     container-file byte range for a future container-based source). `error`
     is set when a document is discoverable but not usable (e.g. no text file
     found) — the orchestrator records the error without calling fetch().
+
+    `scope` separates the two things an errored ref can mean:
+
+      "document"  — this IS a document, and it is broken. It belongs in the
+                    manifest carrying its error (a book whose .txt is
+                    missing stays a real, countable, retryable document).
+      "container" — this is a SCAN REPORT: a container file could not be
+                    enumerated at all (a truncated download, a corrupt
+                    archive, a dump missing its index). It is not a
+                    document and must never become one.
+
+    Why the distinction is load-bearing: container failures used to be
+    stored as documents keyed on the FILENAME, and nothing ever removed
+    them. Observed live on PubMed — 264 orphan rows, 116 of them for
+    containers that had since enumerated perfectly — and once an operator
+    pressed "clear errors & retry" every one became eligible for the rdf
+    stage, where fetch() can only refuse: the locator has no record index.
+    A container-scope ref is logged instead, so a later clean scan heals it
+    by simply not reporting it again.
     """
     source_id: str
     native_id: str
@@ -40,6 +59,7 @@ class DocRef:
     size: int | None = None
     error: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    scope: Literal["document", "container"] = "document"
 
 
 @dataclass(frozen=True)

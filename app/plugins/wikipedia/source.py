@@ -57,7 +57,8 @@ class WikipediaSource:
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
                 yield DocRef(source_id=self.source_id, native_id=dump.name,
-                             locator=str(dump), error="multistream index missing")
+                             locator=str(dump), scope="container",
+                             error=f"multistream index missing for {dump.name}")
                 continue
             if cursor.unchanged(scan, dump) and cursor.unchanged(scan, index):
                 continue     # already enumerated at this (mtime, size)
@@ -85,8 +86,9 @@ class WikipediaSource:
             except Exception as e:  # noqa: BLE001 — truncated/corrupt index: one
                 # error ref, never a dead scan (same rule as pubmed containers)
                 yield DocRef(source_id=self.source_id, native_id=dump.name,
-                             locator=str(dump),
-                             error=f"unreadable index: {type(e).__name__}: {e}"[:200])
+                             locator=str(dump), scope="container",
+                             error=f"unreadable index for {dump.name}: "
+                                    f"{type(e).__name__}: {e}"[:200])
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)

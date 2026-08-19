@@ -34,10 +34,22 @@ def sync_collection(con, collection) -> dict:
     # (WAL autocommit), which also makes an interrupted giant scan resumable
     # in effect: rows written so far stand, the cursor file is only advanced
     # by the plugin for containers it finished enumerating.
-    added = changed = missing = 0
+    added = changed = missing = container_errors = 0
     for i, ref in enumerate(plugin.discover(state), start=1):
         seen += 1
         uid = f"{ref.source_id}:{ref.native_id}"
+        if ref.scope == "container":
+            # A container that could not be enumerated is a scan REPORT, not
+            # a document (DocRef.scope). Storing it as one minted a
+            # filename-keyed row nothing ever removed, which an operator's
+            # "clear errors & retry" then fed to the rdf stage forever.
+            # Logging it keeps it visible (the System page merges every
+            # collection's events) and lets a later clean scan heal it by
+            # simply not reporting it again.
+            container_errors += 1
+            db.log_event(con, "warn", "discover",
+                         f"container not enumerable: {ref.error}", None)
+            continue
         if ref.error:
             missing += 1
             con.execute(
@@ -76,6 +88,8 @@ def sync_collection(con, collection) -> dict:
     apply_scope(con)
     stats = {"seen": seen, "added": added, "changed": changed,
              "missing_txt": missing, "secs": round(time.time() - t0, 1)}
+    if container_errors:
+        stats["container_errors"] = container_errors
     db.log_event(con, "info", "discover", f"discovery done {stats}")
     return stats
 

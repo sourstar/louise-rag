@@ -123,7 +123,7 @@ class EmbeddedSource:
             lang = _lang_of_shard(rel)
             if lang is None:
                 yield DocRef(source_id=self.source_id, native_id=shard.name,
-                             locator=str(shard),
+                             locator=str(shard), scope="container",
                              error=f"unrecognized shard path (want data/<lang>/*.parquet): {rel}")
                 continue
             if cursor.unchanged(scan, shard):
@@ -162,8 +162,9 @@ class EmbeddedSource:
                 # costs one error ref, never the scan (pubmed/wikipedia rule)
                 pending, pending_lang = None, None
                 yield DocRef(source_id=self.source_id, native_id=shard.name,
-                             locator=str(shard),
-                             error=f"unreadable shard: {type(e).__name__}: {e}"[:200])
+                             locator=str(shard), scope="container",
+                             error=f"unreadable shard {rel}: "
+                                    f"{type(e).__name__}: {e}"[:200])
                 continue
             cursor.mark(scan, shard)
         if pending is not None:

@@ -48,6 +48,20 @@ class EmbedRecipe:
     # (TEI/MedCPT); GPU llama-server stays serial — its multi-sequence
     # handling is the defect the batch gate exists for.
     concurrency: int = 1
+    # Which processor this endpoint spends: "gpu" | "cpu". DESCRIPTIVE
+    # ONLY — it never enters the space id, because the same model on a
+    # different device computes the same function (that is precisely what
+    # the live cross-backend calibration measured). It exists so the UI can
+    # tell an operator whether flipping embed mode spends the scarce GPU or
+    # spare CPU. Absent, it is inferred from `concurrency`, which in this
+    # codebase IS the split: GPU stays serial, CPU parallelizes.
+    device: str | None = None
+
+    @property
+    def spends(self) -> str:
+        if self.device in ("gpu", "cpu"):
+            return self.device
+        return "cpu" if self.concurrency > 1 else "gpu"
 
 
 def env_recipe() -> EmbedRecipe:
@@ -136,6 +150,9 @@ def _load_one(path: Path) -> Collection:
                 query_url=(str(e["query_url"]).rstrip("/")
                             if e.get("query_url") else None),
                 concurrency=max(1, int(e.get("concurrency", 1))),
+                device=(str(e["device"]).lower()
+                        if e.get("device") in ("gpu", "cpu", "GPU", "CPU")
+                        else None),
             )
         except KeyError as missing:
             raise ValueError(
