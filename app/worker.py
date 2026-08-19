@@ -494,6 +494,12 @@ def _run_one_step(con, collection, last_idle_log: dict,
 # collections is doctrine, and one owner enforces it.
 _pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
 _paused = threading.Event()          # set = worker paused via the control UI
+# set = "acquire-only": keep the corpus growing (discovery still runs, so
+# finished fetches are picked up and new ones start) but stand down the
+# CPU-heavy stages. Moving bytes is nearly free; rdf/fts/embed run every
+# core hot, which is a real consideration when the node lives in a room
+# someone sits in.
+_acquire_only = threading.Event()
 
 # Discovery requests, drained by the owning collection's pipeline thread.
 #
@@ -541,8 +547,13 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # rescans all arrive as requests from the main loop
                 reason = _take_discovery_request(collection.name)
                 if reason:
+                    # discovery runs in EVERY non-paused mode: it is what
+                    # starts fetches and picks up what they land
                     _discover(con, collection, reason)
                     _last_discover[collection.name] = time.time()
+                    continue
+                if _acquire_only.is_set():
+                    time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)
@@ -744,11 +755,19 @@ def run_forever():
             # applies it. Re-read each round so it takes effect within one
             # document and expires on its own.
             get_manager().set_override(db.get_bandwidth_override(control_con))
-            if db.worker_state(control_con) != "running":
+            state = db.worker_state(control_con)
+            if state == "paused":
                 _paused.set()       # pipeline threads idle at the same gate
                 time.sleep(2)
                 continue
             _paused.clear()
+            # acquire-only: discovery and fetching continue (the pipeline
+            # threads still drain discovery requests), but rdf/fts stand
+            # down there and this loop skips embed/genesis/bundles below
+            if state == "acquire-only":
+                _acquire_only.set()
+            else:
+                _acquire_only.clear()
             if pipeline:
                 # after the pause gate: a paused worker starts no threads,
                 # and running ones idle on _paused
@@ -779,6 +798,8 @@ def run_forever():
                 # With pipeline threads on, this loop is the EMBED loop: rdf/
                 # fts run on per-collection threads and the budget only paces
                 # embed work plus bundles/genesis.
+                if state == "acquire-only":
+                    continue   # discovery above still runs; nothing heavy here
                 round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
                 while not _stop.is_set():
                     if not _run_one_step(con, collection, last_idle_log,

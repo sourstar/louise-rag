@@ -196,8 +196,8 @@ class ControlBody(BaseModel):
 
 @app.post("/api/control", dependencies=[Depends(auth.require_admin)])
 def control(body: ControlBody):
-    if body.state not in ("running", "paused"):
-        raise HTTPException(400, "state must be running|paused")
+    if body.state not in db.WORKER_STATES:
+        raise HTTPException(400, f"state must be {'|'.join(db.WORKER_STATES)}")
     con = _con()
     db.set_worker_state(con, body.state)
     db.log_event(con, "info", "control", f"worker set to {body.state}")

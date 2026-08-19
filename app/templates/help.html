@@ -97,6 +97,15 @@
     <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
   </p>
   <p class="note">
+    Node-wide, the Library page offers three modes. <b>run everything</b> is
+    the normal state. <b>download only</b> keeps acquisition and discovery
+    going while parse, index and embed stand down — the two halves cost very
+    differently, and this is the switch for when the node's heat or CPU
+    matters more than its progress. Per-collection embed modes are left
+    untouched, so switching back restores exactly what each collection was
+    doing. <b>pause</b> stops everything, including starting new fetches.
+  </p>
+  <p class="note">
     Each Library card names <b>which processor</b> that spending lands on —
     <span class="badge lapis">GPU spending</span> for a collection served by
     the shared GPU encoder (one collection at a time, serial by design) and

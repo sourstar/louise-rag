@@ -343,12 +343,20 @@ def apply_reset(con, stage: str, book_ids: list[int]) -> None:
         raise ValueError(f"unknown stage: {stage}")
 
 WORKER_STATE_KEY = "worker_state"
+# Node-level processing modes. "acquire-only" exists because the two
+# halves of this system have very different costs: moving bytes is nearly
+# free, while rdf/fts/embed run every core hot — enough to heat a room.
+# Turning embedding off per collection meant five edits AND losing each
+# collection's own embed_mode; this keeps the corpus growing while the
+# CPU-heavy stages stand down, and restores the previous state exactly.
+WORKER_STATES = ("running", "acquire-only", "paused")
 
 def worker_state(con) -> str:
-    return get_control(con, WORKER_STATE_KEY, "paused")
+    state = get_control(con, WORKER_STATE_KEY, "paused")
+    return state if state in WORKER_STATES else "paused"
 
 def set_worker_state(con, state: str):
-    assert state in ("running", "paused")
+    assert state in WORKER_STATES
     set_control(con, WORKER_STATE_KEY, state)
 
 # Control keys that describe the NODE, not a collection. They live in the

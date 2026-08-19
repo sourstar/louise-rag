@@ -3,14 +3,26 @@
 {% block content %}
 <h1>Library</h1>
 <div class="panel">
-  <span class="dot {{ worker_state }}"></span> worker: <b>{{ worker_state }}</b>
+  <span class="dot {{ 'running' if worker_state=='running' else 'paused' }}"></span>
+  worker: <b>{{ worker_state }}</b>
   <div class="actions">
-    <button class="primary" onclick="toggleWorker()">{{ 'pause' if worker_state=='running' else 'start' }}</button>
+    <button class="{{ 'primary' if worker_state!='running' }}"
+            onclick="setWorkerState('running')">run everything</button>
+    <button class="{{ 'primary' if worker_state!='acquire-only' }}"
+            onclick="setWorkerState('acquire-only')">download only</button>
+    <button class="{{ 'primary' if worker_state!='paused' }}"
+            onclick="setWorkerState('paused')">pause</button>
     <button onclick="rescanAll()">rescan all collections</button>
   </div>
-  <div class="note">Worker pause/resume is one global toggle today — it holds every
-    collection's pipeline thread (rdf/fts) and the shared embed loop at the same gate;
-    not yet per-collection. See app/worker.py's own docstring.</div>
+  <div class="note">
+    <b>download only</b> keeps the corpus growing — acquisition and discovery
+    carry on — while the CPU-heavy stages (parse, index, embed) stand down.
+    The two halves cost very differently: moving bytes is nearly free, while
+    rdf/fts/embed run every core hot. Per-collection embed modes are left
+    untouched, so switching back to <b>run everything</b> restores exactly
+    what each collection was doing. <b>pause</b> stops all of it, including
+    starting new fetches. One node-wide setting, not per-collection.
+  </div>
 </div>
 
 <div class="grid">
@@ -172,9 +184,10 @@ function fillProfileSelect(){
 }
 document.getElementById('nc_plugin').addEventListener('change',fillProfileSelect);
 fillProfileSelect();
-async function toggleWorker(){
-  const next=WORKER_STATE==='running'?'paused':'running';
-  await postJSON('/api/control',{state:next}); location.reload();
+async function setWorkerState(state){
+  try{await postJSON('/api/control',{state})}
+  catch(e){toast('could not set '+state+': '+e);return}
+  location.reload();
 }
 async function rescanAll(){
   {% for c in shelves %}await libDiscover('{{ c.name }}',true);{% endfor %}
