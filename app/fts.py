@@ -36,7 +36,10 @@ def _analyzer_for(group: str) -> tantivy.TextAnalyzer:
     else:
         base = tantivy.TextAnalyzerBuilder(tantivy.Tokenizer.simple())
     base = base.filter(tantivy.Filter.remove_long(64)).filter(tantivy.Filter.lowercase())
-    if group in config.STEMMER_LANGS:
+    # STEMMER_EXCLUDE keeps a language's OWN index (so nothing is re-routed
+    # and no index is orphaned) while dropping the stemmer that would crash
+    # on it — see config.STEMMER_EXCLUDE for the Greek case.
+    if group in config.STEMMER_LANGS and group not in config.STEMMER_EXCLUDE:
         base = base.filter(tantivy.Filter.stemmer(config.STEMMER_LANGS[group]))
     return base.build()
 

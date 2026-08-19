@@ -114,6 +114,25 @@ STEMMER_LANGS = {
     "ru": "russian", "no": "norwegian", "ro": "romanian", "tr": "turkish",
     "ar": "arabic", "ta": "tamil",
 }
+# Languages that keep their own index but are indexed WITHOUT the stemmer.
+#
+# Greek: rust-stemmers 1.2.0 — the version compiled into the tantivy wheel,
+# and the last release of a crate dormant since 2019 — panics inside the
+# Greek algorithm on ordinary words. Verified minimal case, tantivy API
+# only, no code of ours in the path:
+#     "παγαινετε"  -> PanicException: end byte index 18 is out of bounds
+#                     of `παγαινετ`      (snowball_env.rs:249)
+#     "πηγαινετε"  -> ok, stems to `πηγαινετ`
+# The stemmer strips the suffix so the buffer shrinks to 16 bytes, then
+# reuses a byte index computed against the original 18. It fires in one
+# exception branch of the algorithm, so only texts containing that verb
+# family are affected — but for those the panic kills the whole document's
+# indexing, and an unindexed document cannot be found AT ALL, whereas an
+# unstemmed one is merely less forgiving about inflection. Completeness
+# wins. See docs/upstream-rust-stemmers-greek.md; revert this the day the
+# wheel ships a fixed stemmer (tantivy-stemmers is the maintained
+# alternative, but adopting it means compiling tantivy from source).
+STEMMER_EXCLUDE = {"el"}
 # Languages whose scripts have no spaces: index as character bigrams.
 CJK_LANGS = {"zh", "ja", "ko"}
 
