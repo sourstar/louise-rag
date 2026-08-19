@@ -21,9 +21,14 @@ def test_discover_finds_all_fixture_books():
 
 
 def test_discover_reports_missing_txt(tmp_path):
-    empty_book = tmp_path / "99999"
-    empty_book.mkdir()
-    refs = list(SOURCE.discover(DiscoverState(corpus_root=tmp_path)))
+    """A book we HOLD (metadata is there) but cannot index stays a document
+    carrying its error. An empty directory is a transfer stub instead — see
+    test_corpus_stubs.py — so this one needs a file in it."""
+    book = tmp_path / "99999"
+    book.mkdir()
+    (book / "pg99999.rdf").write_text("<rdf/>", encoding="utf-8")
+    refs = [r for r in SOURCE.discover(DiscoverState(corpus_root=tmp_path))
+            if r.scope == "document"]
     assert len(refs) == 1
     assert refs[0].native_id == "99999"
     assert refs[0].error == "no txt file"

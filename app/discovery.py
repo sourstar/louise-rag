@@ -36,7 +36,6 @@ def sync_collection(con, collection) -> dict:
     # by the plugin for containers it finished enumerating.
     added = changed = missing = container_errors = 0
     for i, ref in enumerate(plugin.discover(state), start=1):
-        seen += 1
         uid = f"{ref.source_id}:{ref.native_id}"
         if ref.scope == "container":
             # A container that could not be enumerated is a scan REPORT, not
@@ -49,7 +48,8 @@ def sync_collection(con, collection) -> dict:
             container_errors += 1
             db.log_event(con, "warn", "discover",
                          f"container not enumerable: {ref.error}", None)
-            continue
+            continue      # a scan report is not a document, so it is not "seen"
+        seen += 1
         if ref.error:
             missing += 1
             con.execute(

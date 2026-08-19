@@ -33,7 +33,10 @@ def _seed(con, n=5, *, fts_done=1, error_rows=0):
             "rdf_done,fts_done,embed_done) VALUES(?,?,?,?,?,1,1,?,0)",
             (f"gutenberg:{i}", "gutenberg", str(i), f"/x/{i}", "en", fts_done))
     for i in range(1, error_rows + 1):
-        con.execute("UPDATE documents SET error='boom' WHERE uid=?",
+        # stage-prefixed: a genuine FAILURE, which retrying might fix.
+        # (An unprefixed error comes from discovery and describes the corpus
+        # — counted separately; see test_corpus_stubs.py.)
+        con.execute("UPDATE documents SET error='fts: boom' WHERE uid=?",
                     (f"gutenberg:{i}",))
 
 
@@ -71,7 +74,8 @@ def test_card_names_blocked_documents(client):
     con = db.connect(collection)
     _seed(con, 5, error_rows=2)
 
-    page = client.get("/admin/library").text
+    import re
+    page = re.sub(r"\s+", " ", client.get("/admin/library").text)
     assert "2 blocked" in page
     assert "exhausted their retries" in page
     # and they are excluded from the embeddable backlog

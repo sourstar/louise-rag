@@ -24,12 +24,27 @@ class GutenbergSource:
         root = state.corpus_root
         if not root.is_dir():
             return
+        stubs = 0
         for entry in root.iterdir():
             if not entry.is_dir() or not entry.name.isdigit():
                 continue
             book_id = int(entry.name)
+            # An EMPTY directory is not a book we hold — it is a transfer
+            # stub. rsync creates the directory tree and then copies only
+            # files matching the spec filter (*.txt*, *.rdf), so a title
+            # published solely as epub/mobi/html leaves an empty directory
+            # behind. Minting a document for it produced ~34,800 permanently
+            # errored rows on the live node that "clear errors & retry"
+            # could never fix (the next scan re-applied the error) and that
+            # held every progress bar short of 100% for no stated reason.
+            if not any(entry.iterdir()):
+                stubs += 1
+                continue
             txt = pg_text.find_txt(entry, book_id)
             if txt is None:
+                # files present but no text: a real Gutenberg entry whose
+                # text we cannot index (metadata-only, or an unsupported
+                # format). That IS a document, and it keeps its error.
                 yield DocRef(source_id=self.source_id, native_id=str(book_id),
                              locator=str(entry), error="no txt file")
                 continue
@@ -37,6 +52,13 @@ class GutenbergSource:
             yield DocRef(source_id=self.source_id, native_id=str(book_id),
                          locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
                          extra={"txt_name": txt.name})
+        if stubs:
+            # one scan report, not 34,800 documents
+            yield DocRef(source_id=self.source_id, native_id="(scan)",
+                         locator=str(root), scope="container",
+                         error=f"skipped {stubs} empty book director"
+                               f"{'y' if stubs == 1 else 'ies'} (transfer "
+                               f"stubs: the mirror had no .txt/.rdf to copy)")
 
     def fetch(self, ref: DocRef) -> RawDoc:
         txt = pg_text.find_txt(Path(ref.locator), int(ref.native_id))

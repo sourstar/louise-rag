@@ -51,9 +51,17 @@
   {% if c.blocked %}
   <div class="note">
     <span class="badge err">{{ c.blocked }} blocked</span>
-    document{{ '' if c.blocked == 1 else 's' }} carry an error or exhausted their retries —
-    no stage will pick them up again, which is why the bars above stop short.
-    “clear errors &amp; retry” below puts them back in the pipeline.
+    document{{ '' if c.blocked == 1 else 's' }} failed a stage or exhausted their
+    retries — no stage will pick them up again, which is why the bars above stop
+    short. “clear errors &amp; retry” below puts these back in the pipeline.
+  </div>
+  {% endif %}
+  {% if c.unindexable %}
+  <div class="note">
+    <span class="badge">{{ c.unindexable }} not indexable</span>
+    the source has no usable content for {{ 'it' if c.unindexable == 1 else 'them' }}
+    (no text in the corpus, or retracted upstream). Retrying cannot change that —
+    the next scan re-applies it — so they are counted here rather than as failures.
   </div>
   {% endif %}
   {% if c.gate and not c.gate.allowed %}

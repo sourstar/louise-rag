@@ -189,12 +189,21 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         FROM documents""").fetchone()
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
     # Documents no stage selector will ever pick up again (every selector
-    # filters `error IS NULL AND retries < MAX_RETRIES`). Without this the
-    # progress bars simply stop short of 100% with no stated reason, and the
-    # card's own "clear errors & retry" button looks decorative.
+    # filters `error IS NULL AND retries < MAX_RETRIES`), split by whether
+    # retrying could POSSIBLY help. Stage failures are prefixed with their
+    # stage (see worker._execute_step), so an unprefixed error came from
+    # discovery and describes the CORPUS: no text in the mirror, retracted
+    # upstream. "Clear errors & retry" cannot fix those — the next scan
+    # re-applies them — and reporting them as "blocked" sent an operator
+    # pressing that button expecting an effect it could never have.
+    stage_error = ("(" + " OR ".join(
+        f"error LIKE '{s}: %'" for s in ("rdf", "fts", "embed")) + ")")
     blocked = con.execute(
-        "SELECT COUNT(*) c FROM documents WHERE in_scope=1 "
-        "AND (error IS NOT NULL OR retries>=?)", (config.MAX_RETRIES,)).fetchone()["c"]
+        f"SELECT COUNT(*) c FROM documents WHERE in_scope=1 "
+        f"AND ({stage_error} OR retries>=?)", (config.MAX_RETRIES,)).fetchone()["c"]
+    unindexable = con.execute(
+        f"SELECT COUNT(*) c FROM documents WHERE in_scope=1 AND error IS NOT NULL "
+        f"AND NOT {stage_error} AND retries<?", (config.MAX_RETRIES,)).fetchone()["c"]
     # What the embed stage could pick up right now — the honest backfill
     # number under embed_mode=all, where the lazy queue is always empty
     # because backfill selects from the manifest directly.
@@ -232,7 +241,8 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "queue": queue, "last_discover_text": freshness,
         "profile_mode": (spec.profile_mode if spec else "incremental"),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
-        "blocked": blocked, "embed_ready": embed_ready,
+        "blocked": blocked, "unindexable": unindexable,
+        "embed_ready": embed_ready,
         "gate": backend_gate.gate_state(con),
         # which processor this collection's encoder spends — the GPU is the
         # scarce one, so "turn embedding on" means something different here
