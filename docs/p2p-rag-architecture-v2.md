@@ -650,3 +650,64 @@ in the live deployment:
     `[embed]` recipe, refused whole, ledger-recorded. This amendment is the
     generalization §8 promised — "any compatible embedded data can join the
     platform the same way" — now with the format that makes it true.
+
+Amended again after a day of running four collections at full corpus
+scale. Every item below was forced by something observed live, not by
+design taste:
+
+12. **§2 — `DocRef.scope` separates a broken DOCUMENT from an
+    unenumerable CONTAINER.** The tolerance rule ("a corrupt container
+    costs one error ref, never a dead scan") stored container failures as
+    documents keyed on the FILENAME, and nothing ever removed them: 264
+    orphan rows on PubMed, 116 of them for containers that had since
+    enumerated perfectly, each re-erroring every round after an operator
+    pressed "clear errors & retry". A container-scope ref is a scan
+    REPORT — logged, never a document — so a later clean scan heals it by
+    simply not reporting it again. The same rule retires Gutenberg's
+    empty book directories (rsync creates the tree, then copies only what
+    the filter matches, so an epub-only title leaves an empty directory):
+    ~34k of them were documents that could never be indexed and could
+    never be retried away.
+13. **§5.1 — `AcquisitionSpec.profile_mode`.** Profiles are not always a
+    ladder. *incremental* (demo ⊂ starter ⊂ full) is the original
+    meaning and still governs Gutenberg/PubMed/Wikipedia; *exclusive*
+    marks profiles that must NEVER be combined — genome, where each
+    profile is an assembly and §9's "one collection per assembly" is
+    load-bearing, because `native_id` is the record ordinal WITHIN a
+    FASTA and a second assembly silently overwrites the first (observed:
+    yeast titles on human locators with yeast vectors attached);
+    *additive* marks profiles that combine freely — the pre-embedded
+    corpus, where each profile is a language and the plugin encodes the
+    language into `native_id`, written as `"tr,it,en"` and resolved as
+    the union. Growing an exclusive source is refused; growing an
+    additive one ADDS a slice rather than replacing it.
+14. **§14 — `[embed] device` is descriptive, never identity.** A
+    collection may declare `device = "gpu"|"cpu"` so the UI can say which
+    resource "turn embedding on" actually spends. It is deliberately NOT
+    part of `space_id`: the same model on a different device computes the
+    same function, which is exactly what the live cross-backend
+    calibration measured (cos 0.9999997 GPU-SYCL vs CPU).
+15. **§7 — node-level control state follows the NODE.** `worker_state`
+    and the bandwidth override live in the control table of whichever
+    collection resolves first, which is an accident of sort order.
+    Wiping that collection's derived data (a legitimate repair) emptied
+    it, `worker_state` fell back to its default `paused`, and the entire
+    node stopped — five collections, no log line. The control collection
+    now adopts node keys from a sibling when it has none; per-collection
+    keys (`scope`, the gate verdict) are never adopted.
+16. **§6 — the backend gate's verdict is published, not just cached.**
+    It lived in the worker process, so a paused encoder was
+    indistinguishable in the UI from a stalled progress bar. The
+    transition is written to the collection's control table (runtime
+    state, like `worker_state` — never desired state, invariant 10) and
+    the Library card shows the reason.
+17. **§8 — genesis-imported vectors carry imported provenance.**
+    Verify-on-use reads "no `chunk_verification` row" as *local ✓*, and
+    the genesis path wrote none, so every NCBI/Upstash vector claimed
+    this node had computed it. They are marked `imported` with the
+    archive as producer, which also makes them eligible for
+    verify-on-use. Additionally, a LOCAL archive's shards go *barren*
+    when a pass imports nothing and yield the round to the local
+    encoder — otherwise a residual candidate the archive can never cover
+    (a shard-boundary straddler) makes the drain claim every round
+    forever and the gap-fill amendment 11 promises never happens.

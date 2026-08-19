@@ -89,12 +89,30 @@
   <h2>Scope &amp; embed modes</h2>
   <p class="note">
     The scope (languages, explicit ids, caps) decides which documents are
-    in play. The <b>embed mode</b> decides GPU spending:
+    in play. The <b>embed mode</b> decides encoder spending:
     <b>off</b> — never embed; <b>lazy</b> — embed only what queries actually
     touch (a priority queue fed by search misses); <b>all</b> — background-
     backfill everything in scope. The priority queue always outranks the
     backfill, so a user-requested document embeds first. Set the mode via
     <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
+  </p>
+  <p class="note">
+    Each Library card names <b>which processor</b> that spending lands on —
+    <span class="badge lapis">GPU spending</span> for a collection served by
+    the shared GPU encoder (one collection at a time, serial by design) and
+    <span class="badge brass">CPU spending</span> for one served by a CPU
+    encoder container, which runs beside the GPU without competing for it.
+    Declare it explicitly with <code>device = "gpu"|"cpu"</code> in the
+    collection's <code>[embed]</code> block; otherwise it is inferred from
+    <code>concurrency</code>. The device is descriptive only and never part
+    of the embedding space — the same model on a different device computes
+    the same function.
+  </p>
+  <p class="note">
+    Under <b>all</b>, the card reports the <i>dense backfill</i> still
+    awaiting the encoder rather than the lazy queue, which is empty by
+    definition in that mode: backfill selects straight from the manifest and
+    never touches the queue.
   </p>
 </div>
 
@@ -314,11 +332,22 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     recent</code>. Acquisition is resumable and only fetches what's missing,
     so growing demo → starter → full costs no re-downloading. Also update
     <code>profile</code> in the collection's TOML — that's what the worker's
-    periodic acquisition maintains from then on. Two honest caveats:
-    profiles aren't ordered in the type system ("grow" names the intent, it
-    doesn't enforce bigger-than-before), and switching to a <i>smaller</i>
-    profile stops future fetching but never deletes files already on disk —
-    pruning a corpus is a manual, deliberate act. Hand-populated collections
+    periodic acquisition maintains from then on. Switching to a
+    <i>smaller</i> profile stops future fetching but never deletes files
+    already on disk — pruning a corpus is a manual, deliberate act.
+  </p>
+  <p class="note">
+    <b>Not every source's profiles form a ladder.</b> Gutenberg, PubMed and
+    the Wikipedia dumps are <i>incremental</i> (demo ⊂ starter ⊂ full), and
+    grow offers the current profile and larger. The pre-embedded corpus is
+    <i>additive</i>: each profile is a language, they combine freely
+    (<code>profile = "tr,it,en"</code>), and grow is a checklist where what
+    you already hold stays checked and checking another <b>adds</b> it
+    rather than replacing it. A genome collection is <i>exclusive</i>: each
+    profile is an assembly, one collection holds exactly one assembly (§9),
+    and grow therefore offers nothing — a second assembly is a second
+    collection, because document ids are per-FASTA record ordinals and two
+    assemblies in one corpus would overwrite each other. Hand-populated collections
     (<code>acquire_enabled = false</code>) ignore profiles entirely; the
     Library card shows theirs as <i>(hand-populated)</i>.
   </p>
@@ -398,10 +427,27 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
     <tr><td>401 on admin API calls</td>
       <td>missing/wrong X-Admin-Token header, or ADMIN_TOKEN unset on the
       node (fail-closed).</td></tr>
-    <tr><td>documents with errors like <i>missing txt</i></td>
-      <td>corpus entries without a usable text file — counted, skipped, and
-      harmless. "clear errors &amp; retry" on the Library page re-attempts
-      after a corpus update.</td></tr>
+    <tr><td><b>N not indexable</b> on a Library card</td>
+      <td>the source has no usable content for them — a Gutenberg entry with
+      metadata but no text file, an upstream retraction. Retrying cannot
+      change that (the next scan re-applies it), which is why they are
+      counted apart from failures. Empty book directories are not documents
+      at all: they are transfer stubs (rsync creates the directory, then
+      copies only the files the profile matches) and are reported once per
+      scan instead.</td></tr>
+    <tr><td><b>N blocked</b> on a Library card</td>
+      <td>documents that failed a stage or exhausted their retries — these
+      are the ones "clear errors &amp; retry" puts back in the pipeline.
+      </td></tr>
+    <tr><td>a progress bar stops short of 100%</td>
+      <td>the two counts above explain the gap; between them they account
+      for every document no stage will pick up again.</td></tr>
+    <tr><td><b>embedding paused</b> on a Library card</td>
+      <td>the backend gate stopped this collection's encoder writes because
+      the endpoint no longer reproduces its recorded baseline. Fix the
+      endpoint, or accept the new backend deliberately with
+      <code>backend rebaseline</code> — knowing existing vectors came from a
+      different function.</td></tr>
     <tr><td>a book answers with stale/odd passages</td>
       <td>ask with <code>verify: true</code> or POST its chunk ids to
       /api/verify — failed verification quarantines the producing key and
