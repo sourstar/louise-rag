@@ -91,6 +91,16 @@ class AcquisitionSpec:
     delta: DeltaSpec = field(default_factory=lambda: DeltaSpec(mode="full-resync"))
     etiquette: RateLimit = field(default_factory=RateLimit)
     profiles: dict[str, Filter] = field(default_factory=dict)
+    # Profiles are INCREMENTAL by default (demo ⊂ starter ⊂ full), which is
+    # what makes "grow" meaningful: acquisition only ever adds files.
+    # exclusive_profiles=True marks a source whose profiles are ALTERNATIVES
+    # — genome, where each profile is a different assembly (§9: one
+    # collection per assembly). Growing across them is not a bigger corpus,
+    # it is a second corpus in the same collection, and for genome that
+    # silently collides: native_id is the record ordinal WITHIN a FASTA, so
+    # every assembly mints the same document ids (observed live — a `full`
+    # grow left yeast titles on human locators with yeast vectors attached).
+    exclusive_profiles: bool = False
     estimated_bytes: dict[str, int] = field(default_factory=dict)
     license_class: LicenseClass = LicenseClass.GREEN
     terms_text_path: Path | None = None    # required when license_class != GREEN

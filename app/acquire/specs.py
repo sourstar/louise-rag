@@ -117,14 +117,22 @@ GENOME_SPEC = AcquisitionSpec(
     delta=DeltaSpec(mode="full-resync"),     # assemblies are immutable; a new
                                               # assembly is a NEW collection (§9)
     profiles={
-        # §9's validation ladder: yeast and fly prove the plugin in
-        # GPU-minutes before anyone spends human-scale hours
-        "demo": Filter(include=("sacCer3/*",)),          # yeast, 12 Mbp
-        "starter": Filter(include=("sacCer3/*", "dm6/*")),  # + fly, 140 Mbp
-        "full": Filter(),                                 # + human GRCh38
+        # ONE ASSEMBLY PER PROFILE, and profiles never stack — §9's "one
+        # collection per assembly" is not a style preference: native_id is
+        # the record ordinal WITHIN a FASTA, so a second assembly in the
+        # same corpus mints the same document ids and overwrites the first.
+        # §9's validation ladder is still here, as separate collections:
+        # yeast then fly prove the plugin before anyone spends human-scale
+        # hours on GRCh38.
+        "demo": Filter(include=("sacCer3/*",)),      # alias for sacCer3
+        "sacCer3": Filter(include=("sacCer3/*",)),   # yeast, 12 Mbp
+        "dm6": Filter(include=("dm6/*",)),           # fly, 140 Mbp
+        "hg38": Filter(include=("hg38/*",)),         # human GRCh38, 3.1 Gbp
     },
+    exclusive_profiles=True,                 # alternatives, never increments
     estimated_bytes={
-        "demo": 4_000_000, "starter": 50_000_000, "full": 1_050_000_000,
+        "demo": 4_000_000, "sacCer3": 4_000_000,
+        "dm6": 50_000_000, "hg38": 1_000_000_000,
     },
     license_class=LicenseClass.GREEN,        # consortium reference data
 )

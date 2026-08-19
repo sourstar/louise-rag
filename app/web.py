@@ -151,6 +151,13 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     files, so 'rolling back' a profile wouldn't shrink anything and would
     only misdescribe the corpus. The current profile stays offered as a
     re-sync/top-up."""
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    if spec is not None and spec.exclusive_profiles:
+        # profiles are ALTERNATIVES, not increments (genome: one assembly
+        # each). "Growing" would drop a second corpus into this collection,
+        # which for genome silently collides on document ids — a new
+        # assembly is a new collection.
+        return []
     order = _profile_order(collection.plugin)
     current = collection.profile
     names = [o["name"] for o in order]

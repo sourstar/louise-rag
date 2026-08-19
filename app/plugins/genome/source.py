@@ -35,6 +35,17 @@ def split_locator(locator: str) -> tuple[Path, int]:
     return Path(path), int(ordinal)
 
 
+def _assembly_of(path: Path) -> str:
+    """The assembly a FASTA belongs to. UCSC's layout is
+    <assembly>/bigZips/<assembly>.fa.gz, and the file is named after the
+    assembly either way, so the stem is the reliable signal."""
+    name = path.name
+    for suffix in _FASTA_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return path.stem
+
+
 def _open(path: Path):
     if path.name.endswith(".gz"):
         return gzip.open(path, "rt", encoding="ascii", errors="replace")
@@ -76,6 +87,27 @@ class GenomeSource:
             return
         fastas = sorted(p for p in root.rglob("*")
                         if p.is_file() and p.name.endswith(_FASTA_SUFFIXES))
+        # ONE ASSEMBLY PER COLLECTION (§9), enforced here rather than
+        # trusted: native_id is the record ordinal within a FASTA, so a
+        # second assembly mints the SAME document ids and overwrites the
+        # first. Observed live — a `full` grow put dm6 and hg38 beside
+        # sacCer3 and left yeast titles on human locators with yeast
+        # vectors still attached. Extra assemblies are refused as container
+        # reports (never documents) so the operator sees exactly what to do.
+        if len(fastas) > 1:
+            primary = _assembly_of(fastas[0])
+            foreign = [p for p in fastas if _assembly_of(p) != primary]
+            if foreign:
+                for p in foreign:
+                    yield DocRef(
+                        source_id=self.source_id, native_id=p.name,
+                        locator=str(p), scope="container",
+                        error=f"refusing {_assembly_of(p)}: this collection "
+                              f"already holds {primary}, and one collection "
+                              f"holds exactly one assembly (§9) — give "
+                              f"{_assembly_of(p)} its own collection and "
+                              f"corpus folder")
+                fastas = [p for p in fastas if _assembly_of(p) == primary]
         scan = cursor.load(state.state_dir, self.source_id)
         for fasta in fastas:
             if cursor.unchanged(scan, fasta):
