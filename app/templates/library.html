@@ -8,8 +8,9 @@
     <button class="primary" onclick="toggleWorker()">{{ 'pause' if worker_state=='running' else 'start' }}</button>
     <button onclick="rescanAll()">rescan all collections</button>
   </div>
-  <div class="note">Worker pause/resume is one global toggle today (worker.py round-robins every
-    collection each round) — not yet per-collection; see app/worker.py's own docstring.</div>
+  <div class="note">Worker pause/resume is one global toggle today — it holds every
+    collection's pipeline thread (rdf/fts) and the shared embed loop at the same gate;
+    not yet per-collection. See app/worker.py's own docstring.</div>
 </div>
 
 <div class="grid">
@@ -36,8 +37,31 @@
   <div class="stage"><div class="lbl"><span>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
-    delta freshness: {{ c.last_discover_text }} · lazy-embed queue: {{ c.queue }} pending
+    delta freshness: {{ c.last_discover_text }} ·
+    {% if c.embed_mode == 'all' %}
+      {# backfill selects from the manifest directly and never touches the
+         lazy queue, so the queue count is always 0 here and says nothing #}
+      dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
+    {% elif c.embed_mode == 'lazy' %}
+      lazy-embed queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
+    {% else %}
+      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “lazy”/“all”
+    {% endif %}
   </div>
+  {% if c.blocked %}
+  <div class="note">
+    <span class="badge err">{{ c.blocked }} blocked</span>
+    document{{ '' if c.blocked == 1 else 's' }} carry an error or exhausted their retries —
+    no stage will pick them up again, which is why the bars above stop short.
+    “clear errors &amp; retry” below puts them back in the pipeline.
+  </div>
+  {% endif %}
+  {% if c.gate and not c.gate.allowed %}
+  <div class="note">
+    <span class="badge err">embedding paused</span> the backend gate stopped this
+    collection's encoder writes: {{ c.gate.reason }}
+  </div>
+  {% endif %}
   {% if c.genesis %}
   <div class="note">
     pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.docs else '') }}">{{ c.genesis.archive }}</span>

@@ -1,5 +1,5 @@
 {% for e in events %}
-<div class="{{ e.level }}"><span class="t">{{ e.ts|int }}</span> [{{ e.stage }}{% if e.doc_uid %} #{{ e.doc_uid }}{% endif %}] {{ e.message }}</div>
+<div class="{{ e.level }}"><span class="t">{{ e.ts|int }}</span>{% if e.collection %} <span class="badge">{{ e.collection }}</span>{% endif %} [{{ e.stage }}{% if e.doc_uid %} #{{ e.doc_uid }}{% endif %}] {{ e.message }}</div>
 {% else %}
 <div class="note">no events yet</div>
 {% endfor %}

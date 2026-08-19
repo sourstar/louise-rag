@@ -45,6 +45,7 @@ from .transfer import schedule as transfer_schedule
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
+from .verify import backend_gate
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -168,6 +169,20 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
           SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done
         FROM documents""").fetchone()
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
+    # Documents no stage selector will ever pick up again (every selector
+    # filters `error IS NULL AND retries < MAX_RETRIES`). Without this the
+    # progress bars simply stop short of 100% with no stated reason, and the
+    # card's own "clear errors & retry" button looks decorative.
+    blocked = con.execute(
+        "SELECT COUNT(*) c FROM documents WHERE in_scope=1 "
+        "AND (error IS NOT NULL OR retries>=?)", (config.MAX_RETRIES,)).fetchone()["c"]
+    # What the embed stage could pick up right now — the honest backfill
+    # number under embed_mode=all, where the lazy queue is always empty
+    # because backfill selects from the manifest directly.
+    embed_ready = con.execute(
+        "SELECT COUNT(*) c FROM documents WHERE in_scope=1 AND fts_done=1 "
+        "AND error IS NULL AND retries<? AND (embed_done=0 OR embed_version<?)",
+        (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()["c"]
     space_row = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
     last_discover = con.execute(
         "SELECT ts FROM events WHERE stage='discover' ORDER BY id DESC LIMIT 1").fetchone()
@@ -196,6 +211,8 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "rdf_done": counts["rdf_done"] or 0, "fts_done": counts["fts_done"] or 0,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
+        "blocked": blocked, "embed_ready": embed_ready,
+        "gate": backend_gate.gate_state(con),
         "grow_options": _grow_options(collection),
         "license": _license_state(collection),
         "genesis": _genesis_state(con, collection),
@@ -895,6 +912,35 @@ def _recent_events(con, limit: int = 50) -> list[dict]:
         "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))]
 
 
+def _recent_events_all(limit: int = 60) -> list[dict]:
+    """Events from EVERY collection, newest first, tagged with their
+    collection.
+
+    Events live in per-collection manifests, so reading only the default
+    collection's table hid every genesis verdict, gate pause, acquisition
+    failure and import error belonging to the other collections — the
+    System page looked calm while a collection was stuck. One connection
+    per collection, `limit` rows each, merged and re-sorted here: the row
+    counts are small and the alternative (a UNION over attached databases)
+    would couple the page to every manifest being attachable at once."""
+    rows: list[dict] = []
+    for collection in collections_mod.load_all():
+        try:
+            con = db.connect(collection)
+        except Exception:   # noqa: BLE001 — a broken collection must not
+            continue        # blank the whole log
+        try:
+            for r in con.execute(
+                    "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)):
+                event = dict(r)
+                event["collection"] = collection.name
+                rows.append(event)
+        except Exception:   # noqa: BLE001 — same reasoning per collection
+            continue
+    rows.sort(key=lambda e: (e.get("ts") or 0, e.get("id") or 0), reverse=True)
+    return rows[:limit]
+
+
 @admin_router.get("/system", response_class=HTMLResponse)
 def system_page(request: Request):
     collections = collections_mod.load_all()
@@ -910,6 +956,5 @@ def system_page(request: Request):
 
 @admin_router.get("/system/log", response_class=HTMLResponse)
 def system_log_fragment(request: Request):
-    con = db.connect()
     return TEMPLATES.TemplateResponse(request, "_fragments/log_rows.html",
-                                       {"events": _recent_events(con)})
+                                       {"events": _recent_events_all()})

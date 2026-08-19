@@ -208,6 +208,27 @@ def check(collection, embed_fn=None) -> dict:
 # in-process verdict cache: collection name -> (allowed, reason, expires_at)
 _cache: dict[str, tuple[bool, str, float]] = {}
 
+# The verdict above lives in the WORKER process. The web process has no
+# access to it, so a gate pause was indistinguishable from a stalled
+# progress bar on the Library card — the operator had no way to learn that
+# embedding stopped, or why. The transition is therefore also written to
+# the collection's control table: runtime state (like worker_state), never
+# desired state, so invariant 10 is respected.
+GATE_STATE_KEY = "embed_gate"
+
+
+def gate_state(con) -> dict | None:
+    """Last recorded gate verdict for this collection: {allowed, reason,
+    ts}, or None if the gate has not reached a verdict yet (fresh manifest,
+    or BACKEND_GATE=off)."""
+    raw = db.get_control(con, GATE_STATE_KEY)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
 
 def embed_allowed(con, collection, embed_fn=None) -> bool:
     """TTL-cached gate for the worker's embed stage. Logs transitions to the
@@ -233,6 +254,11 @@ def embed_allowed(con, collection, embed_fn=None) -> bool:
         db.log_event(con, level, "backend-gate",
                      (f"[{collection.name}] embedding "
                       f"{'enabled' if allowed else 'PAUSED'}: {reason}")[:500])
+        try:
+            db.set_control(con, GATE_STATE_KEY, json.dumps(
+                {"allowed": allowed, "reason": reason[:400], "ts": int(now)}))
+        except Exception:   # noqa: BLE001 — a status write must never break
+            pass            # the gate; the next transition re-records it
     return allowed
 
 

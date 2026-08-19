@@ -7,7 +7,12 @@
   fabricated data.</p>
 
 <div class="panel">
-  <h2>Bandwidth by priority class</h2>
+  <h2>Bandwidth by priority class <span class="badge">web process only</span></h2>
+  <div class="note">These counters are <b>not</b> your corpus downloads. Acquisition runs
+    in the worker process with its own token buckets, so a multi-GB fetch in flight still
+    reads 0 B/s here — watch the Library card's “fetched” bar for that. A cross-process
+    rates feed is a later task; showing zeros without this warning read as “nothing is
+    downloading”.</div>
   <table>
     <tr><th>class</th><th>down</th><th>up</th></tr>
     <tr><td>interactive</td><td id="down-interactive">0</td><td id="up-interactive">0</td></tr>
@@ -16,9 +21,7 @@
     <tr><td>seeding</td><td id="down-seeding">0</td><td id="up-seeding">0</td></tr>
   </table>
   <div class="note" id="bw-limits">…</div>
-  <div class="note">Live via SSE from /admin/network/bandwidth/stream. These are this
-    web process's own buckets — acquisition runs in the worker process, so a
-    cross-process rates feed is a later task.</div>
+  <div class="note">Live via SSE from /admin/network/bandwidth/stream.</div>
 </div>
 
 <div class="panel">

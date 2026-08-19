@@ -35,6 +35,7 @@ import numpy as np
 
 from .. import chunking, config, db, embeddings, plugin_io
 from ..collections import recipe_for
+from . import ledger
 from .checks import check_degenerate, check_structural
 from .writer_lock import vector_write_lock
 
@@ -369,12 +370,18 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     batch_rows: list[dict] = []
     batch_native: list[int] = []
     batch_uids: list[str] = []
+    batch_chunk_ids: dict[str, list[str]] = {}
     header_dim: int | None = None
     checked_structural = False
     proven = False
+    # Provenance identity for these vectors. There is no signing key: an
+    # archive is admitted by the same-function proof, not a signature, so
+    # the producer is the archive itself and the "bundle" is one shard of it.
+    producer = f"genesis:{archive.archive_id}"
+    pseudo_bundle = f"genesis:{archive.archive_id}/{shard}"
 
     def flush():
-        nonlocal batch_rows, batch_native, batch_uids
+        nonlocal batch_rows, batch_native, batch_uids, batch_chunk_ids
         if not batch_rows:
             return
         with vector_write_lock(con):
@@ -399,7 +406,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             con.execute(
                 "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
                 "WHERE uid=?", (config.EMBED_VERSION, now, uid))
+            # These vectors were NOT computed here. Without this the Ask
+            # drawer badged every imported chunk "local ✓" — a false
+            # provenance claim, and provenance is what quarantine and §6's
+            # proof-of-forgery rest on. Marking them 'imported' also makes
+            # them eligible for verify-on-use, which is exactly right.
+            ledger.mark_imported(con, batch_chunk_ids.get(uid, []), uid,
+                                  producer, pseudo_bundle)
         batch_rows, batch_native, batch_uids = [], [], []
+        batch_chunk_ids = {}
 
     # Truncation-aware sampling (amendment 11): the local serving stack may
     # truncate shorter than the producer did, so the same-function proof
@@ -455,6 +470,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                     "lang": row["lang"] or "en", "seq": seq, "chapter": "",
                     "text": text, "vector": unit,
                 })
+                batch_chunk_ids.setdefault(uid, []).append(chunk_id)
                 chunks_written += 1
             batch_native.append(int(row["native_id"]))
             batch_uids.append(uid)
