@@ -219,7 +219,13 @@ def connect(collection=None) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    con.execute("PRAGMA busy_timeout=15000")
+    # 60s, not 15: per-collection pipeline threads mean several writers now
+    # contend for one manifest, and a discovery pass streaming millions of
+    # rows can starve a short writer well past 15s. Observed live as
+    # "corpus fetch failed: database is locked" on the acquire path — a
+    # transient loss dressed up as a failure. The PRAGMA governs; the
+    # connect(timeout=) argument above is its Python-side twin.
+    con.execute("PRAGMA busy_timeout=60000")
     con.executescript(SCHEMA)
     try:
         con.execute("ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0")

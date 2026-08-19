@@ -19,6 +19,7 @@ this, only collections[0] was ever discovered/ingested at all — a second
 configured collection was silently, permanently never touched.
 """
 import signal
+import sqlite3
 import threading
 import time
 import traceback
@@ -278,6 +279,15 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
         db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
     except (LicenseAckRequiredError, DiskPreflightError) as e:
         db.log_event(con, "error", "acquire", str(e))
+    except sqlite3.OperationalError as e:
+        # The manifest was busy past the busy timeout — a discovery pass
+        # streaming millions of rows can starve this thread. NOTHING moved
+        # and nothing is inconsistent: the claim was never taken, so this
+        # is a deferral, not a failure. The completion flag below turns
+        # into a discovery request, which starts the fetch again.
+        db.log_event(con, "warn", "acquire",
+                     f"corpus fetch ({reason}) deferred — manifest busy "
+                     f"({e}); retrying next round")
     except Exception as e:   # noqa: BLE001 — a fetch must never kill its thread silently
         db.log_event(con, "error", "acquire",
                      f"corpus fetch ({reason}) failed: {type(e).__name__}: {e}"[:400])
