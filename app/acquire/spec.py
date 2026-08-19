@@ -91,19 +91,74 @@ class AcquisitionSpec:
     delta: DeltaSpec = field(default_factory=lambda: DeltaSpec(mode="full-resync"))
     etiquette: RateLimit = field(default_factory=RateLimit)
     profiles: dict[str, Filter] = field(default_factory=dict)
-    # Profiles are INCREMENTAL by default (demo ⊂ starter ⊂ full), which is
-    # what makes "grow" meaningful: acquisition only ever adds files.
-    # exclusive_profiles=True marks a source whose profiles are ALTERNATIVES
-    # — genome, where each profile is a different assembly (§9: one
-    # collection per assembly). Growing across them is not a bigger corpus,
-    # it is a second corpus in the same collection, and for genome that
-    # silently collides: native_id is the record ordinal WITHIN a FASTA, so
-    # every assembly mints the same document ids (observed live — a `full`
-    # grow left yeast titles on human locators with yeast vectors attached).
-    exclusive_profiles: bool = False
+    # How a source's profiles relate to one another:
+    #
+    #   "incremental" — demo ⊂ starter ⊂ full. Growing means a strictly
+    #                   bigger corpus (gutenberg, pubmed, wikipedia).
+    #   "exclusive"   — alternatives that must NEVER be combined: genome,
+    #                   where each profile is an assembly and two assemblies
+    #                   in one corpus collide on native_id (the record
+    #                   ordinal within a FASTA). §9: one collection per
+    #                   assembly.
+    #   "additive"    — alternatives that MAY be combined freely: the
+    #                   pre-embedded corpus, where each profile is a language
+    #                   and the plugin encodes the language INTO native_id,
+    #                   so any set of them coexists safely. A combined
+    #                   profile is written as a comma-separated list
+    #                   ("tr,it,en") and resolves to the union of its parts.
+    profile_mode: Literal["incremental", "exclusive", "additive"] = "incremental"
     estimated_bytes: dict[str, int] = field(default_factory=dict)
     license_class: LicenseClass = LicenseClass.GREEN
     terms_text_path: Path | None = None    # required when license_class != GREEN
+
+
+PROFILE_SEP = ","
+
+
+def profile_parts(profile: str) -> list[str]:
+    return [p.strip() for p in (profile or "").split(PROFILE_SEP) if p.strip()]
+
+
+def resolve_profile(spec: AcquisitionSpec, profile: str) -> Filter:
+    """The Filter a profile name selects, resolving COMBINED profiles.
+
+    An additive source accepts "tr,it,en" and yields the union of those
+    profiles' include patterns — each language is an independent slice of
+    the same repository, and the embedded plugin encodes the language into
+    native_id, so holding several in one collection is safe by
+    construction (unlike genome, where it is not)."""
+    if profile in spec.profiles:
+        return spec.profiles[profile]
+    parts = profile_parts(profile)
+    if spec.profile_mode == "additive" and len(parts) > 1:
+        unknown = [p for p in parts if p not in spec.profiles]
+        if unknown:
+            raise ValueError(
+                f"{spec.source_id}: unknown profile(s) {', '.join(unknown)} — "
+                f"known: {', '.join(sorted(spec.profiles))}")
+        include: tuple[str, ...] = ()
+        for part in parts:
+            for pattern in spec.profiles[part].include:
+                if pattern not in include:
+                    include += (pattern,)
+        # caps are deliberately dropped: the combinable profiles are plain
+        # slice selectors, and summing two sources' caps would describe
+        # neither of them
+        return Filter(include=include)
+    raise ValueError(f"{spec.source_id}: unknown profile {profile!r}")
+
+
+def estimated_bytes_for(spec: AcquisitionSpec, profile: str) -> int | None:
+    """Declared size of a profile, summed across a combined one."""
+    if profile in spec.estimated_bytes:
+        return spec.estimated_bytes[profile]
+    parts = profile_parts(profile)
+    if spec.profile_mode == "additive" and len(parts) > 1:
+        known = [spec.estimated_bytes[p] for p in parts
+                 if p in spec.estimated_bytes]
+        if known:
+            return sum(known)
+    return None
 
 
 @dataclass(frozen=True)

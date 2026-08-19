@@ -148,7 +148,11 @@
 let WORKER_STATE="{{ worker_state }}";
 const GROW_OPTIONS={};
 const PLUGIN_PROFILES={{ plugin_profiles|tojson }};
+const PROFILE_MODE={};
+const PROFILE_HELD={};
 {% for c in shelves %}GROW_OPTIONS["{{ c.name }}"]={{ c.grow_options|tojson }};
+PROFILE_MODE["{{ c.name }}"]={{ c.profile_mode|tojson }};
+PROFILE_HELD["{{ c.name }}"]={{ c.profile_parts|tojson }};
 {% endfor %}
 function fillProfileSelect(){
   const plugin=document.getElementById('nc_plugin').value;
@@ -192,6 +196,7 @@ function openGrow(name){
       <div class="actions"><button onclick="hideModal()">Close</button></div>`);
     return;
   }
+  if(PROFILE_MODE[name]==='additive'){openGrowAdditive(name,opts);return}
   const options=opts.map((o,i)=>`<option value="${esc(o.name)}" ${i===Math.min(1,opts.length-1)?'selected':''}>${esc(o.label)}</option>`).join('');
   showModal(`<h2>Grow ${esc(name)}</h2>
     <label>Target profile</label><select id="grow_profile">${options}</select>
@@ -201,9 +206,43 @@ function openGrow(name){
     </div>
     <div id="grow_result"></div>`);
 }
+function openGrowAdditive(name,opts){
+  // profiles COMBINE here (each is a language slice): what is already held
+  // stays checked, and checking another ADDS it instead of replacing.
+  const held=new Set(PROFILE_HELD[name]||[]);
+  const rows=opts.filter(o=>o.name!=='all'&&o.name!=='demo').map(o=>
+    `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px;margin:2px 0">
+       <input type="checkbox" class="grow_lang" value="${esc(o.name)}" style="width:auto"
+              ${held.has(o.name)?'checked':''}> ${esc(o.label)}
+       ${held.has(o.name)?'<span class="badge ok">held</span>':''}
+     </label>`).join('');
+  showModal(`<h2>Grow ${esc(name)}</h2>
+    <div class="note">Each entry is an independent slice; the ones you already
+      hold stay checked. Adding one downloads it <b>beside</b> the rest — nothing
+      is replaced or removed (unchecking a held slice does not delete it,
+      it simply stops being fetched).</div>
+    <div style="max-height:260px;overflow-y:auto;margin:8px 0">${rows}</div>
+    <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="grow_all" style="width:auto"> everything (all slices)
+    </label>
+    <div class="actions">
+      <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
+      <button onclick="hideModal()">Cancel</button>
+    </div>
+    <div id="grow_result"></div>`);
+}
+function growProfileValue(name){
+  if(PROFILE_MODE[name]!=='additive'){
+    return document.getElementById('grow_profile').value.trim();
+  }
+  if(document.getElementById('grow_all').checked) return 'all';
+  const picked=[...document.querySelectorAll('.grow_lang:checked')].map(e=>e.value);
+  return picked.join(',');
+}
 async function previewGrow(name){
-  const profile=document.getElementById('grow_profile').value.trim();
+  const profile=growProfileValue(name);
   const box=document.getElementById('grow_result');
+  if(!profile){box.innerHTML='<div class="note">select at least one</div>';return}
   box.innerHTML='<div class="note">planning…</div>';
   try{
     const d=await postJSON('/admin/library/'+name+'/grow/plan',{profile});

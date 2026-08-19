@@ -24,7 +24,8 @@ from ..transfer.manager import Direction, get_manager
 from . import checksum
 from . import claim as claim_mod
 from .spec import (AcquisitionPlan, AcquisitionSpec, DiskPreflightError, Filter,
-                    LicenseAckRequiredError, RemoteFile, TransferAborted, TransportError)
+                    LicenseAckRequiredError, RemoteFile, TransferAborted, TransportError,
+                    estimated_bytes_for, resolve_profile)
 from .transports import REGISTRY
 
 _DRY_RUN_ASSUMED_RATE_BPS = 5_000_000   # ~5 MB/s — a named placeholder; P0.7 has real measurement
@@ -99,9 +100,9 @@ def make_ack(terms_text_path: Path) -> str:
 
 
 def _list_and_filter(spec: AcquisitionSpec, profile: str) -> list[RemoteFile]:
-    profile_filter = spec.profiles.get(profile)
-    if profile_filter is None:
-        raise ValueError(f"{spec.source_id}: unknown profile {profile!r}")
+    # resolve_profile also understands a COMBINED profile ("tr,it") on an
+    # additive source, where it is the union of those slices
+    profile_filter = resolve_profile(spec, profile)
     transport = REGISTRY[spec.transport]
     all_files: list[RemoteFile] = []
     seen: set[str] = set()
@@ -352,7 +353,8 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls
     # back to the precise listing-derived pending-bytes sum otherwise.
-    needed = spec.estimated_bytes.get(profile, plan.bytes_pending)
+    declared = estimated_bytes_for(spec, profile)
+    needed = plan.bytes_pending if declared is None else declared
     free = shutil.disk_usage(collection.corpus_dir).free
     if free < needed * _DISK_HEADROOM:
         raise DiskPreflightError(

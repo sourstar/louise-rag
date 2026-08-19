@@ -43,6 +43,7 @@ from . import (auth, collections as collections_mod, config, db, discovery,
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import engine as acquire_engine
+from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .verify import backend_gate
@@ -147,17 +148,28 @@ def _profile_order(plugin: str) -> list[dict]:
 
 
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
-    """Current profile and larger — never smaller: acquisition only adds
-    files, so 'rolling back' a profile wouldn't shrink anything and would
-    only misdescribe the corpus. The current profile stays offered as a
-    re-sync/top-up."""
+    """What "grow" may offer, which depends on how the source's profiles
+    relate (spec.profile_mode):
+
+    incremental — the current profile and larger, never smaller:
+                  acquisition only adds files, so rolling back would shrink
+                  nothing and only misdescribe the corpus. The current one
+                  stays offered as a re-sync/top-up.
+    exclusive   — nothing: growing would drop a SECOND corpus into the
+                  collection (genome, where two assemblies collide on
+                  document ids). A new assembly is a new collection.
+    additive    — every profile, in size order, as an independent choice:
+                  the caller combines them ("tr,it,en"), so a language
+                  already held stays checked and a new one is added rather
+                  than replacing it.
+    """
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
-    if spec is not None and spec.exclusive_profiles:
-        # profiles are ALTERNATIVES, not increments (genome: one assembly
-        # each). "Growing" would drop a second corpus into this collection,
-        # which for genome silently collides on document ids — a new
-        # assembly is a new collection.
+    if spec is None:
         return []
+    if spec.profile_mode == "exclusive":
+        return []
+    if spec.profile_mode == "additive":
+        return _profile_order(collection.plugin)
     order = _profile_order(collection.plugin)
     current = collection.profile
     names = [o["name"] for o in order]
@@ -218,6 +230,8 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "rdf_done": counts["rdf_done"] or 0, "fts_done": counts["fts_done"] or 0,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
+        "profile_mode": (spec.profile_mode if spec else "incremental"),
+        "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "embed_ready": embed_ready,
         "gate": backend_gate.gate_state(con),
         # which processor this collection's encoder spends — the GPU is the
@@ -310,9 +324,12 @@ def grow_run(name: str, body: GrowBody):
     moved corpus bytes in the wrong process."""
     collection = _collection_or_404(name)
     spec = _spec_or_400(collection)
-    if body.profile not in spec.profiles:
-        raise HTTPException(400, f"unknown profile {body.profile!r} — "
-                                  f"known: {', '.join(spec.profiles)}")
+    try:
+        # accepts a COMBINED profile ("tr,it,en") on an additive source,
+        # where growing means adding a language rather than replacing one
+        acquire_spec.resolve_profile(spec, body.profile)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file (synthesized "

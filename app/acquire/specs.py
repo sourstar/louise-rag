@@ -129,7 +129,7 @@ GENOME_SPEC = AcquisitionSpec(
         "dm6": Filter(include=("dm6/*",)),           # fly, 140 Mbp
         "hg38": Filter(include=("hg38/*",)),         # human GRCh38, 3.1 Gbp
     },
-    exclusive_profiles=True,                 # alternatives, never increments
+    profile_mode="exclusive",                # never combine two assemblies
     estimated_bytes={
         "demo": 4_000_000, "sacCer3": 4_000_000,
         "dm6": 50_000_000, "hg38": 1_000_000_000,
@@ -169,6 +169,11 @@ EMBEDDED_SPEC = AcquisitionSpec(
            for lang in _EMBEDDED_LANG_BYTES},
         "all": Filter(),
     },
+    # languages COMBINE: each is an independent slice of the same repo, and
+    # the plugin encodes the language into native_id, so "tr,it,en" is a
+    # perfectly coherent corpus. Growing adds a language rather than
+    # replacing one.
+    profile_mode="additive",
     estimated_bytes={
         "demo": _EMBEDDED_LANG_BYTES["tr"],
         **_EMBEDDED_LANG_BYTES,

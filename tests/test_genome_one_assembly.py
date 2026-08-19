@@ -66,14 +66,14 @@ def test_assembly_of_reads_the_stem():
 def test_genome_profiles_are_alternatives_never_increments():
     """Each profile is ONE assembly, and the spec says so, so the UI's
     grow flow cannot offer a second corpus into the same collection."""
-    assert GENOME_SPEC.exclusive_profiles is True
+    assert GENOME_SPEC.profile_mode == "exclusive"
     for name, f in GENOME_SPEC.profiles.items():
         assert len(f.include) == 1, f"profile {name!r} stacks assemblies"
     assert set(GENOME_SPEC.profiles) == {"demo", "sacCer3", "dm6", "hg38"}
-    # every other source stays incremental
+    # genome is the ONLY source that must never combine profiles
     for plugin, spec in ACQUIRE_REGISTRY.items():
         if plugin != "genome":
-            assert spec.exclusive_profiles is False
+            assert spec.profile_mode != "exclusive"
 
 
 def test_grow_offers_nothing_for_exclusive_profiles(isolated_config, tmp_path):
