@@ -336,12 +336,43 @@ def apply_reset(con, stage: str, book_ids: list[int]) -> None:
     else:
         raise ValueError(f"unknown stage: {stage}")
 
+WORKER_STATE_KEY = "worker_state"
+
 def worker_state(con) -> str:
-    return get_control(con, "worker_state", "paused")
+    return get_control(con, WORKER_STATE_KEY, "paused")
 
 def set_worker_state(con, state: str):
     assert state in ("running", "paused")
-    set_control(con, "worker_state", state)
+    set_control(con, WORKER_STATE_KEY, state)
+
+# Control keys that describe the NODE, not a collection. They live in the
+# control table of whichever collection the worker resolves FIRST, which is
+# an accident of sort order — `scope` (embed_mode) and `embed_gate` are
+# genuinely per-collection and must never be adopted this way.
+NODE_CONTROL_KEYS = (WORKER_STATE_KEY, BANDWIDTH_OVERRIDE_KEY)
+
+def adopt_node_control(target_con, other_cons) -> dict[str, str]:
+    """Carry node-level control state to the collection that now owns it.
+
+    Observed live: wiping the derived data of the alphabetically-first
+    collection (a genome repair) emptied its control table, so
+    worker_state fell back to its default 'paused' and the WHOLE node
+    stopped — five collections, no log line, nothing obviously wrong. The
+    same fires when that collection is simply removed. Node state must
+    follow the node, so a control collection missing a node key adopts it
+    from a sibling; a key the control collection already has always wins
+    (an explicit pause is never overridden by a stale sibling value)."""
+    adopted: dict[str, str] = {}
+    for key in NODE_CONTROL_KEYS:
+        if get_control(target_con, key) is not None:
+            continue
+        for con in other_cons:
+            value = get_control(con, key)
+            if value is not None:
+                set_control(target_con, key, value)
+                adopted[key] = value
+                break
+    return adopted
 
 # ---------------- events ----------------
 

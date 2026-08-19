@@ -700,6 +700,9 @@ def run_forever():
     last_discover.update({c.name: time.time() for c in all_collections})
     last_idle_log: dict[str, float] = {}
     control_con = cons[all_collections[0].name]
+    # None, not the current name: the first round must run the adoption
+    # (this startup may be the one that follows the wipe)
+    last_control_name: str | None = None
 
     while not _stop.is_set():
         try:
@@ -711,8 +714,21 @@ def run_forever():
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue
             # re-resolved each round: the previous control collection may
-            # have been removed mid-run
-            control_con = cons[all_collections[0].name]
+            # have been removed mid-run. Whoever owns it now inherits the
+            # node's control state, so pause/bandwidth survive a wiped or
+            # removed first collection instead of silently defaulting to
+            # 'paused' and stopping every collection.
+            control_name = all_collections[0].name
+            control_con = cons[control_name]
+            if control_name != last_control_name:
+                adopted = db.adopt_node_control(
+                    control_con,
+                    [cons[c.name] for c in all_collections[1:] if c.name in cons])
+                if adopted:
+                    db.log_event(control_con, "info", "worker",
+                                 f"node control state now owned by "
+                                 f"{control_name!r}; adopted {sorted(adopted)}")
+                last_control_name = control_name
             # Tier-3 "boost bandwidth tonight" reaches the byte-moving process
             # here: the web process writes it to the control table, the worker
             # applies it. Re-read each round so it takes effect within one
