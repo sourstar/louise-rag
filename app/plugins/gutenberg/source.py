@@ -8,8 +8,10 @@ I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
 """
 import hashlib
+import time
 from pathlib import Path
 
+from .. import cursor
 from ..base import CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
 from . import pg_text, rdf
 
@@ -24,9 +26,26 @@ class GutenbergSource:
         root = state.corpus_root
         if not root.is_dir():
             return
+        # Scan cursor, like every other plugin: a book directory whose
+        # (mtime, size) is unchanged is skipped without stat-ing its
+        # contents. Gutenberg was the last plugin re-examining its whole
+        # corpus on every scan — 79k directories, which cost ~5 minutes on
+        # an idle pool and 25+ minutes once wikivec/pubmed/wikipedia were
+        # saturating the same spindles (~150 IOPS, measured).
+        #
+        # A DIRECTORY's mtime is the right signature because every way this
+        # platform writes a book lands with a rename into that directory
+        # (the rsync transport stages then os.replace()s), and a rename
+        # changes it. An external mirror rewriting a file IN PLACE would
+        # not be seen — the Library's "rescan" button clears the cursor for
+        # exactly that case.
+        scan = cursor.load(state.state_dir, self.source_id)
+        started_ns = time.time_ns()   # see cursor.mark_if_settled
         stubs = 0
         for entry in root.iterdir():
             if not entry.is_dir() or not entry.name.isdigit():
+                continue
+            if cursor.unchanged(scan, entry):
                 continue
             book_id = int(entry.name)
             # One pass answers both questions (see pg_text.scan_dir): where
@@ -39,6 +58,11 @@ class GutenbergSource:
             # errors & retry" could never fix (the next scan re-applied the
             # error) and that held every progress bar short of 100%.
             txt, is_stub = pg_text.scan_dir(entry, book_id)
+            # marked either way: a stub examined once should not be
+            # re-examined until something lands in it. mark_if_settled
+            # declines when the directory changed during this scan, so a
+            # concurrent rsync cannot make us skip it forever.
+            cursor.mark_if_settled(scan, entry, started_ns)
             if is_stub:
                 stubs += 1
                 continue
@@ -54,12 +78,13 @@ class GutenbergSource:
                          locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
                          extra={"txt_name": txt.name})
         if stubs:
-            # one scan report, not 34,800 documents
+            # one scan report, not 21,000 documents
             yield DocRef(source_id=self.source_id, native_id="(scan)",
                          locator=str(root), scope="container",
                          error=f"skipped {stubs} empty book director"
                                f"{'y' if stubs == 1 else 'ies'} (transfer "
                                f"stubs: the mirror had no .txt/.rdf to copy)")
+        cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:
         txt = pg_text.find_txt(Path(ref.locator), int(ref.native_id))

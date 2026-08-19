@@ -387,8 +387,20 @@ def library_reset(name: str, body: LibraryResetBody):
 
 @admin_router.post("/library/{name}/discover")
 def library_discover(name: str):
+    """"Rescan" means FULL rescan: the scan cursor is cleared first.
+
+    Every plugin skips containers/book directories whose (mtime, size) is
+    unchanged, which is what makes repeat scans cheap — but it cannot see a
+    file rewritten in place by something outside the platform. Without this
+    the button would re-run the same cheap stat pass and appear to do
+    nothing, which is exactly when an operator reaches for it."""
     collection = _collection_or_404(name)
     con = db.connect(collection)
+    from .plugins import cursor as scan_cursor
+    cleared = scan_cursor.clear(collection.manifest_path.parent, collection.plugin)
+    if cleared:
+        db.log_event(con, "info", "discover",
+                     "scan cursor cleared — this rescan re-examines everything")
     return discovery.sync_collection(con, collection)
 
 
