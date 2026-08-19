@@ -81,11 +81,17 @@ def test_reserve_interactive_rejects_100_percent(cfg_dir):
         platform_config.load()
 
 
-def test_segments_per_file_above_one_refuses_loudly(cfg_dir):
-    """§5.2 defaults it to 1 and calls multi-segment default-off; refusing
-    beats silently ignoring the knob."""
+def test_segments_per_file_is_accepted_up_to_the_etiquette_ceiling(cfg_dir):
+    """§5.2 defaults it to 1 and calls multi-segment downloads default-off
+    against origins — off by default, but no longer refused: the segmented
+    path exists (tests/acquire/test_segments.py). What stays refused is a
+    number past the connection ceiling, which is politeness, not tuning."""
     (cfg_dir / "platform.toml").write_text('[transfer]\nsegments_per_file = 4\n')
-    with pytest.raises(sched.ScheduleError, match="not implemented in P0.7"):
+    assert platform_config.load().transfer.segments_per_file == 4
+
+    (cfg_dir / "platform.toml").write_text(
+        f'[transfer]\nsegments_per_file = {platform_config.MAX_SEGMENTS_PER_FILE + 1}\n')
+    with pytest.raises(sched.ScheduleError, match="ceiling"):
         platform_config.load()
 
 

@@ -23,6 +23,7 @@ fabricating one.
 """
 import json
 import re
+import sqlite3
 import secrets
 import shutil
 import tarfile
@@ -870,12 +871,39 @@ def _bandwidth_payload() -> dict:
     inside a worker thread can't be reliably cancelled mid-sleep by anyio, so
     driving the real endpoint to completion in-process is a hang risk).
 
-    Note this reports the WEB process's own buckets. Acquisition runs in the
-    worker process, so its bytes appear here only for transfers the web
-    process itself performs; a cross-process rates feed is a later task and is
-    labelled as such in the UI rather than silently implied.
+    Reports BOTH processes. A token bucket is per-process state, and the
+    bytes an operator cares about — acquisition, seeding — move in the
+    worker, so this used to be a flat zero line next to a saturated link.
+    The worker publishes its own rates to the control table each loop
+    (db.publish_worker_rates) and they are summed in here per class.
+
+    The worker's contribution is dropped, not carried forward, once its
+    sample goes stale: a frozen number on a live graph reads as traffic that
+    is not happening. `worker` in the payload says which of those two
+    situations the reader is looking at, so the UI never has to guess.
     """
-    return transfer_manager.get_manager().rates()
+    payload = transfer_manager.get_manager().rates()
+    try:
+        worker_rates, age = db.read_worker_rates(db.connect())
+    except sqlite3.Error:
+        # the manifest being briefly unavailable must not break the graph
+        worker_rates, age = None, None
+    if worker_rates:
+        for direction in ("down", "up"):
+            mine = payload.get(direction, {})
+            theirs = worker_rates.get(direction, {}) or {}
+            for cls, value in theirs.items():
+                try:
+                    mine[cls] = round(mine.get(cls, 0.0) + float(value), 1)
+                except (TypeError, ValueError):
+                    continue
+            payload[direction] = mine
+    payload["worker"] = {
+        "reporting": bool(worker_rates),
+        "age_seconds": round(age, 1) if age is not None else None,
+        "max_age_seconds": db.WORKER_RATES_MAX_AGE_S,
+    }
+    return payload
 
 
 @admin_router.get("/network/bandwidth/stream")

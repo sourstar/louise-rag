@@ -7,12 +7,12 @@
   fabricated data.</p>
 
 <div class="panel">
-  <h2>Bandwidth by priority class <span class="badge">web process only</span></h2>
-  <div class="note">These counters are <b>not</b> your corpus downloads. Acquisition runs
-    in the worker process with its own token buckets, so a multi-GB fetch in flight still
-    reads 0 B/s here — watch the Library card's “fetched” bar for that. A cross-process
-    rates feed is a later task; showing zeros without this warning read as “nothing is
-    downloading”.</div>
+  <h2>Bandwidth by priority class <span class="badge" id="bw-scope">both processes</span></h2>
+  <div class="note">Corpus downloads included: a token bucket is per-process state, and
+    acquisition and seeding move their bytes in the <b>worker</b>, so the worker publishes
+    its own rates each loop and they are summed in here. If the worker stops reporting
+    these become web-process-only figures and the badge above says so — a frozen number
+    on a live graph would read as traffic that is not happening.</div>
   <table>
     <tr><th>class</th><th>down</th><th>up</th></tr>
     <tr><td>interactive</td><td id="down-interactive">0</td><td id="up-interactive">0</td></tr>
@@ -59,6 +59,14 @@ try{
       for(const k of ['interactive','delta','backfill','seeding']){
         const dn=document.getElementById('down-'+k); if(dn) dn.textContent=rate(d.down&&d.down[k]);
         const up=document.getElementById('up-'+k); if(up) up.textContent=rate(d.up&&d.up[k]);
+      }
+      const w=d.worker||{}, badge=document.getElementById('bw-scope');
+      if(badge){
+        badge.textContent=w.reporting?'both processes':'web process only — worker silent';
+        badge.title=w.reporting
+          ? 'worker sample '+(w.age_seconds??'?')+'s old'
+          : 'no worker sample within '+(w.max_age_seconds??'?')+'s: it is stopped, '
+            +'paused before its first loop, or cannot write the control table';
       }
       const lim=d.limits||{};
       document.getElementById('bw-limits').textContent=

@@ -45,8 +45,23 @@ workers = 8
 # Endpoint.max_conns and the spec's RateLimit.max_conns — parallelism never
 # overrides origin etiquette.
 per_endpoint = 4
-# Multi-connection downloads of a SINGLE file. Only 1 is supported; a higher
-# value is refused at load rather than silently ignored.
+# Multi-connection downloads of a SINGLE file: N concurrent Range requests
+# for disjoint slices, written straight into their final offsets.
+#
+# Default 1, deliberately (§5.2: "default-off against origins"). It buys
+# nothing on a link the origin can already saturate — it helps when a single
+# stream is capped well below your line, which is a per-mirror property, not
+# a general one. Every extra socket is a cost the origin pays.
+#
+# Three ceilings apply whatever you write here: this number, the endpoint's
+# own allowance (per_endpoint / Endpoint.max_conns / the source's
+# RateLimit.max_conns), and a 32 MB size floor below which files are never
+# split. Values above 8 are refused — past a handful of connections one
+# client stops being a polite peer.
+#
+# Interrupted segmented downloads resume per segment via a small
+# `<file>.segments.json` sidecar beside the .part file; an origin that
+# ignores Range falls back to a single stream automatically.
 segments_per_file = 1
 
 # ---------------------------------------------------------------------------

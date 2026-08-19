@@ -61,15 +61,31 @@ class _Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         total = len(data)
         start = 0
+        end = total - 1
         range_header = self.headers.get("Range")
-        if range_header and range_header.startswith("bytes="):
-            start = int(range_header.split("=", 1)[1].split("-", 1)[0])
+        # `no_ranges` models an origin that ignores Range entirely and answers
+        # 200 with the whole file — legal HTTP, and fatal to a segmented
+        # download, so the client has to detect it and fall back.
+        if range_header and range_header.startswith("bytes=") and name not in server.no_ranges:
+            spec = range_header.split("=", 1)[1]
+            raw_start, _, raw_end = spec.partition("-")
+            start = int(raw_start or 0)
+            # A CLOSED range ("bytes=0-999") is a partial request even when it
+            # starts at zero; only an open-ended one from zero is the whole
+            # file. Segmented downloads send closed ranges for every slice.
+            if raw_end:
+                end = min(int(raw_end), total - 1)
             server.last_range_header[name] = range_header
-        remaining = data[start:]
+            with server.lock:
+                server.range_requests.setdefault(name, []).append(range_header)
+        else:
+            range_header = None
+        remaining = data[start:end + 1]
 
-        if range_header and start > 0:
+        partial = range_header is not None and (start > 0 or end < total - 1)
+        if partial:
             self.send_response(206)
-            self.send_header("Content-Range", f"bytes {start}-{total - 1}/{total}")
+            self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
         else:
             self.send_response(200)
         self.send_header("Content-Length", str(len(remaining)))  # the TRUE promised length
@@ -114,6 +130,8 @@ class MockServer:
         self.drip_rates: dict[str, float] = {}
         self.request_counts: dict[str, int] = {}
         self.last_range_header: dict[str, str] = {}
+        self.range_requests: dict[str, list[str]] = {}
+        self.no_ranges: set[str] = set()     # names served without Range support
         self.last_user_agent: dict[str, str | None] = {}
         self.redirects: dict[str, str] = {}
         self.lock = threading.Lock()

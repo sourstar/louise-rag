@@ -290,6 +290,49 @@ def node_id(con) -> str:
     set_control(con, "node_id", fresh)
     return fresh
 
+WORKER_RATES_KEY = "worker_rates"
+# How long a published sample stays believable. The worker republishes once
+# per loop; past this it is reported as stale and counted as zero, because a
+# frozen number on a live graph is worse than an honest gap.
+WORKER_RATES_MAX_AGE_S = 20.0
+
+def publish_worker_rates(con, payload: dict) -> None:
+    """The worker's own per-class byte rates, for the web process to read.
+
+    Bytes move in the WORKER process (acquisition, seeding); the Network page
+    is served by the WEB process, and a token bucket is per-process state.
+    Without this the graph shows only the web process's own transfers — which
+    for a node that is downloading 80 GB is a flat zero line next to a
+    saturated link.
+
+    This is TELEMETRY, not configuration: a measurement of what happened,
+    overwritten every loop, meaningless after a restart. CLAUDE.md invariant
+    10 forbids writing desired STATE into the DB; an observation is not
+    state, and it is deliberately not in NODE_CONTROL_KEYS — carrying a
+    stale reading to a new owner would only publish a lie for one round.
+    """
+    set_control(con, WORKER_RATES_KEY,
+                json.dumps({"at": time.time(), "rates": payload}))
+
+def read_worker_rates(con, max_age_s: float = WORKER_RATES_MAX_AGE_S
+                       ) -> tuple[dict | None, float | None]:
+    """(rates, age_seconds), or (None, age) when there is no believable
+    sample — no worker has ever published, the value is malformed, or it is
+    older than max_age_s. Never raises: a bad reading must not be able to
+    break the Network page."""
+    raw = get_control(con, WORKER_RATES_KEY)
+    if not raw:
+        return None, None
+    try:
+        payload = json.loads(raw)
+        age = max(0.0, time.time() - float(payload["at"]))
+        rates = payload["rates"]
+        if not isinstance(rates, dict):
+            return None, age
+    except (ValueError, TypeError, KeyError):
+        return None, None
+    return (rates, age) if age <= max_age_s else (None, age)
+
 BANDWIDTH_OVERRIDE_KEY = "bandwidth_override"
 
 def set_bandwidth_override(con, rate_bps: float | None, ttl_seconds: int = 12 * 3600) -> None:

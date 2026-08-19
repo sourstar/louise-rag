@@ -34,6 +34,9 @@ from .transfer import schedule as schedule_mod
 DEFAULT_WORKERS = 8
 DEFAULT_PER_ENDPOINT = 4
 DEFAULT_RESERVE_INTERACTIVE = 0.20   # §5.2: "a reserved interactive headroom (~20%)"
+# Hard ceiling on connections opened for ONE file. Not a performance limit —
+# an etiquette one. Origins see per-client connection counts, not intentions.
+MAX_SEGMENTS_PER_FILE = 8
 
 
 @dataclass(frozen=True)
@@ -164,13 +167,16 @@ def _load_one(path: Path) -> PlatformConfig:
     )
 
     segments = _positive_int(tr_raw, "segments_per_file", 1)
-    if segments != 1:
-        # §5.2 defaults this to 1 and calls multi-segment downloads "default-off
-        # against origins". Refusing loudly beats silently ignoring the knob.
+    if segments > MAX_SEGMENTS_PER_FILE:
+        # §5.2 calls multi-segment downloads "default-off against origins".
+        # They stay opt-in, and the ceiling is etiquette: past a handful of
+        # connections one client stops being a polite peer and starts being
+        # a small denial of service, with no throughput to show for it.
         raise schedule_mod.ScheduleError(
-            f"segments_per_file={segments} is not implemented in P0.7 "
-            f"(single-file multi-connection downloads are a later task); "
-            f"only segments_per_file=1 is supported")
+            f"segments_per_file={segments} exceeds the {MAX_SEGMENTS_PER_FILE} "
+            f"connection ceiling for a single file (§5.2: default-off against "
+            f"origins). Raise per_endpoint if you want more parallelism ACROSS "
+            f"files — that is the axis origins mind less.")
     transfer = TransferConfig(
         workers=_positive_int(tr_raw, "workers", DEFAULT_WORKERS),
         per_endpoint=_positive_int(tr_raw, "per_endpoint", DEFAULT_PER_ENDPOINT),

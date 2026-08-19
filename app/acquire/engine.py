@@ -23,6 +23,8 @@ from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 from . import checksum
 from . import claim as claim_mod
+from . import transport_https
+from .transport_https import RangeUnsupported
 from .spec import (AcquisitionPlan, AcquisitionSpec, DiskPreflightError, Filter,
                     LicenseAckRequiredError, RemoteFile, TransferAborted, TransportError,
                     estimated_bytes_for, resolve_profile)
@@ -295,6 +297,27 @@ def _build_work_items(files: list[RemoteFile], pending: set[str],
     return items
 
 
+_SEGMENT_MIN_BYTES = 32 << 20    # below this, splitting costs more than it saves
+
+
+def _segments_for(manager, endpoint, spec, f: RemoteFile) -> int:
+    """How many connections to open for ONE file.
+
+    Three ceilings, all of them etiquette rather than performance:
+      - the operator's opt-in (platform.toml transfer.segments_per_file,
+        default 1 — §5.2 keeps this default-off against origins)
+      - the endpoint's own connection allowance, so splitting a file can
+        never smuggle in more sockets than `per_endpoint`, Endpoint.max_conns
+        and the spec's RateLimit.max_conns already permit
+      - a size floor: three extra round trips to parallelise a 2 MB file is
+        cost with no benefit
+    """
+    configured = manager.platform.transfer.segments_per_file
+    if configured <= 1 or not f.size or f.size < _SEGMENT_MIN_BYTES:
+        return 1
+    return max(1, min(configured, manager.endpoint_slots(endpoint, spec)))
+
+
 def _adopt_one_file(f: RemoteFile, collection, spec: AcquisitionSpec) -> _FileResult | None:
     """Record an already-present file as fetched, moving zero bytes.
 
@@ -343,7 +366,23 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
     # within the same run would otherwise resume from a stale offset.
     resume_from = part.stat().st_size if part.is_file() else 0
     started = time.monotonic()
+    segments = _segments_for(manager, endpoint, spec, f)
     try:
+        if segments > 1:
+            try:
+                size = transport.fetch_segments(endpoint, f, dest, segments)
+                manager.record_throughput(endpoint_key, size,
+                                          time.monotonic() - started)
+                return _FileResult(remote=f, endpoint_url=endpoint.url,
+                                    status="fetched", size=size,
+                                    digest=checksum.digest_and_verify(dest, spec.checksums))
+            except RangeUnsupported:
+                # The origin will not serve ranges. Clear the segmented
+                # scratch state — its offsets describe a layout we are
+                # abandoning — and fall through to one stream.
+                part.unlink(missing_ok=True)
+                transport_https._sidecar_path(dest).unlink(missing_ok=True)
+                resume_from = 0
         size = transport.fetch_one(endpoint, f, dest, resume_from)
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.

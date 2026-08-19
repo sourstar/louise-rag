@@ -711,3 +711,76 @@ design taste:
     encoder — otherwise a residual candidate the archive can never cover
     (a shard-boundary straddler) makes the drain claim every round
     forever and the gap-fill amendment 11 promises never happens.
+18. **§5.1 — acquisition ADOPTS files already on disk.** A corpus arrives
+    by routes the engine does not control: a dataset copied from another
+    machine, a `zfs send` of someone else's mirror, files staged by hand
+    before the collection existed. A destination file present at exactly
+    the origin's declared size is now verified and recorded rather than
+    re-downloaded — re-fetching 238 GB that is already on the disk is a
+    week of somebody's uplink for no change in state. The shortcut is
+    past the *transfer* only: adoption runs the same
+    `checksum.digest_and_verify` a fetch runs, and a file that fails it
+    goes back on the download path. `AcquisitionPlan` reports
+    `files_adoptable` / `bytes_adoptable`, and those bytes are excluded
+    from `bytes_pending`, so the ETA and the disk preflight describe the
+    bytes that will actually move.
+19. **§14 Tier 2 — per-PLUGIN default embed recipes.** platform.toml
+    gains `[embed_defaults.<plugin>]`, resolved as: the collection's own
+    `[embed]` block, then the node's per-plugin default, then Tier-1 env
+    — each step a fallback for the one before it, never an override
+    (invariant 10). Amendment 9 made the recipe per collection; this
+    covers the gap it left, which is what a collection gets at BIRTH.
+    Env is the node's text encoder, and not every plugin embeds text: two
+    genome collections created from the UI pinned a Qwen3 text space over
+    DNA, which is not a worse choice but a meaningless one. The endpoint
+    URL is deployment-specific, so this is a node file and never repo
+    content.
+20. **§15 — a collection is created against a chosen corpus folder or not
+    at all.** The create flow's "(default — under the shared corpus
+    root)" invented a path present in no container; the collection was
+    born pointing at nothing and said so only one discovery round later,
+    as "corpus dir not found". Selection is now mandatory in both the
+    form and the endpoint, and the refusal names the free mounts.
+21. **§9 — the assembly catalogue is the full UCSC set.** 25 assemblies
+    (yeast through opossum) from one table that feeds `static_files`,
+    `profiles` and `estimated_bytes` together, with real probed
+    Content-Lengths rather than estimates — the budget planner shows
+    those numbers to an operator before a fetch, and a guessed one is a
+    lie they plan a night's download around. `profile_mode="exclusive"`
+    is unchanged: a profile is an assembly, and a second assembly in one
+    corpus collides on `native_id`. `AcquisitionSpec.profile_labels`
+    carries the organism, since "monDom5" is a correct and unreadable
+    name for a possum.
+22. **§5.2 — the third parallelism axis is implemented, still
+    default-off.** `transfer.segments_per_file > 1` splits ONE file
+    across concurrent Range requests, written straight into their final
+    offsets in a preallocated `.part` (concatenating per-segment files
+    would need a second full-size copy on disk — 110 GB transient for a
+    55 GB dump — and a second pass over every byte). Per-segment resume
+    therefore cannot be inferred from file length and lives in a
+    `<file>.segments.json` sidecar, written *after* the bytes it
+    describes are fsynced so a crash can only leave it lagging;
+    re-downloading a lagging segment rewrites identical bytes at
+    identical offsets. Segment threads copy the transfer ContextVar
+    explicitly — threads do not inherit it, and without that every
+    segment would meter itself as an unbound BACKFILL caller and ignore
+    SIGTERM. Segment count is capped by the endpoint's existing
+    connection allowance, so splitting a file can never smuggle in more
+    sockets than politeness already permits, and by a hard ceiling of 8.
+23. **§15 — the Network page reports both processes.** A token bucket is
+    per-process state and the bytes an operator cares about move in the
+    *worker*, so the bandwidth panel showed a flat zero line beside a
+    saturated link. The worker publishes its per-class rates to the
+    control table each loop (telemetry, not desired state) and the web
+    process sums them in; a sample past its max age is dropped rather
+    than carried forward, because a frozen number on a live graph reads
+    as traffic that is not happening.
+24. **§6 / CLAUDE.md style — Greek is stemmed by PyStemmer.** tantivy
+    vendors rust-stemmers 1.2.0, dormant since 2019, whose Greek
+    algorithm panics on ordinary words; a panic crossing the FFI
+    boundary costs the whole document. Greek moved to libstemmer in our
+    own process (`config.PYSTEM_LANGS`), which stems the crashing word
+    and agrees with rust-stemmers everywhere rust-stemmers works. Adding
+    a language to that set changes its index schema, so the mechanism is
+    general but the list is short by choice — see
+    [`upstream-rust-stemmers-greek.md`](upstream-rust-stemmers-greek.md).

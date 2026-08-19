@@ -783,6 +783,12 @@ def run_forever():
             # applies it. Re-read each round so it takes effect within one
             # document and expires on its own.
             get_manager().set_override(db.get_bandwidth_override(control_con))
+            # ...and the same channel carries the measurement back the other
+            # way: acquisition and seeding move their bytes HERE, so without
+            # this the Network page's graph is a flat zero beside a saturated
+            # link. Published every round, including while paused (a paused
+            # node moving no bytes is a true and useful reading).
+            db.publish_worker_rates(control_con, get_manager().rates())
             state = db.worker_state(control_con)
             if state == "paused":
                 _paused.set()       # pipeline threads idle at the same gate
