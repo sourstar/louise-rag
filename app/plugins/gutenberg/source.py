@@ -29,18 +29,19 @@ class GutenbergSource:
             if not entry.is_dir() or not entry.name.isdigit():
                 continue
             book_id = int(entry.name)
-            # An EMPTY directory is not a book we hold — it is a transfer
-            # stub. rsync creates the directory tree and then copies only
-            # files matching the spec filter (*.txt*, *.rdf), so a title
-            # published solely as epub/mobi/html leaves an empty directory
-            # behind. Minting a document for it produced ~34,800 permanently
-            # errored rows on the live node that "clear errors & retry"
-            # could never fix (the next scan re-applied the error) and that
-            # held every progress bar short of 100% for no stated reason.
-            if not any(entry.iterdir()):
+            # One pass answers both questions (see pg_text.scan_dir): where
+            # the text is, and whether this is an EMPTY directory — a
+            # transfer stub, not a book we hold. rsync creates the directory
+            # tree and then copies only files matching the spec filter
+            # (*.txt*, *.rdf), so a title published solely as epub/mobi/html
+            # leaves an empty one behind. Minting a document for it produced
+            # ~21,000 permanently errored rows on the live node that "clear
+            # errors & retry" could never fix (the next scan re-applied the
+            # error) and that held every progress bar short of 100%.
+            txt, is_stub = pg_text.scan_dir(entry, book_id)
+            if is_stub:
                 stubs += 1
                 continue
-            txt = pg_text.find_txt(entry, book_id)
             if txt is None:
                 # files present but no text: a real Gutenberg entry whose
                 # text we cannot index (metadata-only, or an unsupported

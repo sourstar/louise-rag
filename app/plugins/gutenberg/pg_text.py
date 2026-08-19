@@ -19,16 +19,36 @@ _CHAPTER = re.compile(
     re.I | re.M,
 )
 
-def find_txt(book_dir: Path, book_id: int) -> Path | None:
+def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool]:
+    """(text file or None, directory_is_empty) — at most ONE listing.
+
+    The canonical names are probed by stat first, which is the overwhelming
+    common case and lists nothing at all. Only when they all miss do we list
+    the directory, and that single listing answers both remaining questions:
+    "is there some other text file" and "is this an empty transfer stub"
+    (rsync creates the directory, then copies only files matching the spec
+    filter, so a title published solely as epub/mobi leaves an empty one).
+
+    Discovery asks both questions for all ~79k books on every cold scan, so
+    doing them in one pass is the difference between one stat and two full
+    directory listings per book.
+    """
     for name in (f"pg{book_id}.txt.utf8", f"pg{book_id}.txt.utf-8", f"pg{book_id}.txt"):
         p = book_dir / name
         if p.is_file():
-            return p
-    # fall back to any .txt-ish file in the directory
-    for p in sorted(book_dir.glob("*.txt*")):
-        if p.is_file() and "readme" not in p.name.lower():
-            return p
-    return None
+            return p, False
+    entries = sorted(book_dir.iterdir())
+    if not entries:
+        return None, True
+    # fall back to any .txt-ish file (the old glob("*.txt*"), same order)
+    for p in entries:
+        if ".txt" in p.name and "readme" not in p.name.lower() and p.is_file():
+            return p, False
+    return None, False
+
+
+def find_txt(book_dir: Path, book_id: int) -> Path | None:
+    return scan_dir(book_dir, book_id)[0]
 
 def read_clean(path: Path) -> str:
     raw = path.read_bytes()
