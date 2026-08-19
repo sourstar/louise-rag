@@ -24,6 +24,7 @@ manifest rows rebuild refs with nothing but the locator (plugin_io).
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 
 from .. import cursor
@@ -114,6 +115,7 @@ class EmbeddedSource:
             return
         shards = sorted(p for p in root.rglob("*.parquet") if p.is_file())
         scan = cursor.load(state.state_dir, self.source_id)
+        started_ns = time.time_ns()   # see cursor.mark_if_settled
         # carry the last article of a shard into the next shard's scan so a
         # boundary-straddling article becomes ONE ref with two segments
         pending: dict | None = None
@@ -166,7 +168,7 @@ class EmbeddedSource:
                              error=f"unreadable shard {rel}: "
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
-            cursor.mark(scan, shard)
+            cursor.mark_if_settled(scan, shard, started_ns)
         if pending is not None:
             yield self._ref(pending, pending_lang)
         cursor.save(state.state_dir, self.source_id, scan)

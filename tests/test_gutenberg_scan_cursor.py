@@ -130,6 +130,18 @@ def test_mark_if_settled_refuses_what_changed_during_the_scan(tmp_path):
     assert "42" in saved, "one settled before the scan is remembered"
 
 
+def test_every_plugin_uses_the_settle_check():
+    """Structural, because the failure is silent: a plugin that calls the
+    plain mark() stores signatures for things that changed mid-scan and
+    then skips them forever. All five container/directory plugins must go
+    through mark_if_settled."""
+    from pathlib import Path as P
+    root = P(__file__).resolve().parent.parent / "app" / "plugins"
+    offenders = [p.relative_to(root) for p in root.rglob("source.py")
+                 if "cursor.mark(" in p.read_text(encoding="utf-8")]
+    assert offenders == [], f"marks without the settle check: {offenders}"
+
+
 def test_a_book_landing_after_the_scan_is_found_next_time(corpus, tmp_path):
     _discover(corpus, tmp_path)
     _book(corpus, 4, {"pg4.txt": "four"})

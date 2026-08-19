@@ -21,6 +21,7 @@ manifest (§2), same convention as pubmed/wikipedia.
 """
 import gzip
 import hashlib
+import time
 from pathlib import Path
 
 from .. import cursor
@@ -109,6 +110,7 @@ class GenomeSource:
                               f"corpus folder")
                 fastas = [p for p in fastas if _assembly_of(p) == primary]
         scan = cursor.load(state.state_dir, self.source_id)
+        started_ns = time.time_ns()   # see cursor.mark_if_settled
         for fasta in fastas:
             if cursor.unchanged(scan, fasta):
                 continue     # already enumerated at this (mtime, size)
@@ -129,7 +131,7 @@ class GenomeSource:
                              error=f"unreadable FASTA {fasta.name}: "
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
-            cursor.mark(scan, fasta)
+            cursor.mark_if_settled(scan, fasta, started_ns)
         cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:

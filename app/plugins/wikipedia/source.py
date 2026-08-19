@@ -12,6 +12,7 @@ Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
 import bz2
 import hashlib
 import re
+import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -53,6 +54,7 @@ class WikipediaSource:
         if not root.is_dir():
             return
         scan = cursor.load(state.state_dir, self.source_id)
+        started_ns = time.time_ns()   # see cursor.mark_if_settled
         for dump in sorted(root.rglob(f"*{_DUMP_SUFFIX}")):
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
@@ -92,8 +94,8 @@ class WikipediaSource:
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
-            cursor.mark(scan, dump)
-            cursor.mark(scan, index)
+            cursor.mark_if_settled(scan, dump, started_ns)
+            cursor.mark_if_settled(scan, index, started_ns)
         cursor.save(state.state_dir, self.source_id, scan)
 
     def _flush(self, pending, end_offset, dump, st, lang):
