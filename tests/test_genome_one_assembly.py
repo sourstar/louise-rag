@@ -11,6 +11,7 @@ import gzip
 
 import pytest
 
+from app.acquire import specs
 from app.acquire.specs import ACQUIRE_REGISTRY, GENOME_SPEC
 from app.plugins.base import DiscoverState
 from app.plugins.genome.source import GenomeSource, _assembly_of
@@ -69,7 +70,14 @@ def test_genome_profiles_are_alternatives_never_increments():
     assert GENOME_SPEC.profile_mode == "exclusive"
     for name, f in GENOME_SPEC.profiles.items():
         assert len(f.include) == 1, f"profile {name!r} stacks assemblies"
-    assert set(GENOME_SPEC.profiles) == {"demo", "sacCer3", "dm6", "hg38"}
+    # the catalogue grows; these are the ones the validation ladder names
+    assert {"demo", "sacCer3", "dm6", "hg38"} <= set(GENOME_SPEC.profiles)
+    # every profile is one UCSC assembly plus the "demo" alias for the
+    # smallest — nothing else may appear here, since a profile name IS the
+    # assembly a collection pins itself to
+    assert set(GENOME_SPEC.profiles) == {"demo"} | {
+        db for db, _, _ in specs._UCSC_ASSEMBLIES}
+    assert GENOME_SPEC.profiles["demo"] == GENOME_SPEC.profiles["sacCer3"]
     # genome is the ONLY source that must never combine profiles
     for plugin, spec in ACQUIRE_REGISTRY.items():
         if plugin != "genome":

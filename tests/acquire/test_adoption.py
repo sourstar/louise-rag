@@ -1,0 +1,161 @@
+"""Files already on disk are ADOPTED, not re-downloaded.
+
+Corpora arrive by routes other than the acquisition engine: a dataset
+copied from another machine, a `zfs send` of someone else's mirror, files
+staged by hand before the collection existed. Re-fetching bytes that are
+already sitting at the destination is pure waste — on a 238 GB corpus it
+is a week of someone's uplink — but a shortcut past the *transfer* must
+never become a shortcut past the *checking*.
+"""
+from app import db
+from app.acquire import engine
+
+from tests.acquire.test_engine import _collection, _spec, _write_origin_file
+
+
+def test_a_preseeded_file_is_verified_and_recorded_without_a_download(
+        tmp_path, mock_server):
+    body = b"x" * 4096
+    _write_origin_file(mock_server, "a.txt", body)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    # stage the file exactly where acquisition would have put it
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(body)
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+
+    assert result["fetched"] == 1
+    assert result["adopted"] == 1
+    assert mock_server.request_count("a.txt") == 0, "no bytes may move"
+
+    row = con.execute("SELECT * FROM fetch_files WHERE rel_path='a.txt'").fetchone()
+    assert row["fetch_done"] == 1
+    assert row["bytes_fetched"] == len(body)
+    assert row["blake2"], "an adopted row carries the same digest a fetch records"
+    assert row["error"] is None
+
+    # and it is now indistinguishable from a fetched file: the next run skips
+    again = engine.run_acquisition(con, collection, spec, "demo")
+    assert again == {"fetched": 0, "skipped": 1, "failed": 0, "aborted": 0,
+                      "adopted": 0, "total": 1}
+
+
+def test_a_wrong_sized_local_file_is_downloaded_not_adopted(tmp_path, mock_server):
+    """Truncated, stale, or half-copied: size is the only evidence available
+    when the origin publishes no checksum, so anything but an exact match
+    goes down the normal path."""
+    body = b"y" * 4096
+    _write_origin_file(mock_server, "a.txt", body)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"y" * 4095)          # one byte short
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["adopted"] == 0
+    assert result["fetched"] == 1
+    assert mock_server.request_count("a.txt") == 1
+    assert dest.read_bytes() == body
+
+
+def test_adoption_refuses_a_file_that_fails_its_checksum(tmp_path, mock_server,
+                                                          monkeypatch):
+    """Same-size but different content is exactly what a checksum is for.
+    When verification fails the file must be re-downloaded, not recorded."""
+    body = b"z" * 4096
+    _write_origin_file(mock_server, "a.txt", body)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"q" * 4096)          # right size, wrong bytes
+
+    real = engine.checksum.digest_and_verify
+
+    def fail_on_impostor(path, checksums):
+        if path.is_file() and path.read_bytes().startswith(b"q"):
+            raise ValueError("sidecar mismatch (simulated)")
+        return real(path, checksums)
+
+    monkeypatch.setattr(engine.checksum, "digest_and_verify", fail_on_impostor)
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["adopted"] == 0, "a file that fails verification is not adopted"
+    assert result["fetched"] == 1
+    assert mock_server.request_count("a.txt") == 1
+    assert dest.read_bytes() == body
+
+
+def test_the_plan_excludes_adoptable_bytes_from_the_download_estimate(
+        tmp_path, mock_server):
+    """The ETA and the disk preflight both read bytes_pending. Counting
+    bytes that will never move makes both of them lie — and the preflight
+    can refuse a run that needs no space at all."""
+    body = b"w" * 8192
+    _write_origin_file(mock_server, "a.txt", body)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    before = engine.plan_acquisition(con, collection, spec, "demo")
+    assert before.files_pending == 1
+    assert before.bytes_pending == len(body)
+    assert before.files_adoptable == 0
+
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(body)
+
+    after = engine.plan_acquisition(con, collection, spec, "demo")
+    assert after.files_pending == 1, "still work to do: verify and record it"
+    assert after.files_adoptable == 1
+    assert after.bytes_adoptable == len(body)
+    assert after.bytes_pending == 0, "nothing will be downloaded"
+    assert after.eta_seconds == 0
+
+
+def test_a_stale_part_file_is_cleared_when_the_destination_is_adopted(
+        tmp_path, mock_server):
+    """A leftover .part beside a complete file is a dead partial. Left in
+    place it would be read as a resume offset by a later re-fetch, and the
+    Range request would append to an already-complete file."""
+    body = b"v" * 2048
+    _write_origin_file(mock_server, "a.txt", body)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(body)
+    part = dest.with_name("a.txt.part")
+    part.write_bytes(b"v" * 900)
+
+    engine.run_acquisition(con, collection, spec, "demo")
+    assert not part.exists()
+    assert dest.read_bytes() == body
+
+
+def test_is_adoptable_says_no_when_the_remote_size_is_unknown(tmp_path):
+    """Without a declared size there is no way to tell complete from
+    truncated, and the honest answer is no."""
+    from app.acquire.spec import RemoteFile
+
+    collection = _collection(tmp_path)
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"abc")
+
+    assert engine.is_adoptable(collection, RemoteFile(rel_path="a.txt", size=3))
+    assert not engine.is_adoptable(collection, RemoteFile(rel_path="a.txt", size=None))
+    assert not engine.is_adoptable(collection, RemoteFile(rel_path="a.txt", size=0))
+    assert not engine.is_adoptable(collection, RemoteFile(rel_path="gone.txt", size=3))

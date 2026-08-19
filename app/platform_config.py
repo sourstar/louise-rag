@@ -25,7 +25,7 @@ same philosophy collections.py follows for a missing collections/ directory.
 """
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +71,11 @@ class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
     trust: TrustConfig = TrustConfig()
+    # [embed_defaults.<plugin>] -> the raw [embed]-shaped table. Kept RAW
+    # here on purpose: app/collections.py owns EmbedRecipe and parses it,
+    # and importing that module from this one would close an import cycle
+    # (collections -> platform_config -> collections).
+    embed_defaults: dict[str, dict] = field(default_factory=dict)
     source_path: Path | None = None          # None = defaults (no file on disk)
 
 
@@ -171,8 +176,22 @@ def _load_one(path: Path) -> PlatformConfig:
         per_endpoint=_positive_int(tr_raw, "per_endpoint", DEFAULT_PER_ENDPOINT),
         segments_per_file=segments,
     )
+    # [embed_defaults.<plugin>] — validated as "a table per plugin" only;
+    # the field-level parse belongs to collections.parse_recipe, which owns
+    # EmbedRecipe and reports errors in the same words for both files.
+    embed_raw = raw.get("embed_defaults", {}) or {}
+    if not isinstance(embed_raw, dict):
+        raise schedule_mod.ScheduleError(
+            "embed_defaults must be a table of per-plugin [embed] blocks, "
+            "e.g. [embed_defaults.genome]")
+    for plugin, table in embed_raw.items():
+        if not isinstance(table, dict):
+            raise schedule_mod.ScheduleError(
+                f"embed_defaults.{plugin} must be a table, got {type(table).__name__}")
+
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
+                          embed_defaults={str(k): dict(v) for k, v in embed_raw.items()},
                           source_path=path)
 
 

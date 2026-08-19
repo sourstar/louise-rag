@@ -108,6 +108,12 @@ class AcquisitionSpec:
     #                   ("tr,it,en") and resolves to the union of its parts.
     profile_mode: Literal["incremental", "exclusive", "additive"] = "incremental"
     estimated_bytes: dict[str, int] = field(default_factory=dict)
+    # Human-readable gloss per profile, for sources whose profile names are
+    # opaque identifiers rather than words. "hg38" and "monDom5" are the
+    # UCSC database names — correct, and unreadable to anyone who does not
+    # already know them. Absent, the UI shows the bare name (which is right
+    # for "demo"/"starter"/"full" and for language codes).
+    profile_labels: dict[str, str] = field(default_factory=dict)
     license_class: LicenseClass = LicenseClass.GREEN
     terms_text_path: Path | None = None    # required when license_class != GREEN
 
@@ -170,6 +176,12 @@ class AcquisitionPlan:
     bytes_pending: int
     eta_seconds: float
     license_state: Literal["not_required", "acknowledged", "missing"]
+    # Of files_pending, how many are already on disk at the right size and
+    # will be ADOPTED (verified and recorded) rather than downloaded. Their
+    # bytes are excluded from bytes_pending, so the ETA and the disk
+    # preflight describe the bytes that will actually move.
+    files_adoptable: int = 0
+    bytes_adoptable: int = 0
 
 
 class LicenseAckRequiredError(RuntimeError):

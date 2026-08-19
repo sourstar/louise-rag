@@ -98,6 +98,47 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
 )
 
 
+# UCSC goldenPath reference assemblies, smallest first: (db, organism,
+# bytes of <db>/bigZips/<db>.fa.gz).
+#
+# ONE table feeding three structures (static_files, profiles,
+# estimated_bytes) because three hand-maintained parallel lists is three
+# chances to add an assembly to two of them. The sizes are the real
+# Content-Length of each file, probed against hgdownload on 2026-08-19 —
+# the budget planner shows them to an operator BEFORE a fetch starts, and
+# a guessed number there is a lie someone plans a night's download around.
+#
+# Adding one: probe the URL first (a 404 here becomes a fetch error much
+# later, after the collection exists). dp6 was a candidate and is NOT
+# here — UCSC serves no dp6/bigZips/dp6.fa.gz.
+_UCSC_ASSEMBLIES: tuple[tuple[str, str, int], ...] = (
+    ("sacCer3",  "yeast (S. cerevisiae)",      3_820_548),
+    ("ce11",     "roundworm (C. elegans)",    31_816_111),
+    ("dm6",      "fruit fly (D. melanogaster)", 45_153_922),
+    ("anoGam3",  "mosquito (A. gambiae)",     81_983_405),
+    ("galGal6",  "chicken",                  347_959_049),
+    ("xenTro10", "frog (X. tropicalis)",     449_164_532),
+    ("danRer11", "zebrafish",                543_241_465),
+    ("canFam6",  "dog",                      759_784_137),
+    ("susScr11", "pig",                      811_422_721),
+    ("felCat9",  "cat",                      812_014_328),
+    ("equCab3",  "horse",                    829_063_609),
+    ("oryCun2",  "rabbit",                   854_412_134),
+    ("rn7",      "rat (mRatBN7.2)",          859_160_243),
+    ("mm10",     "mouse (GRCm38)",           870_141_360),
+    ("mm39",     "mouse (GRCm39)",           870_543_764),
+    ("bosTau9",  "cow",                      882_512_073),
+    ("rn6",      "rat (Rnor_6.0)",           896_422_133),
+    ("calJac4",  "marmoset",                 931_125_471),
+    ("rheMac10", "rhesus macaque",           941_070_922),
+    ("gorGor6",  "gorilla",                  947_696_407),
+    ("hg19",     "human (GRCh37)",           948_731_419),
+    ("panTro6",  "chimpanzee",               963_190_563),
+    ("ponAbe3",  "orangutan",                973_229_526),
+    ("hg38",     "human (GRCh38)",           983_659_424),
+    ("monDom5",  "opossum",                1_152_791_307),
+)
+
 GENOME_SPEC = AcquisitionSpec(
     source_id="genome",
     transport=Transport.HTTPS,
@@ -105,11 +146,13 @@ GENOME_SPEC = AcquisitionSpec(
         Endpoint(transport=Transport.HTTPS,
                  url="https://hgdownload.soe.ucsc.edu/goldenPath",
                  max_conns=2,
-                 static_files=(
-                     RemoteFile(rel_path="sacCer3/bigZips/sacCer3.fa.gz"),
-                     RemoteFile(rel_path="dm6/bigZips/dm6.fa.gz"),
-                     RemoteFile(rel_path="hg38/bigZips/hg38.fa.gz"),
-                 )),
+                 # Declaring every assembly costs nothing per collection:
+                 # _apply_filters() intersects this list with the profile's
+                 # include patterns, so a dm6 collection still lists exactly
+                 # one file.
+                 static_files=tuple(
+                     RemoteFile(rel_path=f"{db}/bigZips/{db}.fa.gz")
+                     for db, _, _ in _UCSC_ASSEMBLIES)),
     ),
     layout="container-files",
     filters=("*.fa.gz",),
@@ -125,14 +168,16 @@ GENOME_SPEC = AcquisitionSpec(
         # yeast then fly prove the plugin before anyone spends human-scale
         # hours on GRCh38.
         "demo": Filter(include=("sacCer3/*",)),      # alias for sacCer3
-        "sacCer3": Filter(include=("sacCer3/*",)),   # yeast, 12 Mbp
-        "dm6": Filter(include=("dm6/*",)),           # fly, 140 Mbp
-        "hg38": Filter(include=("hg38/*",)),         # human GRCh38, 3.1 Gbp
+        **{db: Filter(include=(f"{db}/*",)) for db, _, _ in _UCSC_ASSEMBLIES},
     },
     profile_mode="exclusive",                # never combine two assemblies
     estimated_bytes={
-        "demo": 4_000_000, "sacCer3": 4_000_000,
-        "dm6": 50_000_000, "hg38": 1_000_000_000,
+        "demo": 3_820_548,
+        **{db: size for db, _, size in _UCSC_ASSEMBLIES},
+    },
+    profile_labels={
+        "demo": "yeast (S. cerevisiae) — smallest, proves the pipeline",
+        **{db: organism for db, organism, _ in _UCSC_ASSEMBLIES},
     },
     license_class=LicenseClass.GREEN,        # consortium reference data
 )

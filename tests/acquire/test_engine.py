@@ -228,11 +228,13 @@ def test_idempotent_rerun_skips_unchanged_files(tmp_path, mock_server):
     # a failure, so it never increments `retries` and never makes the CLI exit
     # nonzero (CLAUDE.md invariant 2). Purely additive to this dict.
     r1 = engine.run_acquisition(con, collection, spec, "demo")
-    assert r1 == {"fetched": 1, "skipped": 0, "failed": 0, "aborted": 0, "total": 1}
+    assert r1 == {"fetched": 1, "skipped": 0, "failed": 0, "aborted": 0,
+                  "adopted": 0, "total": 1}
     assert mock_server.request_count("a.txt") == 1
 
     r2 = engine.run_acquisition(con, collection, spec, "demo")
-    assert r2 == {"fetched": 0, "skipped": 1, "failed": 0, "aborted": 0, "total": 1}
+    assert r2 == {"fetched": 0, "skipped": 1, "failed": 0, "aborted": 0,
+                  "adopted": 0, "total": 1}
     assert mock_server.request_count("a.txt") == 1   # never re-fetched
 
 

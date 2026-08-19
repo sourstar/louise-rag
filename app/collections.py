@@ -72,11 +72,63 @@ def env_recipe() -> EmbedRecipe:
                         ctx=config.EMBED_CTX)
 
 
+def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
+    """An [embed]-shaped TOML table -> EmbedRecipe. None for absent/not-a-
+    table, so callers can say "declared or not".
+
+    Shared by the per-collection [embed] block and platform.toml's per-plugin
+    defaults: one parser means one set of field names, defaults and error
+    messages, whichever file the operator is editing."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return EmbedRecipe(
+            url=str(raw["url"]).rstrip("/"),
+            api=str(raw.get("api", "openai")),
+            model=str(raw["model"]),
+            dtype=str(raw.get("dtype", "f16")),
+            ctx=int(raw.get("ctx", 512)),
+            dim=int(raw["dim"]) if raw.get("dim") is not None else None,
+            query_url=(str(raw["query_url"]).rstrip("/")
+                        if raw.get("query_url") else None),
+            concurrency=max(1, int(raw.get("concurrency", 1))),
+            device=(str(raw["device"]).lower()
+                    if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
+                    else None),
+        )
+    except KeyError as missing:
+        raise ValueError(f"{where}: [embed] block requires url and model "
+                          f"(missing {missing})") from None
+
+
+def default_recipe_for_plugin(plugin: str) -> EmbedRecipe | None:
+    """The node's default recipe for a PLUGIN, from platform.toml's
+    [embed_defaults.<plugin>] — or None when the node declares none.
+
+    Why per plugin: a genome collection embedded with the node's text
+    encoder is not a worse choice, it is a wrong one — DNA is not a
+    language, and the two spaces are not comparable. The endpoint URL is
+    deployment-specific (someone's LAN), so it belongs in Tier-2 node
+    config, never in this repo and never in a plugin's source.
+
+    Tier-2 file, not env and not the DB: it is desired state (invariant 10)."""
+    from . import platform_config
+    raw = platform_config.load().embed_defaults.get(plugin)
+    return parse_recipe(raw, where=f"platform.toml [embed_defaults.{plugin}]")
+
+
 def recipe_for(collection) -> EmbedRecipe:
-    """THE way to resolve a collection's embedding recipe. None (or a
-    collection without an [embed] block) falls back to the env recipe."""
+    """THE way to resolve a collection's embedding recipe.
+
+    Order: the collection's own [embed] block, then the node's per-plugin
+    default, then the Tier-1 env recipe. Each step is a fallback for the
+    one before it, never an override of it (invariant 10)."""
     if collection is not None and getattr(collection, "embed", None) is not None:
         return collection.embed
+    if collection is not None and getattr(collection, "plugin", None):
+        default = default_recipe_for_plugin(collection.plugin)
+        if default is not None:
+            return default
     return env_recipe()
 
 
@@ -136,28 +188,7 @@ def _load_one(path: Path) -> Collection:
 
     corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
 
-    embed = None
-    if isinstance(raw.get("embed"), dict):
-        e = raw["embed"]
-        try:
-            embed = EmbedRecipe(
-                url=str(e["url"]).rstrip("/"),
-                api=str(e.get("api", "openai")),
-                model=str(e["model"]),
-                dtype=str(e.get("dtype", "f16")),
-                ctx=int(e.get("ctx", 512)),
-                dim=int(e["dim"]) if e.get("dim") is not None else None,
-                query_url=(str(e["query_url"]).rstrip("/")
-                            if e.get("query_url") else None),
-                concurrency=max(1, int(e.get("concurrency", 1))),
-                device=(str(e["device"]).lower()
-                        if e.get("device") in ("gpu", "cpu", "GPU", "CPU")
-                        else None),
-            )
-        except KeyError as missing:
-            raise ValueError(
-                f"{path}: [embed] block requires url and model "
-                f"(missing {missing})") from None
+    embed = parse_recipe(raw.get("embed"), where=str(path))
 
     return Collection(
         name=name,

@@ -142,9 +142,16 @@ def _profile_order(plugin: str) -> list[dict]:
     names = list(spec.profiles)
     names.sort(key=lambda n: (spec.estimated_bytes.get(n) is None,
                                spec.estimated_bytes.get(n, 0)))
-    return [{"name": n,
-             "label": f"{n} (~{_human_bytes(spec.estimated_bytes.get(n))})"}
-            for n in names]
+    out = []
+    for n in names:
+        # the gloss goes between name and size: "hg38 — human (GRCh38)
+        # (~938 MB)". Sources whose profile names are already words
+        # declare none and read exactly as before.
+        gloss = spec.profile_labels.get(n)
+        label = f"{n} — {gloss}" if gloss else n
+        out.append({"name": n,
+                    "label": f"{label} (~{_human_bytes(spec.estimated_bytes.get(n))})"})
+    return out
 
 
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
@@ -570,26 +577,37 @@ def new_collection_create(body: CreateCollectionBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing))
 
-    if body.corpus_dir:
-        mounts = _corpus_mounts()
-        chosen = next((m for m in mounts if m["path"] == body.corpus_dir.strip()),
-                      None)
-        if chosen is None:
-            available = ", ".join(m["path"] for m in mounts) or "(none)"
-            raise HTTPException(
-                400, f"corpus folder must be one of the mounted entries under "
-                     f"{config.CORPUS_MOUNTS_DIR} — available: {available}. "
-                     f"Map your dataset there first (TrueNAS: add "
-                     f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                     f"<name>' to both services in the app YAML)")
-        if chosen["used_by"]:
-            raise HTTPException(
-                409, f"{chosen['path']} already belongs to collection "
-                     f"{chosen['used_by']!r} — a corpus folder can serve only "
-                     f"one collection")
-        corpus_dir = Path(chosen["path"])
-    else:
-        corpus_dir = config.CORPUS_DIR / body.name
+    # A corpus folder is CHOSEN, never defaulted. The old fallback
+    # (CORPUS_DIR/<name>) silently invented a path that existed in no
+    # container, so the collection was born pointing at nothing and only
+    # said so as "corpus dir not found" on the next discovery round. An
+    # unmounted corpus is not a state worth being able to create.
+    mounts = _corpus_mounts()
+    if not body.corpus_dir.strip():
+        free = [m["path"] for m in mounts if not m["used_by"]]
+        raise HTTPException(
+            400, f"choose a corpus folder: a collection must point at a real "
+                 f"mounted dataset. Free folders under {config.CORPUS_MOUNTS_DIR}: "
+                 f"{', '.join(free) or '(none — map one first)'}. Map a dataset "
+                 f"by adding '- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
+                 f"<name>' to BOTH services in the app YAML, then re-open this "
+                 f"page")
+    chosen = next((m for m in mounts if m["path"] == body.corpus_dir.strip()),
+                  None)
+    if chosen is None:
+        available = ", ".join(m["path"] for m in mounts) or "(none)"
+        raise HTTPException(
+            400, f"corpus folder must be one of the mounted entries under "
+                 f"{config.CORPUS_MOUNTS_DIR} — available: {available}. "
+                 f"Map your dataset there first (TrueNAS: add "
+                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
+                 f"<name>' to both services in the app YAML)")
+    if chosen["used_by"]:
+        raise HTTPException(
+            409, f"{chosen['path']} already belongs to collection "
+                 f"{chosen['used_by']!r} — a corpus folder can serve only "
+                 f"one collection")
+    corpus_dir = Path(chosen["path"])
 
     ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
                                 body.acknowledge_terms)
@@ -608,11 +626,19 @@ def new_collection_create(body: CreateCollectionBody):
         manifest=base / "manifest.db", fts=base / "fts",
         lancedb=base / "lancedb", license_ack=ack,
         genesis_archive=genesis_archive,
-        # explicit from birth: the space this collection will pin at its
+        # Explicit from birth: the space this collection will pin at its
         # first validation is written down, not implied by env. Switching
         # encoders before anything embeds stays a pin reset + TOML edit,
         # exactly as before — just visible now.
-        embed=collections_mod.env_recipe())
+        #
+        # The node's per-plugin default wins over the env recipe, because
+        # env is the TEXT encoder and some plugins are not text. Two genome
+        # collections were created here against the node default and pinned
+        # a Qwen3 text space over DNA before anyone noticed; a genome
+        # collection embedded with a language model is not a worse choice,
+        # it is a wrong one.
+        embed=(collections_mod.default_recipe_for_plugin(body.plugin)
+               or collections_mod.env_recipe()))
 
     con = db.connect()
     db.log_event(con, "info", "control",
@@ -621,18 +647,17 @@ def new_collection_create(body: CreateCollectionBody):
             "picks it up within one round (no restart). If your config dir "
             "is versioned, commit the new file. A yellow-class source still "
             "needs its license ack before acquisition (corpus add --ack-terms).")
+    # Always true now: the corpus is picked from _corpus_mounts(), which
+    # lists directories that exist. Kept in the response because callers
+    # (and the tests) read it as the "this collection can actually see its
+    # data" flag, and a mount can still vanish between listing and create.
     corpus_mounted = corpus_dir.is_dir()
     if not corpus_mounted:
-        # only reachable via the default path (chosen mounts exist by
-        # construction) — the operator either creates that folder or maps a
-        # dataset under the mounts root and re-creates the collection
-        note = (f"CORPUS PATH NOT PRESENT IN THE CONTAINER: {corpus_dir} does "
-                 f"not exist yet. Either create it, or map a dedicated dataset "
-                 f"under {config.CORPUS_MOUNTS_DIR} (TrueNAS: add "
-                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/<name>' "
-                 f"to BOTH services in the app YAML, save, and pick it in the "
-                 f"corpus dropdown). Until then discovery reports 'corpus dir "
-                 f"not found'. ") + note
+        note = (f"CORPUS PATH DISAPPEARED BETWEEN LISTING AND CREATE: "
+                 f"{corpus_dir} is no longer present in the container. Check "
+                 f"the mount is still declared for BOTH services in the app "
+                 f"YAML. Until then discovery reports 'corpus dir not "
+                 f"found'. ") + note
     return {"ok": True, "toml_path": str(toml_path),
             "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
             "note": note}

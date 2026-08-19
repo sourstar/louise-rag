@@ -82,8 +82,14 @@ def cmd_add(args) -> int:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 1
     aborted = result.get("aborted", 0)
+    adopted = result.get("adopted", 0)
     print(f"fetched={result['fetched']} skipped={result['skipped']} "
           f"failed={result['failed']} aborted={aborted} total={result['total']}")
+    if adopted:
+        # "fetched" counts these, and an operator watching a 200 GB profile
+        # finish in seconds deserves to know why
+        print(f"  ({adopted} of them already on disk: verified and recorded, "
+              f"not downloaded)")
     if aborted:
         print("interrupted — partial downloads were checkpointed; re-run to resume")
     # A clean shutdown exits 0 (CLAUDE.md invariant 2). Only genuine failures

@@ -3,6 +3,7 @@
 data, and bundle export/import ride the exact same code paths as the CLI —
 the upload is delivery, admission stays the importer's job.
 """
+import re
 import io
 import tarfile
 import time
@@ -16,18 +17,37 @@ from app.bundles import importer as bundle_importer
 
 
 @pytest.fixture
-def client(isolated_config, monkeypatch):
+def client(isolated_config, monkeypatch, tmp_path):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
+    # every test here creates collections, and a collection now requires a
+    # real mounted corpus folder — give the module a mounts root to draw from
+    monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", tmp_path / "corpora")
+    (tmp_path / "corpora").mkdir(exist_ok=True)
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
 
 
+def create(client, name, plugin="pubmed", *, corpus=None, **body):
+    """POST /library/new/create with a corpus folder filled in.
+
+    Choosing one is mandatory (test_create_requires_a_chosen_corpus_folder
+    pins that); every OTHER test here is about something else, so the helper
+    mints a fresh mount per collection rather than repeating the setup."""
+    if corpus is None:
+        safe = re.sub(r"[^a-z0-9_-]", "_", name.lower()) or "mount"
+        folder = config.CORPUS_MOUNTS_DIR / safe
+        folder.mkdir(parents=True, exist_ok=True)
+        corpus = folder.as_posix()
+    return client.post("/admin/library/new/create",
+                       json={"name": name, "plugin": plugin,
+                             "corpus_dir": corpus, **body})
+
+
 def test_create_writes_isolated_toml_and_collection_appears(client, isolated_config):
-    r = client.post("/admin/library/new/create",
-                    json={"name": "pubmed2", "plugin": "pubmed"})
+    r = create(client, "pubmed2", "pubmed")
     assert r.status_code == 200
     toml_path = collections_mod.config_toml_path("pubmed2")
     assert toml_path.is_file()
@@ -83,19 +103,44 @@ def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
     assert "in use by withdir" in page.text
 
 
+def test_create_requires_a_chosen_corpus_folder(client, tmp_path):
+    """There is no default corpus folder any more.
+
+    The old fallback (CORPUS_DIR/<name>) invented a path that existed in no
+    container: the collection was born pointing at nothing and only said so
+    one discovery round later, as "corpus dir not found". A collection that
+    cannot see a corpus is not a state worth being able to create."""
+    (config.CORPUS_MOUNTS_DIR / "free").mkdir(parents=True, exist_ok=True)
+
+    r = client.post("/admin/library/new/create",
+                    json={"name": "nodir", "plugin": "pubmed"})
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "choose a corpus folder" in detail
+    assert "free" in detail, "the refusal must name what IS available"
+    assert collections_mod.by_name("nodir") is None
+    assert not collections_mod.config_toml_path("nodir").exists()
+
+    # an explicitly blank one is the same refusal, not an empty-string path
+    assert client.post("/admin/library/new/create",
+                       json={"name": "nodir", "plugin": "pubmed",
+                              "corpus_dir": "   "}).status_code == 400
+
+    # and the form cannot submit one either: no selectable default option
+    page = client.get("/admin/library").text
+    assert 'option value="" disabled selected' in page
+    assert "(default — under the shared corpus root)" not in page
+
+
 def test_create_rejects_bad_names_dup_and_unknown_plugin(client):
-    assert client.post("/admin/library/new/create",
-                       json={"name": "../evil", "plugin": "pubmed"}).status_code == 400
-    assert client.post("/admin/library/new/create",
-                       json={"name": "x", "plugin": "nope"}).status_code == 400
-    assert client.post("/admin/library/new/create",
-                       json={"name": "twice", "plugin": "pubmed"}).status_code == 200
-    assert client.post("/admin/library/new/create",
-                       json={"name": "twice", "plugin": "pubmed"}).status_code == 409
+    assert create(client, "../evil", "pubmed").status_code == 400
+    assert create(client, "x", "nope").status_code == 400
+    assert create(client, "twice", "pubmed").status_code == 200
+    assert create(client, "twice", "pubmed").status_code == 409
 
 
 def test_remove_retires_toml_and_keeps_data(client):
-    client.post("/admin/library/new/create", json={"name": "temp1", "plugin": "pubmed"})
+    create(client, "temp1", "pubmed")
     collection = collections_mod.by_name("temp1")
     con = db.connect(collection)   # materialize the manifest
     con.close()
@@ -177,8 +222,7 @@ def test_library_page_offers_profile_dropdowns_with_estimates(client):
 
 
 def test_grow_options_never_offer_a_rollback(client):
-    client.post("/admin/library/new/create",
-                json={"name": "pm-recent", "plugin": "pubmed", "profile": "recent"})
+    create(client, "pm-recent", "pubmed", profile="recent")
     from app import web as web_mod
     collection = collections_mod.by_name("pm-recent")
     names = [o["name"] for o in web_mod._grow_options(collection)]
@@ -198,16 +242,13 @@ def test_grow_options_never_offer_a_rollback(client):
 def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
     # pubmed is yellow-class: create with acquisition but WITHOUT
     # acknowledgement must refuse with the retry marker
-    r = client.post("/admin/library/new/create",
-                    json={"name": "pm", "plugin": "pubmed",
-                           "acquire_enabled": True})
+    r = create(client, "pm", "pubmed", acquire_enabled=True)
     assert r.status_code == 409
     assert r.json()["detail"].startswith("terms-acknowledgement-required")
 
     # with explicit consent, the ack is computed server-side into the TOML
-    r = client.post("/admin/library/new/create",
-                    json={"name": "pm", "plugin": "pubmed",
-                           "acquire_enabled": True, "acknowledge_terms": True})
+    r = create(client, "pm", "pubmed", acquire_enabled=True,
+               acknowledge_terms=True)
     assert r.status_code == 200
     text = collections_mod.config_toml_path("pm").read_text()
     assert "acquire_enabled = true" in text
@@ -215,15 +256,13 @@ def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
     assert collections_mod.by_name("pm").license_ack
 
     # green sources (gutenberg) need no acknowledgement
-    r = client.post("/admin/library/new/create",
-                    json={"name": "gb2", "plugin": "gutenberg",
-                           "acquire_enabled": True})
+    r = create(client, "gb2", "gutenberg", acquire_enabled=True)
     assert r.status_code == 200
 
 
 def test_ack_endpoint_records_license_for_existing_collection(client):
     # created WITHOUT acquisition: no ack recorded, card should offer it
-    client.post("/admin/library/new/create", json={"name": "pm2", "plugin": "pubmed"})
+    create(client, "pm2", "pubmed")
     assert collections_mod.by_name("pm2").license_ack is None
 
     r = client.get("/admin/library/pm2/terms")
@@ -245,9 +284,7 @@ def test_grow_run_declares_the_profile_and_preserves_the_whole_toml(client):
     hung the modal live) — it declares the profile in the TOML and the
     worker's hot-reload acquires. The rewrite must carry every field:
     dropping [embed] would flip the collection back to the env recipe."""
-    client.post("/admin/library/new/create",
-                json={"name": "pm", "plugin": "pubmed",
-                       "acquire_enabled": True, "acknowledge_terms": True})
+    create(client, "pm", "pubmed", acquire_enabled=True, acknowledge_terms=True)
     created = collections_mod.by_name("pm")
     toml_path = collections_mod.config_toml_path("pm")
     toml_path.write_text(
@@ -284,7 +321,7 @@ def test_embed_mode_is_a_per_collection_control(client):
     assert db.get_scope(db.connect(collection))["embed_mode"] == "all"
 
     # another collection keeps its own default — no cross-talk
-    client.post("/admin/library/new/create", json={"name": "other", "plugin": "pubmed"})
+    create(client, "other", "pubmed")
     other = collections_mod.by_name("other")
     assert db.get_scope(db.connect(other))["embed_mode"] == "lazy"
 

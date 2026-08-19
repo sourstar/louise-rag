@@ -114,9 +114,38 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str) -> list[RemoteFile]:
     return _apply_filters(all_files, spec.filters, profile_filter)
 
 
+def is_adoptable(collection, f: RemoteFile) -> bool:
+    """Is this file ALREADY on disk, complete, at the corpus path acquisition
+    would fetch it to?
+
+    Corpora arrive by routes other than this engine — a dataset copied from
+    another machine, a `zfs send` of someone else's mirror, files staged by
+    hand before the collection existed. Re-downloading bytes that are
+    already sitting there is pure waste, and on a 238 GB corpus it is a
+    week of someone's uplink.
+
+    The test is size equality against the origin's declared size, which is
+    the same freshness test `_is_pending` applies to a file this engine did
+    fetch — so adoption grants no weaker a guarantee than a re-fetch would.
+    An unknown remote size means we cannot tell complete from truncated, and
+    then the honest answer is no.
+
+    Content is still verified before the file is recorded (see
+    `_adopt_one_file`): this predicate only decides whether it is worth
+    looking."""
+    if not f.size:
+        return False
+    dest = collection.corpus_dir / f.rel_path
+    try:
+        return dest.is_file() and dest.stat().st_size == f.size
+    except OSError:
+        return False
+
+
 def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteFile]) -> AcquisitionPlan:
     pending: list[RemoteFile] = []
     bytes_total = bytes_pending = 0
+    files_adoptable = bytes_adoptable = 0
     for f in files:
         row = con.execute(
             "SELECT remote_size,remote_mtime,fetch_done FROM fetch_files "
@@ -127,12 +156,21 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
                       or row["remote_size"] != f.size or row["remote_mtime"] != f.mtime)
         if is_pending:
             pending.append(f)
-            bytes_pending += size
+            if is_adoptable(collection, f):
+                # counted as pending work (it still needs verifying and
+                # recording) but NOT as bytes to move — the ETA and the disk
+                # preflight below both read bytes_pending, and neither should
+                # plan for a download that will not happen
+                files_adoptable += 1
+                bytes_adoptable += size
+            else:
+                bytes_pending += size
     return AcquisitionPlan(
         files_total=len(files), files_pending=len(pending),
         bytes_total=bytes_total, bytes_pending=bytes_pending,
         eta_seconds=round(bytes_pending / _DRY_RUN_ASSUMED_RATE_BPS, 1),
         license_state=_license_state(spec, collection),
+        files_adoptable=files_adoptable, bytes_adoptable=bytes_adoptable,
     )
 
 
@@ -204,6 +242,7 @@ class _FileResult:
     digest: str | None = None
     bytes_now: int = 0
     error: str | None = None
+    adopted: bool = False          # already on disk: verified, recorded, not downloaded
 
 
 @dataclass
@@ -256,9 +295,49 @@ def _build_work_items(files: list[RemoteFile], pending: set[str],
     return items
 
 
+def _adopt_one_file(f: RemoteFile, collection, spec: AcquisitionSpec) -> _FileResult | None:
+    """Record an already-present file as fetched, moving zero bytes.
+
+    Verification is the SAME call a real fetch makes, on the same path, so
+    an adopted row carries exactly the evidence a fetched row does — a
+    sidecar mismatch or an unreadable file returns None and the caller
+    downloads it properly. Adoption is a shortcut past the transfer, never
+    past the checking.
+
+    Throughput is deliberately NOT recorded: no bytes crossed the network,
+    and feeding "size bytes in ~0 seconds" to the endpoint's rate estimate
+    would tell the scheduler this origin is infinitely fast."""
+    dest = collection.corpus_dir / f.rel_path
+    try:
+        digest = checksum.digest_and_verify(dest, spec.checksums)
+    except Exception:   # noqa: BLE001 — same breadth as the fetch path
+        # The bytes on disk are not the bytes the origin is serving. Say
+        # nothing here; returning None puts the file back on the normal
+        # download path, which overwrites it.
+        return None
+    part = dest.with_name(dest.name + ".part")
+    if part.is_file():
+        # Stale by construction: the destination is complete and verified,
+        # so a leftover .part is a dead partial. Left in place it would be
+        # read as a resume offset by a future re-fetch (FETCH_VERSION bump)
+        # and a Range request would append to an already-complete file.
+        try:
+            part.unlink()
+        except OSError:
+            pass
+    return _FileResult(remote=f, endpoint_url="(adopted from disk)",
+                        status="fetched", size=f.size or dest.stat().st_size,
+                        digest=digest, adopted=True)
+
+
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
+    # Already there and complete? Verify and record it; move nothing.
+    if is_adoptable(collection, f):
+        adopted = _adopt_one_file(f, collection, spec)
+        if adopted is not None:
+            return adopted
     part = dest.with_name(dest.name + ".part")
     # Read at fetch time, never hoisted with the pending list: a file retried
     # within the same run would otherwise resume from a stale offset.
@@ -372,7 +451,7 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     manager = get_manager()
     transport = REGISTRY[spec.transport]
     ranked = manager.rank_endpoints([(e.url, e) for e in spec.endpoints])
-    counters = {"fetched": 0, "failed": 0, "aborted": 0}
+    counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0}
     claim_ts = [time.time()]
 
     def _apply(results: list[_FileResult]) -> None:
@@ -407,6 +486,12 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                             "WHERE source_id=? AND rel_path=?",
                             (spec.source_id, sidecar_rel))
             counters[r.status] += 1
+            if r.adopted:
+                # counted INSIDE 'fetched' as well: an adopted file is
+                # fetch_done=1 with a verified digest, indistinguishable
+                # downstream from a downloaded one. This is the extra
+                # detail of how it got there, not a fourth outcome.
+                counters["adopted"] += 1
 
     workers = min(manager.platform.transfer.workers, max(1, len(items)))
     with claim_mod.acquisition_claim(con, spec.source_id):
@@ -417,4 +502,4 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
 
     return {"fetched": counters["fetched"], "skipped": skipped,
             "failed": counters["failed"], "aborted": counters["aborted"],
-            "total": len(files)}
+            "adopted": counters["adopted"], "total": len(files)}

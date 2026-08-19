@@ -155,8 +155,11 @@
         <input type="checkbox" id="nc_acquire" style="width:auto"> fetch corpus from the source
       </label></div>
     <div><label>Corpus folder</label>
-      <select id="nc_corpus">
-        <option value="">(default — under the shared corpus root)</option>
+      {# No default option: a collection points at a real mounted dataset or
+         it is not created. The old "(default)" entry invented a path that
+         existed in no container. #}
+      <select id="nc_corpus" required>
+        <option value="" disabled selected>— choose a mounted folder —</option>
         {% for m in corpus_mounts %}
         <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
         {% endfor %}
@@ -280,8 +283,15 @@ async function previewGrow(name){
   box.innerHTML='<div class="note">planning…</div>';
   try{
     const d=await postJSON('/admin/library/'+name+'/grow/plan',{profile});
-    box.innerHTML=`<div class="note">files: ${d.plan.files_pending} pending / ${d.plan.files_total} total<br>
-      bytes: ${d.plan.bytes_pending} pending / ${d.plan.bytes_total} total<br>
+    // adoptable files count as pending work but move no bytes; saying so
+    // explains an ETA that looks impossibly short for the file count
+    const adopt=d.plan.files_adoptable
+      ? `<br><b>${d.plan.files_adoptable}</b> of those are already on disk
+         (${d.plan.bytes_adoptable} bytes): they will be verified and
+         recorded, not downloaded`
+      : '';
+    box.innerHTML=`<div class="note">files: ${d.plan.files_pending} pending / ${d.plan.files_total} total${adopt}<br>
+      bytes: ${d.plan.bytes_pending} to download / ${d.plan.bytes_total} total<br>
       eta: ~${d.plan.eta_seconds}s (placeholder rate — no live bandwidth measurement until the transfer manager lands)<br>
       license: ${d.plan.license_state}</div>
       <div class="note">CLI equivalent:</div><pre class="cli">${esc(d.cli)}</pre>
@@ -324,6 +334,7 @@ async function createCollection(retryWithAck){
   const corpus_dir=document.getElementById('nc_corpus').value.trim();
   const acquire_enabled=document.getElementById('nc_acquire').checked;
   if(!name){toast('name required');return}
+  if(!corpus_dir){toast('choose a corpus folder — a collection must point at a real mounted dataset');return}
   try{
     const d=await postJSON('/admin/library/new/create',
       {name,plugin,profile,corpus_dir,acquire_enabled,acknowledge_terms:!!retryWithAck});

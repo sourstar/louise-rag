@@ -48,3 +48,32 @@ per_endpoint = 4
 # Multi-connection downloads of a SINGLE file. Only 1 is supported; a higher
 # value is refused at load rather than silently ignored.
 segments_per_file = 1
+
+# ---------------------------------------------------------------------------
+# Per-PLUGIN default embedding recipe. A collection created without its own
+# [embed] block inherits the entry for its plugin; with no entry it falls
+# back to the Tier-1 env recipe. Resolution order, each step a fallback for
+# the one before it and never an override of it:
+#
+#     collection TOML [embed]  ->  [embed_defaults.<plugin>]  ->  env
+#
+# This exists because the env recipe is the node's TEXT encoder, and not
+# every plugin embeds text. A genome collection embedded with a language
+# model is not a worse choice, it is a wrong one: DNA is not a language and
+# the two spaces are not comparable. Two genome collections were created
+# against the node default and pinned a text space over DNA before anyone
+# noticed.
+#
+# Fields are exactly a collection's [embed] block. The endpoint URL is
+# deployment-specific, which is why this lives in your node's config and not
+# in the repo.
+#
+# [embed_defaults.genome]
+# url = "http://<your-dna-encoder-host>:<port>"
+# api = "openai"
+# model = "zhihan1996/DNABERT-2-117M"
+# dtype = "f16"
+# ctx = 1024
+# dim = 768
+# concurrency = 2
+# device = "cpu"
