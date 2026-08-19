@@ -6,6 +6,7 @@ import pytest
 from nacl import signing
 
 from app import db, spaces
+from app.bundles import genesis
 from tests.bundles.helpers import DIM, make_collection
 
 PRODUCER_SEED = bytes(range(32))
@@ -25,6 +26,16 @@ def confirmed_space(monkeypatch):
     """
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
                         lambda: ("c0ffee00c0ffee00", False))
+
+
+@pytest.fixture(autouse=True)
+def fresh_revisit_state():
+    """genesis keeps barren-shard bookkeeping in a process-local dict keyed
+    on COLLECTION NAME, and several test modules reuse the same names —
+    without this, one module's exhausted shards silence another's drain."""
+    genesis.reset_revisit_state()
+    yield
+    genesis.reset_revisit_state()
 
 
 @pytest.fixture

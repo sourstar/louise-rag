@@ -83,6 +83,11 @@ def stage_fts(con, row, collection) -> None:
         "updated_at=? WHERE uid=?",
         (config.FTS_VERSION, config.ENTITY_VERSION, len(chunks),
          sum(c["tokens"] for c in chunks), int(time.time()), row["uid"]))
+    if collection.genesis_archive:
+        # this document just became embed-eligible: let the archive look at
+        # its shards again (they go barren once they cover nothing pending,
+        # so the local encoder is never starved by empty revisits)
+        bundle_genesis.note_new_candidate(collection.name)
 
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)

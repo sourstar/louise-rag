@@ -26,6 +26,7 @@ collection's uids.
 """
 import hashlib
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,45 @@ DEFAULT_ARCHIVE_BY_PLUGIN: dict[str, str] = {
 }
 
 
+# Shards that imported NOTHING since the last time new documents became
+# embed-eligible, per collection. Local archives revisit their shards
+# forever (documents become eligible gradually), so without this a residual
+# candidate the archive can NEVER cover — a shard-boundary straddler, whose
+# vectors are split across two files and so fail the chunk-shape gate —
+# makes drain_next_shard claim every worker round re-reading ~437 MB
+# parquet files to import zero rows, and the local encoder never gets to
+# gap-fill it. Cleared by note_new_candidate() the moment an fts commit
+# creates a candidate the archive might cover.
+_barren: dict[str, set[str]] = {}
+_barren_lock = threading.Lock()
+
+
+def note_new_candidate(collection_name: str) -> None:
+    """A document just became embed-eligible: the archive deserves another
+    look at every shard. Called by the fts stage (the transition that
+    creates candidates) — cheap, and precise enough that no scan is needed."""
+    with _barren_lock:
+        _barren.pop(collection_name, None)
+
+
+def _barren_shards(collection_name: str) -> set[str]:
+    with _barren_lock:
+        return set(_barren.get(collection_name, ()))
+
+
+def _mark_barren(collection_name: str, shard: str) -> None:
+    with _barren_lock:
+        _barren.setdefault(collection_name, set()).add(shard)
+
+
+def reset_revisit_state() -> None:
+    """Drop all barren bookkeeping (process-local, like the backend gate's
+    verdict cache). Tests call it between cases; nothing in production
+    needs it, since a restart starts empty anyway."""
+    with _barren_lock:
+        _barren.clear()
+
+
 def drain_next_shard(con, collection, *, stop=None) -> dict | None:
     """The worker's automatic path: import the next pending shard of the
     collection's declared archive, if there is embed work it could satisfy.
@@ -143,18 +183,29 @@ def drain_next_shard(con, collection, *, stop=None) -> dict | None:
     if any(r["state"] == "rejected" for r in rows.values()):
         return None
     now = int(time.time())
+    barren = _barren_shards(collection.name) if archive.local else set()
     for shard in _drain_order(shards, rows, revisit=archive.local):
+        if shard in barren:
+            continue      # imported nothing since the last new candidate
         row = rows.get(shard)
         if row is not None and row["state"] == "skipped" \
                 and now - (row["updated_at"] or 0) < 600:
             return None                # retryable failure: back off 10 min
         try:
-            return import_shard(con, collection, archive, shard,
-                                 revisit=archive.local)
+            result = import_shard(con, collection, archive, shard,
+                                   revisit=archive.local)
         except GenesisUnavailable:
             return None                # recorded as skipped; retried later
         except GenesisError:
             return None                # recorded as rejected; never retried
+        if archive.local and not result.get("docs"):
+            # this shard covers nothing that is still pending; stop
+            # re-reading it until new candidates appear
+            _mark_barren(collection.name, shard)
+        return result
+    # every shard is either applied-and-barren or skipped: the archive has
+    # nothing left to contribute right now, so YIELD the round — the embed
+    # stage must be free to gap-fill what the archive cannot cover
     return None
 
 
