@@ -195,6 +195,27 @@ def test_https_fetch_sends_descriptive_user_agent(tmp_path, mock_server):
     assert "httpx/" in ua                 # underlying library, per the policy
 
 
+def test_https_fetch_follows_redirects(tmp_path, mock_server):
+    # Hugging Face /resolve/ URLs 302 to a CDN — observed live: every
+    # wikivec shard failed with "Redirect response '302 Found'" because
+    # httpx does not follow redirects by default.
+    from dataclasses import replace
+    _write_origin_file(mock_server, "real_target.bin", b"p" * 500)
+    mock_server.redirects["pointer.bin"] = "real_target.bin"
+    # static file list advertises the POINTER path only
+    spec = replace(_spec(mock_server),
+                   endpoints=(Endpoint(
+                       transport=Transport.HTTPS, url=mock_server.base_url,
+                       static_files=(RemoteFile(rel_path="pointer.bin",
+                                                 size=500),)),))
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["fetched"] == 1, "302 must be followed, not fatal"
+    assert (collection.corpus_dir / "pointer.bin").read_bytes() == b"p" * 500
+
+
 # ---------------- delta gate (idempotence) ----------------
 
 def test_idempotent_rerun_skips_unchanged_files(tmp_path, mock_server):

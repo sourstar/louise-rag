@@ -51,7 +51,13 @@ class HttpsTransport:
             token = endpoint.auth_token_path.read_text().strip()
             headers["Authorization"] = f"Bearer {token}"
         try:
-            with httpx.Client(timeout=60) as client:
+            # follow_redirects: Hugging Face /resolve/ URLs 302 to their CDN
+            # (observed live: every wikivec shard failed with "Redirect
+            # response '302 Found'" — dumps.wikimedia/UCSC/NCBI serve bytes
+            # directly, so this never surfaced before). httpx forwards Range
+            # to the redirect target and drops Authorization on cross-origin
+            # hops, which is exactly the right behavior for both headers.
+            with httpx.Client(timeout=60, follow_redirects=True) as client:
                 with client.stream("GET", url, headers=headers) as r:
                     if resume_from > 0 and r.status_code == 200:
                         # server ignored Range -> must restart from scratch

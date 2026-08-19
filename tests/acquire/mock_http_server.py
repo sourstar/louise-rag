@@ -43,6 +43,16 @@ class _Handler(BaseHTTPRequestHandler):
                 server.live -= 1
 
     def _serve(self, server: "MockServer", name: str, path: Path):
+        target = server.redirects.get(name)
+        if target is not None:
+            # 302 like Hugging Face's /resolve/ -> CDN hop; Location is
+            # same-server so the test exercises the client's redirect
+            # following, not cross-host semantics
+            self.send_response(302)
+            self.send_header("Location", f"{server.base_url}/{target}")
+            self.send_header("Content-Length", "0")   # keep-alive needs it
+            self.end_headers()
+            return
         if not path.is_file():
             self.send_response(404)
             self.end_headers()
@@ -105,6 +115,7 @@ class MockServer:
         self.request_counts: dict[str, int] = {}
         self.last_range_header: dict[str, str] = {}
         self.last_user_agent: dict[str, str | None] = {}
+        self.redirects: dict[str, str] = {}
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
