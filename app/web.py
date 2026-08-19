@@ -181,36 +181,40 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
 
 def _collection_shelf(collection: collections_mod.Collection) -> dict:
     con = db.connect(collection)
-    counts = con.execute("""
+    # ONE pass over `documents` for every number on the card. There is no
+    # index that answers these (they are SUMs over the whole table), so each
+    # separate query was a full scan — at pubmed's ~20M rows the page took
+    # tens of seconds and, once the blocked/unindexable split added a third
+    # scan, timed out outright. Conditional aggregation costs one scan for
+    # all of them, which is fewer than the original code used.
+    #
+    # blocked vs unindexable: stage failures are prefixed with their stage
+    # (worker._execute_step), so an UNPREFIXED error came from discovery and
+    # describes the CORPUS — no text in the mirror, retracted upstream.
+    # "Clear errors & retry" cannot fix those (the next scan re-applies
+    # them), so reporting them as failures promised an impossible remedy.
+    stage_error = ("(" + " OR ".join(
+        f"error LIKE '{s}: %'" for s in ("rdf", "fts", "embed")) + ")")
+    counts = con.execute(f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
           SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
-          SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done
-        FROM documents""").fetchone()
+          SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
+          SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
+                   THEN 1 ELSE 0 END) blocked,
+          SUM(CASE WHEN in_scope=1 AND error IS NOT NULL
+                        AND NOT {stage_error} AND retries<:max
+                   THEN 1 ELSE 0 END) unindexable,
+          SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
+                        AND retries<:max
+                        AND (embed_done=0 OR embed_version<:ver)
+                   THEN 1 ELSE 0 END) embed_ready
+        FROM documents""",
+        {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}).fetchone()
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
-    # Documents no stage selector will ever pick up again (every selector
-    # filters `error IS NULL AND retries < MAX_RETRIES`), split by whether
-    # retrying could POSSIBLY help. Stage failures are prefixed with their
-    # stage (see worker._execute_step), so an unprefixed error came from
-    # discovery and describes the CORPUS: no text in the mirror, retracted
-    # upstream. "Clear errors & retry" cannot fix those — the next scan
-    # re-applies them — and reporting them as "blocked" sent an operator
-    # pressing that button expecting an effect it could never have.
-    stage_error = ("(" + " OR ".join(
-        f"error LIKE '{s}: %'" for s in ("rdf", "fts", "embed")) + ")")
-    blocked = con.execute(
-        f"SELECT COUNT(*) c FROM documents WHERE in_scope=1 "
-        f"AND ({stage_error} OR retries>=?)", (config.MAX_RETRIES,)).fetchone()["c"]
-    unindexable = con.execute(
-        f"SELECT COUNT(*) c FROM documents WHERE in_scope=1 AND error IS NOT NULL "
-        f"AND NOT {stage_error} AND retries<?", (config.MAX_RETRIES,)).fetchone()["c"]
-    # What the embed stage could pick up right now — the honest backfill
-    # number under embed_mode=all, where the lazy queue is always empty
-    # because backfill selects from the manifest directly.
-    embed_ready = con.execute(
-        "SELECT COUNT(*) c FROM documents WHERE in_scope=1 AND fts_done=1 "
-        "AND error IS NULL AND retries<? AND (embed_done=0 OR embed_version<?)",
-        (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()["c"]
+    blocked = counts["blocked"] or 0
+    unindexable = counts["unindexable"] or 0
+    embed_ready = counts["embed_ready"] or 0
     space_row = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
     last_discover = con.execute(
         "SELECT ts FROM events WHERE stage='discover' ORDER BY id DESC LIMIT 1").fetchone()
