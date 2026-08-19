@@ -6,13 +6,26 @@
   <span class="dot {{ 'running' if worker_state=='running' else 'paused' }}"></span>
   worker: <b>{{ worker_state }}</b>
   <div class="actions">
-    <button class="{{ 'primary' if worker_state!='running' }}"
-            onclick="setWorkerState('running')">run everything</button>
-    <button class="{{ 'primary' if worker_state!='acquire-only' }}"
-            onclick="setWorkerState('acquire-only')">download only</button>
-    <button class="{{ 'primary' if worker_state!='paused' }}"
-            onclick="setWorkerState('paused')">pause</button>
-    <button onclick="rescanAll()">rescan all collections</button>
+    {# The accent marks the state the node IS in. It used to mark every
+       state it was NOT in, so the current mode was the one button that
+       looked inactive. Selected is disabled too: you cannot switch to
+       where you already are. #}
+    {% for mode, label in (('running', 'run everything'),
+                            ('acquire-only', 'download only'),
+                            ('paused', 'pause')) %}
+    <button class="mode{{ ' selected' if worker_state==mode }}"
+            {% if worker_state==mode %}disabled aria-current="true"
+            title="the node is already in this mode"{% endif %}
+            onclick="setWorkerState('{{ mode }}')">{{ label }}</button>
+    {% endfor %}
+    {# Grey while paused because it would genuinely do nothing: the worker
+       loop returns at the pause gate before servicing discovery requests,
+       so the rescan would sit queued until the node runs again. #}
+    <button onclick="rescanAll()"
+            {% if worker_state=='paused' %}disabled
+            title="the node is paused — discovery does not run, so a rescan
+                   would sit queued. Switch to download only or run
+                   everything first."{% endif %}>rescan all collections</button>
   </div>
   <div class="note">
     <b>download only</b> keeps the corpus growing — acquisition and discovery
