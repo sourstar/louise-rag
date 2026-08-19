@@ -9,6 +9,7 @@ import threading
 import tantivy
 from . import collections as collections_mod
 from . import config
+from . import stemming
 
 _lock = threading.Lock()
 _indexes: dict[tuple[str, str], tantivy.Index] = {}
@@ -21,13 +22,28 @@ def group_for(lang: str) -> str:
         return "cjk"
     return "other"
 
-def _schema() -> tantivy.Schema:
+def pystem_algorithm(group: str) -> str | None:
+    """The PyStemmer algorithm for a group, or None when tantivy stems it
+    (see config.PYSTEM_LANGS for why the split exists)."""
+    if group in config.PYSTEM_LANGS and group in config.STEMMER_LANGS:
+        return config.STEMMER_LANGS[group]
+    return None
+
+def _schema(group: str) -> tantivy.Schema:
+    """Per GROUP, deliberately: adding a field changes the schema, and
+    tantivy refuses to open an index whose on-disk schema differs. Scoping
+    body_stem to the groups that use it means adopting PyStemmer for one
+    language rebuilds ONE index instead of every index on the node."""
     b = tantivy.SchemaBuilder()
     b.add_integer_field("book_id", stored=True, indexed=True, fast=True)
     b.add_text_field("chunk_id", stored=True, tokenizer_name="raw")
     b.add_text_field("chapter", stored=True, tokenizer_name="default")
     b.add_text_field("lang", stored=True, tokenizer_name="raw")
     b.add_text_field("body", stored=True, tokenizer_name="lang_tok")
+    if pystem_algorithm(group):
+        # stems get their own field so `body` keeps the ORIGINAL text for
+        # snippets; not stored, because nobody reads stems
+        b.add_text_field("body_stem", stored=False, tokenizer_name="stem_tok")
     return b.build()
 
 def _analyzer_for(group: str) -> tantivy.TextAnalyzer:
@@ -36,12 +52,18 @@ def _analyzer_for(group: str) -> tantivy.TextAnalyzer:
     else:
         base = tantivy.TextAnalyzerBuilder(tantivy.Tokenizer.simple())
     base = base.filter(tantivy.Filter.remove_long(64)).filter(tantivy.Filter.lowercase())
-    # STEMMER_EXCLUDE keeps a language's OWN index (so nothing is re-routed
-    # and no index is orphaned) while dropping the stemmer that would crash
-    # on it — see config.STEMMER_EXCLUDE for the Greek case.
-    if group in config.STEMMER_LANGS and group not in config.STEMMER_EXCLUDE:
+    # PYSTEM_LANGS are stemmed by app/stemming.py before they get here, so
+    # tantivy must not stem them again — and for Greek it cannot: its
+    # stemmer panics (docs/upstream-rust-stemmers-greek.md).
+    if group in config.STEMMER_LANGS and not pystem_algorithm(group):
         base = base.filter(tantivy.Filter.stemmer(config.STEMMER_LANGS[group]))
     return base.build()
+
+def _stem_analyzer() -> tantivy.TextAnalyzer:
+    """For body_stem, whose content is ALREADY lowercased and stemmed —
+    split it and nothing more."""
+    base = tantivy.TextAnalyzerBuilder(tantivy.Tokenizer.simple())
+    return base.filter(tantivy.Filter.remove_long(64)).build()
 
 def get_index(group: str, collection=None) -> tantivy.Index:
     if collection is None:
@@ -57,8 +79,22 @@ def get_index(group: str, collection=None) -> tantivy.Index:
             return _indexes[key]
         path = collection.fts_dir / group
         path.mkdir(parents=True, exist_ok=True)
-        idx = tantivy.Index(_schema(), path=str(path))
+        try:
+            idx = tantivy.Index(_schema(group), path=str(path))
+        except Exception as e:
+            # An index built under a different schema cannot be opened.
+            # Say what to do about it: search() swallows exceptions, so
+            # without this the only symptom is a language that silently
+            # returns no hits.
+            raise RuntimeError(
+                f"tantivy index at {path} was built with a different schema "
+                f"({type(e).__name__}: {e}). This happens when a language "
+                f"joins or leaves config.PYSTEM_LANGS. Delete {path} and "
+                f"re-index that language's documents "
+                f"(UPDATE documents SET fts_done=0 WHERE lang=...)") from None
         idx.register_tokenizer("lang_tok", _analyzer_for(group))
+        if pystem_algorithm(group):
+            idx.register_tokenizer("stem_tok", _stem_analyzer())
         _indexes[key] = idx
         return idx
 
@@ -71,13 +107,18 @@ def existing_groups(collection=None) -> list[str]:
                   if p.is_dir() and (p / "meta.json").exists())
 
 def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
-    idx = get_index(group_for(lang), collection)
+    group = group_for(lang)
+    algorithm = pystem_algorithm(group)
+    idx = get_index(group, collection)
     writer = idx.writer(heap_size=64_000_000)
     writer.delete_documents("book_id", book_id)
     for c in chunks:
-        writer.add_document(tantivy.Document(
-            book_id=book_id, chunk_id=c["id"], chapter=c["chapter"] or "",
-            lang=lang or "und", body=c["text"]))
+        fields = dict(book_id=book_id, chunk_id=c["id"],
+                      chapter=c["chapter"] or "", lang=lang or "und",
+                      body=c["text"])
+        if algorithm:
+            fields["body_stem"] = stemming.stem_text(algorithm, c["text"])
+        writer.add_document(tantivy.Document(**fields))
     writer.commit()
     writer.wait_merging_threads()
 
@@ -102,7 +143,21 @@ def search(group: str, query: str, limit: int = 20, collection=None,
         clean = _QUERY_STRIP.sub(" ", query).strip()
         if not clean:
             return []
-        q = idx.parse_query_lenient(clean, ["body", "chapter"])[0]
+        algorithm = pystem_algorithm(group)
+        if algorithm:
+            # the query must pass through the SAME stemmer the documents
+            # did, or a stemmed index answers nothing at all
+            stemmed = stemming.stem_text(algorithm, clean)
+            if not stemmed:
+                return []
+            q = idx.parse_query_lenient(stemmed, ["body_stem"])[0]
+            # chapter titles are stored unstemmed, so they keep the raw
+            # query — dropping them would quietly lose a matching signal
+            chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
+            q = tantivy.Query.boolean_query(
+                [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
+        else:
+            q = idx.parse_query_lenient(clean, ["body", "chapter"])[0]
         if book_ids:
             id_filter = tantivy.Query.term_set_query(idx.schema, "book_id", book_ids)
             q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, id_filter)])

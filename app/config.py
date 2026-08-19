@@ -114,25 +114,28 @@ STEMMER_LANGS = {
     "ru": "russian", "no": "norwegian", "ro": "romanian", "tr": "turkish",
     "ar": "arabic", "ta": "tamil",
 }
-# Languages that keep their own index but are indexed WITHOUT the stemmer.
+# Languages stemmed by PyStemmer in our own code (app/stemming.py) instead
+# of by tantivy's built-in filter.
 #
-# Greek: rust-stemmers 1.2.0 — the version compiled into the tantivy wheel,
-# and the last release of a crate dormant since 2019 — panics inside the
-# Greek algorithm on ordinary words. Verified minimal case, tantivy API
-# only, no code of ours in the path:
+# Greek must be here: tantivy compiles rust-stemmers 1.2.0 — the last
+# release of a crate dormant since November 2019 — whose Greek algorithm
+# PANICS on ordinary words. Verified with tantivy's API and none of our
+# code in the path:
 #     "παγαινετε"  -> PanicException: end byte index 18 is out of bounds
 #                     of `παγαινετ`      (snowball_env.rs:249)
 #     "πηγαινετε"  -> ok, stems to `πηγαινετ`
-# The stemmer strips the suffix so the buffer shrinks to 16 bytes, then
-# reuses a byte index computed against the original 18. It fires in one
-# exception branch of the algorithm, so only texts containing that verb
-# family are affected — but for those the panic kills the whole document's
-# indexing, and an unindexed document cannot be found AT ALL, whereas an
-# unstemmed one is merely less forgiving about inflection. Completeness
-# wins. See docs/upstream-rust-stemmers-greek.md; revert this the day the
-# wheel ships a fixed stemmer (tantivy-stemmers is the maintained
-# alternative, but adopting it means compiling tantivy from source).
-STEMMER_EXCLUDE = {"el"}
+# The suffix removal shrinks the buffer to 16 bytes and a byte index
+# computed against the original 18 is then reused. PyStemmer (libstemmer,
+# released 2024-10-10) stems the same word without complaint and agrees
+# with rust-stemmers everywhere rust-stemmers works.
+#
+# Adding a language here changes that group's index SCHEMA (it gains a
+# body_stem field), so its index must be deleted and its documents
+# re-indexed. That is why this is a short list rather than "all of them":
+# migrating pubmed's 20M documents would cost weeks of CPU to fix a bug
+# they do not have. The mechanism is general — the choice of who uses it
+# is a cost decision, one language at a time.
+PYSTEM_LANGS = {"el"}
 # Languages whose scripts have no spaces: index as character bigrams.
 CJK_LANGS = {"zh", "ja", "ko"}
 

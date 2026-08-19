@@ -4,6 +4,16 @@ httpx>=0.27
 pydantic>=2.7
 jinja2>=3.1
 tantivy>=0.24
+# Snowball stemming (app/stemming.py), replacing tantivy's built-in filter
+# for the languages in config.PYSTEM_LANGS. tantivy compiles rust-stemmers
+# 1.2.0, whose last release was 2019-11 and whose Greek algorithm panics on
+# ordinary words (docs/upstream-rust-stemmers-greek.md). PyStemmer wraps
+# libstemmer from the Snowball project itself, last released 2024-10-10,
+# ships prebuilt manylinux cp312 wheels (no toolchain in the image), and
+# covers 29 languages to rust-stemmers' shorter list. Pinned because a
+# stemmer change silently changes index contents: a bump must be a
+# deliberate act with a re-index, not a surprise from an unrelated build.
+PyStemmer==2.2.0.3
 lancedb>=0.15
 # Pinned deliberately: P1.1 signs a digest of a Parquet file, and pyarrow's
 # writer output is not byte-stable across versions (`created_by` embeds the
