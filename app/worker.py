@@ -267,15 +267,17 @@ def _embed_parallel(con, collection, recipe) -> bool:
 # scan, so newly fetched files enter the pipeline without waiting for the
 # next interval.
 _acquire_threads: dict[str, threading.Thread] = {}
-_acquire_done: set = set()
+_acquire_done: dict[str, bool] = {}      # collection -> did it fetch anything
 _acquire_lock = threading.Lock()
 
 
 def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
     con = db.connect(collection)
+    fetched_any = False
     try:
         result = acquire_engine.run_acquisition(con, collection, spec, profile,
                                                  stop=_stop)
+        fetched_any = bool(result.get("fetched"))
         db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
     except (LicenseAckRequiredError, DiskPreflightError) as e:
         db.log_event(con, "error", "acquire", str(e))
@@ -294,7 +296,10 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
     finally:
         con.close()
         with _acquire_lock:
-            _acquire_done.add(collection.name)
+            # only a fetch that actually LANDED files needs a rescan; a
+            # no-op fetch requesting one is how the acquire/discover loop
+            # sustained itself
+            _acquire_done[collection.name] = fetched_any
 
 
 def _acquire(con, collection, reason: str) -> None:
@@ -326,14 +331,16 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
     collection's pipeline thread when one exists, otherwise inline on the
     main thread (which owns the per-collection cons)."""
     with _acquire_lock:
-        done = {name for name in _acquire_done}
+        done = dict(_acquire_done)
         _acquire_done.clear()
     if pipeline:
-        for name in done:
-            _request_discovery(name, "background fetch finished")
+        for name, fetched in done.items():
+            if fetched:   # nothing landed → nothing to rescan
+                _request_discovery(name, "background fetch finished",
+                                    acquire=False)
         return
     for collection in all_collections:
-        if collection.name in done and collection.name in cons:
+        if done.get(collection.name) and collection.name in cons:
             db.log_event(cons[collection.name], "info", "discover",
                          "background fetch finished — scanning")
             stats = discovery.sync_collection(cons[collection.name], collection)
@@ -395,6 +402,16 @@ def _drain_bundle_inbox(con, collection) -> int:
             pass   # leaving it in place is safe: re-import is a ledger no-op
         processed += 1
     return processed
+
+
+def _scan_only(con, collection, reason: str) -> None:
+    """Scan WITHOUT starting a fetch — see _request_discovery(acquire=False)."""
+    db.log_event(con, "info", "discover", f"corpus scan ({reason})")
+    stats = discovery.sync_collection(con, collection)
+    if stats.get("added") or stats.get("changed"):
+        db.log_event(con, "info", "discover",
+                     f"picked up {stats.get('added', 0)} new, "
+                     f"{stats.get('changed', 0)} changed books")
 
 
 def _discover(con, collection, reason: str) -> None:
@@ -511,7 +528,7 @@ _acquire_only = threading.Event()
 # the point of per-collection threads. Now the main loop only REQUESTS a
 # scan and each thread runs its own, so a slow scan costs its own
 # collection and nobody else.
-_discover_requests: dict[str, str] = {}
+_discover_requests: dict[str, tuple[str, bool]] = {}   # name -> (reason, acquire)
 _discover_req_lock = threading.Lock()
 # When each collection was last scanned; module-level because both the
 # main loop (interval trigger) and the pipeline threads (completion) write
@@ -519,14 +536,21 @@ _discover_req_lock = threading.Lock()
 _last_discover: dict[str, float] = {}
 
 
-def _request_discovery(name: str, reason: str) -> None:
+def _request_discovery(name: str, reason: str, *, acquire: bool = True) -> None:
     """First reason wins: a queued 'startup' must not be relabeled by a
-    later 'interval' before the thread has run it."""
+    later 'interval' before the thread has run it.
+
+    `acquire=False` asks for a PLAIN scan. The post-fetch scan must use it:
+    its job is to pick up what a fetch just landed, and if it started
+    another fetch, that fetch's completion would request another scan —
+    which is exactly the tight acquire↔discover loop this grew when
+    discovery moved onto the pipeline threads (observed live: one cycle
+    every ~5 seconds, starving rdf/fts/embed entirely)."""
     with _discover_req_lock:
-        _discover_requests.setdefault(name, reason)
+        _discover_requests.setdefault(name, (reason, acquire))
 
 
-def _take_discovery_request(name: str) -> str | None:
+def _take_discovery_request(name: str) -> tuple[str, bool] | None:
     with _discover_req_lock:
         return _discover_requests.pop(name, None)
 
@@ -545,11 +569,15 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # this collection's scans belong to this thread: acquisition
                 # kickoff, startup scan, interval rescans and post-fetch
                 # rescans all arrive as requests from the main loop
-                reason = _take_discovery_request(collection.name)
-                if reason:
+                request = _take_discovery_request(collection.name)
+                if request:
                     # discovery runs in EVERY non-paused mode: it is what
                     # starts fetches and picks up what they land
-                    _discover(con, collection, reason)
+                    reason, acquire = request
+                    if acquire:
+                        _discover(con, collection, reason)
+                    else:
+                        _scan_only(con, collection, reason)
                     _last_discover[collection.name] = time.time()
                     continue
                 if _acquire_only.is_set():

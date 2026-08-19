@@ -158,7 +158,8 @@ def test_discovery_requests_keep_the_first_reason(tmp_path):
     worker._take_discovery_request("x")      # clear
     worker._request_discovery("x", "startup")
     worker._request_discovery("x", "interval")
-    assert worker._take_discovery_request("x") == "startup"
+    # (reason, acquire) — see _request_discovery
+    assert worker._take_discovery_request("x") == ("startup", True)
     assert worker._take_discovery_request("x") is None
 
 

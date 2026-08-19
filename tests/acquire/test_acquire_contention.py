@@ -43,7 +43,7 @@ def test_locked_manifest_is_a_deferral_not_a_failure(isolated_config, tmp_path,
     assert "retrying" in rows[0]["message"]
     # and the collection is still queued for another attempt
     assert collection.name in worker._acquire_done
-    worker._acquire_done.discard(collection.name)
+    worker._acquire_done.pop(collection.name, None)
 
 
 def test_a_real_failure_is_still_an_error(isolated_config, tmp_path, monkeypatch):
@@ -61,7 +61,7 @@ def test_a_real_failure_is_still_an_error(isolated_config, tmp_path, monkeypatch
         "SELECT level, message FROM events WHERE stage='acquire' "
         "ORDER BY id DESC LIMIT 1").fetchone()
     assert row["level"] == "error" and "failed" in row["message"]
-    worker._acquire_done.discard(collection.name)
+    worker._acquire_done.pop(collection.name, None)
 
 
 def test_busy_timeout_gives_writers_room(isolated_config, tmp_path):

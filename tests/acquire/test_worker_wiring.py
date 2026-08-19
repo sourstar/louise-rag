@@ -51,7 +51,7 @@ def test_acquire_runs_when_enabled_and_spec_registered(tmp_path, monkeypatch):
     # completion raised the flag the main loop turns into a discovery scan
     with worker._acquire_lock:
         assert collection.name in worker._acquire_done
-        worker._acquire_done.discard(collection.name)
+        worker._acquire_done.pop(collection.name, None)
 
 
 def test_slow_acquisition_does_not_block_the_worker(tmp_path, monkeypatch):
@@ -86,7 +86,7 @@ def test_slow_acquisition_does_not_block_the_worker(tmp_path, monkeypatch):
     worker._acquire_threads[collection.name].join(timeout=10)
     with worker._acquire_lock:
         assert collection.name in worker._acquire_done
-        worker._acquire_done.discard(collection.name)
+        worker._acquire_done.pop(collection.name, None)
 
 
 def test_acquire_noop_when_no_spec_registered(tmp_path, monkeypatch):
