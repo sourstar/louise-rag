@@ -883,11 +883,22 @@ def _bandwidth_payload() -> dict:
     situations the reader is looking at, so the UI never has to guess.
     """
     payload = transfer_manager.get_manager().rates()
+    worker_rates = age = None
+    con = None
     try:
-        worker_rates, age = db.read_worker_rates(db.connect())
+        # read_only_connect, not connect: this runs every couple of seconds
+        # per subscriber, and connect() re-runs the schema script and the
+        # ALTER TABLE migrations each call — write-path work on a manifest
+        # the pipeline threads are already contending for.
+        con = db.read_only_connect()
+        if con is not None:
+            worker_rates, age = db.read_worker_rates(con)
     except sqlite3.Error:
         # the manifest being briefly unavailable must not break the graph
         worker_rates, age = None, None
+    finally:
+        if con is not None:
+            con.close()
     if worker_rates:
         for direction in ("down", "up"):
             mine = payload.get(direction, {})

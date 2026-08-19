@@ -105,6 +105,38 @@ def test_the_stream_endpoint_serves_the_merged_payload(client, isolated_config):
     assert "bw-scope" in r.text, "the badge the flag drives must exist"
 
 
+def test_the_polling_path_uses_a_cheap_reader(isolated_config, monkeypatch):
+    """_bandwidth_payload runs every couple of seconds per subscriber.
+    db.connect() re-runs the schema script and the ALTER TABLE migrations on
+    every call — write-path work against a manifest the pipeline threads are
+    already contending for."""
+    db.publish_worker_rates(db.connect(), {"down": {"backfill": 1.0}, "up": {}})
+
+    calls = {"connect": 0, "ro": 0}
+    real_ro = db.read_only_connect
+    monkeypatch.setattr(db, "connect",
+                        lambda *a, **k: calls.__setitem__("connect", calls["connect"] + 1))
+    monkeypatch.setattr(db, "read_only_connect",
+                        lambda *a, **k: (calls.__setitem__("ro", calls["ro"] + 1),
+                                          real_ro(*a, **k))[1])
+
+    web._bandwidth_payload()
+    assert calls["ro"] == 1
+    assert calls["connect"] == 0, "the full connect() must not be on this path"
+
+
+def test_the_reader_tolerates_a_manifest_that_does_not_exist_yet(isolated_config,
+                                                                  monkeypatch):
+    """A node whose first collection has never been written must still serve
+    the Network page."""
+    from app import collections as collections_mod
+    c = collections_mod.default_collection()
+    monkeypatch.setattr(c.manifest_path.__class__, "exists", lambda self: False)
+    assert db.read_only_connect() is None
+    payload = web._bandwidth_payload()
+    assert payload["worker"]["reporting"] is False
+
+
 def test_worker_rates_are_not_adopted_as_node_control(isolated_config):
     """Telemetry, not state: carrying one node-control owner's stale reading
     to the next would publish a lie for a round, and it is overwritten

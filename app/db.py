@@ -290,6 +290,30 @@ def node_id(con) -> str:
     set_control(con, "node_id", fresh)
     return fresh
 
+def read_only_connect(collection=None) -> sqlite3.Connection | None:
+    """A cheap reader for polling paths. None when there is no manifest yet.
+
+    connect() is not cheap: it runs the whole schema script and the ALTER
+    TABLE migrations on every call, which is right for a process that is
+    about to write and wrong for something asked twice a second. This opens
+    read-only, runs no DDL, and takes no write lock on a manifest the
+    pipeline threads are already contending for.
+
+    check_same_thread=False because the caller is typically a streaming
+    response, and consecutive iterations of a sync generator are not
+    guaranteed the same worker thread. The connection is read-only and
+    short-lived, so there is nothing to serialise.
+    """
+    if collection is None:
+        collection = collections_mod.default_collection()
+    if not collection.manifest_path.exists():
+        return None
+    con = sqlite3.connect(f"file:{collection.manifest_path}?mode=ro", uri=True,
+                          timeout=5, check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    return con
+
+
 WORKER_RATES_KEY = "worker_rates"
 # How long a published sample stays believable. The worker republishes once
 # per loop; past this it is reported as stale and counted as zero, because a
