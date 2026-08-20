@@ -17,7 +17,7 @@ class Transport(str, Enum):
     HTTPS = "https"
     FTP = "ftp"
     HF_HUB = "hf_hub"
-    TORRENT = "torrent"   # stub interface only — Phase 2
+    TORRENT = "torrent"   # BitTorrent v2 via libtorrent (transport_torrent.py)
     S3 = "s3"             # declared, unimplemented — not in P0.4 scope
 
 

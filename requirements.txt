@@ -32,3 +32,16 @@ pytest>=8
 # Property-based generators for the verification ladder's detection matrix
 # (P1.2): honest / wrong-model / perturbed / unnormalized bundles. Test-only.
 hypothesis>=6.100
+# BitTorrent v2 for the P2P raw plane (app/acquire/transport_torrent.py,
+# architecture-v2.md §5). Pinned: a swarm client is a large attack surface
+# and its behaviour under load is a property of the exact build.
+#
+# 2.x is required, not merely preferred — BEP 52's per-file merkle trees are
+# what make files independently verifiable and let consecutive corpus
+# snapshots share the pieces that did not change. 1.x has neither.
+#
+# A prebuilt manylinux wheel exists for CPython 3.12 (~8 MB), so this costs
+# no compilation and no toolchain in the image. The transport imports it
+# LAZILY, so a deployment with no torrent-backed collection never loads it
+# and the app starts normally if the wheel is ever unavailable.
+libtorrent==2.1.1

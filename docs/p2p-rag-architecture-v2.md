@@ -784,3 +784,35 @@ design taste:
     a language to that set changes its index schema, so the mechanism is
     general but the list is short by choice — see
     [`upstream-rust-stemmers-greek.md`](upstream-rust-stemmers-greek.md).
+25. **§5 — the torrent transport is implemented (BitTorrent v2).** No
+    longer a stub: `list_files` enumerates a torrent's tree with real sizes,
+    `fetch_one` pulls exactly one file out of it, and
+    `app/acquire/torrent_publish.py` turns a corpus this node holds into a
+    `.torrent` plus a magnet, with `app.cli torrent publish|seed`. Three
+    things the shape had to get right, each found by a failing test rather
+    than by reasoning: libtorrent writes into FINAL paths as pieces arrive,
+    so every file is renamed to `<name>.part` inside the torrent and
+    promoted with os.replace — and because `rename_file` is asynchronous
+    and `torrent_file()` is immutable metadata that never reflects it, the
+    rename is awaited via `file_renamed_alert` and the stored name is
+    computed, never read back. BitTorrent pads every file up to a piece
+    boundary with synthetic `.pad/NNNN` entries (that alignment is exactly
+    what lets snapshots share unchanged files), and they are excluded
+    everywhere — they are not content and would otherwise become
+    fetch_files rows. Rate limiting reuses the rsync lease: libtorrent has
+    its own limiter and cannot be metered per byte, so it is handed a slice
+    of the central budget rather than exempted from it (invariant 5). The
+    session is process-global so completed torrents keep SEEDING; a node
+    that only downloads is a leech. libtorrent is an optional, lazily
+    imported dependency, so a deployment with no torrent-backed collection
+    never loads it.
+26. **§5 — peer and collection discovery is designed, not built.** See
+    [`p2p-discovery.md`](p2p-discovery.md). The load-bearing distinction:
+    a DHT finds peers for an INFOHASH and can say nothing about whether
+    that infohash holds a corpus in your embedding space under a licence
+    you may redistribute — that is a catalogue question and must be
+    answered first. The proposal is a signed per-node catalogue (reusing
+    the existing bundle signing key) whose first field is `space_id`, with
+    peers found through an explicit pinned list first, the existing
+    coordinator as a rendezvous second, and the DHT only once an infohash
+    is in hand.

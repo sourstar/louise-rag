@@ -432,6 +432,76 @@ def cmd_backend_rebaseline(args) -> int:
     return 0
 
 
+
+def cmd_torrent_publish(args) -> int:
+    """Hash a collection's corpus into a .torrent and print its magnet.
+
+    Reads every byte, so it is minutes on a large corpus and deliberately
+    explicit rather than something the worker does on a timer.
+    """
+    from .acquire import torrent_publish
+    from .acquire.spec import TransportError
+
+    collection = _collection_by_name(args.collection)
+    out = Path(args.out) if args.out else (
+        collection.manifest_path.parent / f"{collection.name}.torrent")
+    try:
+        published = torrent_publish.publish_corpus(
+            collection.corpus_dir, out, name=collection.name,
+            trackers=tuple(args.tracker or ()),
+            web_seeds=tuple(args.web_seed or ()),
+            comment=f"louise-rag collection {collection.name}")
+    except TransportError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 1
+    print(f"torrent:   {published.torrent_path}")
+    print(f"files:     {published.files}")
+    print(f"bytes:     {published.total_bytes:,}")
+    print(f"info hash: {published.info_hash}")
+    print()
+    print("Give a peer either the .torrent file above or this magnet:")
+    print(published.magnet)
+    if not args.tracker:
+        print()
+        print("No tracker is embedded. A peer that cannot reach this node "
+              "through the DHT needs it added directly — see "
+              "docs/p2p-discovery.md.")
+    return 0
+
+
+def cmd_torrent_seed(args) -> int:
+    """Serve an already-published torrent from the corpus on disk, until
+    interrupted. libtorrent re-checks the pieces first, which doubles as a
+    free integrity audit of what this node claims to hold."""
+    import signal as _signal
+    from .acquire import torrent_publish, transport_torrent
+
+    collection = _collection_by_name(args.collection)
+    torrent = Path(args.torrent) if args.torrent else (
+        collection.manifest_path.parent / f"{collection.name}.torrent")
+    if not torrent.is_file():
+        print(f"REFUSED: {torrent} does not exist — run `torrent publish` first",
+              file=sys.stderr)
+        return 1
+
+    handle = torrent_publish.seed(torrent, collection.corpus_dir)
+    session = transport_torrent.get_session()
+    print(f"seeding {collection.name} from {collection.corpus_dir}")
+    print(f"listening on {session.listen_port()}  (Ctrl-C to stop)")
+
+    stop = threading.Event()
+    _signal.signal(_signal.SIGINT, lambda *_: stop.set())
+    _signal.signal(_signal.SIGTERM, lambda *_: stop.set())
+    while not stop.wait(5):
+        st = handle.status()
+        print(f"  peers={st.num_peers} up={st.upload_payload_rate / 1000:.0f} kB/s "
+              f"uploaded={st.total_payload_upload / 1e6:.1f} MB "
+              f"state={st.state}", flush=True)
+    transport_torrent.shutdown_session()
+    print("stopped seeding")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="app.cli")
     top = p.add_subparsers(dest="command", required=True)
@@ -511,6 +581,27 @@ def main(argv=None) -> int:
     be_rebase.add_argument("collection")
     be_rebase.add_argument("--yes", action="store_true")
     be_rebase.set_defaults(func=cmd_backend_rebaseline)
+
+    torrent_parser = top.add_parser(
+        "torrent", help="publish and seed a corpus over BitTorrent")
+    torrent = torrent_parser.add_subparsers(dest="verb", required=True)
+
+    t_pub = torrent.add_parser("publish", help="hash a corpus into a .torrent")
+    t_pub.add_argument("collection")
+    t_pub.add_argument("--out", help="where to write the .torrent "
+                                      "(default: beside the manifest)")
+    t_pub.add_argument("--tracker", action="append",
+                       help="tracker announce URL; repeatable, none by default")
+    t_pub.add_argument("--web-seed", action="append",
+                       help="BEP 19 HTTP seed — the origin URL of this corpus, "
+                            "so a peer can finish even with nobody seeding")
+    t_pub.set_defaults(func=cmd_torrent_publish)
+
+    t_seed = torrent.add_parser("seed", help="serve a published torrent")
+    t_seed.add_argument("collection")
+    t_seed.add_argument("--torrent", help="path to the .torrent "
+                                           "(default: beside the manifest)")
+    t_seed.set_defaults(func=cmd_torrent_seed)
 
     corpus_parser = top.add_parser("corpus")
     corpus = corpus_parser.add_subparsers(dest="verb", required=True)
