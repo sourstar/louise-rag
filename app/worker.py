@@ -122,31 +122,69 @@ def stage_embed(con, row, collection) -> None:
         (config.EMBED_VERSION, int(time.time()), row["uid"]))
     db.log_event(con, "info", "embed", f"embedded {n} chunks", row["uid"])
 
+# The lazy queue's eligibility predicate and its cleanup, shared by every
+# selector that serves the queue (_next_book, _next_embed, _embed_candidates)
+# so the three cannot drift apart — they carried three copies, and the
+# missing filters below were missing from all three.
+#
+# `error IS NULL AND retries<?` is here for the same reason the rdf and fts
+# selections have it: a queued document that CANNOT be embedded was
+# otherwise re-picked every round forever, and because the queue is consulted
+# before rdf/fts, one such document starves the whole collection.
+_QUEUE_ELIGIBLE = """
+    SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
+    WHERE d.in_scope=1 AND d.rdf_done=1 AND d.error IS NULL AND d.retries<?
+      AND (d.embed_done=0 OR d.embed_version < ?)
+    ORDER BY q.priority DESC, q.ts LIMIT ?"""
+
+# NOT EXISTS, never `uid NOT IN (SELECT ...)`: the IN form materialises EVERY
+# not-yet-embedded uid as a list in order to test a handful of queue rows.
+# Measured live on pubmed (33.4M documents, 17 queue rows): 22.3s to delete
+# ZERO. This form is one index probe per queue row. It also retires rows the
+# selection above can no longer serve, so an errored or retry-exhausted
+# document does not sit in the queue forever.
+_QUEUE_CLEANUP = (
+    "DELETE FROM embed_queue WHERE NOT EXISTS ("
+    " SELECT 1 FROM documents d WHERE d.uid=embed_queue.uid"
+    "  AND d.embed_done=0 AND d.error IS NULL AND d.retries<?)")
+
+# Why no ORDER BY on the rdf/fts selections: they used to end
+# `ORDER BY CAST(native_id AS INTEGER)`, and the CAST makes every index
+# unusable — SQLite builds a TEMP B-TREE over the whole candidate set to
+# return one row. Measured live on pubmed: 10.0s with it, 0.000s without.
+# Nothing depends on the order. Each stage flips its own done flag, so the
+# document leaves the candidate set and the next call returns the next one;
+# every document is still processed exactly once. Index order (from
+# idx_documents_scope) replaces numeric native_id order, which was only ever
+# cosmetic. The backfill keeps `ORDER BY (lang='en')` — non-English first is
+# a deliberate priority (rarest knowledge) — and drops only the CAST
+# tiebreaker.
+_RDF_PENDING = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=0 AND error IS NULL "
+    "AND retries<? LIMIT 1")
+
+_FTS_PENDING = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
+    "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
+    "LIMIT 1")
+
+
 def _next_book(con, scope, embed_allowed=True):
     # 1. priority embeds (lazy queue), regardless of backfill mode
     if embed_allowed and scope["embed_mode"] in ("lazy", "all"):
-        r = con.execute("""
-            SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
-            WHERE d.in_scope=1 AND d.rdf_done=1
-              AND (d.embed_done=0 OR d.embed_version < ?)
-            ORDER BY q.priority DESC, q.ts LIMIT 1""",
-            (config.EMBED_VERSION,)).fetchone()
+        r = con.execute(_QUEUE_ELIGIBLE,
+                        (config.MAX_RETRIES, config.EMBED_VERSION, 1)).fetchone()
         if r:
             return "embed", r
-        con.execute("DELETE FROM embed_queue WHERE uid NOT IN "
-                    "(SELECT uid FROM documents WHERE embed_done=0)")
+        con.execute(_QUEUE_CLEANUP, (config.MAX_RETRIES,))
     # 2. metadata
-    r = con.execute(
-        "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=0 AND error IS NULL "
-        "AND retries<? ORDER BY CAST(native_id AS INTEGER) LIMIT 1", (config.MAX_RETRIES,)).fetchone()
+    r = con.execute(_RDF_PENDING, (config.MAX_RETRIES,)).fetchone()
     if r:
         return "rdf", r
     # 3. lexical index (+ entity tagging, gated by its own version so it can
     # be forced to re-run independently of FTS_VERSION)
     r = con.execute(
-        "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
-        "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
-        "ORDER BY CAST(native_id AS INTEGER) LIMIT 1",
+        _FTS_PENDING,
         (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION)).fetchone()
     if r:
         return "fts", r
@@ -155,7 +193,7 @@ def _next_book(con, scope, embed_allowed=True):
         r = con.execute(
             "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
             "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en'), CAST(native_id AS INTEGER) LIMIT 1",
+            "ORDER BY (lang='en') LIMIT 1",
             (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()
         if r:
             return "embed", r
@@ -170,21 +208,16 @@ def _next_embed(con, scope):
     its fts commit, and a pipeline thread never touches it again after that."""
     if scope["embed_mode"] not in ("lazy", "all"):
         return None, None
-    r = con.execute("""
-        SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
-        WHERE d.in_scope=1 AND d.rdf_done=1
-          AND (d.embed_done=0 OR d.embed_version < ?)
-        ORDER BY q.priority DESC, q.ts LIMIT 1""",
-        (config.EMBED_VERSION,)).fetchone()
+    r = con.execute(_QUEUE_ELIGIBLE,
+                    (config.MAX_RETRIES, config.EMBED_VERSION, 1)).fetchone()
     if r:
         return "embed", r
-    con.execute("DELETE FROM embed_queue WHERE uid NOT IN "
-                "(SELECT uid FROM documents WHERE embed_done=0)")
+    con.execute(_QUEUE_CLEANUP, (config.MAX_RETRIES,))
     if scope["embed_mode"] == "all":
         r = con.execute(
             "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
             "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en'), CAST(native_id AS INTEGER) LIMIT 1",
+            "ORDER BY (lang='en') LIMIT 1",
             (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()
         if r:
             return "embed", r
@@ -198,18 +231,15 @@ def _embed_candidates(con, scope, limit: int):
     two selections _next_book makes, widened for the parallel path."""
     rows = []
     if scope["embed_mode"] in ("lazy", "all"):
-        rows += con.execute("""
-            SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
-            WHERE d.in_scope=1 AND d.rdf_done=1
-              AND (d.embed_done=0 OR d.embed_version < ?)
-            ORDER BY q.priority DESC, q.ts LIMIT ?""",
-            (config.EMBED_VERSION, limit)).fetchall()
+        rows += con.execute(
+            _QUEUE_ELIGIBLE,
+            (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
     if len(rows) < limit and scope["embed_mode"] == "all":
         seen = {r["uid"] for r in rows}
         rows += [r for r in con.execute(
             "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
             "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en'), CAST(native_id AS INTEGER) LIMIT ?",
+            "ORDER BY (lang='en') LIMIT ?",
             (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
             if r["uid"] not in seen][: limit - len(rows)]
     return rows
