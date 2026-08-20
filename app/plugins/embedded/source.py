@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
+from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
 
 _SEG_SEP = "|"
 _LOCATOR_SEP = "::"
@@ -107,6 +107,10 @@ class EmbeddedSource:
     license_class = LicenseClass.YELLOW
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "verbatim"
+    # A frozen published dataset — and its boundaries are the
+    # PRODUCER'S, which is the whole basis for reusing their vectors.
+    # Re-cutting them for any reason would orphan every one.
+    mutability = Mutability.IMMUTABLE
 
     def discover(self, state: DiscoverState):
         import pyarrow.parquet as pq

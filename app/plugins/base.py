@@ -24,6 +24,33 @@ class PrivacyClass(str, Enum):
     NEVER_SHARE = "never-share"
 
 
+class Mutability(str, Enum):
+    """Does this source REVISE what it has already published?
+
+    Not a statement about how often it changes — Project Gutenberg adds
+    books constantly — but about whether existing documents are edited in
+    place. That is the only case where a chunk boundary moving matters, and
+    it is therefore what decides how the text is chunked:
+
+      IMMUTABLE  a document, once published, is final; growth is
+                 append-only. Fixed-width chunking is right — simpler, it
+                 overlaps for recall, and nothing is ever re-chunked.
+
+      MUTABLE    documents are revised indefinitely. Fixed-width boundaries
+                 are counted from the start of the text, so inserting one
+                 paragraph shifts every boundary after it and re-embeds a
+                 whole document for a typo. Content-defined chunking cuts on
+                 the content itself, so an edit disturbs only its own
+                 neighbourhood (app/chunking.py::chunk_cdc).
+
+    A source that is mostly-immutable-but-occasionally-revised belongs in
+    IMMUTABLE: this switch is about the COST of re-chunking, not about the
+    fact of change. Revisit per source if one ever proves otherwise.
+    """
+    IMMUTABLE = "immutable"
+    MUTABLE = "mutable"
+
+
 @dataclass(frozen=True)
 class DocRef:
     """One discoverable document — cheap to enumerate, no content read yet.
@@ -105,6 +132,7 @@ class CorpusSource(Protocol):
     license_class: LicenseClass
     privacy_class: PrivacyClass
     chunking_profile: str
+    mutability: Mutability
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...

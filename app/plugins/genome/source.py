@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
+from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
 
 _LOCATOR_SEP = "::"
 _FASTA_SUFFIXES = (".fa", ".fa.gz", ".fasta", ".fasta.gz", ".fna", ".fna.gz")
@@ -81,6 +81,10 @@ class GenomeSource:
                                             # genomes, which this plugin does
                                             # not ingest
     chunking_profile = "sequence-window"
+    # A reference assembly is frozen by definition; a new assembly is
+    # a new collection (§9). The windows ARE coordinates, and moving
+    # them would break the chunk-id-to-locus mapping.
+    mutability = Mutability.IMMUTABLE
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

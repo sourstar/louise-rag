@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ET
 from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
+from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
 from . import medline
 
 DELETE_MARKER = "deleted (DeleteCitation)"
@@ -92,6 +92,10 @@ class PubmedSource:
     license_class = LicenseClass.YELLOW   # publisher copyright on text; raw is pointer-only (§8)
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "abstract"
+    # Articles are occasionally revised or retracted, but an abstract
+    # is a single chunk — there are no downstream boundaries for an
+    # edit to shift, so content-defined chunking would buy nothing.
+    mutability = Mutability.IMMUTABLE
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
+from ..base import CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
 from . import pg_text, rdf
 
 
@@ -21,6 +21,9 @@ class GutenbergSource:
     license_class = LicenseClass.GREEN
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "book"
+    # Books are published finished. The catalogue grows; a text
+    # already in it does not get edited.
+    mutability = Mutability.IMMUTABLE
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

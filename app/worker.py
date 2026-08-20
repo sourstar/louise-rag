@@ -57,7 +57,8 @@ def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
     native_id = int(row["native_id"])
     chapters = plugin_io.sections(plugin, row)
-    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
+    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None),
+                                  getattr(plugin, "mutability", None))
     return list(chunk(row["uid"], native_id, chapters))
 
 def stage_rdf(con, row, collection) -> None:

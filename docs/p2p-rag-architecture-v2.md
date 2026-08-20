@@ -816,3 +816,42 @@ design taste:
     peers found through an explicit pinned list first, the existing
     coordinator as a rendezvous second, and the DHT only once an infohash
     is in hand.
+27. **§2 — a source declares whether it REVISES what it publishes.**
+    `plugins/base.Mutability` is IMMUTABLE or MUTABLE, and it is not a
+    statement about how often a source changes — Project Gutenberg adds
+    books constantly — but about whether existing documents are edited in
+    place. That is the only case where a chunk boundary moving matters, so
+    it is what selects the chunker. Today only wikipedia is MUTABLE; a
+    source that is mostly-immutable-but-occasionally-revised belongs in
+    IMMUTABLE, because this switch is about the cost of re-chunking rather
+    than the fact of change.
+28. **§3 — the chunk version is scoped PER CHUNKER, not per node.** It was
+    one global `CHUNK_VERSION` entering every collection's `space_id`, so
+    changing how TEXT is chunked would have re-pinned collections whose
+    chunker never changed — including the pre-embedded ones, whose vectors
+    were imported against a *producer's* boundaries and cannot be
+    recomputed by re-chunking at all. Fixed-width chunkers still report
+    exactly `config.CHUNK_VERSION`, so every existing space id is unchanged
+    to the byte, and adopting a new chunker costs only the collections that
+    adopt it.
+29. **§3 — content-defined chunking for mutable sources.** Fixed-width
+    boundaries are counted from the start of the text, so inserting one
+    paragraph shifts every boundary after it: a typo fix re-embeds a whole
+    document, and a monthly delta costs the corpus rather than the edits.
+    `chunk_cdc` cuts on a gear-hash rolling window (FastCDC-style
+    normalized chunking, min 1,000 / target 4,000 / max 8,000 characters,
+    the maximum bounded by the encoder's context). Measured on synthetic
+    prose: inserting 25 characters near the start changed **1 of 71**
+    chunks, against **80 of 80** for fixed windows.
+    Two deliberate properties. Sections are chunked independently, so an
+    edit in one cannot move a boundary in another even in principle. And
+    there is NO overlap between CDC chunks — overlap would make each chunk
+    depend on its neighbour's tail, which is the coupling the scheme exists
+    to remove; a passage straddling a boundary is therefore split, which
+    the lexical leg and RRF partly absorb. Determinism (invariant 3) holds:
+    the gear table is derived from a fixed constant by blake2b, never from
+    `random.*`, so it is identical on every machine and Python version.
+    MIGRATION: this changes wikipedia's `space_id`. Its pin must be reset
+    and its documents re-chunked (fts + embed) before it will boot. Doing
+    it before the enwiki backfill runs is the difference between minutes
+    and months, which is why it was done now.

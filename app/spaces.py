@@ -110,11 +110,33 @@ def gather_components(collection=None) -> SpaceComponents:
         dtype=recipe.dtype,
         normalization="l2-client",       # embeddings.py always L2-normalizes client-side
         pooling="server-default",        # not independently observable over HTTP
-        chunk_version=config.CHUNK_VERSION,
+        # Per CHUNKER, not one global number. It used to be
+        # config.CHUNK_VERSION for everyone, which meant changing how TEXT is
+        # chunked would re-pin the space of collections whose chunker never
+        # changed — including the pre-embedded ones, whose vectors were
+        # imported against a producer's boundaries and cannot be recomputed
+        # by re-chunking at all. Fixed-width chunkers still report exactly
+        # config.CHUNK_VERSION, so every existing space_id is unchanged.
+        chunk_version=_chunk_version_for(collection),
         cleaning_version=config.CLEANING_VERSION,
         truncation_policy=f"ctx={recipe.ctx}",
         query_encoder_hash=query_hash,
     )
+
+
+
+def _chunk_version_for(collection) -> int:
+    """The chunk version that belongs in this collection's space id.
+
+    Tolerant of a collection with no plugin instance (tests build ad-hoc
+    Collections): the global is the right answer for every fixed-width
+    chunker, which is all of them bar a mutable source.
+    """
+    from . import chunking
+    try:
+        return chunking.chunker_version_for_collection(collection)[1]
+    except Exception:   # noqa: BLE001 — a space id must always be computable
+        return config.CHUNK_VERSION
 
 
 def _config_id(c: SpaceComponents) -> str:

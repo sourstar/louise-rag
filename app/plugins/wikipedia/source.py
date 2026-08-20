@@ -17,7 +17,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, PrivacyClass, RawDoc
+from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
 from . import wikitext
 
 _LOCATOR_SEP = "::"
@@ -48,6 +48,9 @@ class WikipediaSource:
     license_class = LicenseClass.YELLOW     # CC BY-SA: attribution + share-alike
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "wiki"
+    # The one source here that revises in place, indefinitely, and
+    # the reason content-defined chunking exists in this codebase.
+    mutability = Mutability.MUTABLE
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

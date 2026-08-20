@@ -170,9 +170,19 @@ def test_fetch_uses_the_one_slot_shard_cache(corpus, monkeypatch):
 
 
 def test_chunker_dispatch_default_is_unchanged():
-    assert chunking.chunker_for(None) is chunking.chunk_book
-    assert chunking.chunker_for("book") is chunking.chunk_book
-    assert chunking.chunker_for("abstract") is chunking.chunk_book
-    assert chunking.chunker_for("wiki") is chunking.chunk_book
-    assert chunking.chunker_for("verbatim") is chunking.chunk_verbatim
+    """chunker_for now returns a callable bound to the chunker's own chunk
+    version, so identity against the raw function no longer holds. What must
+    hold — and what this always meant — is that the OUTPUT is unchanged for
+    every profile that predates content-defined chunking.
+    """
+    sections = [("Intro", "para one.\n\npara two."), ("Next", "more text.")]
+
+    for profile in (None, "book", "abstract", "wiki"):
+        assert chunking.chunker_name(profile, None) == "book"
+        assert list(chunking.chunker_for(profile)("u:1", 1, sections)) == \
+            list(chunking.chunk_book("u:1", 1, sections)), profile
+
+    assert chunking.chunker_name("verbatim", None) == "verbatim"
+    assert list(chunking.chunker_for("verbatim")("u:1", 1, sections)) == \
+        list(chunking.chunk_verbatim("u:1", 1, sections))
 
