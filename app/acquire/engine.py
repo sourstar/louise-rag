@@ -102,18 +102,27 @@ def make_ack(terms_text_path: Path) -> str:
     return f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}/{digest}"
 
 
-def _list_and_filter(spec: AcquisitionSpec, profile: str) -> list[RemoteFile]:
+def _list_and_filter(spec: AcquisitionSpec, profile: str,
+                      snapshot: str | None = None) -> list[RemoteFile]:
     # resolve_profile also understands a COMBINED profile ("tr,it") on an
     # additive source, where it is the union of those slices
     profile_filter = resolve_profile(spec, profile)
     transport = REGISTRY[spec.transport]
     all_files: list[RemoteFile] = []
     seen: set[str] = set()
-    for endpoint in spec.endpoints:
-        for f in transport.list_files(endpoint, spec):
-            if f.rel_path not in seen:
-                seen.add(f.rel_path)
-                all_files.append(f)
+    if snapshot and spec.snapshot_files is not None:
+        # A pinned collection asks the origin for THAT dated snapshot, not
+        # for whatever it currently calls latest. Those URLs are immutable,
+        # which is what makes the corpus reproducible and shareable.
+        candidates = list(spec.snapshot_files(snapshot))
+    else:
+        candidates = []
+        for endpoint in spec.endpoints:
+            candidates.extend(transport.list_files(endpoint, spec))
+    for f in candidates:
+        if f.rel_path not in seen:
+            seen.add(f.rel_path)
+            all_files.append(f)
     return _apply_filters(all_files, spec.filters, profile_filter)
 
 
@@ -181,7 +190,7 @@ def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> Ac
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
-    files = _list_and_filter(spec, profile)
+    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     return _plan_from_files(con, collection, spec, files)
 
 
@@ -475,7 +484,7 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     """
     _require_license_ack(spec, collection)
 
-    files = _list_and_filter(spec, profile)
+    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     plan = _plan_from_files(con, collection, spec, files)
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls

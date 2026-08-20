@@ -5,6 +5,7 @@ mirror. Tests point an equivalent HTTPS spec at a local mock server instead
 (see tests/acquire/) — never at these real endpoints (non-goal: real origin
 traffic in tests).
 """
+import re
 from pathlib import Path
 
 from ..plugins.base import LicenseClass
@@ -62,13 +63,68 @@ PUBMED_SPEC = AcquisitionSpec(
     terms_text_path=Path(__file__).parent.parent / "plugins" / "pubmed" / "TERMS.txt",
 )
 
-def _wiki_files(wiki: str) -> tuple[RemoteFile, ...]:
-    """Stable -latest- names per wiki: the multistream dump + its index are
-    the only two files the plugin needs. rel_path is nested (it is also the
-    corpus-relative destination), so multiple wikis coexist in one corpus."""
-    base = f"{wiki}/latest/{wiki}-latest-pages-articles-multistream"
+WIKIS = ("simplewiki", "enwiki")
+_SNAPSHOT_RE = re.compile(r"^\d{8}$")
+
+
+def _wiki_files(wiki: str, snapshot: str = "latest") -> tuple[RemoteFile, ...]:
+    """The multistream dump + its index, the only two files the plugin needs.
+
+    `snapshot` is a dump date ("20260801") or the literal "latest".
+
+    A DATED path is immutable: the same URL serves the same bytes forever,
+    which is what makes the corpus torrentable, cacheable, adoptable, and
+    comparable with a peer's. "latest" is the opposite — the same URL serves
+    different bytes every few weeks, so a collection on it cannot say which
+    dump it holds and every refresh is a full re-download. It remains the
+    default only because changing it under an existing collection would
+    orphan a 27 GB corpus; see Collection.snapshot.
+
+    rel_path is nested (it is also the corpus-relative destination), so
+    multiple wikis — and multiple snapshots — coexist in one corpus.
+    """
+    base = f"{wiki}/{snapshot}/{wiki}-{snapshot}-pages-articles-multistream"
     return (RemoteFile(rel_path=f"{base}.xml.bz2"),
             RemoteFile(rel_path=f"{base}-index.txt.bz2"))
+
+
+def _wikipedia_snapshot_files(snapshot: str) -> tuple[RemoteFile, ...]:
+    files: tuple[RemoteFile, ...] = ()
+    for wiki in WIKIS:
+        files += _wiki_files(wiki, snapshot)
+    return files
+
+
+def wikipedia_snapshots(wiki: str = "enwiki", timeout: float = 30.0) -> tuple[str, ...]:
+    """Dump dates the origin currently offers, NEWEST FIRST.
+
+    Wikimedia keeps only the last few dumps online, so this is also the
+    honest answer to "can I still get the snapshot I am pinned to?" — a date
+    that has fallen off the end is gone, and a collection pinned to it can
+    no longer be rebuilt from the origin (which is exactly the case a peer
+    swarm is for).
+
+    Parsed from the directory index because there is no listing API. Only
+    8-digit names are accepted, so no amount of unexpected HTML can turn
+    into a fetch URL.
+    """
+    import httpx
+
+    url = f"https://dumps.wikimedia.org/{wiki}/"
+    headers = {"User-Agent": _WIKI_USER_AGENT}
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
+    found = {m for m in re.findall(r'href="(\d{8})/"', response.text)
+             if _SNAPSHOT_RE.match(m)}
+    return tuple(sorted(found, reverse=True))
+
+
+# Wikimedia returns 403 to generic library user agents (learned the hard
+# way against the dumps host); the listing endpoint is under the same
+# policy as the files.
+_WIKI_USER_AGENT = ("louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
+                    "httpx")
 
 
 WIKIPEDIA_SPEC = AcquisitionSpec(
@@ -82,7 +138,11 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
     layout="container-files",
     filters=("*multistream.xml.bz2", "*multistream-index.txt.bz2"),
     checksums=ChecksumSource(kind="none"),
-    delta=DeltaSpec(mode="full-resync"),
+    # Dated dumps, once a collection pins one: each is a complete, immutable
+    # snapshot, which is what a delta chain and a torrent both need.
+    delta=DeltaSpec(mode="dated-dumps"),
+    snapshot_files=_wikipedia_snapshot_files,
+    snapshot_index=wikipedia_snapshots,
     profiles={
         # profiles select WHICH wiki: Simple English is a real, useful,
         # self-contained corpus at 1/70th of enwiki's size

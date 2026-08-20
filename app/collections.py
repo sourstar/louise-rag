@@ -151,6 +151,18 @@ class Collection:
     # Declarative reuse of published embeddings (§8 genesis): the worker
     # drains this archive automatically before spending GPU on backfill.
     genesis_archive: str | None = None
+    # WHICH dated snapshot of the origin this collection holds, for sources
+    # that publish them (Wikipedia dumps, a PubMed baseline year).
+    #
+    # None means "whatever the origin calls latest", which is what every
+    # collection did before this existed and is deliberately still the
+    # default — but it is NOT reproducible: the same URL serves different
+    # bytes over time, so a corpus fetched under it cannot be torrented,
+    # cached, adopted, or compared with a peer's, and the collection cannot
+    # answer the one question a freshness feature has to ask, which is "how
+    # old am I?". Pinning a date fixes all of that at the cost of an
+    # explicit decision to move.
+    snapshot: str | None = None
 
     def plugin_instance(self) -> CorpusSource:
         return PLUGIN_REGISTRY[self.plugin]
@@ -203,6 +215,7 @@ def _load_one(path: Path) -> Collection:
         license_ack=raw.get("license_ack"),
         embed=embed,
         genesis_archive=raw.get("genesis_archive"),
+        snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
     )
 
 

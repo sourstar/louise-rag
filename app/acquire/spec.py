@@ -7,7 +7,7 @@ No I/O here — pure data, mirroring app/plugins/base.py's own rule.
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from ..plugins.base import LicenseClass
 
@@ -114,6 +114,18 @@ class AcquisitionSpec:
     # already know them. Absent, the UI shows the bare name (which is right
     # for "demo"/"starter"/"full" and for language codes).
     profile_labels: dict[str, str] = field(default_factory=dict)
+    # Sources that publish DATED, immutable snapshots declare how to name
+    # their files for a given snapshot id, and how to find out which ids
+    # exist. Both are plain callables rather than data because only the
+    # source knows its own URL grammar — everything else about a spec stays
+    # declarative.
+    #
+    # `snapshot_files(snapshot) -> tuple[RemoteFile, ...]` replaces
+    # endpoint.static_files when a collection pins one.
+    # `snapshot_index() -> tuple[str, ...]`, newest first, is what an
+    # operator picks from and what "is there something newer?" reads.
+    snapshot_files: Callable[[str], tuple[RemoteFile, ...]] | None = None
+    snapshot_index: Callable[[], tuple[str, ...]] | None = None
     license_class: LicenseClass = LicenseClass.GREEN
     terms_text_path: Path | None = None    # required when license_class != GREEN
 
