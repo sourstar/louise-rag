@@ -70,6 +70,17 @@ which is gitignored, because this file is public to anyone who clones.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+6. **DNA search axes** — [`dna-search-axes.md`](dna-search-axes.md).
+   **Parked pending the Fable model.** DNABERT-2's space is anisotropic —
+   unrelated sequences score 0.98 cosine — because MLM never asks them apart.
+   DNABERT-S is *not* the fix: it contrasts on species-of-origin, which
+   collapses within-genome distinctions and pushes apart exactly the
+   cross-species pairs §9 wants together. Homology and composition need no
+   model at all (k-mer sketches); only function does. The load-bearing point:
+   **invariant 4 has no category for two ranked lists that must NOT be
+   fused** — a homology ranking and a functional ranking answer different
+   questions, and RRF-ing them yields neither. Measure before amending
+   anything; there is currently no baseline to judge any model against.
 
 ## Known gaps and traps
 
