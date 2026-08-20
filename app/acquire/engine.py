@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config
+from .. import stats
 from ..plugins.base import LicenseClass
 from ..transfer import pool as transfer_pool
 from ..transfer.bucket import Priority
@@ -245,6 +246,12 @@ class _FileResult:
     bytes_now: int = 0
     error: str | None = None
     adopted: bool = False          # already on disk: verified, recorded, not downloaded
+    # What this file actually COST: bytes that crossed the network (a resumed
+    # file moves less than its size) and the seconds they took. Fed to
+    # app/stats.py so the Stats page reports a measured rate instead of the
+    # planner's assumed constant.
+    moved: int = 0
+    seconds: float = 0.0
 
 
 @dataclass
@@ -371,11 +378,12 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
         if segments > 1:
             try:
                 size = transport.fetch_segments(endpoint, f, dest, segments)
-                manager.record_throughput(endpoint_key, size,
-                                          time.monotonic() - started)
+                elapsed = time.monotonic() - started
+                manager.record_throughput(endpoint_key, size, elapsed)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
                                     status="fetched", size=size,
-                                    digest=checksum.digest_and_verify(dest, spec.checksums))
+                                    digest=checksum.digest_and_verify(dest, spec.checksums),
+                                    moved=size, seconds=elapsed)
             except RangeUnsupported:
                 # The origin will not serve ranges. Clear the segmented
                 # scratch state — its offsets describe a layout we are
@@ -387,10 +395,11 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
         digest = checksum.digest_and_verify(dest, spec.checksums)
-        manager.record_throughput(endpoint_key, size - resume_from,
-                                   time.monotonic() - started)
+        elapsed = time.monotonic() - started
+        manager.record_throughput(endpoint_key, size - resume_from, elapsed)
         return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
-                            size=size, digest=digest)
+                            size=size, digest=digest,
+                            moved=max(0, size - resume_from), seconds=elapsed)
     except TransferAborted as e:
         bytes_now = part.stat().st_size if part.is_file() else 0
         return _FileResult(remote=f, endpoint_url=endpoint.url, status="aborted",
@@ -503,6 +512,14 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                 dest = collection.corpus_dir / r.remote.rel_path
                 _upsert_fetched(con, spec.source_id, r.remote, r.endpoint_url, str(dest),
                                  r.size, r.digest, profile)
+                # Per FILE, not per run: a 1,450-shard fetch would otherwise
+                # produce its first measurement only when the whole thing
+                # finished. Adopted files record nothing — no bytes crossed
+                # the network, and counting them would report an infinite
+                # download speed (stats.record_fetch also guards this).
+                if not r.adopted:
+                    stats.recorder().record_fetch(
+                        collection.name, seconds=r.seconds, bytes_moved=r.moved)
             elif r.status == "aborted":
                 _upsert_aborted(con, spec.source_id, r.remote, r.endpoint_url,
                                  r.bytes_now, profile)

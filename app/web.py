@@ -48,6 +48,7 @@ from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .verify import backend_gate
+from . import stats as stats_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -855,6 +856,149 @@ async def collection_bundle_import(name: str, request: Request,
     return {"queued": True, "entry": entry.name,
             "note": "The worker verifies and imports it within one round; "
                      "watch the System log for the verdict."}
+
+
+# ---------------- Stats ----------------
+
+def _human_rate(bps: float | None) -> str:
+    if not bps:
+        return "—"
+    return _human_bytes(int(bps)) + "/s"
+
+
+def _human_duration(seconds: float | None) -> str:
+    """Deliberately coarse. An ETA derived from a rolling sample is accurate
+    to a factor, not to a minute, and printing "3 h 42 m 09 s" would claim a
+    precision the measurement does not have."""
+    if seconds is None:
+        return "—"
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"{int(minutes)} min"
+    hours = minutes / 60
+    if hours < 48:
+        return f"{hours:.1f} h"
+    days = hours / 24
+    if days < 400:
+        return f"{days:.1f} days"
+    return f"{days / 365:.1f} years"
+
+
+def _stats_row(collection, measured: dict) -> dict:
+    """One collection's line: what is left, how fast it is going, and — only
+    where both are known — when it ends."""
+    con = db.connect(collection)
+    recipe = collections_mod.recipe_for(collection)
+    rate = stats_mod.rates(measured.get(collection.name))
+
+    # Remaining EMBED work in chunks, not documents: documents differ in size
+    # by orders of magnitude (a genome contig against a PubMed abstract), so
+    # a per-document ETA is meaningless across collections. `chunks` is
+    # written by the fts stage, so it is known before embedding starts.
+    row = con.execute(
+        """SELECT
+             SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
+                       AND retries < :max
+                       AND (embed_done=0 OR embed_version < :ver)
+                      THEN 1 ELSE 0 END) docs_pending,
+             SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
+                       AND retries < :max
+                       AND (embed_done=0 OR embed_version < :ver)
+                      THEN chunks ELSE 0 END) chunks_pending,
+             SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) docs_done
+           FROM documents""",
+        {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}).fetchone()
+    docs_pending = row["docs_pending"] or 0
+    chunks_pending = row["chunks_pending"] or 0
+
+    # Remaining FETCH work in bytes. fetch_files is small (one row per
+    # container, ~1,450 at the largest), so this is a cheap scan.
+    fetch_pending_bytes = 0
+    fetch_files_pending = 0
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    if spec is not None:
+        fr = con.execute(
+            "SELECT COUNT(*) n, "
+            "  SUM(CASE WHEN fetch_done=0 THEN COALESCE(remote_size,0)"
+            "      - COALESCE(bytes_fetched,0) ELSE 0 END) left_bytes, "
+            "  SUM(CASE WHEN fetch_done=0 THEN 1 ELSE 0 END) left_files "
+            "FROM fetch_files WHERE source_id=?", (spec.source_id,)).fetchone()
+        fetch_pending_bytes = max(0, fr["left_bytes"] or 0)
+        fetch_files_pending = fr["left_files"] or 0
+
+    embed = rate.get("embed") or {}
+    fetch = rate.get("fetch") or {}
+    # ETA uses the WALL-CLOCK rate, never the encoder rate: the encoder is
+    # shared serially across collections, so its raw speed would promise a
+    # finish time no collection can actually reach.
+    chunks_per_hour_wall = None
+    if embed.get("chunks") and embed.get("docs") and embed.get("docs_per_hour"):
+        chunks_per_doc = embed["chunks"] / embed["docs"]
+        chunks_per_hour_wall = embed["docs_per_hour"] * chunks_per_doc
+
+    return {
+        "name": collection.name,
+        "plugin": collection.plugin,
+        "model": recipe.model,
+        "device": (recipe.device or ("cpu" if recipe.concurrency > 1 else "gpu")),
+        "ctx": recipe.ctx,
+        "concurrency": recipe.concurrency,
+        "url": recipe.url,
+        "fetch": {
+            "files_pending": fetch_files_pending,
+            "bytes_pending": fetch_pending_bytes,
+            "bytes_pending_h": _human_bytes(fetch_pending_bytes),
+            "rate": _human_rate(fetch.get("bytes_per_s")),
+            "rate_wall": _human_rate(fetch.get("bytes_per_s_wall")),
+            "samples": fetch.get("samples"),
+            "eta": _human_duration(stats_mod.eta_seconds(
+                fetch_pending_bytes, fetch.get("bytes_per_s_wall"))),
+        },
+        "embed": {
+            "docs_pending": docs_pending,
+            "docs_done": row["docs_done"] or 0,
+            "chunks_pending": chunks_pending,
+            "chars_per_s": embed.get("chars_per_s"),
+            "chunks_per_s": embed.get("chunks_per_s"),
+            "ms_per_chunk": embed.get("ms_per_chunk"),
+            "duty": embed.get("duty"),
+            "samples": embed.get("samples"),
+            "eta": _human_duration(stats_mod.eta_seconds(
+                chunks_pending,
+                chunks_per_hour_wall / 3600 if chunks_per_hour_wall else None)),
+        },
+    }
+
+
+@admin_router.get("/stats", response_class=HTMLResponse)
+def stats_page(request: Request):
+    """Measured throughput and honest ETAs. Every number here is derived
+    from completed work; a stage that has not run recently enough to be
+    measured says so instead of showing a zero."""
+    collections = collections_mod.load_all()
+    measured, age = (None, None)
+    try:
+        con = db.read_only_connect()
+        if con is not None:
+            try:
+                measured, age = db.read_worker_stats(con)
+            finally:
+                con.close()
+    except sqlite3.Error:
+        pass
+    rows = [_stats_row(c, measured or {}) for c in collections]
+    # Busiest first: the collection with work left is the one being watched.
+    rows.sort(key=lambda r: (-(r["embed"]["chunks_pending"] or 0),
+                              -(r["fetch"]["bytes_pending"] or 0), r["name"]))
+    return TEMPLATES.TemplateResponse(request, "stats.html", {
+        "active": "stats",
+        "rows": rows,
+        "measured": bool(measured),
+        "age_seconds": round(age) if age is not None else None,
+        "worker_state": db.worker_state(db.connect()),
+    })
 
 
 # ---------------- Network ----------------

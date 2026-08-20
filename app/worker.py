@@ -25,7 +25,8 @@ import time
 import traceback
 from pathlib import Path
 
-from . import chunking, collections as collections_mod, config, db, discovery, embeddings, entities, fts, plugin_io, refs, spaces
+from . import (chunking, collections as collections_mod, config, db, discovery,
+                embeddings, entities, fts, plugin_io, refs, spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -95,8 +96,16 @@ def stage_embed(con, row, collection) -> None:
     # lock_con serializes the delete+add pair against a concurrent bundle
     # import in another process (app/bundles/writer_lock.py). Passing it here
     # is what makes the importer's lock mean anything.
+    started = time.time()
     n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks, collection,
                                 lock_con=con)
+    # Timed around the encoder call only — not around _load_chunks, and not
+    # around the manifest write below — so the figure on the Stats page is
+    # the endpoint's throughput and nothing else. Comparing a CPU encoder
+    # with a GPU one is the whole point of measuring it.
+    stats.recorder().record_embed(
+        collection.name, seconds=time.time() - started, docs=1, chunks=n,
+        chars=sum(len(c.get("text") or "") for c in chunks))
     bundle_ledger.clear_verification(con, row["uid"])   # no longer imported provenance
     con.execute(
         "UPDATE documents SET embed_done=1,embed_version=?,updated_at=? WHERE uid=?",
@@ -789,6 +798,10 @@ def run_forever():
             # link. Published every round, including while paused (a paused
             # node moving no bytes is a true and useful reading).
             db.publish_worker_rates(control_con, get_manager().rates())
+            # Per-collection fetch/embed throughput for the Stats page. The
+            # recorder lives in this process because this is where the work
+            # happens; publishing is how the web process sees it.
+            db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = db.worker_state(control_con)
             if state == "paused":
                 _paused.set()       # pipeline threads idle at the same gate

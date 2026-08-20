@@ -320,6 +320,47 @@ WORKER_RATES_KEY = "worker_rates"
 # frozen number on a live graph is worse than an honest gap.
 WORKER_RATES_MAX_AGE_S = 20.0
 
+def _publish_sample(con, key: str, payload) -> None:
+    """Stamp a measurement into the control table for another process to
+    read. Telemetry, never configuration — see publish_worker_rates."""
+    set_control(con, key, json.dumps({"at": time.time(), "payload": payload}))
+
+
+def _read_sample(con, key: str, max_age_s: float):
+    """(payload, age) or (None, age) when absent, malformed or stale.
+    Never raises: a bad reading must not break the page that shows it."""
+    raw = get_control(con, key)
+    if not raw:
+        return None, None
+    try:
+        wrapper = json.loads(raw)
+        age = max(0.0, time.time() - float(wrapper["at"]))
+        payload = wrapper["payload"]
+    except (ValueError, TypeError, KeyError):
+        return None, None
+    return (payload, age) if age <= max_age_s else (None, age)
+
+
+WORKER_STATS_KEY = "worker_stats"
+# Throughput samples age out more slowly than instantaneous rates: a
+# collection that embedded steadily and then yielded the encoder to another
+# collection has not stopped being measurable, and its figures are still the
+# right basis for an ETA.
+WORKER_STATS_MAX_AGE_S = 15 * 60.0
+
+
+def publish_worker_stats(con, payload: dict) -> None:
+    """Per-collection fetch/embed throughput from app/stats.py, for the web
+    process to render. Same channel and same reasoning as
+    publish_worker_rates: the work happens in the worker, the page is served
+    by the web process, and a measurement is not desired state."""
+    _publish_sample(con, WORKER_STATS_KEY, payload)
+
+
+def read_worker_stats(con, max_age_s: float = WORKER_STATS_MAX_AGE_S):
+    return _read_sample(con, WORKER_STATS_KEY, max_age_s)
+
+
 def publish_worker_rates(con, payload: dict) -> None:
     """The worker's own per-class byte rates, for the web process to read.
 
