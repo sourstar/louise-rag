@@ -367,3 +367,65 @@ def chain(headers: Iterable[DeltaHeader]) -> list[DeltaHeader]:
             f"the chain covers {len(ordered)} of {len(remaining)} deltas — "
             f"one is missing, and skipping it would lose changes silently")
     return ordered
+
+
+# ---------------- where snapshots live on this node ----------------
+
+SNAPSHOT_DIRNAME = "snapshots"
+
+
+def snapshot_dir(collection) -> Path:
+    """Beside the manifest, so wiping a collection's data wipes its recorded
+    snapshots with it — they describe that manifest and nothing else."""
+    return Path(collection.manifest_path).parent / SNAPSHOT_DIRNAME
+
+
+def manifest_path_for(collection, snapshot: str) -> Path:
+    return snapshot_dir(collection) / f"{snapshot}.jsonl"
+
+
+def record(con, collection, snapshot: str) -> tuple[Path, str]:
+    """Freeze what this collection currently holds as snapshot `snapshot`.
+
+    Deliberately explicit rather than automatic on every scan: a manifest is
+    a claim about a moment, and writing one during an in-progress ingest
+    would freeze a half-applied state that no other node will ever match.
+    """
+    path = manifest_path_for(collection, snapshot)
+    digest = write_manifest(con, path)
+    return path, digest
+
+
+def recorded(collection) -> list[tuple[str, Path]]:
+    """(snapshot, path) for every manifest this node has recorded, oldest
+    first. Snapshot ids are dump dates, so lexical order is chronological."""
+    directory = snapshot_dir(collection)
+    if not directory.is_dir():
+        return []
+    return sorted((p.stem, p) for p in directory.glob("*.jsonl"))
+
+
+def vector_uids(delta_path: Path) -> list[str]:
+    """The uids a VECTOR delta must cover: added and changed, never removed.
+
+    A deleted document has no vectors to ship — it has vectors to delete,
+    which is the tombstone's job on the consumer side, not a bundle's.
+    """
+    _, changes = read_delta(delta_path)
+    return sorted({c.uid for c in changes if c.kind in (ADDED, CHANGED)})
+
+
+# Applying the two planes in the wrong order is the most likely operational
+# mistake, and it fails in a way that looks like a bad bundle rather than a
+# sequencing error, so it is named here once:
+#
+#   1. corpus delta   — the node's text becomes the new revision
+#   2. vector delta   — the bundle's per-uid raw hashes are checked against
+#                       that text (bundles/possession.py::verify_map) and
+#                       admitted only if they agree
+#
+# Reversed, the possession check compares new vectors against OLD text,
+# correctly refuses every document, and reports "these vectors were computed
+# from a different revision of the text" — which is true, and reads like the
+# producer's fault.
+APPLY_ORDER = ("corpus delta", "vector delta")

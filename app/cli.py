@@ -502,6 +502,144 @@ def cmd_torrent_seed(args) -> int:
     return 0
 
 
+
+# ---------------- snapshots and deltas ----------------
+
+def _snapshot_or_fail(collection):
+    if not collection.snapshot:
+        raise SystemExit(
+            f"{collection.name} pins no snapshot. Add a `snapshot` line to "
+            f"its TOML — an unpinned collection tracks whatever the origin "
+            f"calls latest, which cannot be frozen, diffed or shared.")
+    return collection.snapshot
+
+
+def cmd_snapshot_record(args) -> int:
+    """Freeze what this collection currently holds, as a manifest file."""
+    from . import snapshots
+
+    collection = _collection_by_name(args.collection)
+    snapshot = args.snapshot or _snapshot_or_fail(collection)
+    con = db.connect(collection)
+    path, digest = snapshots.record(con, collection, snapshot)
+    entries = sum(1 for _ in snapshots.read_manifest(path))
+    print(f"snapshot:  {snapshot}")
+    print(f"manifest:  {path}")
+    print(f"documents: {entries:,}")
+    print(f"digest:    {digest}")
+    return 0
+
+
+def cmd_snapshot_list(args) -> int:
+    from . import snapshots
+
+    collection = _collection_by_name(args.collection)
+    rows = snapshots.recorded(collection)
+    if not rows:
+        print(f"{collection.name}: no snapshots recorded "
+              f"(run: snapshot record {collection.name})")
+        return 0
+    print("snapshot          documents  digest")
+    for snapshot, path in rows:
+        entries = sum(1 for _ in snapshots.read_manifest(path))
+        marker = " *" if snapshot == collection.snapshot else ""
+        digest = snapshots.manifest_digest(path)[:32]
+        print(f"{snapshot:16} {entries:>10,}  {digest}{marker}")
+    if collection.snapshot:
+        print()
+        print("* = the snapshot this collection is pinned to")
+    return 0
+
+
+def cmd_snapshot_delta(args) -> int:
+    """Diff two recorded snapshots into a shareable delta."""
+    from . import config, snapshots
+
+    collection = _collection_by_name(args.collection)
+    parent = snapshots.manifest_path_for(collection, args.from_snapshot)
+    child = snapshots.manifest_path_for(collection, args.to_snapshot)
+    for path, name in ((parent, args.from_snapshot), (child, args.to_snapshot)):
+        if not path.is_file():
+            raise SystemExit(
+                f"no recorded manifest for {name!r} at {path} — "
+                f"`snapshot list {collection.name}` shows what exists")
+    out = Path(args.out) if args.out else (
+        snapshots.snapshot_dir(collection)
+        / f"{args.from_snapshot}..{args.to_snapshot}.delta.jsonl")
+
+    con = db.connect(collection)
+    row = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
+    header = snapshots.build_delta(
+        parent, child, out,
+        collection=collection.name, plugin=collection.plugin,
+        parent_snapshot=args.from_snapshot, child_snapshot=args.to_snapshot,
+        chunk_version=config.CHUNK_VERSION,
+        cleaning_version=config.CLEANING_VERSION,
+        space_id=(row["space_id"] if row else None))
+
+    counts = header.counts
+    print(f"delta:   {out}")
+    print(f"added:   {counts.get('added', 0):,}")
+    print(f"changed: {counts.get('changed', 0):,}")
+    print(f"removed: {counts.get('removed', 0):,}  (tombstones)")
+    print(f"parent:  {header.parent_digest[:32]}")
+    print()
+    print("Vectors for the added+changed documents:")
+    print(f"  python -m app.cli snapshot vectors {collection.name} "
+          f"--delta {out}")
+    return 0
+
+
+def cmd_snapshot_vectors(args) -> int:
+    """Export a VECTOR delta: a signed bundle covering exactly the documents
+    a corpus delta added or changed.
+
+    Deliberately an ordinary bundle rather than a new artifact — it inherits
+    the signature, the per-uid raw hashes that bind vectors to a text
+    revision, the verification ladder and genesis admission, none of which
+    would be worth rebuilding.
+    """
+    from . import snapshots
+    from .bundles.export import ExportError, export_bundle
+    from .bundles.keys import NodeKeyError
+
+    collection = _collection_by_name(args.collection)
+    delta = Path(args.delta)
+    if not delta.is_file():
+        raise SystemExit(f"no such delta: {delta}")
+    uids = snapshots.vector_uids(delta)
+    if not uids:
+        print("this delta adds or changes no documents — nothing to embed, "
+              "and nothing to ship")
+        return 0
+
+    out = Path(args.out) if args.out else (
+        snapshots.snapshot_dir(collection) / f"{delta.stem}.vectors")
+    con = db.connect(collection)
+    try:
+        summary = export_bundle(con, collection, uids, out)
+    except (ExportError, NodeKeyError) as e:
+        # A missing signing key is an ordinary operator situation on a
+        # consumer-role node, not a bug: a bundle is signed or it is not
+        # shareable, so say so rather than raising a traceback at someone.
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 1
+    covered = len(summary.get("uids", ()))
+    print(f"bundle:    {out}")
+    print(f"documents: {len(uids):,} requested, {covered:,} covered")
+    print(f"chunks:    {summary.get('chunk_count', 0):,}")
+    if len(uids) - covered > 0:
+        print()
+        print(f"{len(uids) - covered:,} of them have no vectors yet — embed "
+              f"them first, then re-export. A partial vector delta is valid; "
+              f"the consumer simply gets less.")
+    print()
+    print("A consumer applies the CORPUS delta first and the vector delta "
+          "second. Reversed, the possession check compares new vectors "
+          "against old text and correctly refuses every document.")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="app.cli")
     top = p.add_subparsers(dest="command", required=True)
@@ -581,6 +719,34 @@ def main(argv=None) -> int:
     be_rebase.add_argument("collection")
     be_rebase.add_argument("--yes", action="store_true")
     be_rebase.set_defaults(func=cmd_backend_rebaseline)
+
+    snapshot_parser = top.add_parser(
+        "snapshot", help="freeze a corpus and diff frozen snapshots")
+    snapshot = snapshot_parser.add_subparsers(dest="verb", required=True)
+
+    s_rec = snapshot.add_parser("record", help="freeze current holdings")
+    s_rec.add_argument("collection")
+    s_rec.add_argument("--snapshot",
+                       help="id to record under (default: the collection pin)")
+    s_rec.set_defaults(func=cmd_snapshot_record)
+
+    s_list = snapshot.add_parser("list", help="recorded snapshots")
+    s_list.add_argument("collection")
+    s_list.set_defaults(func=cmd_snapshot_list)
+
+    s_delta = snapshot.add_parser("delta", help="diff two recorded snapshots")
+    s_delta.add_argument("collection")
+    s_delta.add_argument("--from", dest="from_snapshot", required=True)
+    s_delta.add_argument("--to", dest="to_snapshot", required=True)
+    s_delta.add_argument("--out")
+    s_delta.set_defaults(func=cmd_snapshot_delta)
+
+    s_vec = snapshot.add_parser(
+        "vectors", help="signed bundle covering a delta's documents")
+    s_vec.add_argument("collection")
+    s_vec.add_argument("--delta", required=True)
+    s_vec.add_argument("--out")
+    s_vec.set_defaults(func=cmd_snapshot_vectors)
 
     torrent_parser = top.add_parser(
         "torrent", help="publish and seed a corpus over BitTorrent")
