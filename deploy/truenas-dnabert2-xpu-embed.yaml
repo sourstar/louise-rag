@@ -1,0 +1,64 @@
+# DNABERT-2 on the Intel Arc GPU — TrueNAS custom app.
+#
+# Same model, same weights, same server.py as the CPU app
+# (deploy/truenas-dnabert2-embed.yaml); one variable differs: DEVICE=xpu.
+# Deliberately a SECOND app on its own port rather than a replacement, so the
+# two can be compared side by side and the CPU one remains a fallback.
+#
+# BUILD FIRST, on the NAS (the image is not in a registry):
+#   cd /mnt/ssd4/apps/louise-rag/src
+#   docker build -t dnabert2-embed-xpu:local -f deploy/dnabert2-xpu/Dockerfile .
+#
+# MEASURED 2026-08-20 on this node, 32 sequences of 4,000 bp:
+#   CPU  34.01s ->   3,764 chars/s
+#   XPU   1.31s ->  97,597 chars/s      25.9x
+#   hg38 (~775k chunks):  8.8 h on XPU  vs  228.8 h on CPU
+#
+# The vectors agree across devices: cosine 0.999997 worst, 0.999999 mean —
+# four orders of magnitude tighter than the 0.98 that two UNRELATED sequences
+# score. So this is the same space, and moving a collection here needs no
+# re-embedding: `device` is descriptive only and takes no part in space_id
+# (architecture-v2.md amendment 12). The backend gate will still want a
+# `backend rebaseline`, because its probe baseline is device-specific.
+#
+# WIRING A COLLECTION TO IT — edit collections/genome-<assembly>.toml:
+#      [embed]
+#      url = "http://<node>:30444"
+#      api = "openai"
+#      model = "zhihan1996/DNABERT-2-117M"
+#      dtype = "f16"
+#      ctx = 1024
+#      dim = 768
+#      concurrency = 1        # see below
+#      device = "gpu"
+#
+#   concurrency 1, not 2: the server batches internally (MICRO_BATCH=32 on
+#   XPU) and holds one forward pass at a time behind a lock, so client-side
+#   parallelism buys nothing here and only splits work into smaller batches.
+#   Setting device = "gpu" is what makes the Library card and the Stats page
+#   report this collection as spending the scarce resource.
+#
+# SHARING THE CARD: llama-embed (gutenberg's encoder) is on the same GPU.
+# The Arc Pro B70 has 34 GB and DNABERT-2 is ~0.25 GB in fp16, so they
+# coexist — verified, both holding renderD129 at once. Watch `duty` on the
+# Stats page before assuming there is no contention.
+
+services:
+  dnabert2-xpu:
+    image: dnabert2-embed-xpu:local
+    restart: unless-stopped
+    ports:
+      - '30444:8080'
+    devices:
+      # The whole directory, as llama-embed does. The container runs as root,
+      # so no group_add is needed for the render node.
+      - /dev/dri:/dev/dri
+    environment:
+      - DEVICE=xpu
+      # Raise for more throughput if the card is idle; 32 was enough to reach
+      # ~98k chars/s and leaves plenty of the 34 GB free for llama-embed.
+      - MICRO_BATCH=32
+    volumes:
+      # The same HF cache the CPU app uses: the weights and the pinned
+      # revision are already there, so this starts without downloading.
+      - /mnt/ssd4/apps/dnabert2-models:/data
