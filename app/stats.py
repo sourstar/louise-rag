@@ -95,6 +95,12 @@ class Recorder:
         self._lock = threading.Lock()
         self._embed: dict[str, _Stream] = {}
         self._fetch: dict[str, _Stream] = {}
+        # Documents inside the encoder at this instant. A document commits
+        # only when every one of its chunks is done, so on a slow CPU encoder
+        # several can be in flight for many minutes — and counting those as
+        # "awaiting the encoder" tells an operator nothing is happening while
+        # the encoder is at 300% CPU.
+        self._in_flight: dict[str, int] = {}
 
     def record_embed(self, collection: str, *, seconds: float, docs: int,
                      chunks: int, chars: int) -> None:
@@ -113,13 +119,22 @@ class Recorder:
             self._fetch.setdefault(collection, _Stream()).add(
                 seconds, {"bytes": bytes_moved})
 
+    def set_in_flight(self, collection: str, n: int) -> None:
+        with self._lock:
+            if n:
+                self._in_flight[collection] = n
+            else:
+                self._in_flight.pop(collection, None)
+
     def snapshot(self) -> dict:
         now = time.time()
         with self._lock:
-            names = set(self._embed) | set(self._fetch)
+            names = set(self._embed) | set(self._fetch) | set(self._in_flight)
             out = {}
             for name in names:
                 entry = {}
+                if self._in_flight.get(name):
+                    entry["in_flight"] = self._in_flight[name]
                 embed = self._embed.get(name)
                 fetch = self._fetch.get(name)
                 if embed is not None and (s := embed.summary(now)):
@@ -134,6 +149,7 @@ class Recorder:
         with self._lock:
             self._embed.clear()
             self._fetch.clear()
+            self._in_flight.clear()
 
 
 _recorder = Recorder()
@@ -152,6 +168,9 @@ def rates(entry: dict | None) -> dict:
     out: dict = {}
     if not entry:
         return out
+
+    if entry.get("in_flight"):
+        out["in_flight"] = entry["in_flight"]
 
     embed = entry.get("embed")
     if embed:

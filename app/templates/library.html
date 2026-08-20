@@ -67,7 +67,9 @@
     {% if c.embed_mode == 'all' %}
       {# backfill selects from the manifest directly and never touches the
          lazy queue, so the queue count is always 0 here and says nothing #}
-      dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
+      {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
+      {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
+      {% endif %}
     {% elif c.embed_mode == 'lazy' %}
       lazy-embed queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
     {% else %}

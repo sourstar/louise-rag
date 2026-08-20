@@ -316,12 +316,35 @@ def invalidate_counts(collection=None) -> None:
             _counts_cache.pop(_counts_key(collection), None)
 
 
-def _collection_shelf(collection: collections_mod.Collection) -> dict:
+def _worker_stats() -> dict:
+    """The worker's published per-collection snapshot, or {} when it is
+    silent or stale. Read once per page: it is one control-table row."""
+    try:
+        con = db.read_only_connect()
+        if con is None:
+            return {}
+        try:
+            payload, _ = db.read_worker_stats(con)
+            return payload or {}
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+
+
+def _collection_shelf(collection: collections_mod.Collection,
+                       measured: dict | None = None) -> dict:
     con = db.connect(collection)
     # Counts come from the shared cache (see _document_counts): one scan per
     # collection, reused by the Stats page, refreshed behind the request
     # rather than in front of it.
     counts, counts_age = _document_counts(collection)
+    # How many of the "awaiting" documents are in fact inside the encoder
+    # right now. A document commits only when all of its chunks are done, so
+    # on a slow CPU encoder several sit in flight for many minutes — and
+    # counting them as waiting reads as "nothing is happening" while the
+    # encoder runs at 300% CPU.
+    in_flight = int((measured or {}).get(collection.name, {}).get("in_flight", 0) or 0)
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
     blocked = counts["blocked"] or 0
     unindexable = counts["unindexable"] or 0
@@ -361,6 +384,8 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
         "embed_ready": embed_ready,
+        "embed_in_flight": min(in_flight, embed_ready),
+        "embed_waiting": max(0, embed_ready - in_flight),
         "gate": backend_gate.gate_state(con),
         # which processor this collection's encoder spends — the GPU is the
         # scarce one, so "turn embedding on" means something different here
@@ -415,7 +440,8 @@ def _license_state(collection: collections_mod.Collection) -> dict:
 def library_page(request: Request):
     collections = collections_mod.load_all()
     con = db.connect()   # worker_state is one global control-table toggle (see worker.py)
-    shelves = [_collection_shelf(c) for c in collections]
+    measured = _worker_stats()
+    shelves = [_collection_shelf(c, measured) for c in collections]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
         "shelves": shelves,
@@ -1013,6 +1039,7 @@ def _stats_row(collection, measured: dict) -> dict:
     chunks_pending = counts["chunks_pending"]
     docs_unindexed = counts["docs_unindexed"]
     blocked = counts["blocked"]
+    in_flight = int(rate.get("in_flight") or 0)
 
     # Remaining FETCH work in bytes. fetch_files is small (one row per
     # container, ~1,450 at the largest), so this is a cheap scan.
@@ -1065,6 +1092,7 @@ def _stats_row(collection, measured: dict) -> dict:
             # why a chunk count may be 0 while work remains
             "docs_unindexed": docs_unindexed,
             "blocked": blocked,
+            "in_flight": in_flight,
             "chars_per_s": embed.get("chars_per_s"),
             "chunks_per_s": embed.get("chunks_per_s"),
             "ms_per_chunk": embed.get("ms_per_chunk"),

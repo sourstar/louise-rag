@@ -299,3 +299,110 @@ def test_a_reset_invalidates_the_cache(client, isolated_config):
     assert client.post(f"/admin/library/{col.name}/reset",
                        json={"stage": "errors"}).status_code == 200
     assert web._document_counts(col)[0]["blocked"] == 0, "cache must not hide the reset"
+
+
+def test_the_parallel_embed_path_is_measured_too(isolated_config, tmp_path,
+                                                  monkeypatch):
+    """Every CPU encoder in the deployment goes through _embed_parallel
+    (recipe.concurrency > 1) and only the GPU one goes through stage_embed.
+    Recording in stage_embed alone left the Stats page permanently blank for
+    exactly the encoders it exists to compare — found live: DNABERT-2 was at
+    312% CPU with the page showing "—"."""
+    from app import collections as collections_mod, worker
+
+    col = collections_mod.default_collection()
+    recipe = collections_mod.EmbedRecipe(
+        url="http://x", api="openai", model="m", dtype="f16", ctx=512,
+        concurrency=2)
+    con = db.connect(col)
+    db.set_scope(con, {"embed_mode": "all"})
+    # four, not two: the recorder withholds below MIN_EVENTS samples, which
+    # is its own honesty rule and not something this test should defeat
+    for i in range(4):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,lang,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    f"VALUES('g:{i}','g','{i}','/x','en',1,1,1,0,3)")
+
+    monkeypatch.setattr(worker, "_load_chunks",
+                        lambda row, c: [{"text": "x" * 100, "tokens": 25}] * 3)
+    monkeypatch.setattr(worker.embeddings, "upsert_book",
+                        lambda *a, **k: 3)
+    stats.recorder().reset()
+
+    assert worker._embed_parallel(con, col, recipe) is True
+    snapshot = stats.recorder().snapshot()
+    assert col.name in snapshot, "parallel embeds must be measured"
+    assert snapshot[col.name]["embed"]["totals"]["docs"] == 4
+    assert snapshot[col.name]["embed"]["totals"]["chunks"] == 12
+    assert snapshot[col.name]["embed"]["totals"]["chars"] == 1200
+
+
+def test_a_parallel_batch_announces_itself(isolated_config, monkeypatch):
+    """A document commits only when all its chunks are done, so a 200-chunk
+    chromosome is ~16 minutes of silence. "Slow" and "stuck" are otherwise
+    indistinguishable from the log."""
+    from app import collections as collections_mod, worker
+
+    col = collections_mod.default_collection()
+    recipe = collections_mod.EmbedRecipe(
+        url="http://x", api="openai", model="m", dtype="f16", ctx=512,
+        concurrency=2)
+    con = db.connect(col)
+    db.set_scope(con, {"embed_mode": "all"})
+    con.execute("INSERT INTO documents(uid,source,native_id,path,lang,in_scope,"
+                "rdf_done,fts_done,embed_done,chunks) "
+                "VALUES('g:0','g','0','/x','en',1,1,1,0,200)")
+    monkeypatch.setattr(worker, "_load_chunks",
+                        lambda row, c: [{"text": "x", "tokens": 1}])
+    monkeypatch.setattr(worker.embeddings, "upsert_book", lambda *a, **k: 200)
+
+    worker._embed_parallel(con, col, recipe)
+    msgs = [r["message"] for r in
+            con.execute("SELECT message FROM events WHERE stage='embed'")]
+    assert any("200 chunks" in m for m in msgs), msgs
+
+
+def test_documents_inside_the_encoder_are_not_reported_as_waiting(
+        client, isolated_config):
+    """Observed live: genome-sacCer3's card said "17 documents awaiting the
+    encoder" while DNABERT-2 was at 312% CPU working on four of them. A
+    document commits only when all its chunks are done, so on a slow encoder
+    several are in flight for many minutes — and calling those "awaiting"
+    tells an operator nothing is happening."""
+    from app import collections as collections_mod
+    col = collections_mod.default_collection()
+    con = db.connect(col)
+    db.set_scope(con, {"embed_mode": "all"})
+    for i in range(17):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,lang,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    f"VALUES('g:{i}','g','{i}','/x','en',1,1,1,0,200)")
+    web.invalidate_counts()
+
+    shelf = web._collection_shelf(col, {})
+    assert shelf["embed_ready"] == 17
+    assert shelf["embed_in_flight"] == 0
+    assert shelf["embed_waiting"] == 17
+
+    shelf = web._collection_shelf(col, {col.name: {"in_flight": 4}})
+    assert shelf["embed_in_flight"] == 4
+    assert shelf["embed_waiting"] == 13, "in-flight documents are not waiting"
+
+    # and it can never claim more are encoding than are pending
+    shelf = web._collection_shelf(col, {col.name: {"in_flight": 999}})
+    assert shelf["embed_in_flight"] == 17
+    assert shelf["embed_waiting"] == 0
+
+
+def test_the_recorder_reports_in_flight_before_any_document_finishes():
+    """The whole point: on a slow encoder nothing completes for many
+    minutes, so in-flight must be visible without a single sample."""
+    r = stats.recorder()
+    r.set_in_flight("g", 4)
+    snap = r.snapshot()
+    assert snap["g"]["in_flight"] == 4
+    assert "embed" not in snap["g"], "no completed work yet, and none claimed"
+    assert stats.rates(snap["g"])["in_flight"] == 4
+
+    r.set_in_flight("g", 0)
+    assert r.snapshot() == {}

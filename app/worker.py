@@ -97,8 +97,12 @@ def stage_embed(con, row, collection) -> None:
     # import in another process (app/bundles/writer_lock.py). Passing it here
     # is what makes the importer's lock mean anything.
     started = time.time()
-    n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks, collection,
-                                lock_con=con)
+    stats.recorder().set_in_flight(collection.name, 1)
+    try:
+        n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
+                                    collection, lock_con=con)
+    finally:
+        stats.recorder().set_in_flight(collection.name, 0)
     # Timed around the encoder call only — not around _load_chunks, and not
     # around the manifest write below — so the figure on the Stats page is
     # the endpoint's throughput and nothing else. Comparing a CPU encoder
@@ -229,18 +233,42 @@ def _embed_parallel(con, collection, recipe) -> bool:
         try:
             chunks = _load_chunks(row, collection)
             tcon = db.connect(collection)
+            started = time.time()
             try:
                 n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
                                             chunks, collection, lock_con=tcon)
             finally:
                 tcon.close()
+            # Measured HERE as well as in stage_embed, because every CPU
+            # encoder in the deployment takes this path and only the GPU one
+            # takes the other. Recording in stage_embed alone left the Stats
+            # page permanently blank for exactly the encoders it exists to
+            # compare. The recorder is lock-guarded, so several document
+            # threads reporting at once is fine.
+            stats.recorder().record_embed(
+                collection.name, seconds=time.time() - started, docs=1, chunks=n,
+                chars=sum(len(c.get("text") or "") for c in chunks))
             return (row["uid"], n, None)
         except Exception as e:  # noqa: BLE001 — isolated per document
             return (row["uid"], None, f"{type(e).__name__}: {e}"[:400])
 
+    # A document only commits when ALL of its chunks are done, so a large one
+    # is a long silence — a yeast chromosome is ~200 chunks and DNABERT-2 on
+    # CPU answers in ~5s each, which is a quarter of an hour with nothing in
+    # the log. Announcing the batch is the difference between "slow" and
+    # "stuck", which an operator cannot otherwise tell apart.
+    pending_chunks = sum(r["chunks"] or 0 for r in rows)
+    db.log_event(con, "info", "embed",
+                 f"embedding {len(rows)} document(s)"
+                 + (f" / {pending_chunks} chunks" if pending_chunks else "")
+                 + f" with {recipe.concurrency} workers")
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
-        results = list(pool.map(work, rows))
+    stats.recorder().set_in_flight(collection.name, len(rows))
+    try:
+        with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
+            results = list(pool.map(work, rows))
+    finally:
+        stats.recorder().set_in_flight(collection.name, 0)
 
     now = int(time.time())
     done = 0

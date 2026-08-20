@@ -64,7 +64,8 @@
       <td>{{ '{:,}'.format(r.embed.chunks_pending) }}{% if r.embed.docs_unindexed %}
         <span class="badge" title="these documents have not passed the lexical index yet, and the chunk count is written by that stage — so their share of the work is not zero, it is not yet known">+{{ '{:,}'.format(r.embed.docs_unindexed) }} docs not counted yet</span>{% endif %}
         {% if r.embed.blocked %}<span class="badge err" title="blocked documents are excluded from the pending count until their errors are cleared">{{ '{:,}'.format(r.embed.blocked) }} blocked</span>{% endif %}</td>
-      <td>{{ '{:,}'.format(r.embed.docs_pending) }}</td>
+      <td>{{ '{:,}'.format(r.embed.docs_pending) }}{% if r.embed.in_flight %}
+        <span class="badge ok" title="inside the encoder right now — a document commits only when every one of its chunks is done, which on a slow CPU encoder is many minutes">{{ r.embed.in_flight }} encoding now</span>{% endif %}</td>
       <td>{% if r.embed.eta_is_floor and r.embed.eta != '—' %}≥ {% endif %}{{ r.embed.eta }}</td>
     </tr>
     {% endfor %}
