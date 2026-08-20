@@ -5,6 +5,7 @@ worth running — so the numbers have to be comparable across collections and
 have to distinguish "not observed" from "stopped". Both are easy to get
 wrong in ways that look fine.
 """
+import threading
 import time
 
 import pytest
@@ -406,3 +407,30 @@ def test_the_recorder_reports_in_flight_before_any_document_finishes():
 
     r.set_in_flight("g", 0)
     assert r.snapshot() == {}
+
+
+def test_telemetry_is_published_by_a_thread_the_work_cannot_block(
+        isolated_config, monkeypatch):
+    """The main loop blocks inside _embed_parallel for the whole batch — a
+    quarter of an hour on a CPU encoder. Publishing from there would make
+    in-flight work visible only once it stopped being in flight."""
+    from app import worker
+
+    stats.recorder().set_in_flight("gutenberg", 3)
+    monkeypatch.setattr(worker, "STATS_PUBLISH_INTERVAL_S", 0.05)
+
+    t = threading.Thread(target=worker._stats_publisher, daemon=True)
+    t.start()
+    deadline = time.time() + 5
+    payload = None
+    while time.time() < deadline:
+        payload, _ = db.read_worker_stats(db.connect())
+        if payload:
+            break
+        time.sleep(0.05)
+    worker._stop.set()
+    t.join(timeout=5)
+    worker._stop.clear()
+
+    assert payload, "the publisher must run without the main loop"
+    assert payload["gutenberg"]["in_flight"] == 3

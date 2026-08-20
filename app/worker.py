@@ -747,6 +747,37 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     return [c for c in current if c.name in cons]
 
 
+# Telemetry must not be published by the thread whose work it describes. The
+# main loop blocks inside _embed_parallel for the whole batch — a quarter of
+# an hour on a CPU encoder — so publishing from there means in-flight work
+# becomes visible only once it has stopped being in flight, which is exactly
+# backwards. A tiny dedicated thread keeps the Stats and Network pages honest
+# while the loop is busy.
+STATS_PUBLISH_INTERVAL_S = 10.0
+
+
+def _stats_publisher() -> None:
+    con = None
+    owner = None
+    while not _stop.wait(STATS_PUBLISH_INTERVAL_S):
+        try:
+            collections = collections_mod.load_all()
+            if not collections:
+                continue
+            control = collections[0]          # node control follows sort order
+            if owner != control.name:
+                if con is not None:
+                    con.close()
+                con = db.connect(control)
+                owner = control.name
+            db.publish_worker_stats(con, stats.recorder().snapshot())
+            db.publish_worker_rates(con, get_manager().rates())
+        except Exception:   # noqa: BLE001 — telemetry must never kill the worker
+            pass
+    if con is not None:
+        con.close()
+
+
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -771,6 +802,8 @@ def run_forever():
             db.log_event(cons[c.name], "warn", "bundle",
                          f"{len(stale)} bundle import(s) interrupted by a previous "
                          f"shutdown; affected documents will be re-embedded")
+    threading.Thread(target=_stats_publisher, name="stats-publisher",
+                     daemon=True).start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)
     # restart = new documents are considered. With pipeline threads this is
     # QUEUED rather than run here: scanning five collections serially before
