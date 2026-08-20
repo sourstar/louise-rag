@@ -571,6 +571,8 @@ _discover_req_lock = threading.Lock()
 # main loop (interval trigger) and the pipeline threads (completion) write
 # it. run_forever passes this same object to _sync_collections.
 _last_discover: dict[str, float] = {}
+# idle-log throttle for collections whose pipeline thread owns everything
+_pipeline_idle_log: dict[str, float] = {}
 
 
 def _request_discovery(name: str, reason: str, *, acquire: bool = True) -> None:
@@ -590,6 +592,28 @@ def _request_discovery(name: str, reason: str, *, acquire: bool = True) -> None:
 def _take_discovery_request(name: str) -> tuple[str, bool] | None:
     with _discover_req_lock:
         return _discover_requests.pop(name, None)
+
+
+def owns_own_embed(collection) -> bool:
+    """Does this collection embed on its OWN pipeline thread?
+
+    The "GPU-serial across collections" doctrine exists because one GPU
+    cannot serve two collections at once. It says nothing about CPU
+    encoders, which are separate containers on separate cores and do not
+    contend with the GPU at all — the Library card has always said so
+    ("runs alongside the GPU without competing").
+
+    Making the main loop the single embed owner for EVERYONE turned that
+    doctrine inside out. Observed live: _embed_parallel took a batch of four
+    yeast chromosomes and blocked the loop for a quarter of an hour, and
+    because collections are visited in sort order, `genome-sacCer3` sits
+    ahead of `gutenberg` — so the GPU sat at 0% CPU waiting for a CPU
+    encoder to finish. The scarce resource was starved by the abundant one.
+
+    So: a CPU collection owns its whole pipeline on its own thread, and the
+    main loop keeps exactly what the doctrine is about — the GPU.
+    """
+    return collections_mod.recipe_for(collection).spends == "cpu"
 
 
 def _pipeline_worker(collection, gone: threading.Event) -> None:
@@ -619,6 +643,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                     continue
                 if _acquire_only.is_set():
                     time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                if owns_own_embed(collection):
+                    # The full pipeline, embed and genesis included: this
+                    # collection's encoder is its own container, so nothing
+                    # here competes with the GPU or with another collection.
+                    if not _run_one_step(con, collection, _pipeline_idle_log,
+                                          pipeline_active=False):
+                        time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)
@@ -908,6 +940,12 @@ def run_forever():
                 # embed work plus bundles/genesis.
                 if state == "acquire-only":
                     continue   # discovery above still runs; nothing heavy here
+                if pipeline and owns_own_embed(collection):
+                    # Owned end to end by its own thread. Touching it here
+                    # would put two embed writers on one collection AND let a
+                    # CPU encoder block the GPU's turn, which is the bug this
+                    # split exists to fix.
+                    continue
                 round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
                 while not _stop.is_set():
                     if not _run_one_step(con, collection, last_idle_log,
