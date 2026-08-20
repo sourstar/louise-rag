@@ -150,9 +150,18 @@ GENOME_SPEC = AcquisitionSpec(
                  # _apply_filters() intersects this list with the profile's
                  # include patterns, so a dm6 collection still lists exactly
                  # one file.
+                 #
+                 # `size` is declared, not left None, and it is load-bearing
+                 # twice over. It is what makes `bytes_total` honest in the
+                 # plan — an undeclared size reports a 983 MB assembly as
+                 # "0 bytes total" — and it is the whole basis on which
+                 # is_adoptable() can tell a complete local file from a
+                 # truncated one. HTTPS lists exactly what the spec declares
+                 # (there is no directory protocol to ask), so a size absent
+                 # here is a size absent everywhere downstream.
                  static_files=tuple(
-                     RemoteFile(rel_path=f"{db}/bigZips/{db}.fa.gz")
-                     for db, _, _ in _UCSC_ASSEMBLIES)),
+                     RemoteFile(rel_path=f"{db}/bigZips/{db}.fa.gz", size=size)
+                     for db, _, size in _UCSC_ASSEMBLIES)),
     ),
     layout="container-files",
     filters=("*.fa.gz",),

@@ -92,3 +92,57 @@ def test_grow_offers_nothing_for_exclusive_profiles(isolated_config, tmp_path):
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
     assert web._grow_options(c) == [], \
         "growing a genome collection would drop a second assembly into it"
+
+
+def test_every_assembly_declares_its_size():
+    """A declared size is what makes the plan honest and adoption possible.
+
+    HTTPS has no directory-listing protocol, so the engine knows exactly and
+    only what the spec declares: an undeclared size reports a 983 MB assembly
+    as "0 bytes total" in the budget planner, and makes is_adoptable() refuse
+    every already-present file, because without it there is no way to tell a
+    complete download from a truncated one. Found live — three genome
+    corpora sat on disk unrecognised for exactly this reason.
+    """
+    sizes = {db: size for db, _, size in specs._UCSC_ASSEMBLIES}
+    declared = {f.rel_path: f.size
+                for e in GENOME_SPEC.endpoints for f in e.static_files}
+    assert declared, "the spec must declare its files: HTTPS cannot list them"
+    for db, size in sizes.items():
+        rel = f"{db}/bigZips/{db}.fa.gz"
+        assert declared.get(rel) == size, f"{db}: static_file size must match the table"
+    assert all(s and s > 0 for s in declared.values()), "no zero or None sizes"
+
+
+def test_the_size_table_and_the_estimates_agree():
+    """estimated_bytes drives the disk preflight, static_files drives the
+    plan. Two numbers for one file is one number too many."""
+    for db, _, size in specs._UCSC_ASSEMBLIES:
+        assert GENOME_SPEC.estimated_bytes[db] == size, db
+    assert GENOME_SPEC.estimated_bytes["demo"] == \
+        GENOME_SPEC.estimated_bytes["sacCer3"], "demo is the sacCer3 alias"
+
+
+def test_a_preseeded_assembly_is_adoptable(tmp_path):
+    """The live case: a FASTA placed on disk by hand (or by zfs send) must
+    be recognised and recorded, not re-downloaded."""
+    from app import collections as collections_mod
+    from app.acquire import engine
+
+    corpus = tmp_path / "corpus"
+    fasta = corpus / "dm6" / "bigZips" / "dm6.fa.gz"
+    fasta.parent.mkdir(parents=True)
+    size = dict((db, s) for db, _, s in specs._UCSC_ASSEMBLIES)["dm6"]
+    fasta.write_bytes(b"\0" * size)
+
+    col = collections_mod.Collection(
+        name="genome-dm6", plugin="genome", profile="dm6",
+        embed_mode_default=None, corpus_dir=corpus,
+        manifest_path=tmp_path / "m.db", fts_dir=tmp_path / "fts",
+        lance_dir=tmp_path / "lance")
+    remote = next(f for e in GENOME_SPEC.endpoints for f in e.static_files
+                  if f.rel_path == "dm6/bigZips/dm6.fa.gz")
+    assert engine.is_adoptable(col, remote)
+
+    fasta.write_bytes(b"\0" * (size - 1))       # truncated
+    assert not engine.is_adoptable(col, remote)
