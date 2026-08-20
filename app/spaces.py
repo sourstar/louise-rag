@@ -38,6 +38,20 @@ class SpaceComponents:
     cleaning_version: int
     truncation_policy: str
     query_encoder_hash: str
+    # WHICH chunker produced the chunks, not just at which version.
+    #
+    # chunk_version alone is not enough: two different chunkers can sit at
+    # the same version number (content-defined chunking launched at 1, and
+    # so is the fixed-width family), and then two incompatible segmentations
+    # of the same text would share a space id — vectors cut one way silently
+    # mixed with vectors cut the other, which is exactly what invariant 1
+    # exists to prevent.
+    #
+    # GRANDFATHERED below so that adding this field re-pins nothing: the
+    # chunkers that existed when the space format was frozen are omitted
+    # from the payload, leaving every space id pinned before this change
+    # byte-identical.
+    chunker: str = "book"
 
 
 def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
@@ -118,11 +132,21 @@ def gather_components(collection=None) -> SpaceComponents:
         # by re-chunking at all. Fixed-width chunkers still report exactly
         # config.CHUNK_VERSION, so every existing space_id is unchanged.
         chunk_version=_chunk_version_for(collection),
+        chunker=_chunker_for(collection),
         cleaning_version=config.CLEANING_VERSION,
         truncation_policy=f"ctx={recipe.ctx}",
         query_encoder_hash=query_hash,
     )
 
+
+
+def _chunker_for(collection) -> str:
+    """Which chunker this collection uses, for the space identity."""
+    from . import chunking
+    try:
+        return chunking.chunker_version_for_collection(collection)[0]
+    except Exception:   # noqa: BLE001 — a space id must always be computable
+        return "book"
 
 
 def _chunk_version_for(collection) -> int:
@@ -139,6 +163,17 @@ def _chunk_version_for(collection) -> int:
         return config.CHUNK_VERSION
 
 
+# Chunkers that predate this field. Omitted from the space payload so that
+# every space pinned before the chunker became part of the identity keeps
+# exactly the id it already has (same reasoning as amendment 2, where
+# space_id deliberately does not hash dim).
+GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim", "abstract"})
+
+
+def _chunker_payload(c: SpaceComponents) -> dict:
+    return {} if c.chunker in GRANDFATHERED_CHUNKERS else {"chunker": c.chunker}
+
+
 def _config_id(c: SpaceComponents) -> str:
     """Hash of the components that are always fully known from local config —
     never network-dependent, so a mismatch here is NEVER softened by a weak
@@ -152,6 +187,7 @@ def _config_id(c: SpaceComponents) -> str:
         "chunk_version": c.chunk_version,
         "cleaning_version": c.cleaning_version,
         "truncation_policy": c.truncation_policy,
+        **_chunker_payload(c),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.blake2b(blob, digest_size=16).hexdigest()
@@ -171,6 +207,7 @@ def compute_space_id(c: SpaceComponents) -> str:
         "cleaning_version": c.cleaning_version,
         "truncation_policy": c.truncation_policy,
         "query_encoder_hash": c.query_encoder_hash,
+        **_chunker_payload(c),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.blake2b(blob, digest_size=16).hexdigest()

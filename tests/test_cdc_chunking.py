@@ -13,6 +13,7 @@ re-pins the pre-embedded collections, whose vectors were imported against a
 producer's boundaries and cannot be recomputed by re-chunking at all.
 """
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -168,3 +169,37 @@ def test_a_mutable_collection_gets_the_cdc_version(isolated_config, tmp_path,
     collection = _collection(tmp_path, "wikipedia", "wikipedia")
     assert spaces.gather_components(collection).chunk_version == \
         chunking.CDC_CHUNK_VERSION
+
+
+def test_the_chunker_is_part_of_the_space_identity(isolated_config, tmp_path,
+                                                    monkeypatch):
+    """chunk_version alone is NOT enough, and this nearly shipped wrong:
+    CDC launched at version 1 and so is the fixed-width family, so the two
+    payloads were byte-identical and wikipedia would have booted happily
+    while mixing two incompatible segmentations in one space."""
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    book = spaces.gather_components(_collection(tmp_path, "gutenberg", "gutenberg"))
+    cdc = spaces.gather_components(_collection(tmp_path, "wikipedia", "wikipedia"))
+
+    assert book.chunk_version == cdc.chunk_version, \
+        "the numbers really do collide — which is the whole point"
+    assert book.chunker == "book" and cdc.chunker == "cdc"
+    assert spaces.compute_space_id(book) != spaces.compute_space_id(cdc)
+    assert spaces._config_id(book) != spaces._config_id(cdc), \
+        "the config id must catch it too — it is what boot validation " \
+        "checks when the model hash is weak"
+
+
+def test_adding_the_chunker_field_repins_nothing(isolated_config, tmp_path,
+                                                  monkeypatch):
+    """Grandfathering, asserted: every chunker that existed when the space
+    format was frozen must be omitted from the payload, so a space pinned
+    before this change keeps exactly the id it already had."""
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    components = spaces.gather_components(_collection(tmp_path, "g", "gutenberg"))
+
+    for name in ("book", "verbatim", "abstract"):
+        assert name in spaces.GRANDFATHERED_CHUNKERS
+        variant = replace(components, chunker=name)
+        assert spaces.compute_space_id(variant) == spaces.compute_space_id(components)
+        assert spaces._config_id(variant) == spaces._config_id(components)
