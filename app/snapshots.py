@@ -38,6 +38,7 @@ WHAT A DELTA CARRIES, and why each part is not optional:
 """
 import hashlib
 import json
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -210,14 +211,21 @@ class _peekable:
 
 # ---------------- writing and reading a delta ----------------
 
-def write_delta(path: Path, header: DeltaHeader, changes: Iterable[Change]) -> dict:
+def write_delta(path: Path, header: DeltaHeader, changes: Iterable[Change],
+                *, header_line: bool = True) -> dict:
     """Header line, then one line per change. Returns the counts, which the
-    caller usually wants to fold back into the header."""
+    caller usually wants to fold back into the header.
+
+    `header_line=False` writes the body alone — build_delta() needs that,
+    because the counts it wants in the header are not known until the last
+    change has been written.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     counts = {ADDED: 0, CHANGED: 0, REMOVED: 0}
     with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(header.as_line() + "\n")
+        if header_line:
+            f.write(header.as_line() + "\n")
         for change in changes:
             counts[change.kind] = counts.get(change.kind, 0) + 1
             f.write(json.dumps(
@@ -285,19 +293,28 @@ def build_delta(parent_manifest: Path, child_manifest: Path, out: Path, *,
         chunk_version=chunk_version, cleaning_version=cleaning_version,
         space_id=space_id,
         created_at=int(created_at if created_at is not None else time.time()))
-    counts = write_delta(out, header, diff(parent_manifest, child_manifest))
-    # rewrite with the counts folded in: they are what an operator reads
-    # before deciding to apply a delta, so they belong in the header rather
-    # than only being discoverable by consuming the whole file
-    final = DeltaHeader(**{**asdict(header), "counts": counts})
-    _rewrite_header(out, final)
+    # The counts belong in the header — they are what an operator reads
+    # before deciding to apply a delta — but they are only known once every
+    # change has been written. So the body goes to a scratch file first and
+    # the header is prepended by STREAMING the body back, never by reading
+    # it: a PubMed-scale delta holds millions of changes, and slurping one
+    # to rewrite a single line would defeat the streaming this whole module
+    # exists for. Constant memory, one extra pass over the bytes.
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    scratch = out.with_name(out.name + ".body")
+    try:
+        counts = write_delta(scratch, header,
+                             diff(parent_manifest, child_manifest),
+                             header_line=False)
+        final = DeltaHeader(**{**asdict(header), "counts": counts})
+        with open(out, "w", encoding="utf-8", newline="\n") as dest:
+            dest.write(final.as_line() + "\n")
+            with open(scratch, encoding="utf-8") as body:
+                shutil.copyfileobj(body, dest)
+    finally:
+        scratch.unlink(missing_ok=True)
     return final
-
-
-def _rewrite_header(path: Path, header: DeltaHeader) -> None:
-    path = Path(path)
-    body = path.read_text(encoding="utf-8").split("\n", 1)[1]
-    path.write_text(header.as_line() + "\n" + body, encoding="utf-8", newline="\n")
 
 
 # ---------------- admission ----------------
