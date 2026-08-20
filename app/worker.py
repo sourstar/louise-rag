@@ -18,12 +18,15 @@ P0.5 deliverable. This still fixes the real bug P0.5 needed fixed: before
 this, only collections[0] was ever discovered/ingested at all — a second
 configured collection was silently, permanently never touched.
 """
+import errno
 import signal
 import sqlite3
 import threading
 import time
 import traceback
 from pathlib import Path
+
+import httpx
 
 from . import (chunking, collections as collections_mod, config, db, discovery,
                 embeddings, entities, fts, plugin_io, refs, spaces, stats)
@@ -40,6 +43,8 @@ from .transfer.manager import get_manager
 # acquisition worker threads parked inside the bandwidth bucket. Before P0.7
 # a SIGTERM during a fetch was noticed only after the whole acquisition
 # returned, which on a large corpus could be many minutes.
+DEFERRED = "__deferred__"   # a work() result that must not be recorded
+
 _stop = threading.Event()
 
 def _handle_sigterm(signum, frame):
@@ -251,6 +256,8 @@ def _embed_parallel(con, collection, recipe) -> bool:
                 chars=sum(len(c.get("text") or "") for c in chunks))
             return (row["uid"], n, None)
         except Exception as e:  # noqa: BLE001 — isolated per document
+            if endpoint_unavailable(e):
+                return (row["uid"], None, DEFERRED)
             return (row["uid"], None, f"{type(e).__name__}: {e}"[:400])
 
     # A document only commits when ALL of its chunks are done, so a large one
@@ -272,9 +279,13 @@ def _embed_parallel(con, collection, recipe) -> bool:
         stats.recorder().set_in_flight(collection.name, 0)
 
     now = int(time.time())
-    done = 0
+    done = deferred = 0
     for uid, n, err in results:
         if err == "stopped":
+            continue
+        if err == DEFERRED:
+            # the encoder was not answering: leave the row exactly as it was
+            deferred += 1
             continue
         if err is None:
             con.execute(
@@ -292,7 +303,14 @@ def _embed_parallel(con, collection, recipe) -> bool:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
                      f"{recipe.concurrency}")
-    return True
+    if deferred:
+        db.log_event(con, "warn", "embed",
+                     f"{deferred} document(s) deferred — encoder unreachable; "
+                     f"untouched, and retried when it answers again")
+    # Nothing embedded and something deferred means the endpoint is down:
+    # report no work so the caller yields the round rather than spinning
+    # through the rest of the corpus against a dead encoder.
+    return bool(done)
 
 # Acquisition runs in a BACKGROUND THREAD per collection (§5.2's "download ∥
 # checksum ∥ parse" axis). Observed live: a `grow full` on PubMed put a
@@ -461,10 +479,46 @@ def _discover(con, collection, reason: str) -> None:
                      f"picked up {stats.get('added',0)} new, "
                      f"{stats.get('changed',0)} changed books")
 
-def _execute_step(con, collection, stage, row) -> None:
+# Errors that mean "the endpoint is not there", never "this document is
+# bad". Deliberately narrow: only connection ESTABLISHMENT failures. A read
+# timeout is excluded because an oversized document can genuinely cause one,
+# and mislabelling that as a deferral would retry it forever.
+_ENDPOINT_DOWN_ERRNOS = frozenset(
+    {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH})
+
+
+def endpoint_unavailable(exc: BaseException) -> bool:
+    """Is this failure the encoder's absence rather than the document's fault?
+
+    It matters because of what recording an error DOES: the backfill query
+    requires `error IS NULL`, so an errored document drops out of embedding
+    even with retries left, and only comes back when a human presses "clear
+    errors & retry". Observed live — three documents accumulated across one
+    morning of restarts, each one a connection refused against an encoder
+    that was simply being restarted, and none of them would ever have
+    retried on their own.
+
+    The acquire path already draws this distinction: a manifest busy past
+    its timeout is logged as a deferral and retried next round rather than
+    counted as a failure, because nothing was wrong with the work.
+    """
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return True
+    if isinstance(exc, ConnectionError):      # ConnectionRefusedError et al
+        return True
+    return isinstance(exc, OSError) and exc.errno in _ENDPOINT_DOWN_ERRNOS
+
+
+def _execute_step(con, collection, stage, row) -> bool:
     """One document's stage, transactional, errors recorded on the row —
     shared verbatim by the main loop and the per-collection pipeline
-    threads (each caller passes a con its own thread owns)."""
+    threads (each caller passes a con its own thread owns).
+
+    Returns False when the step was DEFERRED rather than attempted: the
+    document is left completely untouched, and the caller stops working this
+    collection for the round instead of marching through every remaining
+    document against an endpoint that is not answering.
+    """
     t0 = time.time()
     con.execute("BEGIN")
     try:
@@ -474,14 +528,23 @@ def _execute_step(con, collection, stage, row) -> None:
         con.execute("COMMIT")
     except Exception as e:
         con.execute("ROLLBACK")
+        if endpoint_unavailable(e):
+            # Nothing is wrong with this document, so nothing is written to
+            # it: no error, no retry increment. The backend gate owns the
+            # endpoint's health; this stage simply yields the round.
+            db.log_event(con, "warn", stage,
+                         f"{stage} deferred — encoder unreachable ({e}); "
+                         f"the document is untouched and will be retried")
+            return False
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
             (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
         db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
-        return
+        return True
     dt = round(time.time() - t0, 2)
     if stage not in ("rdf", "fts") or int(row["native_id"]) % 500 == 0:
         db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
+    return True
 
 
 def _run_one_step(con, collection, last_idle_log: dict,
@@ -536,8 +599,10 @@ def _run_one_step(con, collection, last_idle_log: dict,
             db.log_event(con, "info", "worker", "idle — pipeline is caught up")
             last_idle_log[collection.name] = now
         return False
-    _execute_step(con, collection, stage, row)
-    return True   # an attempted (even failed) step counts as work this round
+    # an ATTEMPTED (even failed) step counts as work this round; a DEFERRED
+    # one does not, so a dead encoder makes the loop move on instead of
+    # walking the whole collection document by document
+    return _execute_step(con, collection, stage, row)
 
 # Per-collection pipeline threads (rdf/fts). ONE thread per collection —
 # never two writers on one tantivy index, and every plugin cache that spans
