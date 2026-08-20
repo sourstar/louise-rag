@@ -38,6 +38,7 @@
   </div>
 </div>
 
+  <div class="note">Document counts are cached for two minutes and refreshed in the background — the numbers below are {% if counts_age < 5 %}fresh{% else %}up to {{ '%.0f'|format(counts_age) }}s old{% endif %}. Each one is a full scan of that collection's <code>documents</code> table (24M rows for pubmed, ~12s), so computing them per page load made this page a 20-second wait. A backfill moves over days; a two-minute-old count does not mislead, but a count of unknown age would.</div>
 <div class="grid">
 {% for c in shelves %}
 <div class="panel" data-collection="{{ c.name }}">

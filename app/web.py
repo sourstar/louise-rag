@@ -28,6 +28,7 @@ import secrets
 import shutil
 import tarfile
 import tempfile
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -188,23 +189,48 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     return order
 
 
-def _collection_shelf(collection: collections_mod.Collection) -> dict:
+# ---------------- document counts: one scan, shared and cached ----------------
+#
+# Every number on the Library card and the Stats page is a SUM over the whole
+# `documents` table. No index can answer that — the predicates span error,
+# retries, chunks and embed_version — so each one is a full scan, and it is
+# not close to free: measured on this node, pubmed (24.4M rows) takes 12.0s
+# and wikipedia (19.4M rows) 10.5s. Seven collections made the Library page a
+# 24-second wait, and the Stats page scanned the same two tables all over
+# again for 15 more.
+#
+# Two fixes, both here. The queries MERGE: one aggregate now serves both
+# pages, so opening Stats after Library costs nothing rather than repeating
+# the work. And the result is cached stale-while-revalidate: a page is served
+# from cache instantly and a refresh runs behind it when the entry is older
+# than the TTL. Nobody waits except the very first viewer after a restart,
+# and a collection nobody looks at is never scanned at all — which is why
+# this is a cache and not a background job on a timer.
+#
+# Staleness is shown, never hidden: these counts describe a backfill that
+# moves over days, so a two-minute-old number is not misleading, but a
+# number of unknown age would be.
+
+_COUNTS_TTL_S = 120.0
+
+_counts_cache: dict[str, tuple[float, dict]] = {}
+_counts_lock = threading.Lock()
+_counts_refreshing: set[str] = set()
+
+
+def _document_counts_query(collection) -> dict:
+    """THE scan. One pass for every count either page needs."""
     con = db.connect(collection)
-    # ONE pass over `documents` for every number on the card. There is no
-    # index that answers these (they are SUMs over the whole table), so each
-    # separate query was a full scan — at pubmed's ~20M rows the page took
-    # tens of seconds and, once the blocked/unindexable split added a third
-    # scan, timed out outright. Conditional aggregation costs one scan for
-    # all of them, which is fewer than the original code used.
-    #
     # blocked vs unindexable: stage failures are prefixed with their stage
     # (worker._execute_step), so an UNPREFIXED error came from discovery and
     # describes the CORPUS — no text in the mirror, retracted upstream.
     # "Clear errors & retry" cannot fix those (the next scan re-applies
     # them), so reporting them as failures promised an impossible remedy.
     stage_error = ("(" + " OR ".join(
-        f"error LIKE '{s}: %'" for s in ("rdf", "fts", "embed")) + ")")
-    counts = con.execute(f"""
+        f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed")) + ")")
+    pending = (f"in_scope=1 AND fts_done=1 AND error IS NULL AND retries<:max "
+               f"AND (embed_done=0 OR embed_version<:ver)")
+    row = con.execute(f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
           SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
@@ -214,12 +240,88 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
           SUM(CASE WHEN in_scope=1 AND error IS NOT NULL
                         AND NOT {stage_error} AND retries<:max
                    THEN 1 ELSE 0 END) unindexable,
-          SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
-                        AND retries<:max
-                        AND (embed_done=0 OR embed_version<:ver)
-                   THEN 1 ELSE 0 END) embed_ready
+          SUM(CASE WHEN {pending} THEN 1 ELSE 0 END) embed_ready,
+          SUM(CASE WHEN {pending} THEN chunks ELSE 0 END) chunks_pending,
+          -- Documents that still have to pass rdf/fts before they can be
+          -- embedded. `chunks` is written BY the fts stage, so for these the
+          -- chunk count is not zero — it is unknown, and a page that renders
+          -- it as 0 says "nothing to do" about a collection with thousands of
+          -- contigs still to index.
+          SUM(CASE WHEN in_scope=1 AND fts_done=0 AND error IS NULL
+                        AND retries<:max THEN 1 ELSE 0 END) docs_unindexed
         FROM documents""",
         {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}).fetchone()
+    return {k: (row[k] or 0) for k in row.keys()}
+
+
+def _counts_key(collection) -> str:
+    """Keyed on the physical manifest path, not collection.name — the same
+    lesson fts.get_index() records: two Collection instances can share a
+    name while pointing at different files, and a name-keyed cache then
+    serves one collection's numbers for another."""
+    return str(collection.manifest_path)
+
+
+def _document_counts(collection) -> tuple[dict, float]:
+    """(counts, age_seconds). Serves a cached value immediately and refreshes
+    behind it; only a cold cache blocks the caller."""
+    name = _counts_key(collection)
+    now = time.time()
+    with _counts_lock:
+        entry = _counts_cache.get(name)
+    if entry is not None:
+        at, counts = entry
+        if now - at > _COUNTS_TTL_S:
+            _refresh_counts_async(collection)
+        return counts, now - at
+
+    counts = _document_counts_query(collection)      # cold: the one slow path
+    with _counts_lock:
+        _counts_cache[name] = (time.time(), counts)
+    return counts, 0.0
+
+
+def _refresh_counts_async(collection) -> None:
+    """At most one refresh in flight per collection — without the guard, a
+    page that is slow to load invites a reload, and every reload would start
+    another 12-second scan of the same table."""
+    name = _counts_key(collection)
+    with _counts_lock:
+        if name in _counts_refreshing:
+            return
+        _counts_refreshing.add(name)
+
+    def _run():
+        try:
+            counts = _document_counts_query(collection)
+            with _counts_lock:
+                _counts_cache[name] = (time.time(), counts)
+        except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
+            pass
+        finally:
+            with _counts_lock:
+                _counts_refreshing.discard(name)
+
+    threading.Thread(target=_run, name=f"counts:{name}", daemon=True).start()
+
+
+def invalidate_counts(collection=None) -> None:
+    """Drop cached counts after an action that changes them (reset, clear
+    errors, rescan), so the operator sees the effect of what they just did
+    instead of a stale number. No argument clears everything."""
+    with _counts_lock:
+        if collection is None:
+            _counts_cache.clear()
+        else:
+            _counts_cache.pop(_counts_key(collection), None)
+
+
+def _collection_shelf(collection: collections_mod.Collection) -> dict:
+    con = db.connect(collection)
+    # Counts come from the shared cache (see _document_counts): one scan per
+    # collection, reused by the Stats page, refreshed behind the request
+    # rather than in front of it.
+    counts, counts_age = _document_counts(collection)
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
     blocked = counts["blocked"] or 0
     unindexable = counts["unindexable"] or 0
@@ -252,6 +354,9 @@ def _collection_shelf(collection: collections_mod.Collection) -> dict:
         "rdf_done": counts["rdf_done"] or 0, "fts_done": counts["fts_done"] or 0,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
+        # how old the cached counts are, so a stale progress bar is
+        # visibly stale rather than quietly wrong
+        "counts_age": counts_age,
         "profile_mode": (spec.profile_mode if spec else "incremental"),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
@@ -310,9 +415,12 @@ def _license_state(collection: collections_mod.Collection) -> dict:
 def library_page(request: Request):
     collections = collections_mod.load_all()
     con = db.connect()   # worker_state is one global control-table toggle (see worker.py)
+    shelves = [_collection_shelf(c) for c in collections]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
-        "shelves": [_collection_shelf(c) for c in collections],
+        "shelves": shelves,
+        # oldest cached count on the page — a stale bar should look stale
+        "counts_age": max((s["counts_age"] for s in shelves), default=0),
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
         "plugin_profiles": {p: _profile_order(p)
                              for p in collections_mod.PLUGIN_REGISTRY},
@@ -391,6 +499,9 @@ def library_reset(name: str, body: LibraryResetBody):
     except ValueError as e:
         raise HTTPException(400, str(e))
     db.log_event(con, "info", "control", f"reset {body.stage} ({len(body.book_ids) or 'all'})")
+    # a reset is exactly the moment an operator wants to SEE change; serving
+    # them a cached count from before their own click reads as a no-op
+    invalidate_counts(collection)
     return {"ok": True}
 
 
@@ -897,21 +1008,11 @@ def _stats_row(collection, measured: dict) -> dict:
     # by orders of magnitude (a genome contig against a PubMed abstract), so
     # a per-document ETA is meaningless across collections. `chunks` is
     # written by the fts stage, so it is known before embedding starts.
-    row = con.execute(
-        """SELECT
-             SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
-                       AND retries < :max
-                       AND (embed_done=0 OR embed_version < :ver)
-                      THEN 1 ELSE 0 END) docs_pending,
-             SUM(CASE WHEN in_scope=1 AND fts_done=1 AND error IS NULL
-                       AND retries < :max
-                       AND (embed_done=0 OR embed_version < :ver)
-                      THEN chunks ELSE 0 END) chunks_pending,
-             SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) docs_done
-           FROM documents""",
-        {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}).fetchone()
-    docs_pending = row["docs_pending"] or 0
-    chunks_pending = row["chunks_pending"] or 0
+    counts, counts_age = _document_counts(collection)
+    docs_pending = counts["embed_ready"]
+    chunks_pending = counts["chunks_pending"]
+    docs_unindexed = counts["docs_unindexed"]
+    blocked = counts["blocked"]
 
     # Remaining FETCH work in bytes. fetch_files is small (one row per
     # container, ~1,450 at the largest), so this is a cheap scan.
@@ -941,6 +1042,7 @@ def _stats_row(collection, measured: dict) -> dict:
     return {
         "name": collection.name,
         "plugin": collection.plugin,
+        "counts_age": counts_age,
         "model": recipe.model,
         "device": (recipe.device or ("cpu" if recipe.concurrency > 1 else "gpu")),
         "ctx": recipe.ctx,
@@ -958,8 +1060,11 @@ def _stats_row(collection, measured: dict) -> dict:
         },
         "embed": {
             "docs_pending": docs_pending,
-            "docs_done": row["docs_done"] or 0,
+            "docs_done": counts["embed_done"],
             "chunks_pending": chunks_pending,
+            # why a chunk count may be 0 while work remains
+            "docs_unindexed": docs_unindexed,
+            "blocked": blocked,
             "chars_per_s": embed.get("chars_per_s"),
             "chunks_per_s": embed.get("chunks_per_s"),
             "ms_per_chunk": embed.get("ms_per_chunk"),
@@ -968,6 +1073,9 @@ def _stats_row(collection, measured: dict) -> dict:
             "eta": _human_duration(stats_mod.eta_seconds(
                 chunks_pending,
                 chunks_per_hour_wall / 3600 if chunks_per_hour_wall else None)),
+            # a lower bound, not an estimate, while some of the work has not
+            # been measured yet
+            "eta_is_floor": bool(docs_unindexed),
         },
     }
 
@@ -989,12 +1097,14 @@ def stats_page(request: Request):
     except sqlite3.Error:
         pass
     rows = [_stats_row(c, measured or {}) for c in collections]
+    counts_age = max((r["counts_age"] for r in rows), default=0)
     # Busiest first: the collection with work left is the one being watched.
     rows.sort(key=lambda r: (-(r["embed"]["chunks_pending"] or 0),
                               -(r["fetch"]["bytes_pending"] or 0), r["name"]))
     return TEMPLATES.TemplateResponse(request, "stats.html", {
         "active": "stats",
         "rows": rows,
+        "counts_age": counts_age,
         "measured": bool(measured),
         "age_seconds": round(age) if age is not None else None,
         "worker_state": db.worker_state(db.connect()),

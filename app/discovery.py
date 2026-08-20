@@ -5,10 +5,39 @@ changes do we call fetch() to hash content; only when the hash actually
 differs do we reset downstream stage flags for that one document. A
 no-change run is just a stat scan — discover() never touches file content.
 """
+import sqlite3
 import time
 
 from . import db
 from .plugins.base import DiscoverState, DocRef
+
+
+
+def _clear_cursor_if_relocated(con, collection, root) -> bool:
+    """True when stored locators no longer live under the corpus root, in
+    which case the scan cursor is dropped so discovery re-enumerates.
+
+    Deliberately tolerant: a plugin whose locator is not a filesystem path
+    under the root (or a collection with nothing discovered yet) simply
+    reads as "not relocated" and nothing happens.
+    """
+    try:
+        row = con.execute("SELECT path FROM documents "
+                          "WHERE path IS NOT NULL LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None or not row["path"]:
+        return False
+    stored = str(row["path"])
+    prefix = str(root)
+    if stored.startswith(prefix):
+        return False
+    from .plugins import cursor as scan_cursor
+    scan_cursor.clear(collection.manifest_path.parent, collection.plugin)
+    db.log_event(con, "info", "discover",
+                 f"corpus moved (stored locators point outside {prefix}); "
+                 f"scan cursor cleared so locators can be refreshed")
+    return True
 
 
 def sync_collection(con, collection) -> dict:
@@ -18,6 +47,24 @@ def sync_collection(con, collection) -> dict:
     if not root.is_dir():
         db.log_event(con, "error", "discover", f"corpus dir not found: {root}")
         return {"error": f"corpus dir not found: {root}"}
+
+    # HAS THE CORPUS MOVED? Locators are absolute paths, and the scan cursor
+    # is keyed on a container's BASENAME plus (mtime, size) — so a dataset
+    # remounted somewhere else looks completely unchanged to it, every
+    # container is skipped, and not one ref is emitted to carry the new
+    # path. The stored locators then point at a mount that no longer exists
+    # and every stage fails with FileNotFoundError.
+    #
+    # Observed live: renaming the genome collection's ZFS dataset blocked all
+    # 17 of its documents, and rescanning did not help because the file
+    # genuinely had not changed.
+    #
+    # One LIMIT 1 read answers it, so collections that have NOT moved pay a
+    # single indexed row read and nothing else. Clearing the cursor is the
+    # right hammer only here: re-enumeration is what regenerates the
+    # locators, and the relocation branch below then updates them without
+    # touching any stage flag (the bytes are the same bytes).
+    _clear_cursor_if_relocated(con, collection, root)
 
     state = DiscoverState(corpus_root=root,
                            state_dir=collection.manifest_path.parent)
@@ -34,7 +81,7 @@ def sync_collection(con, collection) -> dict:
     # (WAL autocommit), which also makes an interrupted giant scan resumable
     # in effect: rows written so far stand, the cursor file is only advanced
     # by the plugin for containers it finished enumerating.
-    added = changed = missing = container_errors = 0
+    added = changed = missing = container_errors = relocated = 0
     for i, ref in enumerate(plugin.discover(state), start=1):
         uid = f"{ref.source_id}:{ref.native_id}"
         if ref.scope == "container":
@@ -61,7 +108,8 @@ def sync_collection(con, collection) -> dict:
         else:
             txt_name = ref.extra.get("txt_name")
             row = con.execute(
-                "SELECT mtime,size,txt_hash FROM documents WHERE uid=?", (uid,)).fetchone()
+                "SELECT path,mtime,size,txt_hash FROM documents WHERE uid=?",
+                (uid,)).fetchone()
             if row is None:
                 con.execute(
                     "INSERT INTO documents(uid,source,native_id,path,txt_name,mtime,size,"
@@ -82,12 +130,38 @@ def sync_collection(con, collection) -> dict:
                 else:
                     con.execute("UPDATE documents SET mtime=?,size=? WHERE uid=?",
                                 (ref.mtime, ref.size, uid))
+            elif row["path"] != ref.locator:
+                # RELOCATED, not changed. The locator is an absolute path into
+                # the corpus, so remounting a dataset somewhere else — a
+                # rename, a move to another pool — invalidates every stored
+                # locator while mtime and size stay exactly as they were. The
+                # branch above can never notice: it is keyed on content
+                # identity, and location is not content.
+                #
+                # Observed live: renaming the genome collection's dataset left
+                # all 17 documents pointing at the old mount, and every one
+                # failed the embed stage with FileNotFoundError. Rescanning did
+                # not help, because the file really was unchanged.
+                #
+                # Stage flags are deliberately NOT reset: the bytes are the
+                # same bytes, so the parse, the index and the vectors all stay
+                # valid. The error and the retry count ARE cleared — the only
+                # thing wrong was where we were looking, and a document
+                # blocked for that reason should unblock itself rather than
+                # wait for someone to press a button.
+                con.execute(
+                    "UPDATE documents SET path=?,txt_name=?,error=NULL,retries=0,"
+                    "updated_at=? WHERE uid=?",
+                    (ref.locator, txt_name, int(time.time()), uid))
+                relocated += 1
         if i % 2000 == 0:
             con.execute("COMMIT") if con.in_transaction else None
 
     apply_scope(con)
     stats = {"seen": seen, "added": added, "changed": changed,
              "missing_txt": missing, "secs": round(time.time() - t0, 1)}
+    if relocated:
+        stats["relocated"] = relocated
     if container_errors:
         stats["container_errors"] = container_errors
     db.log_event(con, "info", "discover", f"discovery done {stats}")

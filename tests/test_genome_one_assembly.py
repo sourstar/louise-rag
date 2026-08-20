@@ -146,3 +146,69 @@ def test_a_preseeded_assembly_is_adoptable(tmp_path):
 
     fasta.write_bytes(b"\0" * (size - 1))       # truncated
     assert not engine.is_adoptable(col, remote)
+
+
+def test_a_relocated_corpus_updates_locators_without_reindexing(isolated_config,
+                                                                 tmp_path):
+    """Moving a dataset changes every stored locator while leaving mtime and
+    size untouched — so the change-detection branch, which is keyed on
+    content identity, cannot see it.
+
+    Observed live: renaming the genome collection's ZFS dataset left all 17
+    documents pointing at the old mount and every one failed the embed stage
+    with FileNotFoundError. Rescanning did not help; the file really was
+    unchanged. The bytes being identical is exactly why the vectors must
+    survive the fix.
+    """
+    import shutil
+    from app import collections as collections_mod, db, discovery
+
+    def collection_at(corpus):
+        return collections_mod.Collection(
+            name="g", plugin="genome", profile="sacCer3", embed_mode_default=None,
+            corpus_dir=corpus, manifest_path=tmp_path / "m.db",
+            fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
+
+    before = tmp_path / "corpora" / "genome"
+    _fasta(before / "sacCer3.fa", [("chrI", "ACGT" * 40), ("chrII", "TTGC" * 40)])
+    col = collection_at(before)
+    con = db.connect(col)
+    discovery.sync_collection(con, col)
+
+    rows = con.execute("SELECT uid,path FROM documents ORDER BY uid").fetchall()
+    assert rows and all("corpora/genome/" in r["path"] for r in rows)
+    # pretend the pipeline already ran: this is what must NOT be thrown away
+    con.execute("UPDATE documents SET rdf_done=1,fts_done=1,embed_done=1,"
+                "error='embed: FileNotFoundError',retries=2")
+
+    after = tmp_path / "corpora" / "genome-sacCer3"
+    after.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(before), str(after))
+
+    stats = discovery.sync_collection(con, collection_at(after))
+    assert stats.get("relocated") == 2, stats
+    assert stats["changed"] == 0, "the bytes did not change, so nothing was re-read"
+
+    for r in con.execute("SELECT * FROM documents ORDER BY uid"):
+        assert str(after) in r["path"], "locator must follow the corpus"
+        assert r["error"] is None, "a path-only failure must clear itself"
+        assert r["retries"] == 0
+        # the expensive work survives: same bytes, same parse, same vectors
+        assert (r["rdf_done"], r["fts_done"], r["embed_done"]) == (1, 1, 1)
+
+
+def test_an_unmoved_corpus_reports_no_relocation(isolated_config, tmp_path):
+    """The new branch must stay silent on the ordinary path, or every scan
+    would rewrite every row for nothing."""
+    from app import collections as collections_mod, db, discovery
+
+    corpus = tmp_path / "corpus"
+    _fasta(corpus / "sacCer3.fa", [("chrI", "ACGT" * 40)])
+    col = collections_mod.Collection(
+        name="g", plugin="genome", profile="sacCer3", embed_mode_default=None,
+        corpus_dir=corpus, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
+    con = db.connect(col)
+    discovery.sync_collection(con, col)
+    stats = discovery.sync_collection(con, col)
+    assert "relocated" not in stats, stats

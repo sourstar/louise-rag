@@ -183,3 +183,119 @@ def test_the_page_requires_admin(client):
     del client.headers["X-Admin-Token"]
     r = client.get("/admin/stats", headers={"Accept": "application/json"})
     assert r.status_code == 401
+
+
+# ---------------- "0 chunks left" must not mean two different things ------
+
+def test_unindexed_documents_are_reported_as_uncounted_not_as_zero(
+        client, isolated_config):
+    """Observed live: genome-dm6 showed "0 chunks left" with 1,051 contigs
+    still to index. `documents.chunks` is written by the fts stage, so a
+    document that has not reached it contributes an UNKNOWN amount of work,
+    not zero — and zero reads as "nothing to do"."""
+    from app import collections as collections_mod
+    col = collections_mod.default_collection()
+    con = db.connect(col)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                "rdf_done,fts_done,embed_done,chunks) VALUES"
+                "('g:1','g','1','/x',1,1,0,0,0)")          # awaiting fts
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                "rdf_done,fts_done,embed_done,chunks) VALUES"
+                "('g:2','g','2','/x',1,1,1,0,40)")         # counted: 40 chunks
+    web.invalidate_counts()
+
+    row = web._stats_row(col, {})
+    assert row["embed"]["chunks_pending"] == 40
+    assert row["embed"]["docs_unindexed"] == 1
+    assert row["embed"]["eta_is_floor"] is True, \
+        "an ETA over partly-unmeasured work is a floor, not an estimate"
+
+
+def test_blocked_documents_are_named_rather_than_silently_dropped(
+        client, isolated_config):
+    """genome-sacCer3 showed 0 chunks left with 3,459 chunks known: every
+    document carried an error, and embed_ready requires error IS NULL."""
+    from app import collections as collections_mod
+    col = collections_mod.default_collection()
+    con = db.connect(col)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                "rdf_done,fts_done,embed_done,chunks,error) VALUES"
+                "('g:3','g','3','/x',1,1,1,0,99,'embed: FileNotFoundError')")
+    web.invalidate_counts()
+
+    row = web._stats_row(col, {})
+    assert row["embed"]["chunks_pending"] == 0, "blocked work is not pending work"
+    assert row["embed"]["blocked"] == 1, "but it must still be visible"
+
+
+def test_the_table_shows_chunks_per_second(client, isolated_config):
+    """Asked for directly: chunks/s is the intuitive figure. chars/s stays
+    because it is the only one comparable across collections."""
+    r = stats.recorder()
+    for _ in range(5):
+        r.record_embed("gutenberg", seconds=2.0, docs=1, chunks=4, chars=8000)
+    db.publish_worker_stats(db.connect(), r.snapshot())
+
+    page = client.get("/admin/stats").text
+    assert "<th>chunks/s</th>" in page
+    assert "ms per chunk" not in page
+    assert "<th>chars/s</th>" in page
+
+
+# ---------------- the counts cache ----------------
+
+def test_counts_are_cached_per_manifest_not_per_name(isolated_config, tmp_path):
+    """Two Collections can share a name and point at different files — the
+    same trap fts.get_index() documents. A name-keyed cache would serve one
+    collection's numbers for another."""
+    from app import collections as collections_mod
+    a = collections_mod.Collection(
+        name="same", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "a.db",
+        fts_dir=tmp_path / "fa", lance_dir=tmp_path / "la")
+    b = collections_mod.Collection(
+        name="same", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "b.db",
+        fts_dir=tmp_path / "fb", lance_dir=tmp_path / "lb")
+    assert web._counts_key(a) != web._counts_key(b)
+
+    db.connect(a).execute("INSERT INTO documents(uid,source,native_id,path,"
+                          "in_scope) VALUES('x','g','1','/p',1)")
+    db.connect(b)
+    web.invalidate_counts()
+    assert web._document_counts(a)[0]["total"] == 1
+    assert web._document_counts(b)[0]["total"] == 0, "must not reuse a's entry"
+
+
+def test_a_cached_value_is_served_without_rescanning(isolated_config, monkeypatch):
+    """The whole point: pubmed's scan is 12 seconds, and it must not run on
+    every page load."""
+    from app import collections as collections_mod
+    col = collections_mod.default_collection()
+    web.invalidate_counts()
+
+    calls = []
+    real = web._document_counts_query
+    monkeypatch.setattr(web, "_document_counts_query",
+                        lambda c: (calls.append(c.name), real(c))[1])
+
+    web._document_counts(col)
+    web._document_counts(col)
+    web._document_counts(col)
+    assert len(calls) == 1, "cold once, cached thereafter"
+
+
+def test_a_reset_invalidates_the_cache(client, isolated_config):
+    """A reset is exactly when an operator wants to see change; a cached
+    count from before their own click reads as a no-op."""
+    from app import collections as collections_mod
+    col = collections_mod.default_collection()
+    con = db.connect(col)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                "rdf_done,error,retries) VALUES('g:9','g','9','/x',1,1,'rdf: boom',9)")
+    web.invalidate_counts()
+    assert web._document_counts(col)[0]["blocked"] == 1
+
+    assert client.post(f"/admin/library/{col.name}/reset",
+                       json={"stage": "errors"}).status_code == 200
+    assert web._document_counts(col)[0]["blocked"] == 0, "cache must not hide the reset"

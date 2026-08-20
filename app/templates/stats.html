@@ -26,6 +26,7 @@
 
 <div class="panel">
   <h2>Embedding</h2>
+  <div class="note">Document counts are cached for two minutes and refreshed in the background — the numbers below are {% if counts_age < 5 %}fresh{% else %}up to {{ '%.0f'|format(counts_age) }}s old{% endif %}. Each one is a full scan of that collection's <code>documents</code> table (24M rows for pubmed, ~12s), so computing them per page load made this page a 20-second wait. A backfill moves over days; a two-minute-old count does not mislead, but a count of unknown age would.</div>
   <div class="note">
     <b>encoder</b> is throughput measured inside the endpoint call — what the encoder is
     worth, independent of whether the worker had anything else to do. That is the column
@@ -33,15 +34,22 @@
     <b>duty</b> is the share of elapsed time this collection actually held the encoder:
     embedding is GPU-serial across collections by doctrine, so a low duty means the
     encoder is fine and the collection is queueing.
-    Rates are in <b>characters/second</b> on purpose — chunk sizes differ per collection
-    (ctx column), so chunks/second would flatter a small-context encoder for doing less
-    work per chunk.
+    <b>chars/s</b> is the fair cross-collection figure — chunk sizes differ per
+    collection (ctx column), so chunks/s alone would flatter a small-context encoder for
+    doing less work per chunk. Both are shown: chunks/s is the intuitive one, chars/s is
+    the one to compare on.
+    <br><br>
+    <b>chunks left</b> counts only chunks the pipeline already knows about. The count is
+    written by the lexical-index stage, so a document that has not reached it yet
+    contributes an unknown amount, shown separately rather than as zero — and any ETA
+    beside one is a floor (<b>≥</b>), not an estimate. Blocked documents are excluded
+    entirely until their errors are cleared.
   </div>
   <div style="overflow-x:auto">
   <table>
     <tr>
       <th>collection</th><th>encoder</th><th>where</th><th>ctx</th>
-      <th>chars/s</th><th>ms per chunk</th><th>duty</th>
+      <th>chars/s</th><th>chunks/s</th><th>duty</th>
       <th>chunks left</th><th>docs left</th><th>ETA</th>
     </tr>
     {% for r in rows %}
@@ -51,11 +59,13 @@
       <td><span class="badge {{ 'lapis' if r.device=='gpu' else 'brass' }}">{{ r.device }}{% if r.concurrency > 1 %} ×{{ r.concurrency }}{% endif %}</span></td>
       <td>{{ r.ctx }}</td>
       <td>{% if r.embed.chars_per_s %}<b>{{ '%.0f'|format(r.embed.chars_per_s) }}</b>{% else %}—{% endif %}</td>
-      <td>{% if r.embed.ms_per_chunk %}{{ '%.0f'|format(r.embed.ms_per_chunk) }}{% else %}—{% endif %}</td>
+      <td>{% if r.embed.chunks_per_s %}{{ '%.2f'|format(r.embed.chunks_per_s) }}{% else %}—{% endif %}</td>
       <td>{% if r.embed.duty %}{{ '%.0f%%'|format(r.embed.duty * 100) }}{% else %}—{% endif %}</td>
-      <td>{{ '{:,}'.format(r.embed.chunks_pending) }}</td>
+      <td>{{ '{:,}'.format(r.embed.chunks_pending) }}{% if r.embed.docs_unindexed %}
+        <span class="badge" title="these documents have not passed the lexical index yet, and the chunk count is written by that stage — so their share of the work is not zero, it is not yet known">+{{ '{:,}'.format(r.embed.docs_unindexed) }} docs not counted yet</span>{% endif %}
+        {% if r.embed.blocked %}<span class="badge err" title="blocked documents are excluded from the pending count until their errors are cleared">{{ '{:,}'.format(r.embed.blocked) }} blocked</span>{% endif %}</td>
       <td>{{ '{:,}'.format(r.embed.docs_pending) }}</td>
-      <td>{{ r.embed.eta }}</td>
+      <td>{% if r.embed.eta_is_floor and r.embed.eta != '—' %}≥ {% endif %}{{ r.embed.eta }}</td>
     </tr>
     {% endfor %}
   </table>
