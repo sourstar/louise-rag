@@ -155,12 +155,22 @@ def test_hot_path_selections_never_sort_the_candidate_set(tmp_path):
     candidate row to return one. Nothing in the rdf/fts selections may sort."""
     c, con = _discovered(tmp_path)
     for sql, params in ((worker._RDF_PENDING, (config.MAX_RETRIES,)),
-                        (worker._FTS_PENDING, (config.MAX_RETRIES,
+                        (worker._FTS_FRESH, (config.MAX_RETRIES,)),
+                        (worker._FTS_REINDEX, (config.MAX_RETRIES,
                                                config.FTS_VERSION,
                                                config.ENTITY_VERSION))):
         plan = _plan(con, sql, params)
         assert "TEMP B-TREE" not in plan.upper(), \
             f"selection sorts the candidate set: {plan}"
+
+
+def test_fresh_fts_selection_uses_the_scope_index(tmp_path):
+    """The per-round fts check must be an index prefix on
+    (in_scope, rdf_done, fts_done), not a scan filtered afterwards — it now
+    runs before rdf on every single round."""
+    c, con = _discovered(tmp_path)
+    plan = _plan(con, worker._FTS_FRESH, (config.MAX_RETRIES,))
+    assert "idx_documents_scope" in plan, plan
 
 
 def test_queue_cleanup_does_not_materialise_every_uid(tmp_path):

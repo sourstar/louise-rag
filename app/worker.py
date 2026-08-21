@@ -163,9 +163,16 @@ _RDF_PENDING = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=0 AND error IS NULL "
     "AND retries<? LIMIT 1")
 
-_FTS_PENDING = (
-    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
-    "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
+# Split in two so the common case is an index prefix on idx_documents_scope
+# (in_scope, rdf_done, fts_done) instead of an OR that cannot use the
+# fts_done column at all. See the interleaving note in _next_book.
+_FTS_FRESH = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 "
+    "AND error IS NULL AND retries<? LIMIT 1")
+
+_FTS_REINDEX = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
+    "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) "
     "LIMIT 1")
 
 
@@ -177,14 +184,35 @@ def _next_book(con, scope, embed_allowed=True):
         if r:
             return "embed", r
         con.execute(_QUEUE_CLEANUP, (config.MAX_RETRIES,))
-    # 2. metadata
+    # 2/3. rdf and fts INTERLEAVE, one document at a time.
+    #
+    # This module's contract is "stage order PER DOCUMENT: rdf -> fts ->
+    # embed", but selecting rdf first made that order GLOBAL: every document
+    # in the collection finished rdf before any document reached fts. On a
+    # large corpus that is indistinguishable from fts never running — live,
+    # wikivec sat at rdf 172,538 of 8,495,470 with fts exactly 0 — and
+    # everything downstream of an fts commit waits for the whole corpus
+    # instead of for one document. That includes genesis, which imports
+    # published vectors only for documents with fts_done=1, so a collection
+    # whose vectors need no encoder at all still could not use them.
+    #
+    # Checking fresh fts first alternates naturally rather than by counter:
+    # with nothing rdf-done there is no fts work, so rdf runs, and that
+    # document is the fts candidate on the next round.
+    r = con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone()
+    if r:
+        return "fts", r
     r = con.execute(_RDF_PENDING, (config.MAX_RETRIES,)).fetchone()
     if r:
         return "rdf", r
-    # 3. lexical index (+ entity tagging, gated by its own version so it can
-    # be forced to re-run independently of FTS_VERSION)
+    # Version-driven RE-indexing (FTS_VERSION / ENTITY_VERSION, each able to
+    # force a re-run independently) comes last on purpose: a bump makes every
+    # document a candidate at once, and taking those ahead of rdf would stall
+    # ingestion of new documents for the length of a full re-index. It is
+    # also the one selection here that cannot use the fts_done column, so
+    # keeping it last means it is only reached on a caught-up collection.
     r = con.execute(
-        _FTS_PENDING,
+        _FTS_REINDEX,
         (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION)).fetchone()
     if r:
         return "fts", r
