@@ -116,7 +116,7 @@ class GenomeSource:
         scan = cursor.load(state.state_dir, self.source_id)
         started_ns = time.time_ns()   # see cursor.mark_if_settled
         for fasta in fastas:
-            if cursor.unchanged(scan, fasta):
+            if cursor.unchanged(scan, fasta, root):
                 continue     # already enumerated at this (mtime, size)
             st = fasta.stat()
             try:
@@ -135,7 +135,7 @@ class GenomeSource:
                              error=f"unreadable FASTA {fasta.name}: "
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
-            cursor.mark_if_settled(scan, fasta, started_ns)
+            cursor.mark_if_settled(scan, fasta, started_ns, root)
         cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:

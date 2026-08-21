@@ -65,7 +65,7 @@ class WikipediaSource:
                              locator=str(dump), scope="container",
                              error=f"multistream index missing for {dump.name}")
                 continue
-            if cursor.unchanged(scan, dump) and cursor.unchanged(scan, index):
+            if cursor.unchanged(scan, dump, root) and cursor.unchanged(scan, index, root):
                 continue     # already enumerated at this (mtime, size)
             st = dump.stat()
             lang = _lang_of(dump.name)
@@ -97,8 +97,8 @@ class WikipediaSource:
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
-            cursor.mark_if_settled(scan, dump, started_ns)
-            cursor.mark_if_settled(scan, index, started_ns)
+            cursor.mark_if_settled(scan, dump, started_ns, root)
+            cursor.mark_if_settled(scan, index, started_ns, root)
         cursor.save(state.state_dir, self.source_id, scan)
 
     def _flush(self, pending, end_offset, dump, st, lang):

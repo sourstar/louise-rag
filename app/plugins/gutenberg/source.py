@@ -48,7 +48,7 @@ class GutenbergSource:
         for entry in root.iterdir():
             if not entry.is_dir() or not entry.name.isdigit():
                 continue
-            if cursor.unchanged(scan, entry):
+            if cursor.unchanged(scan, entry, root):
                 continue
             book_id = int(entry.name)
             # One pass answers both questions (see pg_text.scan_dir): where
@@ -65,7 +65,7 @@ class GutenbergSource:
             # re-examined until something lands in it. mark_if_settled
             # declines when the directory changed during this scan, so a
             # concurrent rsync cannot make us skip it forever.
-            cursor.mark_if_settled(scan, entry, started_ns)
+            cursor.mark_if_settled(scan, entry, started_ns, root)
             if is_stub:
                 stubs += 1
                 continue

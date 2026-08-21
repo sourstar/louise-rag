@@ -32,15 +32,65 @@ def signature(path: Path) -> list:
     return [st.st_mtime_ns, st.st_size]
 
 
-def unchanged(cursor: dict, path: Path) -> bool:
-    return cursor.get(path.name) == signature(path)
+def key(path: Path, root: Path | None = None) -> str:
+    """The cursor entry name for `path` — its path relative to the corpus
+    root, not its bare file name.
+
+    Keying on `path.name` is only safe while file names are unique across
+    the whole corpus. That holds for pubmed (one flat directory of
+    pubmed26nNNNN.xml.gz), for gutenberg (book directories) and for
+    wikipedia (a dump and its index). It does NOT hold for the embedded
+    plugin, whose format-v1 layout is data/{lang}/{NNN}.parquet: every
+    language directory restarts the numbering, so data/de/000.parquet and
+    data/tr/000.parquet shared one entry and each invalidated the other's
+    signature. Nothing was ever skipped, and a ~437 MB shard was re-read on
+    every scan — enough that the collection's discovery never finished.
+
+    Relative rather than absolute, so that moving a corpus costs one
+    re-examination instead of silently orphaning the whole cursor.
+
+    A path outside the root falls back to its bare name; that is the old
+    behaviour, and the callers that pass no root keep it.
+    """
+    if root is not None:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            pass
+    return path.name
 
 
-def mark(cursor: dict, path: Path) -> None:
-    cursor[path.name] = signature(path)
+def unchanged(cursor: dict, path: Path, root: Path | None = None) -> bool:
+    """True when `path` is recorded with exactly this (mtime_ns, size).
+
+    Accepts a LEGACY entry keyed on the bare file name so that moving to
+    path keys does not discard a cursor built under the old scheme — on a
+    large corpus that would mean one gratuitous full re-parse (pubmed: ~1,330
+    containers). The fallback is safe because it still demands an exact
+    signature match, so it can only fire for the very file that wrote it;
+    two different shards would need identical mtime_ns AND size to collide.
+    Legacy entries are pruned as each file is re-marked.
+    """
+    sig = signature(path)
+    k = key(path, root)
+    if cursor.get(k) == sig:
+        return True
+    return k != path.name and cursor.get(path.name) == sig
 
 
-def mark_if_settled(cursor: dict, path: Path, started_ns: int) -> bool:
+def _record(cursor: dict, path: Path, root: Path | None, sig: list) -> None:
+    k = key(path, root)
+    cursor[k] = sig
+    if k != path.name:
+        cursor.pop(path.name, None)     # retire the legacy entry
+
+
+def mark(cursor: dict, path: Path, root: Path | None = None) -> None:
+    _record(cursor, path, root, signature(path))
+
+
+def mark_if_settled(cursor: dict, path: Path, started_ns: int,
+                    root: Path | None = None) -> bool:
     """Remember `path` only if it was last modified BEFORE this scan began.
 
     The timestamp race this closes: something lands in a directory while
@@ -62,7 +112,7 @@ def mark_if_settled(cursor: dict, path: Path, started_ns: int) -> bool:
     button clears the cursor for everything else."""
     sig = signature(path)
     if sig[0] < started_ns:
-        cursor[path.name] = sig
+        _record(cursor, path, root, sig)
         return True
     return False
 

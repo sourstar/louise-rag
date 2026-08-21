@@ -132,7 +132,7 @@ class EmbeddedSource:
                              locator=str(shard), scope="container",
                              error=f"unrecognized shard path (want data/<lang>/*.parquet): {rel}")
                 continue
-            if cursor.unchanged(scan, shard):
+            if cursor.unchanged(scan, shard, root):
                 if pending is not None:
                     yield self._ref(pending, pending_lang)
                     pending, pending_lang = None, None
@@ -172,7 +172,7 @@ class EmbeddedSource:
                              error=f"unreadable shard {rel}: "
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
-            cursor.mark_if_settled(scan, shard, started_ns)
+            cursor.mark_if_settled(scan, shard, started_ns, root)
         if pending is not None:
             yield self._ref(pending, pending_lang)
         cursor.save(state.state_dir, self.source_id, scan)

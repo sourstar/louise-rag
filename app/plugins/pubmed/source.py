@@ -107,7 +107,7 @@ class PubmedSource:
         scan = cursor.load(state.state_dir, self.source_id)
         started_ns = time.time_ns()   # see cursor.mark_if_settled
         for container in containers:
-            if cursor.unchanged(scan, container):
+            if cursor.unchanged(scan, container, root):
                 continue     # already enumerated at this (mtime, size)
             st = container.stat()
             try:
@@ -145,7 +145,7 @@ class PubmedSource:
             # would never enumerate it properly (cursor.mark_if_settled).
             # Containers land constantly during an active fetch, so this is
             # not hypothetical here.
-            cursor.mark_if_settled(scan, container, started_ns)
+            cursor.mark_if_settled(scan, container, started_ns, root)
         cursor.save(state.state_dir, self.source_id, scan)
 
     def fetch(self, ref: DocRef) -> RawDoc:
