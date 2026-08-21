@@ -106,11 +106,7 @@ def existing_groups(collection=None) -> list[str]:
     return sorted(p.name for p in collection.fts_dir.iterdir()
                   if p.is_dir() and (p / "meta.json").exists())
 
-def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
-    group = group_for(lang)
-    algorithm = pystem_algorithm(group)
-    idx = get_index(group, collection)
-    writer = idx.writer(heap_size=64_000_000)
+def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict]):
     writer.delete_documents("book_id", book_id)
     for c in chunks:
         fields = dict(book_id=book_id, chunk_id=c["id"],
@@ -119,8 +115,41 @@ def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
         if algorithm:
             fields["body_stem"] = stemming.stem_text(algorithm, c["text"])
         writer.add_document(tantivy.Document(**fields))
-    writer.commit()
-    writer.wait_merging_threads()
+
+
+def index_books(entries, collection=None) -> None:
+    """Index several documents through ONE writer per language group.
+
+    `entries` is an iterable of (lang, book_id, chunks).
+
+    The per-document writer this replaces cost a fresh 64 MB allocation, a
+    `commit()` and a `wait_merging_threads()` for EVERY document — a fixed
+    cost that does not shrink with the document. Measured live: ~30s for a
+    2 kb genome scaffold, the same as for a 23 MB chromosome arm, because
+    the work is in the commit and not in the content.
+
+    Still idempotent per document: `delete_documents(book_id)` stays keyed on
+    the individual book, so re-running a batch — in whole or in part — cannot
+    duplicate anything. The caller must mark the documents done only AFTER
+    this returns (see worker.stage_fts): a crash between the commit here and
+    that mark simply re-indexes them, which is a no-op by construction.
+    """
+    by_group: dict[str, list] = {}
+    for lang, book_id, chunks in entries:
+        by_group.setdefault(group_for(lang), []).append((lang, book_id, chunks))
+    for group, items in by_group.items():
+        idx = get_index(group, collection)
+        algorithm = pystem_algorithm(group)
+        writer = idx.writer(heap_size=64_000_000)
+        for lang, book_id, chunks in items:
+            _add_one(writer, algorithm, lang, book_id, chunks)
+        writer.commit()
+        writer.wait_merging_threads()
+
+
+def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
+    """One document, one commit — for callers that genuinely have one."""
+    index_books([(lang, book_id, chunks)], collection)
 
 def delete_book(lang: str, book_id: int, collection=None):
     idx = get_index(group_for(lang), collection)

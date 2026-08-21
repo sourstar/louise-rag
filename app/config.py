@@ -103,6 +103,17 @@ DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))
 # doctrine), genesis, bundles and control. 0 = legacy single-thread rounds.
 WORKER_PIPELINE_THREADS = int(os.getenv("WORKER_PIPELINE_THREADS", "1"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+
+# How many documents one fts round commits through a single tantivy writer.
+# A writer costs a 64 MB allocation, a commit and a merge wait REGARDLESS of
+# how much was written, so paying that once per document is the dominant cost
+# on a corpus of small documents. Two caps, because collections differ by
+# orders of magnitude: pubmed abstracts are 1-2 chunks and hit the document
+# cap, while one genome contig is ~6,700 chunks and hits the chunk cap after
+# three. The chunk cap is the memory guard — a batch holds its chunks in
+# memory until the commit.
+FTS_BATCH_DOCS = int(os.getenv("FTS_BATCH_DOCS", "200"))
+FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the

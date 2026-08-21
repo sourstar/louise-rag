@@ -80,19 +80,80 @@ def stage_rdf(con, row, collection) -> None:
         "VALUES(?,?,?,?,?)",
         (row["uid"], meta["title"], meta["authors"], meta["subjects"], meta["bookshelves"]))
 
-def stage_fts(con, row, collection) -> None:
-    chunks = _load_chunks(row, collection)
-    fts.index_book(row["lang"], int(row["native_id"]), chunks, collection)
-    ref_store = refs.get_store()
-    entities.tag_document(con, row["uid"], row["title"], [c["text"] for c in chunks],
-                           refs.RESOLVER, ref_store)
+_FTS_BATCH_PEERS = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
+    "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
+    "AND uid<>? LIMIT ?")
+
+
+def _mark_indexed(con, row, chunks, now: int) -> None:
     con.execute(
         "UPDATE documents SET fts_done=1,fts_version=?,entity_version=?,chunks=?,tokens=?,"
         "updated_at=? WHERE uid=?",
         (config.FTS_VERSION, config.ENTITY_VERSION, len(chunks),
-         sum(c["tokens"] for c in chunks), int(time.time()), row["uid"]))
+         sum(c["tokens"] for c in chunks), now, row["uid"]))
+
+
+def stage_fts(con, row, collection) -> None:
+    """Index `row`, and as many other fts-pending documents as the batch caps
+    allow, through ONE tantivy commit.
+
+    A writer costs a 64 MB allocation, a commit and a merge wait no matter
+    how little was written, so one writer per document is a fixed toll on
+    every document in the corpus. Batching pays it once per batch instead.
+
+    The ORDER is what keeps invariant 2: every document is indexed, THEN the
+    single commit lands (inside fts.index_books), THEN the rows are marked.
+    A crash anywhere before the mark leaves those documents unmarked, and
+    re-running re-indexes over the same delete-then-insert keyed on book_id —
+    lossless, and truthful about what is actually done. Marking before the
+    commit is the one ordering that would lose data.
+
+    Only `row` may fail the round. A peer that cannot load its chunks, or
+    cannot be entity-tagged, is dropped rather than blamed on `row`: it keeps
+    its pending state and records its own error when its own turn comes.
+    """
+    chunks = _load_chunks(row, collection)
+    batch = [(row, chunks)]
+    n_chunks = len(chunks)
+    if config.FTS_BATCH_DOCS > 1:
+        peers = con.execute(
+            _FTS_BATCH_PEERS,
+            (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION,
+             row["uid"], config.FTS_BATCH_DOCS - 1)).fetchall()
+        for peer in peers:
+            if n_chunks >= config.FTS_BATCH_CHUNKS:
+                break
+            try:
+                peer_chunks = _load_chunks(peer, collection)
+            except Exception:   # noqa: BLE001 — a peer never fails the round
+                continue
+            batch.append((peer, peer_chunks))
+            n_chunks += len(peer_chunks)
+
+    fts.index_books(((r["lang"], int(r["native_id"]), ch) for r, ch in batch),
+                     collection)
+
+    ref_store = refs.get_store()
+    now = int(time.time())
+    # the selected document first and unguarded: its failure IS the round's
+    entities.tag_document(con, row["uid"], row["title"], [c["text"] for c in chunks],
+                           refs.RESOLVER, ref_store)
+    _mark_indexed(con, row, chunks, now)
+    for peer, peer_chunks in batch[1:]:
+        try:
+            entities.tag_document(con, peer["uid"], peer["title"],
+                                   [c["text"] for c in peer_chunks],
+                                   refs.RESOLVER, ref_store)
+            _mark_indexed(con, peer, peer_chunks, now)
+        except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
+            continue        # simply re-runs; never poisons the selected row
+    if len(batch) > 1:
+        db.log_event(con, "info", "fts",
+                     f"indexed {len(batch)} documents / {n_chunks} chunks "
+                     f"in one commit")
     if collection.genesis_archive:
-        # this document just became embed-eligible: let the archive look at
+        # these documents just became embed-eligible: let the archive look at
         # its shards again (they go barren once they cover nothing pending,
         # so the local encoder is never starved by empty revisits)
         bundle_genesis.note_new_candidate(collection.name)
@@ -175,6 +236,12 @@ _FTS_REINDEX = (
     "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) "
     "LIMIT 1")
 
+# Bounded on purpose: the inner LIMIT stops the count at one batch, so this
+# never walks a 33M-row backlog to answer "is there a batch yet".
+_FTS_BACKLOG = (
+    "SELECT COUNT(*) FROM (SELECT 1 FROM documents WHERE in_scope=1 AND rdf_done=1 "
+    "AND fts_done=0 AND error IS NULL AND retries<? LIMIT ?)")
+
 
 def _next_book(con, scope, embed_allowed=True):
     # 1. priority embeds (lazy queue), regardless of backfill mode
@@ -196,15 +263,28 @@ def _next_book(con, scope, embed_allowed=True):
     # published vectors only for documents with fts_done=1, so a collection
     # whose vectors need no encoder at all still could not use them.
     #
-    # Checking fresh fts first alternates naturally rather than by counter:
-    # with nothing rdf-done there is no fts work, so rdf runs, and that
-    # document is the fts candidate on the next round.
-    r = con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone()
-    if r:
-        return "fts", r
+    # They interleave a BATCH at a time, not a document at a time. fts commits
+    # one tantivy writer for up to FTS_BATCH_DOCS documents (see stage_fts),
+    # so taking fts the instant a single document is ready would pay the full
+    # writer cost per document and batching would never happen. Instead rdf
+    # runs ahead until a batch is worth committing, then fts takes it.
+    #
+    # fts therefore lags rdf by at most one batch — against the whole corpus
+    # under the old stage-global ordering. With FTS_BATCH_DOCS=1 this degrades
+    # exactly to one-for-one alternation.
+    fts_row = con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone()
+    if fts_row is not None:
+        ready = con.execute(
+            _FTS_BACKLOG, (config.MAX_RETRIES, config.FTS_BATCH_DOCS)).fetchone()[0]
+        if ready >= config.FTS_BATCH_DOCS:
+            return "fts", fts_row
     r = con.execute(_RDF_PENDING, (config.MAX_RETRIES,)).fetchone()
     if r:
         return "rdf", r
+    # rdf is exhausted, so drain whatever the tail holds even if it is short
+    # of a full batch — otherwise the last documents of a corpus never index.
+    if fts_row is not None:
+        return "fts", fts_row
     # Version-driven RE-indexing (FTS_VERSION / ENTITY_VERSION, each able to
     # force a re-run independently) comes last on purpose: a bump makes every
     # document a candidate at once, and taking those ahead of rdf would stall
