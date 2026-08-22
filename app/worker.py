@@ -91,11 +91,18 @@ def _rdf_one(con, row, collection, plugin, now: int) -> None:
         "rdf_done=1,updated_at=? WHERE uid=?",
         (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
          meta["bookshelves"], now, row["uid"]))
-    con.execute("DELETE FROM catalog_fts WHERE uid=?", (row["uid"],))
+    # Keyed on the document's rowid, REPLACE instead of delete-then-insert:
+    # `uid UNINDEXED` means a DELETE ... WHERE uid=? scans the whole shadow
+    # table — 14.02 of rdf's 14.25 ms/doc at just 36k catalog rows, growing
+    # linearly with the catalog (O(N²) for a whole corpus). REPLACE by rowid
+    # is one b-tree probe and keeps the same idempotence.
+    # db.ensure_catalog_rowids realigned pre-existing rows to this scheme.
     con.execute(
-        "INSERT INTO catalog_fts(uid,title,authors,subjects,bookshelves) "
-        "VALUES(?,?,?,?,?)",
-        (row["uid"], meta["title"], meta["authors"], meta["subjects"], meta["bookshelves"]))
+        "INSERT OR REPLACE INTO catalog_fts"
+        "(rowid,uid,title,authors,subjects,bookshelves) "
+        "VALUES((SELECT rowid FROM documents WHERE uid=?),?,?,?,?,?)",
+        (row["uid"], row["uid"], meta["title"], meta["authors"],
+         meta["subjects"], meta["bookshelves"]))
 
 
 def stage_rdf(con, row, collection) -> None:
@@ -1046,6 +1053,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             continue
         cons[added.name] = db.connect(added)
         db.ensure_browse_index(cons[added.name])
+        db.ensure_catalog_rowids(cons[added.name])
         db.log_event(cons[added.name], "info", "worker",
                      f"collection {added.name!r} added — discovering")
         stale = bundle_ledger.sweep_stale(cons[added.name])
@@ -1111,6 +1119,7 @@ def run_forever():
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker started")
         db.ensure_browse_index(cons[c.name])
+        db.ensure_catalog_rowids(cons[c.name])
         if c.embed is None:
             db.log_event(cons[c.name], "info", "worker",
                          f"embed recipe comes from env (Tier-1 fallback) — "

@@ -262,6 +262,49 @@ def ensure_browse_index(con: sqlite3.Connection) -> bool:
     return True
 
 
+CATALOG_ALIGNED_KEY = "catalog_fts_rowid_aligned"
+
+
+def ensure_catalog_rowids(con: sqlite3.Connection) -> bool:
+    """One-time realignment: catalog_fts rows keyed on documents.rowid.
+
+    catalog_fts declares `uid UNINDEXED`, so `DELETE FROM catalog_fts WHERE
+    uid=?` scans the whole shadow table — measured live at 14.02 of rdf's
+    14.25 ms/doc at only 36k catalog rows, and the scan grows with the
+    catalog: the total cost of extracting a corpus was O(N²), which at
+    pubmed scale never finishes. The cure is to give each catalog row the
+    rowid of its document, so the delete-then-insert becomes a single
+    INSERT OR REPLACE keyed on rowid (see worker._rdf_one).
+
+    Rows written before this scheme carry arbitrary rowids that REPLACE
+    would never hit, leaving duplicates behind — hence this rebuild: wipe
+    and re-derive from the documents table, which holds every column the
+    catalog carries. Runs inside one transaction (a crash re-runs it), is
+    marked done in the control table, and belongs to the WORKER's startup
+    like ensure_browse_index. Nothing here VACUUMs, so implicit rowids are
+    stable; if a VACUUM is ever introduced, clear the marker to force a
+    realignment.
+    """
+    if get_control(con, CATALOG_ALIGNED_KEY) == "1":
+        return False
+    log_event(con, "info", "worker",
+              "realigning catalog_fts to document rowids (one-time)")
+    con.execute("BEGIN")
+    try:
+        con.execute("DELETE FROM catalog_fts")
+        con.execute(
+            "INSERT INTO catalog_fts(rowid,uid,title,authors,subjects,bookshelves) "
+            "SELECT rowid,uid,title,authors,subjects,bookshelves "
+            "FROM documents WHERE rdf_done=1")
+        set_control(con, CATALOG_ALIGNED_KEY, "1")
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    log_event(con, "info", "worker", "catalog_fts realigned")
+    return True
+
+
 # ---------------- control ----------------
 
 DEFAULT_SCOPE = {
