@@ -8,6 +8,9 @@ its §17 amendments (1–29) for every place the design was corrected in flight.
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
 which is gitignored, because this file is public to anyone who clones.
+(Working from a machine without that file: a current copy is kept on the
+node itself, beside the deployment, readable over the same SSH access used
+to deploy.)
 
 ---
 
