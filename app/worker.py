@@ -625,6 +625,26 @@ _ENDPOINT_DOWN_ERRNOS = frozenset(
     {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH})
 
 
+def manifest_contended(exc: BaseException) -> bool:
+    """Is this failure another writer holding the manifest, not the document?
+
+    Same principle as endpoint_unavailable below, and the acquire path has
+    always drawn it (see its docstring: "a manifest busy past its timeout is
+    logged as a deferral"). The document stages never did, so a lock timeout
+    recorded a permanent error and dropped a perfectly good document out of
+    the pipeline until a human pressed "clear errors & retry".
+
+    It went unnoticed while every stage held the write lock for microseconds.
+    It stopped being unnoticeable when fts began committing a whole batch and
+    gutenberg was on embed_mode=all: an embed runs inside _execute_step's
+    transaction and can take minutes, busy_timeout is 60s, so the fts batch
+    behind it lost the lock and errored documents that had nothing wrong with
+    them (observed live: six in the first minutes, still accruing).
+    """
+    return (isinstance(exc, sqlite3.OperationalError)
+            and "locked" in str(exc).lower())
+
+
 def endpoint_unavailable(exc: BaseException) -> bool:
     """Is this failure the encoder's absence rather than the document's fault?
 
@@ -665,7 +685,19 @@ def _execute_step(con, collection, stage, row) -> bool:
             con.execute("DELETE FROM embed_queue WHERE uid=?", (row["uid"],))
         con.execute("COMMIT")
     except Exception as e:
-        con.execute("ROLLBACK")
+        try:
+            con.execute("ROLLBACK")
+        except sqlite3.OperationalError:
+            pass        # nothing to roll back, or still contended: not fatal
+        if manifest_contended(e):
+            # Another writer had the manifest. Nothing is wrong with this
+            # document, so nothing is written to it — and in particular we do
+            # NOT try to record an error, which is itself a write and would
+            # be just as likely to lose the lock.
+            db.log_event(con, "warn", stage,
+                         f"{stage} deferred — manifest busy ({e}); "
+                         f"the document is untouched and will be retried")
+            return False
         if endpoint_unavailable(e):
             # Nothing is wrong with this document, so nothing is written to
             # it: no error, no retry increment. The backend gate owns the
