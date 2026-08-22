@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-08-20.** What exists, what is designed but unbuilt, and
+**Last updated: 2026-08-22.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
 its §17 amendments (1–29) for every place the design was corrected in flight.
@@ -44,6 +44,43 @@ which is gitignored, because this file is public to anyone who clones.
 - **Snapshots and deltas**: manifests, parent-chained deltas with
   tombstones, vector deltas as ordinary bundles.
 - **BitTorrent v2** transport and corpus publishing.
+
+## Pipeline performance (2026-08-21/22 review — measured, not estimated)
+
+A profiling pass over the ingestion pipeline on a 33M-document manifest
+removed four independent per-document costs. All numbers were measured live
+before and after; the commit messages carry the full evidence.
+
+| defect | cost before | after |
+|---|---|---|
+| tantivy writer+commit per document (`fts.index_books` now batches) | 136.9 ms/doc | 0.6 ms |
+| HGNC symbol dict rebuilt per document (resolver now memoised on `ref_meta` version) | 75.6 ms/doc | 0.03 ms |
+| `DELETE FROM catalog_fts WHERE uid=?` scans the FTS5 shadow table (`uid UNINDEXED`) — **extraction was O(N²)** | 14.02 ms/doc at 36k rows, growing | INSERT OR REPLACE by `documents.rowid`, size-independent |
+| `ORDER BY CAST(native_id AS INTEGER)` sorting the whole set per browse page | ~10 s/page | 1 ms (expression index, worker-built) |
+
+Net: **rdf 16.0 → 0.36 ms/doc; fts ~130 → ~1 ms/doc warm.** Structural rules
+that came with this, worth preserving:
+
+- **rdf and fts interleave a batch at a time** (`RDF_BATCH_DOCS` /
+  `FTS_BATCH_DOCS`, default 200): fts lags rdf by at most one batch, never
+  by the corpus. Mark done only AFTER the commit, inside one transaction.
+- **A locked manifest or unreachable encoder is a deferral, never a
+  document error** (`manifest_contended` / `endpoint_unavailable`): recording
+  an error removes the document from every selection until a human clears it.
+- **Selection queries must be plan-checked, not just behaviour-checked** —
+  tests assert no `TEMP B-TREE` / `LIST SUBQUERY`; a merely-slow query
+  passes every behavioural test.
+- **Scan cursors key on path relative to the corpus root**, with a legacy
+  bare-name fallback on exact signature match.
+- **Cold single-document probes measure the container, not the pipeline**
+  (gzip cannot seek): pubmed rdf is 5.8 s cold and was 0.36 ms warm.
+  Benchmark warm, over hundreds of documents.
+
+Known follow-on: after a restart each collection's **startup discovery scan
+holds its pipeline thread** until it completes (cursors make this one-time
+per corpus change, but a first pass over a large corpus is hours). The
+genome collections are parsing/indexing only by operator decision —
+embedding awaits an architectural review ([`dna-search-axes.md`](dna-search-axes.md)).
 
 ## Designed, specified, not built
 
@@ -100,6 +137,13 @@ which is gitignored, because this file is public to anyone who clones.
 - **`test_documents_embed_concurrently_and_queue_drains` is flaky**: it
   asserts two threads genuinely overlap, which the scheduler need not do
   under load. A barrier would make it deterministic.
+- **`_sync_pipeline_threads` reconciles by collection NAME only**, so a
+  pipeline thread keeps the `Collection` object it started with: a TOML edit
+  to `corpus_dir` or `[paths]` never reaches the rdf/fts path until restart.
+  Harmless for recipe edits (those stages don't use the recipe).
+- **No operator control retries a failed acquisition**: the rescan button
+  only rescans the filesystem; a transient fetch failure waits for the
+  6-hour discovery interval or a worker restart.
 - **`EMBED_BATCH=1` is load-bearing.** llama-server corrupts long sequences
   when one `/v1/embeddings` request carries multiple texts, deterministically
   per batch shape, and its prompt cache can replay the corrupted result for
@@ -120,7 +164,15 @@ to reintroduce.
   not just its version.
 - **Caching keyed on a name.** `fts.get_index` documents it and the counts
   cache repeated it: two Collection objects can share a name and point at
-  different files. Key on the physical path.
+  different files. Key on the physical path. The scan cursor repeated it a
+  third time (`path.name` as the key collided across language directories
+  and silently disabled all skipping for the embedded plugin).
+- **A linear cost per item is quadratic per corpus, and no test corpus is
+  big enough to see it.** `DELETE FROM catalog_fts WHERE uid=?` scanned the
+  shadow table (uid is UNINDEXED); at fixture scale that is nothing, at 36k
+  rows it was already 98% of the stage, at corpus scale it never finishes.
+  When a per-document cost depends on how much has been processed so far,
+  treat it as a blocking bug regardless of how fast it currently looks.
 - **Telemetry published by the thread doing the work** is invisible exactly
   when it matters — the loop is blocked. Publish from elsewhere.
 - **Measure before optimising.** Page slowness was assumed to be connection
