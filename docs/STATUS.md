@@ -12,6 +12,26 @@ which is gitignored, because this file is public to anyone who clones.
 node itself, beside the deployment, readable over the same SSH access used
 to deploy.)
 
+## Bootstrapping a new development machine
+
+Everything except two items travels through this repository.
+
+1. `git clone` — code, tests, docs, CLAUDE.md. Read this file first.
+2. Fetch the node reference from the node into the local clone (the app
+   root is the directory the deploy procedure tars into; the file sits one
+   level above `src/`):
+   `scp <node>:<app-root>/DEPLOYMENT.md deploy/reference/DEPLOYMENT.md`
+   After editing it locally, copy it back the same way — the node-side copy
+   is what the *next* machine bootstraps from.
+3. **The SSH key does not travel** — not through git, chat, or any log
+   (invariant 8). Move it between machines yourself, or authorize a fresh
+   key on the node.
+4. Reaching the node from outside its LAN: substitute your remote
+   host/tunnel for the LAN address in every DEPLOYMENT.md command; nothing
+   else changes.
+5. No local Python is assumed anywhere: `docker build -t louise-rag:dev .`
+   recreates the test image, and tests run as in Conventions below.
+
 ---
 
 ## Where the roadmap stands
