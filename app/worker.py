@@ -66,19 +66,72 @@ def _load_chunks(row, collection):
                                   getattr(plugin, "mutability", None))
     return list(chunk(row["uid"], native_id, chapters))
 
-def stage_rdf(con, row, collection) -> None:
-    plugin = collection.plugin_instance()
+_RDF_BATCH_PEERS = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=0 AND error IS NULL "
+    "AND retries<? AND uid<>? LIMIT ?")
+
+# One event line per batch would be ~86k rows/day at full speed — log spam
+# that buries real events. At most one line per collection+stage per 30s;
+# the counters on the Library/Stats pages are the real progress signal.
+_batch_log_ts: dict[tuple[str, str], float] = {}
+
+
+def _batch_log(con, stage: str, collection, msg: str) -> None:
+    key = (collection.name, stage)
+    now = time.time()
+    if now - _batch_log_ts.get(key, 0.0) >= 30:
+        _batch_log_ts[key] = now
+        db.log_event(con, "info", stage, msg)
+
+
+def _rdf_one(con, row, collection, plugin, now: int) -> None:
     meta = plugin_io.metadata(plugin, row)
     con.execute(
         "UPDATE documents SET title=?,authors=?,lang=?,subjects=?,bookshelves=?,"
         "rdf_done=1,updated_at=? WHERE uid=?",
         (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
-         meta["bookshelves"], int(time.time()), row["uid"]))
+         meta["bookshelves"], now, row["uid"]))
     con.execute("DELETE FROM catalog_fts WHERE uid=?", (row["uid"],))
     con.execute(
         "INSERT INTO catalog_fts(uid,title,authors,subjects,bookshelves) "
         "VALUES(?,?,?,?,?)",
         (row["uid"], meta["title"], meta["authors"], meta["subjects"], meta["bookshelves"]))
+
+
+def stage_rdf(con, row, collection) -> None:
+    """Extract metadata for `row`, and for as many other rdf-pending
+    documents as RDF_BATCH_DOCS allows, inside the ONE transaction the
+    caller (_execute_step) already opened.
+
+    Profiled live on pubmed: 95% of a warm rdf step was SQLite, not parsing
+    (0.8 ms) — the UPDATE against a 33M-row table plus the catalog_fts FTS5
+    delete/insert, committed per document. Batching commits each dirty page
+    once per batch and lets FTS5 buffer, the same economics as stage_fts.
+
+    Invariant 2 holds because the enclosing transaction is all-or-nothing:
+    a crash mid-batch marks nothing, and a re-run repeats delete-then-insert
+    keyed on uid. Only `row` may fail the round — a peer that cannot be
+    parsed is skipped, keeps its pending state, and records its own error
+    when its own turn comes. Peers arrive in insertion order (no ORDER BY),
+    which is discovery order, which is container order — so the container
+    cache stays hot across the batch.
+    """
+    plugin = collection.plugin_instance()
+    now = int(time.time())
+    _rdf_one(con, row, collection, plugin, now)   # unguarded: its failure IS the round's
+    n = 1
+    if config.RDF_BATCH_DOCS > 1:
+        peers = con.execute(
+            _RDF_BATCH_PEERS,
+            (config.MAX_RETRIES, row["uid"], config.RDF_BATCH_DOCS - 1)).fetchall()
+        for peer in peers:
+            try:
+                _rdf_one(con, peer, collection, plugin, now)
+                n += 1
+            except Exception:   # noqa: BLE001 — a peer never fails the round
+                continue
+    if n > 1:
+        _batch_log(con, "rdf", collection, f"extracted {n} documents in one transaction")
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -149,9 +202,9 @@ def stage_fts(con, row, collection) -> None:
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
     if len(batch) > 1:
-        db.log_event(con, "info", "fts",
-                     f"indexed {len(batch)} documents / {n_chunks} chunks "
-                     f"in one commit")
+        _batch_log(con, "fts", collection,
+                   f"indexed {len(batch)} documents / {n_chunks} chunks "
+                   f"in one commit")
     if collection.genesis_archive:
         # these documents just became embed-eligible: let the archive look at
         # its shards again (they go barren once they cover nothing pending,
@@ -992,6 +1045,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
                              f"validation — skipped until fixed: {e}"[:500])
             continue
         cons[added.name] = db.connect(added)
+        db.ensure_browse_index(cons[added.name])
         db.log_event(cons[added.name], "info", "worker",
                      f"collection {added.name!r} added — discovering")
         stale = bundle_ledger.sweep_stale(cons[added.name])
@@ -1056,6 +1110,7 @@ def run_forever():
 
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker started")
+        db.ensure_browse_index(cons[c.name])
         if c.embed is None:
             db.log_event(cons[c.name], "info", "worker",
                          f"embed recipe comes from env (Tier-1 fallback) — "

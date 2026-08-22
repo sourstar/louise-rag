@@ -237,6 +237,31 @@ def connect(collection=None) -> sqlite3.Connection:
         pass  # same defensive pattern: pre-hardening manifests lack the column
     return con
 
+def ensure_browse_index(con: sqlite3.Connection) -> bool:
+    """Expression index behind every `ORDER BY CAST(native_id AS INTEGER)` —
+    the browse listing (/api/books), the CLI listing and the bundle-export
+    default all order by it, and without an index SQLite builds a TEMP
+    B-TREE over the whole filtered set to return one page: ~10s PER PAGE
+    VIEW on a 33M-row manifest.
+
+    Deliberately NOT part of SCHEMA: connect() runs from the web process
+    too, and the first build on a large manifest reads the whole table —
+    minutes, not milliseconds. Only the worker calls this (once per
+    collection at startup), so a web request never pays the build; until
+    the worker's first boot after upgrade, browsing is simply as slow as it
+    always was. Returns True when it actually built."""
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='index' "
+                   "AND name='idx_documents_native_int'").fetchone():
+        return False
+    log_event(con, "info", "worker",
+              "building browse index — one-time, may take minutes on a "
+              "large collection")
+    con.execute("CREATE INDEX idx_documents_native_int "
+                "ON documents(CAST(native_id AS INTEGER))")
+    log_event(con, "info", "worker", "browse index built")
+    return True
+
+
 # ---------------- control ----------------
 
 DEFAULT_SCOPE = {

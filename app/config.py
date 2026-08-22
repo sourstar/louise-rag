@@ -114,6 +114,14 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 # memory until the commit.
 FTS_BATCH_DOCS = int(os.getenv("FTS_BATCH_DOCS", "200"))
 FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
+
+# How many documents one rdf round handles inside a single transaction.
+# Profiled on pubmed (33M rows): 95% of a warm rdf step was SQLite — the
+# UPDATE on the wide documents table plus the catalog_fts FTS5 delete/insert,
+# committed per document. Parsing was 0.8 ms. One transaction per batch
+# writes each dirty page to the WAL once per batch instead of once per
+# document, and FTS5 buffers its index writes within a transaction.
+RDF_BATCH_DOCS = int(os.getenv("RDF_BATCH_DOCS", "200"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
