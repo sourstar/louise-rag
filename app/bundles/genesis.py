@@ -171,14 +171,25 @@ class ShardDemand:
 
 
 def _shard_of_locator(root: Path, locator: str, split_locator) -> str | None:
-    """Corpus-relative POSIX path of the shard a locator's FIRST segment
-    lives in — the genesis_imports key. A straddler (two segments) is
-    attributed to its first shard only; reading either would fail the
-    chunk-shape gate, so one attribution is enough to record it residual.
-    A locator outside the corpus root (a moved corpus, before discovery
-    repairs it) names no readable shard and is skipped."""
+    """Corpus-relative POSIX path of the shard that holds a locator — the
+    genesis_imports key — or None when no single shard read can cover it:
+
+    - a STRADDLER (two segments: the article's rows span a shard boundary)
+      — each shard is read independently and yields a partial vector list,
+      so the chunk-shape gate refuses it from either side. Known from the
+      locator alone, so it costs no read, ever, and no state: the residual
+      record is process-local and would otherwise buy one re-read per
+      straddler shard after every restart — ~one per shard, an hour of
+      reads on a 471-shard language once fts has passed them all. The local
+      encoder gap-fills straddlers (amendment 11); a future adapter that
+      reads both segments would lift this.
+    - a locator outside the corpus root (a moved corpus, before discovery
+      repairs it) names no readable shard."""
     try:
-        path, _start, _end = split_locator(locator)[0]
+        segments = split_locator(locator)
+        if len(segments) != 1:
+            return None
+        path, _start, _end = segments[0]
         return Path(path).relative_to(root).as_posix()
     except (ValueError, IndexError):
         return None

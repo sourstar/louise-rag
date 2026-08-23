@@ -14,11 +14,14 @@ The contract pinned here, which every later rework of this path must keep:
 1. Genesis reads ONLY shards its candidates name. The candidates' own
    locators say which shard holds them; a shard nobody is waiting for is
    never opened, however many shards the corpus has.
-2. A document the archive cannot cover (a shard-boundary straddler, whose
-   vectors are split across two files and fail the chunk-shape gate) is
-   remembered as RESIDUAL for its shard: the shard is not re-read on its
-   account, and genesis yields the round so the local encoder may gap-fill
-   it — but a NEW candidate in that shard reopens it.
+2. A document the archive cannot cover never buys a read on its account.
+   A shard-boundary straddler (vectors split across two files, so the
+   chunk-shape gate refuses it from either side) is known from its
+   two-segment locator and is skipped a priori — no read, no state, and
+   nothing to forget on restart. A candidate whose chunk text will not load
+   costs one read and is then RESIDUAL for its shard. Either way genesis
+   yields the round so the local encoder may gap-fill — and a NEW candidate
+   in that shard reopens it.
 3. While rdf/fts still have work on the same thread, a shard read waits
    for a batch (GENESIS_MIN_CANDIDATES) or an age cap (GENESIS_MAX_WAIT_SEC),
    so the read is amortised instead of paid per fts commit; with nothing
@@ -218,22 +221,51 @@ def test_a_residual_shard_is_not_reread_until_it_has_a_new_candidate(
     con = db.connect(c)
     discovery.sync_collection(con, c)
 
-    # only the straddler is eligible: one read, zero imports, residual
+    # only the straddler is eligible: its two-segment locator says no single
+    # shard read can cover it — no read at all, not even once
     _eligible(con, [_uid(12)])
-    r = genesis.drain_next_shard(con, c)
-    assert r is not None and r["docs"] == 0 and r["residual_uids"] == [_uid(12)]
-    assert reads == ["data/tr/000.parquet"]
     for _ in range(5):
         assert genesis.drain_next_shard(con, c) is None
-    assert reads == ["data/tr/000.parquet"], "no re-read on the residual's account"
+    assert reads == [], "a straddler is known from its locator; it costs no read"
 
-    # a NEW candidate in the same shard: one more read, and it imports
+    # a NEW candidate in the same shard: one read, and it imports; the
+    # straddler is still counted by the read (it walks every row) and
+    # still costs nothing afterwards
     _eligible(con, [_uid(10)])
     r = genesis.drain_next_shard(con, c)
-    assert r is not None and r["docs"] == 1
-    assert reads == ["data/tr/000.parquet"] * 2
+    assert r is not None and r["docs"] == 1 and r["skipped_shape"] == 1
+    assert reads == ["data/tr/000.parquet"]
     assert genesis.drain_next_shard(con, c) is None
-    assert reads == ["data/tr/000.parquet"] * 2
+    assert reads == ["data/tr/000.parquet"]
+
+    # a RESTART forgets the process-local residual record — and must not
+    # buy a re-read for the straddler: this is the case that grows by one
+    # shard per shard boundary fts passes, an hour of reads per restart
+    genesis.reset_revisit_state()
+    assert genesis.drain_next_shard(con, c) is None
+    assert reads == ["data/tr/000.parquet"], "no re-read after restart"
+
+
+def test_an_unloadable_candidate_is_residual_after_one_read(
+        isolated_config, tmp_path, monkeypatch, reads):
+    """The other residual class — a candidate whose chunk text will not
+    load — cannot be known from the locator, so it costs exactly one read
+    and is then remembered for its shard."""
+    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    c = _collection(tmp_path)
+    _write_shard(c.corpus_dir / "data" / "tr" / "000.parquet", [
+        ("10", 0, "A", "alpha one")])
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    _eligible(con)
+    monkeypatch.setattr(genesis, "_local_chunk_texts",
+                        lambda collection, row: (_ for _ in ()).throw(OSError("gone")))
+    r = genesis.drain_next_shard(con, c)
+    assert r is not None and r["docs"] == 0 and r["residual_uids"] == [_uid(10)]
+    assert reads == ["data/tr/000.parquet"]
+    for _ in range(3):
+        assert genesis.drain_next_shard(con, c) is None
+    assert reads == ["data/tr/000.parquet"]
 
 
 def test_residual_state_is_keyed_on_the_manifest_not_the_name(isolated_config, tmp_path,
@@ -246,17 +278,27 @@ def test_residual_state_is_keyed_on_the_manifest_not_the_name(isolated_config, t
     b = _collection(tmp_path / "b")
     for c in (a, b):
         _write_shard(c.corpus_dir / "data" / "tr" / "000.parquet", [
-            ("12", 0, "C", "straddle start")])
-        _write_shard(c.corpus_dir / "data" / "tr" / "001.parquet", [
-            ("12", 1, "C", "straddle end")])
+            ("10", 0, "A", "alpha one")])
     con_a, con_b = db.connect(a), db.connect(b)
     discovery.sync_collection(con_a, a)
     discovery.sync_collection(con_b, b)
     _eligible(con_a)
     _eligible(con_b)
-    assert genesis.drain_next_shard(con_a, a) is not None
+    # a's chunk text will not load (its residual class); b's is fine
+    real = genesis._local_chunk_texts
+
+    def flaky(collection, row):
+        if collection.manifest_path == a.manifest_path:
+            raise OSError("gone")
+        return real(collection, row)
+    monkeypatch.setattr(genesis, "_local_chunk_texts", flaky)
+
+    r = genesis.drain_next_shard(con_a, a)
+    assert r is not None and r["docs"] == 0
     assert genesis.drain_next_shard(con_a, a) is None        # a: residual
-    assert genesis.drain_next_shard(con_b, b) is not None, \
+    assert len(reads) == 1
+    r = genesis.drain_next_shard(con_b, b)
+    assert r is not None and r["docs"] == 1, \
         "b's shard must still be read — a's residual is not b's"
 
 
