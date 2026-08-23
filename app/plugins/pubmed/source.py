@@ -15,7 +15,6 @@ same files re-derives the identical tombstone (idempotent).
 """
 import gzip
 import hashlib
-import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -104,10 +103,9 @@ class PubmedSource:
         containers = sorted(
             p for p in root.iterdir()
             if p.is_file() and (p.name.endswith(".xml") or p.name.endswith(".xml.gz")))
-        scan = cursor.load(state.state_dir, self.source_id)
-        started_ns = time.time_ns()   # see cursor.mark_if_settled
+        progress = cursor.Progress(state, self.source_id)
         for container in containers:
-            if cursor.unchanged(scan, container, root):
+            if progress.unchanged(container):
                 continue     # already enumerated at this (mtime, size)
             st = container.stat()
             try:
@@ -142,11 +140,13 @@ class PubmedSource:
             # enumerated cleanly at this signature — unless the container
             # landed WHILE we were scanning, in which case marking it would
             # store a signature that already includes the arrival and we
-            # would never enumerate it properly (cursor.mark_if_settled).
+            # would never enumerate it properly (staging declines then).
             # Containers land constantly during an active fetch, so this is
-            # not hypothetical here.
-            cursor.mark_if_settled(scan, container, started_ns, root)
-        cursor.save(state.state_dir, self.source_id, scan)
+            # not hypothetical here. Staged, not marked: the cursor records
+            # it only once its last ref is committed (cursor.Progress), so
+            # an interrupted scan resumes at this container, never after it.
+            progress.stage(container)
+        progress.flush()
 
     def fetch(self, ref: DocRef) -> RawDoc:
         if ref.extra.get("kind") == "delete":

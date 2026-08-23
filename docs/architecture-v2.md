@@ -889,3 +889,26 @@ the live deployment:
     written with their effective modes first, so the change was a no-op
     there. Tests: `tests/test_config_tiers_embed_mode.py`,
     `tests/test_invariant_guards.py`.
+32. **§2 / invariant 2 — discovery is a batched, resumable, off-thread
+    stage.** The scan used to be the one stage whose unit was the corpus:
+    it held the collection's pipeline thread for its duration, ran in
+    autocommit (one transaction per row — wikivec: 1,083 s for 1.5 M rows,
+    nearly all SQLite overhead), and saved its cursor once at the end, so a
+    restart mid-scan discarded the pass. Now `sync_collection` commits
+    every `DISCOVER_BATCH_REFS` refs and reports progress to the plugin
+    (`DiscoverState.received` / `committed` / `on_commit`); a plugin STAGES
+    a container when it has yielded it and `cursor.Progress` PROMOTES it
+    into the saved cursor only once its last ref is committed — the cursor
+    can never get ahead of the manifest, so an interrupted scan resumes
+    from exactly the containers whose rows are durable; and the worker
+    runs each collection's scan on its own thread, one at a time, stopping
+    at the next ref on SIGTERM or removal with the batch committed. The
+    resumable unit of a scan is one batch of refs (invariant 2 as amended).
+    Two embedded-plugin locator defects surfaced and are fixed: a rescanned
+    shard whose neighbour is skipped completes the boundary carry from that
+    neighbour's tail or head (it used to mint or "relocate" the straddler
+    with one segment — reachable at any acquisition boundary), and an
+    embedded ref's `size` is the article's row count, not the shard's byte
+    size, so a straddler gaining a segment is a change (re-hashed,
+    re-processed), never a relocation. `fetch()` for a changed document
+    runs outside the write transaction.

@@ -114,16 +114,29 @@ class CanonicalDoc:
     raw_hash: str
 
 
-@dataclass(frozen=True)
-class DiscoverState:
+@dataclass
+class DiscoverState:        # not frozen: received/committed advance during the scan
     """Whatever a CorpusSource needs to enumerate its documents. The
     orchestrator constructs and supplies this; Gutenberg only reads
     `corpus_root`. `state_dir` (the collection's data directory, beside its
     manifest) is where an incremental source keeps its scan cursor — the
     "PubMed baseline+updatefiles cursor" this field was reserved for; None
-    means stateless full scans (tests, ad-hoc calls)."""
+    means stateless full scans (tests, ad-hoc calls).
+
+    The last three fields are the orchestrator's durability signal back to
+    the plugin, so a scan cursor can be saved INCREMENTALLY without ever
+    getting ahead of the manifest (app/plugins/cursor.py `Progress`):
+    `received` is the count of refs the orchestrator has taken from
+    discover() so far, `committed` the count it has durably written, and
+    `on_commit` is called after every commit (including the last). A
+    container is safe to remember as done only once `committed` covers its
+    last ref — otherwise an interrupted scan would skip a container whose
+    rows died with the transaction."""
     corpus_root: Path
     state_dir: Path | None = None
+    received: int = 0
+    committed: int = 0
+    on_commit: list = field(default_factory=list)
 
 
 class CorpusSource(Protocol):

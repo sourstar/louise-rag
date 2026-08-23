@@ -40,7 +40,33 @@ def _clear_cursor_if_relocated(con, collection, root) -> bool:
     return True
 
 
-def sync_collection(con, collection) -> dict:
+# Refs per manifest transaction. sync_collection used to run in autocommit
+# — one transaction per row — and the "COMMIT every 2000" below it never
+# fired because nothing had BEGUN one. Measured live on wikivec: 1.5 M rows
+# in 1,083 s, almost all of it SQLite per-statement commit overhead (the
+# same economics rdf batching fixed: each dirty page hits the WAL once per
+# batch instead of once per row). An interrupted batch re-yields next scan
+# — the cursor only advances past containers whose rows are committed.
+DISCOVER_BATCH_REFS = 2000
+
+
+def _commit_batch(con, state, i: int) -> None:
+    if con.in_transaction:
+        con.execute("COMMIT")
+    state.committed = i
+    for hook in state.on_commit:
+        hook()
+
+
+def sync_collection(con, collection, *, stop=None) -> dict:
+    """Enumerate the corpus and upsert what changed. Streams; commits every
+    DISCOVER_BATCH_REFS refs and tells the plugin (DiscoverState.committed,
+    on_commit) so its scan cursor can be saved as it goes. `stop` (an
+    object with is_set(), e.g. the worker's SIGTERM event) ends the scan at
+    the next ref: the batch so far is committed, the cursor covers exactly
+    the containers whose rows are durable, and the result carries
+    `interrupted=True` — the next scan resumes from there. Invariant 2: the
+    resumable unit of a scan is one batch of refs."""
     t0 = time.time()
     plugin = collection.plugin_instance()
     root = collection.corpus_dir
@@ -77,12 +103,24 @@ def sync_collection(con, collection) -> dict:
     # the later ref hits the ordinary mtime/size→hash change gate and wins.
     # The buffer itself had to go: a cold-cursor scan of full PubMed is ~26M
     # refs — the "revisit at millions of records" moment the previous
-    # docstring named, arrived. Progress now commits as the scan streams
-    # (WAL autocommit), which also makes an interrupted giant scan resumable
-    # in effect: rows written so far stand, the cursor file is only advanced
-    # by the plugin for containers it finished enumerating.
+    # docstring named, arrived. Progress commits as the scan streams, one
+    # transaction per DISCOVER_BATCH_REFS, which makes an interrupted giant
+    # scan resumable: rows written so far stand, and the plugin's cursor is
+    # only advanced past containers whose rows are committed.
     added = changed = missing = container_errors = relocated = 0
-    for i, ref in enumerate(plugin.discover(state), start=1):
+    interrupted = False
+    i = 0
+    refs = plugin.discover(state)
+    for i, ref in enumerate(refs, start=1):
+        state.received = i
+        if stop is not None and stop.is_set():
+            interrupted = True
+            i -= 1                      # this ref is NOT applied; do not count it
+            state.received = i
+            refs.close() if hasattr(refs, "close") else None
+            break
+        if not con.in_transaction:
+            con.execute("BEGIN")
         uid = f"{ref.source_id}:{ref.native_id}"
         if ref.scope == "container":
             # A container that could not be enumerated is a scan REPORT, not
@@ -118,7 +156,14 @@ def sync_collection(con, collection) -> dict:
                      ref.mtime, ref.size, int(time.time())))
                 added += 1
             elif row["mtime"] != ref.mtime or row["size"] != ref.size:
+                # fetch() can take seconds (a gz container decompressed from
+                # its start, a parquet shard): never hold the manifest's
+                # write lock across it — rdf/fts on the pipeline thread
+                # would stall behind this scan. Refs 1..i-1 are applied;
+                # commit them, fetch, reopen.
+                _commit_batch(con, state, i - 1)
                 raw = plugin.fetch(ref)
+                con.execute("BEGIN")
                 if raw.raw_hash != row["txt_hash"]:
                     con.execute(
                         "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,txt_hash=?,"
@@ -154,9 +199,10 @@ def sync_collection(con, collection) -> dict:
                     "updated_at=? WHERE uid=?",
                     (ref.locator, txt_name, int(time.time()), uid))
                 relocated += 1
-        if i % 2000 == 0:
-            con.execute("COMMIT") if con.in_transaction else None
+        if i % DISCOVER_BATCH_REFS == 0:
+            _commit_batch(con, state, i)
 
+    _commit_batch(con, state, i)        # the tail batch; the last on_commit
     apply_scope(con)
     stats = {"seen": seen, "added": added, "changed": changed,
              "missing_txt": missing, "secs": round(time.time() - t0, 1)}
@@ -164,7 +210,13 @@ def sync_collection(con, collection) -> dict:
         stats["relocated"] = relocated
     if container_errors:
         stats["container_errors"] = container_errors
-    db.log_event(con, "info", "discover", f"discovery done {stats}")
+    if interrupted:
+        stats["interrupted"] = True
+        db.log_event(con, "info", "discover",
+                     f"discovery interrupted (stop requested) — progress committed, "
+                     f"resumes next scan {stats}")
+    else:
+        db.log_event(con, "info", "discover", f"discovery done {stats}")
     return stats
 
 

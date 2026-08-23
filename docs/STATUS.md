@@ -3,7 +3,7 @@
 **Last updated: 2026-08-23.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–31) for every place the design was corrected in flight.
+its §17 amendments (1–32) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -99,11 +99,27 @@ that came with this, worth preserving:
   (gzip cannot seek): pubmed rdf is 5.8 s cold and was 0.36 ms warm.
   Benchmark warm, over hundreds of documents.
 
-Known follow-on: after a restart each collection's **startup discovery scan
-holds its pipeline thread** until it completes (cursors make this one-time
-per corpus change, but a first pass over a large corpus is hours). The
-genome collections are parsing/indexing only by operator decision —
-embedding awaits an architectural review ([`dna-search-axes.md`](dna-search-axes.md)).
+**2026-08-23 — discovery is batched, resumable and off-thread** (amendment
+32). The startup scan used to hold the collection's pipeline thread (wikivec:
+1,083 s per restart, no rdf/fts/genesis meanwhile), ran in autocommit (one
+transaction per row — that WAS the 1,083 s), and saved its cursor only at
+the end, so a restart mid-scan threw the whole pass away. Now:
+`sync_collection` commits every `DISCOVER_BATCH_REFS` (2,000) refs and
+signals the plugin (`DiscoverState.received/committed/on_commit`);
+`cursor.Progress` promotes a container into the saved cursor only once its
+last ref is committed, so an interrupted scan resumes exactly where its
+rows are durable; the worker runs each collection's scan on its own thread
+(`_start_scan`, one at a time, stop-aware on SIGTERM and removal, joined at
+shutdown). The embedded plugin's boundary straddler made this subtle and
+exposed two latent locator bugs, both fixed: a rescanned shard whose
+neighbour is skipped now completes the carry from that neighbour's tail or
+head (it used to mint or "relocate" the straddler with one segment), and
+an embedded ref's `size` is the article's row count, not its shard's byte
+size (a straddler gaining a segment is now a change, never a relocation).
+`tests/test_discovery_resumable.py` pins it, including every interruption
+point of a straddling fixture. The genome collections are parsing/indexing
+only by operator decision — embedding awaits an architectural review
+([`dna-search-axes.md`](dna-search-axes.md)).
 
 **2026-08-23 — local genesis archives no longer sweep the shard list.**
 Measured live on wikivec (959 shards, CPU encoder, so the pipeline thread
@@ -148,6 +164,21 @@ importable by reading both segments).
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5b. **The enumeration travels with the corpus.** A peer that downloads a
+   corpus snapshot still re-derives its document list by scanning (hours
+   on a large corpus, even resumable). The snapshot manifest already names
+   every uid with its raw hash (§5, parent-chained deltas); extended with
+   each document's locator-within-the-snapshot, mtime and size it becomes a
+   *signed discovery input*: import it, then verify by stat and hash
+   spot-check instead of enumerating. This is the part of "indexing" that
+   SHOULD be shared. The FTS index itself should not: it is cheap to
+   compute (≈1 ms/doc warm, against hours to download), expensive to verify
+   (a binary blob; poisoning is invisible), coupled to local config
+   (`FTS_VERSION`, analyzers, entity version, chunker) and to the tantivy
+   version — and invariant 6 says SQLite state never travels. The rdf
+   output (catalog metadata) is small and derivable and could ride along
+   for "browse before you index"; a possible later addition to the same
+   manifest.
 6. **DNA search axes** — [`dna-search-axes.md`](dna-search-axes.md).
    **Parked pending the Fable model.** DNABERT-2's space is anisotropic —
    unrelated sequences score 0.98 cosine — because MLM never asks them apart.

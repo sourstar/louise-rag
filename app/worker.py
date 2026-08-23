@@ -662,24 +662,93 @@ def _drain_bundle_inbox(con, collection) -> int:
     return processed
 
 
-def _scan_only(con, collection, reason: str) -> None:
+def _scan_only(con, collection, reason: str, stop=None) -> None:
     """Scan WITHOUT starting a fetch — see _request_discovery(acquire=False)."""
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
-    stats = discovery.sync_collection(con, collection)
+    stats = discovery.sync_collection(con, collection, stop=stop)
     if stats.get("added") or stats.get("changed"):
         db.log_event(con, "info", "discover",
                      f"picked up {stats.get('added', 0)} new, "
                      f"{stats.get('changed', 0)} changed books")
 
 
-def _discover(con, collection, reason: str) -> None:
+def _discover(con, collection, reason: str, stop=None) -> None:
     _acquire(con, collection, reason)
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
-    stats = discovery.sync_collection(con, collection)
+    stats = discovery.sync_collection(con, collection, stop=stop)
     if stats.get("added") or stats.get("changed"):
         db.log_event(con, "info", "discover",
                      f"picked up {stats.get('added',0)} new, "
                      f"{stats.get('changed',0)} changed books")
+
+
+# Discovery scans, one thread per collection at most, OFF the pipeline
+# thread. A scan used to run on the pipeline thread itself, so a collection
+# did no rdf, fts or genesis for the scan's whole duration — measured live
+# on wikivec: 1,083 s after every restart (the corpus is still being
+# enumerated), and restarts are frequent. The scan is the one stage whose
+# unit is the corpus; everything else is per document. Now it runs beside
+# the pipeline: its writes are short batched transactions
+# (discovery.DISCOVER_BATCH_REFS) against the same WAL manifest, which the
+# pipeline's busy_timeout and `manifest_contended` deferral already
+# tolerate, and it stops at the next ref on SIGTERM or collection removal
+# with its progress committed and its cursor advanced exactly that far.
+_scan_threads: dict[str, threading.Thread] = {}
+_scan_lock = threading.Lock()
+
+
+class _AnyStop:
+    """is_set() when any of the given events is — the scan must stop both
+    on SIGTERM and when its collection is removed mid-run."""
+    def __init__(self, *events: threading.Event) -> None:
+        self._events = events
+
+    def is_set(self) -> bool:
+        return any(e.is_set() for e in self._events)
+
+
+def scan_running(name: str) -> bool:
+    with _scan_lock:
+        t = _scan_threads.get(name)
+        return t is not None and t.is_alive()
+
+
+def _start_scan(collection, reason: str, acquire: bool, gone: threading.Event) -> bool:
+    """Start this collection's scan on its own thread, unless one is already
+    running (then the caller keeps the request queued). Returns whether a
+    thread was started."""
+    with _scan_lock:
+        current = _scan_threads.get(collection.name)
+        if current is not None and current.is_alive():
+            return False
+        thread = threading.Thread(target=_scan_worker,
+                                  args=(collection, reason, acquire, gone),
+                                  name=f"scan-{collection.name}", daemon=True)
+        _scan_threads[collection.name] = thread
+        thread.start()
+        return True
+
+
+def _scan_worker(collection, reason: str, acquire: bool, gone: threading.Event) -> None:
+    con = db.connect(collection)            # connections are thread-affine
+    stop = _AnyStop(_stop, gone)
+    try:
+        if acquire:
+            _discover(con, collection, reason, stop=stop)
+        else:
+            _scan_only(con, collection, reason, stop=stop)
+        _last_discover[collection.name] = time.time()
+    except Exception:   # noqa: BLE001 — a scan must never take a thread down silently
+        try:
+            db.log_event(con, "error", "discover",
+                         f"scan failed:\n{traceback.format_exc()[:1200]}")
+        except Exception:
+            print(traceback.format_exc()[:1200], flush=True)
+    finally:
+        con.close()
+        with _scan_lock:
+            if _scan_threads.get(collection.name) is threading.current_thread():
+                del _scan_threads[collection.name]
 
 # Errors that mean "the endpoint is not there", never "this document is
 # bad". Deliberately narrow: only connection ESTABLISHMENT failures. A read
@@ -938,20 +1007,19 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 time.sleep(2)
                 continue
             try:
-                # this collection's scans belong to this thread: acquisition
-                # kickoff, startup scan, interval rescans and post-fetch
-                # rescans all arrive as requests from the main loop
-                request = _take_discovery_request(collection.name)
-                if request:
-                    # discovery runs in EVERY non-paused mode: it is what
-                    # starts fetches and picks up what they land
-                    reason, acquire = request
-                    if acquire:
-                        _discover(con, collection, reason)
-                    else:
-                        _scan_only(con, collection, reason)
-                    _last_discover[collection.name] = time.time()
-                    continue
+                # this collection's scans are REQUESTED here (acquisition
+                # kickoff, startup scan, interval rescans, post-fetch
+                # rescans all arrive from the main loop) and run on their
+                # own thread beside this one — see _start_scan. One at a
+                # time: while a scan runs the request stays queued, and the
+                # pipeline below keeps working. Discovery runs in EVERY
+                # non-paused mode: it is what starts fetches and picks up
+                # what they land.
+                if not scan_running(collection.name):
+                    request = _take_discovery_request(collection.name)
+                    if request:
+                        reason, acquire = request
+                        _start_scan(collection, reason, acquire, gone)
                 if _acquire_only.is_set():
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
@@ -1018,6 +1086,12 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
     exit-0 contract past the container's grace period."""
     deadline = time.time() + timeout
     for thread, _ in list(_pipeline_threads.values()):
+        thread.join(timeout=max(0.0, deadline - time.time()))
+    # scans stop at their next ref and commit the batch so far; give them
+    # the same deadline so that commit lands before the process exits
+    with _scan_lock:
+        scans = list(_scan_threads.values())
+    for thread in scans:
         thread.join(timeout=max(0.0, deadline - time.time()))
 
 

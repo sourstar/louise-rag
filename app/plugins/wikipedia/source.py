@@ -12,7 +12,6 @@ Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
 import bz2
 import hashlib
 import re
-import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -56,8 +55,7 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
-        scan = cursor.load(state.state_dir, self.source_id)
-        started_ns = time.time_ns()   # see cursor.mark_if_settled
+        progress = cursor.Progress(state, self.source_id)
         for dump in sorted(root.rglob(f"*{_DUMP_SUFFIX}")):
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
@@ -65,7 +63,7 @@ class WikipediaSource:
                              locator=str(dump), scope="container",
                              error=f"multistream index missing for {dump.name}")
                 continue
-            if cursor.unchanged(scan, dump, root) and cursor.unchanged(scan, index, root):
+            if progress.unchanged(dump) and progress.unchanged(index):
                 continue     # already enumerated at this (mtime, size)
             st = dump.stat()
             lang = _lang_of(dump.name)
@@ -97,9 +95,11 @@ class WikipediaSource:
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
-            cursor.mark_if_settled(scan, dump, started_ns, root)
-            cursor.mark_if_settled(scan, index, started_ns, root)
-        cursor.save(state.state_dir, self.source_id, scan)
+            # both files staged together, recorded once the dump's refs are
+            # committed (cursor.Progress) — an interrupted scan resumes here
+            progress.stage(dump)
+            progress.stage(index)
+        progress.flush()
 
     def _flush(self, pending, end_offset, dump, st, lang):
         for offset, page_id, title in pending:

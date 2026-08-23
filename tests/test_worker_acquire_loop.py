@@ -57,10 +57,12 @@ def test_the_pipeline_thread_honours_the_no_acquire_flag(isolated_config,
     collection = _collection(tmp_path)
     db.connect(collection)
     acquired, scanned = [], []
+    # the scan now runs on its own thread (worker._start_scan) and is
+    # stop-aware — the stand-ins take the same signature
     monkeypatch.setattr(worker, "_discover",
-                        lambda con, c, reason: acquired.append(reason))
+                        lambda con, c, reason, stop=None: acquired.append(reason))
     monkeypatch.setattr(worker, "_scan_only",
-                        lambda con, c, reason: scanned.append(reason))
+                        lambda con, c, reason, stop=None: scanned.append(reason))
 
     worker._request_discovery("c", "background fetch finished", acquire=False)
     gone = threading.Event()
