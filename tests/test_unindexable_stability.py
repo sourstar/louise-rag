@@ -1,0 +1,91 @@
+"""Unindexable documents must STAY unindexable — never bounce into
+'blocked'.
+
+Observed live on gutenberg: 1,111 entries whose mirror ships no text file
+(epub/mobi/covers only) were correctly counted 'not indexable' — until the
+operator pressed "clear errors & retry". The reset cleared discovery's
+corpus-fact error along with the stage errors, the pipeline re-ran the
+documents, fts failed with 'fts: no txt file' — a STAGE-prefixed error the
+Library counts as BLOCKED — and discovery could not relabel them back
+because their directories had not changed (cursor skip). Every press of
+the button converted the whole set again.
+
+Two rules pinned here:
+1. "clear errors & retry" clears STAGE errors only; an unprefixed error is
+   a corpus fact retrying cannot change.
+2. A stage that discovers a corpus fact mid-run (plugins raise
+   UnindexableDocument) records it UNPREFIXED, exactly as discovery does —
+   so even a row that somehow reaches a stage settles back into the
+   'not indexable' bucket instead of oscillating.
+"""
+import shutil
+from pathlib import Path
+
+from app import collections as collections_mod, db, discovery, web, worker
+
+FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
+
+
+def _collection(tmp_path):
+    corpus = tmp_path / "corpus_g"      # isolated_config owns tmp_path/corpus
+    shutil.copytree(FIXTURE_CORPUS, corpus)
+    # one entry with files but NO text — the real shape of the 1,111
+    nodir = corpus / "99999"
+    nodir.mkdir()
+    (nodir / "pg99999.rdf").write_text("<rdf/>", encoding="utf-8")
+    c = collections_mod.Collection(
+        name="g", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=corpus, manifest_path=tmp_path / "g" / "manifest.db",
+        fts_dir=tmp_path / "g" / "fts", lance_dir=tmp_path / "g" / "lancedb")
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    return c, con
+
+
+def _bucket(collection):
+    web.invalidate_counts()
+    counts = web._document_counts_query(collection)
+    return counts["blocked"], counts["unindexable"]
+
+
+def test_clear_errors_never_touches_corpus_facts(tmp_path, isolated_config):
+    c, con = _collection(tmp_path)
+    row = con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()
+    assert row["error"] == "no txt file"          # discovery's corpus fact
+    # and a genuine stage error beside it
+    con.execute("UPDATE documents SET error='fts: boom', retries=1 "
+                "WHERE uid=(SELECT uid FROM documents WHERE error IS NULL LIMIT 1)")
+    assert _bucket(c) == (1, 1)
+
+    db.apply_reset(con, "errors", [])
+    rows = {r["uid"]: r["error"] for r in con.execute(
+        "SELECT uid, error FROM documents WHERE error IS NOT NULL")}
+    assert rows == {"gutenberg:99999": "no txt file"}, \
+        "the corpus fact must survive; the stage error must clear"
+    assert _bucket(c) == (0, 1)
+
+
+def test_a_stage_records_a_corpus_fact_unprefixed(tmp_path, isolated_config):
+    """The healing path for rows already mislabeled: clear them once, let
+    the stage re-run — it must settle them back into 'not indexable',
+    never re-block them."""
+    c, con = _collection(tmp_path)
+    # the mislabeled shape observed live: stage-prefixed, so 'blocked'
+    con.execute("UPDATE documents SET error='fts: no txt file for book 99999', "
+                "retries=1, rdf_done=1 WHERE uid='gutenberg:99999'")
+    assert _bucket(c) == (1, 0)
+
+    db.apply_reset(con, "errors", [])             # clears it (stage-prefixed)
+    row = con.execute("SELECT * FROM documents WHERE uid='gutenberg:99999'").fetchone()
+    assert worker._execute_step(con, c, "fts", row) is True
+    row = con.execute("SELECT error, retries FROM documents "
+                      "WHERE uid='gutenberg:99999'").fetchone()
+    assert row["error"] == "no txt file for book 99999", \
+        "the stage must record the corpus fact unprefixed"
+    assert row["retries"] == 0, "a corpus fact burns no retries"
+    assert _bucket(c) == (0, 1)
+
+    # and the cycle is CLOSED: another clear+count leaves it where it is
+    db.apply_reset(con, "errors", [])
+    row = con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()
+    assert row["error"] == "no txt file for book 99999"

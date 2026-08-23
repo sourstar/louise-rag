@@ -543,7 +543,21 @@ def apply_reset(con, stage: str, book_ids: list[int]) -> None:
         where += " AND CAST(native_id AS INTEGER) IN (%s)" % ",".join("?" * len(book_ids))
         params = list(book_ids)
     if stage == "errors":
-        con.execute(f"UPDATE documents SET error=NULL, retries=0 WHERE {where}", params)
+        # STAGE errors only ('rdf: …' / 'fts: …' / 'embed: …' — the
+        # retryable class). An UNPREFIXED error is a corpus fact written by
+        # discovery ('no txt file': the mirror ships no text for this
+        # entry), and clearing it sent the document through the pipeline to
+        # fail again — except the retry re-recorded the same fact as
+        # 'fts: no txt file', which the Library counts as BLOCKED. Observed
+        # live: every press of "clear errors & retry" converted ~1,100
+        # unindexable gutenberg entries into scary blocked ones, and
+        # discovery could not relabel them back because their directories
+        # had not changed (cursor skip). Retrying cannot change a corpus
+        # fact; the card for unindexable documents says exactly that.
+        prefixed = " OR ".join(f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed"))
+        con.execute(
+            f"UPDATE documents SET error=NULL, retries=0 "
+            f"WHERE {where} AND (error IS NULL OR {prefixed})", params)
     elif stage in ("rdf", "fts", "embed"):
         con.execute(f"UPDATE documents SET {stage}_done=0 WHERE {where}", params)
         if stage == "rdf":

@@ -139,6 +139,16 @@ class DiscoverState:        # not frozen: received/committed advance during the 
     on_commit: list = field(default_factory=list)
 
 
+class UnindexableDocument(RuntimeError):
+    """The CORPUS cannot supply this document's content — no text file in
+    the mirror, a retracted entry — as opposed to a stage failing at its
+    own work. A plugin raises this from fetch()/read paths so the worker
+    records the corpus fact UNPREFIXED (the Library's 'not indexable'
+    bucket: retrying cannot change it, the next scan re-applies it) instead
+    of a stage-prefixed error that reads as a blocked pipeline. Subclasses
+    RuntimeError so pre-existing broad handlers keep working."""
+
+
 class CorpusSource(Protocol):
     """documents → chunks → vectors. architecture-v2.md §2.
 

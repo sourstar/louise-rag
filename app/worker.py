@@ -36,6 +36,7 @@ from .acquire.specs import ACQUIRE_REGISTRY
 from .bundles import genesis as bundle_genesis
 from .bundles import importer as bundle_importer
 from .bundles import ledger as bundle_ledger
+from .plugins import base as plugin_base
 from .verify import backend_gate
 from .transfer.manager import get_manager
 
@@ -860,6 +861,18 @@ def _execute_step(con, collection, stage, row) -> bool:
                          f"{stage} deferred — encoder unreachable ({e}); "
                          f"the document is untouched and will be retried")
             return False
+        if isinstance(e, plugin_base.UnindexableDocument):
+            # a CORPUS fact surfaced mid-stage (the mirror ships no text for
+            # this entry): recorded UNPREFIXED, like discovery writes it, so
+            # it lands in the Library's 'not indexable' bucket — not as a
+            # stage-prefixed error that reads as a blocked pipeline and that
+            # "clear errors & retry" would bounce forever
+            con.execute(
+                "UPDATE documents SET error=?, updated_at=? WHERE uid=?",
+                (str(e)[:500], int(time.time()), row["uid"]))
+            db.log_event(con, "info", stage,
+                         f"not indexable: {e}", row["uid"])
+            return True
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
             (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))

@@ -11,7 +11,8 @@ import hashlib
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass,
+                    Mutability, PrivacyClass, RawDoc, UnindexableDocument)
 from . import pg_text, rdf
 
 
@@ -94,7 +95,7 @@ class GutenbergSource:
     def fetch(self, ref: DocRef) -> RawDoc:
         txt = pg_text.find_txt(Path(ref.locator), int(ref.native_id))
         if txt is None:
-            raise RuntimeError(f"no txt file for book {ref.native_id}")
+            raise UnindexableDocument(f"no txt file for book {ref.native_id}")
         h = hashlib.blake2b(digest_size=16)
         with open(txt, "rb") as f:
             for block in iter(lambda: f.read(1 << 20), b""):
@@ -131,7 +132,8 @@ class GutenbergSource:
     def read_text(self, book_dir: Path, native_id: int) -> str:
         txt = pg_text.find_txt(book_dir, native_id)
         if txt is None:
-            raise RuntimeError(f"no txt file for book {native_id}")
+            # the CORPUS fact, not a stage failure — see UnindexableDocument
+            raise UnindexableDocument(f"no txt file for book {native_id}")
         return pg_text.read_clean(txt)
 
     def split_text(self, text: str) -> list[tuple[str, str]]:
