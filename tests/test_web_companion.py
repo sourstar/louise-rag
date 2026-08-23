@@ -100,6 +100,28 @@ def test_companion_refuses_shared_mount_and_foreign_plugins(client):
     assert collections_mod.by_name("pm") is None
 
 
+def test_snapshot_pin_survives_ui_rewrites(client):
+    """A pinned `snapshot` is desired state like the [embed] block: any
+    TOML rewrite that drops it silently moves the collection back to
+    'whatever the origin calls latest', which is exactly the
+    irreproducibility the pin exists to prevent."""
+    r = client.post("/admin/library/new/create", json={
+        "name": "wp", "plugin": "wikipedia", "profile": "demo",
+        "corpus_dir": _mount("wp")})
+    assert r.status_code == 200
+    toml_path = collections_mod.config_toml_path("wp")
+    text = toml_path.read_text(encoding="utf-8")
+    toml_path.write_text(text.replace('plugin = "wikipedia"',
+                                      'plugin = "wikipedia"\nsnapshot = "20260801"'),
+                         encoding="utf-8")
+
+    assert client.post("/admin/library/wp/embed-mode",
+                       json={"mode": "off"}).status_code == 200
+    raw = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+    assert raw["snapshot"] == "20260801", "the pin was dropped by a rewrite"
+    assert raw["embed_mode"] == "off"
+
+
 def test_embed_mode_survives_the_ack_rewrite(client):
     """The ack endpoint rewrites the TOML; embed_mode must ride along."""
     comp = _mount("wv2")

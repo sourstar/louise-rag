@@ -315,10 +315,21 @@ def test_grow_run_declares_the_profile_and_preserves_the_whole_toml(client):
 def test_embed_mode_is_a_per_collection_control(client):
     r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
     assert r.status_code == 200
+    assert r.json()["persisted"] is True
 
-    # written to the COLLECTION's own manifest scope
+    # written to the COLLECTION's own manifest scope for immediate effect...
     collection = collections_mod.default_collection()
     assert db.get_scope(db.connect(collection))["embed_mode"] == "all"
+    # ...AND to the TOML as desired state, so a restart keeps it — the
+    # operator lost their mode at every restart when this was runtime-only
+    # (seven deploys in one day, seven silent resets)
+    assert collection.embed_mode_default == "all", \
+        "the Library's embed-mode choice must be written to the TOML"
+    from app import worker
+    con = db.connect(collection)
+    worker._apply_tier2_embed_mode(con, collection, "restart")   # the boot path
+    assert db.get_scope(con)["embed_mode"] == "all", \
+        "a restart must keep the operator's choice"
 
     # another collection keeps its own default — no cross-talk
     create(client, "other", "pubmed")

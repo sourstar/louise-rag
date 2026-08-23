@@ -135,10 +135,11 @@
                         else 'a CPU encoder container — runs alongside the GPU without competing' }}">
           {{ c.embed_device|upper }} spending</span>
       </label>
-      {# Tier-3 override (invariant 10): until restart or a TOML edit; a
-         pre-embedded collection's archive import runs regardless of it #}
+      {# persistent: writes embed_mode into the collection's TOML (Tier-2
+         desired state, like create/ack) AND the runtime scope for
+         immediate effect — it survives restarts #}
       <select onchange="setEmbedMode('{{ c.name }}', this.value)"
-              title="{{ 'archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. ' if c.genesis else '' }}Runtime override — lasts until the worker restarts or collections/{{ c.name }}.toml changes; set embed_mode in that TOML to keep it.">
+              title="{{ 'archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. ' if c.genesis else '' }}Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
         {% if c.genesis %}
         {# a pre-embedded collection's vectors arrive via the archive no
            matter what; this knob only governs GAP-FILL of the few documents
@@ -266,7 +267,7 @@ async function libDiscover(name,quiet){
 }
 async function setEmbedMode(name,mode){
   try{await postJSON('/admin/library/'+name+'/embed-mode',{mode});
-    toast(name+': embed mode → '+mode+' until restart (worker applies within a round; set embed_mode in collections/'+name+'.toml to keep it)')}
+    toast(name+': embed mode → '+mode+' — saved to collections/'+name+'.toml (permanent; worker applies within a round)')}
   catch(e){toast('embed mode failed: '+e);location.reload()}
 }
 async function libReset(name,stage){

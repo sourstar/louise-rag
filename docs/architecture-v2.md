@@ -889,6 +889,14 @@ the live deployment:
     written with their effective modes first, so the change was a no-op
     there. Tests: `tests/test_config_tiers_embed_mode.py`,
     `tests/test_invariant_guards.py`.
+    CORRECTED one day later: runtime-only was invariant-correct and
+    operationally wrong — seven restarts in a day silently reset the
+    operator's choice seven times. The Library control now WRITES the TOML
+    (a Tier-2 edit through the UI, like create and the license ack) plus
+    the scope for immediate effect, so it survives restarts; POST
+    /api/scope remains the runtime-only override. The same rewrite-carry
+    rule gained `snapshot` (a pin dropped by a rewrite would silently
+    unpin the collection back to "latest").
 32. **§2 / invariant 2 — discovery is a batched, resumable, off-thread
     stage.** The scan used to be the one stage whose unit was the corpus:
     it held the collection's pipeline thread for its duration, ran in

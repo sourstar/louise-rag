@@ -589,7 +589,8 @@ def grow_run(name: str, body: GrowBody):
         # reason the [embed] block is: a rewrite that drops it would reset
         # the collection to 'lazy' at the next restart.
         embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default)
+        embed_mode=collection.embed_mode_default,
+        snapshot=collection.snapshot)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -678,10 +679,16 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             manifest: Path, fts: Path, lancedb: Path,
                             license_ack: str | None = None,
                             genesis_archive: str | None = None,
-                            embed=None, embed_mode: str | None = None) -> None:
+                            embed=None, embed_mode: str | None = None,
+                            snapshot: str | None = None) -> None:
     lines = [f'plugin = "{plugin}"']
     if embed_mode:
         lines.append(f'embed_mode = "{embed_mode}"')
+    if snapshot:
+        # carried like the [embed] block and embed_mode: dropping a pinned
+        # snapshot on a rewrite would silently move the collection back to
+        # "whatever the origin calls latest"
+        lines.append(f'snapshot = "{snapshot}"')
     if profile:
         lines.append(f'profile = "{profile}"')
     if acquire_enabled:
@@ -841,7 +848,8 @@ def new_collection_create(body: CreateCollectionBody):
                 lancedb=existing.lance_dir, license_ack=existing.license_ack,
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
-                embed_mode=existing.embed_mode_default)
+                embed_mode=existing.embed_mode_default,
+                snapshot=existing.snapshot)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -1004,9 +1012,15 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     backfill never touches pubmed's, and vice versa. The worker re-reads
     scope every round.
 
-    This is a Tier-3 runtime override (invariant 10): it lasts until the
-    worker next applies the TOML — a restart, or an edit of `embed_mode` in
-    collections/<name>.toml. The TOML is where a permanent choice belongs."""
+    PERSISTENT: this writes BOTH the runtime scope (immediate effect) and
+    `embed_mode` in the collection's TOML — a Tier-2 edit through the UI,
+    exactly like collection-create and the license ack. The first cut made
+    this a runtime-only override that a restart reverted to the TOML, which
+    was invariant-10-correct and operationally wrong: the operator set a
+    mode seven restarts in a day set back seven times. Invariant 10 holds
+    because the UI now edits desired state rather than the DB pretending to
+    be it; POST /api/scope remains the runtime-only override for anyone who
+    wants one."""
     if body.mode not in ("off", "lazy", "all"):
         raise HTTPException(400, "mode must be off | lazy | all")
     collection = _collection_or_404(name)
@@ -1014,9 +1028,37 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     scope = db.get_scope(con)
     scope["embed_mode"] = body.mode
     db.set_scope(con, scope)
+    toml_path = collections_mod.config_toml_path(name)
+    toml_path.parent.mkdir(parents=True, exist_ok=True)
+    if not toml_path.exists():
+        # a synthesized collection (no TOMLs at all yet): materialize what
+        # exists first, or writing this one file would disown the rest —
+        # the same guard collection-create applies
+        for existing in collections_mod.load_all():
+            _write_collection_toml(
+                collections_mod.config_toml_path(existing.name),
+                plugin=existing.plugin, profile=existing.profile,
+                acquire_enabled=existing.acquire_enabled,
+                corpus_dir=existing.corpus_dir,
+                manifest=existing.manifest_path, fts=existing.fts_dir,
+                lancedb=existing.lance_dir, license_ack=existing.license_ack,
+                genesis_archive=existing.genesis_archive,
+                embed=collections_mod.recipe_for(existing),
+                embed_mode=existing.embed_mode_default,
+                snapshot=existing.snapshot)
+    _write_collection_toml(
+        toml_path, plugin=collection.plugin, profile=collection.profile,
+        acquire_enabled=collection.acquire_enabled,
+        corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=collection.license_ack,
+        genesis_archive=collection.genesis_archive,
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=body.mode, snapshot=collection.snapshot)
     db.log_event(con, "info", "control",
-                 f"embed mode -> {body.mode!r} for {name!r} via admin UI")
-    return {"ok": True, "embed_mode": body.mode}
+                 f"embed mode -> {body.mode!r} for {name!r} via admin UI "
+                 f"(written to {toml_path.name}: permanent)")
+    return {"ok": True, "embed_mode": body.mode, "persisted": True}
 
 
 @admin_router.get("/library/{name}/terms")
@@ -1052,7 +1094,8 @@ def collection_ack(name: str):
         lancedb=collection.lance_dir, license_ack=ack,
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default)
+        embed_mode=collection.embed_mode_default,
+        snapshot=collection.snapshot)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

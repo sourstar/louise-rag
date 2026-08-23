@@ -98,12 +98,14 @@
     <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
   </p>
   <p class="note">
-    The Library's embed-mode control is a <b>runtime override</b> (Tier 3):
-    it lasts until the worker next applies the collection's TOML — a
-    restart, or an edit of <code>embed_mode = "off" | "lazy" | "all"</code>
-    in <code>collections/&lt;name&gt;.toml</code>, which is where a permanent
-    choice belongs (Tier 2). A collection whose TOML is silent returns to
-    <b>lazy</b>. For a pre-embedded collection (a genesis archive) the mode
+    The Library's embed-mode control is <b>persistent</b>: it writes
+    <code>embed_mode = "off" | "lazy" | "all"</code> into
+    <code>collections/&lt;name&gt;.toml</code> (Tier-2 desired state, the
+    same way collection-create and the license ack write it) and applies
+    immediately — it survives restarts. A runtime-only override is still
+    possible via <code>POST /api/scope</code>; that one lasts until the
+    worker next applies the TOML. A collection whose TOML is silent
+    defaults to <b>lazy</b>. For a pre-embedded collection (a genesis archive) the mode
     only governs <b>local gap-fill</b> of what the archive cannot cover —
     archive import runs regardless — so its card shows the same knob as
     <b>fix / fix on demand / off</b>: <b>fix</b> (= all) embeds, once, the
