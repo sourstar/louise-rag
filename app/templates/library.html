@@ -51,7 +51,7 @@
     {% endif %}
   </div>
   {% if c.fetched %}
-  <div class="stage"><div class="lbl"><span>fetched</span><span>{{ c.fetched.done }} / {{ c.fetched.total }}</span></div>
+  <div class="stage"><div class="lbl"><span>fetched{% if c.fetched.active %} <span class="badge brass" title="a fetch pass is running: it streams the remote listing lazily, so the total GROWS as it goes — done/total look equal mid-pass without meaning the dataset is complete. Final only when the pass logs 'corpus fetch … done'.">fetching…</span>{% endif %}</span><span>{{ c.fetched.done }} / {{ c.fetched.total }}{{ '+' if c.fetched.active }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fetched.done/c.fetched.total)|round(1) if c.fetched.total else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>

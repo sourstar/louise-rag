@@ -113,6 +113,33 @@ def test_a_failing_refresh_is_not_silent_and_a_hung_guard_expires(col, monkeypat
     assert calls, "an abandoned guard must expire and let a new refresh run"
 
 
+def test_fetched_counter_says_when_a_pass_is_still_running(isolated_config):
+    """A fetch pass streams the remote listing lazily, so fetch_files grows
+    as it goes and done==total mid-pass — '1414/1414' read as complete while
+    33 files were still unlisted (observed live on wikivec). The card must
+    say 'fetching…' while the acquisition claim is live, and drop it once
+    the claim is stale or released."""
+    import json as _json
+    from dataclasses import replace
+    from app.acquire import claim as acquire_claim
+
+    c = replace(collections_mod.default_collection(), acquire_enabled=True)
+    con = db.connect(c)
+
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_claim.CLAIM_KEY,
+                 _json.dumps({"pid": 999999, "ts": time.time(),
+                              "source_id": "gutenberg"})))
+    assert web._collection_shelf(c, {})["fetched"]["active"] is True
+
+    con.execute("UPDATE control SET value=? WHERE key=?",
+                (_json.dumps({"pid": 999999,
+                              "ts": time.time() - acquire_claim.STALE_AFTER_SECONDS - 1,
+                              "source_id": "gutenberg"}),
+                 acquire_claim.CLAIM_KEY))
+    assert web._collection_shelf(c, {})["fetched"]["active"] is False
+
+
 def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
     """The pubmed shape: medcpt-pubmed declared, a large rdf/fts backlog.
     The card must say WAITING with the backlog size — not 0/37 shards with

@@ -45,6 +45,7 @@ from . import (auth, collections as collections_mod, config, db, discovery,
                 platform_config, query_service, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
+from .acquire import claim
 from .acquire import engine as acquire_engine
 from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -400,7 +401,19 @@ def _collection_shelf(collection: collections_mod.Collection,
         fc = con.execute(
             "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files WHERE source_id=?",
             (spec.source_id,)).fetchone()
-        fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0}
+        # A fetch pass streams the remote listing lazily — claim a file,
+        # download it, move on — so fetch_files GROWS while the pass runs
+        # and done==total mid-pass, which read as "complete" while a third
+        # of a dataset was still to come (observed live on wikivec:
+        # "1414/1414" with 33 files unlisted). The acquisition claim
+        # (refreshed every 60 s by the running pass) says whether one is
+        # active, so the card can say "in progress" instead.
+        acquire_claim = claim.read_claim(con)
+        active = bool(acquire_claim
+                      and time.time() - float(acquire_claim.get("ts", 0))
+                      <= claim.STALE_AFTER_SECONDS)
+        fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
+                   "active": active}
 
     if last_discover:
         freshness = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last_discover["ts"]))
