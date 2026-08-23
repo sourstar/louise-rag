@@ -105,7 +105,15 @@
     choice belongs (Tier 2). A collection whose TOML is silent returns to
     <b>lazy</b>. For a pre-embedded collection (a genesis archive) the mode
     only governs <b>local gap-fill</b> of what the archive cannot cover —
-    archive import runs regardless.
+    archive import runs regardless — so its card shows the same knob as
+    <b>fix / fix on demand / off</b>: <b>fix</b> (= all) embeds, once, the
+    handful of documents the archive can never deliver (articles whose rows
+    straddle a shard-file boundary, roughly one per shard — minutes of CPU
+    in total) and keeps quarantine-triggered re-embeds working; <b>fix on
+    demand</b> (= lazy) does the same only when a query actually hits such a
+    document; <b>off</b> leaves those gaps without dense vectors forever —
+    and note that after a quarantine, <b>off</b> also means the affected
+    documents are never re-embedded.
   </p>
   <p class="note">
     Node-wide, the Library page offers three modes. <b>run everything</b> is

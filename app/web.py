@@ -559,8 +559,11 @@ def grow_run(name: str, body: GrowBody):
         # Tier-2 TOML is DESIRED STATE (invariant 10): every rewrite
         # materializes the EFFECTIVE recipe, so an env-fallback collection
         # becomes explicit on its first touch. Byte-equal recipe → same
-        # space id → the pin never notices.
-        embed=collections_mod.recipe_for(collection))
+        # space id → the pin never notices. embed_mode carried for the same
+        # reason the [embed] block is: a rewrite that drops it would reset
+        # the collection to 'lazy' at the next restart.
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=collection.embed_mode_default)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -649,8 +652,10 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             manifest: Path, fts: Path, lancedb: Path,
                             license_ack: str | None = None,
                             genesis_archive: str | None = None,
-                            embed=None) -> None:
+                            embed=None, embed_mode: str | None = None) -> None:
     lines = [f'plugin = "{plugin}"']
+    if embed_mode:
+        lines.append(f'embed_mode = "{embed_mode}"')
     if profile:
         lines.append(f'profile = "{profile}"')
     if acquire_enabled:
@@ -713,6 +718,42 @@ class CreateCollectionBody(BaseModel):
     acquire_enabled: bool = False
     corpus_dir: str = ""     # a CORPUS_MOUNTS_DIR entry; empty = CORPUS_DIR/<name>
     acknowledge_terms: bool = False   # yellow-class sources: explicit consent
+    # Optional pre-embedded COMPANION at install time (wikipedia only): a
+    # second collection <name>-vec on the `embedded` plugin, acquiring the
+    # published frozen snapshot whose vectors travel with it — dense search
+    # works from day one while the live collection's own embeddings grow
+    # lazily. Needs its own corpus mount and its own terms acknowledgement.
+    companion_corpus_dir: str = ""
+    acknowledge_companion_terms: bool = False
+
+
+def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
+    """The chosen corpus folder must be a real, unused mounted dataset —
+    shared by the main collection and the companion (each needs its own)."""
+    if not raw.strip():
+        free = [m["path"] for m in mounts if not m["used_by"]]
+        raise HTTPException(
+            400, f"choose a corpus folder for the {what}: it must point at a "
+                 f"real mounted dataset. Free folders under "
+                 f"{config.CORPUS_MOUNTS_DIR}: {', '.join(free) or '(none — map one first)'}. "
+                 f"Map a dataset by adding '- /mnt/<pool>/<dataset>:"
+                 f"{config.CORPUS_MOUNTS_DIR}/<name>' to BOTH services in the "
+                 f"app YAML, then re-open this page")
+    chosen = next((m for m in mounts if m["path"] == raw.strip()), None)
+    if chosen is None:
+        available = ", ".join(m["path"] for m in mounts) or "(none)"
+        raise HTTPException(
+            400, f"the {what}'s corpus folder must be one of the mounted "
+                 f"entries under {config.CORPUS_MOUNTS_DIR} — available: "
+                 f"{available}. Map your dataset there first (TrueNAS: add "
+                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
+                 f"<name>' to both services in the app YAML)")
+    if chosen["used_by"]:
+        raise HTTPException(
+            409, f"{chosen['path']} already belongs to collection "
+                 f"{chosen['used_by']!r} — a corpus folder can serve only "
+                 f"one collection")
+    return Path(chosen["path"])
 
 
 def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
@@ -773,42 +814,52 @@ def new_collection_create(body: CreateCollectionBody):
                 manifest=existing.manifest_path, fts=existing.fts_dir,
                 lancedb=existing.lance_dir, license_ack=existing.license_ack,
                 genesis_archive=existing.genesis_archive,
-                embed=collections_mod.recipe_for(existing))
+                embed=collections_mod.recipe_for(existing),
+                embed_mode=existing.embed_mode_default)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
     # container, so the collection was born pointing at nothing and only
     # said so as "corpus dir not found" on the next discovery round. An
     # unmounted corpus is not a state worth being able to create.
+    #
+    # EVERYTHING is validated before ANYTHING is written: a companion that
+    # fails validation must not leave the main collection half-created.
     mounts = _corpus_mounts()
-    if not body.corpus_dir.strip():
-        free = [m["path"] for m in mounts if not m["used_by"]]
-        raise HTTPException(
-            400, f"choose a corpus folder: a collection must point at a real "
-                 f"mounted dataset. Free folders under {config.CORPUS_MOUNTS_DIR}: "
-                 f"{', '.join(free) or '(none — map one first)'}. Map a dataset "
-                 f"by adding '- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                 f"<name>' to BOTH services in the app YAML, then re-open this "
-                 f"page")
-    chosen = next((m for m in mounts if m["path"] == body.corpus_dir.strip()),
-                  None)
-    if chosen is None:
-        available = ", ".join(m["path"] for m in mounts) or "(none)"
-        raise HTTPException(
-            400, f"corpus folder must be one of the mounted entries under "
-                 f"{config.CORPUS_MOUNTS_DIR} — available: {available}. "
-                 f"Map your dataset there first (TrueNAS: add "
-                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                 f"<name>' to both services in the app YAML)")
-    if chosen["used_by"]:
-        raise HTTPException(
-            409, f"{chosen['path']} already belongs to collection "
-                 f"{chosen['used_by']!r} — a corpus folder can serve only "
-                 f"one collection")
-    corpus_dir = Path(chosen["path"])
+    corpus_dir = _resolve_corpus_mount(body.corpus_dir, mounts)
 
     ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
                                 body.acknowledge_terms)
+
+    companion = None
+    if body.companion_corpus_dir.strip():
+        if body.plugin != "wikipedia":
+            raise HTTPException(400, "the pre-embedded companion is offered "
+                                     "for the wikipedia plugin only")
+        companion_name = f"{body.name}-vec"
+        if collections_mod.by_name(companion_name) is not None or \
+                collections_mod.config_toml_path(companion_name).exists():
+            raise HTTPException(409, f"companion collection {companion_name!r} "
+                                     f"already exists")
+        companion_dir = _resolve_corpus_mount(body.companion_corpus_dir, mounts,
+                                              what="companion")
+        if companion_dir == corpus_dir:
+            raise HTTPException(409, "the companion needs its OWN corpus "
+                                     "folder — the frozen parquet snapshot and "
+                                     "the live dumps cannot share one")
+        # the embedded plugin is yellow-class with its own terms text: its
+        # acknowledgement is separate from the main plugin's, never implied
+        try:
+            companion_ack = _ack_for_acquisition("embedded", True,
+                                                 body.acknowledge_companion_terms)
+        except HTTPException as e:
+            if "terms-acknowledgement-required" in str(e.detail):
+                raise HTTPException(
+                    409, "companion-terms-acknowledgement-required: the "
+                         "pre-embedded companion carries its own license "
+                         "terms (embedded plugin)") from None
+            raise
+        companion = (companion_name, companion_dir, companion_ack)
 
     # default ON: a plugin with a known published-embeddings archive gets it
     # declared, so the worker reuses pre-embedded data before spending GPU.
@@ -838,13 +889,39 @@ def new_collection_create(body: CreateCollectionBody):
         embed=(collections_mod.default_recipe_for_plugin(body.plugin)
                or collections_mod.env_recipe()))
 
+    companion_note = ""
+    if companion is not None:
+        companion_name, companion_dir, companion_ack = companion
+        companion_base = config.DATA_DIR / companion_name
+        _write_collection_toml(
+            collections_mod.config_toml_path(companion_name),
+            plugin="embedded", profile="all", acquire_enabled=True,
+            corpus_dir=companion_dir,
+            manifest=companion_base / "manifest.db",
+            fts=companion_base / "fts", lancedb=companion_base / "lancedb",
+            license_ack=companion_ack,
+            genesis_archive=DEFAULT_ARCHIVE_BY_PLUGIN.get("embedded"),
+            embed=(collections_mod.default_recipe_for_plugin("embedded")
+                   or collections_mod.env_recipe()),
+            # 'fix' from birth: everything arrives pre-embedded via genesis;
+            # the local encoder only mops up what the archive cannot cover
+            # (shard-boundary straddlers), which is minutes of CPU, once
+            embed_mode="all")
+        companion_note = (
+            f" Companion {companion_name!r} created beside it: it acquires "
+            f"the published pre-embedded snapshot and imports its vectors "
+            f"(no GPU work), so dense search answers from day one while "
+            f"{body.name!r} embeds lazily where queries lead.")
+
     con = db.connect()
     db.log_event(con, "info", "control",
-                 f"collection {body.name!r} created via admin UI ({toml_path})")
+                 f"collection {body.name!r} created via admin UI ({toml_path})"
+                 + (f"; companion {companion[0]!r} created" if companion else ""))
     note = ("Live now: the web process sees it immediately and the worker "
             "picks it up within one round (no restart). If your config dir "
             "is versioned, commit the new file. A yellow-class source still "
-            "needs its license ack before acquisition (corpus add --ack-terms).")
+            "needs its license ack before acquisition (corpus add --ack-terms)."
+            + companion_note)
     # Always true now: the corpus is picked from _corpus_mounts(), which
     # lists directories that exist. Kept in the response because callers
     # (and the tests) read it as the "this collection can actually see its
@@ -858,6 +935,7 @@ def new_collection_create(body: CreateCollectionBody):
                  f"found'. ") + note
     return {"ok": True, "toml_path": str(toml_path),
             "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
+            "companion": (companion[0] if companion else None),
             "note": note}
 
 
@@ -947,7 +1025,8 @@ def collection_ack(name: str):
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=ack,
         genesis_archive=collection.genesis_archive,
-        embed=collections_mod.recipe_for(collection))
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=collection.embed_mode_default)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "
