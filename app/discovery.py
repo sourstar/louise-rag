@@ -136,7 +136,10 @@ def sync_collection(con, collection, *, stop=None) -> dict:
         if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted):
             applied += len(batch)
             _signal_committed(state, applied)
-    if not interrupted:
+    if not interrupted and (counts["added"] or counts["changed"]
+                            or counts["relocated"] or counts["missing"]):
+        # a pure stat pass changed nothing in_scope could depend on; scope
+        # CONFIG changes apply through their own endpoint (api set_scope)
         apply_scope(con)
     stats = {"seen": counts["seen"], "added": counts["added"],
              "changed": counts["changed"], "missing_txt": counts["missing"],
@@ -294,7 +297,13 @@ def apply_scope(con):
     collection).
     """
     scope = db.get_scope(con)
-    con.execute("UPDATE documents SET in_scope=1")
+    # WHERE in_scope=0, not unconditional: `SET in_scope=1` over a 33M-row
+    # manifest rewrites every page and holds the write lock for MINUTES —
+    # observed live as "database is locked" errors in every other thread
+    # the moment the startup scans ran beside the pipelines. With nothing
+    # scoped out (the common case) this touches zero rows via the
+    # idx_documents_scope prefix. Semantics identical: widen, then narrow.
+    con.execute("UPDATE documents SET in_scope=1 WHERE in_scope=0")
     if scope["languages"]:
         marks = ",".join("?" for _ in scope["languages"])
         con.execute(

@@ -327,6 +327,28 @@ def test_scan_and_pipeline_steps_write_concurrently_without_a_deferral_storm(
     assert deferred == 0
 
 
+def test_a_stat_pass_never_runs_apply_scope_and_the_widen_is_indexed(
+        corpus, tmp_path, monkeypatch):
+    """apply_scope's `UPDATE documents SET in_scope=1` rewrote every row of
+    the manifest on EVERY scan — minutes of write lock on 33M rows, even
+    when the scan was a pure stat pass. Now a no-change scan skips it, and
+    the widen touches only rows that are actually scoped out (an indexed
+    prefix), so the common case holds the lock for nothing."""
+    c = _collection(tmp_path)
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+
+    calls = []
+    monkeypatch.setattr(discovery, "apply_scope",
+                        lambda con: calls.append(1))
+    assert discovery.sync_collection(con, c)["seen"] == 0
+    assert calls == [], "a stat pass must not touch in_scope at all"
+
+    plan = " ".join(str(r[-1]) for r in con.execute(
+        "EXPLAIN QUERY PLAN UPDATE documents SET in_scope=1 WHERE in_scope=0"))
+    assert "idx_documents_scope" in plan, plan
+
+
 # --- 3. off-thread ----------------------------------------------------------
 
 def test_the_scan_runs_beside_the_pipeline_thread(corpus, tmp_path, monkeypatch):

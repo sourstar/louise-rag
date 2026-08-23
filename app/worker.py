@@ -1062,7 +1062,16 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 _execute_step(con, collection, stage, row)
-            except Exception:   # noqa: BLE001 — a pipeline thread must outlive any step
+            except Exception as e:   # noqa: BLE001 — a pipeline thread must outlive any step
+                if manifest_contended(e):
+                    # a writer outside _execute_step's own handling (queue
+                    # cleanup in _next_book, a control write) lost the lock
+                    # to a long holder — a deferral, not an error: nothing
+                    # is wrong, the round retries
+                    db.log_event(con, "warn", "worker",
+                                 f"round deferred — manifest busy ({e})")
+                    time.sleep(2)
+                    continue
                 try:
                     db.log_event(con, "error", "worker",
                                  f"pipeline thread error:\n"
@@ -1387,7 +1396,19 @@ def run_forever():
                         break
             if not any_work:
                 time.sleep(config.WORKER_IDLE_SLEEP)
-        except Exception:
+        except Exception as e:
+            if manifest_contended(e):
+                # a control-plane write (telemetry publish, worker_state
+                # read/write) lost the lock to a long holder on the control
+                # collection's manifest — stale telemetry for one round, not
+                # an error
+                try:
+                    db.log_event(control_con, "warn", "worker",
+                                 f"round deferred — control manifest busy ({e})")
+                except Exception:   # noqa: BLE001 — the logger writes too
+                    pass
+                time.sleep(2)
+                continue
             try:
                 db.log_event(control_con, "error", "worker", traceback.format_exc()[:1500])
             except Exception:
