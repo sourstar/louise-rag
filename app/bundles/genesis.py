@@ -109,113 +109,196 @@ DEFAULT_ARCHIVE_BY_PLUGIN: dict[str, str] = {
 }
 
 
-# Shards that imported NOTHING since the last time new documents became
-# embed-eligible, per collection. Local archives revisit their shards
-# forever (documents become eligible gradually), so without this a residual
-# candidate the archive can NEVER cover — a shard-boundary straddler, whose
-# vectors are split across two files and so fail the chunk-shape gate —
-# makes drain_next_shard claim every worker round re-reading ~437 MB
-# parquet files to import zero rows, and the local encoder never gets to
-# gap-fill it. Cleared by note_new_candidate() the moment an fts commit
-# creates a candidate the archive might cover.
-_barren: dict[str, set[str]] = {}
-_barren_lock = threading.Lock()
+# Residual candidates per (manifest path, shard): documents a read of that
+# shard was asked to cover and could NOT — a shard-boundary straddler whose
+# vectors are split across two files and so fail the chunk-shape gate, or a
+# document whose chunk text would not load. They stay embed-eligible (the
+# local encoder gap-fills them, amendment 11), so without this record the
+# shard they point at would be re-read — ~437 MB, ~10 s — every round to
+# import zero rows. A shard is re-read only for a candidate NOT in its
+# residual set. Process-local, like the backend gate's verdict cache: a
+# restart costs one re-read per residual shard, never a wrong import.
+#
+# Keyed on the manifest PATH, not the collection name: two Collection
+# objects can share a name and point at different files (fts.get_index,
+# the counts cache and the scan cursor each learned this separately).
+_residual: dict[tuple[str, str], frozenset[str]] = {}
+_residual_lock = threading.Lock()
+
+# One page of the candidate walk; the walk is capped so one round never
+# spends more than a bounded number of row lookups deciding there is
+# nothing to read.
+_CANDIDATE_PAGE = 2048
+_CANDIDATE_SCAN_CAP = 65536
+
+# Selection is the per-collection embed-candidate set, walked in index order
+# — a prefix of idx_documents_scope (in_scope, rdf_done, fts_done,
+# embed_done) with rowid as the tail key, so `rowid>? ORDER BY rowid` pages
+# through the index range without a TEMP B-TREE. This is what replaced
+# sweeping the shard LIST: the candidates' own locators name the shards
+# worth reading, and a shard nobody is waiting for is never opened.
+_CANDIDATES_PAGE_SQL = (
+    "SELECT rowid, uid, path, updated_at FROM documents "
+    "WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
+    "AND error IS NULL AND rowid>? ORDER BY rowid LIMIT ?")
 
 
-def note_new_candidate(collection_name: str) -> None:
-    """A document just became embed-eligible: the archive deserves another
-    look at every shard. Called by the fts stage (the transition that
-    creates candidates) — cheap, and precise enough that no scan is needed."""
-    with _barren_lock:
-        _barren.pop(collection_name, None)
+def _residual_of(collection, shard: str) -> frozenset[str]:
+    with _residual_lock:
+        return _residual.get((str(collection.manifest_path), shard), frozenset())
 
 
-def _barren_shards(collection_name: str) -> set[str]:
-    with _barren_lock:
-        return set(_barren.get(collection_name, ()))
-
-
-def _mark_barren(collection_name: str, shard: str) -> None:
-    with _barren_lock:
-        _barren.setdefault(collection_name, set()).add(shard)
+def _record_residual(collection, shard: str, uids) -> None:
+    with _residual_lock:
+        _residual[(str(collection.manifest_path), shard)] = frozenset(uids)
 
 
 def reset_revisit_state() -> None:
-    """Drop all barren bookkeeping (process-local, like the backend gate's
+    """Drop all residual bookkeeping (process-local, like the backend gate's
     verdict cache). Tests call it between cases; nothing in production
     needs it, since a restart starts empty anyway."""
-    with _barren_lock:
-        _barren.clear()
+    with _residual_lock:
+        _residual.clear()
 
 
-def drain_next_shard(con, collection, *, stop=None) -> dict | None:
-    """The worker's automatic path: import the next pending shard of the
-    collection's declared archive, if there is embed work it could satisfy.
+@dataclass
+class ShardDemand:
+    """What one on-disk shard is being waited on for: the embed-eligible
+    documents it holds that are not in its residual set."""
+    shard: str
+    uids: list[str]
+    oldest: int            # smallest updated_at among them (fts commit time)
+
+
+def _shard_of_locator(root: Path, locator: str, split_locator) -> str | None:
+    """Corpus-relative POSIX path of the shard a locator's FIRST segment
+    lives in — the genesis_imports key. A straddler (two segments) is
+    attributed to its first shard only; reading either would fail the
+    chunk-shape gate, so one attribution is enough to record it residual.
+    A locator outside the corpus root (a moved corpus, before discovery
+    repairs it) names no readable shard and is skipped."""
+    try:
+        path, _start, _end = split_locator(locator)[0]
+        return Path(path).relative_to(root).as_posix()
+    except (ValueError, IndexError):
+        return None
+
+
+def _candidate_shards(con, collection) -> list[ShardDemand]:
+    """For a LOCAL archive: the shards holding documents that are
+    embed-eligible and not yet covered, found from the candidates' own
+    locators — never by sweeping the shard list — in candidate index
+    order. Empty when there is nothing the archive could do this round."""
+    from ..plugins.embedded.source import split_locator   # format v1 locators
+    root = collection.corpus_dir
+    demand: dict[str, ShardDemand] = {}
+    last_rowid, scanned = -1, 0
+    while scanned < _CANDIDATE_SCAN_CAP:
+        page = con.execute(_CANDIDATES_PAGE_SQL,
+                           (last_rowid, _CANDIDATE_PAGE)).fetchall()
+        if not page:
+            break
+        for r in page:
+            shard = _shard_of_locator(root, r["path"], split_locator)
+            if shard is None or r["uid"] in _residual_of(collection, shard):
+                continue
+            d = demand.get(shard)
+            ts = int(r["updated_at"] or 0)
+            if d is None:
+                demand[shard] = ShardDemand(shard, [r["uid"]], ts)
+            else:
+                d.uids.append(r["uid"])
+                d.oldest = min(d.oldest, ts)
+        last_rowid = page[-1]["rowid"]
+        scanned += len(page)
+    return list(demand.values())
+
+
+def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict | None:
+    """The worker's automatic path: import the next shard of the
+    collection's declared archive that has embed work it could satisfy.
     Returns the shard result, or None when there is nothing to do (no
     declaration, no candidates, all shards applied, a shard was rejected —
     a systematically incompatible archive must not be retried forever — or
-    a retryable failure is inside its backoff window)."""
+    a retryable failure is inside its backoff window).
+
+    `eager=False` (the caller still has rdf/fts work on this thread) makes
+    a LOCAL archive wait for a shard's demand to reach GENESIS_MIN_CANDIDATES
+    documents or GENESIS_MAX_WAIT_SEC of age before paying the read, so the
+    ~10 s shard read is amortised over a batch instead of charged per fts
+    commit. Remote archives apply once post-settle and ignore it."""
     archive = ARCHIVES.get(collection.genesis_archive or "")
     if archive is None:
         return None
-    candidates = con.execute(
-        "SELECT 1 FROM documents WHERE fts_done=1 AND embed_done=0 "
-        "AND error IS NULL LIMIT 1").fetchone()
-    if candidates is None:
-        return None
-    if not archive.local:
-        # Wait for the collection's rdf/fts backlog to settle: a REMOTE
-        # shard applies ONCE, and running it while most documents are not
-        # yet eligible would permanently strand them on the local-GPU path.
-        # Post-settle growth is fine — appended corpora land in later,
-        # still-pending shards, and any stragglers gap-fill locally into
-        # the same proven space. A LOCAL archive skips this: its shards are
-        # revisited, so early passes strand nothing (amendment 11).
-        backlog = con.execute(
-            "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
-            "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
-        if backlog is not None:
-            return None
-    shards = _local_shards(collection) if archive.local else archive.shards
     rows = {r["shard"]: r for r in con.execute(
         "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
         (archive.archive_id,))}
     if any(r["state"] == "rejected" for r in rows.values()):
         return None
     now = int(time.time())
-    barren = _barren_shards(collection.name) if archive.local else set()
-    for shard in _drain_order(shards, rows, revisit=archive.local):
-        if shard in barren:
-            continue      # imported nothing since the last new candidate
+
+    def in_backoff(shard: str) -> bool:
         row = rows.get(shard)
-        if row is not None and row["state"] == "skipped" \
-                and now - (row["updated_at"] or 0) < 600:
-            return None                # retryable failure: back off 10 min
+        return row is not None and row["state"] == "skipped" \
+            and now - (row["updated_at"] or 0) < 600       # retryable: 10 min
+
+    if archive.local:
+        for d in _candidate_shards(con, collection):
+            if in_backoff(d.shard):
+                continue
+            if not eager and len(d.uids) < config.GENESIS_MIN_CANDIDATES \
+                    and now - d.oldest < config.GENESIS_MAX_WAIT_SEC:
+                continue                # let the batch grow; rdf/fts run meanwhile
+            try:
+                result = import_shard(con, collection, archive, d.shard, revisit=True)
+            except GenesisUnavailable:
+                return None             # recorded as skipped; retried later
+            except GenesisError:
+                return None             # recorded as rejected; never retried
+            # what this read was asked for and could not cover stays
+            # eligible for the local encoder; the shard is not re-read for it
+            _record_residual(collection, d.shard, result.get("residual_uids", ()))
+            return result
+        # nothing the archive can cover right now: YIELD the round — the
+        # embed stage must be free to gap-fill what the archive cannot
+        return None
+
+    candidates = con.execute(
+        "SELECT 1 FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
+        "AND embed_done=0 AND error IS NULL LIMIT 1").fetchone()
+    if candidates is None:
+        return None
+    # Wait for the collection's rdf/fts backlog to settle: a REMOTE shard
+    # applies ONCE, and running it while most documents are not yet
+    # eligible would permanently strand them on the local-GPU path.
+    # Post-settle growth is fine — appended corpora land in later,
+    # still-pending shards, and any stragglers gap-fill locally into the
+    # same proven space.
+    backlog = con.execute(
+        "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
+        "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
+    if backlog is not None:
+        return None
+    for shard in _drain_order(archive.shards, rows, revisit=False):
+        if in_backoff(shard):
+            return None
         try:
-            result = import_shard(con, collection, archive, shard,
-                                   revisit=archive.local)
+            return import_shard(con, collection, archive, shard)
         except GenesisUnavailable:
-            return None                # recorded as skipped; retried later
+            return None                 # recorded as skipped; retried later
         except GenesisError:
-            return None                # recorded as rejected; never retried
-        if archive.local and not result.get("docs"):
-            # this shard covers nothing that is still pending; stop
-            # re-reading it until new candidates appear
-            _mark_barren(collection.name, shard)
-        return result
-    # every shard is either applied-and-barren or skipped: the archive has
-    # nothing left to contribute right now, so YIELD the round — the embed
-    # stage must be free to gap-fill what the archive cannot cover
+            return None                 # recorded as rejected; never retried
     return None
 
 
 def _drain_order(shards, rows, *, revisit: bool):
     """Remote archives: pending shards in declared order, applied ones
-    excluded (they applied ONCE, post-settle, and are final). Local
-    archives: pending shards first, then applied ones oldest-first — each
-    revisit picks up documents that became eligible since the last pass,
-    and the cycle starves itself the moment no candidates remain (the
-    caller's candidates gate)."""
+    excluded (they applied ONCE, post-settle, and are final). With
+    `revisit` (an explicit `genesis import` of a local archive): pending
+    shards first, then applied ones oldest-first. The WORKER never walks a
+    local archive this way — it reads the shards its candidates name
+    (_candidate_shards); sweeping the list cost one ~10 s parquet read per
+    shard per round on a 959-shard corpus, importing nothing from 958."""
     pending = [s for s in shards
                if rows.get(s) is None or rows[s]["state"] != "applied"]
     if not revisit:
@@ -417,6 +500,9 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     np_dtype = np.float16 if recipe.dtype == "f16" else np.float32
     docs = chunks_written = skipped_absent = skipped_shape = 0
+    # candidates this read was asked for and could not cover — reported so
+    # drain_next_shard stops re-reading the shard on their account
+    residual_uids: list[str] = []
     sample: list[tuple[str, np.ndarray]] = []
     batch_rows: list[dict] = []
     batch_native: list[int] = []
@@ -500,12 +586,14 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 chunk_texts = _local_chunk_texts(collection, row)
             except Exception:
                 skipped_absent += 1
+                residual_uids.append(uid)
                 continue
             if len(chunk_texts) != len(vecs):
                 # vectors bind to chunks 1:1; a count mismatch would leave
                 # the document half-embedded (or mis-attached) — skip it,
                 # local gap-fill covers it in the same proven space
                 skipped_shape += 1
+                residual_uids.append(uid)
                 continue
 
             for seq, ((chunk_id, text), vec, unit) in enumerate(
@@ -599,7 +687,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             p.unlink(missing_ok=True)
     return {"shard": shard, "state": "applied", "docs": docs,
             "chunks": chunks_written, "skipped_absent": skipped_absent,
-            "skipped_shape": skipped_shape}
+            "skipped_shape": skipped_shape, "residual_uids": residual_uids}
 
 
 def import_archive(con, collection, archive: GenesisArchive, *,

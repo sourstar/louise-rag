@@ -212,11 +212,6 @@ def stage_fts(con, row, collection) -> None:
         _batch_log(con, "fts", collection,
                    f"indexed {len(batch)} documents / {n_chunks} chunks "
                    f"in one commit")
-    if collection.genesis_archive:
-        # these documents just became embed-eligible: let the archive look at
-        # its shards again (they go barren once they cover nothing pending,
-        # so the local encoder is never starved by empty revisits)
-        bundle_genesis.note_new_candidate(collection.name)
 
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)
@@ -301,6 +296,15 @@ _FTS_REINDEX = (
 _FTS_BACKLOG = (
     "SELECT COUNT(*) FROM (SELECT 1 FROM documents WHERE in_scope=1 AND rdf_done=1 "
     "AND fts_done=0 AND error IS NULL AND retries<? LIMIT ?)")
+
+
+def _ingest_pending(con) -> bool:
+    """Does this collection still have rdf or fts work? Two LIMIT-1 index
+    probes. Genesis uses it to decide whether a shard read may wait for a
+    batch (rdf/fts would otherwise starve behind it) or should happen now
+    (nothing else to do on this thread)."""
+    return con.execute(_RDF_PENDING, (config.MAX_RETRIES,)).fetchone() is not None \
+        or con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone() is not None
 
 
 def _next_book(con, scope, embed_allowed=True):
@@ -795,9 +799,20 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # archive declared (genesis_archive in its TOML) reuses published
     # vectors before any GPU-hour is spent. One shard per round; failures
     # are ledgered and backed off inside drain_next_shard, never fatal.
+    #
+    # Genesis comes BEFORE the selection below because imported vectors
+    # beat computed ones — but it must never come before rdf/fts for long:
+    # observed live, a local archive on a pipeline thread that owns its
+    # whole pipeline claimed every round re-reading shards, and the
+    # collection advanced one fts batch per full sweep (200 documents per
+    # 3.2 hours on 959 shards). drain_next_shard now reads only shards its
+    # candidates name; `eager` tells it whether rdf/fts are waiting on this
+    # thread, so a read is amortised over a batch rather than paid per
+    # fts commit (config.GENESIS_MIN_CANDIDATES / GENESIS_MAX_WAIT_SEC).
     if collection.genesis_archive:
         try:
-            result = bundle_genesis.drain_next_shard(con, collection, stop=_stop)
+            result = bundle_genesis.drain_next_shard(
+                con, collection, stop=_stop, eager=not _ingest_pending(con))
         except Exception as e:   # noqa: BLE001 — an archive must never crash the worker
             db.log_event(con, "error", "genesis",
                          f"unexpected genesis failure: {type(e).__name__}: {e}"[:400])

@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-08-22.** What exists, what is designed but unbuilt, and
+**Last updated: 2026-08-23.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
 its §17 amendments (1–29) for every place the design was corrected in flight.
@@ -105,6 +105,24 @@ per corpus change, but a first pass over a large corpus is hours). The
 genome collections are parsing/indexing only by operator decision —
 embedding awaits an architectural review ([`dna-search-axes.md`](dna-search-axes.md)).
 
+**2026-08-23 — local genesis archives no longer sweep the shard list.**
+Measured live on wikivec (959 shards, CPU encoder, so the pipeline thread
+owns rdf + fts + genesis): with 200 embed-eligible documents present,
+genesis claimed every round re-reading the next shard oldest-first (~437 MB,
+~10 s, "imported 0 vectors across 0 documents") and rdf/fts got one turn
+per full sweep — **200 documents per 3.2 hours, 13.5 M pending.** Now the
+candidates' own locators name the shards worth reading (an index range over
+`idx_documents_scope`, plan-checked), a shard nobody waits for is never
+opened, documents a read cannot cover (boundary straddlers) are remembered
+as residual per shard, and while rdf/fts still have work a read waits for a
+batch (`GENESIS_MIN_CANDIDATES`) or an age cap (`GENESIS_MAX_WAIT_SEC`).
+`tests/bundles/test_genesis_starvation.py` pins all of it, through the
+worker — keep it passing across any rework of this path. Open follow-on:
+the read still loads a whole shard's `embedding` column for the ~200–1000
+documents it wants; the locators carry row ranges, so reading only those
+row groups would cut it to a fraction (and would make straddlers
+importable by reading both segments).
+
 ## Designed, specified, not built
 
 1. **Peer and collection discovery** — [`p2p-discovery.md`](p2p-discovery.md).
@@ -206,6 +224,18 @@ to reintroduce.
 - **Contact with the real library finds what reasoning does not.** Every
   torrent bug (pad files, asynchronous renames, an always-truthy
   `error_code`) came from running a real swarm, not from reading docs.
+- **"Did work" is not "made progress".** A stage that returns True for a
+  round in which it imported nothing still wins the round from every stage
+  behind it. Genesis's 0-document shard reads were each legitimate
+  bookkeeping and together were the whole behaviour of the collection. When
+  a stage can succeed at doing nothing, the selection that hands it the
+  round must know the difference — and a per-round cost that scales with
+  the size of a LIST (shards) rather than with the work available
+  (candidates) is the quadratic trap again, in a different coat.
+- **A log line per round is a benchmark.** "imported 0 vectors across 0
+  documents" every ~10 s, for hours, was the measurement; nobody had to
+  profile anything. Read the worker log as a time series before reading
+  the code.
 
 ## Conventions
 

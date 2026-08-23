@@ -122,6 +122,17 @@ FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
 # writes each dirty page to the WAL once per batch instead of once per
 # document, and FTS5 buffers its index writes within a transaction.
 RDF_BATCH_DOCS = int(os.getenv("RDF_BATCH_DOCS", "200"))
+
+# Local (corpus-resident) genesis archives read a whole parquet shard —
+# ~437 MB, ~10 s — to import the documents in it that became embed-eligible
+# since the last read. While rdf/fts still have work on the same thread, a
+# shard is read only once it holds at least GENESIS_MIN_CANDIDATES such
+# documents, or once its oldest one has waited GENESIS_MAX_WAIT_SEC — so the
+# read is amortised over a batch instead of paid per fts commit, and no
+# document waits longer than the cap for its free vectors. Once rdf/fts are
+# exhausted every candidate is taken immediately.
+GENESIS_MIN_CANDIDATES = int(os.getenv("GENESIS_MIN_CANDIDATES", "1000"))
+GENESIS_MAX_WAIT_SEC = int(os.getenv("GENESIS_MAX_WAIT_SEC", "600"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
