@@ -10,6 +10,7 @@ CorpusSource Protocol, already stabilized across P0.1/P0.2/P0.3.
 """
 import fnmatch
 import hashlib
+import json
 import shutil
 import threading
 import time
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config
+from .. import db
 from .. import stats
 from ..plugins.base import LicenseClass
 from ..transfer import pool as transfer_pool
@@ -33,6 +35,10 @@ from .transports import REGISTRY
 
 _DRY_RUN_ASSUMED_RATE_BPS = 5_000_000   # ~5 MB/s — a named placeholder; P0.7 has real measurement
 _DISK_HEADROOM = 1.1                     # refuse unless free space clears the estimate by 10%
+# control-table key: what the origin's listing held at the start of the
+# last acquisition pass (files/bytes for the fetched profile) — the honest
+# denominator for the Library's fetched counter while a pass streams
+LISTING_KEY = "acquire_listing"
 
 
 def _apply_filters(files: list[RemoteFile], spec_filters: tuple[str, ...],
@@ -486,6 +492,16 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
 
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     plan = _plan_from_files(con, collection, spec, files)
+    # The SOURCE's own file count, recorded the moment it is known. The
+    # fetch loop below streams — fetch_files rows appear per file as each
+    # is processed — so during a long pass done==total at every instant and
+    # the Library card had no honest denominator ("1414/1414" while the
+    # origin held 1,447). This is a cached observation, not desired state
+    # (invariant 10): each pass overwrites it with what the origin said,
+    # scoped to the profile actually being fetched.
+    db.set_control(con, LISTING_KEY, json.dumps({
+        "files_total": plan.files_total, "bytes_total": plan.bytes_total,
+        "profile": profile, "ts": int(time.time())}))
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls
     # back to the precise listing-derived pending-bytes sum otherwise.

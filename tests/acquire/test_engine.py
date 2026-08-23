@@ -238,6 +238,26 @@ def test_idempotent_rerun_skips_unchanged_files(tmp_path, mock_server):
     assert mock_server.request_count("a.txt") == 1   # never re-fetched
 
 
+def test_pass_records_the_origins_listing_total(tmp_path, mock_server):
+    """The fetch loop streams — fetch_files rows appear per file — so
+    during a long pass done==total at every instant and the Library card
+    had no honest denominator. The engine knows the origin's full listing
+    at pass start (the delta gate walks it); it must RECORD it."""
+    import json
+    for i in range(3):
+        _write_origin_file(mock_server, f"f{i}.txt", b"x" * 10)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    engine.run_acquisition(con, collection, spec, "demo")
+    listing = json.loads(db.get_control(con, engine.LISTING_KEY))
+    assert listing["files_total"] == 3
+    assert listing["bytes_total"] == 30
+    assert listing["profile"] == "demo"
+    assert listing["ts"] > 0
+
+
 # ---------------- resumability (the acceptance criterion) ----------------
 
 def test_kill_mid_acquisition_then_restart_resumes(tmp_path, mock_server):

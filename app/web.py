@@ -412,7 +412,20 @@ def _collection_shelf(collection: collections_mod.Collection,
         active = bool(acquire_claim
                       and time.time() - float(acquire_claim.get("ts", 0))
                       <= claim.STALE_AFTER_SECONDS)
+        # the SOURCE's own file count, recorded by the engine at pass start
+        # (acquire_engine.LISTING_KEY): the honest denominator while the
+        # pass streams — without it, done==total at every instant mid-pass
+        remote_total = 0
+        raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
+        if raw_listing:
+            try:
+                listing = json.loads(raw_listing)
+                if listing.get("profile") == (collection.profile or listing.get("profile")):
+                    remote_total = int(listing.get("files_total") or 0)
+            except (ValueError, TypeError):
+                pass
         fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
+                   "remote_total": max(remote_total, fc["total"] or 0),
                    "active": active}
 
     if last_discover:

@@ -139,6 +139,17 @@ def test_fetched_counter_says_when_a_pass_is_still_running(isolated_config):
                  acquire_claim.CLAIM_KEY))
     assert web._collection_shelf(c, {})["fetched"]["active"] is False
 
+    # ...and the denominator is the ORIGIN's listing total when the engine
+    # has recorded one (LISTING_KEY at pass start), never the streaming
+    # fetch_files count that equals `done` at every instant mid-pass
+    from app.acquire import engine as acquire_engine
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_engine.LISTING_KEY,
+                 _json.dumps({"files_total": 1447, "bytes_total": 1,
+                              "profile": None, "ts": int(time.time())})))
+    fetched = web._collection_shelf(c, {})["fetched"]
+    assert fetched["remote_total"] == 1447
+
 
 def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
     """The pubmed shape: medcpt-pubmed declared, a large rdf/fts backlog.
