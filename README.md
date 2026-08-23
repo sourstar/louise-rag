@@ -134,8 +134,9 @@ away from it.
 
 - **Tier 1 — env** (identity/infrastructure, restart to change): paths, ports,
   `OLLAMA_URL`/`EMBED_URL`/`RERANK_URL`, `EMBED_MODEL`, version bumps
-  (`CHUNK_VERSION`…), `ADMIN_TOKEN`, `NODE_KEY_PATH` (path to the Ed25519
-  node key — the key *location*, never key material).
+  (`CHUNK_VERSION`…), `ADMIN_TOKEN_FILE` (preferred; a path — wins over
+  `ADMIN_TOKEN`), `NODE_KEY_PATH` (path to the Ed25519 node key — the key
+  *location*, never key material).
 - **Tier 2 — files** (desired state, versioned):
   `collections/*.toml` (plugin, profile, embed mode, licence ack) and
   [`platform.toml`](platform.toml.example) (`[bandwidth]` caps + schedule,

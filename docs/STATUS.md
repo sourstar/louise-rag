@@ -3,7 +3,7 @@
 **Last updated: 2026-08-23.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–29) for every place the design was corrected in flight.
+its §17 amendments (1–31) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -159,6 +159,21 @@ importable by reading both segments).
    fused** — a homology ranking and a functional ranking answer different
    questions, and RRF-ing them yields neither. Measure before amending
    anything; there is currently no baseline to judge any model against.
+
+## Invariants review (2026-08-23 — amendments 30, 31)
+
+The ten CLAUDE.md invariants were re-read against what was built. They
+hold, with one violation and several stale sentences: **#10 was inverted
+for `embed_mode`** (TOML parsed and only displayed; the Library's override
+permanent) — fixed, the worker now applies the TOML on restart/add/edit and
+the reference node's TOMLs were written with their effective modes first so
+the deploy changed nothing. Each invariant now says how it is enforced
+(*boot* / *test* / *review*); #7, #8, #9 gained mechanical tests
+(`tests/test_invariant_guards.py`); #8 gained `ADMIN_TOKEN_FILE`; the stale
+`space_id` component list in #1 is a pointer to §3. A short list of
+**engineering rules** joined CLAUDE.md, each a recorded incident. Every
+stdout log line now names its collection. The golden test no longer fails
+on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 

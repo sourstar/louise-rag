@@ -111,7 +111,7 @@
   {% endif %}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
-      <label style="margin:0 0 2px">Embed mode —
+      <label style="margin:0 0 2px">{{ 'Local gap-fill' if c.genesis else 'Embed mode' }} —
         {# which processor this collection's encoder actually spends: the
            GPU is the scarce, contended one; CPU encoders run beside it #}
         <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
@@ -120,7 +120,10 @@
                         else 'a CPU encoder container — runs alongside the GPU without competing' }}">
           {{ c.embed_device|upper }} spending</span>
       </label>
-      <select onchange="setEmbedMode('{{ c.name }}', this.value)">
+      {# Tier-3 override (invariant 10): until restart or a TOML edit; a
+         pre-embedded collection's archive import runs regardless of it #}
+      <select onchange="setEmbedMode('{{ c.name }}', this.value)"
+              title="{{ 'archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. ' if c.genesis else '' }}Runtime override — lasts until the worker restarts or collections/{{ c.name }}.toml changes; set embed_mode in that TOML to keep it.">
         {% for m in ['off','lazy','all'] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>
         {% endfor %}
@@ -218,7 +221,7 @@ async function libDiscover(name,quiet){
 }
 async function setEmbedMode(name,mode){
   try{await postJSON('/admin/library/'+name+'/embed-mode',{mode});
-    toast(name+': embed mode → '+mode+' (worker applies within a round)')}
+    toast(name+': embed mode → '+mode+' until restart (worker applies within a round; set embed_mode in collections/'+name+'.toml to keep it)')}
   catch(e){toast('embed mode failed: '+e);location.reload()}
 }
 async function libReset(name,stage){

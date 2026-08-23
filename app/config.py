@@ -82,10 +82,29 @@ NODE_KEY_PATH = Path(_node_key_path) if _node_key_path else None
 
 # Single admin token gating librarian (/admin) routes (architecture-v2.md
 # §14: "authenticated /admin API, strictly separate from the OpenAI-
-# compatible query endpoint"). Tier 1 identity, env only (CLAUDE.md
-# invariant 8: secrets by filesystem/env, never DB/logs). Unset = admin
-# routes refuse everything — fail closed, never a default-open backdoor.
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+# compatible query endpoint"). Tier 1 identity. Unset = admin routes refuse
+# everything — fail closed, never a default-open backdoor.
+#
+# Two ways to supply it, and ADMIN_TOKEN_FILE (a PATH) wins: invariant 8
+# wants secrets referenced by filesystem path, never carried as a value that
+# `docker inspect`, a compose dump or a transcript can expose — the token
+# leaked that way once on the reference deployment. ADMIN_TOKEN (the value
+# itself) stays supported for existing deployments. The material is read
+# once here and never logged; a set-but-unreadable file is a startup error
+# naming the path, not a silently disabled admin.
+def _resolve_admin_token(env) -> str:
+    path = env.get("ADMIN_TOKEN_FILE")
+    if path:
+        try:
+            return Path(path).read_text(encoding="utf-8").strip()
+        except OSError as e:
+            raise RuntimeError(
+                f"ADMIN_TOKEN_FILE is set but unreadable: {path} "
+                f"({type(e).__name__})") from None
+    return env.get("ADMIN_TOKEN", "")
+
+
+ADMIN_TOKEN = _resolve_admin_token(os.environ)
 
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))

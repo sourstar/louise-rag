@@ -1021,6 +1021,23 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
         thread.join(timeout=max(0.0, deadline - time.time()))
 
 
+def _apply_tier2_embed_mode(con, collection, reason: str) -> None:
+    """On restart, on add, and on a TOML edit the file wins (invariant 10):
+    the Library's runtime override is replaced by the TOML's `embed_mode`
+    (or the default when the TOML is silent), and the event log says so —
+    an operator who flipped a mode from the UI sees why it changed back and
+    where to make it permanent."""
+    replaced = db.apply_desired_embed_mode(con, collection)
+    if replaced is not None:
+        desired = collection.embed_mode_default or collections_mod.DEFAULT_EMBED_MODE
+        source = (f"collections/{collection.name}.toml" if collection.embed_mode_default
+                  else "the default — the TOML sets none")
+        db.log_event(con, "info", "control",
+                     f"embed mode {replaced!r} -> {desired!r} on {reason}: the "
+                     f"file wins ({source}); the Library's override lasts until "
+                     f"the next restart or TOML edit")
+
+
 def _sync_collections(all_collections, cons, last_discover, pipeline: bool = False):
     """Hot-reload collections each round: a collections/*.toml added or
     removed while the worker runs takes effect within one round — no restart.
@@ -1046,6 +1063,8 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         prev = previous_by_name.get(kept.name)
         if prev is None or kept.name not in cons:
             continue
+        if prev.embed_mode_default != kept.embed_mode_default:
+            _apply_tier2_embed_mode(cons[kept.name], kept, "TOML edit")
         if (prev.acquire_enabled, prev.license_ack, prev.profile) != \
                 (kept.acquire_enabled, kept.license_ack, kept.profile):
             db.log_event(cons[kept.name], "info", "worker",
@@ -1069,6 +1088,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         cons[added.name] = db.connect(added)
         db.ensure_browse_index(cons[added.name])
         db.ensure_catalog_rowids(cons[added.name])
+        _apply_tier2_embed_mode(cons[added.name], added, "add")
         db.log_event(cons[added.name], "info", "worker",
                      f"collection {added.name!r} added — discovering")
         stale = bundle_ledger.sweep_stale(cons[added.name])
@@ -1135,6 +1155,7 @@ def run_forever():
         db.log_event(cons[c.name], "info", "worker", "worker started")
         db.ensure_browse_index(cons[c.name])
         db.ensure_catalog_rowids(cons[c.name])
+        _apply_tier2_embed_mode(cons[c.name], c, "restart")
         if c.embed is None:
             db.log_event(cons[c.name], "info", "worker",
                          f"embed recipe comes from env (Tier-1 fallback) — "

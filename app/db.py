@@ -209,13 +209,24 @@ CREATE TABLE IF NOT EXISTS fetch_files (
 CREATE INDEX IF NOT EXISTS idx_fetch_files_pending ON fetch_files(source_id, fetch_done);
 """
 
+class ManifestConnection(sqlite3.Connection):
+    """A manifest connection that knows WHICH collection it belongs to, so
+    every log line written through it can say so. Seven collections share
+    one worker stdout; `[info:fts] indexed 200 documents` could be any of
+    them, which is useless exactly when one of them is the problem. A
+    plain sqlite3.Connection accepts no attributes, hence the subclass."""
+    collection_name: str = ""
+
+
 def connect(collection=None) -> sqlite3.Connection:
     if collection is None:
         collection = collections_mod.default_collection()
     collection.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     collection.fts_dir.mkdir(parents=True, exist_ok=True)
     collection.lance_dir.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None)
+    con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None,
+                          factory=ManifestConnection)
+    con.collection_name = collection.name
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
@@ -312,7 +323,7 @@ DEFAULT_SCOPE = {
     "book_ids": [],         # explicit allow-list, [] = no restriction
     "limit": 0,             # 0 = unlimited; else cap total in-scope books
     "sample_per_lang": 0,   # 0 = off; else pick N lowest ids per language
-    "embed_mode": "lazy",   # off | lazy | all
+    "embed_mode": collections_mod.DEFAULT_EMBED_MODE,   # off | lazy | all
 }
 
 def get_control(con, key, default=None):
@@ -339,6 +350,28 @@ def set_scope(con, scope: dict):
     merged.update({k: v for k, v in scope.items() if k in DEFAULT_SCOPE})
     set_control(con, "scope", json.dumps(merged))
     return merged
+
+
+def apply_desired_embed_mode(con, collection) -> str | None:
+    """Make the collection's Tier-2 `embed_mode` (its TOML, else the default)
+    the effective one. Returns the Tier-3 value it replaced, or None when
+    nothing changed.
+
+    Invariant 10: TOML = desired state, DB = runtime override that does NOT
+    survive restart. The Library's embed-mode control writes the scope in the
+    control table; without this, that override was permanent and the TOML
+    value was parsed and only ever displayed — Tier 3 acting as desired
+    state and Tier 2 decorative. The worker calls this at boot and whenever
+    the TOML value changes; the override remains useful between those.
+    """
+    desired = collection.embed_mode_default or collections_mod.DEFAULT_EMBED_MODE
+    scope = get_scope(con)
+    current = scope.get("embed_mode")
+    if current == desired:
+        return None
+    scope["embed_mode"] = desired
+    set_scope(con, scope)
+    return current
 
 def node_id(con) -> str:
     """A stable, unique identity for this node, generated once and persisted.
@@ -567,9 +600,15 @@ def adopt_node_control(target_con, other_cons) -> dict[str, str]:
 # ---------------- events ----------------
 
 def log_event(con, level, stage, message, doc_uid=None):
+    """stdout line: `HH:MM:SS [<collection> level:stage #uid] message`. The
+    collection comes from the connection (ManifestConnection), so no caller
+    has to pass it and no line can omit it; connections opened some other
+    way (tests, tools) simply print without it."""
     stamp = time.strftime("%H:%M:%S")
     tag = f" #{doc_uid}" if doc_uid else ""
-    print(f"{stamp} [{level}:{stage}{tag}] {message}", flush=True)
+    who = getattr(con, "collection_name", "")
+    prefix = f"{who} " if who else ""
+    print(f"{stamp} [{prefix}{level}:{stage}{tag}] {message}", flush=True)
     try:
         con.execute(
             "INSERT INTO events(ts,level,stage,doc_uid,message) VALUES(?,?,?,?,?)",
@@ -584,7 +623,7 @@ def log_event(con, level, stage, message, doc_uid=None):
         # acquire thread's ERROR HANDLER then died in this very function,
         # and a survivable lock contention became a dead thread with a
         # stack trace. The stdout line above already carried the message.
-        print(f"{stamp} [warn:db] event not persisted ({e}): "
+        print(f"{stamp} [{prefix}warn:db] event not persisted ({e}): "
               f"[{level}:{stage}] {message[:200]}", flush=True)
 
 def log_query(con, endpoint, query, mode, k, timings, n_results, books):

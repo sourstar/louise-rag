@@ -50,8 +50,22 @@ def _run_pipeline(con, collection):
     return stats, chunks_by_native
 
 
+def _pin_fixture_mtimes(corpus_dir: Path) -> None:
+    """The golden records each text file's mtime as discovery saw it. git
+    does not preserve mtimes, so on a fresh clone every fixture file carries
+    the clone time and the `mtime` column could never match — the test
+    failed on every new machine for an environmental reason. Pin the copied
+    fixture's mtimes to the golden's values: what the pipeline then records
+    is deterministic, and the comparison tests the pipeline, not the clone."""
+    import os
+    for book in GOLDEN["books"]:
+        txt = corpus_dir / str(book["id"]) / book["txt_name"]
+        os.utime(txt, (book["mtime"], book["mtime"]))
+
+
 def test_golden_gutenberg_mini(isolated_config):
     collection = collections_mod.default_collection()
+    _pin_fixture_mtimes(collection.corpus_dir)
     con = db.connect(collection)
 
     stats, chunks_by_native = _run_pipeline(con, collection)

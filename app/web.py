@@ -839,7 +839,11 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     """Per-collection GPU-spending control (off | lazy | all) — each
     collection's manifest carries its own scope, so pausing gutenberg's
     backfill never touches pubmed's, and vice versa. The worker re-reads
-    scope every round."""
+    scope every round.
+
+    This is a Tier-3 runtime override (invariant 10): it lasts until the
+    worker next applies the TOML — a restart, or an edit of `embed_mode` in
+    collections/<name>.toml. The TOML is where a permanent choice belongs."""
     if body.mode not in ("off", "lazy", "all"):
         raise HTTPException(400, "mode must be off | lazy | all")
     collection = _collection_or_404(name)

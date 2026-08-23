@@ -61,8 +61,9 @@
       space pin), model-endpoint health, and the live event log.</td></tr>
   </table>
   <p class="note">
-    Admin pages need the node's <b>ADMIN_TOKEN</b> (an environment variable
-    set at install). Enter it once at <a href="/admin/login">/admin/login</a>
+    Admin pages need the node's admin token (set at install — preferably
+    as a file named by <b>ADMIN_TOKEN_FILE</b>, a path; the <b>ADMIN_TOKEN</b>
+    env value still works). Enter it once at <a href="/admin/login">/admin/login</a>
     — a 30-day cookie keeps the browser session authenticated. If the token
     is unset, admin areas are locked entirely (fail-closed); Ask keeps
     working regardless. Navigating to an admin page without a session simply
@@ -95,6 +96,16 @@
     backfill everything in scope. The priority queue always outranks the
     backfill, so a user-requested document embeds first. Set the mode via
     <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
+  </p>
+  <p class="note">
+    The Library's embed-mode control is a <b>runtime override</b> (Tier 3):
+    it lasts until the worker next applies the collection's TOML — a
+    restart, or an edit of <code>embed_mode = "off" | "lazy" | "all"</code>
+    in <code>collections/&lt;name&gt;.toml</code>, which is where a permanent
+    choice belongs (Tier 2). A collection whose TOML is silent returns to
+    <b>lazy</b>. For a pre-embedded collection (a genesis archive) the mode
+    only governs <b>local gap-fill</b> of what the archive cannot cover —
+    archive import runs regardless.
   </p>
   <p class="note">
     Node-wide, the Library page offers three modes. <b>run everything</b> is

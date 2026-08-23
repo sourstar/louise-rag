@@ -132,12 +132,20 @@ def recipe_for(collection) -> EmbedRecipe:
     return env_recipe()
 
 
+# What the worker may SPEND on a collection's local encoder (never what
+# retrieval uses — amendment 6). `embed_mode` in the collection TOML is the
+# Tier-2 desired state; the Library's override is Tier 3 and lasts until the
+# worker next applies the TOML (restart, or a TOML edit) — invariant 10.
+EMBED_MODES = ("off", "lazy", "all")
+DEFAULT_EMBED_MODE = "lazy"
+
+
 @dataclass(frozen=True)
 class Collection:
     name: str
     plugin: str
     profile: str | None
-    embed_mode_default: str | None
+    embed_mode_default: str | None      # TOML `embed_mode`; None = DEFAULT_EMBED_MODE
     corpus_dir: Path
     manifest_path: Path
     fts_dir: Path
@@ -201,12 +209,16 @@ def _load_one(path: Path) -> Collection:
     corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
 
     embed = parse_recipe(raw.get("embed"), where=str(path))
+    embed_mode = raw.get("embed_mode")
+    if embed_mode is not None and embed_mode not in EMBED_MODES:
+        raise ValueError(f"{path}: embed_mode must be one of "
+                         f"{' | '.join(EMBED_MODES)}, got {embed_mode!r}")
 
     return Collection(
         name=name,
         plugin=plugin,
         profile=raw.get("profile"),
-        embed_mode_default=raw.get("embed_mode"),
+        embed_mode_default=embed_mode,
         corpus_dir=corpus_dir,
         manifest_path=_resolve("manifest", config.DATA_DIR / "manifest.db"),
         fts_dir=_resolve("fts", config.DATA_DIR / "fts"),

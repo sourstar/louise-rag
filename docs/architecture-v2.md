@@ -855,3 +855,37 @@ design taste:
     and its documents re-chunked (fts + embed) before it will boot. Doing
     it before the enwiki backfill runs is the difference between minutes
     and months, which is why it was done now.
+
+Amended after the invariants review (2026-08-23), evidence in STATUS.md and
+the live deployment:
+
+30. **CLAUDE.md — the invariants re-read against what was built.** Each
+    invariant now names how it is enforced (*boot* / *test* / *review*),
+    because the ones enforced by review alone were the ones that drifted.
+    Corrections: (1) the inline list of `space_id` components was stale
+    (amendments 2, 14, 28) and is replaced by a pointer to §3; (2) gains the
+    mark-after-commit ordering and the bounded-unit note; (3) names the
+    chunker, not a global version knob; (4) flags the pending third fusion
+    category from the DNA axes work; (6) records that `catalog_fts` is
+    rowid-keyed and nothing VACUUMs; (8) extends from key material to
+    secrets and adds `ADMIN_TOKEN_FILE` (path wins over value; a
+    set-but-unreadable file is a startup error naming the path); (9) records
+    that terms text is byte-exact; (10) gains the concrete rule that every
+    Tier-3 override expires or is reset when the worker applies the files.
+    A short list of **engineering rules** joins CLAUDE.md — each one a
+    recorded incident: per-round cost scales with work not lists; "did work"
+    is not "made progress"; selection queries are plan-checked; deferral is
+    not failure; caches key on paths not names; telemetry from another
+    thread; every log line names its collection; measure first.
+31. **§7 / §14 — `embed_mode` obeys the tiers.** The TOML's `embed_mode`
+    was parsed and only displayed; the Library's override persisted across
+    restarts with no expiry — Tier 2 decorative, Tier 3 acting as desired
+    state. Now `db.apply_desired_embed_mode` makes the TOML (or the default,
+    `lazy`) effective on restart, on add and on a TOML edit, logging the
+    replaced override and where to make a choice permanent; the Library
+    says the override lasts until then, and labels the control "local
+    gap-fill" on a collection with a genesis archive, whose import runs
+    regardless of it (amendment 6). The reference deployment's TOMLs were
+    written with their effective modes first, so the change was a no-op
+    there. Tests: `tests/test_config_tiers_embed_mode.py`,
+    `tests/test_invariant_guards.py`.
