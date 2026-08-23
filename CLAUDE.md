@@ -78,6 +78,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
 - Caches, cursors and bookkeeping key on physical identity (a path), never
   on a name. Two objects can share a name and point at different files.
 - Telemetry is published by someone other than the thread doing the work.
+- A writer that reads first takes `BEGIN IMMEDIATE`. Under WAL a deferred
+  transaction that has read fails its upgrade to write INSTANTLY if anyone
+  committed meanwhile — the busy handler never runs. Long non-DB work
+  (an encoder call, a fetch) stays outside the transaction entirely.
 - Every log line names its collection (db.ManifestConnection does it).
 - Measure before optimising; the worker log read as a time series is the
   first benchmark. Read it before reading the code.

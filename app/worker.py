@@ -809,17 +809,38 @@ def _execute_step(con, collection, stage, row) -> bool:
     document is left completely untouched, and the caller stops working this
     collection for the round instead of marching through every remaining
     document against an endpoint that is not answering.
+
+    TRANSACTIONS. rdf and fts run under `BEGIN IMMEDIATE`: they read, then
+    write, and a deferred `BEGIN` that reads first can fail its upgrade to
+    write INSTANTLY (WAL snapshot conflict — the busy handler never runs)
+    whenever another connection committed in between. That was invisible
+    while every writer of a manifest sat on one thread; with the discovery
+    scan on its own thread (committing a batch every second or so) fts was
+    deferred six times for every success. The RESERVED lock is held for the
+    step — seconds for a batch — and contenders wait busy_timeout instead of
+    failing. The embed step opens NO outer transaction: its long part is the
+    encoder call, and holding the manifest's write lock across minutes of
+    network I/O would stall the web process and every other writer; instead
+    `upsert_book` embeds outside any lock and takes `vector_write_lock`
+    (`BEGIN IMMEDIATE`) for the Lance delete+add alone — which it silently
+    did NOT do before, because the outer deferred transaction made
+    `vector_write_lock` yield without taking a lock at all. The SQL writes
+    that follow autocommit; a crash between them re-embeds the document
+    (delete-then-insert, invariant 2).
     """
     t0 = time.time()
-    con.execute("BEGIN")
+    if stage != "embed":
+        con.execute("BEGIN IMMEDIATE")
     try:
         STAGES[stage](con, row, collection)
         if stage == "embed":
             con.execute("DELETE FROM embed_queue WHERE uid=?", (row["uid"],))
-        con.execute("COMMIT")
+        if con.in_transaction:
+            con.execute("COMMIT")
     except Exception as e:
         try:
-            con.execute("ROLLBACK")
+            if con.in_transaction:
+                con.execute("ROLLBACK")
         except sqlite3.OperationalError:
             pass        # nothing to roll back, or still contended: not fatal
         if manifest_contended(e):

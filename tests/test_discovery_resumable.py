@@ -280,6 +280,53 @@ def test_bare_discover_without_an_orchestrator_still_saves_its_cursor(corpus, tm
     assert list(EmbeddedSource().discover(state)) == []
 
 
+def test_scan_and_pipeline_steps_write_concurrently_without_a_deferral_storm(
+        tmp_path, monkeypatch):
+    """Live, the first time the scan ran beside the pipeline thread: fts was
+    deferred six times for every success and the scan died with 'database
+    is locked'. Both sides opened DEFERRED transactions (read, then write);
+    in WAL a commit by the other side between those phases fails the
+    upgrade instantly. Both now take BEGIN IMMEDIATE (the embed step takes
+    none and lets vector_write_lock do it), so contenders WAIT. Here: a
+    6,000-ref scan on one thread, a tight loop of read-then-write steps on
+    another — every step must succeed and the scan must complete."""
+    fake = _FakeSource(6_000)
+    monkeypatch.setitem(collections_mod.PLUGIN_REGISTRY, "fake", fake)
+    c = collections_mod.Collection(
+        name="fk", plugin="fake", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "fk" / "manifest.db",
+        fts_dir=tmp_path / "fk" / "fts", lance_dir=tmp_path / "fk" / "lancedb")
+    con_step = db.connect(c)
+    # native_id 7, not 0: _execute_step logs every 500th id, and a log per
+    # step would make this a test of the event table
+    con_step.execute("INSERT INTO documents(uid,source,native_id,path,mtime,size) "
+                     "VALUES('fake:7','fake','7','/x/7',1,1)")   # as the scan will see it
+
+    def read_then_write(con, row, collection):
+        con.execute("SELECT COUNT(*) FROM documents").fetchone()
+        time.sleep(0.002)
+        con.execute("UPDATE documents SET retries=retries+1 WHERE uid='fake:7'")
+    monkeypatch.setitem(worker.STAGES, "rdf", read_then_write)
+
+    result = {}
+
+    def scan():   # connections are thread-affine: open it on the scan thread
+        result.update(discovery.sync_collection(db.connect(c), c))
+    t = threading.Thread(target=scan)
+    t.start()
+    row = con_step.execute("SELECT * FROM documents WHERE uid='fake:7'").fetchone()
+    outcomes = []
+    while t.is_alive():
+        outcomes.append(worker._execute_step(con_step, c, "rdf", row))
+    t.join(60)
+    assert result.get("seen") == 6_000 and result.get("added") == 5_999, result  # one pre-existed
+    assert outcomes and all(outcomes), \
+        f"{outcomes.count(False)} of {len(outcomes)} steps deferred beside the scan"
+    deferred = con_step.execute(
+        "SELECT COUNT(*) FROM events WHERE message LIKE '%deferred%'").fetchone()[0]
+    assert deferred == 0
+
+
 # --- 3. off-thread ----------------------------------------------------------
 
 def test_the_scan_runs_beside_the_pipeline_thread(corpus, tmp_path, monkeypatch):

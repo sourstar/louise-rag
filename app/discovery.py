@@ -50,14 +50,6 @@ def _clear_cursor_if_relocated(con, collection, root) -> bool:
 DISCOVER_BATCH_REFS = 2000
 
 
-def _commit_batch(con, state, i: int) -> None:
-    if con.in_transaction:
-        con.execute("COMMIT")
-    state.committed = i
-    for hook in state.on_commit:
-        hook()
-
-
 def sync_collection(con, collection, *, stop=None) -> dict:
     """Enumerate the corpus and upsert what changed. Streams; commits every
     DISCOVER_BATCH_REFS refs and tells the plugin (DiscoverState.committed,
@@ -107,20 +99,92 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     # transaction per DISCOVER_BATCH_REFS, which makes an interrupted giant
     # scan resumable: rows written so far stand, and the plugin's cursor is
     # only advanced past containers whose rows are committed.
-    added = changed = missing = container_errors = relocated = 0
+    counts = {"seen": 0, "added": 0, "changed": 0, "missing": 0,
+              "container_errors": 0, "relocated": 0}
     interrupted = False
-    i = 0
+    applied = 0                 # refs durably written so far
+    batch: list[DocRef] = []
+    batch_uids: set[str] = set()
     refs = plugin.discover(state)
-    for i, ref in enumerate(refs, start=1):
-        state.received = i
+    for ref in refs:
         if stop is not None and stop.is_set():
             interrupted = True
-            i -= 1                      # this ref is NOT applied; do not count it
-            state.received = i
-            refs.close() if hasattr(refs, "close") else None
+            if hasattr(refs, "close"):
+                refs.close()
             break
-        if not con.in_transaction:
-            con.execute("BEGIN")
+        uid = f"{ref.source_id}:{ref.native_id}"
+        # A batch is decided against the manifest BEFORE its writes, so two
+        # refs for one uid in the same batch (a PubMed revision following
+        # its baseline record, a tombstone after the record it retracts)
+        # would both plan as new. Flushing first keeps last-write-wins by
+        # arrival order exact: the later ref sees the earlier one committed.
+        if batch and (uid in batch_uids or len(batch) >= DISCOVER_BATCH_REFS):
+            if not _apply_batch(con, plugin, batch, counts, stop, wait=True):
+                interrupted = True      # stop arrived while the manifest was contended
+                batch = []
+                break
+            applied += len(batch)
+            _signal_committed(state, applied)
+            batch, batch_uids = [], set()
+        batch.append(ref)
+        batch_uids.add(uid)
+        state.received = applied + len(batch)
+    if batch:
+        # the tail (or the batch a stop request cut short): one attempt if
+        # stopping — a contended manifest must not hold SIGTERM past its
+        # grace; what is not committed is simply re-enumerated next scan
+        if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted):
+            applied += len(batch)
+            _signal_committed(state, applied)
+    if not interrupted:
+        apply_scope(con)
+    stats = {"seen": counts["seen"], "added": counts["added"],
+             "changed": counts["changed"], "missing_txt": counts["missing"],
+             "secs": round(time.time() - t0, 1)}
+    if counts["relocated"]:
+        stats["relocated"] = counts["relocated"]
+    if counts["container_errors"]:
+        stats["container_errors"] = counts["container_errors"]
+    if interrupted:
+        stats["interrupted"] = True
+        db.log_event(con, "info", "discover",
+                     f"discovery interrupted (stop requested) — progress committed, "
+                     f"resumes next scan {stats}")
+    else:
+        db.log_event(con, "info", "discover", f"discovery done {stats}")
+    return stats
+
+
+def _signal_committed(state, n: int) -> None:
+    state.committed = n
+    for hook in state.on_commit:
+        hook()
+
+
+def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool) -> bool:
+    """Apply one batch of refs to the manifest. Two phases, so the write
+    lock is held only for the writes:
+
+    1. DECIDE, holding nothing: read each document's row, and for one whose
+       (mtime, size) moved call fetch() to hash it — seconds on a gz
+       container or a parquet shard, which must never sit inside a
+       transaction that rdf/fts are waiting on.
+    2. WRITE under `BEGIN IMMEDIATE` — the RESERVED lock taken up front so a
+       concurrent commit makes us WAIT (busy_timeout) rather than fail: a
+       deferred BEGIN that had already read would fail its upgrade
+       instantly (WAL snapshot conflict), which is exactly what happened the
+       first time this scan ran beside the pipeline thread. An embed step
+       elsewhere can hold the lock longer than busy_timeout, so a lock
+       failure is retried (with `wait`) until it succeeds or `stop` says
+       otherwise; `counts` are merged only on commit.
+
+    Returns False only when the batch could not be committed (stop while
+    contended, or `wait=False`); the caller then treats the scan as
+    interrupted — nothing half-applied, nothing in the cursor past it."""
+    now = int(time.time())
+    local = {k: 0 for k in counts}
+    writes: list[tuple[str, tuple]] = []
+    for ref in batch:
         uid = f"{ref.source_id}:{ref.native_id}"
         if ref.scope == "container":
             # A container that could not be enumerated is a scan REPORT, not
@@ -130,52 +194,43 @@ def sync_collection(con, collection, *, stop=None) -> dict:
             # Logging it keeps it visible (the System page merges every
             # collection's events) and lets a later clean scan heal it by
             # simply not reporting it again.
-            container_errors += 1
+            local["container_errors"] += 1
             db.log_event(con, "warn", "discover",
                          f"container not enumerable: {ref.error}", None)
             continue      # a scan report is not a document, so it is not "seen"
-        seen += 1
+        local["seen"] += 1
         if ref.error:
-            missing += 1
-            con.execute(
+            local["missing"] += 1
+            writes.append((
                 "INSERT INTO documents(uid,source,native_id,path,error,updated_at) "
                 "VALUES(?,?,?,?,?,?) "
                 "ON CONFLICT(uid) DO UPDATE SET error=excluded.error",
-                (uid, ref.source_id, ref.native_id, ref.locator, ref.error,
-                 int(time.time())))
-        else:
-            txt_name = ref.extra.get("txt_name")
-            row = con.execute(
-                "SELECT path,mtime,size,txt_hash FROM documents WHERE uid=?",
-                (uid,)).fetchone()
-            if row is None:
-                con.execute(
-                    "INSERT INTO documents(uid,source,native_id,path,txt_name,mtime,size,"
-                    "updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (uid, ref.source_id, ref.native_id, ref.locator, txt_name,
-                     ref.mtime, ref.size, int(time.time())))
-                added += 1
-            elif row["mtime"] != ref.mtime or row["size"] != ref.size:
-                # fetch() can take seconds (a gz container decompressed from
-                # its start, a parquet shard): never hold the manifest's
-                # write lock across it — rdf/fts on the pipeline thread
-                # would stall behind this scan. Refs 1..i-1 are applied;
-                # commit them, fetch, reopen.
-                _commit_batch(con, state, i - 1)
-                raw = plugin.fetch(ref)
-                con.execute("BEGIN")
-                if raw.raw_hash != row["txt_hash"]:
-                    con.execute(
-                        "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,txt_hash=?,"
-                        "rdf_done=0,fts_done=0,embed_done=0,summary_done=0,error=NULL,"
-                        "retries=0,updated_at=? WHERE uid=?",
-                        (ref.locator, txt_name, ref.mtime, ref.size, raw.raw_hash,
-                         int(time.time()), uid))
-                    changed += 1
-                else:
-                    con.execute("UPDATE documents SET mtime=?,size=? WHERE uid=?",
-                                (ref.mtime, ref.size, uid))
-            elif row["path"] != ref.locator:
+                (uid, ref.source_id, ref.native_id, ref.locator, ref.error, now)))
+            continue
+        txt_name = ref.extra.get("txt_name")
+        row = con.execute(
+            "SELECT path,mtime,size,txt_hash FROM documents WHERE uid=?",
+            (uid,)).fetchone()
+        if row is None:
+            writes.append((
+                "INSERT INTO documents(uid,source,native_id,path,txt_name,mtime,size,"
+                "updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (uid, ref.source_id, ref.native_id, ref.locator, txt_name,
+                 ref.mtime, ref.size, now)))
+            local["added"] += 1
+        elif row["mtime"] != ref.mtime or row["size"] != ref.size:
+            raw = plugin.fetch(ref)                 # no lock held here
+            if raw.raw_hash != row["txt_hash"]:
+                writes.append((
+                    "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,txt_hash=?,"
+                    "rdf_done=0,fts_done=0,embed_done=0,summary_done=0,error=NULL,"
+                    "retries=0,updated_at=? WHERE uid=?",
+                    (ref.locator, txt_name, ref.mtime, ref.size, raw.raw_hash, now, uid)))
+                local["changed"] += 1
+            else:
+                writes.append(("UPDATE documents SET mtime=?,size=? WHERE uid=?",
+                               (ref.mtime, ref.size, uid)))
+        elif row["path"] != ref.locator:
                 # RELOCATED, not changed. The locator is an absolute path into
                 # the corpus, so remounting a dataset somewhere else — a
                 # rename, a move to another pool — invalidates every stored
@@ -194,30 +249,39 @@ def sync_collection(con, collection, *, stop=None) -> dict:
                 # thing wrong was where we were looking, and a document
                 # blocked for that reason should unblock itself rather than
                 # wait for someone to press a button.
-                con.execute(
-                    "UPDATE documents SET path=?,txt_name=?,error=NULL,retries=0,"
-                    "updated_at=? WHERE uid=?",
-                    (ref.locator, txt_name, int(time.time()), uid))
-                relocated += 1
-        if i % DISCOVER_BATCH_REFS == 0:
-            _commit_batch(con, state, i)
+            writes.append((
+                "UPDATE documents SET path=?,txt_name=?,error=NULL,retries=0,"
+                "updated_at=? WHERE uid=?",
+                (ref.locator, txt_name, now, uid)))
+            local["relocated"] += 1
 
-    _commit_batch(con, state, i)        # the tail batch; the last on_commit
-    apply_scope(con)
-    stats = {"seen": seen, "added": added, "changed": changed,
-             "missing_txt": missing, "secs": round(time.time() - t0, 1)}
-    if relocated:
-        stats["relocated"] = relocated
-    if container_errors:
-        stats["container_errors"] = container_errors
-    if interrupted:
-        stats["interrupted"] = True
-        db.log_event(con, "info", "discover",
-                     f"discovery interrupted (stop requested) — progress committed, "
-                     f"resumes next scan {stats}")
-    else:
-        db.log_event(con, "info", "discover", f"discovery done {stats}")
-    return stats
+    waited = False
+    while True:
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            for sql, params in writes:
+                con.execute(sql, params)
+            con.execute("COMMIT")
+            break
+        except sqlite3.OperationalError as e:
+            try:
+                if con.in_transaction:
+                    con.execute("ROLLBACK")
+            except sqlite3.OperationalError:
+                pass
+            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                raise
+            if not wait or (stop is not None and stop.is_set()):
+                return False
+            if not waited:
+                db.log_event(con, "warn", "discover",
+                             f"discovery waiting for the manifest ({e}); the batch "
+                             f"is intact and will be retried")
+                waited = True
+            time.sleep(2)
+    for k, v in local.items():
+        counts[k] += v
+    return True
 
 
 def apply_scope(con):
