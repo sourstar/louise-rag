@@ -30,6 +30,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import asdict
 from pathlib import Path
 
@@ -215,7 +216,18 @@ _COUNTS_TTL_S = 120.0
 
 _counts_cache: dict[str, tuple[float, dict]] = {}
 _counts_lock = threading.Lock()
-_counts_refreshing: set[str] = set()
+# in-flight refresh per collection, WITH its start time: a refresh thread
+# that hangs (or dies un-noticed) must not hold the guard forever, or the
+# counters freeze at an ever-growing age with no refresh ever starting
+_counts_refreshing: dict[str, float] = {}
+_COUNTS_REFRESH_ABANDON_S = 600.0
+# a cache entry that cannot be refreshed (every attempt failing) is dropped
+# once it is this stale, so the next viewer pays the cold scan and sees the
+# truth instead of a frozen number of unbounded age
+_COUNTS_MAX_AGE_S = 1800.0
+# how long a COLD page view waits for the first scan before rendering
+# "counting…" instead — small manifests answer well inside this
+_COUNTS_COLD_WAIT_S = 2.0
 
 
 def _document_counts_query(collection) -> dict:
@@ -262,9 +274,15 @@ def _counts_key(collection) -> str:
     return str(collection.manifest_path)
 
 
-def _document_counts(collection) -> tuple[dict, float]:
+def _document_counts(collection) -> tuple[dict | None, float]:
     """(counts, age_seconds). Serves a cached value immediately and refreshes
-    behind it; only a cold cache blocks the caller."""
+    behind it. A COLD cache no longer blocks for long: seven collections at
+    ~25 s of full scan each made the first Library view after a restart a
+    minute-plus hang — indistinguishable from a stuck page, on the page
+    whose job is to show that things move. Cold starts the refresh and
+    waits at most _COUNTS_COLD_WAIT_S for it — a small manifest answers
+    within that and behaves as always; a 40M-row one returns (None, 0) and
+    the card renders an honest "counting…" until the scan lands."""
     name = _counts_key(collection)
     now = time.time()
     with _counts_lock:
@@ -274,22 +292,30 @@ def _document_counts(collection) -> tuple[dict, float]:
         if now - at > _COUNTS_TTL_S:
             _refresh_counts_async(collection)
         return counts, now - at
-
-    counts = _document_counts_query(collection)      # cold: the one slow path
-    with _counts_lock:
-        _counts_cache[name] = (time.time(), counts)
-    return counts, 0.0
+    _refresh_counts_async(collection)
+    deadline = time.time() + _COUNTS_COLD_WAIT_S
+    while time.time() < deadline:
+        with _counts_lock:
+            entry = _counts_cache.get(name)
+        if entry is not None:
+            return entry[1], 0.0
+        time.sleep(0.05)
+    return None, 0.0
 
 
 def _refresh_counts_async(collection) -> None:
     """At most one refresh in flight per collection — without the guard, a
     page that is slow to load invites a reload, and every reload would start
-    another 12-second scan of the same table."""
+    another 12-second scan of the same table. The guard expires
+    (_COUNTS_REFRESH_ABANDON_S): a refresh thread that hangs must not stop
+    every future refresh, which would freeze the counters for good."""
     name = _counts_key(collection)
+    now = time.time()
     with _counts_lock:
-        if name in _counts_refreshing:
+        started = _counts_refreshing.get(name)
+        if started is not None and now - started < _COUNTS_REFRESH_ABANDON_S:
             return
-        _counts_refreshing.add(name)
+        _counts_refreshing[name] = now
 
     def _run():
         try:
@@ -297,10 +323,20 @@ def _refresh_counts_async(collection) -> None:
             with _counts_lock:
                 _counts_cache[name] = (time.time(), counts)
         except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
-            pass
+            # ...but never silently: a refresh that fails EVERY time froze
+            # the Library's counters at an ever-growing age with nothing in
+            # any log to say why. stdout reaches `docker logs`; and once the
+            # entry is too stale to be worth anything, drop it so the next
+            # viewer pays the cold scan and sees the truth.
+            print(f"counts refresh failed for {name}:\n"
+                  f"{traceback.format_exc()[:1200]}", flush=True)
+            with _counts_lock:
+                entry = _counts_cache.get(name)
+                if entry is not None and time.time() - entry[0] > _COUNTS_MAX_AGE_S:
+                    del _counts_cache[name]
         finally:
             with _counts_lock:
-                _counts_refreshing.discard(name)
+                _counts_refreshing.pop(name, None)
 
     threading.Thread(target=_run, name=f"counts:{name}", daemon=True).start()
 
@@ -339,6 +375,11 @@ def _collection_shelf(collection: collections_mod.Collection,
     # collection, reused by the Stats page, refreshed behind the request
     # rather than in front of it.
     counts, counts_age = _document_counts(collection)
+    counts_pending = counts is None
+    if counts_pending:
+        counts = {k: 0 for k in ("total", "in_scope", "rdf_done", "fts_done",
+                                 "embed_done", "blocked", "unindexable",
+                                 "embed_ready", "chunks_pending", "docs_unindexed")}
     # How many of the "awaiting" documents are in fact inside the encoder
     # right now. A document commits only when all of its chunks are done, so
     # on a slow CPU encoder several sit in flight for many minutes — and
@@ -378,8 +419,10 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
         # how old the cached counts are, so a stale progress bar is
-        # visibly stale rather than quietly wrong
+        # visibly stale rather than quietly wrong; counts_pending = the
+        # first scan after a restart is still running (cold cache)
         "counts_age": counts_age,
+        "counts_pending": counts_pending,
         "profile_mode": (spec.profile_mode if spec else "incremental"),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
@@ -392,13 +435,21 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_device": collections_mod.recipe_for(collection).spends,
         "grow_options": _grow_options(collection),
         "license": _license_state(collection),
-        "genesis": _genesis_state(con, collection),
+        "genesis": _genesis_state(con, collection,
+                                  None if counts_pending else counts),
     }
 
 
-def _genesis_state(con, collection) -> dict | None:
+def _genesis_state(con, collection, counts=None) -> dict | None:
     """Provenance visibility for pre-embedded data: is a genesis archive
-    declared, and how much of the collection did it cover?"""
+    declared, how much of the collection did it cover — and, for a REMOTE
+    archive, whether it is still WAITING. Remote shards apply once,
+    post-settle (drain_next_shard's backlog gate), so pubmed's card read
+    "0/37 shards ... the worker drains the rest automatically" for the
+    ~8 weeks its 33M documents take to parse and index, promising activity
+    the gate deliberately withholds. Say so instead: `waiting_docs` (from
+    the cached counts — never a fresh scan here) is how many in-scope
+    documents still have to pass fts before the first shard can apply."""
     if not collection.genesis_archive:
         return None
     from .bundles.genesis import ARCHIVES, _local_shards
@@ -411,13 +462,21 @@ def _genesis_state(con, collection) -> dict | None:
         shard_total = len(_local_shards(collection))
     else:
         shard_total = len(archive.shards) if archive else 0
+    waiting_docs = 0
+    if archive is not None and not archive.local:
+        if counts is None:      # cold cache: unknown, but almost surely waiting
+            waiting_docs = None
+        else:
+            waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,
+        "local": bool(archive and archive.local),
         "shard_total": shard_total,
         "applied": totals["applied"] or 0,
         "docs": totals["docs"] or 0,
         "rejected": bool(totals["rejected"]),
+        "waiting_docs": waiting_docs,
     }
 
 
@@ -1039,6 +1098,9 @@ def _stats_row(collection, measured: dict) -> dict:
     # a per-document ETA is meaningless across collections. `chunks` is
     # written by the fts stage, so it is known before embedding starts.
     counts, counts_age = _document_counts(collection)
+    if counts is None:      # cold cache: the first scan is running behind this
+        counts = {"embed_ready": 0, "chunks_pending": 0,
+                  "docs_unindexed": 0, "blocked": 0}
     docs_pending = counts["embed_ready"]
     chunks_pending = counts["chunks_pending"]
     docs_unindexed = counts["docs_unindexed"]

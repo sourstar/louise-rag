@@ -56,6 +56,11 @@
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
   {% endif %}
+  {% if c.counts_pending %}
+  <div class="note">counting — the first scan of this collection's counters
+    after a restart is running now (~25 s on the largest manifests); the
+    bars below read 0 until it lands. Refresh in a moment.</div>
+  {% endif %}
   <div class="stage"><div class="lbl"><span>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
   <div class="stage"><div class="lbl"><span>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
@@ -103,6 +108,12 @@
     pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.docs else '') }}">{{ c.genesis.archive }}</span>
     {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
     {% elif not c.genesis.known %} — unknown archive id
+    {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} — waiting: a remote archive applies
+      once, against the settled corpus, and
+      {{ c.genesis.waiting_docs if c.genesis.waiting_docs is not none else 'its remaining' }}
+      document{{ '' if c.genesis.waiting_docs == 1 else 's' }} still have to
+      be parsed and indexed first. Not stuck — the shard counter stays
+      {{ c.genesis.applied }}/{{ c.genesis.shard_total }} by design until then.
     {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shards,
       {{ c.genesis.docs }} documents covered without GPU work; the worker
       drains the rest automatically and gap-fills locally
