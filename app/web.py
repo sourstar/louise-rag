@@ -1213,19 +1213,40 @@ def _stats_row(collection, measured: dict) -> dict:
     in_flight = int(rate.get("in_flight") or 0)
 
     # Remaining FETCH work in bytes. fetch_files is small (one row per
-    # container, ~1,450 at the largest), so this is a cheap scan.
+    # container, ~1,450 at the largest), so this is a cheap scan — but it
+    # STREAMS: rows appear per file as a pass processes them, so mid-pass
+    # "left" read 0 while a third of the dataset was still unlisted, and
+    # the Fetching table sat empty through every long acquisition. The
+    # origin's listing, recorded by the engine at pass start
+    # (acquire_engine.LISTING_KEY), is the honest total; remaining work is
+    # listing minus what fetch_files has actually landed.
     fetch_pending_bytes = 0
     fetch_files_pending = 0
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is not None:
         fr = con.execute(
-            "SELECT COUNT(*) n, "
+            "SELECT COUNT(*) n, SUM(fetch_done) done_files, "
+            "  SUM(COALESCE(bytes_fetched,0)) landed_bytes, "
             "  SUM(CASE WHEN fetch_done=0 THEN COALESCE(remote_size,0)"
             "      - COALESCE(bytes_fetched,0) ELSE 0 END) left_bytes, "
             "  SUM(CASE WHEN fetch_done=0 THEN 1 ELSE 0 END) left_files "
             "FROM fetch_files WHERE source_id=?", (spec.source_id,)).fetchone()
         fetch_pending_bytes = max(0, fr["left_bytes"] or 0)
         fetch_files_pending = fr["left_files"] or 0
+        raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
+        if raw_listing:
+            try:
+                listing = json.loads(raw_listing)
+            except ValueError:
+                listing = None
+            if listing and (collection.profile is None
+                            or listing.get("profile") == collection.profile):
+                fetch_files_pending = max(
+                    fetch_files_pending,
+                    int(listing.get("files_total") or 0) - (fr["done_files"] or 0))
+                fetch_pending_bytes = max(
+                    fetch_pending_bytes,
+                    int(listing.get("bytes_total") or 0) - (fr["landed_bytes"] or 0))
 
     embed = rate.get("embed") or {}
     fetch = rate.get("fetch") or {}
@@ -1275,6 +1296,13 @@ def _stats_row(collection, measured: dict) -> dict:
             # a lower bound, not an estimate, while some of the work has not
             # been measured yet
             "eta_is_floor": bool(docs_unindexed),
+            # why an ETA can be honestly absent: a lazy/off collection's
+            # encoder is not scheduled to run, and a pre-embedded
+            # collection's vectors arrive by import, paced by indexing —
+            # a bare "—" for pubmed/wikipedia/wikivec read as broken when
+            # each was doing exactly what its mode says
+            "mode": db.get_scope(con)["embed_mode"],
+            "via_archive": bool(collection.genesis_archive),
         },
     }
 

@@ -82,6 +82,20 @@ class Filter:
 
 @dataclass(frozen=True)
 class AcquisitionSpec:
+    """Declarative acquisition for one plugin (a NEW PLUGIN ships one of
+    these, or none if its corpus is always hand-populated).
+
+    LISTING CONTRACT (amendment 33): the transport's list_files() must
+    enumerate the origin's COMPLETE listing for the profile — paginate to
+    the end, never truncate, never sample. The engine walks it once per
+    pass (the delta gate needs it) and records the totals as the
+    `acquire_listing` observation; every honest denominator downstream —
+    the Library's fetched counter, the Stats page's files/bytes-left and
+    fetch ETA — reads that record, because fetch_files itself streams (a
+    row per file as the pass processes it) and mid-pass shows done==total
+    at every instant. A transport that cannot enumerate cheaply must still
+    enumerate fully; a source that cannot be listed at all needs
+    endpoint.static_files or snapshot_files instead."""
     source_id: str                        # ties to CorpusSource.source_id / Collection.plugin
     transport: Transport
     endpoints: tuple[Endpoint, ...]

@@ -912,3 +912,22 @@ the live deployment:
     size, so a straddler gaining a segment is a change (re-hashed,
     re-processed), never a relocation. `fetch()` for a changed document
     runs outside the write transaction.
+33. **§5.1 — the origin's listing is a recorded observation, and every
+    denominator reads it.** A fetch pass streams: `fetch_files` gains a
+    row per file as the pass processes it, so at every instant mid-pass
+    done==total ("1414/1414" on the Library card while the origin held
+    1,447 files) and the Stats page's files/bytes-left and fetch ETA read
+    zero through every long acquisition. The engine has always walked the
+    complete listing at pass start (the delta gate requires it); it now
+    records the totals (files, bytes, profile, timestamp) as the
+    `acquire_listing` control entry — a cached observation, not desired
+    state — and the Library and Stats pages use it as the denominator and
+    the ETA's remaining-work figure. RULE FOR NEW PLUGINS (in
+    `AcquisitionSpec`'s docstring, where authors look): a transport's
+    `list_files()` enumerates the origin's complete listing for the
+    profile — paginate to the end, never truncate; a source that cannot be
+    listed needs `static_files` or `snapshot_files` instead. Companion
+    honesty fixes: the fetched counter shows a `fetching…` badge while the
+    acquisition claim is live, and the Stats embed-ETA cell says WHY when
+    no number exists ("with indexing (imported)" for genesis collections,
+    "on demand (lazy)", "off") instead of a bare dash.

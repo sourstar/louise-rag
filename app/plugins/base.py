@@ -140,7 +140,12 @@ class DiscoverState:        # not frozen: received/committed advance during the 
 
 
 class CorpusSource(Protocol):
-    """documents → chunks → vectors. architecture-v2.md §2."""
+    """documents → chunks → vectors. architecture-v2.md §2.
+
+    A new plugin that also fetches its corpus ships an AcquisitionSpec
+    (app/acquire/spec.py) — read its docstring's LISTING CONTRACT
+    (amendment 33): the origin's complete listing is enumerated per pass
+    and recorded, and every UI denominator and ETA depends on it."""
     source_id: str
     license_class: LicenseClass
     privacy_class: PrivacyClass

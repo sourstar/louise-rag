@@ -66,7 +66,11 @@
         {% if r.embed.blocked %}<span class="badge err" title="blocked documents are excluded from the pending count until their errors are cleared">{{ '{:,}'.format(r.embed.blocked) }} blocked</span>{% endif %}</td>
       <td>{{ '{:,}'.format(r.embed.docs_pending) }}{% if r.embed.in_flight %}
         <span class="badge ok" title="inside the encoder right now — a document commits only when every one of its chunks is done, which on a slow CPU encoder is many minutes">{{ r.embed.in_flight }} encoding now</span>{% endif %}</td>
-      <td>{% if r.embed.eta_is_floor and r.embed.eta != '—' %}≥ {% endif %}{{ r.embed.eta }}</td>
+      <td>{% if r.embed.eta != '—' %}{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }}
+        {%- elif r.embed.via_archive %}<span class="badge" title="this collection's vectors arrive by genesis import, paced by indexing — the encoder only gap-fills what the archive cannot cover, so an encoder ETA does not apply">with indexing (imported)</span>
+        {%- elif r.embed.mode == 'off' %}<span class="badge" title="embedding is switched off for this collection">off</span>
+        {%- elif r.embed.mode == 'lazy' %}<span class="badge" title="lazy mode embeds only what queries touch — there is no schedule to estimate; switch to 'all' for a backfill with an ETA">on demand (lazy)</span>
+        {%- else %}—{% endif %}</td>
     </tr>
     {% endfor %}
   </table>

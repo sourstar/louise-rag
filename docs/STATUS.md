@@ -3,7 +3,7 @@
 **Last updated: 2026-08-23.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–32) for every place the design was corrected in flight.
+its §17 amendments (1–33) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,

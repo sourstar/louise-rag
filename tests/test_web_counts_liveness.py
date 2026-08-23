@@ -151,6 +151,35 @@ def test_fetched_counter_says_when_a_pass_is_still_running(isolated_config):
     assert fetched["remote_total"] == 1447
 
 
+def test_stats_fetching_row_reads_the_listing_not_the_stream(isolated_config):
+    """The Stats page's files/bytes-left sat at zero through every long
+    acquisition: fetch_files streams (a row per processed file), so rows
+    with fetch_done=0 barely exist mid-pass. Remaining work = the origin's
+    recorded listing minus what has actually landed."""
+    import json as _json
+    from dataclasses import replace
+    from app.acquire import engine as acquire_engine
+
+    c = replace(collections_mod.default_collection(), acquire_enabled=True)
+    con = db.connect(c)
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_engine.LISTING_KEY,
+                 _json.dumps({"files_total": 10, "bytes_total": 1000,
+                              "profile": None, "ts": int(time.time())})))
+    for i in range(3):
+        con.execute(
+            "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
+            "remote_size) VALUES('gutenberg',?,1,100,100)", (f"f{i}",))
+    web.invalidate_counts()
+
+    row = web._stats_row(c, {})
+    assert row["fetch"]["files_pending"] == 7, row["fetch"]
+    assert row["fetch"]["bytes_pending"] == 700, row["fetch"]
+    # and the embed ETA cell can explain an honest absence
+    assert row["embed"]["mode"] in ("off", "lazy", "all")
+    assert row["embed"]["via_archive"] is False
+
+
 def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
     """The pubmed shape: medcpt-pubmed declared, a large rdf/fts backlog.
     The card must say WAITING with the backlog size — not 0/37 shards with
