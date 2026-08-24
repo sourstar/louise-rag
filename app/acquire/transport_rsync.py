@@ -29,8 +29,14 @@ from typing import Iterator
 from . import budget
 from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransferAborted, TransportError
 
+# rsync ≥3.1 prints sizes with COMMA GROUPING ("2,417,305"). The old
+# `\d+` matched only plain digits, so every file of 1,000 bytes or more was
+# silently dropped from the listing — observed live: a complete 2.8M-entry
+# recursive listing of gutenberg-epub filtered down to the FIVE files that
+# happened to be under 1 KB, and the historical "total: 1" fetch summaries
+# were the same bug against the module's top level.
 _LISTING_RE = re.compile(
-    r"^(?P<perm>[-dl][rwxstST-]{9})\s+(?P<size>\d+)\s+(?P<date>\d{4}/\d{2}/\d{2})\s+"
+    r"^(?P<perm>[-dl][rwxstST-]{9})\s+(?P<size>[\d,]+)\s+(?P<date>\d{4}/\d{2}/\d{2})\s+"
     r"(?P<time>\d{2}:\d{2}:\d{2})\s+(?P<name>.+)$")
 
 _POLL_SECONDS = 1.0
@@ -71,7 +77,8 @@ class RsyncTransport:
                 continue   # directories are traversed implicitly by the transfer itself
             mtime = int(time.mktime(time.strptime(
                 f"{m.group('date')} {m.group('time')}", "%Y/%m/%d %H:%M:%S")))
-            yield RemoteFile(rel_path=m.group("name"), size=int(m.group("size")), mtime=mtime)
+            yield RemoteFile(rel_path=m.group("name"),
+                             size=int(m.group("size").replace(",", "")), mtime=mtime)
 
     def fetch_one(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
                   resume_from: int) -> int:
