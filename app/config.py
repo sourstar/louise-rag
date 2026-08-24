@@ -157,6 +157,13 @@ RDF_BATCH_DOCS = int(os.getenv("RDF_BATCH_DOCS", "200"))
 # exhausted every candidate is taken immediately.
 GENESIS_MIN_CANDIDATES = int(os.getenv("GENESIS_MIN_CANDIDATES", "1000"))
 GENESIS_MAX_WAIT_SEC = int(os.getenv("GENESIS_MAX_WAIT_SEC", "600"))
+# Amendment 38 — remote archives are fetched like a corpus. Shards on disk
+# that are not yet FINAL (fetched, or applied but still revisited as their
+# documents clear fts) are bounded by this many bytes; one MedCPT shard is
+# ~3.0 GB, so the default keeps a handful — the active shard and the next.
+GENESIS_CACHE_BYTES = int(os.getenv("GENESIS_CACHE_BYTES", str(24 * 1024 ** 3)))
+# a revisit pass that imports nothing doubles that shard's wait, up to this
+GENESIS_PASS_BACKOFF_MAX_SEC = int(os.getenv("GENESIS_PASS_BACKOFF_MAX_SEC", "21600"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the

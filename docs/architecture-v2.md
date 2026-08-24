@@ -1017,3 +1017,54 @@ the live deployment:
     (book directories; the torrent pieces covering a dump stream), so the
     peer is embedding its share while the rest of the corpus is still
     arriving. Results travel as signed bundles into peers' inboxes.
+38. **§8 — pre-embedded archives: fetched like a corpus, applied as
+    indexing goes, one knob (operator policy, 2026-08-24).** The remote
+    genesis path applied its shards ONCE, post-settle: a shard downloaded
+    only after the whole collection had passed rdf/fts. Observed live on
+    pubmed: 8.25M of 40M documents indexed after weeks, 0 of 37 shards
+    fetched, 44 documents embedded — the archive that "already paid the
+    GPU-hours" contributed nothing for the months the gate would hold.
+    Amended rules:
+    - **Fetch both, corpus first.** A remote archive is a SECOND
+      acquisition stream of the collection: its shards download in the
+      background (resumable at byte granularity, same `.part` discipline
+      as corpus files, same license gate as the collection — amendment
+      36), drawing from the central budget under a new priority class
+      `archive` that sits BELOW `backfill` (the corpus, without which the
+      vectors are useless) and above `seeding`. Shards on disk are
+      bounded (`GENESIS_CACHE_BYTES`) with a disk preflight, so an
+      archive never fills the disk ahead of the corpus.
+    - **Apply as documents become eligible; revisit; finalise.** A fetched
+      shard applies immediately for the documents already indexed, is
+      REVISITED as more of its documents clear fts (a pass that imports
+      nothing backs off geometrically per shard, so cost follows work,
+      not the shard list), and becomes FINAL — files deleted — once no
+      in-scope document in its id range is still waiting for fts. A
+      document in a final shard's range that the archive did not cover
+      (no abstract, straddler, shape mismatch) is thereby released to the
+      local encoder; until then it waits, never a wrong import.
+    - **The archive declares its coverage.** MedCPT's 37 shards are exact
+      PMID ranges (shard *i* = *i*·10⁶ … *i*·10⁶+999,999, verified from
+      the published id lists), so `GenesisArchive.shard_of_id` names a
+      document's shard from its native id alone — no download needed to
+      know what the archive can cover.
+    - **One knob: Embed mode, coverage-aware.** The archive imports
+      whenever the worker runs, in every mode — it is free. The knob
+      governs the LOCAL encoder only: *off* — nothing; *on-demand* — the
+      query queue (any document, covered or not: a question is answered
+      now); *all* — the documents the archive CANNOT cover (outside every
+      non-final shard's range), selected by a rowid cursor over the scope
+      index so a round never re-walks the covered prefix. The former
+      "non-English first" ORDER BY on the backfill is dropped: it sorted
+      the whole candidate set every round (a TEMP B-TREE, the same trap
+      as the rdf ordering) and language priority belongs to the queue.
+    - **Card.** Main box: `embedded (dense)` is total coverage (archive +
+      local); the sub-box carries `fetched (vectors)` (shards on disk /
+      declared, bytes) and `pre-embedded (dense)` (documents the archive
+      covered / in scope), and no knob. Local archives (the corpus IS the
+      archive) keep their candidate-driven read; only the remote path
+      changes.
+    Schema: `genesis_imports` gains `id_min`, `id_max`, `bytes`,
+    `pending`, `next_pass_at` (additive, migrated on connect); states
+    become fetching → fetched → applying → applied ⇄ applying → final |
+    rejected | skipped. Built 2026-08-24/25 — STATUS.md 5g.

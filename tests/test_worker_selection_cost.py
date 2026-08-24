@@ -216,3 +216,106 @@ def test_queue_eligible_scans_the_queue_not_the_documents(tmp_path):
     scope["embed_mode"] = "lazy"
     stage, row = worker._next_book(con, scope)
     assert stage == "embed" and row["uid"] == uid
+
+
+# --- 5. amendment 38: coverage-aware dense backfill --------------------------
+
+def _archive_collection(tmp_path, monkeypatch):
+    """A gutenberg-mini collection that DECLARES a remote archive covering
+    native id 10001 (shard 0 = ids 0..10001); the fixture's 10002 and 10003 lie beyond."""
+    from dataclasses import replace
+    from app.bundles import genesis
+    c, con = _discovered(tmp_path)
+    archive = genesis.GenesisArchive(
+        archive_id="test-arc", base_url="http://arc", adapter="medcpt-npy",
+        shards=("0",), uid_prefix="gutenberg:", ids_per_shard=10002)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    worker.reset_backfill_cursors()
+    return replace(c, genesis_archive="test-arc"), con, archive
+
+
+def test_backfill_under_all_skips_what_the_archive_can_still_cover(tmp_path, monkeypatch):
+    """Policy 2 of the operator's scheduling: under "all" the local encoder
+    embeds only the corpus the pre-embedded data does NOT cover. Coverage
+    is the declared id range of every shard that is not final; a
+    finalised shard releases the documents it could not cover."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
+    covered = [i for i in ids if i <= 10001]
+    beyond = [i for i in ids if i > 10001]
+    assert covered and beyond, f"fixture must straddle the archive: {ids}"
+
+    scope = dict(db.get_scope(con), embed_mode="all")
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(beyond), "covered documents are the archive's, not the encoder's"
+    stage, row = worker._next_book(con, scope, collection=c)
+    assert stage == "embed" and int(row["native_id"]) in beyond
+    stage, row = worker._next_embed(con, scope, c)
+    assert stage == "embed" and int(row["native_id"]) in beyond
+    assert {int(r["native_id"]) for r in worker._embed_candidates(con, scope, 100, c)} == set(beyond)
+
+    # shard 0 goes FINAL: the documents it left unembedded are released
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) "
+                "VALUES('test-arc','0','final',0)")
+    con.commit()
+    from app.bundles import genesis
+    genesis._bump_coverage_epoch()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(beyond) | set(covered)
+
+    # a REJECTED archive covers nothing: everything is the encoder's
+    con.execute("UPDATE genesis_imports SET state='rejected'")
+    con.commit()
+    genesis._bump_coverage_epoch()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(ids)
+
+
+
+def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch):
+    """pubmed: 8M covered documents sit BEFORE the first uncovered one in
+    rowid order. The cursor resumes from the first row returned, so the
+    next round starts past the covered prefix; a shard going final (epoch)
+    or the TTL resets it; a deferred (still pending) row is re-selected."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    key = (str(c.manifest_path), "new")
+    rows = worker._backfill_rows(con, c, 1)
+    assert rows, "an uncovered candidate exists"
+    first = rows[0]
+    epoch, since, rid = worker._backfill_cursor[key]
+    assert rid == int(first["rid"]) - 1, "resume FROM the first returned row"
+    # the covered prefix lies below the cursor
+    below = con.execute("SELECT COUNT(*) FROM documents WHERE rowid<=? AND CAST(native_id AS INTEGER)<=10001",
+                        (rid,)).fetchone()[0]
+    assert below == con.execute("SELECT COUNT(*) FROM documents WHERE rowid<? AND CAST(native_id AS INTEGER)<=10001",
+                                (int(first["rid"]),)).fetchone()[0]
+    # deferred (not embedded): selected again
+    assert worker._backfill_rows(con, c, 1)[0]["uid"] == first["uid"]
+    # embedded: the cursor moves on without revisiting anything before it
+    con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (first["uid"],))
+    con.commit()
+    nxt = worker._backfill_rows(con, c, 1)
+    assert not nxt or nxt[0]["uid"] != first["uid"]
+    # a shard going final resets the cursor (its released documents sit below)
+    from app.bundles import genesis
+    genesis._bump_coverage_epoch()
+    worker._backfill_rows(con, c, 1)
+    assert worker._backfill_cursor[key][0] == genesis.coverage_epoch()
+
+
+def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkeypatch):
+    """The former backfill ended `ORDER BY (lang='en')`: a TEMP B-TREE over
+    every candidate, per round, growing with the corpus. rowid order IS
+    the scope index's order — with and without the coverage predicate."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    covered = "AND NOT (CAST(native_id AS INTEGER) BETWEEN ? AND ?)"
+    for sql, params in (
+            (worker._BACKFILL_SQL.format(covered=""), (config.MAX_RETRIES, -1, 1)),
+            (worker._BACKFILL_SQL.format(covered=covered), (config.MAX_RETRIES, -1, 0, 19, 1)),
+            (worker._REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES, -1, 1))):
+        plan = _plan(con, sql, params)
+        assert "TEMP B-TREE" not in plan.upper(), f"backfill sorts the candidate set: {plan}"
+        assert "idx_documents_scope" in plan, plan

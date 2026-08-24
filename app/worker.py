@@ -34,6 +34,7 @@ from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .bundles import genesis as bundle_genesis
+from .bundles import genesis_fetch as bundle_genesis_fetch
 from .bundles import importer as bundle_importer
 from .bundles import ledger as bundle_ledger
 from .plugins import base as plugin_base
@@ -327,6 +328,109 @@ _FTS_BACKLOG = (
     "AND fts_done=0 AND error IS NULL AND retries<? LIMIT ?)")
 
 
+# ---- amendment 38: coverage-aware dense backfill ---------------------------
+# Under "all" the local encoder takes only what a declared archive CANNOT
+# cover: documents outside every non-final shard's id range. The selection
+# walks the scope index in rowid order (its own order — no ORDER BY over
+# the candidate set, which sorted millions of rows per round) from a
+# per-collection CURSOR kept in memory, keyed on the manifest PATH, so a
+# round never re-walks the covered prefix (8M rows on pubmed). The cursor
+# expires after a short TTL (one index pass) and resets when a shard goes
+# final (genesis.coverage_epoch): the documents in that range the archive
+# did not cover sit BELOW the cursor and are now the encoder's. Without an
+# archive there is no cursor at all — a document that clears fts must be
+# embeddable in the same round.
+_BACKFILL_SQL = (
+    "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 "
+    "AND fts_done=1 AND embed_done=0 AND error IS NULL AND retries<? AND rowid>? "
+    "{covered} ORDER BY rowid LIMIT ?")
+_REEMBED_SQL = (
+    "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 "
+    "AND fts_done=1 AND embed_done=1 AND embed_version<? AND error IS NULL "
+    "AND retries<? AND rowid>? ORDER BY rowid LIMIT ?")
+_BACKFILL_CURSOR_TTL_S = 120
+_backfill_cursor: dict[tuple[str, str], tuple[int, float, int]] = {}  # (path, kind) -> (epoch, since, rowid)
+_backfill_cursor_lock = threading.Lock()
+
+
+def _covered_ranges(con, collection) -> list[tuple[int, int]]:
+    """Merged id ranges of the archive's shards that are not final — what
+    the archive can still deliver, so the local encoder skips them. A
+    REJECTED archive covers nothing (it is not this function)."""
+    if collection is None or not collection.genesis_archive:
+        return []
+    archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
+    if archive is None or archive.local or not archive.ids_per_shard:
+        return []
+    done: set[str] = set()
+    for r in con.execute("SELECT shard, state FROM genesis_imports WHERE archive=?",
+                         (archive.archive_id,)):
+        if r["state"] == "rejected":
+            return []
+        if r["state"] == "final":
+            done.add(r["shard"])
+    ranges = sorted(rng for s in archive.shards if s not in done
+                    for rng in (archive.id_range_of(s),) if rng)
+    merged: list[tuple[int, int]] = []
+    for lo, hi in ranges:
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(hi, merged[-1][1]))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def _backfill_rows(con, collection, limit: int) -> list:
+    """Dense backfill candidates under "all": new documents first, then
+    version-driven re-embeds — both cursor-paged when an archive is
+    declared, both walked from the start otherwise."""
+    ranges = _covered_ranges(con, collection)
+    key = str(collection.manifest_path) if collection is not None else ""
+    covered, params = "", []
+    if ranges:
+        covered = "AND NOT (" + " OR ".join(
+            "CAST(native_id AS INTEGER) BETWEEN ? AND ?" for _ in ranges) + ")"
+        for lo, hi in ranges:
+            params += [lo, hi]
+    rows = _cursor_page(
+        con, key, "new", bool(ranges),
+        lambda start, n: con.execute(_BACKFILL_SQL.format(covered=covered),
+                                     (config.MAX_RETRIES, start, *params, n)).fetchall(),
+        limit)
+    if len(rows) < limit:
+        rows += _cursor_page(
+            con, key, "ver", bool(ranges),
+            lambda start, n: con.execute(_REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES,
+                                                        start, n)).fetchall(),
+            limit - len(rows))
+    return rows
+
+
+def _cursor_page(con, key: str, kind: str, use_cursor: bool, query, limit: int) -> list:
+    if not use_cursor:
+        return query(-1, limit)
+    epoch, now = bundle_genesis.coverage_epoch(), time.time()
+    with _backfill_cursor_lock:
+        cur = _backfill_cursor.get((key, kind))
+    live = cur is not None and cur[0] == epoch and now - cur[1] < _BACKFILL_CURSOR_TTL_S
+    rows = query(cur[2] if live else -1, limit)
+    if rows:
+        # resume FROM the first returned row: if it is deferred rather than
+        # embedded it is selected again; everything before it was covered
+        nxt = int(rows[0]["rid"]) - 1
+    else:
+        # nothing eligible below the end: skip to it until the cursor expires
+        nxt = int(con.execute("SELECT COALESCE(MAX(rowid), -1) FROM documents").fetchone()[0])
+    with _backfill_cursor_lock:
+        _backfill_cursor[(key, kind)] = (epoch, cur[1] if live else now, nxt)
+    return rows
+
+
+def reset_backfill_cursors() -> None:
+    with _backfill_cursor_lock:
+        _backfill_cursor.clear()
+
+
 def _ingest_pending(con) -> bool:
     """Does this collection still have rdf or fts work? Two LIMIT-1 index
     probes. Genesis uses it to decide whether a shard read may wait for a
@@ -336,7 +440,7 @@ def _ingest_pending(con) -> bool:
         or con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone() is not None
 
 
-def _next_book(con, scope, embed_allowed=True):
+def _next_book(con, scope, embed_allowed=True, collection=None):
     # 1. priority embeds (lazy queue), regardless of backfill mode
     if embed_allowed and scope["embed_mode"] in ("lazy", "all"):
         r = con.execute(_QUEUE_ELIGIBLE,
@@ -389,19 +493,16 @@ def _next_book(con, scope, embed_allowed=True):
         (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION)).fetchone()
     if r:
         return "fts", r
-    # 4. dense backfill only in 'all' mode (non-English first: rarest knowledge)
+    # 4. dense backfill only in 'all' mode — coverage-aware (amendment 38):
+    # what a declared archive can still deliver is not the encoder's
     if embed_allowed and scope["embed_mode"] == "all":
-        r = con.execute(
-            "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
-            "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en') LIMIT 1",
-            (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()
-        if r:
-            return "embed", r
+        rows = _backfill_rows(con, collection, 1)
+        if rows:
+            return "embed", rows[0]
     return None, None
 
 
-def _next_embed(con, scope):
+def _next_embed(con, scope, collection=None):
     """Embed-stage selection ONLY — the main loop's share of the pipeline
     when per-collection threads own rdf/fts. Exactly _next_book's parts 1
     (lazy queue) and 4 (backfill under 'all'), so the two selectors can
@@ -415,19 +516,15 @@ def _next_embed(con, scope):
         return "embed", r
     con.execute(_QUEUE_CLEANUP, (config.MAX_RETRIES,))
     if scope["embed_mode"] == "all":
-        r = con.execute(
-            "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
-            "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en') LIMIT 1",
-            (config.MAX_RETRIES, config.EMBED_VERSION)).fetchone()
-        if r:
-            return "embed", r
+        rows = _backfill_rows(con, collection, 1)
+        if rows:
+            return "embed", rows[0]
     return None, None
 
 STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
 
 
-def _embed_candidates(con, scope, limit: int):
+def _embed_candidates(con, scope, limit: int, collection=None):
     """Up to `limit` embed-stage candidates, queue priority first — the same
     two selections _next_book makes, widened for the parallel path."""
     rows = []
@@ -437,12 +534,8 @@ def _embed_candidates(con, scope, limit: int):
             (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
     if len(rows) < limit and scope["embed_mode"] == "all":
         seen = {r["uid"] for r in rows}
-        rows += [r for r in con.execute(
-            "SELECT * FROM documents WHERE in_scope=1 AND fts_done=1 AND error IS NULL "
-            "AND retries<? AND (embed_done=0 OR embed_version<?) "
-            "ORDER BY (lang='en') LIMIT ?",
-            (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
-            if r["uid"] not in seen][: limit - len(rows)]
+        rows += [r for r in _backfill_rows(con, collection, limit)
+                 if r["uid"] not in seen][: limit - len(rows)]
     return rows
 
 
@@ -460,7 +553,7 @@ def _embed_parallel(con, collection, recipe) -> bool:
     sequence processing is precisely the failure mode the batch gate guards.
     """
     scope = db.get_scope(con)
-    rows = _embed_candidates(con, scope, recipe.concurrency * 2)
+    rows = _embed_candidates(con, scope, recipe.concurrency * 2, collection)
     if not rows:
         return False
 
@@ -549,7 +642,7 @@ def _embed_parallel(con, collection, recipe) -> bool:
             if not queue:
                 # candidates committed by THIS thread are already out of
                 # the selection; the ones in flight are not, hence `seen`
-                fresh = [r for r in _embed_candidates(con, scope, recipe.concurrency * 2)
+                fresh = [r for r in _embed_candidates(con, scope, recipe.concurrency * 2, collection)
                          if r["uid"] not in seen]
                 if not fresh:
                     return
@@ -656,6 +749,66 @@ def _acquire(con, collection, reason: str) -> None:
     thread.start()
 
 
+_archive_threads: dict[str, threading.Thread] = {}
+_archive_log_state: dict[str, dict] = {}
+
+
+def _archive_worker(collection, reason: str) -> None:
+    con = db.connect(collection)
+    try:
+        state = _archive_log_state.setdefault(collection.name, {})
+        result = bundle_genesis_fetch.run_fetcher(con, collection, stop=_stop,
+                                                  log_state=state)
+        if result.get("fetched"):
+            db.log_event(con, "info", "genesis",
+                         f"archive fetch ({reason}): landed {len(result['fetched'])} "
+                         f"shard(s), stopped: {result['reason']}")
+    except LicenseAckRequiredError as e:
+        db.log_event(con, "error", "genesis", str(e))
+    except sqlite3.OperationalError as e:
+        db.log_event(con, "warn", "genesis",
+                     f"archive fetch ({reason}) deferred — manifest busy ({e})")
+    except Exception as e:   # noqa: BLE001 — a fetch must never kill its thread silently
+        db.log_event(con, "error", "genesis",
+                     f"archive fetch ({reason}) failed: {type(e).__name__}: {e}"[:400])
+    finally:
+        con.close()
+
+
+_archive_last_kick: dict[str, float] = {}
+_ARCHIVE_KICK_INTERVAL_S = 600
+
+
+def _acquire_archive(con, collection, reason: str, force: bool = False) -> None:
+    """Amendment 38: a REMOTE genesis archive is the collection's second
+    acquisition stream — its shards download on their own thread, under
+    the `archive` budget class (behind the corpus), whenever the corpus
+    fetch would run. Same opt-in (acquire_enabled), same license gate.
+    Called every round from _run_one_step: restarts are throttled to one
+    per _ARCHIVE_KICK_INTERVAL_S unless `force` (a shard just went final
+    and freed a cache slot)."""
+    if not collection.acquire_enabled or not collection.genesis_archive:
+        return
+    if _paused.is_set():
+        return
+    archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
+    if archive is None or archive.local:
+        return
+    now = time.time()
+    with _acquire_lock:
+        existing = _archive_threads.get(collection.name)
+        if existing is not None and existing.is_alive():
+            return
+        if not force and now - _archive_last_kick.get(collection.name, 0.0) \
+                < _ARCHIVE_KICK_INTERVAL_S:
+            return
+        _archive_last_kick[collection.name] = now
+        thread = threading.Thread(target=_archive_worker, args=(collection, reason),
+                                  name=f"archive-{collection.name}", daemon=True)
+        _archive_threads[collection.name] = thread
+    thread.start()
+
+
 def _finish_completed_acquires(cons, all_collections, last_discover,
                                 pipeline: bool = False) -> None:
     """Turn finished background fetches into discovery scans: on the
@@ -747,6 +900,7 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
 
 def _discover(con, collection, reason: str, stop=None) -> None:
     _acquire(con, collection, reason)
+    _acquire_archive(con, collection, reason)
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
     stats = discovery.sync_collection(con, collection, stop=stop)
     if stats.get("added") or stats.get("changed"):
@@ -989,6 +1143,11 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # thread, so a read is amortised over a batch rather than paid per
     # fts commit (config.GENESIS_MIN_CANDIDATES / GENESIS_MAX_WAIT_SEC).
     if collection.genesis_archive:
+        # a remote archive's fetcher (amendment 38) is kicked from here
+        # too — throttled inside — so a fetch that stopped on "cache full"
+        # or an unreachable origin resumes within minutes, not at the next
+        # 6-hour discovery cycle
+        _acquire_archive(con, collection, "round")
         try:
             result = bundle_genesis.drain_next_shard(
                 con, collection, stop=_stop, eager=not _ingest_pending(con))
@@ -997,14 +1156,17 @@ def _run_one_step(con, collection, last_idle_log: dict,
                          f"unexpected genesis failure: {type(e).__name__}: {e}"[:400])
             result = None
         if result is not None:
+            if result.get("state") == "final":
+                # a slot in the bounded cache just freed: land the next shard
+                _acquire_archive(con, collection, "shard final", force=True)
             return True
     scope = db.get_scope(con)
     if pipeline_active:
-        stage, row = _next_embed(con, scope)
+        stage, row = _next_embed(con, scope, collection)
         if stage == "embed" and not backend_gate.embed_allowed(con, collection):
             return False        # rdf/fts continue on the pipeline thread
     else:
-        stage, row = _next_book(con, scope)
+        stage, row = _next_book(con, scope, collection=collection)
         if stage == "embed" and not backend_gate.embed_allowed(con, collection):
             # The endpoint failed its behavioral baseline (or is down).
             # Embedding pauses — the document is untouched, never errored —

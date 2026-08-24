@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from app import collections as collections_mod, config, db, embeddings
-from app.bundles import genesis
+from app.bundles import genesis, genesis_fetch
 from app.bundles.genesis import GenesisArchive, GenesisError, GenesisUnavailable
 
 DIM = 8
@@ -195,14 +195,18 @@ def test_worker_drains_a_declared_archive_automatically(collection, monkeypatch)
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
     declared = replace(collection, genesis_archive="test-arc")
 
-    # patch the network seams the worker path uses
-    monkeypatch.setattr(genesis, "_https_fetcher", lambda a: _fake_fetch(cache))
     calls = []
 
     def fake_embed(texts, timeout=300, recipe=None, query=False):
         calls.append(len(texts))
         return _same_function_embed(texts)
     monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+
+    # amendment 38: the embed thread NEVER downloads — a shard that is not
+    # on disk is not drained (the fetcher's thread lands it first)
+    assert genesis.drain_next_shard(con, declared) is None
+    landed = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    assert landed["fetched"] == ["0"]
 
     result = genesis.drain_next_shard(con, declared)
     assert result is not None and result["docs"] == 10
@@ -220,23 +224,32 @@ def test_drain_never_retries_a_rejected_archive(collection, monkeypatch):
     con = db.connect(collection)
     cache = {}
     _write_medcpt_shard(cache, "0", range(1, 11))
-    archive = _archive(["0"])
+    _write_medcpt_shard(cache, "1", range(11, 21))
+    archive = _archive(["0", "1"])
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(genesis, "_https_fetcher", lambda a: _fake_fetch(cache))
     monkeypatch.setattr(
         embeddings, "embed_texts",
         lambda texts, timeout=300, recipe=None, query=False:
             _different_model_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
 
-    assert genesis.drain_next_shard(con, declared) is None   # rejected inside
-    assert con.execute("SELECT state FROM genesis_imports").fetchone()["state"] == "rejected"
-
     fetches = []
-    monkeypatch.setattr(genesis, "_https_fetcher",
-                         lambda a: lambda n, d: fetches.append(n))
+
+    def counting_fetch(name, dest):
+        fetches.append(name)
+        _fake_fetch(cache)(name, dest)
+    genesis_fetch.run_fetcher(con, declared, fetch=counting_fetch)
+    assert genesis.drain_next_shard(con, declared) is None   # rejected inside
+    assert con.execute("SELECT state FROM genesis_imports WHERE shard='0'").fetchone()["state"] \
+        == "rejected"
+
+    fetches.clear()
     assert genesis.drain_next_shard(con, declared) is None
-    assert fetches == [], "a rejected archive must never be re-downloaded"
+    # ...and the FETCHER stops too: one rejected shard proves the archive
+    # is not this collection's function — the other 36 must not download
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None
+    genesis_fetch.run_fetcher(con, declared, fetch=counting_fetch)
+    assert fetches == [], "a rejected archive must never be downloaded further"
 
 
 def test_multi_chunk_documents_are_skipped_not_half_embedded(collection, monkeypatch):
@@ -261,3 +274,266 @@ def test_multi_chunk_documents_are_skipped_not_half_embedded(collection, monkeyp
     assert result["docs"] == 4 and result["skipped_shape"] == 1
     row = con.execute("SELECT embed_done FROM documents WHERE uid='fake:3'").fetchone()
     assert row["embed_done"] == 0, "half-covered documents must stay unembedded"
+
+
+# --- amendment 38: fetched like a corpus, applied as indexing goes ----------
+
+def _declared_archive(shards, ids_per_shard=10, shard_bytes=0):
+    """A fake archive with DECLARED coverage: shard i holds ids
+    [i*10, i*10+9], like MedCPT's exact PMID ranges (1e6 per shard)."""
+    return GenesisArchive(archive_id="test-arc", base_url="http://arc",
+                           adapter="medcpt-npy", shards=tuple(shards),
+                           uid_prefix="fake:", ids_per_shard=ids_per_shard,
+                           shard_bytes=shard_bytes)
+
+
+def test_declared_coverage_names_a_documents_shard_from_its_id():
+    arc = _declared_archive(["0", "1", "2"])
+    assert arc.id_range_of("1") == (10, 19)
+    assert arc.shard_of_id(0) == "0" and arc.shard_of_id(19) == "1"
+    assert arc.shard_of_id(30) is None, "past the archive: a post-snapshot document"
+    assert genesis.MEDCPT_PUBMED.shard_of_id(36_999_999) == "36"
+    assert genesis.MEDCPT_PUBMED.shard_of_id(37_000_000) is None
+    assert genesis.MEDCPT_PUBMED.id_range_of("5") == (5_000_000, 5_999_999)
+    assert _archive(["0"]).shard_of_id(5) is None, "undeclared coverage: unknown"
+
+
+def test_fetcher_lands_shards_under_the_archive_class_and_records_them(
+        collection, monkeypatch):
+    """Every byte draws from the bucket under Priority.ARCHIVE (below the
+    corpus), the row records size/digest/id range, and the per-collection
+    download split sees the bytes."""
+    from dataclasses import replace
+    from app.transfer.bucket import Priority
+    from app.transfer.manager import current_handle
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    archive = _declared_archive(["0", "1"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    seen = []
+
+    def fetch(name, dest):
+        h = current_handle()
+        seen.append((name, h.priority if h else None))
+        _fake_fetch(cache)(name, dest)
+    result = genesis_fetch.run_fetcher(con, declared, fetch=fetch)
+    assert result["fetched"] == ["0", "1"]
+    assert seen and all(p is Priority.ARCHIVE for _, p in seen), seen
+    assert Priority.BACKFILL < Priority.ARCHIVE < Priority.SEEDING
+    rows = {r["shard"]: r for r in con.execute(
+        "SELECT * FROM genesis_imports ORDER BY shard")}
+    assert rows["0"]["state"] == "fetched" and rows["0"]["bytes"] > 0
+    assert rows["0"]["content_digest"] and rows["0"]["next_pass_at"] == 0
+    assert (rows["1"]["id_min"], rows["1"]["id_max"]) == (10, 19)
+    # nothing left to fetch; the files are on disk
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None
+    for _, path in genesis_fetch.shard_files(
+            archive, genesis_fetch.cache_dir(declared, archive), "0"):
+        assert path.is_file()
+
+
+def test_fetcher_is_bounded_by_the_cache_and_the_license(collection, monkeypatch):
+    from dataclasses import replace
+    from app import config as config_mod
+    from app.acquire.spec import LicenseAckRequiredError, LicenseClass
+    from app.acquire import specs as specs_mod
+    con = db.connect(collection)
+    cache = {}
+    for i in range(3):
+        _write_medcpt_shard(cache, str(i), range(i * 10, i * 10 + 10))
+    archive = _declared_archive(["0", "1", "2"], shard_bytes=1000)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    # cache bound: shards on disk that are not final count against it
+    monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", 1500)
+    first = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    assert first["fetched"] == ["0"] and first["reason"] == "cache full", first
+    resident = genesis_fetch.resident_bytes(con, archive)
+    assert resident > 0
+    monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", resident + 1000)
+    second = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    assert second["fetched"] == ["1"]
+
+    # license: a yellow-class collection without an ack fetches nothing
+    # (amendment 36 — the archive is USE of the corpus)
+    yellow = specs_mod.ACQUIRE_REGISTRY["pubmed"]
+    assert yellow.license_class is LicenseClass.YELLOW
+    monkeypatch.setitem(specs_mod.ACQUIRE_REGISTRY, "fake", yellow)
+    with pytest.raises(LicenseAckRequiredError):
+        genesis_fetch.run_fetcher(con, replace(declared, license_ack=None),
+                                  fetch=_fake_fetch(cache))
+
+
+def test_fetcher_defers_an_unreachable_origin_and_resumes(collection, monkeypatch):
+    import time as _time
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    archive = _declared_archive(["0"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    def down(name, dest):
+        raise GenesisUnavailable("origin unreachable")
+    result = genesis_fetch.run_fetcher(con, declared, fetch=down)
+    assert result["fetched"] == [] and result["reason"] == "deferred"
+    row = con.execute("SELECT state, detail FROM genesis_imports").fetchone()
+    assert row["state"] == "skipped" and "retryable" in row["detail"]
+    # inside the backoff: not retried; past it: fetched
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None
+    later = int(_time.time()) + genesis_fetch.RETRY_AFTER_S + 1
+    assert genesis_fetch.next_shard_to_fetch(con, archive, now=later) == "0"
+    con.execute("UPDATE genesis_imports SET updated_at=updated_at-?",
+                (genesis_fetch.RETRY_AFTER_S + 1,))
+    assert genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))["fetched"] == ["0"]
+    # a deferral never wrote an error onto a document
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE error IS NOT NULL").fetchone()[0] == 0
+
+
+def test_a_fetched_shard_applies_now_revisits_and_finalises(collection, monkeypatch):
+    """The old post-settle gate is gone: with most of the collection still
+    indexing, a shard on disk applies for the documents that ARE indexed,
+    stays on disk while documents in its range wait for fts (revisited
+    with a per-shard backoff that doubles after an empty pass), and goes
+    FINAL — files deleted — once none is waiting."""
+    from dataclasses import replace
+    from app import config as config_mod
+    con = db.connect(collection)
+    # ids 1..20 exist; shard "0" covers 0..9, shard "1" covers 10..19
+    # (20 lies past the archive: a post-snapshot document)
+    con.execute("UPDATE documents SET fts_done=0, rdf_done=0 "
+                "WHERE CAST(native_id AS INTEGER) >= 5")
+    db.ensure_browse_index(con)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    archive = _declared_archive(["0", "1"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _same_function_embed(texts))
+    declared = replace(collection, genesis_archive="test-arc")
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+
+    # pass 1: applies for the 4 indexed documents (1..4) despite the backlog
+    r1 = genesis.drain_next_shard(con, declared)
+    assert r1["shard"] == "0" and r1["docs"] == 4 and r1["state"] == "applied"
+    assert r1["pending"] == 5, "ids 5..9 are held and still waiting for fts"
+    row0 = con.execute("SELECT * FROM genesis_imports WHERE shard='0'").fetchone()
+    assert row0["state"] == "applied" and row0["pending"] == 5
+    base = config_mod.GENESIS_MAX_WAIT_SEC
+    assert row0["next_pass_at"] - row0["updated_at"] == base
+    files0 = [p for _, p in genesis_fetch.shard_files(
+        archive, genesis_fetch.cache_dir(declared, archive), "0")]
+    assert all(p.is_file() for p in files0), "a shard with pending documents stays on disk"
+
+    # no embed-eligible document at all -> the archive has nothing to do
+    # this round (no shard is read for nothing)
+    assert genesis.drain_next_shard(con, declared) is None
+    # id 20 (past the archive) clears fts: a candidate exists, so the
+    # fetched-never-applied shard "1" gets its first pass (nothing indexed
+    # in its range: imports 0, backs off) — then nothing is due until the
+    # backoff passes
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1 WHERE native_id='20'")
+    r2 = genesis.drain_next_shard(con, declared)
+    assert r2["shard"] == "1" and r2["docs"] == 0 and r2["pending"] == 10
+    row1 = con.execute("SELECT * FROM genesis_imports WHERE shard='1'").fetchone()
+    assert row1["next_pass_at"] - row1["updated_at"] == base
+    assert genesis.drain_next_shard(con, declared) is None, "both shards inside their backoff"
+
+    # an EMPTY pass doubles the wait; a productive one resets it (the
+    # clock moves past the shard's next_pass_at: shift its row back)
+    con.execute("UPDATE genesis_imports SET updated_at=updated_at-?, "
+                "next_pass_at=next_pass_at-? WHERE shard='1'", (base + 1, base + 1))
+    r3 = genesis.drain_next_shard(con, declared)
+    assert r3["shard"] == "1" and r3["docs"] == 0
+    row1 = con.execute("SELECT * FROM genesis_imports WHERE shard='1'").fetchone()
+    assert row1["next_pass_at"] - row1["updated_at"] == 2 * base
+
+    # indexing reaches ids 5..9: shard 0 revisits, imports them, and is FINAL
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1 "
+                "WHERE CAST(native_id AS INTEGER) BETWEEN 5 AND 9")
+    con.execute("UPDATE genesis_imports SET updated_at=updated_at-?, next_pass_at=next_pass_at-? WHERE shard='0'", (4 * base, 4 * base))
+    r4 = genesis.drain_next_shard(con, declared)
+    assert r4["shard"] == "0" and r4["docs"] == 5 and r4["state"] == "final"
+    row0 = con.execute("SELECT * FROM genesis_imports WHERE shard='0'").fetchone()
+    assert row0["state"] == "final" and row0["docs"] == 9 and row0["bytes"] == 0
+    assert not any(p.is_file() for p in files0), "final: files deleted"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 9
+    # a final shard is never walked again, even when asked
+    assert genesis.import_shard(con, declared, archive, "0", fetch=_fake_fetch(cache),
+                                revisit=True)["state"] == "already-applied"
+    # the fetcher may now land the next shard in the freed cache slot
+    assert genesis_fetch.resident_bytes(con, archive) == \
+        con.execute("SELECT bytes FROM genesis_imports WHERE shard='1'").fetchone()[0]
+
+
+def test_a_remote_shard_without_declared_coverage_counts_pending_by_probe(
+        collection, monkeypatch):
+    from dataclasses import replace
+    con = db.connect(collection)
+    con.execute("UPDATE documents SET fts_done=0 WHERE CAST(native_id AS INTEGER) > 6")
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _archive(["0"])          # no ids_per_shard
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _same_function_embed(texts))
+    declared = replace(collection, genesis_archive="test-arc")
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    r = genesis.drain_next_shard(con, declared)
+    assert r["docs"] == 6 and r["pending"] == 4, "ids 7..10 held, waiting for fts"
+
+
+def test_worker_starts_the_archive_fetcher_beside_the_corpus_fetch(collection, monkeypatch):
+    """Amendment 38: a remote archive is the collection's second
+    acquisition stream — started where the corpus fetch is, under the
+    same opt-in and worker state; a local archive or an undeclared
+    collection starts nothing; restarts are throttled unless a shard just
+    went final (a cache slot freed)."""
+    import threading
+    from dataclasses import replace
+    from app import worker
+    started = []
+    monkeypatch.setattr(worker, "_archive_worker",
+                        lambda c, reason: started.append((c.name, reason)))
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", _declared_archive(["0"]))
+    worker._archive_threads.clear()
+    worker._archive_last_kick.clear()
+    worker._paused.clear()
+    con = db.connect(collection)
+
+    remote = replace(collection, genesis_archive="test-arc", acquire_enabled=True)
+    worker._acquire_archive(con, remote, "startup")
+    for t in list(worker._archive_threads.values()):
+        t.join(2)
+    assert started == [("fake", "startup")]
+
+    # throttled: the round-by-round kick does not restart it for a while
+    worker._acquire_archive(con, remote, "round")
+    assert len(started) == 1
+    # ...unless a shard went final and freed a cache slot
+    worker._acquire_archive(con, remote, "shard final", force=True)
+    for t in list(worker._archive_threads.values()):
+        t.join(2)
+    assert len(started) == 2
+
+    # opt-in and state gates
+    worker._archive_last_kick.clear()
+    worker._acquire_archive(con, replace(remote, acquire_enabled=False), "startup")
+    worker._acquire_archive(con, replace(remote, genesis_archive=None), "startup")
+    worker._acquire_archive(con, replace(remote, genesis_archive="upstash-wikipedia-2024-06"),
+                            "startup")
+    worker._paused.set()
+    try:
+        worker._acquire_archive(con, remote, "startup")
+    finally:
+        worker._paused.clear()
+    assert len(started) == 2, "acquisition off / no archive / local archive / paused start nothing"

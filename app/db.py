@@ -252,6 +252,17 @@ def connect(collection=None) -> sqlite3.Connection:
         con.execute("ALTER TABLE fetch_files ADD COLUMN extra INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    # amendment 38: remote archive shards are fetched ahead, revisited and
+    # finalised — the ledger row carries the shard's id range (coverage),
+    # its size on disk, how many held documents still wait for fts, and
+    # the per-shard backoff for revisit passes that imported nothing
+    for column, decl in (("id_min", "INTEGER"), ("id_max", "INTEGER"),
+                         ("bytes", "INTEGER"), ("pending", "INTEGER"),
+                         ("next_pass_at", "INTEGER")):
+        try:
+            con.execute(f"ALTER TABLE genesis_imports ADD COLUMN {column} {decl}")
+        except sqlite3.OperationalError:
+            pass
     return con
 
 def ensure_browse_index(con: sqlite3.Connection) -> bool:

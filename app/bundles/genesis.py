@@ -71,17 +71,45 @@ class GenesisArchive:
     shards: tuple[str, ...]           # shard names, adapter-interpreted; () + local → on-disk
     uid_prefix: str                   # archive id -> manifest uid
     local: bool = False
+    # Amendment 38 — DECLARED COVERAGE for a remote archive whose shards
+    # are contiguous id ranges: shard `str(i)` holds native ids
+    # [i*ids_per_shard, (i+1)*ids_per_shard - 1]. Lets the worker know
+    # which documents the archive CAN cover from the id alone (the local
+    # encoder skips them under "all") and which shard a document waits
+    # on, without downloading anything. None = coverage unknown.
+    ids_per_shard: int | None = None
+    shard_bytes: int = 0              # size hint per shard (cache bound, preflight)
+
+    def id_range_of(self, shard: str) -> tuple[int, int] | None:
+        if not self.ids_per_shard or not shard.isdigit():
+            return None
+        i = int(shard)
+        return i * self.ids_per_shard, (i + 1) * self.ids_per_shard - 1
+
+    def shard_of_id(self, native_id: int) -> str | None:
+        """The shard that would hold this id, or None when the archive's
+        declared range ends before it (a post-snapshot document)."""
+        if not self.ids_per_shard or native_id < 0:
+            return None
+        shard = str(native_id // self.ids_per_shard)
+        return shard if shard in self.shards else None
 
 
 # NCBI publishes MedCPT article embeddings for all of PubMed (public
 # domain): per shard, embeds_chunk_N.npy (float32 [n, 768]) with
-# pmids_chunk_N.json (n PMIDs, same order).
+# pmids_chunk_N.json (n PMIDs, same order). The shards are EXACT PMID
+# ranges — chunk i holds PMIDs i*10^6 .. i*10^6+999,999, strictly
+# increasing (verified against the published id lists of chunks 0, 1 and
+# 36 on 2026-08-24; ~977k-999k ids each: PMIDs without an abstract are
+# simply absent). embeds_chunk_N.npy is ~3.0 GB.
 MEDCPT_PUBMED = GenesisArchive(
     archive_id="medcpt-pubmed",
     base_url="https://ftp.ncbi.nlm.nih.gov/pub/lu/MedCPT/pubmed_embeddings",
     adapter="medcpt-npy",
     shards=tuple(str(i) for i in range(37)),
     uid_prefix="pubmed:",
+    ids_per_shard=1_000_000,
+    shard_bytes=3_070_000_000,
 )
 
 # The vectors travel WITH the corpus (format v1: data/{lang}/NNN.parquet
@@ -124,6 +152,21 @@ DEFAULT_ARCHIVE_BY_PLUGIN: dict[str, str] = {
 # the counts cache and the scan cursor each learned this separately).
 _residual: dict[tuple[str, str], frozenset[str]] = {}
 _residual_lock = threading.Lock()
+
+# Amendment 38: bumped whenever a remote shard goes FINAL. The worker's
+# coverage-aware backfill keys its rowid cursor on it — documents in a
+# finalised range that the archive did not cover sit BELOW the cursor and
+# become the local encoder's the moment the shard is final.
+_coverage_epoch = 0
+
+
+def coverage_epoch() -> int:
+    return _coverage_epoch
+
+
+def _bump_coverage_epoch() -> None:
+    global _coverage_epoch
+    _coverage_epoch += 1
 
 # One page of the candidate walk; the walk is capped so one round never
 # spends more than a bounded number of row lookups deciding there is
@@ -242,8 +285,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     if archive is None:
         return None
     rows = {r["shard"]: r for r in con.execute(
-        "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
-        (archive.archive_id,))}
+        "SELECT shard, state, updated_at, pending, next_pass_at FROM genesis_imports "
+        "WHERE archive=?", (archive.archive_id,))}
     if any(r["state"] == "rejected" for r in rows.values()):
         return None
     now = int(time.time())
@@ -279,39 +322,51 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
         "AND embed_done=0 AND error IS NULL LIMIT 1").fetchone()
     if candidates is None:
         return None
-    # Wait for the collection's rdf/fts backlog to settle: a REMOTE shard
-    # applies ONCE, and running it while most documents are not yet
-    # eligible would permanently strand them on the local-GPU path.
-    # Post-settle growth is fine — appended corpora land in later,
-    # still-pending shards, and any stragglers gap-fill locally into the
-    # same proven space.
-    backlog = con.execute(
-        "SELECT 1 FROM documents WHERE in_scope=1 AND error IS NULL "
-        "AND (rdf_done=0 OR fts_done=0) LIMIT 1").fetchone()
-    if backlog is not None:
-        return None
-    for shard in _drain_order(archive.shards, rows, revisit=False):
-        if in_backoff(shard):
-            return None
+    # REMOTE archive, amendment 38: shards reach the cache through
+    # genesis_fetch (its own thread, its own budget class) and are applied
+    # from disk HERE — at once for the documents indexed so far, revisited
+    # as more of their documents clear fts, and finalised (files deleted)
+    # once no document in their id range still waits. The old post-settle
+    # gate (apply once, after the whole collection had indexed) held
+    # pubmed's 37 shards back for the months 40M documents take.
+    for shard in _remote_drain_order(archive.shards, rows, now):
         try:
-            return import_shard(con, collection, archive, shard)
+            return import_shard(con, collection, archive, shard,
+                                fetch=_not_on_disk, revisit=True)
         except GenesisUnavailable:
-            return None                 # recorded as skipped; retried later
+            return None                 # files gone: skipped, re-fetched later
         except GenesisError:
             return None                 # recorded as rejected; never retried
     return None
 
 
+def _remote_drain_order(shards, rows, now: int) -> list[str]:
+    """Fetched-never-applied shards first, in declared order — the free
+    vectors land as early as possible — then applied shards that still
+    have documents waiting (`pending`), soonest revisit first. A shard's
+    `next_pass_at` is its per-shard backoff: a pass that imported nothing
+    doubled it (import_shard), so the cost of revisiting follows the work
+    available, never the length of the shard list. A shard not on disk
+    (no row, fetching, skipped) or final is never walked here."""
+    fresh = [s for s in shards
+             if rows.get(s) is not None and rows[s]["state"] == "fetched"]
+    due = [s for s in shards
+           if rows.get(s) is not None and rows[s]["state"] == "applied"
+           and (rows[s]["pending"] is None or rows[s]["pending"] > 0)
+           and int(rows[s]["next_pass_at"] or 0) <= now]
+    due.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
+    return fresh + due
+
+
 def _drain_order(shards, rows, *, revisit: bool):
-    """Remote archives: pending shards in declared order, applied ones
-    excluded (they applied ONCE, post-settle, and are final). With
-    `revisit` (an explicit `genesis import` of a local archive): pending
-    shards first, then applied ones oldest-first. The WORKER never walks a
-    local archive this way — it reads the shards its candidates name
-    (_candidate_shards); sweeping the list cost one ~10 s parquet read per
-    shard per round on a 959-shard corpus, importing nothing from 958."""
+    """The explicit `genesis import` walk (CLI): pending shards in declared
+    order, then — with `revisit` — applied ones oldest-first. The WORKER
+    never walks an archive this way: a local archive reads the shards its
+    candidates name (_candidate_shards), a remote one what is on disk
+    (_remote_drain_order); sweeping the list cost one ~10 s parquet read
+    per shard per round on a 959-shard corpus, importing nothing from 958."""
     pending = [s for s in shards
-               if rows.get(s) is None or rows[s]["state"] != "applied"]
+               if rows.get(s) is None or rows[s]["state"] not in ("applied", "final")]
     if not revisit:
         return pending
     applied = sorted((s for s in shards
@@ -419,7 +474,8 @@ _ADAPTERS = {"medcpt-npy": _read_medcpt_shard, "parquet": _read_parquet_shard,
 # ---------------- import ---------------------------------------------------
 
 def _https_fetcher(archive: GenesisArchive):
-    from ..acquire.spec import Endpoint, RemoteFile, Transport, TransportError
+    from ..acquire.spec import (Endpoint, RemoteFile, Transport, TransferAborted,
+                                TransportError)
     from ..acquire.transport_https import HttpsTransport
     transport = HttpsTransport()
     endpoint = Endpoint(transport=Transport.HTTPS, url=archive.base_url)
@@ -429,9 +485,20 @@ def _https_fetcher(archive: GenesisArchive):
         resume = part.stat().st_size if part.is_file() else 0
         try:
             transport.fetch_one(endpoint, RemoteFile(rel_path=name), dest, resume)
+        except TransferAborted:
+            raise                       # a stop request is not unavailability
         except TransportError as e:
             raise GenesisUnavailable(str(e)) from e
     return fetch
+
+
+def _not_on_disk(name: str, dest: Path) -> None:
+    """The worker's remote-archive fetch seam (amendment 38): shards reach
+    the cache through genesis_fetch on their own thread and budget class;
+    the embed thread never downloads. A shard recorded `fetched` whose
+    files are gone is unavailable — the row goes back to `skipped` and the
+    fetcher lands it again."""
+    raise GenesisUnavailable(f"{name} is not in the archive cache")
 
 
 def _digest_files(paths: list[Path]) -> str:
@@ -486,10 +553,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     `revisit` (local archives) — re-running only touches documents that
     became eligible since, via the same delete-then-insert."""
     existing = con.execute(
-        "SELECT state FROM genesis_imports WHERE archive=? AND shard=?",
-        (archive.archive_id, shard)).fetchone()
+        "SELECT state, updated_at, next_pass_at FROM genesis_imports "
+        "WHERE archive=? AND shard=?", (archive.archive_id, shard)).fetchone()
+    if existing and existing["state"] == "final":
+        return {"shard": shard, "state": "already-applied"}   # complete: files gone
     if existing and existing["state"] == "applied" and not revisit:
         return {"shard": shard, "state": "already-applied"}
+    # the revisit interval this pass inherits (per-shard backoff, remote)
+    prev_interval = max(0, int((existing["next_pass_at"] or 0) - (existing["updated_at"] or 0))) \
+        if existing else 0
 
     recipe = recipe_for(collection)
     if embed_fn is None:
@@ -500,7 +572,14 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     rows_iter, files = _ADAPTERS[archive.adapter](cache_dir, shard, fetch,
                                                     archive.uid_prefix, collection)
-    digest = _digest_files(files)
+    # the fetcher digested a remote shard when it landed (3 GB, ~10 s);
+    # a revisit pass on the embed thread must not pay that again
+    prior_digest = con.execute(
+        "SELECT content_digest FROM genesis_imports WHERE archive=? AND shard=?",
+        (archive.archive_id, shard)).fetchone()
+    digest = (prior_digest["content_digest"]
+              if prior_digest and prior_digest["content_digest"] and revisit
+              else _digest_files(files))
     con.execute(
         "INSERT INTO genesis_imports(archive,shard,source_url,content_digest,"
         "state,updated_at) VALUES(?,?,?,?,?,?) "
@@ -511,6 +590,11 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     np_dtype = np.float16 if recipe.dtype == "f16" else np.float32
     docs = chunks_written = skipped_absent = skipped_shape = 0
+    # remote archive WITHOUT declared coverage: the pass counts, per id it
+    # saw and could not import, whether the document is held and still
+    # waiting for fts (a declared range answers this with one count)
+    pending_probe = {"n": 0}
+    probe_pending = revisit and not archive.local and archive.ids_per_shard is None
     # candidates this read was asked for and could not cover — reported so
     # drain_next_shard stops re-reading the shard on their account
     residual_uids: list[str] = []
@@ -550,17 +634,32 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 ])
                 conn.create_table(embeddings.TABLE, data=batch_rows, schema=schema)
         now = int(time.time())
-        for uid in batch_uids:
-            con.execute(
-                "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
-                "WHERE uid=?", (config.EMBED_VERSION, now, uid))
-            # These vectors were NOT computed here. Without this the Ask
-            # drawer badged every imported chunk "local ✓" — a false
-            # provenance claim, and provenance is what quarantine and §6's
-            # proof-of-forgery rest on. Marking them 'imported' also makes
-            # them eligible for verify-on-use, which is exactly right.
-            ledger.mark_imported(con, batch_chunk_ids.get(uid, []), uid,
-                                  producer, pseudo_bundle)
+        # ONE transaction per flush (invariant 2: marks land after the
+        # durable Lance write, together): on the autocommit connection
+        # every UPDATE used to be its own commit — 2 × APPLY_BATCH_DOCS
+        # fsyncs per batch, a million per MedCPT shard. BEGIN IMMEDIATE:
+        # a writer that reads first must not upgrade under WAL.
+        own_tx = not con.in_transaction
+        if own_tx:
+            con.execute("BEGIN IMMEDIATE")
+        try:
+            for uid in batch_uids:
+                con.execute(
+                    "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
+                    "WHERE uid=?", (config.EMBED_VERSION, now, uid))
+                # These vectors were NOT computed here. Without this the Ask
+                # drawer badged every imported chunk "local ✓" — a false
+                # provenance claim, and provenance is what quarantine and §6's
+                # proof-of-forgery rest on. Marking them 'imported' also makes
+                # them eligible for verify-on-use, which is exactly right.
+                ledger.mark_imported(con, batch_chunk_ids.get(uid, []), uid,
+                                      producer, pseudo_bundle)
+            if own_tx:
+                con.execute("COMMIT")
+        except BaseException:
+            if own_tx and con.in_transaction:
+                con.execute("ROLLBACK")
+            raise
         batch_rows, batch_native, batch_uids = [], [], []
         batch_chunk_ids = {}
 
@@ -579,6 +678,12 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 (uid,)).fetchone()
             if row is None:
                 skipped_absent += 1
+                if probe_pending:
+                    held = con.execute(
+                        "SELECT 1 FROM documents WHERE uid=? AND in_scope=1 "
+                        "AND error IS NULL AND fts_done=0", (uid,)).fetchone()
+                    if held is not None:
+                        pending_probe["n"] += 1
                 continue
 
             units = []
@@ -675,30 +780,75 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             (int(time.time()), archive.archive_id, shard))
         raise
 
+    now = int(time.time())
+    state = "applied"
+    pending: int | None = None
+    next_pass_at = 0
+    if revisit and not archive.local:
+        # REMOTE, amendment 38: how many documents this shard could still
+        # cover are waiting for fts? None → FINAL (files deleted); some →
+        # revisit later, with a per-shard backoff that doubles after a
+        # pass that imported nothing, so an idle shard costs less and
+        # less while the active one is read as often as it pays.
+        pending = _pending_for_shard(con, archive, shard, pending_probe)
+        if pending == 0:
+            state = "final"
+            _bump_coverage_epoch()
+        else:
+            base = config.GENESIS_MAX_WAIT_SEC
+            interval = base if docs else min(config.GENESIS_PASS_BACKOFF_MAX_SEC,
+                                             max(base, prev_interval * 2))
+            next_pass_at = now + interval
     if revisit:
         # each revisit pass imports only newly-eligible documents; the
         # ledger's counters accumulate coverage across passes
         con.execute(
-            "UPDATE genesis_imports SET state='applied', "
+            "UPDATE genesis_imports SET state=?, "
             "docs=COALESCE(docs,0)+?, chunks=COALESCE(chunks,0)+?, detail=NULL, "
-            "updated_at=? WHERE archive=? AND shard=?",
-            (docs, chunks_written, int(time.time()), archive.archive_id, shard))
+            "pending=?, next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
+            (state, docs, chunks_written, pending, next_pass_at, now,
+             archive.archive_id, shard))
     else:
         con.execute(
-            "UPDATE genesis_imports SET state='applied', docs=?, chunks=?, detail=NULL, "
-            "updated_at=? WHERE archive=? AND shard=?",
-            (docs, chunks_written, int(time.time()), archive.archive_id, shard))
+            "UPDATE genesis_imports SET state=?, docs=?, chunks=?, detail=NULL, "
+            "pending=?, next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
+            (state, docs, chunks_written, pending, next_pass_at, now,
+             archive.archive_id, shard))
     db.log_event(con, "info", "genesis",
                  f"{archive.archive_id}/{shard}: imported {chunks_written} vectors "
                  f"across {docs} documents ({skipped_absent} not held locally, "
-                 f"{skipped_shape} chunk-shape mismatches)")
-    if not keep_cache and not archive.local:
-        # local archives' files ARE the corpus — never delete them
+                 f"{skipped_shape} chunk-shape mismatches)"
+                 + (f"; {pending} still indexing, next pass in {next_pass_at - now}s"
+                    if state == "applied" and pending is not None
+                    else "; FINAL" if state == "final" else ""))
+    if not keep_cache and not archive.local and (state == "final" or not revisit):
+        # local archives' files ARE the corpus — never delete them; a
+        # remote shard that will be revisited stays on disk (cache-bounded
+        # by genesis_fetch) until it is final
         for p in files:
             p.unlink(missing_ok=True)
-    return {"shard": shard, "state": "applied", "docs": docs,
+        if state == "final":
+            con.execute("UPDATE genesis_imports SET bytes=0 WHERE archive=? AND shard=?",
+                        (archive.archive_id, shard))
+    return {"shard": shard, "state": state, "docs": docs,
             "chunks": chunks_written, "skipped_absent": skipped_absent,
-            "skipped_shape": skipped_shape, "residual_uids": residual_uids}
+            "skipped_shape": skipped_shape, "residual_uids": residual_uids,
+            "pending": pending}
+
+
+def _pending_for_shard(con, archive: GenesisArchive, shard: str,
+                       pending_probe: dict) -> int:
+    """Documents the shard could still cover that have not cleared fts.
+    With DECLARED coverage it is one range count over the browse index
+    (CAST(native_id AS INTEGER), built by the worker at startup); without
+    it, the pass itself probed every id it saw (pending_probe)."""
+    id_range = archive.id_range_of(shard)
+    if id_range is None:
+        return int(pending_probe.get("n", 0))
+    lo, hi = id_range
+    return int(con.execute(
+        "SELECT COUNT(*) FROM documents WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
+        "AND in_scope=1 AND error IS NULL AND fts_done=0", (lo, hi)).fetchone()[0])
 
 
 def import_archive(con, collection, archive: GenesisArchive, *,

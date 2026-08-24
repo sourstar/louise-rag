@@ -89,7 +89,11 @@
      pubmed's main box read as truncated without it) — named for what it
      is: pre-embedded when the vectors arrive via an archive. The sub-box
      below keeps only what is specific to the archive itself. #}
-  {% set dense_label = 'pre-embedded (dense)' if c.genesis else 'embedded (dense)' %}
+  {# amendment 38: a REMOTE archive's main-box row is TOTAL coverage
+     (archive + local encoder) — 'embedded (dense)'; only a stand-alone
+     pre-embedded corpus (local archive: the corpus IS the vectors) keeps
+     the 'pre-embedded' name on its one and only dense row #}
+  {% set dense_label = 'pre-embedded (dense)' if c.genesis and c.genesis.local else 'embedded (dense)' %}
   {# dense state: done -> green; an ARCHIVE collection's vectors are in
      the scheduling pool whenever the worker runs (import ignores the
      mode) -> turquoise; otherwise the mode speaks: off -> grey,
@@ -108,6 +112,7 @@
       {# backfill selects from the manifest directly and never touches the
          lazy queue, so the queue count is always 0 here and says nothing #}
       {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
+      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.local %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors — the archive delivers the ones it covers, the encoder takes only the rest
       {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
       {% endif %}
     {% elif c.embed_mode == 'lazy' %}
@@ -154,20 +159,20 @@
     {% elif not c.genesis.known %}
     <div class="note">unknown archive id — nothing will import.</div>
     {% else %}
-    {# fetched (vectors): the archive's OWN fetch meter, colored by the
-       same scheme (green done / orange in progress / grey idle). No
-       duplicate progress numbers here: the pipeline progress the download
-       waits on is the main box's indexed bar. #}
-    <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads and applies in one pass after the main box's indexed (lexical) bar completes (earlier would re-download it repeatedly as documents trickle in); until then 0/{{ c.genesis.shard_total }} is pacing, not a stall. Label color: green = complete, turquoise = downloading or scheduled (it starts on its own), grey = paused."{% if c.genesis.fetch_state == 'done' or (c.genesis.shard_total and c.genesis.applied >= c.genesis.shard_total) %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
-        <span>{{ c.genesis.applied|num }} / {{ c.genesis.shard_total|num }} archive files</span></div>
-      <div class="spine"><span style="width:{{ (100*c.genesis.applied/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
-    {% if c.genesis.waiting_docs is none or c.genesis.waiting_docs %}
-    {# visible, not tooltip-only: without this line a 0/N counter reads as
-       stuck. Words only — the progress it waits on is the indexed bar. #}
-    <div class="note">not started yet, and not stuck: this download begins
-      automatically when <i>indexed (lexical)</i> above completes —
-      fetching earlier would re-download the archive repeatedly as
-      documents trickle in.</div>
+    {# amendment 38 — two rows, no knob. fetched (vectors): the archive's
+       OWN download meter — shards landed over declared (it is a second
+       acquisition stream, behind the corpus on the link, bounded on
+       disk). pre-embedded (dense): documents the archive has covered so
+       far — its share of the main box's embedded (dense) row. Colors:
+       green complete, turquoise moving or scheduled, grey paused. #}
+    <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads in the background behind the corpus (the corpus wins the link: without it the vectors are useless), a few files at a time; each file applies as soon as it lands for the documents already indexed, is revisited as more of them clear indexing, and is deleted once nothing in its range still waits. Label color: green = all landed, turquoise = downloading or scheduled, grey = paused."{% if c.genesis.fetch_state == 'done' %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or (worker_state == 'running' and c.license.acquire_enabled) %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
+        <span>{{ c.genesis.fetched|num }} / {{ c.genesis.shard_total|num }} archive files{% if c.genesis.resident_bytes %} <span class="note" title="archive files kept on disk until every document in their range has been indexed and covered (GENESIS_CACHE_BYTES bounds this)">({{ (c.genesis.resident_bytes / 1073741824)|round(1) }} GB on disk)</span>{% endif %}</span></div>
+      <div class="spine"><span style="width:{{ (100*c.genesis.fetched/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
+    <div class="stage"><div class="lbl"><span title="documents whose vectors came from the archive — no GPU spent. The main box's embedded (dense) row is this plus whatever the local encoder embedded. A document the archive turns out not to hold (no abstract, a chunk-shape mismatch) is released to the local encoder once its archive file is complete."{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>pre-embedded (dense)</span>
+        <span>{{ c.genesis.docs|num }} / {{ c.in_scope|num }}{% if c.genesis.pending %} <span class="note" title="documents in the landed files' ranges still waiting for indexing — they import for free when they get there">({{ c.genesis.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
+      <div class="spine"><span style="width:{{ (100*c.genesis.docs/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+    {% if not c.license.acquire_enabled %}
+    <div class="note">acquisition is off for this collection, so the archive is not fetched either — it follows the same switch and the same license gate as the corpus.</div>
     {% endif %}
     {% endif %}
   </div>
@@ -183,12 +188,14 @@
     {% endif %}
   </div>
   {% endif %}
-  {# the knob is part of EVERY card's main box (operator: pubmed's main
-     box read as truncated without it) — named for what it honestly does:
-     gap-fill when an archive delivers the vectors, embed mode otherwise #}
+  {# ONE knob on EVERY card's main box (operator: "single knob"). It
+     governs the LOCAL encoder only; an archive imports whenever the
+     worker runs. Under "all" the encoder takes what the archive cannot
+     cover (amendment 38) — so the same three values mean the same thing
+     on every card. #}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
-      <label style="margin:0 0 2px">{{ 'Local gap-fill' if c.genesis else 'Embed mode' }} —
+      <label style="margin:0 0 2px">Embed mode —
         {# which processor this collection's encoder actually spends: the
            GPU is the scarce, contended one; CPU encoders run beside it #}
         <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
@@ -201,18 +208,12 @@
          desired state, like create/ack) AND the runtime scope for
          immediate effect — it survives restarts #}
       <select onchange="setEmbedMode('{{ c.name }}', this.value)"
-              title="{{ 'archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. ' if c.genesis else '' }}Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
-        {% if c.genesis %}
-        <option value="all" {{ 'selected' if c.embed_mode == 'all' }}>fix — embed the few docs the archive can’t cover</option>
-        <option value="lazy" {{ 'selected' if c.embed_mode == 'lazy' }}>fix on demand — only when a query hits one</option>
-        <option value="off" {{ 'selected' if c.embed_mode == 'off' }}>off — leave the gaps unembedded</option>
-        {% else %}
+              title="What the LOCAL encoder does. off: nothing. on-demand: only documents a query touches. all: every indexed document without vectors{{ ' that the pre-embedded archive cannot cover — the archive imports regardless, in every mode, and goes first' if c.genesis else '' }}. Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
         {# display name "on-demand"; the STORED value stays "lazy" (TOML /
            API compatibility — same pattern as plugin display labels) #}
         {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all')] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
-        {% endif %}
       </select></div>
   </div>
   <div class="actions">

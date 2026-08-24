@@ -723,8 +723,17 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     from .bundles.genesis import ARCHIVES, _local_shards
     archive = ARCHIVES.get(collection.genesis_archive)
     totals = con.execute(
-        "SELECT COUNT(*) shards, SUM(state='applied') applied, SUM(docs) docs, "
-        "SUM(state='rejected') rejected FROM genesis_imports WHERE archive=?",
+        "SELECT COUNT(*) shards, SUM(state IN ('applied','final')) applied, "
+        "SUM(state='final') final, SUM(docs) docs, "
+        "SUM(state='rejected') rejected, "
+        # amendment 38: what the fetcher has landed (on disk or already
+        # consumed), what still sits on disk, and how many held documents
+        # the resident shards are waiting on
+        "SUM(state IN ('fetched','applying','applied','final')) fetched, "
+        "SUM(state='fetching') fetching, "
+        "SUM(CASE WHEN state IN ('fetched','applying','applied') THEN COALESCE(bytes,0) ELSE 0 END) resident_bytes, "
+        "SUM(CASE WHEN state='applied' THEN COALESCE(pending,0) ELSE 0 END) pending "
+        "FROM genesis_imports WHERE archive=?",
         (collection.genesis_archive,)).fetchone()
     if archive is not None and archive.local:
         shard_total = len(_local_shards(collection))
@@ -760,12 +769,15 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         else:
             fetch_state = "idle"
     else:
+        # amendment 38: the archive is a second acquisition stream — its
+        # fetch meter is shards LANDED (fetched, applying, applied, final)
+        # over declared; active while a shard is downloading or applying
         applying = con.execute(
             "SELECT 1 FROM genesis_imports WHERE archive=? AND state='applying' "
             "LIMIT 1", (collection.genesis_archive,)).fetchone()
-        if shard_total and applied >= shard_total:
+        if shard_total and (totals["fetched"] or 0) >= shard_total:
             fetch_state = "done"
-        elif applying:
+        elif applying or totals["fetching"]:
             fetch_state = "active"
         else:
             fetch_state = "idle"
@@ -775,6 +787,10 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "local": bool(archive and archive.local),
         "shard_total": shard_total,
         "applied": applied,
+        "final": totals["final"] or 0,
+        "fetched": totals["fetched"] or 0,
+        "resident_bytes": totals["resident_bytes"] or 0,
+        "pending": totals["pending"] or 0,
         "docs": totals["docs"] or 0,
         "rejected": bool(totals["rejected"]),
         "waiting_docs": waiting_docs,
@@ -782,6 +798,9 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "index_done": index_done,
         "index_total": index_total,
         "index_pct": index_pct,
+        # declared coverage: how many in-scope documents the archive CAN
+        # cover is unknown without the ids; what it has covered is `docs`
+        "declares_coverage": bool(archive and archive.ids_per_shard),
     }
 
 

@@ -200,7 +200,7 @@ def test_bandwidth_payload_reports_real_per_class_rates():
     # endpoint yields every 2s.
     payload = web._bandwidth_payload()
     for direction in ("down", "up"):
-        assert set(payload[direction]) == {"interactive", "delta", "backfill", "seeding"}
+        assert set(payload[direction]) == {"interactive", "delta", "backfill", "archive", "seeding"}
     assert "schedule" in payload["limits"]
 
 

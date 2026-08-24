@@ -61,8 +61,10 @@ class Priority(IntEnum):
     """Lower value = higher priority (architecture-v2.md §5.2's ordering)."""
     INTERACTIVE = 0    # interactive queries & lazy-p2p fetches
     DELTA = 1          # delta sync
-    BACKFILL = 2       # backfill acquisition
-    SEEDING = 3        # leftover only, never reserved
+    BACKFILL = 2       # backfill acquisition (the corpus)
+    ARCHIVE = 3        # pre-embedded vector archives (amendment 38): useless
+                       # without the corpus, so always behind it
+    SEEDING = 4        # leftover only, never reserved
 
 
 class TransferAborted(Exception):

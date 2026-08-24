@@ -341,26 +341,44 @@ def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
     from dataclasses import replace
     c = replace(collections_mod.default_collection(),
                 genesis_archive="medcpt-pubmed")
-    db.connect(c)
+    con = db.connect(c)
+    # amendment 38: two shards landed, one applied with documents still
+    # indexing, one final; 12 documents covered so far
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,bytes,pending,updated_at) "
+                "VALUES('medcpt-pubmed','0','final',9,0,0,0)")
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,bytes,pending,updated_at) "
+                "VALUES('medcpt-pubmed','1','applied',3,3000000000,7,0)")
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) "
+                "VALUES('medcpt-pubmed','2','fetching',0)")
     shelf = web._collection_shelf(c, {})
+    g = shelf["genesis"]
+    assert (g["fetched"], g["final"], g["docs"], g["pending"]) == (2, 1, 12, 7)
+    assert g["resident_bytes"] == 3000000000 and g["fetch_state"] == "active"
+    assert g["declares_coverage"] is True
     html = _render_library(shelf)
-    assert html.count(">pre-embedded (dense)</span>") == 1, "dense row once, in the main box"
-    assert "fetched (vectors)" in html
-    assert "Local gap-fill" in html
+    # main box: TOTAL coverage under the standard name; sub-box: the
+    # archive's own two rows, single knob in the main box only
+    assert html.count(">embedded (dense)</span>") == 1, "the main box's dense row is total coverage"
+    assert html.count(">pre-embedded (dense)</span>") == 1, "the archive's share, in the sub-box"
+    assert "fetched (vectors)" in html and "2 / 37 archive files" in html
+    assert "(2.8 GB on disk)" in html and "(7 awaiting indexing)" in html
+    assert html.count("Embed mode —") == 1 and "Local gap-fill" not in html, "ONE knob"
+    assert "fix — embed" not in html and "fix on demand" not in html, \
+        "the same three values as every other card"
     assert html.count("space: %s" % shelf["space_id"]) == 1, \
         "no repeated space badge in the sub-box (redundant)"
     assert "Progress toward it" not in html, \
         "no duplicate indexing numbers — the indexed bar already shows them"
-    assert ">embedded (dense)</span>" not in html, \
-        "a combined card's dense bar lives in the sub-box only"
+    assert "not started yet" not in html, "the post-settle gate is gone"
 
     standalone = replace(collections_mod.default_collection(),
                          genesis_archive="upstash-wikipedia-2024-06")
     html_local = _render_library(web._collection_shelf(standalone, {}))
     assert "fetched (vectors)" not in html_local, \
         "a stand-alone pre-embedded collection gets no sub-box"
-    assert ">pre-embedded (dense)</span>" in html_local
-    assert "Local gap-fill" in html_local
+    assert ">pre-embedded (dense)</span>" in html_local, \
+        "the corpus IS the vectors: its one dense row keeps the name"
+    assert html_local.count("Embed mode —") == 1
 
     plain = web._collection_shelf(collections_mod.default_collection(), {})
     html2 = _render_library(plain)

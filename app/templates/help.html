@@ -154,13 +154,15 @@
       <td>embeds only documents queries actually touch (the priority
       queue); no background work</td>
       <td>background-backfills everything in scope, queue first</td></tr>
-    <tr><td><b>pre-embedded (dense)</b> — archive declared</td>
-      <td>import runs anyway; the few documents the archive cannot cover
-      stay without vectors (and post-quarantine re-embeds never run)</td>
-      <td>import runs anyway; gaps are filled only when a query hits
-      one</td>
-      <td>import runs anyway; gaps are filled once, in the background —
-      minutes of encoder time in total</td></tr>
+    <tr><td><b>embedded (dense)</b> — pre-embedded archive declared</td>
+      <td>the archive imports anyway (it is free); what it cannot cover
+      stays without vectors (and post-quarantine re-embeds never run)</td>
+      <td>the archive imports anyway; the encoder embeds only what a
+      query touches</td>
+      <td>the archive imports anyway and goes first; the encoder
+      background-embeds only the documents the archive <i>cannot</i>
+      cover — outside its declared id ranges, or left uncovered once an
+      archive file is complete</td></tr>
   </table></div>
   <p class="note">
     The Library's embed-mode control is <b>persistent</b>: it writes
@@ -170,17 +172,19 @@
     immediately — it survives restarts. A runtime-only override is still
     possible via <code>POST /api/scope</code>; that one lasts until the
     worker next applies the TOML. A collection whose TOML is silent
-    defaults to <b>on-demand</b> (stored value <code>lazy</code>). For a pre-embedded collection (a genesis archive) the mode
-    only governs <b>local gap-fill</b> of what the archive cannot cover —
-    archive import runs regardless — so its card shows the same knob as
-    <b>fix / fix on demand / off</b>: <b>fix</b> (= all) embeds, once, the
-    handful of documents the archive can never deliver (articles whose rows
-    straddle a shard-file boundary, roughly one per shard — minutes of CPU
-    in total) and keeps quarantine-triggered re-embeds working; <b>fix on
-    demand</b> (stored value <code>lazy</code>) does the same only when a query actually hits such a
-    document; <b>off</b> leaves those gaps without dense vectors forever —
-    and note that after a quarantine, <b>off</b> also means the affected
-    documents are never re-embedded.
+    defaults to <b>on-demand</b> (stored value <code>lazy</code>). A
+    collection with a pre-embedded archive has the <b>same knob with the
+    same three values</b> — one knob, not two. The archive imports in every
+    mode (it costs no encoder time and always goes first); the mode says
+    what the <i>local encoder</i> does with the rest. Under <b>all</b> it
+    embeds only what the archive cannot cover: documents outside the
+    archive's declared id ranges (PubMed articles newer than the MedCPT
+    snapshot, ~3M of 40M) and, once an archive file is complete, the few
+    inside its range the archive did not hold (no abstract, a chunk-shape
+    mismatch). Until that file is complete those wait for it — never a
+    duplicate, never a wrong import. <b>off</b> leaves the uncovered
+    documents without dense vectors — and note that after a quarantine,
+    <b>off</b> also means the affected documents are never re-embedded.
   </p>
   <p class="note">
     Node-wide, the Library page offers three modes. <b>run everything</b> is
@@ -320,16 +324,21 @@
     before any local GPU embedding — and the Library card shows the
     coverage. An archive is split by its producer into numbered
     <b>archive files</b> ("shards": NCBI publishes MedCPT's vectors as 37
-    of them; the pre-embedded Wikipedia corpus IS its 1,447 parquet
-    files). Mind that this is a <b>download of its own</b>, separate from
-    the corpus fetch — a card can honestly say <i>compressed data
-    fetched</i> while its vector archive has not moved yet. A
-    <i>remote</i> archive downloads and applies in one pass after
-    indexing completes (applying earlier would re-download it repeatedly
-    as documents trickle in), so its card line shows the indexing
-    progress that moves toward that point; a <i>local</i> one is read
-    file by file as its documents pass indexing. The CLI does the same
-    thing on demand:
+    files of ~3 GB; the pre-embedded Wikipedia corpus IS its 1,447 parquet
+    files). A <i>remote</i> archive is a <b>second download stream of the
+    collection</b>, beside the corpus fetch and behind it on the link
+    (the corpus wins: without it the vectors are useless — that is the
+    <i>archive</i> class of the bandwidth budget). Files land a few at a
+    time (a bounded cache on disk, <code>GENESIS_CACHE_BYTES</code>, and a
+    disk preflight), and each one <b>applies as soon as it lands</b> for
+    the documents already indexed, is revisited as more of them clear
+    indexing (a revisit that finds nothing backs off, per file), and is
+    deleted once nothing in its id range still waits. MedCPT's files are
+    exact PMID ranges (file <i>i</i> = PMIDs <i>i</i>·10⁶ …), so the
+    worker knows from the id alone which documents the archive can cover
+    — the local encoder never spends a GPU-hour on one. A <i>local</i>
+    archive is read file by file as its documents pass indexing. The CLI
+    does the same thing on demand:
   </p>
   <p class="note">
     <b>Why some pre-embedded data is combined with a collection and some

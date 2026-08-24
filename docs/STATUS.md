@@ -162,6 +162,32 @@ documents it wants; the locators carry row ranges, so reading only those
 row groups would cut it to a fraction (and would make straddlers
 importable by reading both segments).
 
+**2026-08-25 — remote genesis archives are fetched like a corpus and
+applied as indexing goes (amendment 38).** Live pubmed after weeks:
+8.25M of 40M indexed, **0 of 37 MedCPT shards fetched, 44 documents
+embedded** — the post-settle gate (apply once, after the whole collection
+had passed rdf/fts) held the free vectors back for the months the
+indexing takes, and the embed thread would have downloaded each 3 GB
+shard inline when it finally ran. Now `app/bundles/genesis_fetch.py`
+lands shards on its own thread under the `archive` budget class (below
+`backfill`: the corpus wins the link), bounded on disk
+(`GENESIS_CACHE_BYTES`, default 24 GiB ≈ the active shard and a few
+ahead) with a disk preflight; `drain_next_shard` applies whatever is on
+disk for the documents indexed so far, revisits with a per-shard
+geometric backoff (`GENESIS_MAX_WAIT_SEC` doubling to
+`GENESIS_PASS_BACKOFF_MAX_SEC` after empty passes), and finalises — files
+deleted, `coverage_epoch` bumped — once its id range has no document
+waiting. MedCPT's coverage is declared (`ids_per_shard=1_000_000`,
+verified exact against chunks 0/1/36), so the worker's "all" backfill
+excludes covered ranges by predicate and walks the scope index from a
+rowid cursor (`_backfill_rows`; plan-checked: no TEMP B-TREE — the old
+`ORDER BY (lang='en')` sorted every candidate per round). Per-flush
+manifest writes in `import_shard` are now one `BEGIN IMMEDIATE`
+transaction (they were one commit per UPDATE). Watch on the NAS: the
+first pass over a fetched shard costs ~1M uid lookups on the embed
+thread (bounded by backoff); `idx_documents_native_int` is what makes
+the pending range count cheap — the worker builds it at startup.
+
 ## Designed, specified, not built
 
 1. **Peer and collection discovery** — [`p2p-discovery.md`](p2p-discovery.md).
@@ -187,6 +213,22 @@ importable by reading both segments).
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5g. **Pre-embedded archives: fetched like a corpus, applied as indexing
+   goes, one knob (amendment 38; operator policy, 2026-08-24).** Live
+   pubmed: 8.25M/40M indexed, 0/37 MedCPT shards, 44 embedded — the
+   post-settle gate withheld the archive for months. Built: the archive
+   is a second acquisition stream (`app/bundles/genesis_fetch.py`, budget
+   class `archive` below `backfill`, bounded on-disk cache with
+   preflight); fetched shards apply at once for the indexed documents,
+   are revisited with per-shard geometric backoff, and go FINAL (files
+   deleted) when their id range has no document left waiting for fts;
+   MedCPT declares its coverage (`shard_of_id`: exact PMID ranges); the
+   single Embed-mode knob governs the local encoder only, and `all`
+   selects the documents the archive cannot cover through a rowid
+   cursor (no per-round re-walk of the covered prefix, no ORDER BY).
+   Card: main `embedded (dense)` = total coverage; sub-box = `fetched
+   (vectors)` + `pre-embedded (dense)`, no knob. Local archives
+   (wikivec) unchanged.
 5f. **Index sharing for LIGHT peers — decide by measurement (2026-08-24).**
    The lexical index stays recomputed by default (≈1 ms/doc, deterministic,
    zero trust surface; a received tantivy segment can only be fully
