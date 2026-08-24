@@ -205,10 +205,10 @@ samples, median ≥ τ and 75 % ≥ τ; the samples below τ are stale
 documents, evicted from the batch and left to the encoder, never
 imported), and a rejected shard stops the archive ONLY while nothing has
 proven it — under a proven archive the rejected shard alone is out and
-its id range is released to the local encoder. Operator note: shard 1
-on the NAS was rejected under the old rule; reset its row to `fetched`
-(`UPDATE genesis_imports SET state='fetched', detail=NULL WHERE
-shard='1'`) so the quorum proof re-runs — its files are still on disk.
+its id range is released to the local encoder. (Shard 1 on the NAS,
+rejected under the old rule, was reset to `fetched` by hand —
+`UPDATE genesis_imports SET state='fetched', detail=NULL WHERE
+shard='1'` — and re-proved; the recipe for any future case.)
 Also measured: roughly half of the sampled 1970s-era shard-1 documents
 chunk into TWO pieces locally, so the shape gate skips them (the
 `chunk_abstract` follow-up in *Known gaps* is what would lift that).
