@@ -1039,7 +1039,12 @@ the live deployment:
       REVISITED as more of its documents clear fts (a pass that imports
       nothing backs off geometrically per shard, so cost follows work,
       not the shard list), and becomes FINAL — files deleted — once no
-      in-scope document in its id range is still waiting for fts. A
+      in-scope document in its id range is still waiting for fts. A pass
+      runs on the collection's own thread beside its rdf/fts and is
+      BUDGETED (`GENESIS_PASS_BUDGET_S`): it commits what it has and
+      resumes after an equal share for indexing — a million-document
+      first pass must not stall the indexer the archive itself depends
+      on; a stop resumes at once. A
       document in a final shard's range that the archive did not cover
       (no abstract, straddler, shape mismatch) is thereby released to the
       local encoder; until then it waits, never a wrong import.

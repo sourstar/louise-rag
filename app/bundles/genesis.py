@@ -332,7 +332,7 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     for shard in _remote_drain_order(archive.shards, rows, now):
         try:
             return import_shard(con, collection, archive, shard,
-                                fetch=_not_on_disk, revisit=True)
+                                fetch=_not_on_disk, revisit=True, stop=stop)
         except GenesisUnavailable:
             return None                 # files gone: skipped, re-fetched later
         except GenesisError:
@@ -350,8 +350,10 @@ def _remote_drain_order(shards, rows, now: int) -> list[str]:
     (no row, fetching, skipped) or final is never walked here."""
     fresh = [s for s in shards
              if rows.get(s) is not None and rows[s]["state"] == "fetched"]
+    # `applying` here means a pass was cut short by a crash or restart —
+    # its files are on disk and its work resumes like a budgeted pause
     due = [s for s in shards
-           if rows.get(s) is not None and rows[s]["state"] == "applied"
+           if rows.get(s) is not None and rows[s]["state"] in ("applied", "applying")
            and (rows[s]["pending"] is None or rows[s]["pending"] > 0)
            and int(rows[s]["next_pass_at"] or 0) <= now]
     due.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
@@ -548,7 +550,7 @@ def _sample_re_encode(collection, sampled: list[tuple[str, np.ndarray]], embed_f
 
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                  embed_fn=None, fetch=None, keep_cache: bool = False,
-                 revisit: bool = False) -> dict:
+                 revisit: bool = False, stop=None) -> dict:
     """Admit one shard. Idempotent: an applied shard short-circuits, unless
     `revisit` (local archives) — re-running only touches documents that
     became eligible since, via the same delete-then-insert."""
@@ -595,6 +597,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     # waiting for fts (a declared range answers this with one count)
     pending_probe = {"n": 0}
     probe_pending = revisit and not archive.local and archive.ids_per_shard is None
+    # A remote shard's first pass imports up to a million documents on the
+    # collection's own thread — the thread that also runs its rdf/fts. The
+    # pass is BUDGETED (config.GENESIS_PASS_BUDGET_S): it stops on time or
+    # on stop (SIGTERM: the unit is a batch), commits what it has, and
+    # resumes next time — after an equal share for rdf/fts. Every already-
+    # imported document is skipped by its row lookup on resume.
+    t_start = time.time()
+    budget = config.GENESIS_PASS_BUDGET_S if (revisit and not archive.local) else None
+    partial = stopped = False
     # candidates this read was asked for and could not cover — reported so
     # drain_next_shard stops re-reading the shard on their account
     residual_uids: list[str] = []
@@ -621,8 +632,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             import pyarrow as pa
             if embeddings.TABLE in conn.table_names():
                 table = conn.open_table(embeddings.TABLE)
-                for native in batch_native:
-                    table.delete(embeddings._book_filter(native))
+                # ONE delete per batch, not one per document: a Lance delete
+                # scans the table for its filter, so a million per-document
+                # deletes over a table growing to a million rows was the
+                # quadratic trap in a new coat (pubmed's first shard pass:
+                # ~150 documents/s). Idempotence (invariant 2: delete-then-
+                # insert keyed on the document) is unchanged — the ids are
+                # forced through int() exactly as _book_filter does.
+                ids = ",".join(str(int(n)) for n in batch_native)
+                table.delete(f"book_id IN ({ids})")
                 table.add(batch_rows)
             else:
                 value_type = pa.float16() if recipe.dtype == "f16" else pa.float32()
@@ -672,6 +690,11 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     try:
         for uid, vecs in rows_iter:
+            if budget is not None and (time.time() - t_start > budget
+                                       or (stop is not None and stop.is_set())):
+                partial = True
+                stopped = stop is not None and stop.is_set()
+                break
             row = con.execute(
                 "SELECT uid, native_id, path, lang FROM documents "
                 "WHERE uid=? AND error IS NULL AND fts_done=1 AND embed_done=0",
@@ -784,7 +807,13 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     state = "applied"
     pending: int | None = None
     next_pass_at = 0
-    if revisit and not archive.local:
+    if partial:
+        # budget or stop: the walk did not reach the end of the shard, so
+        # nothing is known about its coverage yet (pending NULL: due). A
+        # budget cut resumes after an equal share of the thread for
+        # rdf/fts; a stop (SIGTERM) resumes the moment the worker is back
+        next_pass_at = now if stopped else now + int(budget or 0)
+    elif revisit and not archive.local:
         # REMOTE, amendment 38: how many documents this shard could still
         # cover are waiting for fts? None → FINAL (files deleted); some →
         # revisit later, with a per-shard backoff that doubles after a
@@ -818,7 +847,9 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                  f"{archive.archive_id}/{shard}: imported {chunks_written} vectors "
                  f"across {docs} documents ({skipped_absent} not held locally, "
                  f"{skipped_shape} chunk-shape mismatches)"
-                 + (f"; {pending} still indexing, next pass in {next_pass_at - now}s"
+                 + (f"; paused after {int(time.time() - t_start)}s, resumes in "
+                    f"{next_pass_at - now}s" if partial
+                    else f"; {pending} still indexing, next pass in {next_pass_at - now}s"
                     if state == "applied" and pending is not None
                     else "; FINAL" if state == "final" else ""))
     if not keep_cache and not archive.local and (state == "final" or not revisit):
@@ -833,7 +864,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     return {"shard": shard, "state": state, "docs": docs,
             "chunks": chunks_written, "skipped_absent": skipped_absent,
             "skipped_shape": skipped_shape, "residual_uids": residual_uids,
-            "pending": pending}
+            "pending": pending, "partial": partial}
 
 
 def _pending_for_shard(con, archive: GenesisArchive, shard: str,

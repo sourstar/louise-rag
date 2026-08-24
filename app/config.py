@@ -164,6 +164,11 @@ GENESIS_MAX_WAIT_SEC = int(os.getenv("GENESIS_MAX_WAIT_SEC", "600"))
 GENESIS_CACHE_BYTES = int(os.getenv("GENESIS_CACHE_BYTES", str(24 * 1024 ** 3)))
 # a revisit pass that imports nothing doubles that shard's wait, up to this
 GENESIS_PASS_BACKOFF_MAX_SEC = int(os.getenv("GENESIS_PASS_BACKOFF_MAX_SEC", "21600"))
+# a remote shard's apply pass runs on the collection's own thread, beside its
+# rdf/fts: it is cut after this many seconds (committing what it has) and
+# resumes after an equal share for indexing — 1M documents per shard would
+# otherwise hold indexing for hours (observed: ~150 docs/s on pubmed)
+GENESIS_PASS_BUDGET_S = int(os.getenv("GENESIS_PASS_BUDGET_S", "300"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the

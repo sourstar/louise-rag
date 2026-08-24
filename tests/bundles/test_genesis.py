@@ -541,3 +541,83 @@ def test_worker_starts_the_archive_fetcher_beside_the_corpus_fetch(collection, m
     finally:
         worker._paused.clear()
     assert len(started) == 2, "acquisition off / no archive / local archive / paused start nothing"
+
+
+def test_a_budgeted_pass_pauses_commits_and_resumes(collection, monkeypatch):
+    """A remote shard's first pass can hold the collection's own thread
+    (its rdf/fts) for hours. It is cut at GENESIS_PASS_BUDGET_S, commits
+    what it imported, is NOT final (coverage unknown), and resumes after
+    an equal share — skipping what it already imported. A pass interrupted
+    by a restart (row left `applying`) resumes the same way."""
+    import time as _time
+    from dataclasses import replace
+    from app import config as config_mod
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))          # all 20 held and indexed
+    archive = _declared_archive(["0"], ids_per_shard=100)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _same_function_embed(texts))
+    declared = replace(collection, genesis_archive="test-arc")
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+
+    # a budget the clock has already spent: the pass stops at once,
+    # having imported nothing — nothing lost, nothing marked final
+    monkeypatch.setattr(config_mod, "GENESIS_PASS_BUDGET_S", -1)
+    r = genesis.drain_next_shard(con, declared)
+    assert r["partial"] is True and r["state"] == "applied" and r["docs"] == 0
+    row = con.execute("SELECT * FROM genesis_imports").fetchone()
+    assert row["state"] == "applied" and row["pending"] is None
+    assert row["next_pass_at"] <= int(_time.time()), "resumes without a backoff wait"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
+
+    # a stop request cuts the pass the same way (SIGTERM: unit = a batch)
+    monkeypatch.setattr(config_mod, "GENESIS_PASS_BUDGET_S", 3600)
+    import threading
+    stop = threading.Event()
+    stop.set()
+    r = genesis.drain_next_shard(con, declared, stop=stop)
+    assert r["partial"] is True and r["docs"] == 0
+
+    # the resumed pass completes: everything imports, the shard is FINAL
+    r = genesis.drain_next_shard(con, declared)
+    assert r["partial"] is False and r["docs"] == 20 and r["state"] == "final"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 20
+
+
+def test_a_pass_interrupted_by_a_restart_resumes(collection, monkeypatch):
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _declared_archive(["0"], ids_per_shard=100)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _same_function_embed(texts))
+    declared = replace(collection, genesis_archive="test-arc")
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    # the crash left the row mid-pass
+    con.execute("UPDATE genesis_imports SET state='applying', next_pass_at=0")
+    r = genesis.drain_next_shard(con, declared)
+    assert r is not None and r["docs"] == 10 and r["state"] == "final"
+
+
+def test_reimporting_a_shard_never_duplicates_vectors(collection, monkeypatch):
+    """Delete-then-insert per document (invariant 2), now one delete per
+    batch: a second import of the same documents leaves exactly one
+    vector per chunk."""
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _archive(["0"])
+    genesis.import_shard(con, collection, archive, "0",
+                         embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    con.execute("UPDATE documents SET embed_done=0")      # force a re-import
+    con.execute("DELETE FROM genesis_imports")
+    genesis.import_shard(con, collection, archive, "0",
+                         embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.count_rows() == 10, "one vector per chunk after a re-import"

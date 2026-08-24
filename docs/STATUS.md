@@ -183,10 +183,19 @@ excludes covered ranges by predicate and walks the scope index from a
 rowid cursor (`_backfill_rows`; plan-checked: no TEMP B-TREE — the old
 `ORDER BY (lang='en')` sorted every candidate per round). Per-flush
 manifest writes in `import_shard` are now one `BEGIN IMMEDIATE`
-transaction (they were one commit per UPDATE). Watch on the NAS: the
-first pass over a fetched shard costs ~1M uid lookups on the embed
-thread (bounded by backoff); `idx_documents_native_int` is what makes
-the pending range count cheap — the worker builds it at startup.
+transaction (they were one commit per UPDATE). Observed on the NAS the
+same evening: shards 0–2 landed at 7.5–10.8 MB/s; the first pass over
+shard 0 ran at **~150 documents/s** on pubmed's own pipeline thread —
+a container parse per 30k documents (0.6 ms/doc) plus one Lance
+`delete` PER DOCUMENT on a growing table (the quadratic trap again) —
+i.e. ~1.8 h per shard with rdf/fts stalled meanwhile. Two fixes in the
+same change: the flush deletes ONCE per batch (`book_id IN (...)`), and
+a pass is **budgeted** (`GENESIS_PASS_BUDGET_S`, 300 s): it commits what
+it has, records the row as `applied` with unknown coverage, and resumes
+after an equal share for rdf/fts; a stop (SIGTERM) resumes at once on
+restart, and a row left `applying` by a crash resumes the same way.
+`idx_documents_native_int` is what makes the pending range count cheap
+— the worker builds it at startup.
 
 ## Designed, specified, not built
 
