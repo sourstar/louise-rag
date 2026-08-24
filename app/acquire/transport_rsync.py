@@ -41,14 +41,26 @@ def _with_trailing_slash(url: str) -> str:
     return url if url.endswith("/") else url + "/"
 
 
+_LISTING_TIMEOUT = 1800
+
+
 class RsyncTransport:
     def list_files(self, endpoint: Endpoint, spec: AcquisitionSpec) -> Iterator[RemoteFile]:
-        argv = ["rsync", "--list-only"]
+        # -r: without it `--list-only` shows the module's TOP LEVEL only —
+        # for a one-dir-per-doc corpus that is 79k DIRECTORIES (measured
+        # against gutenberg-epub), every one skipped below, so the listing
+        # was empty and gutenberg's in-app acquisition never enumerated a
+        # single book. The listing contract (AcquisitionSpec docstring,
+        # amendment 33) demands the origin's COMPLETE listing; recursive is
+        # the only complete one. The timeout matches: a full recursive
+        # listing of ~800k entries takes minutes, not the old 60 s.
+        argv = ["rsync", "-r", "--list-only"]
         if endpoint.ssh_key_path is not None:
             argv += ["-e", f"ssh -i {endpoint.ssh_key_path}"]
         argv.append(_with_trailing_slash(endpoint.url))
         try:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=True)
+            result = subprocess.run(argv, capture_output=True, text=True,
+                                    timeout=_LISTING_TIMEOUT, check=True)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
             raise TransportError(f"rsync --list-only {endpoint.url}: {e}") from e
         for line in result.stdout.splitlines():

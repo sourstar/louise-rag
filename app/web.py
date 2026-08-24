@@ -825,6 +825,14 @@ def new_collection_create(body: CreateCollectionBody):
         raise HTTPException(400, f"unknown plugin: {body.plugin!r}")
     if collections_mod.by_name(body.name) is not None:
         raise HTTPException(409, f"collection {body.name!r} already exists")
+    # "(hand-populated)": no profile, no acquisition — the operator fills
+    # the corpus folder themselves (rsync, zfs send, files staged by hand)
+    # and discovery simply indexes what appears. Selecting it forces
+    # acquisition off: a profile is what acquisition fetches BY.
+    hand_populated = body.profile in ("", "hand-populated")
+    if hand_populated:
+        body.profile = ""
+        body.acquire_enabled = False
     toml_path = collections_mod.config_toml_path(body.name)
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")

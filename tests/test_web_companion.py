@@ -100,6 +100,26 @@ def test_companion_refuses_shared_mount_and_foreign_plugins(client):
     assert collections_mod.by_name("pm") is None
 
 
+def test_hand_populated_profile_creates_without_acquisition(client):
+    """Every plugin's create form offers "(hand-populated)": no profile, no
+    acquisition — the operator fills the corpus folder themselves and
+    discovery indexes what appears. Selecting it forces acquisition off
+    even if the checkbox was ticked: a profile is what acquisition
+    fetches BY."""
+    r = client.post("/admin/library/new/create", json={
+        "name": "handy", "plugin": "gutenberg", "profile": "hand-populated",
+        "corpus_dir": _mount("handy"), "acquire_enabled": True})
+    assert r.status_code == 200, r.json()
+    raw = tomllib.loads(
+        collections_mod.config_toml_path("handy").read_text(encoding="utf-8"))
+    assert "profile" not in raw
+    assert "acquire_enabled" not in raw, "hand-populated forces acquisition off"
+    c = collections_mod.by_name("handy")
+    assert c.profile is None and c.acquire_enabled is False
+    page = client.get("/admin/library")
+    assert "(hand-populated)" in page.text
+
+
 def test_snapshot_pin_survives_ui_rewrites(client):
     """A pinned `snapshot` is desired state like the [embed] block: any
     TOML rewrite that drops it silently moves the collection back to

@@ -26,6 +26,7 @@ from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 from . import checksum
 from . import claim as claim_mod
+from . import mirrors
 from . import transport_https
 from .transport_https import RangeUnsupported
 from .spec import (AcquisitionPlan, AcquisitionSpec, DiskPreflightError, Filter,
@@ -436,6 +437,7 @@ def _make_worker(transport, collection, spec, manager, ranked, stop, priority):
             return []
         endpoint_key, endpoint, sem = slot
         results: list[_FileResult] = []
+        data_result: _FileResult | None = None
         try:
             with manager.bind(priority, Direction.DOWN, stop=stop, endpoint_key=endpoint_key):
                 if item.sidecar is not None:
@@ -455,14 +457,49 @@ def _make_worker(transport, collection, spec, manager, ranked, stop, priority):
                                   f"an unverified fetch"))
                         return results
                 if item.data is not None:
-                    results.append(_fetch_one_file(
+                    data_result = _fetch_one_file(
                         transport, endpoint, item.data, collection, spec,
-                        manager, endpoint_key))
+                        manager, endpoint_key)
         finally:
             sem.release()
+        if data_result is not None:
+            if data_result.status == "failed" and len(ranked) > 1:
+                # MIRROR FAILOVER: on a mirrored source, a transport failure
+                # is more likely the mirror than the file. Mark this mirror
+                # down (mirrors.DOWN_S; the next benchmark re-admits it) and
+                # retry ONCE on the next-ranked mirror before recording
+                # anything — so a mirror dying mid-pass costs seconds per
+                # file, not a failed batch waiting for the next 6-hour pass.
+                # A clean stop ('aborted') never triggers this.
+                mirrors.mark_down(endpoint.url)
+                retried = _retry_on_next_mirror(
+                    transport, collection, spec, manager, ranked, stop,
+                    priority, item.data, endpoint.url)
+                if retried is not None:
+                    data_result = retried
+            results.append(data_result)
         return results
 
     return _work
+
+
+def _retry_on_next_mirror(transport, collection, spec, manager, ranked, stop,
+                           priority, remote: RemoteFile, failed_url: str):
+    alt = next(((k, e) for k, e in ranked
+                if e.url != failed_url and not mirrors.is_down(e.url)), None)
+    if alt is None:
+        return None
+    alt_key, alt_endpoint = alt
+    sem = manager.endpoint_semaphore(alt_key,
+                                     manager.endpoint_slots(alt_endpoint, spec))
+    if not sem.acquire(timeout=30):
+        return None
+    try:
+        with manager.bind(priority, Direction.DOWN, stop=stop, endpoint_key=alt_key):
+            return _fetch_one_file(transport, alt_endpoint, remote, collection,
+                                   spec, manager, alt_key)
+    finally:
+        sem.release()
 
 
 def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
@@ -523,7 +560,21 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
 
     manager = get_manager()
     transport = REGISTRY[spec.transport]
-    ranked = manager.rank_endpoints([(e.url, e) for e in spec.endpoints])
+    # Mirrored sources: benchmark first (a ~10 KB structure probe per
+    # mirror, skipped while the last record is fresh), then seed the order
+    # from the PERSISTED ranking — a restart starts with the mirror that
+    # won last time, and a better one takes over at the next benchmark,
+    # unattended. The manager's EWMA still re-ranks live within the pass:
+    # measured beats benchmarked beats declared.
+    endpoints = list(spec.endpoints)
+    if spec.probe_file and len(endpoints) > 1:
+        try:
+            mirrors.benchmark(con, spec)
+        except Exception as e:   # noqa: BLE001 — a broken benchmark must not stop a fetch
+            db.log_event(con, "warn", "acquire",
+                         f"mirror benchmark failed ({e}); using last known order")
+        endpoints = mirrors.seed_order(con, spec)
+    ranked = manager.rank_endpoints([(e.url, e) for e in endpoints])
     counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0}
     claim_ts = [time.time()]
 

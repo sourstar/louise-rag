@@ -243,9 +243,19 @@ function fillProfileSelect(){
   const plugin=document.getElementById('nc_plugin').value;
   const sel=document.getElementById('nc_profile');
   const opts=PLUGIN_PROFILES[plugin]||[];
-  sel.innerHTML=opts.length
+  sel.innerHTML=(opts.length
     ? opts.map(o=>`<option value="${esc(o.name)}">${esc(o.label)}</option>`).join('')
-    : '<option value="demo">demo</option>';
+    : '<option value="demo">demo</option>')
+    // every plugin can be hand-populated: no profile, no acquisition —
+    // the operator fills the corpus folder and discovery indexes it
+    + '<option value="hand-populated">(hand-populated — I fill the corpus folder myself)</option>';
+  sel.onchange=()=>{
+    const hp=sel.value==='hand-populated';
+    const acq=document.getElementById('nc_acquire');
+    if(hp)acq.checked=false;
+    acq.disabled=hp;
+  };
+  sel.onchange();
   // the pre-embedded companion pairs with the live wikipedia plugin only
   document.getElementById('nc_companion_block').style.display =
     plugin==='wikipedia' ? '' : 'none';

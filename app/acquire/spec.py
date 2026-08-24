@@ -105,6 +105,12 @@ class AcquisitionSpec:
     delta: DeltaSpec = field(default_factory=lambda: DeltaSpec(mode="full-resync"))
     etiquette: RateLimit = field(default_factory=RateLimit)
     profiles: dict[str, Filter] = field(default_factory=dict)
+    # MIRRORED sources (several endpoints): the relative path of a SMALL
+    # file every structurally-correct mirror must serve — the structure
+    # probe AND the benchmark unit (app/acquire/mirrors.py). A mirror that
+    # cannot serve it at this exact path carries a different layout and is
+    # excluded from ranking. None = single endpoint or no mirror logic.
+    probe_file: str | None = None
     # How a source's profiles relate to one another:
     #
     #   "incremental" — demo ⊂ starter ⊂ full. Growing means a strictly

@@ -939,3 +939,24 @@ the live deployment:
     acquisition claim is live, and the Stats embed-ETA cell says WHY when
     no number exists ("with indexing (imported)" for genesis collections,
     "on demand (lazy)", "off") instead of a bare dash.
+34. **§5.1 — mirrored sources: structure-probed, benchmarked, persisted
+    ranking, mid-pass failover (`app/acquire/mirrors.py`).** A spec with
+    several endpoints names `probe_file`: a small file at its OFFICIAL
+    relative path (gutenberg: `1/pg1.rdf`). Fetching it IS the admission
+    rule — a mirror with a different layout cannot serve it and is ranked
+    out — and the timed fetch is the benchmark. The outcome persists in
+    the control table, so a restart starts with the mirror that won last
+    time; the benchmark re-runs when the record ages past 6 h, so a
+    better mirror takes over unattended; a mirror failing a real fetch
+    mid-pass is marked down 15 min and the file retried immediately on
+    the next-ranked one. The gutenberg endpoints were re-probed live:
+    rsync.mirrorservice.org (the old FIRST endpoint) no longer carries
+    cache/epub and is removed; the pglaf aliases are one host with the
+    master; ftp.ibiblio.org is a real second mirror. Found underneath:
+    rsync `list_files` was NON-RECURSIVE — for a one-dir-per-doc corpus
+    the listing held 79k directories and zero files, so gutenberg's
+    in-app acquisition had never enumerated a single book (its corpus
+    grew via an external rsync task). `-r` added, listing timeout sized
+    for ~800k entries. The create form also gains "(hand-populated)" as
+    an explicit profile choice for every plugin: no profile, no
+    acquisition, discovery indexes what the operator lands.
