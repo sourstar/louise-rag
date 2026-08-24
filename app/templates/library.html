@@ -60,8 +60,8 @@
      label): green done, orange in progress, grey idle/off. {what} says
      what moves: data, compressed data, +extras. Details in Help. #}
   {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
-  {% set fetch_title = ('this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery. ' if c.fetched.containers else 'corpus files fetched from the source — see Help. ') + 'Label color: green = complete, orange = a fetch pass is running, grey = idle/waiting.' %}
-  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif c.fetched.active %} style="color:var(--brass)"{% endif %}>fetched ({{ fetch_what }})</span>
+  {% set fetch_title = ('this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery. ' if c.fetched.containers else 'corpus files fetched from the source — see Help. ') + 'Label color: green = complete, turquoise = running or in the scheduling pool, orange = on-demand only, grey = off/paused.' %}
+  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif worker_state != 'paused' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
       <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.fetch|num }}/h)">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
@@ -72,20 +72,30 @@
     after a restart is running now (~25 s on the largest manifests); the
     bars below read 0 until it lands. Refresh in a moment.</div>
   {% endif %}
-  {# every stage label speaks the SAME color scheme as the fetch label:
-     green = done, orange = actively progressing (the worker runs and work
-     remains), grey = idle (worker paused/off) #}
-  {% set stage_title = 'label color: green = complete, orange = in progress, grey = idle' %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.rdf_done < c.in_scope %} style="color:var(--brass)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.rdf and c.in_scope and c.rdf_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.rdf|num }}/h) — proof the stage is moving even when the bar barely shows it">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
+  {# ONE color scheme for every stage label (operator's): green = complete,
+     turquoise (--brass, the collection-name accent) = running or in the
+     scheduling pool, orange (--amber) = runs only on-demand, grey
+     (--muted) = off/paused #}
+  {% set stage_title = 'label color: green = complete, turquoise = running or in the scheduling pool, orange = on-demand only, grey = off/paused' %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.rdf and c.in_scope and c.rdf_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.rdf|num }}/h) — proof the stage is moving even when the bar barely shows it">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.fts_done < c.in_scope %} style="color:var(--brass)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.fts and c.in_scope and c.fts_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.fts|num }}/h) — proof the stage is moving even when the bar barely shows it">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.fts and c.in_scope and c.fts_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.fts|num }}/h) — proof the stage is moving even when the bar barely shows it">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
   {# the dense row is part of the STANDARD ladder on EVERY card (operator:
      pubmed's main box read as truncated without it) — named for what it
      is: pre-embedded when the vectors arrive via an archive. The sub-box
      below keeps only what is specific to the archive itself. #}
   {% set dense_label = 'pre-embedded (dense)' if c.genesis else 'embedded (dense)' %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and (c.genesis or c.embed_mode != 'off') and c.in_scope and c.embed_done < c.in_scope %} style="color:var(--brass)"{% endif %}>{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.embed and c.in_scope and c.embed_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate embeddings became available over the last minutes (+{{ c.stage_rates.embed|num }}/h)">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
+  {# dense state: done -> green; an ARCHIVE collection's vectors are in
+     the scheduling pool whenever the worker runs (import ignores the
+     mode) -> turquoise; otherwise the mode speaks: off -> grey,
+     on-demand -> orange, all -> turquoise while the worker runs #}
+  {% if c.in_scope and c.embed_done >= c.in_scope %}{% set dense_color = 'var(--ok)' %}
+  {% elif c.genesis %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}
+  {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
+  {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
+  {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.embed and c.in_scope and c.embed_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate embeddings became available over the last minutes (+{{ c.stage_rates.embed|num }}/h)">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
@@ -143,7 +153,7 @@
        same scheme (green done / orange in progress / grey idle). No
        duplicate progress numbers here: the pipeline progress the download
        waits on is the main box's indexed bar. #}
-    <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads and applies in one pass after the main box's indexed (lexical) bar completes (earlier would re-download it repeatedly as documents trickle in); until then 0/{{ c.genesis.shard_total }} is pacing, not a stall. Label color: green = complete, orange = in progress, grey = idle/not started."{% if c.genesis.fetch_state == 'done' or (c.genesis.shard_total and c.genesis.applied >= c.genesis.shard_total) %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' %} style="color:var(--brass)"{% endif %}>fetched (vectors)</span>
+    <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads and applies in one pass after the main box's indexed (lexical) bar completes (earlier would re-download it repeatedly as documents trickle in); until then 0/{{ c.genesis.shard_total }} is pacing, not a stall. Label color: green = complete, turquoise = downloading or scheduled (it starts on its own), grey = paused."{% if c.genesis.fetch_state == 'done' or (c.genesis.shard_total and c.genesis.applied >= c.genesis.shard_total) %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
         <span>{{ c.genesis.applied|num }} / {{ c.genesis.shard_total|num }} archive files</span></div>
       <div class="spine"><span style="width:{{ (100*c.genesis.applied/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
     {% if c.genesis.waiting_docs is none or c.genesis.waiting_docs %}

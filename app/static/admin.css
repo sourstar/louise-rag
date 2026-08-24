@@ -9,7 +9,7 @@
 :root{
   --ink:#0e141b; --panel:#151d26; --panel2:#1a2530; --line:#2a3947;
   --ivory:#dbe4ea; --muted:#7f909d; --brass:#43bfb4; --lapis:#9d8cff;
-  --ok:#6fbf73; --err:#e06c5a; --mono:'IBM Plex Mono',monospace,monospace;
+  --ok:#6fbf73; --err:#e06c5a; --amber:#d9973b; --mono:'IBM Plex Mono',monospace,monospace;
 }
 *{box-sizing:border-box;margin:0}
 html{background:var(--ink)}

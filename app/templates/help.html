@@ -585,9 +585,12 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
   <p class="note">
     <b>Reading the stage labels.</b> Every stage label on a Library card —
     <i>fetched (data)</i>, <i>parsed (rdf)</i>, <i>indexed (lexical)</i>,
-    <i>embedded / pre-embedded (dense)</i> — keeps a constant name and
-    speaks its state through one color scheme: <b>green</b> done,
-    <b>orange</b> in progress, <b>grey</b> idle or off. For the fetch row,
+    <i>embedded / pre-embedded (dense)</i>, <i>fetched (vectors)</i> —
+    keeps a constant name and speaks its state through one color scheme:
+    <b>green</b> completed; <b>turquoise</b> (the collection-name accent)
+    running or in the scheduling pool — the worker is on it or will reach
+    it on its own; <b>orange</b> runs only on-demand (a query triggers
+    it); <b>grey</b> off or paused. For the fetch row,
     <i>compressed data</i> replaces <i>data</i> for container sources and
     <i>+extras</i> is appended when extra formats are opted in; the
     denominator is what the origin's listing held at pass start. A
