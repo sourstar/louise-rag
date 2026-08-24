@@ -350,7 +350,20 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   nothing else does.
 - **`chunk_abstract` is dead code** — `chunker_for` never returns it, so
   pubmed uses `chunk_book`. Deliberate: wiring it would change pubmed's
-  chunking (invariant 3).
+  chunking (invariant 3). **Measured 2026-08-25, and it now matters:**
+  MedCPT holds ONE vector per article (title + abstract, 512 tokens), the
+  genesis shape gate binds vectors to chunks 1:1, and `chunk_book` splits
+  every abstract-bearing article into two or more chunks — of shard 0's
+  647,490 held documents 274,514 (42 %) are multi-chunk, of shard 1's
+  938,691 609,182 (65 %), and the fraction rises with the year as
+  abstracts become universal. So the archive can cover only the
+  title-only records; every article with an abstract is skipped and
+  falls to the local encoder once its shard is final. The fix is the
+  pubmed-only chunker change this note refused: one chunk per article
+  (title + abstract, truncated to the encoder's budget the way MedCPT
+  did), bumped explicitly for pubmed's chunker id, which re-pins pubmed's
+  space and invalidates its existing vectors (tens of thousands today —
+  cheap to redo now, not later). Operator decision required.
 - **Library/Stats counts are cached ~2 minutes** (stale-while-revalidate).
   `invalidate_counts` is wired only to the reset endpoint, so any change made
   outside the web process — including direct SQL — lingers until the TTL.
