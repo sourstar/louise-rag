@@ -187,6 +187,18 @@ importable by reading both segments).
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5f. **Index sharing for LIGHT peers — decide by measurement (2026-08-24).**
+   The lexical index stays recomputed by default (≈1 ms/doc, deterministic,
+   zero trust surface; a received tantivy segment can only be fully
+   verified by rebuilding it, and it is coupled to FTS_VERSION /
+   ENTITY_VERSION / chunker / tokenizer). But a light peer "does only the
+   work it cannot avoid", and pubmed's ~40 CPU-hours IS avoidable if the
+   index travels. Option to build if the numbers favor it: index segments
+   per lease (they merge like tantivy segments do) shipped beside the
+   bundle, guarded like vectors are — an INDEX-SPACE PIN (the four versions
+   above; refuse on mismatch) and SAMPLED verification (re-index a few
+   received documents locally, compare postings). Decide once pubmed's
+   index is complete: its size on disk vs the measured 40 h rebuild.
 5e. **Two peer classes, and benchmark-based eligibility (operator design,
    2026-08-24).** *Light* peers do only the processing that cannot be
    shared (discovery, FTS — local by design) and still share corpus bytes
