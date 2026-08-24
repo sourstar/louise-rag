@@ -73,11 +73,13 @@
     after a restart is running now (~25 s on the largest manifests); the
     bars below read 0 until it lands. Refresh in a moment.</div>
   {% endif %}
-  <div class="stage"><div class="lbl"><span>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
+  {# a stage label turns green the moment its count covers everything in
+     scope — same signal as the fetch label's green "fetched" state #}
+  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
