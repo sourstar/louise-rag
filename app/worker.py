@@ -1215,12 +1215,12 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         if prev.embed_mode_default != kept.embed_mode_default:
             _apply_tier2_embed_mode(cons[kept.name], kept, "TOML edit")
         if (prev.acquire_enabled, prev.license_ack, prev.profile,
-                prev.extras) != \
+                prev.extras, prev.peer_source) != \
                 (kept.acquire_enabled, kept.license_ack, kept.profile,
-                 kept.extras):
+                 kept.extras, kept.peer_source):
             db.log_event(cons[kept.name], "info", "worker",
                          f"collection {kept.name!r} config changed "
-                         f"(acquire/license/profile/extras) — re-discovering")
+                         f"(acquire/license/profile/extras/peer) — re-discovering")
             if pipeline:
                 _request_discovery(kept.name, "config-changed")
             else:
