@@ -622,3 +622,48 @@ def test_seed_only_and_state_gates(isolated_config):
         corpus_mounts_dir="", worker_state="seed-only")
     assert "seeding only" in html and "download/seeding only" in html
     assert "rescan" in html
+
+
+def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
+    """Louise2's gutenberg embeds a 1,000-chunk book every ~6 minutes: most
+    5-minute windows see NO commit. A quiet window is not evidence of a
+    zero rate — the window stretches until the stage moves again — and
+    only a stall of _STALL_S (30 min) drops the ETA to TBD."""
+    import json as _json
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(100):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,1,?,0)", (f"g:{i}", str(i), f"/x{i}", 1 if i < 20 else 0))
+    key = str(c.manifest_path)
+    now = int(time.time())
+    # two windows of evidence at 60/h; the latest sample saw NO progress
+    # 6 minutes ago, but progress last showed 12 minutes ago (embed_pc=20)
+    web._stage_rate_memo[key] = {
+        "rdf": 100, "fts": 100, "embed": 20, "fetch": 0, "ts": now - 360,
+        "embed_ph": 60, "embed_n": 2, "embed_pts": now - 720, "embed_pc": 20}
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_rates"]["embed"] == 60 and shelf["stage_etas"]["embed"] == "~80min", \
+        "a quiet window keeps the smoothed rate (80 left at 60/h)"
+    rec = web._stage_rate_memo[key]
+    assert rec["embed_n"] == 2 and rec["embed_pts"] == now - 720, \
+        "no progress: the window keeps stretching from the last progress"
+
+    # progress arrives: measured over the STRETCHED span (12 min, 4 docs
+    # -> 20/h raw), smoothed into the EMA, never over the last 5 minutes
+    con.execute("UPDATE documents SET embed_done=1 WHERE uid IN ('g:20','g:21','g:22','g:23')")
+    web._stage_rate_memo[key] = {**rec, "ts": now - 360}
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_rates"]["embed"] == round(0.3 * 20 + 0.7 * 60)
+    assert web._stage_rate_memo[key]["embed_pc"] == 24
+
+    # a real stall (no progress for 30 min) is TBD, not a frozen number
+    web._stage_rate_memo[key] = {
+        "rdf": 100, "fts": 100, "embed": 24, "fetch": 0, "ts": now - 360,
+        "embed_ph": 48, "embed_n": 3, "embed_pts": now - 1801, "embed_pc": 24}
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_rates"]["embed"] is None and shelf["stage_etas"]["embed"] == "TBD"

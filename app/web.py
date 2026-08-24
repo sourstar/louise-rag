@@ -616,25 +616,43 @@ def _collection_shelf(collection: collections_mod.Collection,
             # stale number into an ever-growing ETA.
             _EMA_ALPHA = 0.3
             _MIN_WINDOWS = 2
+            # A stage that commits in BURSTS (a 1,000-chunk book every six
+            # minutes) shows no progress in many 5-minute windows. Such a
+            # window is not evidence of a zero rate: the measurement
+            # window STRETCHES until the stage moves again — the rate is
+            # progress over the time since the LAST progress — and only a
+            # stall longer than _STALL_S drops the rate to TBD.
+            _STALL_S = 1800
             samples = {k: int(rec_sr.get(k + "_n") or 0) for k in _RATE_FIELDS}
             for k in _RATE_FIELDS:
                 stage_rates[k] = rec_sr.get(k + "_ph")
             elapsed = now_i - int(rec_sr.get("ts") or now_i)
             if elapsed >= 300:
+                progress_ts, progress_count = {}, {}
                 for k in _RATE_FIELDS:
-                    delta = cur[k] - int(rec_sr.get(k) or 0)
-                    raw = delta * 3600.0 / elapsed
+                    # since the last PROGRESS-bearing sample (older records:
+                    # the last sample)
+                    p_ts = int(rec_sr.get(k + "_pts") or rec_sr.get("ts") or now_i)
+                    p_count = int(rec_sr.get(k + "_pc") if rec_sr.get(k + "_pc") is not None
+                                  else (rec_sr.get(k) or 0))
+                    delta = cur[k] - p_count
+                    span = max(1, now_i - p_ts)
                     prev = rec_sr.get(k + "_ph")
-                    if raw > 0:
+                    if delta > 0:
+                        raw = delta * 3600.0 / span
                         ema = raw if not prev else _EMA_ALPHA * raw + (1 - _EMA_ALPHA) * prev
                         stage_rates[k] = round(ema)
                         samples[k] += 1
-                    else:
-                        stage_rates[k] = None
+                        p_ts, p_count = now_i, cur[k]
+                    elif span >= _STALL_S:
+                        stage_rates[k] = None       # stalled: no number to stand behind
                         samples[k] = 0
+                    progress_ts[k], progress_count[k] = p_ts, p_count
                 updated = {**cur, "ts": now_i,
                            **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS},
-                           **{k + "_n": samples[k] for k in _RATE_FIELDS}}
+                           **{k + "_n": samples[k] for k in _RATE_FIELDS},
+                           **{k + "_pts": progress_ts[k] for k in _RATE_FIELDS},
+                           **{k + "_pc": progress_count[k] for k in _RATE_FIELDS}}
                 _stage_rate_memo[memo_key] = updated
                 _sample_write(con, "stage_rate", json.dumps(updated))
             for k in _RATE_FIELDS:
