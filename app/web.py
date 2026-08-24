@@ -276,6 +276,9 @@ _COUNTS_TTL_S = 120.0
 
 _counts_cache: dict[str, tuple[float, dict]] = {}
 _counts_lock = threading.Lock()
+# Stage-rate samples (see _collection_shelf): memory-first, keyed on the
+# manifest path. GIL-atomic dict ops; a rare lost update costs one sample.
+_stage_rate_memo: dict[str, dict] = {}
 # in-flight refresh per collection, WITH its start time: a refresh thread
 # that hangs (or dies un-noticed) must not hold the guard forever, or the
 # counters freeze at an ever-growing age with no refresh ever starting
@@ -549,6 +552,13 @@ def _collection_shelf(collection: collections_mod.Collection,
     # report, verified live against the events table). A rate that
     # measures zero over the window yields NOTHING — no placeholder, and
     # never a stale number beside a genuinely stalled stage.
+    # Samples live in PROCESS MEMORY first (all page loads share the web
+    # process); the control-table write is best-effort persistence for the
+    # next restart only. Memory is not optional: on a manifest under
+    # continuous pipeline writes the 200 ms _sample_write loses the lock
+    # race nearly every time (observed live on pubmed after the throughput
+    # fix — the baseline could not land for an hour), and a sampler that
+    # needs a WRITE to function turns a reader into a lock contender.
     _RATE_FIELDS = ("fetch", "rdf", "fts", "embed")
     stage_rates = {k: None for k in _RATE_FIELDS}
     stage_etas = {k: None for k in _RATE_FIELDS}
@@ -573,19 +583,23 @@ def _collection_shelf(collection: collections_mod.Collection,
                                else fetched.get("remote_total")) or 0)
                           - cur["fetch"]) if fetched else 0),
         }
-        raw_sr = db.get_control(con, "stage_rate")
-        rec_sr = None
-        if raw_sr:
-            try:
-                rec_sr = json.loads(raw_sr)
-            except (ValueError, TypeError):
-                rec_sr = None
+        memo_key = str(collection.manifest_path)
+        rec_sr = _stage_rate_memo.get(memo_key)
+        if rec_sr is None:
+            # warm start after a web restart: the last persisted sample
+            raw_sr = db.get_control(con, "stage_rate")
+            if raw_sr:
+                try:
+                    rec_sr = json.loads(raw_sr)
+                except (ValueError, TypeError):
+                    rec_sr = None
         if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS) \
                 or any(cur[k] < int(rec_sr.get(k) or 0) for k in _RATE_FIELDS):
             # first sight, a pre-upgrade record, or a reset shrank a
             # count: fresh baseline
-            _sample_write(con, "stage_rate",
-                          json.dumps({**cur, "ts": now_i}))
+            baseline = {**cur, "ts": now_i}
+            _stage_rate_memo[memo_key] = baseline
+            _sample_write(con, "stage_rate", json.dumps(baseline))
         else:
             for k in _RATE_FIELDS:
                 stage_rates[k] = rec_sr.get(k + "_ph")
@@ -595,9 +609,10 @@ def _collection_shelf(collection: collections_mod.Collection,
                     delta = cur[k] - int(rec_sr.get(k) or 0)
                     per_h = delta * 3600.0 / elapsed
                     stage_rates[k] = round(per_h) if per_h > 0 else None
-                _sample_write(con, "stage_rate", json.dumps(
-                    {**cur, "ts": now_i,
-                     **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS}}))
+                updated = {**cur, "ts": now_i,
+                           **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS}}
+                _stage_rate_memo[memo_key] = updated
+                _sample_write(con, "stage_rate", json.dumps(updated))
             for k in _RATE_FIELDS:
                 if stage_rates[k] and remaining[k] > 0:
                     stage_etas[k] = _human_eta(

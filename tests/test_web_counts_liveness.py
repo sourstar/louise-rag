@@ -397,6 +397,8 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
         con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
                     "rdf_done,fts_done,embed_done,chunks) "
                     "VALUES(?,'g',?,?,1,0,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    # memory-first: seed the memo the way a prior page load would have
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
     # an earlier sample saw 10 parsed, 600 s ago -> (100-10)/600*3600 = 540/h
     db.set_control(con, "stage_rate",
                    _json.dumps({"rdf": 10, "fts": 0, "embed": 0, "fetch": 0,
@@ -416,17 +418,19 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     assert "no rate" not in html, "an unknown ETA shows NOTHING"
 
     # a reset that shrinks a count starts a fresh baseline
-    db.set_control(con, "stage_rate",
-                   _json.dumps({"rdf": 99999, "fts": 0, "embed": 0, "fetch": 0,
-                                "ts": int(time.time()) - 600}))
+    web._stage_rate_memo[str(c.manifest_path)] = {
+        "rdf": 99999, "fts": 0, "embed": 0, "fetch": 0,
+        "ts": int(time.time()) - 600}
     web.invalidate_counts()
     shelf = web._collection_shelf(c, {})
     assert all(v is None for v in shelf["stage_rates"].values())
-    rec = _json.loads(db.get_control(con, "stage_rate"))
+    rec = web._stage_rate_memo[str(c.manifest_path)]
     assert rec["rdf"] == 100 and "rdf_ph" not in rec
 
-    # a pre-upgrade record (rdf/fts only) re-baselines instead of minting
-    # a bogus rate from a missing field
+    # a pre-upgrade record (rdf/fts only) in the CONTROL table (a restart's
+    # warm start) re-baselines instead of minting a bogus rate from a
+    # missing field
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
     db.set_control(con, "stage_rate",
                    _json.dumps({"rdf": 10, "fts": 0, "ts": int(time.time()) - 600}))
     web.invalidate_counts()
@@ -461,3 +465,43 @@ def test_page_render_never_blocks_on_a_locked_manifest(isolated_config):
     finally:
         blocker.rollback()
         blocker.close()
+
+
+def test_stage_rates_survive_a_manifest_too_busy_to_write(isolated_config):
+    """Observed live after the throughput fix: pubmed's manifest takes
+    back-to-back pipeline transactions, so the 200 ms sample write lost
+    the lock race for over an hour and the baseline never landed — no
+    ETA on exactly the collection that most needed one. Samples live in
+    process memory first; the control write is persistence, not a
+    dependency."""
+    import json as _json
+    import sqlite3 as _sq
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(100):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    for i in range(100, 300):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,0,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    con.commit()
+    web.invalidate_counts()
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    # seed only MEMORY (the busy-manifest case: control never accepts it)
+    web._stage_rate_memo[str(c.manifest_path)] = {
+        "rdf": 10, "fts": 0, "embed": 0, "fetch": 0,
+        "ts": int(time.time()) - 600}
+
+    blocker = _sq.connect(str(c.manifest_path))
+    try:
+        blocker.execute("BEGIN IMMEDIATE")     # a busy pipeline, permanently
+        shelf = web._collection_shelf(c, {})
+    finally:
+        blocker.rollback()
+        blocker.close()
+    assert shelf["stage_rates"]["rdf"] == 540, \
+        "the rate must come from memory even when the manifest refuses writes"
+    assert shelf["stage_etas"]["rdf"] == "~22min"
+    assert web._stage_rate_memo[str(c.manifest_path)]["rdf"] == 100
