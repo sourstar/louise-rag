@@ -167,7 +167,7 @@
                 title="{{ 'the shared GPU encoder — one collection at a time, serial by design'
                           if c.embed_device == 'gpu'
                           else 'a CPU encoder container — runs alongside the GPU without competing' }}">
-            {{ c.embed_device|upper }} spending</span>
+            {{ c.embed_device|upper }}</span>
         </label>
         {# one knob per pre-embedded sub-box. Today a collection declares
            one archive, and gap-fill targets DOCUMENTS the archive(s)
@@ -205,7 +205,7 @@
               title="{{ 'the shared GPU encoder — one collection at a time, serial by design'
                         if c.embed_device == 'gpu'
                         else 'a CPU encoder container — runs alongside the GPU without competing' }}">
-          {{ c.embed_device|upper }} spending</span>
+          {{ c.embed_device|upper }}</span>
       </label>
       {# persistent: writes embed_mode into the collection's TOML (Tier-2
          desired state, like create/ack) AND the runtime scope for

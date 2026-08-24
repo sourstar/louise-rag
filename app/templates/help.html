@@ -160,9 +160,9 @@
   </p>
   <p class="note">
     Each Library card names <b>which processor</b> that spending lands on —
-    <span class="badge lapis">GPU spending</span> for a collection served by
+    <span class="badge lapis">GPU</span> for a collection served by
     the shared GPU encoder (one collection at a time, serial by design) and
-    <span class="badge brass">CPU spending</span> for one served by a CPU
+    <span class="badge brass">CPU</span> for one served by a CPU
     encoder container, which runs beside the GPU without competing for it.
     Declare it explicitly with <code>device = "gpu"|"cpu"</code> in the
     collection's <code>[embed]</code> block; otherwise it is inferred from
