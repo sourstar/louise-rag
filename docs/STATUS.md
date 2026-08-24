@@ -245,6 +245,43 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5i. **Storage tiers: main archive on HDD, working set on SSD (operator
+   request 2026-08-25; evaluated, to implement 2026-08-26).** Today
+   EVERYTHING sits on `ssd4` (NVMe, 1.81 TB, 569 GB free): corpora 923 GB
+   (wikivec 590, gutenberg 256, pubmed 51, wikipedia 26) plus `/data`
+   250 GB (Lance 23 + wikivec vectors 127, tantivy 34, pubmed 36). The
+   HDD pool `tank` (raidz1, 8.9 TB free) reads 304 MB/s sequential
+   (direct) and 6.3 GB/s when the block is in ZFS's RAM cache (ARC: 25 GB
+   of 61 GB RAM, 99.8 % hit ratio). Measured stage costs are CPU/GPU, not
+   disk: a 30 MB pubmed container takes 13–20 s to gunzip+parse and 0.1 s
+   to read from HDD; wikipedia rdf 33–68 s per 1000 documents; a 438 MB
+   wikivec shard ~10 s to decode vs 1.5 s to read from HDD (and the
+   revisited shard comes back from ARC). Verdict: **no app-level SSD cache
+   for reading** — ZFS ARC already is one, warm and free. Plan:
+   (1) new datasets `tank/louise-corpora/{wikivec,pubmed,wikipedia}`
+   (recordsize 1M, lz4), moved by rsync (~1 h at the measured rate), and
+   the app's host mounts repointed — the in-container paths
+   (`/corpora/<name>`) stay identical, so every locator stays valid and
+   no discovery repair runs; (2) **gutenberg stays on SSD for now**: 256 GB
+   of 2.8 M small files, and discovery stats every one of them each
+   rescan — measure a scan from HDD before moving it; (3) `/data` (SQLite
+   WAL, tantivy, Lance, the genesis cache's 3 GB mmap'd shards) stays on
+   SSD, invariant 6; (4) the one place SSD staging DOES pay is
+   ACQUISITION: torrent pieces land as random writes, which raidz1
+   handles badly — download into `/data/staging` and move each file to
+   its corpus directory on completion (the `.part` discipline already
+   isolates the incomplete file; the engine's preflight bounds the
+   staging area); (5) no L2ARC — it excludes streaming reads by default
+   and the ARC hit ratio leaves nothing for it.
+5h. **wikivec per-language torrents (operator approved 2026-08-25; to
+   build 2026-08-26).** The single 590 GB / 1,447-file torrent is split
+   into one torrent per language directory (`data/<lang>`: en 192 GB,
+   de 83, fr 75, ru 57, es 54, it 42, ja 33, pt 25, zh 14, fa 11, tr 8.4),
+   the seeding record holds several torrents per collection, and a peer
+   can fetch and start on one language while the rest arrives (the
+   "active while fetching" principle of amendment 37). It also resolves
+   the preflight refusal (`all` needs ~633 GB; 645 GB free at 1.05
+   headroom) once the languages move to `tank` (5i).
 5g. **Pre-embedded archives: fetched like a corpus, applied as indexing
    goes, one knob (amendment 38; operator policy, 2026-08-24).** Live
    pubmed: 8.25M/40M indexed, 0/37 MedCPT shards, 44 embedded — the
