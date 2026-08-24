@@ -29,7 +29,8 @@ confirms baseline reproduction on the first embed after the swap.
 
 | build | digest | verdict | evidence |
 |---|---|---|---|
-| b10450 | `sha256:5a47f527e1b06b0351bf43e9b2f3baf14a06b097526cc37d2cdd9c77de9a3ec2` | **approved (in production)** | serving gutenberg's `ed…` space since the digest pin; baseline reproduced across restarts |
+| b10603 | `sha256:33927f8a9af7657469e5b3a65027a1b2d0419f185385cc82f7be59790590a74d` | **approved (in production, 2026-08-24)** | trial vs b10450 on the Arc, Qwen3-Embedding-8B-Q4_K_M: cosine min/mean **1.000000** over 16 texts; interleaved A/B **+1.5% faster** (1.95 vs 1.92 texts/s under a live embed workload) |
+| b10450 | `sha256:5a47f527e1b06b0351bf43e9b2f3baf14a06b097526cc37d2cdd9c77de9a3ec2` | approved (superseded by b10603) | served gutenberg's space until 2026-08-24; baseline reproduced across restarts |
 
 <!-- encoder_trial verdicts are appended here -->
 
