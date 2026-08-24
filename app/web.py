@@ -59,6 +59,17 @@ ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
 
 
+# UI display names for plugins whose internal id is not the name operators
+# know: "embedded" IS the wikivec pre-embedded corpus on every known
+# deployment. The internal id stays stable (TOMLs, registries, tests);
+# every human-facing surface shows the label.
+PLUGIN_LABELS = {"embedded": "wikivec"}
+
+
+def _plugin_label(plugin: str) -> str:
+    return PLUGIN_LABELS.get(plugin, plugin)
+
+
 def _collection_or_404(name: str) -> collections_mod.Collection:
     c = collections_mod.by_name(name)
     if c is None:
@@ -485,6 +496,7 @@ def _collection_shelf(collection: collections_mod.Collection,
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
+        "plugin_label": _plugin_label(collection.plugin),
         "profile": collection.profile or "(hand-populated)",
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten
@@ -1742,7 +1754,7 @@ def _effective_config() -> dict:
         "ADMIN_TOKEN": "(set)" if config.ADMIN_TOKEN else "(unset — admin routes locked)",
     }
     tier2 = [{
-        "collection": c.name, "plugin": c.plugin, "profile": c.profile,
+        "collection": c.name, "plugin": _plugin_label(c.plugin), "profile": c.profile,
         "embed_mode": c.embed_mode_default, "acquire_enabled": c.acquire_enabled,
         "license_ack": "(recorded)" if c.license_ack else "(none)",
         "embed_recipe": (f"{c.embed.model} @ {c.embed.url}"

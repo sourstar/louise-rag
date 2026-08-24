@@ -424,34 +424,59 @@ def test_remote_genesis_card_shows_indexing_progress_toward_import(isolated_conf
     assert cold["index_pct"] is None, "a cold cache says counting, never 0%"
 
 
+def _render_library(shelf):
+    return web.TEMPLATES.env.get_template("library.html").render(
+        request=None, active="library", shelves=[shelf], counts_age=0,
+        plugins=[], plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
+        corpus_mounts_dir="", worker_state="running")
+
+
 def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
-    """A collection with a genesis archive is a 'double' plugin: its card
-    grows a sub-box for the pre-embedded data — own fetched (vectors) and
-    pre-embedded (dense) rows, the gap-fill knob, and the SAME space badge
-    as the main box — while the main box keeps fetched/parsed/indexed and
-    drops its embedded row."""
+    """Only a COMBINED plugin — a remote vector archive beside a corpus
+    (pubmed) — gets the sub-box: own fetched (vectors) and pre-embedded
+    (dense) rows plus the gap-fill knob, NO repeated space badge (operator:
+    redundant), and no duplicate indexing-progress numbers (the main box's
+    indexed bar already shows them). A stand-alone pre-embedded collection
+    (wikivec, local archive) stays ONE box with a pre-embedded (dense) row;
+    a plain collection keeps embedded (dense)."""
     from dataclasses import replace
     c = replace(collections_mod.default_collection(),
                 genesis_archive="medcpt-pubmed")
     db.connect(c)
     shelf = web._collection_shelf(c, {})
-    html = web.TEMPLATES.env.get_template("library.html").render(
-        request=None, active="library", shelves=[shelf], counts_age=0,
-        plugins=[], plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
-        corpus_mounts_dir="", worker_state="running")
+    html = _render_library(shelf)
     assert "pre-embedded (dense)" in html
     assert "fetched (vectors)" in html
     assert "Local gap-fill" in html
-    assert html.count("space: %s" % shelf["space_id"]) == 2, \
-        "the sub-box repeats the main box's space badge"
-    assert "embedded (dense)" in html  # substring of pre-embedded — check exclusivity:
+    assert html.count("space: %s" % shelf["space_id"]) == 1, \
+        "no repeated space badge in the sub-box (redundant)"
+    assert "Progress toward it" not in html, \
+        "no duplicate indexing numbers — the indexed bar already shows them"
     assert ">embedded (dense)</span>" not in html, \
-        "a genesis card's dense bar lives in the sub-box only"
+        "a combined card's dense bar lives in the sub-box only"
+
+    standalone = replace(collections_mod.default_collection(),
+                         genesis_archive="upstash-wikipedia-2024-06")
+    html_local = _render_library(web._collection_shelf(standalone, {}))
+    assert "fetched (vectors)" not in html_local, \
+        "a stand-alone pre-embedded collection gets no sub-box"
+    assert ">pre-embedded (dense)</span>" in html_local
+    assert "Local gap-fill" in html_local
 
     plain = web._collection_shelf(collections_mod.default_collection(), {})
-    html2 = web.TEMPLATES.env.get_template("library.html").render(
-        request=None, active="library", shelves=[plain], counts_age=0,
-        plugins=[], plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
-        corpus_mounts_dir="", worker_state="running")
+    html2 = _render_library(plain)
     assert ">embedded (dense)</span>" in html2
     assert "pre-embedded (dense)" not in html2
+
+
+def test_library_card_shows_the_plugin_display_label(isolated_config):
+    """'embedded' is the internal id; every human-facing surface says
+    wikivec (operator: keep it consistent, in general)."""
+    from dataclasses import replace
+    c = replace(collections_mod.default_collection(),
+                name="wikivec", plugin="embedded")
+    assert web._plugin_label("embedded") == "wikivec"
+    shelf = web._collection_shelf(c, {})
+    assert shelf["plugin_label"] == "wikivec"
+    html = _render_library(shelf)
+    assert ">wikivec</span>" in html
