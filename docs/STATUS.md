@@ -3,7 +3,7 @@
 **Last updated: 2026-08-24.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–36) for every place the design was corrected in flight.
+its §17 amendments (1–37) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -187,6 +187,19 @@ importable by reading both segments).
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5e. **Two peer classes, and benchmark-based eligibility (operator design,
+   2026-08-24).** *Light* peers do only the processing that cannot be
+   shared (discovery, FTS — local by design) and still share corpus bytes
+   and processed data (seed torrents, serve bundles). *Full* peers also
+   take shared-workload leases (embedding batches) from the coordinator.
+   For now a full peer gets a FIXED, generous lease TTL (the existing
+   24 h `LEASE_TTL_SECONDS`); an expired lease is reissued to whoever
+   asks next. TO BUILD: a benchmark a peer runs to become ELIGIBLE for
+   shared workload (encoder consistency vs the space's baseline + a
+   throughput measurement) that also sets a proper per-peer lease TTL
+   instead of the fixed one; until then eligibility is the operator's
+   choice (`contribute` mode on/off) and the TTL is the constant. See
+   also the corpus chunking proposal recorded with amendment 37.
 5d. **License gate on USE, not just acquisition (amendment 36; operator
    report, 2026-08-24).** A yellow-class shard copied from a peer into a
    hand-populated collection was indexed and imported with no ack — the

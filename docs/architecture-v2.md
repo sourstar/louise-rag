@@ -997,3 +997,23 @@ the live deployment:
     loop and the pipeline threads skip a gated collection the way
     `acquire_enabled=False` skips acquisition; a boot-time warning names
     it. Not yet built — STATUS.md 5d.
+37. **§7 — peer classes and workload chunking (operator design,
+    2026-08-24; proposal recorded, not built).** Two kinds of peer:
+    *light* (does only unshareable local work — discovery, FTS; still
+    seeds corpus bytes and serves processed data) and *full* (also takes
+    shared-workload leases). A lease is a fixed, generous TTL for now
+    (24 h, the existing `LEASE_TTL_SECONDS`); expired leases are reissued;
+    a benchmark-based eligibility + per-peer TTL is a to-do (STATUS 5e).
+    Chunking: a lease's unit is a CONTIGUOUS, FETCHABLE corpus range
+    sized to ~7,000 chunks (≈1 h on the reference encoders): gutenberg
+    50 books by native_id range (~148 chunks/book measured), wikipedia
+    2,000 articles by id range within one dump stream (~3.5
+    chunks/article measured); pubmed and the pre-embedded corpus carry
+    no shared embedding work (archive / pre-embedded); genome awaits its
+    encoder review. Lease size therefore becomes per-plugin
+    (`target_chunks / chunks_per_doc`), replacing the flat 64-uid default.
+    The first lease a joining full peer receives is chosen from the range
+    it can fetch first, and acquisition prioritizes that range's files
+    (book directories; the torrent pieces covering a dump stream), so the
+    peer is embedding its share while the rest of the corpus is still
+    arriving. Results travel as signed bundles into peers' inboxes.
