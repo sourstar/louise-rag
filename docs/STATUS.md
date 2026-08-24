@@ -212,6 +212,13 @@ shard='1'`) so the quorum proof re-runs — its files are still on disk.
 Also measured: roughly half of the sampled 1970s-era shard-1 documents
 chunk into TWO pieces locally, so the shape gate skips them (the
 `chunk_abstract` follow-up in *Known gaps* is what would lift that).
+Deployed and re-run: shard 1's quorum proof passed with exactly one
+stale sample skipped; the cache bound held the fetcher at 8 shards
+(22 GiB, "next fetch when one is final"). One more placement fix from
+the same evening: a remote archive's pass runs on the collection's
+PIPELINE thread (`_drain_remote_archive`), never on the GPU-serial main
+loop — a collection whose encoder is the shared GPU would otherwise
+block every other collection's embedding for each 300 s slice.
 
 ## Designed, specified, not built
 

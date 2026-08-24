@@ -730,3 +730,34 @@ def test_a_proven_archive_survives_one_rejected_shard(collection, monkeypatch):
     assert genesis_fetch.next_shard_to_fetch(con, archive) is None
     worker.reset_backfill_cursors()
     assert {int(r["native_id"]) for r in worker._backfill_rows(con, declared, 100)} == set(range(1, 20))
+
+
+def test_a_remote_archive_is_drained_on_the_pipeline_thread_not_the_gpu_loop(
+        collection, monkeypatch):
+    """A remote shard's pass is CPU/IO work for minutes; on the GPU-serial
+    main loop it blocked every other collection's embedding (live:
+    gutenberg's embeds 'done in 478 s'). With a pipeline thread the main
+    loop's _run_one_step(pipeline_active=True) leaves the remote archive
+    alone and the pipeline loop drains it; a LOCAL archive keeps being
+    drained wherever the collection's pipeline runs."""
+    from dataclasses import replace
+    from app import worker
+    con = db.connect(collection)
+    drained = []
+    monkeypatch.setattr(genesis, "drain_next_shard",
+                        lambda con, c, stop=None, eager=True: (drained.append(c.genesis_archive), None)[1])
+    monkeypatch.setattr(worker, "_drain_bundle_inbox", lambda con, c: 0)
+    monkeypatch.setattr(worker, "_acquire_archive", lambda *a, **k: None)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", _declared_archive(["0"]))
+
+    remote = replace(collection, genesis_archive="test-arc")
+    local = replace(collection, genesis_archive="upstash-wikipedia-2024-06")
+    worker._run_one_step(con, remote, {}, pipeline_active=True)
+    assert drained == [], "the GPU loop must not run a remote archive's pass"
+    worker._run_one_step(con, local, {}, pipeline_active=True)
+    assert drained == ["upstash-wikipedia-2024-06"], "a local archive is still drained there"
+    assert worker._drain_remote_archive(con, remote, None) is False
+    assert drained[-1] == "test-arc", "the pipeline thread's round drains the remote archive"
+    # a collection running its whole pipeline on one thread drains both
+    worker._run_one_step(con, remote, {}, pipeline_active=False)
+    assert drained[-1] == "test-arc"

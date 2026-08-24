@@ -809,6 +809,35 @@ def _acquire_archive(con, collection, reason: str, force: bool = False) -> None:
     thread.start()
 
 
+def _remote_archive(collection) -> bool:
+    archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
+    return archive is not None and not archive.local
+
+
+def _drain_remote_archive(con, collection, stop) -> bool:
+    """One genesis round for the collection's declared archive: kick the
+    fetcher (throttled inside), apply the next shard with work, and — when
+    a shard went final — land the next one into the freed cache slot.
+    Returns True when a shard was worked (the caller skips its idle sleep
+    / its own selection this round). Failures are ledgered inside
+    drain_next_shard; anything unexpected is logged, never raised."""
+    if not collection.genesis_archive:
+        return False
+    _acquire_archive(con, collection, "round")
+    try:
+        result = bundle_genesis.drain_next_shard(
+            con, collection, stop=stop, eager=not _ingest_pending(con))
+    except Exception as e:   # noqa: BLE001 — an archive must never crash the worker
+        db.log_event(con, "error", "genesis",
+                     f"unexpected genesis failure: {type(e).__name__}: {e}"[:400])
+        return False
+    if result is None:
+        return False
+    if result.get("state") == "final":
+        _acquire_archive(con, collection, "shard final", force=True)
+    return True
+
+
 def _finish_completed_acquires(cons, all_collections, last_discover,
                                 pipeline: bool = False) -> None:
     """Turn finished background fetches into discovery scans: on the
@@ -1142,23 +1171,12 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # candidates name; `eager` tells it whether rdf/fts are waiting on this
     # thread, so a read is amortised over a batch rather than paid per
     # fts commit (config.GENESIS_MIN_CANDIDATES / GENESIS_MAX_WAIT_SEC).
-    if collection.genesis_archive:
-        # a remote archive's fetcher (amendment 38) is kicked from here
-        # too — throttled inside — so a fetch that stopped on "cache full"
-        # or an unreachable origin resumes within minutes, not at the next
-        # 6-hour discovery cycle
-        _acquire_archive(con, collection, "round")
-        try:
-            result = bundle_genesis.drain_next_shard(
-                con, collection, stop=_stop, eager=not _ingest_pending(con))
-        except Exception as e:   # noqa: BLE001 — an archive must never crash the worker
-            db.log_event(con, "error", "genesis",
-                         f"unexpected genesis failure: {type(e).__name__}: {e}"[:400])
-            result = None
-        if result is not None:
-            if result.get("state") == "final":
-                # a slot in the bounded cache just freed: land the next shard
-                _acquire_archive(con, collection, "shard final", force=True)
+    # A REMOTE archive whose collection has a pipeline thread is drained
+    # on THAT thread (_drain_remote_archive in the pipeline loop), never
+    # here on the GPU-serial main loop; a local archive, or any archive of
+    # a collection that runs its whole pipeline here, is drained here.
+    if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
+        if _drain_remote_archive(con, collection, _stop):
             return True
     scope = db.get_scope(con)
     if pipeline_active:
@@ -1302,6 +1320,16 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                     if not _run_one_step(con, collection, _pipeline_idle_log,
                                           pipeline_active=False):
                         time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                # A REMOTE archive (amendment 38) is applied HERE, on the
+                # collection's own thread, never on the GPU-serial main
+                # loop: a pass is CPU/IO work (a million row lookups, text
+                # loads, Lance writes — the encoder is touched only for
+                # the 16-sample proof), and on the main loop it blocked
+                # every other collection's embedding for its whole budget
+                # (observed live: gutenberg's embeds "done in 478 s"). Its
+                # budget/yield alternation is with THIS thread's rdf/fts.
+                if _drain_remote_archive(con, collection, gone):
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)
