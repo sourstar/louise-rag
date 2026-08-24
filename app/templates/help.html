@@ -39,11 +39,12 @@
 │                                  │        archives
 │  worker: discover → rdf → fts    │◄───────────┴──────────►
 │              → embed             │
-│     │                  │         │    state never travels;
-│     ▼                  ▼         │    corpus bytes and vectors
-│  SQLite manifest    LanceDB      │    do — verified, never
-│  (state, FTS)       (vectors)    │    trusted
-│     ▲                  ▲         │
+│     │                  │         │   travels: corpus bytes,
+│     ▼                  ▼         │   vectors, (planned) signed
+│  SQLite manifest    LanceDB      │   corpus enumeration —
+│  (state, FTS)       (vectors)    │   verified, never trusted.
+│     ▲                  ▲         │   stays local: state, FTS
+│     │                  │         │   index — recomputed here
 │     └──── web UI ──────┘         │
 │  Ask · Library · Stats · Network │
 │                                  │
@@ -227,6 +228,38 @@
     <code>bundle resweep</code> re-checks earlier imports after a trust or
     calibration change.
   </p>
+  <h2 style="margin-top:14px">What travels, what stays local</h2>
+  <p class="note">
+    The dividing rule: a peer shares what is <b>expensive to make and cheap
+    to verify</b>, and recomputes what is the reverse.
+  </p>
+  <table>
+    <tr><th>artifact</th><th>travels?</th><th>why</th></tr>
+    <tr><td><b>corpus bytes</b></td><td>yes (torrents, mirrors)</td>
+      <td>expensive to move from origin, trivially verified by hash.</td></tr>
+    <tr><td><b>vectors</b></td><td>yes (signed bundles, genesis archives)</td>
+      <td>the GPU-hours are the whole cost; verifiable by sampled
+      re-embedding against the local encoder.</td></tr>
+    <tr><td><b>corpus enumeration</b> (which documents exist in a
+      snapshot)</td><td>designed, not built</td>
+      <td>discovery over millions of files is slow and every peer repeats
+      it identically — a signed listing in the snapshot manifest would let
+      a peer skip it and still verify what lands. The plan is recorded;
+      no wire format exists yet.</td></tr>
+    <tr><td><b>FTS index</b></td><td>no — deliberately</td>
+      <td>cheap to recompute locally (~1&nbsp;ms/doc), <i>expensive</i> to
+      verify received (the only check is rebuilding it, which costs the
+      recompute anyway), and coupled to local versions and config — a
+      shared index would import another node's chunking decisions
+      unverifiably.</td></tr>
+    <tr><td><b>SQLite state</b> (manifest, progress, settings)</td>
+      <td>never</td>
+      <td>it describes <i>this node's</i> pipeline position and choices;
+      on any other node it is meaningless or wrong.</td></tr>
+    <tr><td><b>extra formats</b> (e.g. epubs)</td><td>never</td>
+      <td>local convenience only — peers exchange the data that fulfils
+      Louise's purpose (see Acquisition → Extra formats).</td></tr>
+  </table>
 </div>
 
 <div class="panel" id="genesis">
@@ -494,7 +527,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     <b>Reading the fetch label.</b> The stage label names what moves and
     its state: <i>fetching data…</i> while a pass is running (the
     denominator is what the origin's listing held at pass start),
-    <i>data done</i> once every listed file has landed, and <i>data
+    <i>data fetched</i> once every listed file has landed, and <i>data
     waiting</i> when the pass is idle with work left — the worker resumes
     it within a round, or downloads are paused. <i>compressed data</i>
     replaces <i>data</i> for container sources, and <i>+extras</i> is
