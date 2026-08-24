@@ -63,7 +63,7 @@
   {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
   {% set fetch_title = 'this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery.' if c.fetched.containers else 'corpus files fetched from the source — see Help' %}
   <div class="stage"><div class="lbl"><span title="{{ fetch_title }}">{% if c.fetched.active %}<span style="color:var(--brass)">fetching {{ fetch_what }}…</span>{% elif c.fetched.complete %}<span style="color:var(--ok)">{{ fetch_what }} fetched</span>{% else %}{{ fetch_what }} waiting{% endif %}</span>
-      <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} <small>({{ c.fetched.done }}/{{ fetch_total }})</small>{% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}{% if c.fetched.has_extras %} <small title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ '{:,}'.format(c.fetched.extra_done) }}/{{ '{:,}'.format(c.fetched.extra_total) }})</small>{% endif %}</span></div>
+      <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} ({{ c.fetched.done }}/{{ fetch_total }}){% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}{% if c.fetched.has_extras %} <span title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ '{:,}'.format(c.fetched.extra_done) }}/{{ '{:,}'.format(c.fetched.extra_total) }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
@@ -131,12 +131,12 @@
       follows indexing: vectors apply as documents pass <i>indexed
       (lexical)</i>, and the <i>embedded (dense)</i> bar above is this
       import's progress — no GPU spent
-      <small>({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read)</small></span>
+      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read)</span>
     {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} —
       <span title="a remote archive is downloaded and applied in a single pass, deliberately after the whole corpus is parsed and indexed — importing earlier would re-download shards as documents trickle in. Nothing is stuck.">import
       waits for indexing: vectors arrive in one pass when the <i>indexed
       (lexical)</i> bar above completes
-      <small>({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read so far)</small></span>
+      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read so far)</span>
     {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard
       files applied; the imported vectors show in the <i>embedded
       (dense)</i> bar above, and the worker gap-fills locally what the
@@ -206,7 +206,7 @@
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
     {# spec.extras: local-only extra formats — counter shows "(+ e/E)", details in Help #}
-    <div id="nc_extras_wrap" style="display:none"><label>Extra formats <small>(local only — see Help)</small></label>
+    <div id="nc_extras_wrap" style="display:none"><label>Extra formats (local only — see Help)</label>
       <div id="nc_extras"></div></div>
     <div><label>Acquisition</label>
       <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
@@ -352,7 +352,7 @@ function growExtrasBlock(name){
   const offered=EXTRAS_OFFERED[name]||[];
   if(!offered.length) return '';
   const held=new Set(EXTRAS_HELD[name]||[]);
-  return `<label style="margin-top:8px">Extra formats <small>(local only — see Help)</small></label>`
+  return `<label style="margin-top:8px">Extra formats (local only — see Help)</label>`
     + offered.map(x=>
       `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
          <input type="checkbox" class="grow_extra" value="${esc(x)}" style="width:auto"
