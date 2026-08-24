@@ -543,12 +543,15 @@ def _genesis_state(con, collection, counts=None) -> dict | None:
         shard_total = len(_local_shards(collection))
     else:
         shard_total = len(archive.shards) if archive else 0
-    waiting_docs = 0
-    if archive is not None and not archive.local:
-        if counts is None:      # cold cache: unknown, but almost surely waiting
-            waiting_docs = None
-        else:
-            waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
+    # Computed for BOTH kinds: a remote archive WAITS on it (shards apply
+    # once, post-settle); a local one is PACED by it (a shard is read when
+    # an indexed document's locator names it, and revisited as more of its
+    # documents clear fts) — either way it is the number that explains a
+    # shard counter standing still.
+    if counts is None:          # cold cache: unknown, but almost surely waiting
+        waiting_docs = None
+    else:
+        waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,

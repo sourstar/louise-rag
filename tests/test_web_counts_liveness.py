@@ -357,3 +357,19 @@ def test_embed_eta_from_availability_rate_for_imported_collections(isolated_conf
     row = web._stats_row(c, {})
     rec = _json.loads(db.get_control(con, "embed_avail_rate"))
     assert rec["done"] == 49 and "dps" not in rec
+
+
+def test_local_genesis_archive_reports_indexing_pacing(isolated_config):
+    """The wikivec shape: all 1,447 shard files fetched, yet the card read
+    '958/1447 shards' — shards are read when an INDEXED document's locator
+    names them, so the shard counter measures pacing, not a stall. A local
+    archive must expose waiting_docs too, so the card can lead with
+    documents and say 'import follows indexing'."""
+    from dataclasses import replace
+    c = replace(collections_mod.default_collection(),
+                genesis_archive="upstash-wikipedia-2024-06")
+    con = db.connect(c)
+
+    state = web._genesis_state(con, c, {"in_scope": 1000, "fts_done": 10})
+    assert state["local"] is True
+    assert state["waiting_docs"] == 990
