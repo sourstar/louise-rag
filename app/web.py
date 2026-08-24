@@ -398,8 +398,15 @@ def _collection_shelf(collection: collections_mod.Collection,
     fetched = None
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if collection.acquire_enabled and spec is not None:
+        # extra=0: opted-in EXTRA formats (spec.extras — local-only, never
+        # p2p) are counted apart, never inflating the Louise numbers.
         fc = con.execute(
-            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files WHERE source_id=?",
+            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files "
+            "WHERE source_id=? AND extra=0",
+            (spec.source_id,)).fetchone()
+        xc = con.execute(
+            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files "
+            "WHERE source_id=? AND extra=1",
             (spec.source_id,)).fetchone()
         # A fetch pass streams the remote listing lazily — claim a file,
         # download it, move on — so fetch_files GROWS while the pass runs
@@ -417,6 +424,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         # pass streams — without it, done==total at every instant mid-pass
         remote_total = 0
         docs_total = None
+        extra_remote_total = 0
         raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
         if raw_listing:
             try:
@@ -424,6 +432,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                 if listing.get("profile") == (collection.profile or listing.get("profile")):
                     remote_total = int(listing.get("files_total") or 0)
                     docs_total = listing.get("docs_total")
+                    extra_remote_total = int(listing.get("extra_files_total") or 0)
             except (ValueError, TypeError):
                 pass
         # fetched in the same UNIT parsed/indexed use, where the layout
@@ -433,7 +442,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         if spec.layout == "one-dir-per-doc":
             docs_done = con.execute(
                 "SELECT COUNT(DISTINCT substr(rel_path, 1, instr(rel_path, '/') - 1)) "
-                "FROM fetch_files WHERE source_id=? AND fetch_done=1 "
+                "FROM fetch_files WHERE source_id=? AND fetch_done=1 AND extra=0 "
                 "AND instr(rel_path, '/') > 0", (spec.source_id,)).fetchone()[0]
             # SEEDED from discovery: what is already on disk IS fetched in
             # the operator's sense, and discovery counted it at startup —
@@ -445,11 +454,18 @@ def _collection_shelf(collection: collections_mod.Collection,
             if not counts_pending:
                 on_disk = max(0, (counts["total"] or 0) - (counts["unindexable"] or 0))
                 docs_done = max(docs_done, on_disk)
+        # extras (spec.extras): "+ e/E" beside the Louise counter, shown
+        # only when the collection opted in or extra rows exist. Format
+        # explained in Help, never inline — the GUI stays clean.
+        has_extras = bool(getattr(collection, "extras", ())) or (xc["total"] or 0) > 0
         fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
                    "remote_total": max(remote_total, fc["total"] or 0),
                    "docs_done": docs_done, "docs_total": docs_total,
                    "containers": spec.layout != "one-dir-per-doc",
-                   "active": active}
+                   "active": active,
+                   "has_extras": has_extras,
+                   "extra_done": xc["done"] or 0,
+                   "extra_total": max(extra_remote_total, xc["total"] or 0)}
 
     if last_discover:
         freshness = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last_discover["ts"]))
@@ -486,6 +502,9 @@ def _collection_shelf(collection: collections_mod.Collection,
         # scarce one, so "turn embedding on" means something different here
         "embed_device": collections_mod.recipe_for(collection).spends,
         "grow_options": _grow_options(collection),
+        # EXTRA formats: what the source offers, what this collection holds
+        "extras_offered": sorted(spec.extras) if spec is not None else [],
+        "extras_held": list(getattr(collection, "extras", ())),
         "license": _license_state(collection),
         "genesis": _genesis_state(con, collection,
                                   None if counts_pending else counts),
@@ -561,6 +580,11 @@ def library_page(request: Request):
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
         "plugin_profiles": {p: _profile_order(p)
                              for p in collections_mod.PLUGIN_REGISTRY},
+        # EXTRA formats each source offers (spec.extras) — local-only
+        # downloads, never p2p; the create/grow modals render checkboxes
+        "plugin_extras": {p: (sorted(ACQUIRE_REGISTRY[p].extras)
+                              if p in ACQUIRE_REGISTRY else [])
+                          for p in collections_mod.PLUGIN_REGISTRY},
         "corpus_mounts": _corpus_mounts(),
         "corpus_mounts_dir": str(config.CORPUS_MOUNTS_DIR),
         "worker_state": db.worker_state(con),
@@ -569,6 +593,10 @@ def library_page(request: Request):
 
 class GrowBody(BaseModel):
     profile: str
+    # opted-in EXTRA formats (spec.extras): None = keep the collection's
+    # current opt-ins; a list = the new selection (may be empty to drop
+    # them). Local-only downloads — never part of the p2p exchange.
+    extras: list[str] | None = None
 
 
 @admin_router.post("/library/{name}/grow/plan")
@@ -598,6 +626,15 @@ def grow_run(name: str, body: GrowBody):
         acquire_spec.resolve_profile(spec, body.profile)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
+    if body.extras is None:
+        extras = collection.extras
+    else:
+        unknown = [e for e in body.extras if e not in spec.extras]
+        if unknown:
+            raise HTTPException(400, f"unknown extra format(s) "
+                                      f"{', '.join(unknown)} — this source "
+                                      f"offers: {', '.join(sorted(spec.extras)) or 'none'}")
+        extras = tuple(body.extras)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
@@ -616,7 +653,7 @@ def grow_run(name: str, body: GrowBody):
         # the collection to 'lazy' at the next restart.
         embed=collections_mod.recipe_for(collection),
         embed_mode=collection.embed_mode_default,
-        snapshot=collection.snapshot)
+        snapshot=collection.snapshot, extras=extras)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -706,7 +743,8 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             license_ack: str | None = None,
                             genesis_archive: str | None = None,
                             embed=None, embed_mode: str | None = None,
-                            snapshot: str | None = None) -> None:
+                            snapshot: str | None = None,
+                            extras: tuple[str, ...] = ()) -> None:
     lines = [f'plugin = "{plugin}"']
     if embed_mode:
         lines.append(f'embed_mode = "{embed_mode}"')
@@ -723,6 +761,12 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
         lines.append(f'license_ack = "{license_ack}"')
     if genesis_archive:
         lines.append(f'genesis_archive = "{genesis_archive}"')
+    if extras:
+        # opted-in EXTRA formats (spec.extras) — local-only downloads,
+        # never p2p. Carried on every rewrite like embed_mode: dropping it
+        # would silently stop the extras at the next profile touch.
+        quoted = ", ".join(f'"{e}"' for e in extras)
+        lines.append(f"extras = [{quoted}]")
     lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
     if embed is not None:
         # any rewrite must carry the [embed] block forward — dropping it
@@ -784,6 +828,9 @@ class CreateCollectionBody(BaseModel):
     # lazily. Needs its own corpus mount and its own terms acknowledgement.
     companion_corpus_dir: str = ""
     acknowledge_companion_terms: bool = False
+    # opted-in EXTRA formats (spec.extras) — local-only downloads beside
+    # the Louise data, never part of the p2p exchange
+    extras: list[str] = []
 
 
 def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
@@ -859,6 +906,17 @@ def new_collection_create(body: CreateCollectionBody):
     if hand_populated:
         body.profile = ""
         body.acquire_enabled = False
+    create_spec = ACQUIRE_REGISTRY.get(body.plugin)
+    if body.extras:
+        offered = create_spec.extras if create_spec is not None else {}
+        unknown = [e for e in body.extras if e not in offered]
+        if unknown:
+            raise HTTPException(400, f"unknown extra format(s) "
+                                      f"{', '.join(unknown)} — this source "
+                                      f"offers: {', '.join(sorted(offered)) or 'none'}")
+        if hand_populated:
+            raise HTTPException(400, "extras need acquisition — a "
+                                      "hand-populated collection fetches nothing")
     toml_path = collections_mod.config_toml_path(body.name)
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")
@@ -883,7 +941,7 @@ def new_collection_create(body: CreateCollectionBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
-                snapshot=existing.snapshot)
+                snapshot=existing.snapshot, extras=existing.extras)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -955,7 +1013,8 @@ def new_collection_create(body: CreateCollectionBody):
         # collection embedded with a language model is not a worse choice,
         # it is a wrong one.
         embed=(collections_mod.default_recipe_for_plugin(body.plugin)
-               or collections_mod.env_recipe()))
+               or collections_mod.env_recipe()),
+        extras=tuple(body.extras))
 
     companion_note = ""
     if companion is not None:
@@ -1079,7 +1138,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
-                snapshot=existing.snapshot)
+                snapshot=existing.snapshot, extras=existing.extras)
     _write_collection_toml(
         toml_path, plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=collection.acquire_enabled,
@@ -1088,7 +1147,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
-        embed_mode=body.mode, snapshot=collection.snapshot)
+        embed_mode=body.mode, snapshot=collection.snapshot,
+        extras=collection.extras)
     db.log_event(con, "info", "control",
                  f"embed mode -> {body.mode!r} for {name!r} via admin UI "
                  f"(written to {toml_path.name}: permanent)")
@@ -1129,7 +1189,7 @@ def collection_ack(name: str):
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
         embed_mode=collection.embed_mode_default,
-        snapshot=collection.snapshot)
+        snapshot=collection.snapshot, extras=collection.extras)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "
@@ -1301,15 +1361,27 @@ def _stats_row(collection, measured: dict) -> dict:
     fetch_files_pending = 0
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is not None:
+        # Louise files and opted-in extras aggregated APART: the listing's
+        # totals are Louise-only (extra_files_total names the extras), so
+        # the listing-minus-landed arithmetic must not mix the two ledgers.
+        # The pass moves both, so the ETA sums the two pendings at the end.
         fr = con.execute(
-            "SELECT COUNT(*) n, SUM(fetch_done) done_files, "
-            "  SUM(COALESCE(bytes_fetched,0)) landed_bytes, "
-            "  SUM(CASE WHEN fetch_done=0 THEN COALESCE(remote_size,0)"
+            "SELECT COUNT(*) n, "
+            "  SUM(CASE WHEN extra=0 THEN fetch_done ELSE 0 END) done_files, "
+            "  SUM(CASE WHEN extra=0 THEN COALESCE(bytes_fetched,0) ELSE 0 END) landed_bytes, "
+            "  SUM(CASE WHEN extra=0 AND fetch_done=0 THEN COALESCE(remote_size,0)"
             "      - COALESCE(bytes_fetched,0) ELSE 0 END) left_bytes, "
-            "  SUM(CASE WHEN fetch_done=0 THEN 1 ELSE 0 END) left_files "
+            "  SUM(CASE WHEN extra=0 AND fetch_done=0 THEN 1 ELSE 0 END) left_files, "
+            "  SUM(CASE WHEN extra=1 THEN fetch_done ELSE 0 END) x_done_files, "
+            "  SUM(CASE WHEN extra=1 THEN COALESCE(bytes_fetched,0) ELSE 0 END) x_landed_bytes, "
+            "  SUM(CASE WHEN extra=1 AND fetch_done=0 THEN COALESCE(remote_size,0)"
+            "      - COALESCE(bytes_fetched,0) ELSE 0 END) x_left_bytes, "
+            "  SUM(CASE WHEN extra=1 AND fetch_done=0 THEN 1 ELSE 0 END) x_left_files "
             "FROM fetch_files WHERE source_id=?", (spec.source_id,)).fetchone()
         fetch_pending_bytes = max(0, fr["left_bytes"] or 0)
         fetch_files_pending = fr["left_files"] or 0
+        extra_pending_bytes = max(0, fr["x_left_bytes"] or 0)
+        extra_pending_files = fr["x_left_files"] or 0
         raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
         if raw_listing:
             try:
@@ -1324,6 +1396,17 @@ def _stats_row(collection, measured: dict) -> dict:
                 fetch_pending_bytes = max(
                     fetch_pending_bytes,
                     int(listing.get("bytes_total") or 0) - (fr["landed_bytes"] or 0))
+                if getattr(collection, "extras", ()):
+                    extra_pending_files = max(
+                        extra_pending_files,
+                        int(listing.get("extra_files_total") or 0)
+                        - (fr["x_done_files"] or 0))
+                    extra_pending_bytes = max(
+                        extra_pending_bytes,
+                        int(listing.get("extra_bytes_total") or 0)
+                        - (fr["x_landed_bytes"] or 0))
+        fetch_files_pending += extra_pending_files
+        fetch_pending_bytes += extra_pending_bytes
 
     embed = rate.get("embed") or {}
     fetch = rate.get("fetch") or {}

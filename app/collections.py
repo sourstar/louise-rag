@@ -159,6 +159,10 @@ class Collection:
     # Declarative reuse of published embeddings (§8 genesis): the worker
     # drains this archive automatically before spending GPU on backfill.
     genesis_archive: str | None = None
+    # Opted-in EXTRA formats from the acquisition source (spec.extras) —
+    # a LOCAL convenience (gutenberg: epubs beside the text), never part
+    # of the p2p exchange. TOML: extras = ["epub"].
+    extras: tuple[str, ...] = ()
     # WHICH dated snapshot of the origin this collection holds, for sources
     # that publish them (Wikipedia dumps, a PubMed baseline year).
     #
@@ -227,6 +231,7 @@ def _load_one(path: Path) -> Collection:
         license_ack=raw.get("license_ack"),
         embed=embed,
         genesis_archive=raw.get("genesis_archive"),
+        extras=tuple(raw.get("extras") or ()),
         snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
     )
 

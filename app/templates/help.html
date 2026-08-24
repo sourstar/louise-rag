@@ -245,7 +245,9 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
       <td>one directory per book (text + RDF metadata); one book = one
         document, chunked by chapters.</td>
       <td>green (public domain)</td>
-      <td>immutable; the catalogue grows, existing texts do not change.</td></tr>
+      <td>immutable; the catalogue grows, existing texts do not change.
+        Offers <code>epub</code> as an extra format (local only — see
+        <i>Extra formats</i> under Acquisition).</td></tr>
     <tr><td><b>pubmed</b></td>
       <td>PubMed baseline + update files from NCBI's FTP.</td>
       <td>compressed container archives (<code>.xml.gz</code>, ~30k records
@@ -425,6 +427,39 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     assemblies in one corpus would overwrite each other. Hand-populated collections
     (<code>acquire_enabled = false</code>) ignore profiles entirely; the
     Library card shows theirs as <i>(hand-populated)</i>.
+  </p>
+  <h2 style="margin-top:14px">Extra formats (local only)</h2>
+  <p class="note">
+    Some sources publish the same documents in <b>more than one format</b>.
+    Louise needs exactly one of them — for Gutenberg that is the plain
+    <code>.txt</code>, which is what gets cleaned, chunked, indexed and
+    embedded. The others (for Gutenberg: <code>.epub</code>, nice for an
+    e-reader) are offered as <b>extra formats</b>: tick them when creating
+    the collection or in <i>grow profile…</i>, and Louise downloads them
+    from the corpus source into the same per-book folders, purely as a
+    local convenience. Unticking one stops future fetching but never
+    deletes files already on disk.
+  </p>
+  <p class="note">
+    <b>Policy — peers exchange only the data that fulfils Louise's
+    purpose.</b> Extra formats are a local download from the corpus source
+    and are <b>never</b> part of the peer-to-peer exchange: not published
+    in corpus torrents, not in snapshot manifests, not counted as
+    possession material. They also never inflate the pipeline numbers —
+    parsed/indexed/embedded see only Louise's own format.
+  </p>
+  <p class="note">
+    <b>Reading the fetched counter.</b> The card keeps it bare:
+    <code>fetched D_done/D_total (f_done/f_total) (+ e_done/e_total)</code>.
+    The first pair is <b>documents</b> — the unit parsed/indexed use — for
+    sources whose layout makes documents countable (one directory = one
+    book); the plain parenthesized pair is the underlying <b>files</b>
+    (gutenberg: text + RDF metadata, so roughly two per book). Container
+    sources cannot know document counts before unpacking, so their single
+    pair counts archives and the card says <i>compressed containers</i>.
+    The <code>(+ …)</code> pair appears only with extras opted in and
+    counts the extra-format files, kept apart precisely because they are
+    not Louise data.
   </p>
 </div>
 

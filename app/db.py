@@ -246,6 +246,12 @@ def connect(collection=None) -> sqlite3.Connection:
         con.execute("ALTER TABLE bundles ADD COLUMN tier_reached INTEGER")
     except sqlite3.OperationalError:
         pass  # same defensive pattern: pre-hardening manifests lack the column
+    try:
+        # opted-in EXTRA formats (spec.extras): local-only files counted
+        # apart from Louise data everywhere they appear
+        con.execute("ALTER TABLE fetch_files ADD COLUMN extra INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return con
 
 def ensure_browse_index(con: sqlite3.Connection) -> bool:

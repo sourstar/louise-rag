@@ -56,7 +56,7 @@
      streams, so done==its total at every instant mid-pass #}
   {% set fetch_total = c.fetched.remote_total or c.fetched.total %}
   <div class="stage"><div class="lbl"><span>fetched{% if c.fetched.active %} <span class="badge brass" title="a fetch pass is running — the denominator is what the origin's listing held when it started">fetching…</span>{% endif %}{% if c.fetched.containers %} <span class="badge" title="this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery.">compressed containers</span>{% endif %}</span>
-      <span>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} documents <small>({{ c.fetched.done }}/{{ fetch_total }} files)</small>{% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}</span></div>
+      <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} <small>({{ c.fetched.done }}/{{ fetch_total }})</small>{% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}{% if c.fetched.has_extras %} <small title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ '{:,}'.format(c.fetched.extra_done) }}/{{ '{:,}'.format(c.fetched.extra_total) }})</small>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
@@ -186,6 +186,9 @@
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}</select>
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
+    {# spec.extras: local-only extra formats — counter shows "(+ e/E)", details in Help #}
+    <div id="nc_extras_wrap" style="display:none"><label>Extra formats <small>(local only — see Help)</small></label>
+      <div id="nc_extras"></div></div>
     <div><label>Acquisition</label>
       <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
         <input type="checkbox" id="nc_acquire" style="width:auto"> fetch corpus from the source
@@ -237,11 +240,16 @@
 let WORKER_STATE="{{ worker_state }}";
 const GROW_OPTIONS={};
 const PLUGIN_PROFILES={{ plugin_profiles|tojson }};
+const PLUGIN_EXTRAS={{ plugin_extras|tojson }};
 const PROFILE_MODE={};
 const PROFILE_HELD={};
+const EXTRAS_OFFERED={};
+const EXTRAS_HELD={};
 {% for c in shelves %}GROW_OPTIONS["{{ c.name }}"]={{ c.grow_options|tojson }};
 PROFILE_MODE["{{ c.name }}"]={{ c.profile_mode|tojson }};
 PROFILE_HELD["{{ c.name }}"]={{ c.profile_parts|tojson }};
+EXTRAS_OFFERED["{{ c.name }}"]={{ c.extras_offered|tojson }};
+EXTRAS_HELD["{{ c.name }}"]={{ c.extras_held|tojson }};
 {% endfor %}
 function fillProfileSelect(){
   const plugin=document.getElementById('nc_plugin').value;
@@ -253,11 +261,20 @@ function fillProfileSelect(){
     // every plugin can be hand-populated: no profile, no acquisition —
     // the operator fills the corpus folder and discovery indexes it
     + '<option value="hand-populated">(hand-populated — I fill the corpus folder myself)</option>';
+  const xw=document.getElementById('nc_extras_wrap');
+  const xb=document.getElementById('nc_extras');
+  const extras=PLUGIN_EXTRAS[plugin]||[];
+  xb.innerHTML=extras.map(x=>
+    `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
+       <input type="checkbox" class="nc_extra" value="${esc(x)}" style="width:auto"> ${esc(x)}
+     </label>`).join('');
   sel.onchange=()=>{
     const hp=sel.value==='hand-populated';
     const acq=document.getElementById('nc_acquire');
     if(hp)acq.checked=false;
     acq.disabled=hp;
+    // extras need acquisition: nothing to opt into on a hand-filled corpus
+    xw.style.display=(extras.length&&!hp)?'':'none';
   };
   sel.onchange();
   // the pre-embedded companion pairs with the live wikipedia plugin only
@@ -303,11 +320,28 @@ function openGrow(name){
   const options=opts.map((o,i)=>`<option value="${esc(o.name)}" ${i===Math.min(1,opts.length-1)?'selected':''}>${esc(o.label)}</option>`).join('');
   showModal(`<h2>Grow ${esc(name)}</h2>
     <label>Target profile</label><select id="grow_profile">${options}</select>
+    ${growExtrasBlock(name)}
     <div class="actions">
       <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
       <button onclick="hideModal()">Cancel</button>
     </div>
     <div id="grow_result"></div>`);
+}
+function growExtrasBlock(name){
+  // spec.extras: local-only extra formats — never exchanged between peers.
+  // Details live in Help, the modal stays clean.
+  const offered=EXTRAS_OFFERED[name]||[];
+  if(!offered.length) return '';
+  const held=new Set(EXTRAS_HELD[name]||[]);
+  return `<label style="margin-top:8px">Extra formats <small>(local only — see Help)</small></label>`
+    + offered.map(x=>
+      `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
+         <input type="checkbox" class="grow_extra" value="${esc(x)}" style="width:auto"
+                ${held.has(x)?'checked':''}> ${esc(x)}${held.has(x)?' <span class="badge ok">held</span>':''}
+       </label>`).join('');
+}
+function growExtrasValue(){
+  return [...document.querySelectorAll('.grow_extra:checked')].map(e=>e.value);
 }
 function openGrowAdditive(name,opts){
   // profiles COMBINE here (each is a language slice): what is already held
@@ -328,6 +362,7 @@ function openGrowAdditive(name,opts){
     <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="grow_all" style="width:auto"> everything (all slices)
     </label>
+    ${growExtrasBlock(name)}
     <div class="actions">
       <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
       <button onclick="hideModal()">Cancel</button>
@@ -365,7 +400,8 @@ async function previewGrow(name){
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 async function runGrow(name,profile){
-  try{const d=await postJSON('/admin/library/'+name+'/grow/run',{profile});
+  try{const d=await postJSON('/admin/library/'+name+'/grow/run',
+      {profile,extras:growExtrasValue()});
     toast(d.note||('profile set to '+profile));hideModal();location.reload()}
   catch(e){toast('grow failed: '+e)}
 }
@@ -427,11 +463,14 @@ async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
     return;
   }
   try{
+    const extras=(profile==='hand-populated')?[]
+      :[...document.querySelectorAll('.nc_extra:checked')].map(e=>e.value);
     const d=await postJSON('/admin/library/new/create',
       {name,plugin,profile,corpus_dir,acquire_enabled,
        acknowledge_terms:!!ackMain,
        companion_corpus_dir,
-       acknowledge_companion_terms:!!ackCompanion});
+       acknowledge_companion_terms:!!ackCompanion,
+       extras});
     const mountWarn=d.corpus_mounted?''
       :`<div class="note" style="color:var(--err)">corpus folder not mounted yet</div>`;
     showModal(`<h2>Collection created</h2>

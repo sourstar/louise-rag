@@ -19,6 +19,7 @@ platform already has two ways for peers to find each other without one
 (docs/p2p-discovery.md): an explicit peer list, and the DHT once an
 infohash is known. `--tracker` exists for anyone who wants one anyway.
 """
+import fnmatch
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,8 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
                    trackers: tuple[str, ...] = (),
                    web_seeds: tuple[str, ...] = (),
                    comment: str | None = None,
-                   hybrid: bool = True) -> PublishedTorrent:
+                   hybrid: bool = True,
+                   exclude_patterns: tuple[str, ...] = ()) -> PublishedTorrent:
     """Hash `corpus_dir` into a .torrent at `out_path`.
 
     Hashing reads every byte, so this is minutes of disk on a large corpus
@@ -72,7 +74,20 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
         raise TransportError(f"{corpus_dir}: not a directory")
 
     fs = lt.file_storage()
-    lt.add_files(fs, str(corpus_dir))
+    if exclude_patterns:
+        # POLICY (spec.extras): peers exchange only the data that fulfils
+        # Louise's purpose. Opted-in extra formats live in the SAME corpus
+        # tree (gutenberg: the epub beside the txt), so publishing the
+        # directory wholesale would ship them — exclude by pattern here,
+        # at the one place corpus bytes become p2p material.
+        def _include(path: str) -> bool:
+            rel = Path(path).as_posix()
+            base = rel.rsplit("/", 1)[-1]
+            return not any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat)
+                           for pat in exclude_patterns)
+        lt.add_files(fs, str(corpus_dir), _include)
+    else:
+        lt.add_files(fs, str(corpus_dir))
     if fs.num_files() == 0:
         raise TransportError(f"{corpus_dir}: nothing to publish (no files)")
 

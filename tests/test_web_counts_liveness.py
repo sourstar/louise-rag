@@ -224,3 +224,42 @@ def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
 
     unknown = web._genesis_state(con, c, None)      # cold counts
     assert unknown["waiting_docs"] is None
+
+
+def test_fetched_counter_counts_extras_apart(isolated_config):
+    """spec.extras policy: extra-format files (local-only, never p2p) are a
+    SEPARATE '(+ e/E)' pair on the card — they must never inflate the
+    Louise done/total, and the extras denominator reads the listing's
+    extra_files_total (the ledger streams, like the Louise one)."""
+    import json as _json
+    from dataclasses import replace
+    from app.acquire import engine as acquire_engine
+
+    c = replace(collections_mod.default_collection(), acquire_enabled=True,
+                extras=("epub",))
+    con = db.connect(c)
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_engine.LISTING_KEY,
+                 _json.dumps({"files_total": 4, "bytes_total": 400,
+                              "extra_files_total": 9, "extra_bytes_total": 900,
+                              "profile": None, "ts": int(time.time())})))
+    for i in range(2):
+        con.execute(
+            "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
+            "remote_size,extra) VALUES('gutenberg',?,1,100,100,0)", (f"{i}/pg{i}.txt",))
+    con.execute(
+        "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
+        "remote_size,extra) VALUES('gutenberg','0/pg0.epub',1,50,50,1)")
+    web.invalidate_counts()
+
+    fetched = web._collection_shelf(c, {})["fetched"]
+    assert fetched["done"] == 2, "the epub must not inflate the Louise count"
+    assert fetched["remote_total"] == 4
+    assert fetched["has_extras"] is True
+    assert fetched["extra_done"] == 1
+    assert fetched["extra_total"] == 9, "denominator = the listing, not the stream"
+    # a collection with no extras configured and no extra rows stays clean
+    plain = replace(c, extras=())
+    con.execute("DELETE FROM fetch_files WHERE extra=1")
+    web.invalidate_counts()
+    assert web._collection_shelf(plain, {})["fetched"]["has_extras"] is False

@@ -960,3 +960,21 @@ the live deployment:
     for ~800k entries. The create form also gains "(hand-populated)" as
     an explicit profile choice for every plugin: no profile, no
     acquisition, discovery indexes what the operator lands.
+35. **§5.1 — extra formats (`spec.extras`), and the exchange policy they
+    make explicit: peers exchange ONLY the data that fulfils Louise's
+    purpose.** Some origins publish the same document in several formats;
+    Louise ingests exactly one (gutenberg: the plain `.txt`). A spec may
+    declare the others as named extras (`extras={"epub": Filter(...)}`);
+    a collection opts in per format (TOML `extras = ["epub"]`, chosen at
+    create or grow). Opted-in extras are fetched from the corpus source
+    into the same tree as a LOCAL convenience — and are NEVER p2p
+    material: not in published corpus torrents (`torrent_publish`
+    excludes their patterns unconditionally, since files from a past
+    opt-in outlive the opt-out), not in snapshot manifests, not
+    possession material (they never enter `documents`). Classification
+    is exclusive — a file the base filters claim is Louise data, never
+    an extra — carried as `fetch_files.extra`, split in the
+    `acquire_listing` totals (`extra_files_total`/`extra_bytes_total`),
+    and shown on the Library card as a separate `(+ e/E)` pair so extras
+    never inflate the Louise counters. Details live in Help; the GUI
+    stays clean.

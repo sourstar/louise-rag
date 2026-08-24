@@ -28,6 +28,9 @@ class RemoteFile:
     size: int | None = None
     mtime: int | None = None
     checksum: str | None = None   # rare: inline checksum from the listing itself
+    # classified by the engine after filtering: True = an opted-in EXTRA
+    # format (local-only; see AcquisitionSpec.extras), never Louise data
+    extra: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,14 @@ class AcquisitionSpec:
     # cannot serve it at this exact path carries a different layout and is
     # excluded from ranking. None = single endpoint or no mirror logic.
     probe_file: str | None = None
+    # EXTRA formats the origin offers beyond what Louise needs (gutenberg:
+    # epub files). POLICY — exchange only the data that fulfils Louise's
+    # purpose: extras are a LOCAL convenience download from the corpus
+    # source, opted into per collection (TOML `extras = [...]`), and are
+    # NEVER part of the peer-to-peer exchange — not published in corpus
+    # torrents, not in snapshot manifests, not possession material. The
+    # Library counts them separately ("+ e/E"); the Help page explains.
+    extras: dict[str, Filter] = field(default_factory=dict)
     # How a source's profiles relate to one another:
     #
     #   "incremental" — demo ⊂ starter ⊂ full. Growing means a strictly

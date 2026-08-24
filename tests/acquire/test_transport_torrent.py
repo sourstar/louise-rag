@@ -339,3 +339,28 @@ def test_the_published_torrent_is_hybrid_v1_and_v2(tmp_path):
     hashes = lt.torrent_info(str(out)).info_hashes()
     assert hashes.has_v1(), "v1-only clients must still be able to join"
     assert hashes.has_v2(), "v2 is why snapshots can share unchanged files"
+
+
+def test_publish_excludes_extra_format_files(tmp_path):
+    """POLICY (spec.extras): extra formats are a local convenience and are
+    NEVER p2p material — a published corpus torrent must not carry them,
+    whether or not the collection currently opts in (files from a past
+    opt-in stay on disk)."""
+    from app.acquire import torrent_publish
+
+    corpus = tmp_path / "gut"
+    (corpus / "1").mkdir(parents=True)
+    (corpus / "1" / "pg1.txt").write_bytes(b"t" * 4000)
+    (corpus / "1" / "pg1.epub").write_bytes(b"e" * 6000)
+
+    out = tmp_path / "gut.torrent"
+    published = torrent_publish.publish_corpus(
+        corpus, out, piece_size=16 * 1024,
+        exclude_patterns=("*.epub",))
+
+    assert published.files == 1
+    assert published.total_bytes == 4000
+    ep = Endpoint(transport=Transport.TORRENT, url=str(out))
+    listed = [f.rel_path for f in TorrentT().list_files(ep, None)]
+    assert any(p.endswith("pg1.txt") for p in listed)
+    assert not any(p.endswith(".epub") for p in listed)

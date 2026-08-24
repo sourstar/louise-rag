@@ -445,12 +445,19 @@ def cmd_torrent_publish(args) -> int:
     collection = _collection_by_name(args.collection)
     out = Path(args.out) if args.out else (
         collection.manifest_path.parent / f"{collection.name}.torrent")
+    # POLICY (spec.extras): extra formats are a local convenience and are
+    # NEVER p2p material. Excluded UNCONDITIONALLY — not just when opted in,
+    # because files from a past opt-in stay on disk after the opt-out.
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    exclude = tuple(pat for flt in (spec.extras.values() if spec else ())
+                    for pat in flt.include)
     try:
         published = torrent_publish.publish_corpus(
             collection.corpus_dir, out, name=collection.name,
             trackers=tuple(args.tracker or ()),
             web_seeds=tuple(args.web_seed or ()),
-            comment=f"louise-rag collection {collection.name}")
+            comment=f"louise-rag collection {collection.name}",
+            exclude_patterns=exclude)
     except TransportError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 1

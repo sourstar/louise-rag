@@ -42,6 +42,9 @@ GUTENBERG_SPEC = AcquisitionSpec(
     # small, stable, and part of the official layout — the structure probe
     # and benchmark unit (app/acquire/mirrors.py)
     probe_file="1/pg1.rdf",
+    # optional extra formats, LOCAL-ONLY (spec.extras policy): someone may
+    # want the epubs beside the text — they never enter the p2p exchange
+    extras={"epub": Filter(include=("*.epub",), exclude=("*images*",))},
     profiles={
         "demo": Filter(include=("1/**", "2/**", "3/**"), max_files=3, max_bytes=5_000_000),
         "starter": Filter(max_files=500, max_bytes=2_000_000_000),

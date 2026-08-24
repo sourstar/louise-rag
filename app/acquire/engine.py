@@ -109,9 +109,34 @@ def make_ack(terms_text_path: Path) -> str:
     return f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}/{digest}"
 
 
+def _select_extras(all_files: list[RemoteFile], spec: AcquisitionSpec,
+                    extras_selected: tuple[str, ...],
+                    louise: list[RemoteFile]) -> list[RemoteFile]:
+    """The opted-in EXTRA files (spec.extras policy: local-only, never p2p).
+    A file the base filters already claim is Louise data, never an extra —
+    classification is exclusive so the counters never double-count."""
+    import dataclasses
+    if not extras_selected:
+        return []
+    louise_paths = {f.rel_path for f in louise}
+    chosen: dict[str, RemoteFile] = {}
+    for name in extras_selected:
+        flt = spec.extras.get(name)
+        if flt is None:
+            continue
+        for f in all_files:
+            if f.rel_path in louise_paths or f.rel_path in chosen:
+                continue
+            if any(fnmatch.fnmatch(f.rel_path, p) for p in flt.include) \
+                    and not any(fnmatch.fnmatch(f.rel_path, p) for p in flt.exclude):
+                chosen[f.rel_path] = dataclasses.replace(f, extra=True)
+    return sorted(chosen.values(), key=lambda f: f.rel_path)
+
+
 def _list_and_filter(spec: AcquisitionSpec, profile: str,
                       snapshot: str | None = None,
-                      endpoints: list | None = None) -> list[RemoteFile]:
+                      endpoints: list | None = None,
+                      extras_selected: tuple[str, ...] = ()) -> list[RemoteFile]:
     # resolve_profile also understands a COMBINED profile ("tr,it") on an
     # additive source, where it is the union of those slices
     profile_filter = resolve_profile(spec, profile)
@@ -149,7 +174,8 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         if f.rel_path not in seen:
             seen.add(f.rel_path)
             all_files.append(f)
-    return _apply_filters(all_files, spec.filters, profile_filter)
+    louise = _apply_filters(all_files, spec.filters, profile_filter)
+    return louise + _select_extras(all_files, spec, extras_selected, louise)
 
 
 def is_adoptable(collection, f: RemoteFile) -> bool:
@@ -225,28 +251,28 @@ def _upsert_fetched(con, source_id: str, f: RemoteFile, endpoint_url: str, local
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
         "local_path,bytes_fetched,blake2,fetch_done,fetch_version,profile,error,retries,"
-        "updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?,NULL,0,?) "
+        "extra,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?,NULL,0,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
         "endpoint_url=excluded.endpoint_url,remote_size=excluded.remote_size,"
         "remote_mtime=excluded.remote_mtime,local_path=excluded.local_path,"
         "bytes_fetched=excluded.bytes_fetched,blake2=excluded.blake2,fetch_done=1,"
         "fetch_version=excluded.fetch_version,profile=excluded.profile,error=NULL,"
-        "updated_at=excluded.updated_at",
+        "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, local_path, bytes_fetched,
-         blake2, config.FETCH_VERSION, profile, int(time.time())))
+         blake2, config.FETCH_VERSION, profile, int(f.extra), int(time.time())))
 
 
 def _upsert_failed(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,
                     profile: str, error: str) -> None:
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
-        "bytes_fetched,fetch_done,profile,error,retries,updated_at) "
-        "VALUES(?,?,?,?,?,?,0,?,?,1,?) "
+        "bytes_fetched,fetch_done,profile,error,retries,extra,updated_at) "
+        "VALUES(?,?,?,?,?,?,0,?,?,1,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
         "bytes_fetched=excluded.bytes_fetched,error=excluded.error,retries=retries+1,"
-        "updated_at=excluded.updated_at",
+        "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, bytes_fetched, profile,
-         error[:500], int(time.time())))
+         error[:500], int(f.extra), int(time.time())))
 
 
 def _upsert_aborted(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,
@@ -259,13 +285,13 @@ def _upsert_aborted(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes
     "SIGTERM = ... exit 0")."""
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
-        "bytes_fetched,fetch_done,profile,error,retries,updated_at) "
-        "VALUES(?,?,?,?,?,?,0,?,NULL,0,?) "
+        "bytes_fetched,fetch_done,profile,error,retries,extra,updated_at) "
+        "VALUES(?,?,?,?,?,?,0,?,NULL,0,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
-        "bytes_fetched=excluded.bytes_fetched,error=NULL,"
+        "bytes_fetched=excluded.bytes_fetched,error=NULL,extra=excluded.extra,"
         "updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, bytes_fetched, profile,
-         int(time.time())))
+         int(f.extra), int(time.time())))
 
 
 @dataclass
@@ -608,7 +634,8 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
         endpoints = mirrors.seed_order(con, spec)
 
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None),
-                             endpoints=endpoints)
+                             endpoints=endpoints,
+                             extras_selected=getattr(collection, "extras", ()))
     plan = _plan_from_files(con, collection, spec, files)
     # The SOURCE's own file count, recorded the moment it is known. The
     # fetch loop below streams — fetch_files rows appear per file as each
@@ -624,13 +651,20 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
     # wikivec's parquet) cannot know document counts before unpacking —
     # the card says "compressed containers" instead of implying files are
     # documents.
+    louise_files = [f for f in files if not f.extra]
+    extra_files = [f for f in files if f.extra]
     docs_total = None
     if spec.layout == "one-dir-per-doc":
         docs_total = len({f.rel_path.split("/", 1)[0]
-                          for f in files if "/" in f.rel_path})
+                          for f in louise_files if "/" in f.rel_path})
     db.set_control(con, LISTING_KEY, json.dumps({
-        "files_total": plan.files_total, "bytes_total": plan.bytes_total,
+        "files_total": len(louise_files),
+        "bytes_total": sum(f.size or 0 for f in louise_files),
         "docs_total": docs_total, "layout": spec.layout,
+        # extras counted apart, always: local-only data must never inflate
+        # the Louise totals the counters and the p2p plane reason about
+        "extra_files_total": len(extra_files),
+        "extra_bytes_total": sum(f.size or 0 for f in extra_files),
         "profile": profile, "ts": int(time.time())}))
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls

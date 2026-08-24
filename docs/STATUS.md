@@ -1,9 +1,9 @@
 # Project status
 
-**Last updated: 2026-08-23.** What exists, what is designed but unbuilt, and
+**Last updated: 2026-08-24.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–34) for every place the design was corrected in flight.
+its §17 amendments (1–35) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -98,6 +98,16 @@ that came with this, worth preserving:
 - **Cold single-document probes measure the container, not the pipeline**
   (gzip cannot seek): pubmed rdf is 5.8 s cold and was 0.36 ms warm.
   Benchmark warm, over hundreds of documents.
+
+**2026-08-24 — extra formats, and the p2p exchange policy** (amendment 35).
+Peers exchange only the data that fulfils Louise's purpose. An origin's
+alternative formats (gutenberg's epubs) are now declarable per spec
+(`spec.extras`) and opt-in per collection (TOML `extras = ["epub"]`,
+chosen at create or in grow) — fetched from the corpus source as a LOCAL
+convenience, classified exclusively (`fetch_files.extra`, split
+`acquire_listing` totals), shown as a separate `(+ e/E)` pair on the
+Library card, and excluded unconditionally from published corpus torrents.
+Explanation lives in Help's Acquisition tab; the GUI stays clean.
 
 **2026-08-23 — discovery is batched, resumable and off-thread** (amendment
 32). The startup scan used to hold the collection's pipeline thread (wikivec:
