@@ -66,7 +66,7 @@ def test_card_keeps_the_queue_under_lazy(client):
     con.execute("INSERT INTO embed_queue(uid,priority,ts) VALUES('gutenberg:1',1,1)")
 
     page = client.get("/admin/library").text
-    assert "lazy-embed queue: 1 pending" in page
+    assert "on-demand queue: 1 pending" in page
 
 
 def test_card_names_blocked_documents(client):
@@ -79,7 +79,7 @@ def test_card_names_blocked_documents(client):
     assert "2 blocked" in page
     assert "exhausted their retries" in page
     # and they are excluded from the embeddable backlog
-    assert "3 documents awaiting the encoder" in page or "lazy-embed queue" in page
+    assert "3 documents awaiting the encoder" in page or "on-demand queue" in page
 
 
 def test_card_surfaces_a_gate_pause(client):

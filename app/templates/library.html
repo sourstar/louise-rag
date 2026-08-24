@@ -96,9 +96,9 @@
       {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
       {% endif %}
     {% elif c.embed_mode == 'lazy' %}
-      lazy-embed queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
+      on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
     {% else %}
-      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “lazy”/“all”
+      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
     {% endif %}
   </div>
   {% if c.blocked %}
@@ -192,8 +192,10 @@
         <option value="lazy" {{ 'selected' if c.embed_mode == 'lazy' }}>fix on demand — only when a query hits one</option>
         <option value="off" {{ 'selected' if c.embed_mode == 'off' }}>off — leave the gaps unembedded</option>
         {% else %}
-        {% for m in ['off','lazy','all'] %}
-        <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>
+        {# display name "on-demand"; the STORED value stays "lazy" (TOML /
+           API compatibility — same pattern as plugin display labels) #}
+        {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all')] %}
+        <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
         {% endif %}
       </select></div>

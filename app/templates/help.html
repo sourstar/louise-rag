@@ -123,12 +123,45 @@
   <p class="note">
     The scope (languages, explicit ids, caps) decides which documents are
     in play. The <b>embed mode</b> decides encoder spending:
-    <b>off</b> — never embed; <b>lazy</b> — embed only what queries actually
-    touch (a priority queue fed by search misses); <b>all</b> — background-
-    backfill everything in scope. The priority queue always outranks the
-    backfill, so a user-requested document embeds first. Set the mode via
-    <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
+    <b>off</b> — never embed; <b>on-demand</b> — embed only what queries
+    actually touch (a priority queue fed by search misses; stored as
+    <code>"lazy"</code> in the TOML and API, kept for compatibility);
+    <b>all</b> — background-backfill everything in scope. The priority
+    queue always outranks the backfill, so a user-requested document
+    embeds first. Set the mode via <code>POST /api/scope</code> (see
+    <a href="#api">HTTP API</a>).
   </p>
+  <h2 style="margin-top:14px">What the mode actually controls</h2>
+  <p class="note">
+    The knob touches <b>one thing only: local encoder spending on dense
+    vectors</b>. Fetching, parsing and indexing never depend on it — they
+    follow the node-wide worker state. Archive import (pre-embedded data)
+    never depends on it either — it runs whenever the worker runs.
+  </p>
+  <div style="overflow-x:auto"><table>
+    <tr><th>operation</th><th>off</th><th>on-demand / fix on demand</th><th>all / fix</th></tr>
+    <tr><td><b>fetched</b> (acquisition)</td>
+      <td colspan="3">runs regardless — governed only by the node-wide
+      worker state (<i>run everything</i> and <i>download only</i> fetch;
+      <i>pause</i> stops it)</td></tr>
+    <tr><td><b>parsed (rdf)</b></td>
+      <td colspan="3">runs regardless under <i>run everything</i>; stands
+      down under <i>download only</i> and <i>pause</i></td></tr>
+    <tr><td><b>indexed (lexical)</b></td>
+      <td colspan="3">same as parsed — never gated by the embed mode</td></tr>
+    <tr><td><b>embedded (dense)</b> — no archive</td>
+      <td>never embeds; documents stay without vectors</td>
+      <td>embeds only documents queries actually touch (the priority
+      queue); no background work</td>
+      <td>background-backfills everything in scope, queue first</td></tr>
+    <tr><td><b>pre-embedded (dense)</b> — archive declared</td>
+      <td>import runs anyway; the few documents the archive cannot cover
+      stay without vectors (and post-quarantine re-embeds never run)</td>
+      <td>import runs anyway; gaps are filled only when a query hits
+      one</td>
+      <td>import runs anyway; gaps are filled once, in the background —
+      minutes of encoder time in total</td></tr>
+  </table></div>
   <p class="note">
     The Library's embed-mode control is <b>persistent</b>: it writes
     <code>embed_mode = "off" | "lazy" | "all"</code> into
@@ -137,14 +170,14 @@
     immediately — it survives restarts. A runtime-only override is still
     possible via <code>POST /api/scope</code>; that one lasts until the
     worker next applies the TOML. A collection whose TOML is silent
-    defaults to <b>lazy</b>. For a pre-embedded collection (a genesis archive) the mode
+    defaults to <b>on-demand</b> (stored value <code>lazy</code>). For a pre-embedded collection (a genesis archive) the mode
     only governs <b>local gap-fill</b> of what the archive cannot cover —
     archive import runs regardless — so its card shows the same knob as
     <b>fix / fix on demand / off</b>: <b>fix</b> (= all) embeds, once, the
     handful of documents the archive can never deliver (articles whose rows
     straddle a shard-file boundary, roughly one per shard — minutes of CPU
     in total) and keeps quarantine-triggered re-embeds working; <b>fix on
-    demand</b> (= lazy) does the same only when a query actually hits such a
+    demand</b> (stored value <code>lazy</code>) does the same only when a query actually hits such a
     document; <b>off</b> leaves those gaps without dense vectors forever —
     and note that after a quarantine, <b>off</b> also means the affected
     documents are never re-embedded.
@@ -172,7 +205,7 @@
   </p>
   <p class="note">
     Under <b>all</b>, the card reports the <i>dense backfill</i> still
-    awaiting the encoder rather than the lazy queue, which is empty by
+    awaiting the encoder rather than the on-demand queue, which is empty by
     definition in that mode: backfill selects straight from the manifest and
     never touches the queue.
   </p>
