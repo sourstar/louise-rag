@@ -34,6 +34,17 @@ confirms baseline reproduction on the first embed after the swap.
 
 <!-- encoder_trial verdicts are appended here -->
 
+## AMD GPU (Vulkan) — RX 9060 XT (RDNA4), llama.cpp Windows binary
+
+Second instance (Windows machine). Native Windows process — ROCm-in-WSL2
+does not cover RDNA4; containers reach it via `host.docker.internal`.
+Flags replicate the production app exactly (`--embeddings --pooling last
+-ngl 999 -c 65536 -np 4 -b 8192 -ub 8192`).
+
+| build | artifact | verdict | evidence |
+|---|---|---|---|
+| b10603 | `llama-b10603-bin-win-vulkan-x64.zip` (same tag as the production SYCL build) | **approved (2026-08-24)** | cross-backend consistency vs the production Arc encoder, Qwen3-Embedding-8B-Q4_K_M (GGUF byte-copied from the node): cosine min **0.999599** / mean 0.999681 over 16 long texts, dim 4096; local throughput 0.39 s/text (~5x the Arc under load) |
+
 ## CPU (TEI) — text-embeddings-inference
 
 | model | image | verdict |
