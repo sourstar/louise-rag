@@ -70,6 +70,28 @@ def _plugin_label(plugin: str) -> str:
     return PLUGIN_LABELS.get(plugin, plugin)
 
 
+def _sample_write(con, key: str, payload: str) -> None:
+    """Telemetry-sample writes from PAGE-RENDER code (stage_rate,
+    embed_avail_rate, last_embed_rate): never worth waiting for. The
+    manifest's writers are the worker's — db.connect sets a 60 s busy
+    timeout sized for THEM — and a page that sits in that timeout, or
+    500s when it expires, turns a read-only view into a hostage of the
+    pipeline (observed live: Library and Stats "look busy" during a
+    gutenberg fetch pass beside pubmed fts). Try briefly, skip on
+    contention: the next page load samples again, and a skipped sample
+    only delays a rate display, never corrupts one."""
+    try:
+        con.execute("PRAGMA busy_timeout=200")
+        db.set_control(con, key, payload)
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        try:
+            con.execute("PRAGMA busy_timeout=60000")
+        except sqlite3.OperationalError:
+            pass
+
+
 def _collection_or_404(name: str) -> collections_mod.Collection:
     c = collections_mod.by_name(name)
     if c is None:
@@ -515,7 +537,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         if rec_sr is None or rdf_now < int(rec_sr.get("rdf") or 0) \
                 or fts_now < int(rec_sr.get("fts") or 0):
             # first sight, or a reset shrank a count: fresh baseline
-            db.set_control(con, "stage_rate", json.dumps(
+            _sample_write(con, "stage_rate", json.dumps(
                 {"rdf": rdf_now, "fts": fts_now, "ts": now_i}))
         else:
             stage_rates["rdf"] = rec_sr.get("rdf_ph")
@@ -526,7 +548,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                 fts_ph = (fts_now - int(rec_sr.get("fts") or 0)) * 3600.0 / elapsed
                 stage_rates["rdf"] = round(rdf_ph) if rdf_ph > 0 else None
                 stage_rates["fts"] = round(fts_ph) if fts_ph > 0 else None
-                db.set_control(con, "stage_rate", json.dumps(
+                _sample_write(con, "stage_rate", json.dumps(
                     {"rdf": rdf_now, "fts": fts_now, "ts": now_i,
                      "rdf_ph": stage_rates["rdf"],
                      "fts_ph": stage_rates["fts"]}))
@@ -1525,7 +1547,7 @@ def _stats_row(collection, measured: dict) -> dict:
     encoder_frozen = False
     if chunks_per_hour_wall:
         cps_wall = chunks_per_hour_wall / 3600
-        db.set_control(con, "last_embed_rate",
+        _sample_write(con, "last_embed_rate",
                        json.dumps({"cps": cps_wall, "ts": int(time.time())}))
     else:
         cps_wall = None
@@ -1558,7 +1580,7 @@ def _stats_row(collection, measured: dict) -> dict:
             except (ValueError, TypeError):
                 rec = None
         if rec is None or done_now < int(rec.get("done") or 0):
-            db.set_control(con, "embed_avail_rate",
+            _sample_write(con, "embed_avail_rate",
                            json.dumps({"done": done_now, "ts": now}))
         else:
             avail_dps = float(rec.get("dps") or 0) or None
@@ -1569,7 +1591,7 @@ def _stats_row(collection, measured: dict) -> dict:
                 if delta > 0:
                     avail_dps = delta / elapsed
                     avail_rts = now
-                db.set_control(con, "embed_avail_rate",
+                _sample_write(con, "embed_avail_rate",
                                json.dumps({"done": done_now, "ts": now,
                                            "dps": avail_dps,
                                            "rts": avail_rts}))

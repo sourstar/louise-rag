@@ -520,3 +520,33 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     assert shelf["stage_rates"] == {"rdf": None, "fts": None}
     rec = _json.loads(db.get_control(con, "stage_rate"))
     assert rec["rdf"] == 100 and "rdf_ph" not in rec
+
+
+def test_page_render_never_blocks_on_a_locked_manifest(isolated_config):
+    """Observed live: Library and Stats 'look busy' — the rate-sample
+    writes added to page-render code sat in the 60 s busy timeout while
+    the worker held its write lock, then raised 'database is locked' into
+    the page. A page is a READER: under contention it must render now,
+    skip the sample, and try again next load."""
+    import sqlite3 as _sq
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                "rdf_done,fts_done,embed_done,chunks) "
+                "VALUES('g:1','g','1','/x',1,1,1,0,10)")
+    con.commit()
+    web.invalidate_counts()
+    _wait_counts(c)
+
+    blocker = _sq.connect(str(c.manifest_path))
+    try:
+        blocker.execute("BEGIN IMMEDIATE")   # the worker's write lock
+        t0 = time.time()
+        shelf = web._collection_shelf(c, {})
+        row = web._stats_row(c, {})
+        took = time.time() - t0
+        assert shelf["name"] == c.name and "embed" in row
+        assert took < 5, f"page render blocked {took:.1f}s on a locked manifest"
+    finally:
+        blocker.rollback()
+        blocker.close()
