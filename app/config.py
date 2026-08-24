@@ -113,6 +113,11 @@ WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
 # stage (a 60s embed) still runs exactly once — fairness bounded by time,
 # not by document count.
 WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
+# How long one parallel-embed call keeps REFILLING its worker window before
+# draining and returning to the round loop. Long enough that the window is
+# full almost all the time (a document is minutes), short enough that stop
+# / state changes are honored within a reasonable delay.
+EMBED_STREAM_S = float(os.getenv("EMBED_STREAM_S", "120"))
 # Rescan the corpus for new/changed books: always at worker startup, then every
 # N minutes while running (0 = only at startup / manual rescan).
 DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))

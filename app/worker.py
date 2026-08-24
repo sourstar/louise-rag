@@ -501,23 +501,34 @@ def _embed_parallel(con, collection, recipe) -> bool:
                  f"embedding {len(rows)} document(s)"
                  + (f" / {pending_chunks} chunks" if pending_chunks else "")
                  + f" with {recipe.concurrency} workers")
-    from concurrent.futures import ThreadPoolExecutor
-    stats.recorder().set_in_flight(collection.name, len(rows))
-    try:
-        with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
-            results = list(pool.map(work, rows))
-    finally:
-        stats.recorder().set_in_flight(collection.name, 0)
 
-    now = int(time.time())
+    # A SLIDING WINDOW, not a batch-and-join. Measured live on the AMD
+    # instance (60 s GPU trace at 1 Hz): the batch form ran ~20 s at
+    # 90-100 % and then sat ~9 s idle — every batch ended with a tail where
+    # one or two workers embedded the longest book alone, then a full stop
+    # while the main loop turned around. 30 % of the GPU wasted, in a
+    # rhythm the operator could see. Now a worker that finishes is handed
+    # the next candidate immediately, results commit on THIS thread as they
+    # land, and the call keeps refilling for EMBED_STREAM_S before draining
+    # — the round loop still gets control back, just less often. Nothing
+    # about the requests changes: one document per worker, one text per
+    # request (the batch gate's rule), document-serial inside a worker.
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    deadline = time.time() + getattr(config, "EMBED_STREAM_S", 120.0)
+    in_flight: dict = {}          # future -> uid
+    seen: set[str] = {r["uid"] for r in rows}
+    queue: list = list(rows)
     done = deferred = 0
-    for uid, n, err in results:
+
+    def commit(uid, n, err) -> None:
+        nonlocal done, deferred
+        now = int(time.time())
         if err == "stopped":
-            continue
+            return
         if err == DEFERRED:
             # the encoder was not answering: leave the row exactly as it was
             deferred += 1
-            continue
+            return
         if err is None:
             con.execute(
                 "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
@@ -530,6 +541,39 @@ def _embed_parallel(con, collection, recipe) -> bool:
                 "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
                 "WHERE uid=?", (f"embed: {err}"[:500], now, uid))
             db.log_event(con, "error", "embed", err, uid)
+
+    def refill(pool) -> None:
+        nonlocal queue
+        while len(in_flight) < recipe.concurrency and not _stop.is_set() \
+                and time.time() < deadline:
+            if not queue:
+                # candidates committed by THIS thread are already out of
+                # the selection; the ones in flight are not, hence `seen`
+                fresh = [r for r in _embed_candidates(con, scope, recipe.concurrency * 2)
+                         if r["uid"] not in seen]
+                if not fresh:
+                    return
+                seen.update(r["uid"] for r in fresh)
+                queue = fresh
+            row = queue.pop(0)
+            in_flight[pool.submit(work, row)] = row["uid"]
+        stats.recorder().set_in_flight(collection.name, len(in_flight))
+
+    try:
+        with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
+            refill(pool)
+            while in_flight:
+                finished, _ = wait(list(in_flight), return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    in_flight.pop(fut)
+                    commit(*fut.result())
+                # a dead encoder must not be walked document by document:
+                # stop refilling as soon as a deferral shows up
+                if deferred == 0:
+                    refill(pool)
+                stats.recorder().set_in_flight(collection.name, len(in_flight))
+    finally:
+        stats.recorder().set_in_flight(collection.name, 0)
     if done:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
