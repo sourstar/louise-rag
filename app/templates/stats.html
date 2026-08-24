@@ -66,12 +66,19 @@
         {% if r.embed.blocked %}<span class="badge err" title="blocked documents are excluded from the pending count until their errors are cleared">{{ '{:,}'.format(r.embed.blocked) }} blocked</span>{% endif %}</td>
       <td>{{ '{:,}'.format(r.embed.docs_pending) }}{% if r.embed.in_flight %}
         <span class="badge ok" title="inside the encoder right now — a document commits only when every one of its chunks is done, which on a slow CPU encoder is many minutes">{{ r.embed.in_flight }} encoding now</span>{% endif %}</td>
+      {# color = MODE (off grey / lazy orange / all-running green), ❄ = the
+         rate is frozen (last measured, nothing moving now). The ETA itself
+         comes from whichever rate is alive: the encoder's chunk rate, or —
+         for imported collections — the measured rate embeddings actually
+         become usable, which prices the parsing/indexing that paces the
+         import. #}
+      {% set mode_color = 'ok' if r.embed.mode == 'all' else ('brass' if r.embed.mode == 'lazy' else '') %}
+      {% set mode_word = {'all': 'running', 'lazy': 'on demand', 'off': 'off'}.get(r.embed.mode, r.embed.mode) %}
+      {% set src_word = 'embeddings-available rate (imports included, paced by parsing/indexing)' if r.embed.eta_source == 'avail' else "encoder's wall-clock rate" %}
       <td>{% if r.embed.eta != '—' %}
-        {%- if r.embed.eta_frozen %}<span class="badge brass" title="residual work at the LAST measured rate — the encoder is not running for this collection right now (mode: {{ r.embed.mode }}{{ '; vectors arrive by import' if r.embed.via_archive }}). It starts moving when the mode allows it.">{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }} ❄</span>
-        {%- else %}<span class="badge ok" title="live: computed from the encoder's current wall-clock rate">{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }}</span>{% endif %}
+        <span class="badge {{ mode_color }}" title="residual ETA from the {{ src_word }}{{ ' — LAST measured value, nothing is moving right now' if r.embed.eta_frozen }}. Color = embed mode ({{ mode_word }}).">{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }}{{ ' ❄' if r.embed.eta_frozen }}</span>
         {%- elif r.embed.chunks_pending == 0 and r.embed.docs_unindexed == 0 %}—
-        {%- elif r.embed.via_archive %}<span class="badge" title="this collection's vectors arrive by genesis import, paced by indexing; its encoder has never run, so no rate exists to estimate the residual gap-fill with">with indexing (imported)</span>
-        {%- else %}<span class="badge" title="no encoder rate has ever been measured for this collection (mode: {{ r.embed.mode }}) — the residual ETA appears after its first measured embeds">no rate yet ({{ r.embed.mode }})</span>
+        {%- else %}<span class="badge {{ mode_color }}" title="no rate measured yet for this collection (mode: {{ mode_word }}{{ '; vectors arrive by import, paced by parsing/indexing' if r.embed.via_archive }}) — the ETA appears once embeddings are seen becoming available">no rate yet</span>
         {%- endif %}</td>
     </tr>
     {% endfor %}

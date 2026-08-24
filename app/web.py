@@ -1350,9 +1350,10 @@ def _stats_row(collection, measured: dict) -> dict:
     # a per-document ETA is meaningless across collections. `chunks` is
     # written by the fts stage, so it is known before embedding starts.
     counts, counts_age = _document_counts(collection)
+    have_counts = counts is not None
     if counts is None:      # cold cache: the first scan is running behind this
         counts = {"embed_ready": 0, "chunks_pending": 0,
-                  "docs_unindexed": 0, "blocked": 0}
+                  "docs_unindexed": 0, "blocked": 0, "embed_done": 0}
     docs_pending = counts["embed_ready"]
     chunks_pending = counts["chunks_pending"]
     docs_unindexed = counts["docs_unindexed"]
@@ -1432,7 +1433,7 @@ def _stats_row(collection, measured: dict) -> dict:
     # measured live, remember its wall rate (per collection, a cached
     # observation); when it is idle, compute the residual at the LAST
     # measured rate and say so — eta_frozen colors the cell.
-    eta_frozen = False
+    encoder_frozen = False
     if chunks_per_hour_wall:
         cps_wall = chunks_per_hour_wall / 3600
         db.set_control(con, "last_embed_rate",
@@ -1443,9 +1444,72 @@ def _stats_row(collection, measured: dict) -> dict:
         if raw_rate:
             try:
                 cps_wall = float(json.loads(raw_rate).get("cps") or 0) or None
-                eta_frozen = cps_wall is not None
+                encoder_frozen = cps_wall is not None
             except (ValueError, TypeError):
                 cps_wall = None
+
+    # The AVAILABILITY rate: how fast embeddings actually become usable,
+    # HOWEVER they arrive — the local encoder or a genesis import (which is
+    # paced by parsing/indexing, a non-trivial cost in itself). Sampled as
+    # d(embed_done)/dt across page loads and persisted per collection, it
+    # gives the imported collections a real ETA where the cell used to shrug
+    # "with indexing (imported)". A shrinking count (a stage reset) starts a
+    # fresh baseline instead of recording a negative rate.
+    AVAIL_STALE_S = 900
+    avail_dps = None
+    avail_rts = None
+    if have_counts:
+        now = int(time.time())
+        done_now = int(counts.get("embed_done") or 0)
+        rec = None
+        raw = db.get_control(con, "embed_avail_rate")
+        if raw:
+            try:
+                rec = json.loads(raw)
+            except (ValueError, TypeError):
+                rec = None
+        if rec is None or done_now < int(rec.get("done") or 0):
+            db.set_control(con, "embed_avail_rate",
+                           json.dumps({"done": done_now, "ts": now}))
+        else:
+            avail_dps = float(rec.get("dps") or 0) or None
+            avail_rts = rec.get("rts")
+            elapsed = now - int(rec.get("ts") or now)
+            if elapsed >= 60:
+                delta = done_now - int(rec.get("done") or 0)
+                if delta > 0:
+                    avail_dps = delta / elapsed
+                    avail_rts = now
+                db.set_control(con, "embed_avail_rate",
+                               json.dumps({"done": done_now, "ts": now,
+                                           "dps": avail_dps,
+                                           "rts": avail_rts}))
+    avail_live = bool(avail_dps) and bool(avail_rts) and \
+        (time.time() - float(avail_rts)) <= AVAIL_STALE_S
+
+    # ETA choice, most-alive rate first: live encoder (chunk-based, floor
+    # while unindexed chunks are uncounted) → live availability (doc-based,
+    # covers the whole remaining pipeline, so never a floor) → the frozen
+    # variants of each. eta_frozen colors nothing by itself any more — the
+    # cell is colored by MODE (off grey / lazy orange / running green) and
+    # ❄ marks a frozen rate.
+    remaining_docs = docs_pending + docs_unindexed
+    eta_frozen = False
+    eta_source = "encoder"
+    if cps_wall and not encoder_frozen:
+        eta_s = stats_mod.eta_seconds(chunks_pending, cps_wall)
+    elif avail_live:
+        eta_s = stats_mod.eta_seconds(remaining_docs, avail_dps)
+        eta_source = "avail"
+    elif cps_wall:
+        eta_s = stats_mod.eta_seconds(chunks_pending, cps_wall)
+        eta_frozen = True
+    elif avail_dps:
+        eta_s = stats_mod.eta_seconds(remaining_docs, avail_dps)
+        eta_source = "avail"
+        eta_frozen = True
+    else:
+        eta_s = None
 
     return {
         "name": collection.name,
@@ -1479,13 +1543,17 @@ def _stats_row(collection, measured: dict) -> dict:
             "ms_per_chunk": embed.get("ms_per_chunk"),
             "duty": embed.get("duty"),
             "samples": embed.get("samples"),
-            "eta": _human_duration(stats_mod.eta_seconds(chunks_pending, cps_wall)),
+            "eta": _human_duration(eta_s),
             # a lower bound, not an estimate, while some of the work has not
-            # been measured yet
-            "eta_is_floor": bool(docs_unindexed),
-            # computed at the LAST measured rate: the encoder is not
-            # currently running for this collection (off/lazy/idle)
+            # been measured yet — only for the chunk-based encoder ETA; the
+            # availability ETA covers the whole remaining pipeline
+            "eta_is_floor": bool(docs_unindexed) and eta_source == "encoder",
+            # computed at the LAST measured rate — nothing is moving now
             "eta_frozen": eta_frozen,
+            # "encoder": the local encoder's chunk rate; "avail": the
+            # measured rate embeddings become usable (imports included,
+            # paced by parsing/indexing)
+            "eta_source": eta_source,
             # why an ETA can be honestly absent: a lazy/off collection's
             # encoder is not scheduled to run, and a pre-embedded
             # collection's vectors arrive by import, paced by indexing —

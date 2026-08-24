@@ -308,3 +308,52 @@ def test_fetch_label_state_complete_vs_waiting(isolated_config):
                               "source_id": "gutenberg"})))
     f = web._collection_shelf(c, {})["fetched"]
     assert f["active"] is True and f["complete"] is False
+
+
+def test_embed_eta_from_availability_rate_for_imported_collections(isolated_config):
+    """A genesis collection's encoder never runs, but its embeddings still
+    become available at a measurable rate (import, paced by parsing and
+    indexing — a non-trivial cost). The ETA must price THAT rate instead of
+    shrugging 'with indexing (imported)': d(embed_done)/dt sampled across
+    page loads, doc-based, covering the whole remaining pipeline (so it is
+    an estimate, never a floor)."""
+    import json as _json
+    from dataclasses import replace
+    c = replace(collections_mod.default_collection(),
+                genesis_archive="medcpt-pubmed")
+    con = db.connect(c)
+    # 50 already available, 10 indexed and waiting, 5 not indexed yet
+    for i in range(50):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,1,1,10)", (f"g:{i}", str(i), f"/x{i}"))
+    for i in range(50, 60):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,1,0,10)", (f"g:{i}", str(i), f"/x{i}"))
+    for i in range(60, 65):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    # an earlier sample saw 0 available, 100 s ago -> 0.5 docs/s since
+    db.set_control(con, "embed_avail_rate",
+                   _json.dumps({"done": 0, "ts": int(time.time()) - 100}))
+    web.invalidate_counts()
+
+    row = web._stats_row(c, {})
+    e = row["embed"]
+    assert e["eta_source"] == "avail", e
+    assert e["eta_frozen"] is False
+    assert e["eta_is_floor"] is False, "the availability rate covers unindexed docs"
+    # 15 docs remain (10 ready + 5 unindexed) at 0.5 docs/s = 30 s -> "0 min"
+    assert e["eta"] != "—"
+
+    # a stage reset that SHRINKS embed_done starts a fresh baseline
+    # rather than recording a negative rate
+    con.execute("UPDATE documents SET embed_done=0 WHERE uid='g:0'")
+    db.set_control(con, "embed_avail_rate",
+                   _json.dumps({"done": 999, "ts": int(time.time()) - 100}))
+    web.invalidate_counts()
+    row = web._stats_row(c, {})
+    rec = _json.loads(db.get_control(con, "embed_avail_rate"))
+    assert rec["done"] == 49 and "dps" not in rec
