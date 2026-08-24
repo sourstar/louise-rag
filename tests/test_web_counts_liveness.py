@@ -330,19 +330,21 @@ def _render_library(shelf):
 
 def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
     """Only a COMBINED plugin — a remote vector archive beside a corpus
-    (pubmed) — gets the sub-box: own fetched (vectors) and pre-embedded
-    (dense) rows plus the gap-fill knob, NO repeated space badge (operator:
-    redundant), and no duplicate indexing-progress numbers (the main box's
-    indexed bar already shows them). A stand-alone pre-embedded collection
-    (wikivec, local archive) stays ONE box with a pre-embedded (dense) row;
-    a plain collection keeps embedded (dense)."""
+    (pubmed) — gets the sub-box, and it holds ONLY what is specific to the
+    archive (its fetched (vectors) meter and the waiting note). The dense
+    row and the gap-fill knob live in the MAIN box on every card (operator:
+    pubmed's main box read as truncated without them), named pre-embedded
+    (dense) when the vectors arrive via an archive. No repeated space
+    badge, no duplicate indexing numbers. A stand-alone pre-embedded
+    collection (wikivec, local archive) stays ONE box; a plain collection
+    keeps embedded (dense)."""
     from dataclasses import replace
     c = replace(collections_mod.default_collection(),
                 genesis_archive="medcpt-pubmed")
     db.connect(c)
     shelf = web._collection_shelf(c, {})
     html = _render_library(shelf)
-    assert "pre-embedded (dense)" in html
+    assert html.count(">pre-embedded (dense)</span>") == 1, "dense row once, in the main box"
     assert "fetched (vectors)" in html
     assert "Local gap-fill" in html
     assert html.count("space: %s" % shelf["space_id"]) == 1, \
