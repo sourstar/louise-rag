@@ -29,6 +29,7 @@ Rules, all doc-mandated:
   logs once and waits for the next cycle.
 """
 import shutil
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -91,6 +92,46 @@ def next_shard_to_fetch(con, archive: GenesisArchive, now: int | None = None) ->
     return None
 
 
+class _PartSampler(threading.Thread):
+    """Samples a growing `.part` file every few seconds and records the
+    delta as fetched bytes for the collection — progress visible while a
+    multi-GB shard streams, not only when it lands."""
+    INTERVAL_S = 5.0
+
+    def __init__(self, collection: str, part: Path, start_size: int) -> None:
+        super().__init__(name=f"archive-sample-{collection}", daemon=True)
+        self._collection = collection
+        self._part = part
+        self._seen = start_size
+        self._done = threading.Event()
+        self.sampled = 0
+        self.last_at = time.time()
+
+    def run(self) -> None:
+        while not self._done.wait(self.INTERVAL_S):
+            self._sample()
+
+    def _sample(self) -> None:
+        try:
+            size = self._part.stat().st_size if self._part.is_file() else self._seen
+        except OSError:
+            return
+        delta = size - self._seen
+        if delta > 0:
+            now = time.time()
+            stats.recorder().record_fetch(self._collection,
+                                          seconds=max(0.001, now - self.last_at),
+                                          bytes_moved=delta)
+            self._seen = size
+            self.sampled += delta
+            self.last_at = now
+
+    def stop(self) -> int:
+        self._done.set()
+        self.join(timeout=2)
+        return self.sampled
+
+
 def fetch_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 fetch=None) -> dict | None:
     """Land one shard's files in the cache and record it `fetched` (with
@@ -116,8 +157,24 @@ def fetch_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 continue
             part = path.with_name(path.name + ".part")
             before = part.stat().st_size if part.is_file() else 0
-            fetch(name, path)
-            moved += max(0, path.stat().st_size - before)
+            # a 3 GB file takes minutes: the Network page's per-collection
+            # split reads the fetch recorder, so progress is sampled from
+            # the growing .part while the transport streams it, and only
+            # the unsampled remainder is recorded at the end
+            sampler = _PartSampler(collection.name, part, before)
+            sampler.start()
+            try:
+                fetch(name, path)
+            finally:
+                sampled = sampler.stop()
+            landed = path.stat().st_size if path.is_file() else \
+                (part.stat().st_size if part.is_file() else before)
+            remainder = max(0, landed - before - sampled)
+            if remainder:
+                stats.recorder().record_fetch(collection.name,
+                                              seconds=max(0.001, time.time() - sampler.last_at),
+                                              bytes_moved=remainder)
+            moved += max(0, landed - before)
     except TransferAborted:
         return None                     # stop requested: resume next time
     except GenesisUnavailable as e:
@@ -129,9 +186,6 @@ def fetch_shard(con, collection, archive: GenesisArchive, shard: str, *,
                      f"{archive.archive_id}/{shard}: fetch deferred — {e}"[:400])
         return None
     seconds = time.time() - t0
-    if moved:
-        # the Network page's per-collection download split reads this
-        stats.recorder().record_fetch(collection.name, seconds=seconds, bytes_moved=moved)
     paths = [p for _, p in files]
     size = sum(p.stat().st_size for p in paths)
     digest = _digest_files(paths)

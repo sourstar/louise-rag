@@ -320,9 +320,13 @@ def test_fetcher_lands_shards_under_the_archive_class_and_records_them(
         h = current_handle()
         seen.append((name, h.priority if h else None))
         _fake_fetch(cache)(name, dest)
+    from app import stats
+    stats.recorder().reset() if hasattr(stats.recorder(), "reset") else None
     result = genesis_fetch.run_fetcher(con, declared, fetch=fetch)
     assert result["fetched"] == ["0", "1"]
     assert seen and all(p is Priority.ARCHIVE for _, p in seen), seen
+    fetched_bytes = stats.recorder().snapshot().get("fake", {}).get("fetch", {}).get("totals", {}).get("bytes", 0)
+    assert fetched_bytes > 0, "the per-collection download split sees archive bytes"
     assert Priority.BACKFILL < Priority.ARCHIVE < Priority.SEEDING
     rows = {r["shard"]: r for r in con.execute(
         "SELECT * FROM genesis_imports ORDER BY shard")}
