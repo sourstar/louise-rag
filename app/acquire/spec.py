@@ -95,7 +95,19 @@ class AcquisitionSpec:
     row per file as the pass processes it) and mid-pass shows done==total
     at every instant. A transport that cannot enumerate cheaply must still
     enumerate fully; a source that cannot be listed at all needs
-    endpoint.static_files or snapshot_files instead."""
+    endpoint.static_files or snapshot_files instead.
+
+    UNITS CONTRACT: "fetched" must be comparable with parsed/indexed —
+    documents, wherever the layout makes them countable. `layout` drives
+    it: "one-dir-per-doc" derives document totals from the listing (one
+    distinct top directory = one document) and the Library reports
+    documents with the file count in parentheses; container layouts
+    ("container-files", "single-file") CANNOT know document counts before
+    unpacking, so the card labels the count "compressed containers" and
+    the parsed/indexed rows carry the document truth as each archive is
+    unpacked. A new plugin whose origin publishes a total document count
+    somewhere machine-readable should surface it (a future
+    `docs_total_hint`); never present archive counts as documents."""
     source_id: str                        # ties to CorpusSource.source_id / Collection.plugin
     transport: Transport
     endpoints: tuple[Endpoint, ...]

@@ -234,6 +234,19 @@ class TokenBucket:
         with self._cv:
             return self._clock.monotonic(), list(self._core.granted)
 
+    def note_granted(self, n: int, priority: Priority) -> None:
+        """Count bytes that MOVED OUTSIDE the token flow — rsync's subprocess,
+        which is paced by a rate lease (--bwlimit) rather than per-chunk
+        draws. Tokens are untouched (the lease already withdrew budget; with
+        an unlimited budget there is nothing to withdraw): this is
+        accounting, not arbitration. Without it the Network page's per-class
+        graph read zero whenever rsync was the thing moving bytes — which on
+        the reference node is gutenberg, the biggest mover."""
+        if n <= 0:
+            return
+        with self._cv:
+            self._core.granted[priority] += float(n)
+
     # ---------------- rate control ----------------
 
     def set_rate(self, rate_bps: float | None) -> None:

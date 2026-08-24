@@ -180,6 +180,32 @@ def test_stats_fetching_row_reads_the_listing_not_the_stream(isolated_config):
     assert row["embed"]["via_archive"] is False
 
 
+def test_embed_eta_is_residual_and_frozen_when_the_encoder_is_idle(isolated_config):
+    """The ETA answers "how long would the rest take?" no matter the mode:
+    live rate when the encoder runs, the LAST measured rate (marked frozen)
+    when it is off/lazy/idle, and 'no rate yet' only when nothing was ever
+    measured."""
+    import json as _json
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
+                "fts_done,embed_done,chunks) VALUES('g:1','g','1','/x',1,1,1,0,3600)")
+    web.invalidate_counts()
+
+    # never measured: no number to give, and the cell says so
+    row = web._stats_row(c, {})
+    assert row["embed"]["eta"] == "—" and row["embed"]["eta_frozen"] is False
+
+    # encoder idle with a REMEMBERED rate: the residual ETA still shows,
+    # marked frozen (the live-rate path both computes and stores this
+    # record whenever the encoder is measured)
+    db.set_control(con, "last_embed_rate", _json.dumps({"cps": 1.0, "ts": 1}))
+    web.invalidate_counts()
+    row = web._stats_row(c, {})
+    assert row["embed"]["eta"] == "60 min", row["embed"]  # 3600 chunks at 1/s
+    assert row["embed"]["eta_frozen"] is True
+
+
 def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
     """The pubmed shape: medcpt-pubmed declared, a large rdf/fts backlog.
     The card must say WAITING with the backlog size — not 0/37 shards with

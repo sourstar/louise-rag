@@ -87,14 +87,14 @@ class RsyncTransport:
             if bwlimit_kbps is not None:
                 argv.append(f"--bwlimit={bwlimit_kbps}")
             argv += [f"{_with_trailing_slash(endpoint.url)}{remote.rel_path}", str(part)]
-            self._run(argv, endpoint, remote, stop)
+            self._run(argv, endpoint, remote, stop, progress_path=part)
 
         size = part.stat().st_size
         os.replace(part, dest)      # the final path only ever appears complete
         return size
 
     def _run(self, argv: list[str], endpoint: Endpoint, remote: RemoteFile,
-             stop=None) -> None:
+             stop=None, progress_path: Path | None = None) -> None:
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True)
@@ -102,6 +102,24 @@ class RsyncTransport:
             raise TransportError(f"rsync {endpoint.url}/{remote.rel_path}: {e}") from e
 
         deadline = time.monotonic() + _DEFAULT_TIMEOUT
+
+        counted = 0
+
+        def _note_progress() -> None:
+            # the growing .part file is the only observable byte flow of an
+            # rsync subprocess: credit each second's delta to the per-class
+            # accounting so the Network graph shows this transfer live
+            nonlocal counted
+            if progress_path is None:
+                return
+            try:
+                size = progress_path.stat().st_size
+            except OSError:
+                return
+            if size > counted:
+                budget.note_external_bytes(size - counted)
+                counted = size
+
         while True:
             if stop is not None and stop.is_set():
                 proc.terminate()
@@ -110,6 +128,7 @@ class RsyncTransport:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.communicate()
+                _note_progress()   # bytes landed before the stop are real traffic
                 # --partial leaves a truthful staging file; the next run resumes
                 # from it. Nothing is moved into place, so nothing is corrupt.
                 raise TransferAborted(
@@ -117,6 +136,7 @@ class RsyncTransport:
             try:
                 _, stderr = proc.communicate(timeout=_POLL_SECONDS)
             except subprocess.TimeoutExpired:
+                _note_progress()
                 if time.monotonic() > deadline:
                     proc.kill()
                     proc.communicate()
@@ -124,6 +144,7 @@ class RsyncTransport:
                         f"rsync {endpoint.url}/{remote.rel_path}: timed out after "
                         f"{_DEFAULT_TIMEOUT}s")
                 continue
+            _note_progress()       # the tail of a fast file that never hit a poll
             if proc.returncode != 0:
                 raise TransportError(
                     f"rsync {endpoint.url}/{remote.rel_path}: exit {proc.returncode}: "

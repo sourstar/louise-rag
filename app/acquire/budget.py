@@ -55,6 +55,19 @@ def acquire_bytes(n: int) -> None:
         raise TransferAborted(str(e)) from e
 
 
+def note_external_bytes(n: int) -> None:
+    """Account bytes an unmeterable subprocess (rsync) has landed, so the
+    Network page's per-class rates include them. Pure accounting — pacing is
+    the rate lease's job (rsync_reservation below); nothing blocks here."""
+    if n <= 0:
+        return
+    handle = current_handle()
+    if handle is None:
+        get_manager().bucket(Direction.DOWN).note_granted(n, Priority.BACKFILL)
+    else:
+        handle.bucket.note_granted(n, handle.priority)
+
+
 @contextmanager
 def rsync_reservation(endpoint_key: str | None = None):
     """Yield the --bwlimit value in KiB/s for one rsync invocation, or None

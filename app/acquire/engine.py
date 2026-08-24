@@ -617,8 +617,20 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
     # origin held 1,447). This is a cached observation, not desired state
     # (invariant 10): each pass overwrites it with what the origin said,
     # scoped to the profile actually being fetched.
+    # DOCUMENT total, where the layout makes it knowable from the listing
+    # alone: for one-dir-per-doc every distinct top directory is one
+    # document, so "fetched" can be reported in the same unit parsed/
+    # indexed use. Container layouts (pubmed's gz, wikipedia's dumps,
+    # wikivec's parquet) cannot know document counts before unpacking —
+    # the card says "compressed containers" instead of implying files are
+    # documents.
+    docs_total = None
+    if spec.layout == "one-dir-per-doc":
+        docs_total = len({f.rel_path.split("/", 1)[0]
+                          for f in files if "/" in f.rel_path})
     db.set_control(con, LISTING_KEY, json.dumps({
         "files_total": plan.files_total, "bytes_total": plan.bytes_total,
+        "docs_total": docs_total, "layout": spec.layout,
         "profile": profile, "ts": int(time.time())}))
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls

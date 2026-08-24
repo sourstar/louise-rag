@@ -3,24 +3,19 @@
 {% block content %}
 <h1>Help</h1>
 
-<div class="panel">
-  <b>Contents</b>
-  <div class="note">
-    <a href="#overview">What this is</a> ·
-    <a href="#pages">The pages</a> ·
-    <a href="#pipeline">Ingestion pipeline</a> ·
-    <a href="#scope">Scope &amp; embed modes</a> ·
-    <a href="#safety">Embedding safety</a> ·
-    <a href="#bundles">Bundles &amp; the P2P plane</a> ·
-    <a href="#genesis">Reusing published embeddings</a> ·
-    <a href="#collections">Adding a collection</a> ·
-    <a href="#acquire">Acquisition, profiles &amp; licenses</a> ·
-    <a href="#config">Configuration tiers</a> ·
-    <a href="#cli">CLI reference</a> ·
-    <a href="#api">HTTP API</a> ·
-    <a href="#trouble">Troubleshooting</a>
-  </div>
-</div>
+{# One page had grown to 13 sections of scrolling; it is now TABS with a
+   sub-contents each. Panels keep their ids, so every #anchor link from the
+   rest of the app keeps working: a deep link activates the tab that owns
+   the target and scrolls to it. #}
+<style>
+  .help-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .help-tabs button{padding:6px 14px;cursor:pointer;border:1px solid var(--line,#8884);
+    background:transparent;color:inherit;border-radius:6px 6px 0 0;font:inherit}
+  .help-tabs button.active{border-bottom:2px solid var(--brass,#b08d57);font-weight:bold}
+  .help-toc{margin-bottom:8px}
+</style>
+<div class="help-tabs" id="help-tabs"></div>
+<div class="panel help-toc"><b>In this tab</b> <span class="note" id="help-toc"></span></div>
 
 <div class="panel" id="overview">
   <h2>What this is</h2>
@@ -237,6 +232,56 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     per-collection encoder setup for MedCPT (two small CPU containers) is
     documented in <code>deploy/truenas-medcpt-embed.yaml</code>.
   </p>
+</div>
+
+<div class="panel" id="plugins">
+  <h2>The plugins</h2>
+  <div style="overflow-x:auto"><table>
+    <tr><th>plugin</th><th>what it ingests</th><th>layout &amp; unit</th><th>license</th><th>notes</th></tr>
+    <tr><td><b>gutenberg</b></td>
+      <td>Project Gutenberg books — the official <code>cache/epub</code>
+        generated collection, fetched over rsync from structure-verified
+        mirrors (benchmarked, with failover).</td>
+      <td>one directory per book (text + RDF metadata); one book = one
+        document, chunked by chapters.</td>
+      <td>green (public domain)</td>
+      <td>immutable; the catalogue grows, existing texts do not change.</td></tr>
+    <tr><td><b>pubmed</b></td>
+      <td>PubMed baseline + update files from NCBI's FTP.</td>
+      <td>compressed container archives (<code>.xml.gz</code>, ~30k records
+        each) — one abstract = one document, one chunk.</td>
+      <td>yellow (publisher copyright on text; ack required)</td>
+      <td>revisions and DeleteCitation tombstones honored; md5 sidecars
+        verified; a genesis archive (NCBI's MedCPT vectors) applies once the
+        corpus settles.</td></tr>
+    <tr><td><b>wikipedia</b></td>
+      <td>Wikimedia's official multistream dumps, per wiki, optionally
+        pinned to a dated snapshot.</td>
+      <td>compressed containers (bz2 dump + index) — one article = one
+        document, content-defined chunking (stable under edits).</td>
+      <td>yellow (CC BY-SA; ack required)</td>
+      <td>offers the <b>wikivec sub-plugin</b> at install (see below) — the
+        offer is made once, at creation.</td></tr>
+    <tr><td><b>wikivec</b> <span class="badge">plugin id: embedded</span></td>
+      <td>a published PRE-EMBEDDED corpus — today the Upstash Wikipedia
+        2024-06 / bge-m3 dataset: text and vectors travel together.</td>
+      <td>parquet shards; one article = one document; the producer's chunk
+        boundaries are preserved verbatim (that is what makes their vectors
+        attach).</td>
+      <td>yellow (content stays CC BY-SA; ack required)</td>
+      <td>vectors are imported (genesis), not computed — dense search at
+        zero GPU cost; the embed-mode knob only gap-fills what the archive
+        cannot cover. The internal plugin id stays <code>embedded</code>:
+        it is minted into every document uid and can never be renamed.</td></tr>
+    <tr><td><b>genome</b></td>
+      <td>reference genome assemblies (UCSC FASTA), one assembly per
+        collection.</td>
+      <td>one FASTA per assembly; one chromosome/contig = one document;
+        fixed sequence windows whose chunk ids ARE coordinates.</td>
+      <td>green (consortium reference assemblies)</td>
+      <td>reference genomes only — never personal genomes; all assemblies
+        share one DNA space so cross-species retrieval works.</td></tr>
+  </table></div>
 </div>
 
 <div class="panel" id="collections">
@@ -484,4 +529,64 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
       re-queues honest re-embedding.</td></tr>
   </table>
 </div>
+
+<script>
+(function(){
+  // tab -> panel ids; a panel not listed lands in Reference so a future
+  // section never silently disappears
+  const TABS = [
+    ["Basics", ["overview", "pages", "pipeline"]],
+    ["Embedding", ["scope", "safety", "genesis"]],
+    ["Collections & data", ["collections", "acquire", "config"]],
+    ["Sharing (P2P)", ["bundles"]],
+    ["Reference", ["cli", "api", "trouble"]],
+  ];
+  const known = new Set(TABS.flatMap(t => t[1]));
+  document.querySelectorAll(".panel[id]").forEach(p => {
+    if (!known.has(p.id)) TABS[TABS.length - 1][1].push(p.id);
+  });
+  const bar = document.getElementById("help-tabs");
+  const toc = document.getElementById("help-toc");
+  function titleOf(id){
+    const h = document.querySelector("#" + id + " h2");
+    return h ? h.textContent : id;
+  }
+  function activate(name, scrollTo){
+    TABS.forEach(([tab, ids]) => {
+      const on = tab === name;
+      ids.forEach(id => {
+        const p = document.getElementById(id);
+        if (p) p.style.display = on ? "" : "none";
+      });
+    });
+    bar.querySelectorAll("button").forEach(b =>
+      b.classList.toggle("active", b.textContent === name));
+    const ids = (TABS.find(t => t[0] === name) || [null, []])[1];
+    toc.innerHTML = ids.map(id =>
+      `<a href="#${id}">${titleOf(id)}</a>`).join(" · ");
+    if (scrollTo) {
+      const p = document.getElementById(scrollTo);
+      if (p) p.scrollIntoView();
+    } else { window.scrollTo(0, 0); }
+  }
+  function tabOf(id){
+    const t = TABS.find(t => t[1].includes(id));
+    return t ? t[0] : TABS[0][0];
+  }
+  TABS.forEach(([name]) => {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.onclick = () => { history.replaceState(null, "", "#" + TABS.find(t=>t[0]===name)[1][0]); activate(name); };
+    bar.appendChild(b);
+  });
+  // deep links (#scope etc., linked from all over the app) keep working:
+  // activate the owning tab and scroll to the target
+  function fromHash(){
+    const id = (location.hash || "#overview").slice(1);
+    activate(tabOf(id), document.getElementById(id) ? id : null);
+  }
+  window.addEventListener("hashchange", fromHash);
+  fromHash();
+})();
+</script>
 {% endblock %}

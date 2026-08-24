@@ -66,11 +66,13 @@
         {% if r.embed.blocked %}<span class="badge err" title="blocked documents are excluded from the pending count until their errors are cleared">{{ '{:,}'.format(r.embed.blocked) }} blocked</span>{% endif %}</td>
       <td>{{ '{:,}'.format(r.embed.docs_pending) }}{% if r.embed.in_flight %}
         <span class="badge ok" title="inside the encoder right now — a document commits only when every one of its chunks is done, which on a slow CPU encoder is many minutes">{{ r.embed.in_flight }} encoding now</span>{% endif %}</td>
-      <td>{% if r.embed.eta != '—' %}{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }}
-        {%- elif r.embed.via_archive %}<span class="badge" title="this collection's vectors arrive by genesis import, paced by indexing — the encoder only gap-fills what the archive cannot cover, so an encoder ETA does not apply">with indexing (imported)</span>
-        {%- elif r.embed.mode == 'off' %}<span class="badge" title="embedding is switched off for this collection">off</span>
-        {%- elif r.embed.mode == 'lazy' %}<span class="badge" title="lazy mode embeds only what queries touch — there is no schedule to estimate; switch to 'all' for a backfill with an ETA">on demand (lazy)</span>
-        {%- else %}—{% endif %}</td>
+      <td>{% if r.embed.eta != '—' %}
+        {%- if r.embed.eta_frozen %}<span class="badge brass" title="residual work at the LAST measured rate — the encoder is not running for this collection right now (mode: {{ r.embed.mode }}{{ '; vectors arrive by import' if r.embed.via_archive }}). It starts moving when the mode allows it.">{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }} ❄</span>
+        {%- else %}<span class="badge ok" title="live: computed from the encoder's current wall-clock rate">{% if r.embed.eta_is_floor %}≥ {% endif %}{{ r.embed.eta }}</span>{% endif %}
+        {%- elif r.embed.chunks_pending == 0 and r.embed.docs_unindexed == 0 %}—
+        {%- elif r.embed.via_archive %}<span class="badge" title="this collection's vectors arrive by genesis import, paced by indexing; its encoder has never run, so no rate exists to estimate the residual gap-fill with">with indexing (imported)</span>
+        {%- else %}<span class="badge" title="no encoder rate has ever been measured for this collection (mode: {{ r.embed.mode }}) — the residual ETA appears after its first measured embeds">no rate yet ({{ r.embed.mode }})</span>
+        {%- endif %}</td>
     </tr>
     {% endfor %}
   </table>

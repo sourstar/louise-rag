@@ -416,16 +416,39 @@ def _collection_shelf(collection: collections_mod.Collection,
         # (acquire_engine.LISTING_KEY): the honest denominator while the
         # pass streams — without it, done==total at every instant mid-pass
         remote_total = 0
+        docs_total = None
         raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
         if raw_listing:
             try:
                 listing = json.loads(raw_listing)
                 if listing.get("profile") == (collection.profile or listing.get("profile")):
                     remote_total = int(listing.get("files_total") or 0)
+                    docs_total = listing.get("docs_total")
             except (ValueError, TypeError):
                 pass
+        # fetched in the same UNIT parsed/indexed use, where the layout
+        # allows it: one dir = one document, so distinct fetched top dirs =
+        # documents on disk. Container sources instead say so on the card.
+        docs_done = None
+        if spec.layout == "one-dir-per-doc":
+            docs_done = con.execute(
+                "SELECT COUNT(DISTINCT substr(rel_path, 1, instr(rel_path, '/') - 1)) "
+                "FROM fetch_files WHERE source_id=? AND fetch_done=1 "
+                "AND instr(rel_path, '/') > 0", (spec.source_id,)).fetchone()[0]
+            # SEEDED from discovery: what is already on disk IS fetched in
+            # the operator's sense, and discovery counted it at startup —
+            # the fetch ledger only catches up as the first full pass
+            # ADOPTS (hash-verifies) those files. Without the seed the
+            # counter started at 0 beside a 45k-book corpus. Documents the
+            # corpus holds without usable text are excluded: an empty or
+            # text-less dir is not a fetched document.
+            if not counts_pending:
+                on_disk = max(0, (counts["total"] or 0) - (counts["unindexable"] or 0))
+                docs_done = max(docs_done, on_disk)
         fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
                    "remote_total": max(remote_total, fc["total"] or 0),
+                   "docs_done": docs_done, "docs_total": docs_total,
+                   "containers": spec.layout != "one-dir-per-doc",
                    "active": active}
 
     if last_discover:
@@ -437,7 +460,10 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
         "profile": collection.profile or "(hand-populated)",
-        "space_id": ((space_row["space_id"][:10] + "…") if space_row and space_row["space_id"]
+        # the FULL id, never truncated: it names an embedding space uniquely,
+        # and a prefix invites comparing prefixes — two spaces can share ten
+        # hex chars and a truncated display would call them equal
+        "space_id": (space_row["space_id"] if space_row and space_row["space_id"]
                       else "unpinned"),
         "fetched": fetched,
         "total": counts["total"] or 0, "in_scope": counts["in_scope"] or 0,
@@ -1308,6 +1334,25 @@ def _stats_row(collection, measured: dict) -> dict:
     if embed.get("chunks") and embed.get("docs") and embed.get("docs_per_hour"):
         chunks_per_doc = embed["chunks"] / embed["docs"]
         chunks_per_hour_wall = embed["docs_per_hour"] * chunks_per_doc
+    # The RESIDUAL ETA shows whatever the mode: a lazy/off collection's dash
+    # answered "how long would this take?" with nothing. When the encoder is
+    # measured live, remember its wall rate (per collection, a cached
+    # observation); when it is idle, compute the residual at the LAST
+    # measured rate and say so — eta_frozen colors the cell.
+    eta_frozen = False
+    if chunks_per_hour_wall:
+        cps_wall = chunks_per_hour_wall / 3600
+        db.set_control(con, "last_embed_rate",
+                       json.dumps({"cps": cps_wall, "ts": int(time.time())}))
+    else:
+        cps_wall = None
+        raw_rate = db.get_control(con, "last_embed_rate")
+        if raw_rate:
+            try:
+                cps_wall = float(json.loads(raw_rate).get("cps") or 0) or None
+                eta_frozen = cps_wall is not None
+            except (ValueError, TypeError):
+                cps_wall = None
 
     return {
         "name": collection.name,
@@ -1341,12 +1386,13 @@ def _stats_row(collection, measured: dict) -> dict:
             "ms_per_chunk": embed.get("ms_per_chunk"),
             "duty": embed.get("duty"),
             "samples": embed.get("samples"),
-            "eta": _human_duration(stats_mod.eta_seconds(
-                chunks_pending,
-                chunks_per_hour_wall / 3600 if chunks_per_hour_wall else None)),
+            "eta": _human_duration(stats_mod.eta_seconds(chunks_pending, cps_wall)),
             # a lower bound, not an estimate, while some of the work has not
             # been measured yet
             "eta_is_floor": bool(docs_unindexed),
+            # computed at the LAST measured rate: the encoder is not
+            # currently running for this collection (off/lazy/idle)
+            "eta_frozen": eta_frozen,
             # why an ETA can be honestly absent: a lazy/off collection's
             # encoder is not scheduled to run, and a pre-embedded
             # collection's vectors arrive by import, paced by indexing —
