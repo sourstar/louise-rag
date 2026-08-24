@@ -263,3 +263,48 @@ def test_fetched_counter_counts_extras_apart(isolated_config):
     con.execute("DELETE FROM fetch_files WHERE extra=1")
     web.invalidate_counts()
     assert web._collection_shelf(plain, {})["fetched"]["has_extras"] is False
+
+
+def test_fetch_label_state_complete_vs_waiting(isolated_config):
+    """The stage label is the state: 'fetching…' while the claim is live,
+    'done' only when every listed file (Louise AND opted-in extras) has
+    landed with no pass running, 'waiting' otherwise. `complete` must be
+    judged against the recorded listing, never the streaming ledger."""
+    import json as _json
+    from dataclasses import replace
+    from app.acquire import engine as acquire_engine
+
+    c = replace(collections_mod.default_collection(), acquire_enabled=True,
+                extras=("epub",))
+    con = db.connect(c)
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_engine.LISTING_KEY,
+                 _json.dumps({"files_total": 2, "bytes_total": 200,
+                              "extra_files_total": 1, "extra_bytes_total": 50,
+                              "profile": None, "ts": int(time.time())})))
+    for i in range(2):
+        con.execute(
+            "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
+            "remote_size,extra) VALUES('gutenberg',?,1,100,100,0)", (f"{i}/pg{i}.txt",))
+    web.invalidate_counts()
+
+    # Louise files all landed, but the opted-in extra has not: waiting
+    f = web._collection_shelf(c, {})["fetched"]
+    assert f["active"] is False and f["complete"] is False
+
+    con.execute(
+        "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
+        "remote_size,extra) VALUES('gutenberg','0/pg0.epub',1,50,50,1)")
+    web.invalidate_counts()
+    f = web._collection_shelf(c, {})["fetched"]
+    assert f["complete"] is True, f
+
+    # a live claim always reads as fetching, never done — mid-pass
+    # done==total at every instant
+    from app.acquire import claim as acquire_claim
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_claim.CLAIM_KEY,
+                 _json.dumps({"pid": 999999, "ts": time.time(),
+                              "source_id": "gutenberg"})))
+    f = web._collection_shelf(c, {})["fetched"]
+    assert f["active"] is True and f["complete"] is False

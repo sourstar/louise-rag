@@ -449,6 +449,16 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     parsed/indexed/embedded see only Louise's own format.
   </p>
   <p class="note">
+    <b>Reading the fetch label.</b> The stage label names what moves and
+    its state: <i>fetching data…</i> while a pass is running (the
+    denominator is what the origin's listing held at pass start),
+    <i>data done</i> once every listed file has landed, and <i>data
+    waiting</i> when the pass is idle with work left — the worker resumes
+    it within a round, or downloads are paused. <i>compressed data</i>
+    replaces <i>data</i> for container sources, and <i>+extras</i> is
+    appended when extra formats are opted in.
+  </p>
+  <p class="note">
     <b>Reading the fetched counter.</b> The card keeps it bare:
     <code>fetched D_done/D_total (f_done/f_total) (+ e_done/e_total)</code>.
     The first pair is <b>documents</b> — the unit parsed/indexed use — for

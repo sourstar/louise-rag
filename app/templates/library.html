@@ -55,7 +55,14 @@
      pass start (engine LISTING_KEY) — fetch_files alone grows as the pass
      streams, so done==its total at every instant mid-pass #}
   {% set fetch_total = c.fetched.remote_total or c.fetched.total %}
-  <div class="stage"><div class="lbl"><span>fetched{% if c.fetched.active %} <span class="badge brass" title="a fetch pass is running — the denominator is what the origin's listing held when it started">fetching…</span>{% endif %}{% if c.fetched.containers %} <span class="badge" title="this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery.">compressed containers</span>{% endif %}</span>
+  {# the label IS the state: "fetching {what}…" (pass running, brass) /
+     "{what} done" (every listed file landed, green) / "{what} waiting"
+     (idle with work left — the worker resumes within a round, or
+     downloads are paused). {what} says what moves: data, compressed
+     data, +extras. Details in Help; the card stays bare. #}
+  {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
+  {% set fetch_title = 'this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery.' if c.fetched.containers else 'corpus files fetched from the source — see Help' %}
+  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}">{% if c.fetched.active %}<span style="color:var(--brass)">fetching {{ fetch_what }}…</span>{% elif c.fetched.complete %}<span style="color:var(--ok)">{{ fetch_what }} done</span>{% else %}{{ fetch_what }} waiting{% endif %}</span>
       <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} <small>({{ c.fetched.done }}/{{ fetch_total }})</small>{% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}{% if c.fetched.has_extras %} <small title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ '{:,}'.format(c.fetched.extra_done) }}/{{ '{:,}'.format(c.fetched.extra_total) }})</small>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}

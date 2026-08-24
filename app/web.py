@@ -458,14 +458,24 @@ def _collection_shelf(collection: collections_mod.Collection,
         # only when the collection opted in or extra rows exist. Format
         # explained in Help, never inline — the GUI stays clean.
         has_extras = bool(getattr(collection, "extras", ())) or (xc["total"] or 0) > 0
+        louise_total = max(remote_total, fc["total"] or 0)
+        extra_total = max(extra_remote_total, xc["total"] or 0)
+        # The label's third state: no pass running AND every listed file
+        # (Louise and, when opted in, extras) has landed. `complete` is
+        # judged against the honest denominators — the origin's recorded
+        # listing — never against the streaming ledger alone, and never
+        # while a pass is running (mid-pass done==total at every instant).
+        complete = (not active and louise_total > 0
+                    and (fc["done"] or 0) >= louise_total
+                    and (xc["done"] or 0) >= extra_total)
         fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
-                   "remote_total": max(remote_total, fc["total"] or 0),
+                   "remote_total": louise_total,
                    "docs_done": docs_done, "docs_total": docs_total,
                    "containers": spec.layout != "one-dir-per-doc",
-                   "active": active,
+                   "active": active, "complete": complete,
                    "has_extras": has_extras,
                    "extra_done": xc["done"] or 0,
-                   "extra_total": max(extra_remote_total, xc["total"] or 0)}
+                   "extra_total": extra_total}
 
     if last_discover:
         freshness = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last_discover["ts"]))
