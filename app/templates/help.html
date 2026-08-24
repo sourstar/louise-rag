@@ -298,6 +298,22 @@
     file by file as its documents pass indexing. The CLI does the same
     thing on demand:
   </p>
+  <p class="note">
+    <b>Why some pre-embedded data is combined with a collection and some
+    stands alone.</b> The rule follows what the data <i>is</i>. Pre-embedded
+    data that is a <b>corpus in its own right</b> — text and vectors
+    together, like the wikivec parquet files — stands alone as its own
+    collection, with its own documents, ids and embedding space. Pre-embedded
+    data that is <b>vectors <i>for</i> another collection's documents</b> —
+    MedCPT for pubmed: same document ids, no text of its own, computed in
+    the very space the collection is pinned to — must live <i>inside</i>
+    that collection, shown as the light-green sub-box on its Library card.
+    Split out, it would be a "collection" owning vectors but no documents:
+    it could not search lexically, could not verify possession (hashes bind
+    to document bytes it would not have), and retrieval would double-count
+    the same documents across two fused legs. So: corpus-with-vectors →
+    own card; vectors-for-your-documents → sub-box.
+  </p>
   <pre class="cli"># NCBI MedCPT vectors into the pubmed collection (resumable):
 python -m app.cli genesis import pubmed --archive medcpt-pubmed
 

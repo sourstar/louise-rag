@@ -493,10 +493,49 @@ def _collection_shelf(collection: collections_mod.Collection,
     else:
         freshness = "never scanned"
 
+    # PROOF OF MOTION for the slow stages: parsed/indexed advance measured
+    # across page loads (persisted, same pattern as embed_avail_rate). A
+    # 40M-document collection advancing at a healthy ~18k docs/h moves its
+    # bar 0.045% per hour, which reads as STUCK (operator report: pubmed
+    # "parsed is really stuck" while the events table showed a steady rate
+    # all morning). A rate that measures zero over the window shows nothing
+    # — a stale rate beside a genuinely stalled stage would lie.
+    stage_rates = {"rdf": None, "fts": None}
+    if not counts_pending:
+        now_i = int(time.time())
+        raw_sr = db.get_control(con, "stage_rate")
+        rec_sr = None
+        if raw_sr:
+            try:
+                rec_sr = json.loads(raw_sr)
+            except (ValueError, TypeError):
+                rec_sr = None
+        rdf_now = counts["rdf_done"] or 0
+        fts_now = counts["fts_done"] or 0
+        if rec_sr is None or rdf_now < int(rec_sr.get("rdf") or 0) \
+                or fts_now < int(rec_sr.get("fts") or 0):
+            # first sight, or a reset shrank a count: fresh baseline
+            db.set_control(con, "stage_rate", json.dumps(
+                {"rdf": rdf_now, "fts": fts_now, "ts": now_i}))
+        else:
+            stage_rates["rdf"] = rec_sr.get("rdf_ph")
+            stage_rates["fts"] = rec_sr.get("fts_ph")
+            elapsed = now_i - int(rec_sr.get("ts") or now_i)
+            if elapsed >= 300:
+                rdf_ph = (rdf_now - int(rec_sr.get("rdf") or 0)) * 3600.0 / elapsed
+                fts_ph = (fts_now - int(rec_sr.get("fts") or 0)) * 3600.0 / elapsed
+                stage_rates["rdf"] = round(rdf_ph) if rdf_ph > 0 else None
+                stage_rates["fts"] = round(fts_ph) if fts_ph > 0 else None
+                db.set_control(con, "stage_rate", json.dumps(
+                    {"rdf": rdf_now, "fts": fts_now, "ts": now_i,
+                     "rdf_ph": stage_rates["rdf"],
+                     "fts_ph": stage_rates["fts"]}))
+
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
+        "stage_rates": stage_rates,
         "profile": collection.profile or "(hand-populated)",
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten

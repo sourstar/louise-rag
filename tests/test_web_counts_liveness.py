@@ -480,3 +480,43 @@ def test_library_card_shows_the_plugin_display_label(isolated_config):
     assert shelf["plugin_label"] == "wikivec"
     html = _render_library(shelf)
     assert ">wikivec</span>" in html
+
+
+def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
+    """pubmed's parsed bar moves 0.045%/h at a healthy 18k docs/h — it READ
+    as stuck (operator report) while the events table showed steady motion.
+    The card now carries a measured +N/h beside parsed/indexed, computed
+    across page loads and persisted; a zero delta shows NOTHING (a stale
+    rate beside a genuinely stalled stage would lie); a shrinking count
+    (reset) re-baselines."""
+    import json as _json
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(100):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    for i in range(100, 300):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,0,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
+    # an earlier sample saw 10 parsed, 600 s ago -> (100-10)/600*3600 = 540/h
+    db.set_control(con, "stage_rate",
+                   _json.dumps({"rdf": 10, "fts": 0, "ts": int(time.time()) - 600}))
+    web.invalidate_counts()
+
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_rates"]["rdf"] == 540
+    assert shelf["stage_rates"]["fts"] is None, \
+        "fts did not advance (100 -> 100): no rate, never a stale one"
+    html = _render_library(shelf)
+    assert "+540/h" in html
+
+    # a reset that shrinks a count starts a fresh baseline
+    db.set_control(con, "stage_rate",
+                   _json.dumps({"rdf": 99999, "fts": 0, "ts": int(time.time()) - 600}))
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_rates"] == {"rdf": None, "fts": None}
+    rec = _json.loads(db.get_control(con, "stage_rate"))
+    assert rec["rdf"] == 100 and "rdf_ph" not in rec

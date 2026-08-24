@@ -76,9 +76,9 @@
      green = done, orange = actively progressing (the worker runs and work
      remains), grey = idle (worker paused/off) #}
   {% set stage_title = 'label color: green = complete, orange = in progress, grey = idle' %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.rdf_done < c.in_scope %} style="color:var(--brass)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.rdf_done < c.in_scope %} style="color:var(--brass)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}{% if c.stage_rates and c.stage_rates.rdf and c.in_scope and c.rdf_done < c.in_scope %} <span style="color:var(--brass)" title="measured over the last minutes — the stage is moving; on a large corpus the bar itself barely shows it">+{{ '{:,}'.format(c.stage_rates.rdf) }}/h</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.fts_done < c.in_scope %} style="color:var(--brass)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.fts_done < c.in_scope %} style="color:var(--brass)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}{% if c.stage_rates and c.stage_rates.fts and c.in_scope and c.fts_done < c.in_scope %} <span style="color:var(--brass)" title="measured over the last minutes — the stage is moving; on a large corpus the bar itself barely shows it">+{{ '{:,}'.format(c.stage_rates.fts) }}/h</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
   {% if not c.genesis or c.genesis.local %}
   {# a stand-alone pre-embedded collection (local archive: the corpus
@@ -148,6 +148,14 @@
     <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads and applies in one pass after the main box's indexed (lexical) bar completes (earlier would re-download it repeatedly as documents trickle in); until then 0/{{ c.genesis.shard_total }} is pacing, not a stall. Label color: green = complete, orange = in progress, grey = idle/not started."{% if c.genesis.fetch_state == 'done' or (c.genesis.shard_total and c.genesis.applied >= c.genesis.shard_total) %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' %} style="color:var(--brass)"{% endif %}>fetched (vectors)</span>
         <span>{{ c.genesis.applied }} / {{ c.genesis.shard_total }} archive files</span></div>
       <div class="spine"><span style="width:{{ (100*c.genesis.applied/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
+    {% if c.genesis.waiting_docs is none or c.genesis.waiting_docs %}
+    {# visible, not tooltip-only: without this line a 0/N counter reads as
+       stuck. Words only — the progress it waits on is the indexed bar. #}
+    <div class="note">not started yet, and not stuck: this download begins
+      automatically when <i>indexed (lexical)</i> above completes —
+      fetching earlier would re-download the archive repeatedly as
+      documents trickle in.</div>
+    {% endif %}
     {# pre-embedded (dense): the import's progress in documents — the same
        counter a plain collection shows as "embedded (dense)" #}
     <div class="stage"><div class="lbl"><span title="documents whose dense vectors are in place — here they arrive pre-embedded from the archive (plus local gap-fill). Label color: green = complete, orange = in progress, grey = idle."{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.embed_done < c.in_scope %} style="color:var(--brass)"{% endif %}>pre-embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
