@@ -285,8 +285,18 @@
     the create dialog when the plugin has a known archive; delete the line
     to opt out) is drained by the worker on its own — one shard per round,
     before any local GPU embedding — and the Library card shows the
-    coverage: shards applied and documents served by pre-embedded data. The
-    CLI does the same thing on demand:
+    coverage. An archive is split by its producer into numbered
+    <b>archive files</b> ("shards": NCBI publishes MedCPT's vectors as 37
+    of them; the pre-embedded Wikipedia corpus IS its 1,447 parquet
+    files). Mind that this is a <b>download of its own</b>, separate from
+    the corpus fetch — a card can honestly say <i>compressed data
+    fetched</i> while its vector archive has not moved yet. A
+    <i>remote</i> archive downloads and applies in one pass after
+    indexing completes (applying earlier would re-download it repeatedly
+    as documents trickle in), so its card line shows the indexing
+    progress that moves toward that point; a <i>local</i> one is read
+    file by file as its documents pass indexing. The CLI does the same
+    thing on demand:
   </p>
   <pre class="cli"># NCBI MedCPT vectors into the pubmed collection (resumable):
 python -m app.cli genesis import pubmed --archive medcpt-pubmed

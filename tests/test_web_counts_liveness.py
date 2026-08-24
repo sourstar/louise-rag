@@ -403,3 +403,22 @@ def test_genesis_badge_speaks_the_archive_fetch_state(isolated_config):
                  "content_digest,state,docs,chunks,detail,updated_at) "
                  "VALUES('medcpt-pubmed','s1','u','d','applying',0,0,'',1)")
     assert web._genesis_state(rcon, remote, None)["fetch_state"] == "active"
+
+
+def test_remote_genesis_card_shows_indexing_progress_toward_import(isolated_config):
+    """'0/37, waits by design' is a fact but not a meter (operator report:
+    'you must show a progress'). The card line must carry the number that
+    actually moves toward the import — indexing — using the same counts as
+    the indexed row, so nothing on the card can disagree."""
+    from dataclasses import replace
+    c = replace(collections_mod.default_collection(),
+                genesis_archive="medcpt-pubmed")
+    con = db.connect(c)
+
+    state = web._genesis_state(con, c, {"in_scope": 200, "fts_done": 50})
+    assert state["index_done"] == 50
+    assert state["index_total"] == 200
+    assert state["index_pct"] == 25.0
+
+    cold = web._genesis_state(con, c, None)
+    assert cold["index_pct"] is None, "a cold cache says counting, never 0%"

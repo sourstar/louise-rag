@@ -551,8 +551,15 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     # shard counter standing still.
     if counts is None:          # cold cache: unknown, but almost surely waiting
         waiting_docs = None
+        index_done = index_total = index_pct = None
     else:
         waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
+        # progress TOWARD the import, for the card to show as a number —
+        # "0/37, waits by design" is a fact but not a meter; what actually
+        # moves toward the import starting is indexing
+        index_done = counts["fts_done"] or 0
+        index_total = counts["in_scope"] or 0
+        index_pct = (100.0 * index_done / index_total) if index_total else 0.0
     # The badge's color speaks the ARCHIVE DATA's fetch state (operator
     # scheme: green done, orange fetching in progress, grey fetching off).
     # For a local archive the data IS the corpus, so its state is the
@@ -586,6 +593,9 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "rejected": bool(totals["rejected"]),
         "waiting_docs": waiting_docs,
         "fetch_state": fetch_state,
+        "index_done": index_done,
+        "index_total": index_total,
+        "index_pct": index_pct,
     }
 
 

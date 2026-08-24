@@ -127,17 +127,22 @@
     {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
     {% elif not c.genesis.known %} — unknown archive id
     {% elif c.genesis.local %} —
-      <span title="a shard file is read when an indexed document points into it, and revisited as more of its documents pass indexing — so the shard count trails the indexed bar by design; it is pacing, never a stall">import
+      <span title="an archive file is read when an indexed document points into it, and revisited as more of its documents pass indexing — so the file count trails the indexed bar by design; it is pacing, never a stall">import
       follows indexing: vectors apply as documents pass <i>indexed
       (lexical)</i>, and the <i>embedded (dense)</i> bar above is this
       import's progress — no GPU spent
-      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read)</span>
+      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive files read)</span>
     {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} —
-      <span title="a remote archive is downloaded and applied in a single pass, deliberately after the whole corpus is parsed and indexed — importing earlier would re-download shards as documents trickle in. Nothing is stuck.">import
-      waits for indexing: vectors arrive in one pass when the <i>indexed
-      (lexical)</i> bar above completes
-      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read so far)</span>
-    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard
+      {# the corpus "fetched" line above and this archive are TWO different
+         downloads — conflating them read as "fetching is done, so 0/37 is
+         stuck". Say whose download this is, and show the meter that
+         actually moves toward it (same numbers as the indexed row). #}
+      <span title="the vector archive is its own download — separate from the corpus fetched above — of {{ c.genesis.shard_total }} files published beside the corpus by the archive's producer. Downloading and applying happen together in one pass, after indexing completes: applying earlier would re-download the whole archive repeatedly as documents trickle in.">separate
+      vector download, not started ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive
+      files) — it begins when <i>indexed (lexical)</i> completes. Progress toward it:
+      {% if c.genesis.index_total is not none %}{{ '{:,}'.format(c.genesis.index_done) }} / {{ '{:,}'.format(c.genesis.index_total) }} indexed ({{ '%.1f'|format(c.genesis.index_pct) }}%){% else %}counting…{% endif %}</span>
+    <div class="spine"><span style="width:{{ c.genesis.index_pct|round(1) if c.genesis.index_pct is not none else 0 }}%;background:var(--lapis)"></span></div>
+    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive
       files applied; the imported vectors show in the <i>embedded
       (dense)</i> bar above, and the worker gap-fills locally what the
       archive cannot cover
