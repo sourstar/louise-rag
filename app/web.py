@@ -517,11 +517,12 @@ def _collection_shelf(collection: collections_mod.Collection,
         "extras_held": list(getattr(collection, "extras", ())),
         "license": _license_state(collection),
         "genesis": _genesis_state(con, collection,
-                                  None if counts_pending else counts),
+                                  None if counts_pending else counts,
+                                  fetched=fetched),
     }
 
 
-def _genesis_state(con, collection, counts=None) -> dict | None:
+def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     """Provenance visibility for pre-embedded data: is a genesis archive
     declared, how much of the collection did it cover — and, for a REMOTE
     archive, whether it is still WAITING. Remote shards apply once,
@@ -552,15 +553,39 @@ def _genesis_state(con, collection, counts=None) -> dict | None:
         waiting_docs = None
     else:
         waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
+    # The badge's color speaks the ARCHIVE DATA's fetch state (operator
+    # scheme: green done, orange fetching in progress, grey fetching off).
+    # For a local archive the data IS the corpus, so its state is the
+    # card's own fetched state; for a remote one it is the shard download:
+    # all applied = done, a shard mid-apply = active, otherwise idle.
+    applied = totals["applied"] or 0
+    if archive is not None and archive.local:
+        if fetched and fetched.get("complete"):
+            fetch_state = "done"
+        elif fetched and fetched.get("active"):
+            fetch_state = "active"
+        else:
+            fetch_state = "idle"
+    else:
+        applying = con.execute(
+            "SELECT 1 FROM genesis_imports WHERE archive=? AND state='applying' "
+            "LIMIT 1", (collection.genesis_archive,)).fetchone()
+        if shard_total and applied >= shard_total:
+            fetch_state = "done"
+        elif applying:
+            fetch_state = "active"
+        else:
+            fetch_state = "idle"
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,
         "local": bool(archive and archive.local),
         "shard_total": shard_total,
-        "applied": totals["applied"] or 0,
+        "applied": applied,
         "docs": totals["docs"] or 0,
         "rejected": bool(totals["rejected"]),
         "waiting_docs": waiting_docs,
+        "fetch_state": fetch_state,
     }
 
 

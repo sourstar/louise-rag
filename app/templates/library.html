@@ -119,31 +119,28 @@
   {% endif %}
   {% if c.genesis %}
   <div class="note">
-    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.docs else '') }}">{{ c.genesis.archive }}</span>
+    {# badge color = the ARCHIVE DATA's fetch state (green done, orange
+       fetching in progress, grey fetching off/idle); the text points at
+       the card's OWN bars instead of introducing numbers that appear
+       nowhere else on the page. #}
+    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
     {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
     {% elif not c.genesis.known %} — unknown archive id
-    {% elif c.genesis.local %} — import follows indexing:
-      {# a LOCAL archive's honest meter is DOCUMENTS. The shard counter
-         counts files the candidates have named so far — a shard is read
-         when an indexed document points into it and revisited as more of
-         its documents clear fts, so "958/1447" beside a fully fetched
-         corpus is pacing, not a stall. #}
-      {{ '{:,}'.format(c.genesis.docs) }} document{{ '' if c.genesis.docs == 1 else 's' }}
-      served pre-embedded so far, no GPU spent
-      <small>({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files
-      read{% if c.genesis.waiting_docs %}; {{ '{:,}'.format(c.genesis.waiting_docs) }}
-      documents still to parse + index before their vectors can apply{% endif %})</small>
-    {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} — import waits for indexing:
-      {# plain situation first, mechanism in the tooltip — the old sentence
-         ("applies once, against the settled corpus…") explained the design
-         and left the reader none the wiser about THEIR card #}
-      <span title="a remote archive is downloaded and applied in a single pass, deliberately after the whole corpus is parsed and indexed — importing earlier would re-download shards as documents trickle in. Nothing is stuck.">vectors
-      arrive in one pass when parsing + indexing finish
-      <small>({% if c.genesis.waiting_docs is not none %}{{ '{:,}'.format(c.genesis.waiting_docs) }} document{{ '' if c.genesis.waiting_docs == 1 else 's' }} to go{% else %}counting the backlog…{% endif %};
-      {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read so far)</small></span>
-    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shards,
-      {{ c.genesis.docs }} documents covered without GPU work; the worker
-      drains the rest automatically and gap-fills locally
+    {% elif c.genesis.local %} —
+      <span title="a shard file is read when an indexed document points into it, and revisited as more of its documents pass indexing — so the shard count trails the indexed bar by design; it is pacing, never a stall">import
+      follows indexing: vectors apply as documents pass <i>indexed
+      (lexical)</i>, and the <i>embedded (dense)</i> bar above is this
+      import's progress — no GPU spent
+      <small>({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read)</small></span>
+    {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} —
+      <span title="a remote archive is downloaded and applied in a single pass, deliberately after the whole corpus is parsed and indexed — importing earlier would re-download shards as documents trickle in. Nothing is stuck.">import
+      waits for indexing: vectors arrive in one pass when the <i>indexed
+      (lexical)</i> bar above completes
+      <small>({{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard files read so far)</small></span>
+    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shard
+      files applied; the imported vectors show in the <i>embedded
+      (dense)</i> bar above, and the worker gap-fills locally what the
+      archive cannot cover
     {% endif %}
   </div>
   {% endif %}

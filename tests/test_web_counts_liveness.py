@@ -373,3 +373,33 @@ def test_local_genesis_archive_reports_indexing_pacing(isolated_config):
     state = web._genesis_state(con, c, {"in_scope": 1000, "fts_done": 10})
     assert state["local"] is True
     assert state["waiting_docs"] == 990
+
+
+def test_genesis_badge_speaks_the_archive_fetch_state(isolated_config):
+    """Operator color scheme for the archive badge: green when the archive
+    data is fetched/done, orange while fetching is in progress, grey when
+    fetching is off/idle. Local archives read the card's own fetched state;
+    remote ones read the shard download state."""
+    from dataclasses import replace
+    local = replace(collections_mod.default_collection(),
+                    genesis_archive="upstash-wikipedia-2024-06")
+    con = db.connect(local)
+
+    s = web._genesis_state(con, local, None,
+                           fetched={"complete": True, "active": False})
+    assert s["fetch_state"] == "done"
+    s = web._genesis_state(con, local, None,
+                           fetched={"complete": False, "active": True})
+    assert s["fetch_state"] == "active"
+    s = web._genesis_state(con, local, None,
+                           fetched={"complete": False, "active": False})
+    assert s["fetch_state"] == "idle"
+
+    remote = replace(collections_mod.default_collection(),
+                     genesis_archive="medcpt-pubmed")
+    rcon = db.connect(remote)
+    assert web._genesis_state(rcon, remote, None)["fetch_state"] == "idle"
+    rcon.execute("INSERT INTO genesis_imports(archive,shard,source_url,"
+                 "content_digest,state,docs,chunks,detail,updated_at) "
+                 "VALUES('medcpt-pubmed','s1','u','d','applying',0,0,'',1)")
+    assert web._genesis_state(rcon, remote, None)["fetch_state"] == "active"
