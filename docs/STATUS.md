@@ -3,7 +3,7 @@
 **Last updated: 2026-08-24.** What exists, what is designed but unbuilt, and
 what is deliberately not being built. Read this before planning work; read
 [`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–35) for every place the design was corrected in flight.
+its §17 amendments (1–36) for every place the design was corrected in flight.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -187,6 +187,15 @@ importable by reading both segments).
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5d. **License gate on USE, not just acquisition (amendment 36; operator
+   report, 2026-08-24).** A yellow-class shard copied from a peer into a
+   hand-populated collection was indexed and imported with no ack — the
+   gate only fired on origin fetches. To build: worker round loop +
+   pipeline threads skip a yellow+ collection with no valid
+   `license_ack` (discovery, genesis, bundles, onward exchange all
+   excluded); Library card shows "license acknowledgement required" with
+   the existing acknowledge flow; boot warning names gated collections.
+   Until built, this is enforced by review only.
 5c. **Acquisition source choice at collection create (operator request,
    2026-08-24).** The create panel's "Acquisition" checkbox should become
    a drop-down: *fetch corpus from the source* (today's behavior) or

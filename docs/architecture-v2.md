@@ -978,3 +978,22 @@ the live deployment:
     and shown on the Library card as a separate `(+ e/E)` pair so extras
     never inflate the Louise counters. Details live in Help; the GUI
     stays clean.
+36. **§5/§9 — the license gate guards USE, not just acquisition.** The
+    original gate (invariant 9) fires "before the first byte moves" —
+    which only covers fetching from the origin. Found live during the
+    first two-instance exchange (2026-08-24): a yellow-class shard
+    copied from a peer into a hand-populated collection was discovered,
+    indexed and genesis-imported with no acknowledgement recorded — the
+    operator had to notice and acknowledge after the fact. Amended rule:
+    a yellow-or-stricter collection with no valid `license_ack` is
+    EXCLUDED FROM USE — discovery does not enumerate its corpus,
+    genesis/bundles do not import into it, and its data is never
+    exchanged onward — regardless of how the bytes arrived
+    (acquisition, hand-population, peer copy). The Library card says
+    "license acknowledgement required" with the acknowledge button
+    instead of silently idling; the ack the create dialog and the CLI
+    record stays exactly as today (timestamp + sha256 of byte-exact
+    terms text). Enforcement design: the worker's per-round collection
+    loop and the pipeline threads skip a gated collection the way
+    `acquire_enabled=False` skips acquisition; a boot-time warning names
+    it. Not yet built — STATUS.md 5d.

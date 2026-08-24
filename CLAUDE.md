@@ -52,10 +52,17 @@ are the ones that have drifted; prefer to add a test when you touch them.
    path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
    or error messages, and never in an env VALUE where a path is possible.
    *Enforced: test + review.*
-9. LICENSE GATES. Acquisition of yellow-class sources requires a recorded
-   acknowledgement (timestamp + sha256 of terms text) before the first byte
-   moves. Terms text is byte-exact and never converted (a CRLF checkout
-   would silently invalidate every recorded ack). *Enforced: test.*
+9. LICENSE GATES. A yellow-class source requires a recorded
+   acknowledgement (timestamp + sha256 of terms text) before its data is
+   USED — however the data arrived. Acquisition: before the first byte
+   moves from the origin. Ingestion/exchange (amendment 36): a
+   yellow-class collection without an ack is not discovered, not
+   imported, not exchanged — hand-populated folders and peer copies are
+   not a bypass (observed live: a peer-copied shard was indexed and
+   imported ack-free). Terms text is byte-exact and never converted (a
+   CRLF checkout would silently invalidate every recorded ack).
+   *Enforced: acquisition by test; ingestion gate designed, not built
+   (STATUS 5d) — review until it lands.*
 10. CONFIG TIERS. Env = identity; TOML files = desired state; DB settings =
     runtime overrides that do NOT survive restart. Never write desired state
     into the DB. Concretely: every Tier-3 override either expires or is
