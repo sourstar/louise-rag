@@ -573,13 +573,24 @@ def test_a_budgeted_pass_pauses_commits_and_resumes(collection, monkeypatch):
     assert row["next_pass_at"] <= int(_time.time()), "resumes without a backoff wait"
     assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
 
+    # ...and the collection's archive YIELDS the thread for the budget's
+    # span (per collection: five shards on disk must not each take a
+    # slice back-to-back while rdf/fts wait)
+    key = str(declared.manifest_path)
+    assert key in genesis._yield_until
+    genesis._yield_until[key] = _time.time() + 60
+    assert genesis.drain_next_shard(con, declared) is None, "yielding to rdf/fts"
+    genesis._yield_until.pop(key)
+
     # a stop request cuts the pass the same way (SIGTERM: unit = a batch)
+    # but does NOT yield: the worker is going down, the row resumes at once
     monkeypatch.setattr(config_mod, "GENESIS_PASS_BUDGET_S", 3600)
     import threading
     stop = threading.Event()
     stop.set()
     r = genesis.drain_next_shard(con, declared, stop=stop)
     assert r["partial"] is True and r["docs"] == 0
+    assert key not in genesis._yield_until
 
     # the resumed pass completes: everything imports, the shard is FINAL
     r = genesis.drain_next_shard(con, declared)
@@ -621,3 +632,101 @@ def test_reimporting_a_shard_never_duplicates_vectors(collection, monkeypatch):
                          embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
     tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
     assert tbl.count_rows() == 10, "one vector per chunk after a re-import"
+
+
+# --- the same-function proof is a quorum; a stale sample is skipped ----------
+
+def _stale_embed(stale_ids):
+    """The local encoder reproduces the archive exactly — except for the
+    documents whose text changed since the snapshot (their archived
+    vector was made from OLD text)."""
+    def embed(texts, **kwargs):
+        out = []
+        for t in texts:
+            nid = t.rsplit(" ", 1)[-1]
+            out.append(_unit(("changed:" if nid in stale_ids else "") + t).tolist())
+        return out
+    return embed
+
+
+def test_a_stale_sample_is_skipped_not_held_against_the_archive(collection):
+    """Live: shard 0 proved and imported, shard 1 failed worst-of-8 at
+    0.874 while every other sample sat at >= 0.993 — one corrected
+    abstract. The proof is a quorum (median and 75% >= tau); the stale
+    documents are evicted from the batch, never imported, left to the
+    local encoder."""
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    # two of the first 16 (the sample) changed since the snapshot
+    r = genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_stale_embed({"3", "11"}),
+                             fetch=_fake_fetch(cache))
+    assert r["state"] == "applied" and r["docs"] == 18, r
+    done = {row["uid"] for row in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
+    assert "fake:3" not in done and "fake:11" not in done and len(done) == 18
+    assert set(r["residual_uids"]) == {"fake:3", "fake:11"}
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.count_rows() == 18, "stale vectors were never written"
+
+
+def test_too_many_stale_samples_still_refuse_the_shard(collection):
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    with pytest.raises(GenesisError, match="NOT produced by this"):
+        genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_stale_embed({str(i) for i in range(1, 8)}),
+                             fetch=_fake_fetch(cache))
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
+
+
+def test_a_proven_archive_survives_one_rejected_shard(collection, monkeypatch):
+    """One shard proved and imported; a later one fails its quorum. The
+    archive is not this function's enemy — the rejected shard alone is
+    out: the fetcher and the drain go on, and its id range is released
+    to the local encoder. With NOTHING proven, a rejection still stops
+    the archive (36 more downloads must not re-prove the same mismatch)."""
+    from dataclasses import replace
+    from app import worker
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    _write_medcpt_shard(cache, "2", [20])
+    archive = _declared_archive(["0", "1", "2"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+    db.ensure_browse_index(con)
+    # shard 0 proves; shard 1's documents ALL changed since the snapshot
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _stale_embed({str(i) for i in range(10, 20)})(texts))
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    assert genesis.drain_next_shard(con, declared)["shard"] == "0"
+    assert genesis.drain_next_shard(con, declared) is None      # shard 1 rejected inside
+    states = {r["shard"]: r["state"] for r in con.execute("SELECT shard, state FROM genesis_imports")}
+    assert states["0"] == "final" and states["1"] == "rejected"
+    assert not genesis.archive_stopped(con.execute("SELECT state FROM genesis_imports"))
+    # the drain continues with shard 2; the fetcher would still fetch
+    assert genesis.drain_next_shard(con, declared)["shard"] == "2"
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None, "all landed already"
+    # coverage: shard 1's range (rejected) is the encoder's now, like the
+    # final shards' — pretend shards 0 and 1 were never embedded
+    con.execute("UPDATE documents SET embed_done=0 WHERE CAST(native_id AS INTEGER) < 20")
+    worker.reset_backfill_cursors()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, declared, 100)}
+    assert picked == set(range(1, 20)), picked
+    # ...whereas a rejected shard beside an UNAPPLIED one keeps the latter covered
+    con.execute("UPDATE genesis_imports SET state='fetched', pending=NULL WHERE shard='0'")
+    worker.reset_backfill_cursors()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, declared, 100)}
+    assert picked == set(range(10, 20)), picked
+
+    # nothing proven + a rejection = the archive stops, and covers nothing
+    con.execute("UPDATE genesis_imports SET state='rejected'")
+    assert genesis.archive_stopped(con.execute("SELECT state FROM genesis_imports"))
+    assert genesis.drain_next_shard(con, declared) is None
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None
+    worker.reset_backfill_cursors()
+    assert {int(r["native_id"]) for r in worker._backfill_rows(con, declared, 100)} == set(range(1, 20))

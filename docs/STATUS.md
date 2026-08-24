@@ -195,7 +195,23 @@ it has, records the row as `applied` with unknown coverage, and resumes
 after an equal share for rdf/fts; a stop (SIGTERM) resumes at once on
 restart, and a row left `applying` by a crash resumes the same way.
 `idx_documents_native_int` is what makes the pending range count cheap
-— the worker builds it at startup.
+— the worker builds it at startup. Then the restart's first pass went
+to shard 1 and **its same-function proof failed at worst-of-8 cos
+0.874** — while shard 0 had proved and imported, and a per-document
+check of shard 1's single-chunk samples sat at ≥ 0.993: one sampled
+document whose text changed since NCBI's 2023 snapshot. A snapshot of a
+living corpus always has some. The proof is now a **quorum** (16
+samples, median ≥ τ and 75 % ≥ τ; the samples below τ are stale
+documents, evicted from the batch and left to the encoder, never
+imported), and a rejected shard stops the archive ONLY while nothing has
+proven it — under a proven archive the rejected shard alone is out and
+its id range is released to the local encoder. Operator note: shard 1
+on the NAS was rejected under the old rule; reset its row to `fetched`
+(`UPDATE genesis_imports SET state='fetched', detail=NULL WHERE
+shard='1'`) so the quorum proof re-runs — its files are still on disk.
+Also measured: roughly half of the sampled 1970s-era shard-1 documents
+chunk into TWO pieces locally, so the shape gate skips them (the
+`chunk_abstract` follow-up in *Known gaps* is what would lift that).
 
 ## Designed, specified, not built
 

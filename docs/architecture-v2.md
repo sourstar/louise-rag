@@ -1044,7 +1044,16 @@ the live deployment:
       BUDGETED (`GENESIS_PASS_BUDGET_S`): it commits what it has and
       resumes after an equal share for indexing — a million-document
       first pass must not stall the indexer the archive itself depends
-      on; a stop resumes at once. A
+      on; a stop resumes at once.
+    - **The same-function proof is a quorum.** An archive is a snapshot
+      of a living corpus; a sampled document whose text changed since
+      reproduces badly under the SAME function (live: shard 1 failed
+      worst-of-8 at 0.874 beside a proven shard 0 and samples at
+      ≥ 0.993). Sixteen samples; median ≥ τ and 75 % ≥ τ prove the
+      function; the samples below τ are stale documents — evicted, never
+      imported, left to the encoder. A rejected shard stops the archive
+      only while nothing has proven it; under a proven archive the
+      rejected shard alone is out, its range released to the encoder. A
       document in a final shard's range that the archive did not cover
       (no abstract, straddler, shape mismatch) is thereby released to the
       local encoder; until then it waits, never a wrong import.

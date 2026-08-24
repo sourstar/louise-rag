@@ -39,7 +39,7 @@ from ..acquire.spec import TransferAborted
 from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 from .genesis import (ARCHIVES, GenesisArchive, GenesisUnavailable, _digest_files,
-                      _https_fetcher)
+                      _https_fetcher, archive_stopped)
 
 RETRY_AFTER_S = 600          # a skipped (unreachable) shard is retried after this
 _DISK_HEADROOM = 1.2         # free bytes must exceed the shard estimate by this
@@ -81,7 +81,7 @@ def next_shard_to_fetch(con, archive: GenesisArchive, now: int | None = None) ->
     rows = {r["shard"]: r for r in con.execute(
         "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
         (archive.archive_id,))}
-    if any(r["state"] == "rejected" for r in rows.values()):
+    if archive_stopped(rows.values()):
         return None
     for shard in archive.shards:
         row = rows.get(shard)
@@ -250,6 +250,8 @@ def run_fetcher(con, collection, *, stop=None, fetch=None, log_state: dict | Non
             reason = "deferred"
             break
         fetched.append(shard)
+    if stop is not None and stop.is_set():
+        reason = "stopped"
     return {"fetched": fetched, "reason": reason}
 
 

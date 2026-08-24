@@ -362,13 +362,13 @@ def _covered_ranges(con, collection) -> list[tuple[int, int]]:
     archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
     if archive is None or archive.local or not archive.ids_per_shard:
         return []
-    done: set[str] = set()
-    for r in con.execute("SELECT shard, state FROM genesis_imports WHERE archive=?",
-                         (archive.archive_id,)):
-        if r["state"] == "rejected":
-            return []
-        if r["state"] == "final":
-            done.add(r["shard"])
+    rows = con.execute("SELECT shard, state FROM genesis_imports WHERE archive=?",
+                       (archive.archive_id,)).fetchall()
+    if bundle_genesis.archive_stopped(rows):
+        return []           # nothing proven, something rejected: not this function
+    # a final shard delivered all it can; a rejected one (under a proven
+    # archive) never will — both release their range to the encoder
+    done = {r["shard"] for r in rows if r["state"] in ("final", "rejected")}
     ranges = sorted(rng for s in archive.shards if s not in done
                     for rng in (archive.id_range_of(s),) if rng)
     merged: list[tuple[int, int]] = []

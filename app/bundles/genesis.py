@@ -41,7 +41,18 @@ from .checks import check_degenerate, check_structural
 from .writer_lock import vector_write_lock
 
 RE_ENCODE_TAU = 0.95      # same-function gate; calibrated tau supersedes later
-RE_ENCODE_SAMPLE = 8
+# The proof is a QUORUM, not a worst-of: an archive is a snapshot of a
+# living corpus, so a few sampled documents whose text changed since
+# (a corrected abstract) reproduce badly under the SAME function. Live on
+# pubmed: shard 0 proved and imported, shard 1 failed worst-of-8 at 0.874
+# while every other sampled document sat at >= 0.993. The rule: at least
+# RE_ENCODE_MIN_SAMPLE samples, a median >= tau AND RE_ENCODE_QUORUM of
+# them >= tau proves the function; the samples below tau are STALE
+# documents and are skipped (never imported), not evidence against the
+# archive. A shard whose quorum fails is refused whole, as before.
+RE_ENCODE_SAMPLE = 16
+RE_ENCODE_MIN_SAMPLE = 1      # a shard with few held documents proves with what it has
+RE_ENCODE_QUORUM = 0.75
 APPLY_BATCH_DOCS = 500
 
 
@@ -268,6 +279,21 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
     return list(demand.values())
 
 
+PROVEN_STATES = ("applying", "applied", "final")
+
+
+def archive_stopped(rows) -> bool:
+    """A rejected shard stops the archive ONLY while nothing has proven
+    it: a systematically incompatible archive must not be retried shard
+    after shard. Once one shard has passed the same-function proof and
+    imported, a later rejection is that shard's problem (its range is
+    released to the local encoder) — not evidence against the archive."""
+    rows = list(rows)
+    rejected = any(r["state"] == "rejected" for r in rows)
+    proven = any(r["state"] in PROVEN_STATES for r in rows)
+    return rejected and not proven
+
+
 def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict | None:
     """The worker's automatic path: import the next shard of the
     collection's declared archive that has embed work it could satisfy.
@@ -287,7 +313,7 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     rows = {r["shard"]: r for r in con.execute(
         "SELECT shard, state, updated_at, pending, next_pass_at FROM genesis_imports "
         "WHERE archive=?", (archive.archive_id,))}
-    if any(r["state"] == "rejected" for r in rows.values()):
+    if archive_stopped(rows.values()):
         return None
     now = int(time.time())
 
@@ -329,15 +355,31 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     # once no document in their id range still waits. The old post-settle
     # gate (apply once, after the whole collection had indexed) held
     # pubmed's 37 shards back for the months 40M documents take.
+    # The budget's other half: after a pass was cut on time, THIS
+    # COLLECTION's archive yields for the same span — per collection, not
+    # per shard, or five shards on disk would each take their slice
+    # back-to-back and rdf/fts (which the archive itself depends on)
+    # would never get the thread.
+    key = str(collection.manifest_path)
+    if time.time() < _yield_until.get(key, 0.0):
+        return None
     for shard in _remote_drain_order(archive.shards, rows, now):
         try:
-            return import_shard(con, collection, archive, shard,
-                                fetch=_not_on_disk, revisit=True, stop=stop)
+            result = import_shard(con, collection, archive, shard,
+                                  fetch=_not_on_disk, revisit=True, stop=stop)
         except GenesisUnavailable:
             return None                 # files gone: skipped, re-fetched later
         except GenesisError:
             return None                 # recorded as rejected; never retried
+        if result.get("partial") and not (stop is not None and stop.is_set()):
+            _yield_until[key] = time.time() + config.GENESIS_PASS_BUDGET_S
+        return result
     return None
+
+
+# per collection (manifest path): when its remote archive may run again
+# after a budget-cut pass — process-local, like the residual sets
+_yield_until: dict[str, float] = {}
 
 
 def _remote_drain_order(shards, rows, now: int) -> list[str]:
@@ -522,12 +564,24 @@ def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
             for c in chunk(row["uid"], native_id, sections)]
 
 
-def _sample_re_encode(collection, sampled: list[tuple[str, np.ndarray]], embed_fn) -> None:
+def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],
+                      embed_fn) -> list[str]:
     """The same-function proof: the collection's own encoder must reproduce
     the archive's vectors on held texts. This is what makes later gap-filling
-    coherent — and what keeps an INCOMPATIBLE dataset out, however well-formed."""
+    coherent — and what keeps an INCOMPATIBLE dataset out, however well-formed.
+
+    `sampled` is [(uid, text, archived vector)]. Passes by QUORUM (see the
+    constants) and returns the uids of the samples below tau — stale
+    documents the caller must not import. Raises GenesisError when the
+    quorum fails (the shard is refused whole) or the sample is too small
+    to prove anything."""
+    if len(sampled) < RE_ENCODE_MIN_SAMPLE:
+        raise GenesisError(
+            f"only {len(sampled)} re-encode sample(s) within the local truncation "
+            f"budget (need {RE_ENCODE_MIN_SAMPLE}) — cannot prove the archive "
+            f"matches this collection's encoder")
     texts, archived = [], []
-    for text, vec in sampled:
+    for _uid, text, vec in sampled:
         texts.append(text)
         archived.append(vec / (np.linalg.norm(vec) or 1.0))
     try:
@@ -536,16 +590,20 @@ def _sample_re_encode(collection, sampled: list[tuple[str, np.ndarray]], embed_f
         raise GenesisUnavailable(
             f"embed endpoint needed for the same-function proof is unavailable "
             f"({type(e).__name__})") from e
-    worst = 1.0
+    cosines = []
     for a, f in zip(archived, fresh):
         f = np.asarray(f, dtype=np.float64)
         f /= (np.linalg.norm(f) or 1.0)
-        worst = min(worst, float(a @ f))
-    if worst < RE_ENCODE_TAU:
+        cosines.append(float(a @ f))
+    passing = sum(1 for c in cosines if c >= RE_ENCODE_TAU)
+    median = float(np.median(cosines))
+    if median < RE_ENCODE_TAU or passing < RE_ENCODE_QUORUM * len(cosines):
         raise GenesisError(
-            f"sample re-encode failed: archive vs local encoder cos {worst:.4f} "
-            f"< {RE_ENCODE_TAU} — the archive was NOT produced by this "
-            f"collection's [embed] recipe; importing it would mix spaces")
+            f"sample re-encode failed: archive vs local encoder median cos "
+            f"{median:.4f}, {passing}/{len(cosines)} >= {RE_ENCODE_TAU} — the "
+            f"archive was NOT produced by this collection's [embed] recipe; "
+            f"importing it would mix spaces")
+    return [uid for (uid, _t, _v), c in zip(sampled, cosines) if c < RE_ENCODE_TAU]
 
 
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
@@ -609,7 +667,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     # candidates this read was asked for and could not cover — reported so
     # drain_next_shard stops re-reading the shard on their account
     residual_uids: list[str] = []
-    sample: list[tuple[str, np.ndarray]] = []
+    sample: list[tuple[str, str, np.ndarray]] = []      # (uid, text, archived vector)
     batch_rows: list[dict] = []
     batch_native: list[int] = []
     batch_uids: list[str] = []
@@ -681,6 +739,29 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         batch_rows, batch_native, batch_uids = [], [], []
         batch_chunk_ids = {}
 
+    def evict(stale: list[str]) -> None:
+        """Drop the STALE sample documents (below tau under a proven
+        function: their text changed since the snapshot) from the pending
+        batch before it is written. They stay embed-eligible for the
+        local encoder, like a chunk-shape mismatch."""
+        nonlocal batch_rows, batch_native, batch_uids, batch_chunk_ids, docs, chunks_written
+        bad = set(stale)
+        if not bad:
+            return
+        natives = {native for u, native in zip(batch_uids, batch_native) if u in bad}
+        before = len(batch_rows)
+        batch_rows = [r for r in batch_rows if r["book_id"] not in natives]
+        chunks_written -= before - len(batch_rows)
+        docs -= sum(1 for u in batch_uids if u in bad)
+        batch_native = [n for u, n in zip(batch_uids, batch_native) if u not in bad]
+        batch_uids = [u for u in batch_uids if u not in bad]
+        for u in bad:
+            batch_chunk_ids.pop(u, None)
+            residual_uids.append(u)
+        db.log_event(con, "info", "genesis",
+                     f"{archive.archive_id}/{shard}: {len(bad)} sampled document(s) "
+                     f"stale under a proven function — skipped, left to the encoder")
+
     # Truncation-aware sampling (amendment 11): the local serving stack may
     # truncate shorter than the producer did, so the same-function proof
     # samples chunks inside the LOCAL budget — where the two functions must
@@ -739,10 +820,10 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                     zip(chunk_texts, vecs, units)):
                 if not proven and len(sample) < RE_ENCODE_SAMPLE \
                         and len(text) <= sample_char_budget:
-                    sample.append((text, np.asarray(vec, dtype=np.float64)))
-                    if len(sample) == RE_ENCODE_SAMPLE:
-                        _sample_re_encode(collection, sample, embed_fn)
-                        proven = True
+                    # the proof itself runs at the first flush, over the
+                    # whole sample: stale samples are then evicted from
+                    # the batch before anything is written
+                    sample.append((uid, text, np.asarray(vec, dtype=np.float64)))
                 batch_rows.append({
                     "id": chunk_id, "book_id": int(row["native_id"]),
                     "lang": row["lang"] or "en", "seq": seq, "chapter": "",
@@ -772,20 +853,11 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                             raise GenesisError(f"admission: {result.detail}")
                     checked_structural = True
                 if not proven:
-                    if not sample:
-                        raise GenesisError(
-                            "no re-encode sample within the local truncation "
-                            "budget — cannot prove the archive matches this "
-                            "collection's encoder")
-                    _sample_re_encode(collection, sample, embed_fn)
+                    evict(_sample_re_encode(collection, sample, embed_fn))
                     proven = True
                 flush()
         if chunks_written and not proven:
-            if not sample:
-                raise GenesisError(
-                    "no re-encode sample within the local truncation budget — "
-                    "cannot prove the archive matches this collection's encoder")
-            _sample_re_encode(collection, sample, embed_fn)
+            evict(_sample_re_encode(collection, sample, embed_fn))
             proven = True
         flush()
     except GenesisError as e:
