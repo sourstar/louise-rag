@@ -13,12 +13,46 @@
     background:transparent;color:inherit;border-radius:6px 6px 0 0;font:inherit}
   .help-tabs button.active{border-bottom:2px solid var(--brass,#b08d57);font-weight:bold}
   .help-toc{margin-bottom:8px}
+  /* the one-line "In short" opener each section starts with: the general
+     picture first, the detail after — never extra information, only a
+     handle on what follows */
+  .lead{border-left:3px solid var(--brass,#b08d57);padding-left:10px}
+  .arch{line-height:1.25;font-size:.85em}
 </style>
 <div class="help-tabs" id="help-tabs"></div>
 <div class="panel help-toc"><b>In this tab</b> <span class="note" id="help-toc"></span></div>
 
 <div class="panel" id="overview">
   <h2>What this is</h2>
+  <p class="note lead"><b>In short:</b> your node turns document collections
+    into something you can search and ask questions about — and exchanges
+    the expensive part (embeddings) with other nodes, checking everything
+    it receives.</p>
+  <div style="overflow-x:auto"><pre class="cli arch">
+     corpus sources                              other peers
+ (Gutenberg, NCBI, dumps…)                  ┌────────┐ ┌────────┐
+          │                                 │ peer B │ │ peer C │
+          │ fetch (profiles,                └───┬────┘ └───┬────┘
+          │  licenses, mirrors)                 │          │
+          ▼                             signed vector bundles ·
+┌── THIS NODE ─────────────────────┐    corpus torrents · genesis
+│                                  │        archives
+│  worker: discover → rdf → fts    │◄───────────┴──────────►
+│              → embed             │
+│     │                  │         │    state never travels;
+│     ▼                  ▼         │    corpus bytes and vectors
+│  SQLite manifest    LanceDB      │    do — verified, never
+│  (state, FTS)       (vectors)    │    trusted
+│     ▲                  ▲         │
+│     └──── web UI ──────┘         │
+│  Ask · Library · Stats · Network │
+│                                  │
+│  models over HTTP only:          │
+│  encoders (embed-gpu-*/cpu-*),   │
+│  LLM for answers                 │
+└──────────────▲───────────────────┘
+               │
+          you (browser)</pre></div>
   <p class="note">
     louise-rag is a peer-to-peer RAG platform: each node ingests document
     collections (Project Gutenberg, PubMed, …), indexes them lexically
@@ -68,6 +102,7 @@
 
 <div class="panel" id="pipeline">
   <h2>Ingestion pipeline</h2>
+  <p class="note lead"><b>In short:</b> every document climbs four steps — found, described, searchable, embedded — and any step can be safely interrupted and re-run.</p>
   <p class="note">
     Per document, in order: <b>discover</b> (corpus scan; also at startup and
     every DISCOVER_INTERVAL_MIN) → <b>rdf</b> (metadata) → <b>fts</b>
@@ -83,6 +118,7 @@
 
 <div class="panel" id="scope">
   <h2>Scope &amp; embed modes</h2>
+  <p class="note lead"><b>In short:</b> scope decides <i>which</i> documents are in play; embed mode decides how much encoder time they get.</p>
   <p class="note">
     The scope (languages, explicit ids, caps) decides which documents are
     in play. The <b>embed mode</b> decides encoder spending:
@@ -143,6 +179,7 @@
 
 <div class="panel" id="safety">
   <h2>Embedding safety</h2>
+  <p class="note lead"><b>In short:</b> two vectors are only comparable when the exact same machinery produced them — everything in this section defends that one rule.</p>
   <p class="note">
     Vectors are only comparable inside one <b>embedding space</b>: same
     model weights, dtype, normalization, pooling, chunking and cleaning
@@ -175,6 +212,7 @@
 
 <div class="panel" id="bundles">
   <h2>Bundles &amp; the P2P plane</h2>
+  <p class="note lead"><b>In short:</b> nodes share finished embeddings so one GPU serves many — and every import is checked, never trusted.</p>
   <p class="note">
     A <b>bundle</b> is a signed, portable set of vectors: header +
     Parquet vectors + per-document possession hashes, Ed25519-signed by the
@@ -193,6 +231,7 @@
 
 <div class="panel" id="genesis">
   <h2>Reusing published embeddings (genesis import)</h2>
+  <p class="note lead"><b>In short:</b> when someone already paid the GPU-hours for a corpus, this node reuses their vectors — after checking they came from the same encoder.</p>
   <p class="note">
     If someone already paid the GPU-hours for a corpus, this node reuses
     that work instead of re-embedding: NCBI publishes MedCPT vectors for
@@ -236,6 +275,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
 
 <div class="panel" id="plugins">
   <h2>The plugins</h2>
+  <p class="note lead"><b>In short:</b> a plugin knows one source — where its documents live, how to fetch them, and how to cut them into chunks.</p>
   <div style="overflow-x:auto"><table>
     <tr><th>plugin</th><th>what it ingests</th><th>layout &amp; unit</th><th>license</th><th>notes</th></tr>
     <tr><td><b>gutenberg</b></td>
@@ -288,6 +328,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
 
 <div class="panel" id="collections">
   <h2>Adding a collection</h2>
+  <p class="note lead"><b>In short:</b> a collection is one corpus in one embedding space, defined by one TOML file — the create dialog writes it for you.</p>
   <p class="note">
     A collection is defined by one versioned TOML file — that file existing
     is what makes the collection exist (config tier 2, never a database
@@ -375,6 +416,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
 
 <div class="panel" id="acquire">
   <h2>Acquisition, profiles &amp; licenses</h2>
+  <p class="note lead"><b>In short:</b> a profile says how much of a source to fetch; a license gate stands before the first byte; everything downloads through one shared bandwidth budget.</p>
   <p class="note">
     Collections can fetch their own corpus (opt-in per collection). Sources
     have license classes; a <i>yellow</i>-class source requires a recorded
@@ -475,6 +517,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
 
 <div class="panel" id="config">
   <h2>Configuration tiers</h2>
+  <p class="note lead"><b>In short:</b> three layers that never mix — who the node <i>is</i> (env), what you <i>want</i> (files), what is <i>temporarily</i> overridden (DB, gone at restart).</p>
   <table>
     <tr><th>tier</th><th>where</th><th>meaning</th></tr>
     <tr><td>1 — identity</td><td>environment variables</td>
@@ -494,6 +537,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
 
 <div class="panel" id="cli">
   <h2>CLI reference</h2>
+  <p class="note lead"><b>In short:</b> everything the UI does has a command-line twin — same code path, scriptable.</p>
   <pre class="cli">python -m app.cli corpus add &lt;collection&gt; [--profile P] [--dry-run] [--ack-terms FILE]
 python -m app.cli corpus grow &lt;collection&gt; --profile P
 python -m app.cli corpus status [collection]
@@ -515,6 +559,7 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
 
 <div class="panel" id="api">
   <h2>HTTP API</h2>
+  <p class="note lead"><b>In short:</b> the same operations over HTTP — open for searching and asking, token-gated for anything that changes state.</p>
   <table>
     <tr><th>endpoint</th><th>auth</th><th>purpose</th></tr>
     <tr><td>GET /api/status</td><td>open</td><td>worker state, scope, pipeline counts, config summary</td></tr>
@@ -531,6 +576,7 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
 
 <div class="panel" id="trouble">
   <h2>Troubleshooting</h2>
+  <p class="note lead"><b>In short:</b> most "stuck" states are deliberate safety stops — find the symptom, the fix is next to it.</p>
   <table>
     <tr><th>symptom</th><th>likely cause / fix</th></tr>
     <tr><td>worker shows <b>paused</b>, nothing processes</td>
