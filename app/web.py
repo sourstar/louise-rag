@@ -51,9 +51,35 @@ from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .verify import backend_gate
-from . import stats as stats_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
+# half the world — an operator read "+377,217/h" as 377.217 docs/h and
+# computed an 11-year ETA from a 4-day one. Dots as thousands separators,
+# everywhere a count is shown.
+TEMPLATES.env.filters["num"] = (
+    lambda n: "" if n is None else f"{int(n):,}".replace(",", "."))
+
+
+def _human_eta(seconds: float | None) -> str | None:
+    """Compact ETA for the Library bars — None when it cannot be known
+    (no rate, nothing left), so the card shows NOTHING rather than a
+    placeholder. Deliberately coarse: a rolling-sample ETA is accurate to
+    a factor, not a minute."""
+    if not seconds or seconds <= 0:
+        return None
+    if seconds < 90:
+        return f"~{int(seconds)}s"
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"~{int(minutes)}min"
+    hours = minutes / 60
+    if hours < 48:
+        return f"~{hours:.0f}h"
+    days = hours / 24
+    if days < 400:
+        return f"~{days:.0f}d"
+    return f"~{days / 365:.0f}y"
 
 ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
@@ -515,16 +541,38 @@ def _collection_shelf(collection: collections_mod.Collection,
     else:
         freshness = "never scanned"
 
-    # PROOF OF MOTION for the slow stages: parsed/indexed advance measured
-    # across page loads (persisted, same pattern as embed_avail_rate). A
-    # 40M-document collection advancing at a healthy ~18k docs/h moves its
-    # bar 0.045% per hour, which reads as STUCK (operator report: pubmed
-    # "parsed is really stuck" while the events table showed a steady rate
-    # all morning). A rate that measures zero over the window shows nothing
-    # — a stale rate beside a genuinely stalled stage would lie.
-    stage_rates = {"rdf": None, "fts": None}
+    # PROOF OF MOTION and synthetic ETAs, one mechanism for EVERY bar:
+    # each stage's advance is measured across page loads (persisted per
+    # collection) and turned into a compact ETA shown after the counter. A
+    # 40M-document collection advancing at a healthy rate moves its bar
+    # fractions of a percent per hour, which reads as STUCK (operator
+    # report, verified live against the events table). A rate that
+    # measures zero over the window yields NOTHING — no placeholder, and
+    # never a stale number beside a genuinely stalled stage.
+    _RATE_FIELDS = ("fetch", "rdf", "fts", "embed")
+    stage_rates = {k: None for k in _RATE_FIELDS}
+    stage_etas = {k: None for k in _RATE_FIELDS}
     if not counts_pending:
         now_i = int(time.time())
+        cur = {
+            "rdf": counts["rdf_done"] or 0,
+            "fts": counts["fts_done"] or 0,
+            "embed": counts["embed_done"] or 0,
+            # documents where the layout counts them, files otherwise —
+            # the same unit the fetched bar displays
+            "fetch": ((fetched.get("docs_done") if fetched
+                       and fetched.get("docs_done") is not None
+                       else (fetched or {}).get("done")) or 0),
+        }
+        remaining = {
+            "rdf": max(0, (counts["in_scope"] or 0) - cur["rdf"]),
+            "fts": max(0, (counts["in_scope"] or 0) - cur["fts"]),
+            "embed": max(0, (counts["in_scope"] or 0) - cur["embed"]),
+            "fetch": (max(0, ((fetched.get("docs_total")
+                               if fetched.get("docs_total") is not None
+                               else fetched.get("remote_total")) or 0)
+                          - cur["fetch"]) if fetched else 0),
+        }
         raw_sr = db.get_control(con, "stage_rate")
         rec_sr = None
         if raw_sr:
@@ -532,32 +580,35 @@ def _collection_shelf(collection: collections_mod.Collection,
                 rec_sr = json.loads(raw_sr)
             except (ValueError, TypeError):
                 rec_sr = None
-        rdf_now = counts["rdf_done"] or 0
-        fts_now = counts["fts_done"] or 0
-        if rec_sr is None or rdf_now < int(rec_sr.get("rdf") or 0) \
-                or fts_now < int(rec_sr.get("fts") or 0):
-            # first sight, or a reset shrank a count: fresh baseline
-            _sample_write(con, "stage_rate", json.dumps(
-                {"rdf": rdf_now, "fts": fts_now, "ts": now_i}))
+        if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS) \
+                or any(cur[k] < int(rec_sr.get(k) or 0) for k in _RATE_FIELDS):
+            # first sight, a pre-upgrade record, or a reset shrank a
+            # count: fresh baseline
+            _sample_write(con, "stage_rate",
+                          json.dumps({**cur, "ts": now_i}))
         else:
-            stage_rates["rdf"] = rec_sr.get("rdf_ph")
-            stage_rates["fts"] = rec_sr.get("fts_ph")
+            for k in _RATE_FIELDS:
+                stage_rates[k] = rec_sr.get(k + "_ph")
             elapsed = now_i - int(rec_sr.get("ts") or now_i)
             if elapsed >= 300:
-                rdf_ph = (rdf_now - int(rec_sr.get("rdf") or 0)) * 3600.0 / elapsed
-                fts_ph = (fts_now - int(rec_sr.get("fts") or 0)) * 3600.0 / elapsed
-                stage_rates["rdf"] = round(rdf_ph) if rdf_ph > 0 else None
-                stage_rates["fts"] = round(fts_ph) if fts_ph > 0 else None
+                for k in _RATE_FIELDS:
+                    delta = cur[k] - int(rec_sr.get(k) or 0)
+                    per_h = delta * 3600.0 / elapsed
+                    stage_rates[k] = round(per_h) if per_h > 0 else None
                 _sample_write(con, "stage_rate", json.dumps(
-                    {"rdf": rdf_now, "fts": fts_now, "ts": now_i,
-                     "rdf_ph": stage_rates["rdf"],
-                     "fts_ph": stage_rates["fts"]}))
+                    {**cur, "ts": now_i,
+                     **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS}}))
+            for k in _RATE_FIELDS:
+                if stage_rates[k] and remaining[k] > 0:
+                    stage_etas[k] = _human_eta(
+                        remaining[k] * 3600.0 / stage_rates[k])
 
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
         "stage_rates": stage_rates,
+        "stage_etas": stage_etas,
         "profile": collection.profile or "(hand-populated)",
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten
@@ -1420,291 +1471,6 @@ async def collection_bundle_import(name: str, request: Request,
             "note": "The worker verifies and imports it within one round; "
                      "watch the System log for the verdict."}
 
-
-# ---------------- Stats ----------------
-
-def _human_rate(bps: float | None) -> str:
-    if not bps:
-        return "—"
-    return _human_bytes(int(bps)) + "/s"
-
-
-def _human_duration(seconds: float | None) -> str:
-    """Deliberately coarse. An ETA derived from a rolling sample is accurate
-    to a factor, not to a minute, and printing "3 h 42 m 09 s" would claim a
-    precision the measurement does not have."""
-    if seconds is None:
-        return "—"
-    if seconds < 90:
-        return f"{int(seconds)}s"
-    minutes = seconds / 60
-    if minutes < 90:
-        return f"{int(minutes)} min"
-    hours = minutes / 60
-    if hours < 48:
-        return f"{hours:.1f} h"
-    days = hours / 24
-    if days < 400:
-        return f"{days:.1f} days"
-    return f"{days / 365:.1f} years"
-
-
-def _stats_row(collection, measured: dict) -> dict:
-    """One collection's line: what is left, how fast it is going, and — only
-    where both are known — when it ends."""
-    con = db.connect(collection)
-    recipe = collections_mod.recipe_for(collection)
-    rate = stats_mod.rates(measured.get(collection.name))
-
-    # Remaining EMBED work in chunks, not documents: documents differ in size
-    # by orders of magnitude (a genome contig against a PubMed abstract), so
-    # a per-document ETA is meaningless across collections. `chunks` is
-    # written by the fts stage, so it is known before embedding starts.
-    counts, counts_age = _document_counts(collection)
-    have_counts = counts is not None
-    if counts is None:      # cold cache: the first scan is running behind this
-        counts = {"embed_ready": 0, "chunks_pending": 0,
-                  "docs_unindexed": 0, "blocked": 0, "embed_done": 0}
-    docs_pending = counts["embed_ready"]
-    chunks_pending = counts["chunks_pending"]
-    docs_unindexed = counts["docs_unindexed"]
-    blocked = counts["blocked"]
-    in_flight = int(rate.get("in_flight") or 0)
-
-    # Remaining FETCH work in bytes. fetch_files is small (one row per
-    # container, ~1,450 at the largest), so this is a cheap scan — but it
-    # STREAMS: rows appear per file as a pass processes them, so mid-pass
-    # "left" read 0 while a third of the dataset was still unlisted, and
-    # the Fetching table sat empty through every long acquisition. The
-    # origin's listing, recorded by the engine at pass start
-    # (acquire_engine.LISTING_KEY), is the honest total; remaining work is
-    # listing minus what fetch_files has actually landed.
-    fetch_pending_bytes = 0
-    fetch_files_pending = 0
-    spec = ACQUIRE_REGISTRY.get(collection.plugin)
-    if spec is not None:
-        # Louise files and opted-in extras aggregated APART: the listing's
-        # totals are Louise-only (extra_files_total names the extras), so
-        # the listing-minus-landed arithmetic must not mix the two ledgers.
-        # The pass moves both, so the ETA sums the two pendings at the end.
-        fr = con.execute(
-            "SELECT COUNT(*) n, "
-            "  SUM(CASE WHEN extra=0 THEN fetch_done ELSE 0 END) done_files, "
-            "  SUM(CASE WHEN extra=0 THEN COALESCE(bytes_fetched,0) ELSE 0 END) landed_bytes, "
-            "  SUM(CASE WHEN extra=0 AND fetch_done=0 THEN COALESCE(remote_size,0)"
-            "      - COALESCE(bytes_fetched,0) ELSE 0 END) left_bytes, "
-            "  SUM(CASE WHEN extra=0 AND fetch_done=0 THEN 1 ELSE 0 END) left_files, "
-            "  SUM(CASE WHEN extra=1 THEN fetch_done ELSE 0 END) x_done_files, "
-            "  SUM(CASE WHEN extra=1 THEN COALESCE(bytes_fetched,0) ELSE 0 END) x_landed_bytes, "
-            "  SUM(CASE WHEN extra=1 AND fetch_done=0 THEN COALESCE(remote_size,0)"
-            "      - COALESCE(bytes_fetched,0) ELSE 0 END) x_left_bytes, "
-            "  SUM(CASE WHEN extra=1 AND fetch_done=0 THEN 1 ELSE 0 END) x_left_files "
-            "FROM fetch_files WHERE source_id=?", (spec.source_id,)).fetchone()
-        fetch_pending_bytes = max(0, fr["left_bytes"] or 0)
-        fetch_files_pending = fr["left_files"] or 0
-        extra_pending_bytes = max(0, fr["x_left_bytes"] or 0)
-        extra_pending_files = fr["x_left_files"] or 0
-        raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
-        if raw_listing:
-            try:
-                listing = json.loads(raw_listing)
-            except ValueError:
-                listing = None
-            if listing and (collection.profile is None
-                            or listing.get("profile") == collection.profile):
-                fetch_files_pending = max(
-                    fetch_files_pending,
-                    int(listing.get("files_total") or 0) - (fr["done_files"] or 0))
-                fetch_pending_bytes = max(
-                    fetch_pending_bytes,
-                    int(listing.get("bytes_total") or 0) - (fr["landed_bytes"] or 0))
-                if getattr(collection, "extras", ()):
-                    extra_pending_files = max(
-                        extra_pending_files,
-                        int(listing.get("extra_files_total") or 0)
-                        - (fr["x_done_files"] or 0))
-                    extra_pending_bytes = max(
-                        extra_pending_bytes,
-                        int(listing.get("extra_bytes_total") or 0)
-                        - (fr["x_landed_bytes"] or 0))
-        fetch_files_pending += extra_pending_files
-        fetch_pending_bytes += extra_pending_bytes
-
-    embed = rate.get("embed") or {}
-    fetch = rate.get("fetch") or {}
-    # ETA uses the WALL-CLOCK rate, never the encoder rate: the encoder is
-    # shared serially across collections, so its raw speed would promise a
-    # finish time no collection can actually reach.
-    chunks_per_hour_wall = None
-    if embed.get("chunks") and embed.get("docs") and embed.get("docs_per_hour"):
-        chunks_per_doc = embed["chunks"] / embed["docs"]
-        chunks_per_hour_wall = embed["docs_per_hour"] * chunks_per_doc
-    # The RESIDUAL ETA shows whatever the mode: a lazy/off collection's dash
-    # answered "how long would this take?" with nothing. When the encoder is
-    # measured live, remember its wall rate (per collection, a cached
-    # observation); when it is idle, compute the residual at the LAST
-    # measured rate and say so — eta_frozen colors the cell.
-    encoder_frozen = False
-    if chunks_per_hour_wall:
-        cps_wall = chunks_per_hour_wall / 3600
-        _sample_write(con, "last_embed_rate",
-                       json.dumps({"cps": cps_wall, "ts": int(time.time())}))
-    else:
-        cps_wall = None
-        raw_rate = db.get_control(con, "last_embed_rate")
-        if raw_rate:
-            try:
-                cps_wall = float(json.loads(raw_rate).get("cps") or 0) or None
-                encoder_frozen = cps_wall is not None
-            except (ValueError, TypeError):
-                cps_wall = None
-
-    # The AVAILABILITY rate: how fast embeddings actually become usable,
-    # HOWEVER they arrive — the local encoder or a genesis import (which is
-    # paced by parsing/indexing, a non-trivial cost in itself). Sampled as
-    # d(embed_done)/dt across page loads and persisted per collection, it
-    # gives the imported collections a real ETA where the cell used to shrug
-    # "with indexing (imported)". A shrinking count (a stage reset) starts a
-    # fresh baseline instead of recording a negative rate.
-    AVAIL_STALE_S = 900
-    avail_dps = None
-    avail_rts = None
-    if have_counts:
-        now = int(time.time())
-        done_now = int(counts.get("embed_done") or 0)
-        rec = None
-        raw = db.get_control(con, "embed_avail_rate")
-        if raw:
-            try:
-                rec = json.loads(raw)
-            except (ValueError, TypeError):
-                rec = None
-        if rec is None or done_now < int(rec.get("done") or 0):
-            _sample_write(con, "embed_avail_rate",
-                           json.dumps({"done": done_now, "ts": now}))
-        else:
-            avail_dps = float(rec.get("dps") or 0) or None
-            avail_rts = rec.get("rts")
-            elapsed = now - int(rec.get("ts") or now)
-            if elapsed >= 60:
-                delta = done_now - int(rec.get("done") or 0)
-                if delta > 0:
-                    avail_dps = delta / elapsed
-                    avail_rts = now
-                _sample_write(con, "embed_avail_rate",
-                               json.dumps({"done": done_now, "ts": now,
-                                           "dps": avail_dps,
-                                           "rts": avail_rts}))
-    avail_live = bool(avail_dps) and bool(avail_rts) and \
-        (time.time() - float(avail_rts)) <= AVAIL_STALE_S
-
-    # ETA choice, most-alive rate first: live encoder (chunk-based, floor
-    # while unindexed chunks are uncounted) → live availability (doc-based,
-    # covers the whole remaining pipeline, so never a floor) → the frozen
-    # variants of each. eta_frozen colors nothing by itself any more — the
-    # cell is colored by MODE (off grey / lazy orange / running green) and
-    # ❄ marks a frozen rate.
-    remaining_docs = docs_pending + docs_unindexed
-    eta_frozen = False
-    eta_source = "encoder"
-    if cps_wall and not encoder_frozen:
-        eta_s = stats_mod.eta_seconds(chunks_pending, cps_wall)
-    elif avail_live:
-        eta_s = stats_mod.eta_seconds(remaining_docs, avail_dps)
-        eta_source = "avail"
-    elif cps_wall:
-        eta_s = stats_mod.eta_seconds(chunks_pending, cps_wall)
-        eta_frozen = True
-    elif avail_dps:
-        eta_s = stats_mod.eta_seconds(remaining_docs, avail_dps)
-        eta_source = "avail"
-        eta_frozen = True
-    else:
-        eta_s = None
-
-    return {
-        "name": collection.name,
-        "plugin": collection.plugin,
-        "counts_age": counts_age,
-        "model": recipe.model,
-        "device": (recipe.device or ("cpu" if recipe.concurrency > 1 else "gpu")),
-        "ctx": recipe.ctx,
-        "concurrency": recipe.concurrency,
-        "url": recipe.url,
-        "fetch": {
-            "files_pending": fetch_files_pending,
-            "bytes_pending": fetch_pending_bytes,
-            "bytes_pending_h": _human_bytes(fetch_pending_bytes),
-            "rate": _human_rate(fetch.get("bytes_per_s")),
-            "rate_wall": _human_rate(fetch.get("bytes_per_s_wall")),
-            "samples": fetch.get("samples"),
-            "eta": _human_duration(stats_mod.eta_seconds(
-                fetch_pending_bytes, fetch.get("bytes_per_s_wall"))),
-        },
-        "embed": {
-            "docs_pending": docs_pending,
-            "docs_done": counts["embed_done"],
-            "chunks_pending": chunks_pending,
-            # why a chunk count may be 0 while work remains
-            "docs_unindexed": docs_unindexed,
-            "blocked": blocked,
-            "in_flight": in_flight,
-            "chars_per_s": embed.get("chars_per_s"),
-            "chunks_per_s": embed.get("chunks_per_s"),
-            "ms_per_chunk": embed.get("ms_per_chunk"),
-            "duty": embed.get("duty"),
-            "samples": embed.get("samples"),
-            "eta": _human_duration(eta_s),
-            # a lower bound, not an estimate, while some of the work has not
-            # been measured yet — only for the chunk-based encoder ETA; the
-            # availability ETA covers the whole remaining pipeline
-            "eta_is_floor": bool(docs_unindexed) and eta_source == "encoder",
-            # computed at the LAST measured rate — nothing is moving now
-            "eta_frozen": eta_frozen,
-            # "encoder": the local encoder's chunk rate; "avail": the
-            # measured rate embeddings become usable (imports included,
-            # paced by parsing/indexing)
-            "eta_source": eta_source,
-            # why an ETA can be honestly absent: a lazy/off collection's
-            # encoder is not scheduled to run, and a pre-embedded
-            # collection's vectors arrive by import, paced by indexing —
-            # a bare "—" for pubmed/wikipedia/wikivec read as broken when
-            # each was doing exactly what its mode says
-            "mode": db.get_scope(con)["embed_mode"],
-            "via_archive": bool(collection.genesis_archive),
-        },
-    }
-
-
-@admin_router.get("/stats", response_class=HTMLResponse)
-def stats_page(request: Request):
-    """Measured throughput and honest ETAs. Every number here is derived
-    from completed work; a stage that has not run recently enough to be
-    measured says so instead of showing a zero."""
-    collections = collections_mod.load_all()
-    measured, age = (None, None)
-    try:
-        con = db.read_only_connect()
-        if con is not None:
-            try:
-                measured, age = db.read_worker_stats(con)
-            finally:
-                con.close()
-    except sqlite3.Error:
-        pass
-    rows = [_stats_row(c, measured or {}) for c in collections]
-    counts_age = max((r["counts_age"] for r in rows), default=0)
-    # Busiest first: the collection with work left is the one being watched.
-    rows.sort(key=lambda r: (-(r["embed"]["chunks_pending"] or 0),
-                              -(r["fetch"]["bytes_pending"] or 0), r["name"]))
-    return TEMPLATES.TemplateResponse(request, "stats.html", {
-        "active": "stats",
-        "rows": rows,
-        "counts_age": counts_age,
-        "measured": bool(measured),
-        "age_seconds": round(age) if age is not None else None,
-        "worker_state": db.worker_state(db.connect()),
-    })
 
 
 # ---------------- Network ----------------

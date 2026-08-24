@@ -151,60 +151,6 @@ def test_fetched_counter_says_when_a_pass_is_still_running(isolated_config):
     assert fetched["remote_total"] == 1447
 
 
-def test_stats_fetching_row_reads_the_listing_not_the_stream(isolated_config):
-    """The Stats page's files/bytes-left sat at zero through every long
-    acquisition: fetch_files streams (a row per processed file), so rows
-    with fetch_done=0 barely exist mid-pass. Remaining work = the origin's
-    recorded listing minus what has actually landed."""
-    import json as _json
-    from dataclasses import replace
-    from app.acquire import engine as acquire_engine
-
-    c = replace(collections_mod.default_collection(), acquire_enabled=True)
-    con = db.connect(c)
-    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
-                (acquire_engine.LISTING_KEY,
-                 _json.dumps({"files_total": 10, "bytes_total": 1000,
-                              "profile": None, "ts": int(time.time())})))
-    for i in range(3):
-        con.execute(
-            "INSERT INTO fetch_files(source_id,rel_path,fetch_done,bytes_fetched,"
-            "remote_size) VALUES('gutenberg',?,1,100,100)", (f"f{i}",))
-    web.invalidate_counts()
-
-    row = web._stats_row(c, {})
-    assert row["fetch"]["files_pending"] == 7, row["fetch"]
-    assert row["fetch"]["bytes_pending"] == 700, row["fetch"]
-    # and the embed ETA cell can explain an honest absence
-    assert row["embed"]["mode"] in ("off", "lazy", "all")
-    assert row["embed"]["via_archive"] is False
-
-
-def test_embed_eta_is_residual_and_frozen_when_the_encoder_is_idle(isolated_config):
-    """The ETA answers "how long would the rest take?" no matter the mode:
-    live rate when the encoder runs, the LAST measured rate (marked frozen)
-    when it is off/lazy/idle, and 'no rate yet' only when nothing was ever
-    measured."""
-    import json as _json
-    c = collections_mod.default_collection()
-    con = db.connect(c)
-    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
-                "fts_done,embed_done,chunks) VALUES('g:1','g','1','/x',1,1,1,0,3600)")
-    web.invalidate_counts()
-
-    # never measured: no number to give, and the cell says so
-    row = web._stats_row(c, {})
-    assert row["embed"]["eta"] == "—" and row["embed"]["eta_frozen"] is False
-
-    # encoder idle with a REMEMBERED rate: the residual ETA still shows,
-    # marked frozen (the live-rate path both computes and stores this
-    # record whenever the encoder is measured)
-    db.set_control(con, "last_embed_rate", _json.dumps({"cps": 1.0, "ts": 1}))
-    web.invalidate_counts()
-    row = web._stats_row(c, {})
-    assert row["embed"]["eta"] == "60 min", row["embed"]  # 3600 chunks at 1/s
-    assert row["embed"]["eta_frozen"] is True
-
 
 def test_remote_genesis_archive_reports_waiting_until_settled(isolated_config):
     """The pubmed shape: medcpt-pubmed declared, a large rdf/fts backlog.
@@ -308,55 +254,6 @@ def test_fetch_label_state_complete_vs_waiting(isolated_config):
                               "source_id": "gutenberg"})))
     f = web._collection_shelf(c, {})["fetched"]
     assert f["active"] is True and f["complete"] is False
-
-
-def test_embed_eta_from_availability_rate_for_imported_collections(isolated_config):
-    """A genesis collection's encoder never runs, but its embeddings still
-    become available at a measurable rate (import, paced by parsing and
-    indexing — a non-trivial cost). The ETA must price THAT rate instead of
-    shrugging 'with indexing (imported)': d(embed_done)/dt sampled across
-    page loads, doc-based, covering the whole remaining pipeline (so it is
-    an estimate, never a floor)."""
-    import json as _json
-    from dataclasses import replace
-    c = replace(collections_mod.default_collection(),
-                genesis_archive="medcpt-pubmed")
-    con = db.connect(c)
-    # 50 already available, 10 indexed and waiting, 5 not indexed yet
-    for i in range(50):
-        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
-                    "rdf_done,fts_done,embed_done,chunks) "
-                    "VALUES(?,'g',?,?,1,1,1,1,10)", (f"g:{i}", str(i), f"/x{i}"))
-    for i in range(50, 60):
-        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
-                    "rdf_done,fts_done,embed_done,chunks) "
-                    "VALUES(?,'g',?,?,1,1,1,0,10)", (f"g:{i}", str(i), f"/x{i}"))
-    for i in range(60, 65):
-        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
-                    "rdf_done,fts_done,embed_done,chunks) "
-                    "VALUES(?,'g',?,?,1,1,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
-    # an earlier sample saw 0 available, 100 s ago -> 0.5 docs/s since
-    db.set_control(con, "embed_avail_rate",
-                   _json.dumps({"done": 0, "ts": int(time.time()) - 100}))
-    web.invalidate_counts()
-
-    row = web._stats_row(c, {})
-    e = row["embed"]
-    assert e["eta_source"] == "avail", e
-    assert e["eta_frozen"] is False
-    assert e["eta_is_floor"] is False, "the availability rate covers unindexed docs"
-    # 15 docs remain (10 ready + 5 unindexed) at 0.5 docs/s = 30 s -> "0 min"
-    assert e["eta"] != "—"
-
-    # a stage reset that SHRINKS embed_done starts a fresh baseline
-    # rather than recording a negative rate
-    con.execute("UPDATE documents SET embed_done=0 WHERE uid='g:0'")
-    db.set_control(con, "embed_avail_rate",
-                   _json.dumps({"done": 999, "ts": int(time.time()) - 100}))
-    web.invalidate_counts()
-    row = web._stats_row(c, {})
-    rec = _json.loads(db.get_control(con, "embed_avail_rate"))
-    assert rec["done"] == 49 and "dps" not in rec
 
 
 def test_local_genesis_archive_reports_indexing_pacing(isolated_config):
@@ -502,24 +399,39 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
                     "VALUES(?,'g',?,?,1,0,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
     # an earlier sample saw 10 parsed, 600 s ago -> (100-10)/600*3600 = 540/h
     db.set_control(con, "stage_rate",
-                   _json.dumps({"rdf": 10, "fts": 0, "ts": int(time.time()) - 600}))
+                   _json.dumps({"rdf": 10, "fts": 0, "embed": 0, "fetch": 0,
+                                "ts": int(time.time()) - 600}))
     web.invalidate_counts()
 
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["rdf"] == 540
     assert shelf["stage_rates"]["fts"] is None, \
-        "fts did not advance (100 -> 100): no rate, never a stale one"
+        "fts did not advance (0 -> 0): no rate, never a stale one"
+    # the card shows a compact ETA, dot-grouped, never a bare rate:
+    # 200 remaining at 540/h = ~22 min
+    assert shelf["stage_etas"]["rdf"] == "~22min"
+    assert shelf["stage_etas"]["fts"] is None
     html = _render_library(shelf)
-    assert "+540/h" in html
+    assert "(~22min)" in html
+    assert "no rate" not in html, "an unknown ETA shows NOTHING"
 
     # a reset that shrinks a count starts a fresh baseline
     db.set_control(con, "stage_rate",
-                   _json.dumps({"rdf": 99999, "fts": 0, "ts": int(time.time()) - 600}))
+                   _json.dumps({"rdf": 99999, "fts": 0, "embed": 0, "fetch": 0,
+                                "ts": int(time.time()) - 600}))
     web.invalidate_counts()
     shelf = web._collection_shelf(c, {})
-    assert shelf["stage_rates"] == {"rdf": None, "fts": None}
+    assert all(v is None for v in shelf["stage_rates"].values())
     rec = _json.loads(db.get_control(con, "stage_rate"))
     assert rec["rdf"] == 100 and "rdf_ph" not in rec
+
+    # a pre-upgrade record (rdf/fts only) re-baselines instead of minting
+    # a bogus rate from a missing field
+    db.set_control(con, "stage_rate",
+                   _json.dumps({"rdf": 10, "fts": 0, "ts": int(time.time()) - 600}))
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert all(v is None for v in shelf["stage_rates"].values())
 
 
 def test_page_render_never_blocks_on_a_locked_manifest(isolated_config):
@@ -543,9 +455,8 @@ def test_page_render_never_blocks_on_a_locked_manifest(isolated_config):
         blocker.execute("BEGIN IMMEDIATE")   # the worker's write lock
         t0 = time.time()
         shelf = web._collection_shelf(c, {})
-        row = web._stats_row(c, {})
         took = time.time() - t0
-        assert shelf["name"] == c.name and "embed" in row
+        assert shelf["name"] == c.name
         assert took < 5, f"page render blocked {took:.1f}s on a locked manifest"
     finally:
         blocker.rollback()

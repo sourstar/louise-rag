@@ -125,10 +125,11 @@ def test_embed_mode_names_the_processor_it_spends(client, isolated_config,
 
     import re
     page = re.sub(r"\s+", " ", client.get("/admin/library").text)
-    assert "GPU spending" in page and "CPU spending" in page
     # the two cases must be visually DISTINCT, not just worded differently
-    assert re.search(r'badge lapis"[^>]*>\s*GPU spending', page)
-    assert re.search(r'badge brass"[^>]*>\s*CPU spending', page)
+    # (label shortened to bare CPU/GPU on operator request; the tooltip
+    # carries what "spending" meant)
+    assert re.search(r'badge lapis"[^>]*>\s*GPU\s*<', page)
+    assert re.search(r'badge brass"[^>]*>\s*CPU\s*<', page)
 
 
 def test_device_can_be_declared_explicitly(isolated_config, config_dir):
