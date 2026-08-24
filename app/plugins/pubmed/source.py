@@ -15,6 +15,8 @@ same files re-derives the identical tombstone (idempotent).
 """
 import gzip
 import hashlib
+import sys
+import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -63,8 +65,19 @@ def _parse_container(path: Path) -> ET.Element:
     with _cache_lock:
         if _parsed_cache.get("key") == key:
             return _parsed_cache["root"]
+        # Cold parses are ~6.5 s each (measured live), so every one must be
+        # visible: name the container coming in and the one evicted. A
+        # healthy walk logs one line per container (~150 batches); a line
+        # per batch means the cache is thrashing and this IS the pipeline's
+        # cost. Straight to stderr — the manifest may be mid-transaction.
+        prev = _parsed_cache.get("key")
+        t0 = time.monotonic()
         with _open_container(path) as f:
             root = ET.parse(f).getroot()
+        print(f"[pubmed cache] cold parse {path.name} "
+              f"({time.monotonic() - t0:.1f}s), evicted "
+              f"{prev[0].rsplit('/', 1)[-1] if prev else '(empty)'}",
+              file=sys.stderr, flush=True)
         _parsed_cache.clear()
         _parsed_cache["key"] = key
         _parsed_cache["root"] = root

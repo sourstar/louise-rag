@@ -126,6 +126,7 @@ def stage_rdf(con, row, collection) -> None:
     """
     plugin = collection.plugin_instance()
     now = int(time.time())
+    t0 = time.monotonic()
     _rdf_one(con, row, collection, plugin, now)   # unguarded: its failure IS the round's
     n = 1
     if config.RDF_BATCH_DOCS > 1:
@@ -139,7 +140,9 @@ def stage_rdf(con, row, collection) -> None:
             except Exception:   # noqa: BLE001 — a peer never fails the round
                 continue
     if n > 1:
-        _batch_log(con, "rdf", collection, f"extracted {n} documents in one transaction")
+        _batch_log(con, "rdf", collection,
+                   f"extracted {n} documents in one transaction "
+                   f"({time.monotonic() - t0:.1f}s)")
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -174,6 +177,7 @@ def stage_fts(con, row, collection) -> None:
     cannot be entity-tagged, is dropped rather than blamed on `row`: it keeps
     its pending state and records its own error when its own turn comes.
     """
+    t0 = time.monotonic()
     chunks = _load_chunks(row, collection)
     batch = [(row, chunks)]
     n_chunks = len(chunks)
@@ -212,7 +216,7 @@ def stage_fts(con, row, collection) -> None:
     if len(batch) > 1:
         _batch_log(con, "fts", collection,
                    f"indexed {len(batch)} documents / {n_chunks} chunks "
-                   f"in one commit")
+                   f"in one commit ({time.monotonic() - t0:.1f}s)")
 
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)
@@ -248,8 +252,17 @@ def stage_embed(con, row, collection) -> None:
 # selections have it: a queued document that CANNOT be embedded was
 # otherwise re-picked every round forever, and because the queue is consulted
 # before rdf/fts, one such document starves the whole collection.
+# CROSS JOIN is load-bearing: it pins the join order to queue -> documents
+# (SQLite treats CROSS JOIN as "do not reorder"). With a plain JOIN the
+# planner inverted it — SEARCH documents (in_scope, rdf_done) probing the
+# queue per row — which scans every rdf-done document to serve a queue
+# that is usually EMPTY. Measured live on pubmed: 4.9 s per call at 3.6M
+# rdf-done rows, paid at the top of EVERY _next_book, and growing with
+# rdf progress — this one query was the pipeline's ~10x brake. Queue-first
+# is one tiny scan (the lazy queue holds at most a few hundred rows) plus
+# one uid probe per row.
 _QUEUE_ELIGIBLE = """
-    SELECT d.* FROM embed_queue q JOIN documents d ON d.uid=q.uid
+    SELECT d.* FROM embed_queue q CROSS JOIN documents d ON d.uid=q.uid
     WHERE d.in_scope=1 AND d.rdf_done=1 AND d.error IS NULL AND d.retries<?
       AND (d.embed_done=0 OR d.embed_version < ?)
     ORDER BY q.priority DESC, q.ts LIMIT ?"""

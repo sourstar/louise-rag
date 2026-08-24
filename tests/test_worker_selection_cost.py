@@ -181,3 +181,38 @@ def test_queue_cleanup_does_not_materialise_every_uid(tmp_path):
     plan = _plan(con, worker._QUEUE_CLEANUP, (config.MAX_RETRIES,)).upper()
     assert "LIST SUBQUERY" not in plan, \
         f"cleanup materialises the whole uid set: {plan}"
+
+
+# --- 4. the queue selection must scan the QUEUE, never the documents -------
+
+def test_queue_eligible_scans_the_queue_not_the_documents(tmp_path):
+    """Found live on pubmed at 3.6M rdf-done rows: the planner inverted the
+    join — SEARCH documents (in_scope, rdf_done) probing the queue per row
+    plus a TEMP B-TREE — costing 4.9 s at the top of EVERY _next_book, and
+    growing with rdf progress, to serve a queue that is usually empty. The
+    CROSS JOIN pins queue-first: one tiny scan plus one uid probe per row.
+    Behaviour alone cannot catch this — the query returns the same rows
+    either way."""
+    c, con = _discovered(tmp_path)
+    uid, _ = _uids(con, 2)
+    con.execute("UPDATE documents SET rdf_done=1 WHERE uid=?", (uid,))
+    con.commit()
+    _enqueue(con, uid)
+
+    plan = _plan(con, worker._QUEUE_ELIGIBLE,
+                 (config.MAX_RETRIES, config.EMBED_VERSION, 1))
+    d_at = max(plan.find("SEARCH documents"), plan.find("SCAN documents"),
+               plan.find("SEARCH d"), plan.find("SCAN d"))
+    q_at = max(plan.find("SCAN embed_queue"), plan.find("SEARCH embed_queue"),
+               plan.find("SCAN q"), plan.find("SEARCH q"))
+    assert q_at != -1 and d_at != -1, plan
+    assert q_at < d_at, f"documents must be probed FROM the queue, not scanned: {plan}"
+    # and the documents side must be a uid probe, never an index-range scan
+    assert "SEARCH d USING INDEX sqlite_autoindex_documents_1 (uid=?)" in plan \
+        or "uid=?" in plan, plan
+
+    # correctness unchanged: the queued document is still served first
+    scope = db.get_scope(con)
+    scope["embed_mode"] = "lazy"
+    stage, row = worker._next_book(con, scope)
+    assert stage == "embed" and row["uid"] == uid
