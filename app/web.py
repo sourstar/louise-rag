@@ -840,7 +840,8 @@ def grow_run(name: str, body: GrowBody):
         # the collection to 'lazy' at the next restart.
         embed=collections_mod.recipe_for(collection),
         embed_mode=collection.embed_mode_default,
-        snapshot=collection.snapshot, extras=extras)
+        snapshot=collection.snapshot, extras=extras,
+        peer_source=collection.peer_source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -931,8 +932,13 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             genesis_archive: str | None = None,
                             embed=None, embed_mode: str | None = None,
                             snapshot: str | None = None,
-                            extras: tuple[str, ...] = ()) -> None:
+                            extras: tuple[str, ...] = (),
+                            peer_source: str | None = None) -> None:
     lines = [f'plugin = "{plugin}"']
+    if peer_source:
+        # peer plane: fetch from this magnet/.torrent instead of the origin
+        # (engine.effective_spec). Carried on every rewrite like the rest.
+        lines.append(f'peer_source = "{peer_source}"')
     if embed_mode:
         lines.append(f'embed_mode = "{embed_mode}"')
     if snapshot:
@@ -1018,6 +1024,12 @@ class CreateCollectionBody(BaseModel):
     # opted-in EXTRA formats (spec.extras) — local-only downloads beside
     # the Louise data, never part of the p2p exchange
     extras: list[str] = []
+    # WHERE the corpus comes from: "source" (the origin, today's default),
+    # "peers" (a peer's torrent — peer_source holds the magnet/.torrent),
+    # or "off" (hand-populated: no acquisition). acquire_enabled stays for
+    # older clients; the dropdown value wins when given.
+    acquire_source: str = ""
+    peer_source: str = ""
 
 
 def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
@@ -1104,6 +1116,22 @@ def new_collection_create(body: CreateCollectionBody):
         if hand_populated:
             raise HTTPException(400, "extras need acquisition — a "
                                       "hand-populated collection fetches nothing")
+    # acquisition SOURCE (the create form's drop-down): the origin, a
+    # peer's torrent, or nothing (hand-populated)
+    if body.acquire_source:
+        if body.acquire_source not in ("source", "peers", "off"):
+            raise HTTPException(400, "acquire_source must be source | peers | off")
+        if hand_populated and body.acquire_source != "off":
+            raise HTTPException(400, "a hand-populated collection acquires nothing")
+        body.acquire_enabled = body.acquire_source != "off"
+        if body.acquire_source != "peers":
+            body.peer_source = ""
+    peer = body.peer_source.strip()
+    if body.acquire_source == "peers" and not peer:
+        raise HTTPException(400, "fetching from peers needs a magnet URI or a "
+                                  ".torrent path (peer_source)")
+    if peer and not (peer.startswith("magnet:") or peer.endswith(".torrent")):
+        raise HTTPException(400, "peer_source must be a magnet: URI or a .torrent path")
     toml_path = collections_mod.config_toml_path(body.name)
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")
@@ -1128,7 +1156,8 @@ def new_collection_create(body: CreateCollectionBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
-                snapshot=existing.snapshot, extras=existing.extras)
+                snapshot=existing.snapshot, extras=existing.extras,
+                peer_source=existing.peer_source)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -1201,7 +1230,8 @@ def new_collection_create(body: CreateCollectionBody):
         # it is a wrong one.
         embed=(collections_mod.default_recipe_for_plugin(body.plugin)
                or collections_mod.env_recipe()),
-        extras=tuple(body.extras))
+        extras=tuple(body.extras),
+        peer_source=(body.peer_source.strip() or None))
 
     companion_note = ""
     if companion is not None:
@@ -1326,7 +1356,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
-                snapshot=existing.snapshot, extras=existing.extras)
+                snapshot=existing.snapshot, extras=existing.extras,
+                peer_source=existing.peer_source)
     _write_collection_toml(
         toml_path, plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=collection.acquire_enabled,
@@ -1336,7 +1367,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
         embed_mode=body.mode, snapshot=collection.snapshot,
-        extras=collection.extras)
+        extras=collection.extras, peer_source=collection.peer_source)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -1533,6 +1564,7 @@ def _bandwidth_payload() -> dict:
     """
     payload = transfer_manager.get_manager().rates()
     worker_rates = age = None
+    seed_rows, seed_age = [], None
     con = None
     try:
         # read_only_connect, not connect: this runs every couple of seconds
@@ -1542,6 +1574,11 @@ def _bandwidth_payload() -> dict:
         con = db.read_only_connect()
         if con is not None:
             worker_rates, age = db.read_worker_rates(con)
+            # the seeding table rides the SAME cheap reader (one read-only
+            # connection per poll — the test pins that): what this node
+            # serves to peers, published by the worker's seeder each beat
+            from .acquire import seeding
+            seed_rows, seed_age = seeding.read_table(con)
     except sqlite3.Error:
         # the manifest being briefly unavailable must not break the graph
         worker_rates, age = None, None
@@ -1563,6 +1600,8 @@ def _bandwidth_payload() -> dict:
         "age_seconds": round(age, 1) if age is not None else None,
         "max_age_seconds": db.WORKER_RATES_MAX_AGE_S,
     }
+    payload["seeding"] = {"rows": seed_rows,
+                          "age_seconds": round(seed_age, 1) if seed_age is not None else None}
     return payload
 
 

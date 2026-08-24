@@ -29,9 +29,9 @@ from . import claim as claim_mod
 from . import mirrors
 from . import transport_https
 from .transport_https import RangeUnsupported
-from .spec import (AcquisitionPlan, AcquisitionSpec, DiskPreflightError, Filter,
-                    LicenseAckRequiredError, RemoteFile, TransferAborted, TransportError,
-                    estimated_bytes_for, resolve_profile)
+from .spec import (AcquisitionPlan, AcquisitionSpec, ChecksumSource, DiskPreflightError,
+                    Endpoint, Filter, LicenseAckRequiredError, RemoteFile, TransferAborted,
+                    Transport, TransportError, estimated_bytes_for, resolve_profile)
 from .transports import REGISTRY
 
 _DRY_RUN_ASSUMED_RATE_BPS = 5_000_000   # ~5 MB/s — a named placeholder; P0.7 has real measurement
@@ -238,10 +238,32 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
     )
 
 
+def effective_spec(collection, spec: AcquisitionSpec) -> AcquisitionSpec:
+    """The spec a collection ACTUALLY fetches by.
+
+    `peer_source` (TOML; a magnet or .torrent path) redirects the whole
+    acquisition to the PEER PLANE: same plugin, same profiles and filters,
+    same license gate and disk preflight — but the bytes come from a peer's
+    torrent instead of the origin. The torrent's own piece hashes replace
+    origin checksum sidecars; dated snapshots do not apply (a torrent IS a
+    frozen snapshot). Mirrors/probing are origin concepts and are dropped.
+    """
+    from dataclasses import replace
+    peer = getattr(collection, "peer_source", None)
+    if not peer:
+        return spec
+    return replace(spec,
+                   transport=Transport.TORRENT,
+                   endpoints=(Endpoint(transport=Transport.TORRENT, url=peer),),
+                   checksums=ChecksumSource(kind="none"),
+                   probe_file=None, snapshot_files=None, snapshot_index=None)
+
+
 def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> AcquisitionPlan:
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
+    spec = effective_spec(collection, spec)
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     return _plan_from_files(con, collection, spec, files)
 
@@ -579,6 +601,7 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     # a bare "fetched 0/0" with no fetching… badge (the badge reads the
     # claim) and a concurrent `corpus add` could have started a second
     # listing against the same origin.
+    spec = effective_spec(collection, spec)      # peer plane, when the TOML says so
     with claim_mod.acquisition_claim(con, spec.source_id):
         keepalive = _ClaimKeepalive(collection, spec.source_id)
         keepalive.start()

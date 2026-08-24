@@ -451,9 +451,10 @@ def cmd_torrent_publish(args) -> int:
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     exclude = tuple(pat for flt in (spec.extras.values() if spec else ())
                     for pat in flt.include)
+    root = collection.corpus_dir / args.subdir if args.subdir else collection.corpus_dir
     try:
         published = torrent_publish.publish_corpus(
-            collection.corpus_dir, out, name=collection.name,
+            root, out, name=collection.name,
             trackers=tuple(args.tracker or ()),
             web_seeds=tuple(args.web_seed or ()),
             comment=f"louise-rag collection {collection.name}",
@@ -461,13 +462,26 @@ def cmd_torrent_publish(args) -> int:
     except TransportError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 1
+    # the worker's seeder reads this record and serves the torrent from
+    # `root` (app/acquire/seeding.py); deleting the .torrent stops it
+    from .acquire import seeding
+    seeding.record_published(db.connect(collection), {
+        **published.as_catalog_entry(),
+        "torrent_path": str(published.torrent_path), "root": str(root)})
+    magnet = published.magnet
+    if args.peer_hint:
+        magnet += f"&x.pe={args.peer_hint}"
     print(f"torrent:   {published.torrent_path}")
+    print(f"root:      {root}")
     print(f"files:     {published.files}")
     print(f"bytes:     {published.total_bytes:,}")
     print(f"info hash: {published.info_hash}")
     print()
-    print("Give a peer either the .torrent file above or this magnet:")
-    print(published.magnet)
+    print("Recorded for the worker's seeder (starts within its next telemetry "
+          "beat while the node runs, downloads/seeding only, or seeding only).")
+    print("Give a peer either the .torrent file above or this magnet"
+          + (" (with the direct-peer hint):" if args.peer_hint else ":"))
+    print(magnet)
     if not args.tracker:
         print()
         print("No tracker is embedded. A peer that cannot reach this node "
@@ -768,6 +782,14 @@ def main(argv=None) -> int:
     t_pub.add_argument("--web-seed", action="append",
                        help="BEP 19 HTTP seed — the origin URL of this corpus, "
                             "so a peer can finish even with nobody seeding")
+    t_pub.add_argument("--subdir", default="",
+                       help="publish this SUBDIRECTORY of the corpus (its name "
+                            "becomes the torrent root, so a peer's corpus_dir/"
+                            "<subdir>/... lands in the plugin's own layout — "
+                            "e.g. 'data' for the pre-embedded corpus)")
+    t_pub.add_argument("--peer-hint", default="",
+                       help="host:port a peer can dial directly (no tracker/DHT): "
+                            "appended to the printed magnet as x.pe=")
     t_pub.set_defaults(func=cmd_torrent_publish)
 
     t_seed = torrent.add_parser("seed", help="serve a published torrent")

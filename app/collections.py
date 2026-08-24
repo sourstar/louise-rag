@@ -163,6 +163,12 @@ class Collection:
     # a LOCAL convenience (gutenberg: epubs beside the text), never part
     # of the p2p exchange. TOML: extras = ["epub"].
     extras: tuple[str, ...] = ()
+    # PEER PLANE: a magnet URI or .torrent path. Set, acquisition fetches
+    # this collection's corpus from a peer's torrent instead of the origin
+    # — same plugin, profiles, license gate; the torrent's piece hashes
+    # stand in for origin checksums (engine.effective_spec). TOML:
+    # peer_source = "magnet:?xt=...&x.pe=host:port".
+    peer_source: str | None = None
     # WHICH dated snapshot of the origin this collection holds, for sources
     # that publish them (Wikipedia dumps, a PubMed baseline year).
     #
@@ -232,6 +238,7 @@ def _load_one(path: Path) -> Collection:
         embed=embed,
         genesis_archive=raw.get("genesis_archive"),
         extras=tuple(raw.get("extras") or ()),
+        peer_source=(str(raw["peer_source"]) if raw.get("peer_source") else None),
         snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
     )
 

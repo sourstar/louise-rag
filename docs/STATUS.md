@@ -196,13 +196,15 @@ importable by reading both segments).
    excluded); Library card shows "license acknowledgement required" with
    the existing acknowledge flow; boot warning names gated collections.
    Until built, this is enforced by review only.
-5c. **Acquisition source choice at collection create (operator request,
-   2026-08-24).** The create panel's "Acquisition" checkbox should become
-   a drop-down: *fetch corpus from the source* (today's behavior) or
-   *fetch from peers* (torrent/peer plane). The peer path needs discovery
-   (item 1) or at least a pasted magnet/peer address wired into the
-   create flow; the torrent transport itself already works. UI waits
-   until the peer path exists — no dropdown with a dead option.
+5c. ~~**Acquisition source choice at collection create.**~~ **Built
+   2026-08-24:** the create panel's Acquisition drop-down offers *off* /
+   *from the source* / *from peers* (magnet or .torrent). `peer_source`
+   in the TOML redirects the whole acquisition to the torrent transport
+   (`engine.effective_spec`); the worker seeds every torrent recorded by
+   `torrent publish` and credits uploads to the UP bucket
+   (`app/acquire/seeding.py`). What remains unbuilt is DISCOVERY (item
+   1): today the magnet carries a direct-peer hint (`x.pe=host:port`)
+   pasted by the operator.
 5b. **The enumeration travels with the corpus.** A peer that downloads a
    corpus snapshot still re-derives its document list by scanning (hours
    on a large corpus, even resumable). The snapshot manifest already names

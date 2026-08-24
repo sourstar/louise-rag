@@ -249,9 +249,18 @@
     <div id="nc_extras_wrap" style="display:none"><label>Extra formats (local only — see Help)</label>
       <div id="nc_extras"></div></div>
     <div><label>Acquisition</label>
-      <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
-        <input type="checkbox" id="nc_acquire" style="width:auto"> fetch corpus from the source
-      </label></div>
+      {# WHERE the corpus comes from (STATUS 5c, now built): the origin, a
+         peer's torrent, or nothing. The peer path is the same acquisition
+         engine on the torrent transport — same profiles, license gate,
+         disk preflight (engine.effective_spec). #}
+      <select id="nc_acquire_source">
+        <option value="off">off — I fill the corpus folder myself</option>
+        <option value="source" selected>fetch corpus from the source</option>
+        <option value="peers">fetch corpus from peers (torrent)</option>
+      </select>
+      <div id="nc_peer_wrap" style="display:none;margin-top:6px">
+        <input id="nc_peer_source" placeholder="magnet:?xt=urn:btih:…&x.pe=host:port  or  /config/x.torrent" style="width:100%">
+      </div></div>
     <div><label>Corpus folder</label>
       {# No default option: a collection points at a real mounted dataset or
          it is not created. The old "(default)" entry invented a path that
@@ -327,11 +336,14 @@ function fillProfileSelect(){
     `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
        <input type="checkbox" class="nc_extra" value="${esc(x)}" style="width:auto"> ${esc(x)}
      </label>`).join('');
+  const src=document.getElementById('nc_acquire_source');
+  const peerWrap=document.getElementById('nc_peer_wrap');
+  src.onchange=()=>{peerWrap.style.display=src.value==='peers'?'':'none'};
   sel.onchange=()=>{
     const hp=sel.value==='hand-populated';
-    const acq=document.getElementById('nc_acquire');
-    if(hp)acq.checked=false;
-    acq.disabled=hp;
+    if(hp)src.value='off';
+    src.disabled=hp;
+    src.onchange();
     // extras need acquisition: nothing to opt into on a hand-filled corpus
     xw.style.display=(extras.length&&!hp)?'':'none';
   };
@@ -499,7 +511,11 @@ async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
   const plugin=document.getElementById('nc_plugin').value;
   const profile=document.getElementById('nc_profile').value.trim()||'demo';
   const corpus_dir=document.getElementById('nc_corpus').value.trim();
-  const acquire_enabled=document.getElementById('nc_acquire').checked;
+  const acquire_source=document.getElementById('nc_acquire_source').value;
+  const acquire_enabled=acquire_source!=='off';
+  const peer_source=acquire_source==='peers'
+    ? document.getElementById('nc_peer_source').value.trim() : '';
+  if(acquire_source==='peers'&&!peer_source){toast('paste the peer magnet (or a .torrent path) to fetch from peers');return}
   const wantCompanion=plugin==='wikipedia'
     && document.getElementById('nc_companion').checked;
   const companion_corpus_dir=wantCompanion
@@ -526,6 +542,7 @@ async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
       :[...document.querySelectorAll('.nc_extra:checked')].map(e=>e.value);
     const d=await postJSON('/admin/library/new/create',
       {name,plugin,profile,corpus_dir,acquire_enabled,
+       acquire_source,peer_source,
        acknowledge_terms:!!ackMain,
        companion_corpus_dir,
        acknowledge_companion_terms:!!ackCompanion,

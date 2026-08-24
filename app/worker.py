@@ -1273,8 +1273,10 @@ STATS_PUBLISH_INTERVAL_S = 10.0
 
 
 def _stats_publisher() -> None:
+    from .acquire import seeding
     con = None
     owner = None
+    seed_cons: dict[str, object] = {}
     while not _stop.wait(STATS_PUBLISH_INTERVAL_S):
         try:
             collections = collections_mod.load_all()
@@ -1287,9 +1289,20 @@ def _stats_publisher() -> None:
                 con = db.connect(control)
                 owner = control.name
             db.publish_worker_stats(con, stats.recorder().snapshot())
+            # SEEDING lives on this thread: it is telemetry-shaped work
+            # (start published torrents, gate on the worker state, credit
+            # uploaded bytes to the UP bucket, publish the table) and the
+            # pipeline threads never touch it — per-collection connections
+            # are this thread's own (SQLite is thread-affine).
+            for c in collections:
+                if c.name not in seed_cons:
+                    seed_cons[c.name] = db.connect(c)
+            seeding.tick(collections, seed_cons, con, db.worker_state(con))
             db.publish_worker_rates(con, get_manager().rates())
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
+    for c_con in seed_cons.values():
+        c_con.close()
     if con is not None:
         con.close()
 

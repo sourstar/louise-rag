@@ -562,6 +562,34 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     (<code>acquire_enabled = false</code>) ignore profiles entirely; the
     Library card shows theirs as <i>(hand-populated)</i>.
   </p>
+  <h2 style="margin-top:14px">Fetching from peers, and seeding</h2>
+  <p class="note">
+    The create panel's <b>Acquisition</b> drop-down offers three sources:
+    <b>off</b> (hand-populated — you fill the corpus folder), <b>from the
+    source</b> (the origin: rsync/https/hf-hub as the plugin declares), or
+    <b>from peers</b>: paste a magnet URI or a <code>.torrent</code> path
+    and the SAME acquisition engine fetches the corpus over BitTorrent —
+    same profiles and filters, same license gate, same disk preflight; the
+    torrent's own piece hashes replace the origin's checksum sidecars.
+    Stored as <code>peer_source</code> in the collection's TOML. Without
+    peer discovery (not built) the magnet carries a direct-peer hint,
+    <code>&amp;x.pe=host:port</code>, which <code>torrent publish
+    --peer-hint</code> prints for you.
+  </p>
+  <p class="note">
+    <b>Seeding</b> is the other direction: <code>torrent publish
+    &lt;collection&gt; [--subdir data]</code> hashes the corpus (minutes on
+    a large one) and records it; from then on the worker seeds it whenever
+    the node runs, is in <i>download/seeding only</i>, or <i>seeding only</i>
+    — <i>pause</i> stands it down. Every uploaded byte is credited to the
+    Network page's <i>seeding</i> class, and its Seeding table lists what
+    is served, to how many peers, and how much has gone out. Deleting the
+    <code>.torrent</code> file stops seeding. <code>--subdir</code> matters
+    for layout: the hashed directory's name becomes the torrent root, so a
+    peer's <code>corpus_dir/&lt;subdir&gt;/…</code> lands exactly where the
+    plugin expects it (the pre-embedded corpus lives under
+    <code>data/</code>).
+  </p>
   <h2 style="margin-top:14px">Extra formats (local only)</h2>
   <p class="note">
     Some sources publish the same documents in <b>more than one format</b>.

@@ -43,9 +43,14 @@
 </div>
 
 <div class="panel">
-  <h2>Seeding table</h2>
-  <div class="note">not yet available — lands with P1.3 (coordinator tracks peer/seeding
-    state; this node has no exchange service yet).</div>
+  <h2>Seeding <span class="badge" id="seed-scope">no torrents published</span></h2>
+  <div class="note">What this node serves to peers: every torrent published with
+    <code>torrent publish</code> is seeded by the worker while the node runs,
+    downloads/seeding only, or seeding only — paused stops it. Uploaded bytes
+    are credited to the <i>seeding</i> class above.</div>
+  <table id="seed-table">
+    <tr><th>collection</th><th>torrent</th><th>files</th><th>size</th><th>uploaded</th><th>peers</th><th>state</th></tr>
+  </table>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -67,6 +72,21 @@ try{
           ? 'worker sample '+(w.age_seconds??'?')+'s old'
           : 'no worker sample within '+(w.max_age_seconds??'?')+'s: it is stopped, '
             +'paused before its first loop, or cannot write the control table';
+      }
+      const sd=d.seeding||{}, rows=sd.rows||[], tbl=document.getElementById('seed-table'),
+            sb=document.getElementById('seed-scope');
+      if(tbl){
+        [...tbl.querySelectorAll('tr.seed-row')].forEach(r=>r.remove());
+        const bytes=n=>{n=Number(n||0);
+          return n>=1e9?(n/1e9).toFixed(2)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':n>=1e3?(n/1e3).toFixed(0)+' KB':n+' B'};
+        for(const r of rows){
+          const tr=document.createElement('tr'); tr.className='seed-row';
+          const state=r.error?r.error:(r.paused?'paused':(r.checking?'checking pieces':(r.seeding?'seeding':'starting')));
+          tr.innerHTML=`<td>${r.collection||''}</td><td>${r.name||''}<br><small>${(r.info_hash||'').slice(0,16)}…</small></td>`
+            +`<td>${r.files??''}</td><td>${bytes(r.bytes)}</td><td>${bytes(r.uploaded)}</td><td>${r.peers??0}</td><td>${state}</td>`;
+          tbl.appendChild(tr);
+        }
+        if(sb) sb.textContent=rows.length?rows.length+' torrent'+(rows.length===1?'':'s')+(sd.age_seconds!=null?' · sample '+sd.age_seconds+'s old':''):'no torrents published';
       }
       const lim=d.limits||{};
       document.getElementById('bw-limits').textContent=
