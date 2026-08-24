@@ -43,7 +43,7 @@ Flags replicate the production app exactly (`--embeddings --pooling last
 
 | build | artifact | verdict | evidence |
 |---|---|---|---|
-| b10603 | `llama-b10603-bin-win-vulkan-x64.zip` (same tag as the production SYCL build) | **approved (2026-08-24)** | cross-backend consistency vs the production Arc encoder, Qwen3-Embedding-8B-Q4_K_M (GGUF byte-copied from the node): cosine min **0.999599** / mean 0.999681 over 16 long texts, dim 4096; local throughput 0.39 s/text (~5x the Arc under load) |
+| b10603 | `llama-b10603-bin-win-vulkan-x64.zip` (same tag as the production SYCL build) | **approved (2026-08-24)** | cross-backend consistency vs the production Arc encoder, Qwen3-Embedding-8B-Q4_K_M (GGUF byte-copied from the node): cosine min **0.999599** / mean 0.999681 over 16 long texts, dim 4096; local throughput 0.39 s/text idle (~5x the Arc under load). **Capacity flags sized for the 16 GB card** (`-c 36864 -np 4 -ub 2048`, function unchanged — re-verified min **0.999607** / mean 0.999684): the production `-c 65536` copied verbatim oversubscribed VRAM (18.2 GB committed of 16) and the driver's paging froze every slot ~9 s per ~30 s. Rule of thumb: per-slot context ≥ the recipe's EMBED_CTX is all the function needs; size `-c` = slots × EMBED_CTX (+margin) to the card, never to another card. |
 
 ## CPU (TEI) — text-embeddings-inference
 
