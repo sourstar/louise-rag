@@ -110,7 +110,8 @@ def make_ack(terms_text_path: Path) -> str:
 
 
 def _list_and_filter(spec: AcquisitionSpec, profile: str,
-                      snapshot: str | None = None) -> list[RemoteFile]:
+                      snapshot: str | None = None,
+                      endpoints: list | None = None) -> list[RemoteFile]:
     # resolve_profile also understands a COMBINED profile ("tr,it") on an
     # additive source, where it is the union of those slices
     profile_filter = resolve_profile(spec, profile)
@@ -122,6 +123,24 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         # for whatever it currently calls latest. Those URLs are immutable,
         # which is what makes the corpus reproducible and shareable.
         candidates = list(spec.snapshot_files(snapshot))
+    elif spec.probe_file and len(spec.endpoints) > 1:
+        # MIRRORED source: the admission rule makes every listed mirror
+        # structurally identical, so listing all of them is the same listing
+        # N times — measured at 12 minutes EACH on gutenberg-epub (2.8M
+        # entries). List from the best-ranked mirror only, falling to the
+        # next on failure; the union semantic below stays for specs whose
+        # endpoints genuinely carry different subsets.
+        candidates = []
+        last_error: Exception | None = None
+        for endpoint in (endpoints if endpoints is not None else spec.endpoints):
+            try:
+                candidates = list(transport.list_files(endpoint, spec))
+                break
+            except TransportError as e:
+                last_error = e
+                mirrors.mark_down(endpoint.url)
+        else:
+            raise last_error or TransportError(f"{spec.source_id}: no endpoint could list")
     else:
         candidates = []
         for endpoint in spec.endpoints:
@@ -527,7 +546,69 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     """
     _require_license_ack(spec, collection)
 
-    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
+    # The CLAIM covers the WHOLE pass, enumeration included, with a
+    # keepalive so it cannot go stale under a long listing. It used to be
+    # taken only around the transfer loop — so during gutenberg's first
+    # real enumeration (~12 minutes, 2.8M entries) the Library card showed
+    # a bare "fetched 0/0" with no fetching… badge (the badge reads the
+    # claim) and a concurrent `corpus add` could have started a second
+    # listing against the same origin.
+    with claim_mod.acquisition_claim(con, spec.source_id):
+        keepalive = _ClaimKeepalive(collection, spec.source_id)
+        keepalive.start()
+        try:
+            return _run_acquisition_claimed(con, collection, spec, profile,
+                                            stop, priority)
+        finally:
+            keepalive.stop()
+
+
+class _ClaimKeepalive:
+    """Refreshes the acquisition claim every minute from its own thread and
+    connection (SQLite connections are thread-affine), so a pass whose
+    current phase produces no _apply callbacks for >5 minutes — a first
+    recursive listing runs ~12 — does not lose its claim mid-flight."""
+
+    def __init__(self, collection, source_id: str) -> None:
+        self._collection = collection
+        self._source_id = source_id
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"acquire-claim-{source_id}")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._done.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        from .. import db as _db
+        con = _db.connect(self._collection)
+        try:
+            last = time.time()
+            while not self._done.wait(30):
+                last = claim_mod.refresh_claim(con, self._source_id, last)
+        finally:
+            con.close()
+
+
+def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: str,
+                              stop, priority) -> dict:
+    # Mirrored sources: benchmark FIRST — it is the structure gate and it
+    # decides which single mirror the (expensive) listing runs against.
+    endpoints = list(spec.endpoints)
+    if spec.probe_file and len(endpoints) > 1:
+        try:
+            mirrors.benchmark(con, spec)
+        except Exception as e:   # noqa: BLE001 — a broken benchmark must not stop a fetch
+            db.log_event(con, "warn", "acquire",
+                         f"mirror benchmark failed ({e}); using last known order")
+        endpoints = mirrors.seed_order(con, spec)
+
+    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None),
+                             endpoints=endpoints)
     plan = _plan_from_files(con, collection, spec, files)
     # The SOURCE's own file count, recorded the moment it is known. The
     # fetch loop below streams — fetch_files rows appear per file as each
@@ -560,20 +641,9 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
 
     manager = get_manager()
     transport = REGISTRY[spec.transport]
-    # Mirrored sources: benchmark first (a ~10 KB structure probe per
-    # mirror, skipped while the last record is fresh), then seed the order
-    # from the PERSISTED ranking — a restart starts with the mirror that
-    # won last time, and a better one takes over at the next benchmark,
-    # unattended. The manager's EWMA still re-ranks live within the pass:
-    # measured beats benchmarked beats declared.
-    endpoints = list(spec.endpoints)
-    if spec.probe_file and len(endpoints) > 1:
-        try:
-            mirrors.benchmark(con, spec)
-        except Exception as e:   # noqa: BLE001 — a broken benchmark must not stop a fetch
-            db.log_event(con, "warn", "acquire",
-                         f"mirror benchmark failed ({e}); using last known order")
-        endpoints = mirrors.seed_order(con, spec)
+    # seeded from the benchmark's persisted ranking (a restart starts with
+    # the last winner); the manager's EWMA re-ranks live within the pass:
+    # measured beats benchmarked beats declared
     ranked = manager.rank_endpoints([(e.url, e) for e in endpoints])
     counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0}
     claim_ts = [time.time()]
@@ -626,11 +696,11 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                 counters["adopted"] += 1
 
     workers = min(manager.platform.transfer.workers, max(1, len(items)))
-    with claim_mod.acquisition_claim(con, spec.source_id):
-        transfer_pool.run_pool(
-            items,
-            _make_worker(transport, collection, spec, manager, ranked, stop, priority),
-            _apply, max_workers=workers, stop=stop)
+    # the claim is already held by run_acquisition, covering the whole pass
+    transfer_pool.run_pool(
+        items,
+        _make_worker(transport, collection, spec, manager, ranked, stop, priority),
+        _apply, max_workers=workers, stop=stop)
 
     return {"fetched": counters["fetched"], "skipped": skipped,
             "failed": counters["failed"], "aborted": counters["aborted"],
