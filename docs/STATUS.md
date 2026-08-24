@@ -348,6 +348,22 @@ to reintroduce.
   documents" every ~10 s, for hours, was the measurement; nobody had to
   profile anything. Read the worker log as a time series before reading
   the code.
+- **A rate from one window is not a rate.** The Library ETA divided one
+  sample window's progress by its length, so a window that caught a
+  commit burst said "~20min" and the next, idle one, said "~9h" — the
+  operator saw a number swinging between optimistic and pessimistic and
+  trusted neither. Now it is an EMA (alpha 0.3, ~3 windows to settle)
+  over the windows that saw progress, it needs two windows before it
+  shows anything, and while work remains but the rate is untrustworthy
+  or zero it prints **TBD** rather than nothing — an honest "not yet"
+  is a value; a blank is indistinguishable from "done". Same rule as
+  `stats.eta_seconds`: never a number the page cannot stand behind.
+- **A statistic the reader cannot act on is noise, not transparency.**
+  The Network page listed the transfer manager's four priority classes
+  per direction — "interactive 0 · delta 0 · backfill 0 · seeding 0" —
+  which answered a scheduler's question, not an operator's. Replaced by
+  two totals and the download split by collection; the classes stay in
+  the API payload for tests.
 
 ## Conventions
 

@@ -403,7 +403,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     # an earlier sample saw 10 parsed, 600 s ago -> (100-10)/600*3600 = 540/h
     db.set_control(con, "stage_rate",
-                   _json.dumps({"rdf": 10, "fts": 0, "embed": 0, "fetch": 0,
+                   _json.dumps({"rdf": 10, "fts": 0, "embed": 0, "fetch": 0, "rdf_ph": 540, "rdf_n": 1,
                                 "ts": int(time.time()) - 600}))
     web.invalidate_counts()
 
@@ -414,7 +414,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     # the card shows a compact ETA, dot-grouped, never a bare rate:
     # 200 remaining at 540/h = ~22 min
     assert shelf["stage_etas"]["rdf"] == "~22min"
-    assert shelf["stage_etas"]["fts"] is None
+    assert shelf["stage_etas"]["fts"] == "TBD", "work remains, no trustworthy rate: say so"
     html = _render_library(shelf)
     assert "(~22min)" in html
     assert "no rate" not in html, "an unknown ETA shows NOTHING"
@@ -493,7 +493,7 @@ def test_stage_rates_survive_a_manifest_too_busy_to_write(isolated_config):
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     # seed only MEMORY (the busy-manifest case: control never accepts it)
     web._stage_rate_memo[str(c.manifest_path)] = {
-        "rdf": 10, "fts": 0, "embed": 0, "fetch": 0,
+        "rdf": 10, "fts": 0, "embed": 0, "fetch": 0, "rdf_ph": 540, "rdf_n": 1,
         "ts": int(time.time()) - 600}
 
     blocker = _sq.connect(str(c.manifest_path))

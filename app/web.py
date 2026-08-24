@@ -51,6 +51,7 @@ from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
 from .verify import backend_gate
+from . import stats as stats_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
@@ -600,23 +601,51 @@ def _collection_shelf(collection: collections_mod.Collection,
             baseline = {**cur, "ts": now_i}
             _stage_rate_memo[memo_key] = baseline
             _sample_write(con, "stage_rate", json.dumps(baseline))
+            for k in _RATE_FIELDS:
+                if remaining[k] > 0:
+                    stage_etas[k] = "TBD"        # work remains, no history yet
         else:
+            # LOW-PASS FILTERED rate: an exponential moving average over the
+            # per-window rates (alpha 0.3 -> a new window carries 30 %), and
+            # an ETA is shown only once TWO windows have contributed.
+            # Operator report: raw window-to-window rates swung the ETA from
+            # wildly optimistic (a 1000-document batch landing just inside
+            # the window) to wildly pessimistic (the window catching the
+            # quiet tail of a batch). A zero-progress window drops the rate
+            # entirely — TBD until motion resumes — rather than decaying a
+            # stale number into an ever-growing ETA.
+            _EMA_ALPHA = 0.3
+            _MIN_WINDOWS = 2
+            samples = {k: int(rec_sr.get(k + "_n") or 0) for k in _RATE_FIELDS}
             for k in _RATE_FIELDS:
                 stage_rates[k] = rec_sr.get(k + "_ph")
             elapsed = now_i - int(rec_sr.get("ts") or now_i)
             if elapsed >= 300:
                 for k in _RATE_FIELDS:
                     delta = cur[k] - int(rec_sr.get(k) or 0)
-                    per_h = delta * 3600.0 / elapsed
-                    stage_rates[k] = round(per_h) if per_h > 0 else None
+                    raw = delta * 3600.0 / elapsed
+                    prev = rec_sr.get(k + "_ph")
+                    if raw > 0:
+                        ema = raw if not prev else _EMA_ALPHA * raw + (1 - _EMA_ALPHA) * prev
+                        stage_rates[k] = round(ema)
+                        samples[k] += 1
+                    else:
+                        stage_rates[k] = None
+                        samples[k] = 0
                 updated = {**cur, "ts": now_i,
-                           **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS}}
+                           **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS},
+                           **{k + "_n": samples[k] for k in _RATE_FIELDS}}
                 _stage_rate_memo[memo_key] = updated
                 _sample_write(con, "stage_rate", json.dumps(updated))
             for k in _RATE_FIELDS:
-                if stage_rates[k] and remaining[k] > 0:
-                    stage_etas[k] = _human_eta(
-                        remaining[k] * 3600.0 / stage_rates[k])
+                if remaining[k] <= 0:
+                    continue
+                if stage_rates[k] and samples[k] >= _MIN_WINDOWS:
+                    stage_etas[k] = _human_eta(remaining[k] * 3600.0 / stage_rates[k])
+                else:
+                    # work remains and the rate is not yet trustworthy:
+                    # say so, never a number that will be revised 10x
+                    stage_etas[k] = "TBD"
 
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
@@ -1565,6 +1594,7 @@ def _bandwidth_payload() -> dict:
     payload = transfer_manager.get_manager().rates()
     worker_rates = age = None
     seed_rows, seed_age = [], None
+    worker_stats: dict = {}
     con = None
     try:
         # read_only_connect, not connect: this runs every couple of seconds
@@ -1579,6 +1609,9 @@ def _bandwidth_payload() -> dict:
             # serves to peers, published by the worker's seeder each beat
             from .acquire import seeding
             seed_rows, seed_age = seeding.read_table(con)
+            # ...and so does the per-collection stats snapshot the
+            # download split below is derived from (one more row)
+            worker_stats = (db.read_worker_stats(con)[0] or {})
     except sqlite3.Error:
         # the manifest being briefly unavailable must not break the graph
         worker_rates, age = None, None
@@ -1602,6 +1635,27 @@ def _bandwidth_payload() -> dict:
     }
     payload["seeding"] = {"rows": seed_rows,
                           "age_seconds": round(seed_age, 1) if seed_age is not None else None}
+    # WHAT A PERSON CAN ACT ON: one download total, one upload total, and
+    # the download split BY COLLECTION (measured by the worker's fetch
+    # recorder: bytes over wall time). The priority classes above stay in
+    # the payload for tests and the API, but they answer a scheduler's
+    # question, not an operator's — "interactive 0, delta 0, backfill 0,
+    # seeding 0" told nobody which corpus was downloading how fast.
+    payload["totals"] = {
+        "down": round(sum(float(v or 0) for v in payload.get("down", {}).values()), 1),
+        "up": round(sum(float(v or 0) for v in payload.get("up", {}).values()), 1),
+    }
+    downloads = []
+    for name, entry in worker_stats.items():
+        try:
+            fetch = stats_mod.rates(entry).get("fetch") or {}
+        except Exception:   # noqa: BLE001 — a malformed sample must not break the page
+            continue
+        bps = fetch.get("bytes_per_s_wall")
+        if bps:
+            downloads.append({"collection": name, "bytes_per_s": round(float(bps), 1)})
+    downloads.sort(key=lambda d: -d["bytes_per_s"])
+    payload["downloads"] = downloads
     return payload
 
 

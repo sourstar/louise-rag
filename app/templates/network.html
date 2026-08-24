@@ -7,21 +7,23 @@
   fabricated data.</p>
 
 <div class="panel">
-  <h2>Bandwidth by priority class <span class="badge" id="bw-scope">both processes</span></h2>
-  <div class="note">Corpus downloads included: a token bucket is per-process state, and
-    acquisition and seeding move their bytes in the <b>worker</b>, so the worker publishes
-    its own rates each loop and they are summed in here. If the worker stops reporting
-    these become web-process-only figures and the badge above says so — a frozen number
-    on a live graph would read as traffic that is not happening.</div>
+  <h2>Traffic <span class="badge" id="bw-scope">both processes</span></h2>
+  {# Two numbers a person can act on, then the download split by
+     collection (measured by the worker's fetch recorder). The scheduler's
+     priority classes stay in the API payload; on a page they answered a
+     question nobody was asking. #}
   <table>
-    <tr><th>class</th><th>down</th><th>up</th></tr>
-    <tr><td>interactive</td><td id="down-interactive">0</td><td id="up-interactive">0</td></tr>
-    <tr><td>delta</td><td id="down-delta">0</td><td id="up-delta">0</td></tr>
-    <tr><td>backfill</td><td id="down-backfill">0</td><td id="up-backfill">0</td></tr>
-    <tr><td>seeding</td><td id="down-seeding">0</td><td id="up-seeding">0</td></tr>
+    <tr><th>direction</th><th>now</th><th>what</th></tr>
+    <tr><td><b>download</b></td><td id="bw-down-total">0</td>
+      <td id="bw-down-what">corpus and pre-embedded data from origins and peers</td></tr>
+    <tr><td><b>upload</b></td><td id="bw-up-total">0</td>
+      <td>seeding to peers — see the table below</td></tr>
+  </table>
+  <table id="dl-table" style="margin-top:6px">
+    <tr><th>downloading</th><th>rate</th></tr>
+    <tr id="dl-none"><td colspan="2" class="note">no collection is downloading right now</td></tr>
   </table>
   <div class="note" id="bw-limits">…</div>
-  <div class="note">Live via SSE from /admin/network/bandwidth/stream.</div>
 </div>
 
 <div class="panel">
@@ -47,7 +49,7 @@
   <div class="note">What this node serves to peers: every torrent published with
     <code>torrent publish</code> is seeded by the worker while the node runs,
     downloads/seeding only, or seeding only — paused stops it. Uploaded bytes
-    are credited to the <i>seeding</i> class above.</div>
+    are what the <b>upload</b> figure above measures.</div>
   <table id="seed-table">
     <tr><th>collection</th><th>torrent</th><th>files</th><th>size</th><th>uploaded</th><th>peers</th><th>state</th></tr>
   </table>
@@ -61,9 +63,18 @@ try{
   const es=new EventSource('/admin/network/bandwidth/stream');
   es.onmessage=(ev)=>{
     try{const d=JSON.parse(ev.data);
-      for(const k of ['interactive','delta','backfill','seeding']){
-        const dn=document.getElementById('down-'+k); if(dn) dn.textContent=rate(d.down&&d.down[k]);
-        const up=document.getElementById('up-'+k); if(up) up.textContent=rate(d.up&&d.up[k]);
+      const tot=d.totals||{};
+      document.getElementById('bw-down-total').textContent=rate(tot.down);
+      document.getElementById('bw-up-total').textContent=rate(tot.up);
+      const dl=d.downloads||[], dtbl=document.getElementById('dl-table'), none=document.getElementById('dl-none');
+      if(dtbl){
+        [...dtbl.querySelectorAll('tr.dl-row')].forEach(r=>r.remove());
+        for(const r of dl){
+          const tr=document.createElement('tr'); tr.className='dl-row';
+          tr.innerHTML=`<td>${r.collection}</td><td>${rate(r.bytes_per_s)}</td>`;
+          dtbl.appendChild(tr);
+        }
+        if(none) none.style.display=dl.length?'none':'';
       }
       const w=d.worker||{}, badge=document.getElementById('bw-scope');
       if(badge){
