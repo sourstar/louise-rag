@@ -1304,10 +1304,11 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     if body.mode not in ("off", "lazy", "all"):
         raise HTTPException(400, "mode must be off | lazy | all")
     collection = _collection_or_404(name)
-    con = db.connect(collection)
-    scope = db.get_scope(con)
-    scope["embed_mode"] = body.mode
-    db.set_scope(con, scope)
+    # TOML FIRST — a file write never loses a lock race. The old order
+    # wrote the runtime scope first, and on a manifest under continuous
+    # pipeline writes that raised "database is locked" BEFORE the TOML was
+    # ever written: the 500 reloaded the page and the mode reverted
+    # (operator report: wikipedia off -> refresh -> on-demand again).
     toml_path = collections_mod.config_toml_path(name)
     toml_path.parent.mkdir(parents=True, exist_ok=True)
     if not toml_path.exists():
@@ -1336,10 +1337,27 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         embed=collections_mod.recipe_for(collection),
         embed_mode=body.mode, snapshot=collection.snapshot,
         extras=collection.extras)
-    db.log_event(con, "info", "control",
-                 f"embed mode -> {body.mode!r} for {name!r} via admin UI "
-                 f"(written to {toml_path.name}: permanent)")
-    return {"ok": True, "embed_mode": body.mode, "persisted": True}
+    # Runtime scope + event log are BEST-EFFORT immediacy on top of the
+    # persisted desired state: if the manifest is busy right now, the
+    # worker still applies the TOML within a round — the setting is never
+    # hostage to the write lock, and the page never 500s over it.
+    applied_now = True
+    try:
+        con = db.connect(collection)
+        con.execute("PRAGMA busy_timeout=2000")
+        scope = db.get_scope(con)
+        scope["embed_mode"] = body.mode
+        db.set_scope(con, scope)
+        db.log_event(con, "info", "control",
+                     f"embed mode -> {body.mode!r} for {name!r} via admin UI "
+                     f"(written to {toml_path.name}: permanent)")
+    except sqlite3.OperationalError:
+        applied_now = False
+    return {"ok": True, "embed_mode": body.mode, "persisted": True,
+            "applied_now": applied_now,
+            "note": None if applied_now else
+            "saved to the TOML; the manifest is busy, so the worker applies "
+            "it within a round"}
 
 
 @admin_router.get("/library/{name}/terms")

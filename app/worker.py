@@ -177,6 +177,15 @@ def stage_fts(con, row, collection) -> None:
     cannot be entity-tagged, is dropped rather than blamed on `row`: it keeps
     its pending state and records its own error when its own turn comes.
     """
+    # LOADS AND THE TANTIVY COMMIT RUN OUTSIDE ANY SQLITE TRANSACTION
+    # (CLAUDE.md: long non-DB work stays outside the transaction). Chunking
+    # is pure compute — a genome chromosome takes the better part of an
+    # hour — and holding BEGIN IMMEDIATE across it wedged genome-hg38's
+    # manifest solid (observed live: every discovery/event/acquire write
+    # "database is locked" for 68+ minutes). Invariant 2's ordering is
+    # untouched: index, THEN the tantivy commit, THEN the marks — only the
+    # marks are SQLite writes, so the transaction opens just before them
+    # (see the BEGIN IMMEDIATE below; _execute_step commits it).
     t0 = time.monotonic()
     chunks = _load_chunks(row, collection)
     batch = [(row, chunks)]
@@ -199,6 +208,12 @@ def stage_fts(con, row, collection) -> None:
     fts.index_books(((r["lang"], int(r["native_id"]), ch) for r, ch in batch),
                      collection)
 
+    # the tantivy commit landed; only the tags and marks remain — SQLite
+    # writes, seconds for a batch. THIS is where the write lock begins
+    # (unless a caller already opened one — direct callers in tests and
+    # legacy paths wrap the whole stage; their commit covers these writes).
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
     ref_store = refs.get_store()
     now = int(time.time())
     # the selected document first and unguarded: its failure IS the round's
@@ -843,7 +858,11 @@ def _execute_step(con, collection, stage, row) -> bool:
     (delete-then-insert, invariant 2).
     """
     t0 = time.time()
-    if stage != "embed":
+    if stage not in ("embed", "fts"):
+        # fts opens its own BEGIN IMMEDIATE late — after chunk loading and
+        # the tantivy commit — so hours of pure compute on a huge document
+        # never hold the manifest's write lock (stage_fts explains). The
+        # commit/rollback below covers it either way (in_transaction).
         con.execute("BEGIN IMMEDIATE")
     try:
         STAGES[stage](con, row, collection)
@@ -1364,7 +1383,13 @@ def run_forever():
             # happens; publishing is how the web process sees it.
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = db.worker_state(control_con)
-            if state == "paused":
+            if state in ("paused", "seed-only"):
+                # seed-only: downloads and processing stand down exactly
+                # like pause; what stays alive — serving peers (the web
+                # process, torrent seeding) — does not live in this loop,
+                # so the worker-side gating is identical. The distinct
+                # state exists so the UI says what the NODE is doing and
+                # so a future worker-managed seeder has a state to honor.
                 _paused.set()       # pipeline threads idle at the same gate
                 time.sleep(2)
                 continue

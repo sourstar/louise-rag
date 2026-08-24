@@ -507,3 +507,118 @@ def test_stage_rates_survive_a_manifest_too_busy_to_write(isolated_config):
         "the rate must come from memory even when the manifest refuses writes"
     assert shelf["stage_etas"]["rdf"] == "~22min"
     assert web._stage_rate_memo[str(c.manifest_path)]["rdf"] == 100
+
+
+def test_embed_mode_persists_even_when_the_manifest_is_locked(isolated_config, monkeypatch, tmp_path):
+    """Operator report: wikipedia switched to off reverted to on-demand on
+    refresh. The endpoint wrote the runtime scope FIRST, and on a manifest
+    under continuous pipeline writes that raised 'database is locked'
+    before the TOML was ever written — the 500 reloaded the page and the
+    mode reverted. The TOML (a file, never contended) must be written
+    FIRST; the scope write is best-effort immediacy, never a gate."""
+    import sqlite3 as _sq
+    from fastapi.testclient import TestClient
+    from app import config as _config, spaces
+    from app.api import app as _app
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a, **k: ("abc", False))
+    monkeypatch.setattr(web, "_ping", lambda url: True)
+    monkeypatch.setattr(_config, "ADMIN_TOKEN", "sekrit")
+
+    c = collections_mod.default_collection()
+    db.connect(c)                                     # create the manifest
+    with TestClient(_app) as client:
+        client.headers["X-Admin-Token"] = "sekrit"
+        blocker = _sq.connect(str(c.manifest_path))
+        try:
+            blocker.execute("BEGIN IMMEDIATE")        # the busy pipeline
+            r = client.post(f"/admin/library/{c.name}/embed-mode",
+                            json={"mode": "off"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["persisted"] is True
+            assert body["applied_now"] is False, \
+                "the scope write must yield to the lock, not 500"
+        finally:
+            blocker.rollback()
+            blocker.close()
+    # the DESIRED STATE survived: a fresh load shows the new mode
+    loaded = collections_mod.by_name(c.name)
+    assert loaded.embed_mode_default == "off"
+    # and with the manifest free, the same call applies immediately too
+    with TestClient(_app) as client:
+        client.headers["X-Admin-Token"] = "sekrit"
+        r = client.post(f"/admin/library/{c.name}/embed-mode",
+                        json={"mode": "lazy"})
+        assert r.status_code == 200 and r.json()["applied_now"] is True
+    assert collections_mod.by_name(c.name).embed_mode_default == "lazy"
+
+
+def test_stage_label_colors_are_consistent(isolated_config):
+    """Operator's four-state scheme, pinned per state: green = complete,
+    turquoise = running/scheduled, orange = on-demand only, grey =
+    off/paused — and NEUTRAL while counts are still being computed (a
+    cold-cache card colored its labels from all-zero counts)."""
+    import re
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(4):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) "
+                    "VALUES(?,'g',?,?,1,1,?,0,1)", (f"g:{i}", str(i), f"/x{i}",
+                                                    1 if i < 2 else 0))
+    web.invalidate_counts()
+    _wait_counts(c)
+
+    def color_of(html, label):
+        m = re.search(r'style="color:([^"]*)"[^>]*>' + re.escape(label) + "<", html)
+        if m:
+            return m.group(1)
+        m = re.search(r"<span[^>]*>" + re.escape(label) + "<", html)
+        return "neutral" if m else None
+
+    shelf = web._collection_shelf(c, {})
+    html = _render_library(shelf)                      # worker running
+    assert color_of(html, "parsed (rdf)") == "var(--ok)"          # 4/4
+    assert color_of(html, "indexed (lexical)") == "var(--brass)"  # 2/4, running
+    assert color_of(html, "embedded (dense)") == "var(--amber)"   # mode lazy
+
+    scope = db.get_scope(con); scope["embed_mode"] = "off"; db.set_scope(con, scope)
+    web.invalidate_counts(); _wait_counts(c)
+    html = _render_library(web._collection_shelf(c, {}))
+    assert color_of(html, "embedded (dense)") == "var(--muted)"   # mode off
+
+    # paused node: nothing runs — grey everywhere that is not complete
+    html_p = web.TEMPLATES.env.get_template("library.html").render(
+        request=None, active="library",
+        shelves=[web._collection_shelf(c, {})], counts_age=0, plugins=[],
+        plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
+        corpus_mounts_dir="", worker_state="paused")
+    assert color_of(html_p, "indexed (lexical)") == "var(--muted)"
+    assert color_of(html_p, "parsed (rdf)") == "var(--ok)", \
+        "complete stays green even while paused"
+
+    # counts pending: neutral, never colored from zeros
+    pending = dict(web._collection_shelf(c, {}))
+    pending.update(counts_pending=True, in_scope=0, rdf_done=0, fts_done=0,
+                   embed_done=0)
+    html_c = _render_library(pending)
+    assert color_of(html_c, "parsed (rdf)") == "neutral"
+    assert color_of(html_c, "indexed (lexical)") == "neutral"
+    assert color_of(html_c, "embedded (dense)") == "inherit"
+
+
+def test_seed_only_and_state_gates(isolated_config):
+    """The two seeding modes exist, validate, and gate like their design
+    says: seed-only idles the pipeline exactly like pause (what stays
+    alive lives outside the worker loop)."""
+    assert "seed-only" in db.WORKER_STATES
+    assert "acquire-only" in db.WORKER_STATES
+    con = db.connect()
+    db.set_worker_state(con, "seed-only")
+    assert db.worker_state(con) == "seed-only"
+    html = web.TEMPLATES.env.get_template("library.html").render(
+        request=None, active="library", shelves=[], counts_age=0, plugins=[],
+        plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
+        corpus_mounts_dir="", worker_state="seed-only")
+    assert "seeding only" in html and "download/seeding only" in html
+    assert "rescan" in html

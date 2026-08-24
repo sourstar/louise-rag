@@ -578,7 +578,7 @@ WORKER_STATE_KEY = "worker_state"
 # Turning embedding off per collection meant five edits AND losing each
 # collection's own embed_mode; this keeps the corpus growing while the
 # CPU-heavy stages stand down, and restores the previous state exactly.
-WORKER_STATES = ("running", "acquire-only", "paused")
+WORKER_STATES = ("running", "acquire-only", "seed-only", "paused")
 
 def worker_state(con) -> str:
     state = get_control(con, WORKER_STATE_KEY, "paused")
