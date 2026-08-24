@@ -99,6 +99,19 @@ that came with this, worth preserving:
   (gzip cannot seek): pubmed rdf is 5.8 s cold and was 0.36 ms warm.
   Benchmark warm, over hundreds of documents.
 
+**2026-08-24 — the queue-eligible join was the pipeline's ~20-40x brake.**
+The lazy-queue selection at the top of every `_next_book` let the planner
+invert its join: SEARCH over ALL in_scope rdf_done=1 documents (3.6M on
+pubmed, growing with progress) probing the usually-empty queue per row,
+plus a TEMP B-TREE — 4.9 s per step, measured live, in every collection
+with embed_mode lazy/all. CROSS JOIN pins queue→documents; measured
+after: pubmed rdf+fts at 894k docs/h (was ~18-54k/h), remaining corpus
+~40 h, not weeks. The plan test asserts join order — behaviour alone
+returns the same rows either way. Batch sizes bumped to 1000 in the
+node's worker env. Diagnosis chain preserved in commit and
+DEPLOYMENT.md; the container-cache cold-parse log and batch timings that
+found it stay in.
+
 **2026-08-24 — extra formats, and the p2p exchange policy** (amendment 35).
 Peers exchange only the data that fulfils Louise's purpose. An origin's
 alternative formats (gutenberg's epubs) are now declarable per spec
