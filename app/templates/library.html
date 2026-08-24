@@ -55,14 +55,13 @@
      pass start (engine LISTING_KEY) — fetch_files alone grows as the pass
      streams, so done==its total at every instant mid-pass #}
   {% set fetch_total = c.fetched.remote_total or c.fetched.total %}
-  {# the label IS the state: "fetching {what}…" (pass running, brass) /
-     "{what} fetched" (every listed file landed, green) / "{what} waiting"
-     (idle with work left — the worker resumes within a round, or
-     downloads are paused). {what} says what moves: data, compressed
-     data, +extras. Details in Help; the card stays bare. #}
+  {# the label is CONSTANT — "fetched ({what})", matching parsed/indexed/
+     embedded — and the COLOR is the state (one scheme for every stage
+     label): green done, orange in progress, grey idle/off. {what} says
+     what moves: data, compressed data, +extras. Details in Help. #}
   {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
-  {% set fetch_title = 'this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery.' if c.fetched.containers else 'corpus files fetched from the source — see Help' %}
-  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}">{% if c.fetched.active %}<span style="color:var(--brass)">fetching {{ fetch_what }}…</span>{% elif c.fetched.complete %}<span style="color:var(--ok)">{{ fetch_what }} fetched</span>{% else %}{{ fetch_what }} waiting{% endif %}</span>
+  {% set fetch_title = ('this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery. ' if c.fetched.containers else 'corpus files fetched from the source — see Help. ') + 'Label color: green = complete, orange = a fetch pass is running, grey = idle/waiting.' %}
+  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif c.fetched.active %} style="color:var(--brass)"{% endif %}>fetched ({{ fetch_what }})</span>
       <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ '{:,}'.format(c.fetched.docs_done or 0) }} / {{ '{:,}'.format(c.fetched.docs_total) }} ({{ c.fetched.done }}/{{ fetch_total }}){% else %}{{ c.fetched.done }} / {{ fetch_total }}{% endif %}{% if c.fetched.has_extras %} <span title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ '{:,}'.format(c.fetched.extra_done) }}/{{ '{:,}'.format(c.fetched.extra_total) }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
@@ -73,14 +72,20 @@
     after a restart is running now (~25 s on the largest manifests); the
     bars below read 0 until it lands. Refresh in a moment.</div>
   {% endif %}
-  {# a stage label turns green the moment its count covers everything in
-     scope — same signal as the fetch label's green "fetched" state #}
-  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
+  {# every stage label speaks the SAME color scheme as the fetch label:
+     green = done, orange = actively progressing (the worker runs and work
+     remains), grey = idle (worker paused/off) #}
+  {% set stage_title = 'label color: green = complete, orange = in progress, grey = idle' %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.rdf_done < c.in_scope %} style="color:var(--brass)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.fts_done < c.in_scope %} style="color:var(--brass)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% endif %}>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
+  {% if not c.genesis %}
+  {# a pre-embedded collection's dense bar lives in its sub-box below,
+     labeled "pre-embedded (dense)" — it is the import's progress #}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.embed_mode != 'off' and c.in_scope and c.embed_done < c.in_scope %} style="color:var(--brass)"{% endif %}>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+  {% endif %}
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
     {% if c.embed_mode == 'all' %}
@@ -118,40 +123,67 @@
   </div>
   {% endif %}
   {% if c.genesis %}
-  <div class="note">
-    {# badge color = the ARCHIVE DATA's fetch state (green done, orange
-       fetching in progress, grey fetching off/idle); the text points at
-       the card's OWN bars instead of introducing numbers that appear
-       nowhere else on the page. #}
-    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
-    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
-    {% elif not c.genesis.known %} — unknown archive id
-    {% elif c.genesis.local %} —
-      <span title="an archive file is read when an indexed document points into it, and revisited as more of its documents pass indexing — so the file count trails the indexed bar by design; it is pacing, never a stall">import
-      follows indexing: vectors apply as documents pass <i>indexed
-      (lexical)</i>, and the <i>embedded (dense)</i> bar above is this
-      import's progress — no GPU spent
-      ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive files read)</span>
-    {% elif c.genesis.waiting_docs is none or c.genesis.waiting_docs %} —
-      {# the corpus "fetched" line above and this archive are TWO different
-         downloads — conflating them read as "fetching is done, so 0/37 is
-         stuck". Say whose download this is, and show the meter that
-         actually moves toward it (same numbers as the indexed row). #}
-      <span title="the vector archive is its own download — separate from the corpus fetched above — of {{ c.genesis.shard_total }} files published beside the corpus by the archive's producer. Downloading and applying happen together in one pass, after indexing completes: applying earlier would re-download the whole archive repeatedly as documents trickle in.">separate
-      vector download, not started ({{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive
-      files) — it begins when <i>indexed (lexical)</i> completes. Progress toward it:
-      {% if c.genesis.index_total is not none %}{{ '{:,}'.format(c.genesis.index_done) }} / {{ '{:,}'.format(c.genesis.index_total) }} indexed ({{ '%.1f'|format(c.genesis.index_pct) }}%){% else %}counting…{% endif %}</span>
+  {# a "double" plugin: the collection carries a SECOND dataset — the
+     pre-embedded vectors — with its own fetching and its own pacing, so
+     it gets its own SUB-BOX (lighter green). Everything in it lives in
+     the SAME embedding space as the main box: that is exactly what import
+     admission verifies, and the space badge repeats the main one to say
+     so. Unlike wikipedia/wikivec, this is not a second collection. #}
+  <div style="background:rgba(111,191,115,.06);border:1px solid rgba(111,191,115,.30);border-radius:6px;padding:8px 10px;margin-top:8px">
+    <div>
+      pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
+      <span class="badge lapis" title="pre-embedded vectors live in the SAME embedding space as the collection above — import admission verifies exactly that">space: {{ c.space_id }}</span>
+    </div>
+    {% if c.genesis.rejected %}
+    <div class="note">REJECTED — the archive was not produced by this collection's encoder; see the System log.</div>
+    {% elif not c.genesis.known %}
+    <div class="note">unknown archive id — nothing will import.</div>
+    {% else %}
+    {# fetched (vectors): the archive's OWN fetch meter, colored by the
+       same scheme (green done / orange in progress / grey idle) #}
+    <div class="stage"><div class="lbl"><span title="{{ 'the corpus files above ARE this archive — this counts how many have been read into the vector store; a file is read when an indexed document points into it, so the count trails the indexed bar by design' if c.genesis.local else 'the vector archive is its own download of ' ~ c.genesis.shard_total ~ ' files, separate from the corpus fetched above — it downloads and applies in one pass after indexing completes (earlier would re-download it repeatedly as documents trickle in)' }}. Label color: green = complete, orange = in progress, grey = idle/not started."{% if c.genesis.fetch_state == 'done' or (c.genesis.shard_total and c.genesis.applied >= c.genesis.shard_total) %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' %} style="color:var(--brass)"{% endif %}>fetched (vectors)</span>
+        <span>{{ c.genesis.applied }} / {{ c.genesis.shard_total }} archive files</span></div>
+      <div class="spine"><span style="width:{{ (100*c.genesis.applied/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
+    {% if not c.genesis.local and (c.genesis.waiting_docs is none or c.genesis.waiting_docs) %}
+    <div class="note">the download begins when <i>indexed (lexical)</i> above
+      completes. Progress toward it:
+      {% if c.genesis.index_total is not none %}{{ '{:,}'.format(c.genesis.index_done) }} / {{ '{:,}'.format(c.genesis.index_total) }} indexed ({{ '%.1f'|format(c.genesis.index_pct) }}%){% else %}counting…{% endif %}</div>
     <div class="spine"><span style="width:{{ c.genesis.index_pct|round(1) if c.genesis.index_pct is not none else 0 }}%;background:var(--lapis)"></span></div>
-    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} archive
-      files applied; the imported vectors show in the <i>embedded
-      (dense)</i> bar above, and the worker gap-fills locally what the
-      archive cannot cover
+    {% elif c.genesis.local %}
+    <div class="note">import follows indexing: vectors apply as documents pass
+      <i>indexed (lexical)</i> above — no GPU spent.</div>
+    {% endif %}
+    {# pre-embedded (dense): the import's progress in documents — the same
+       counter a plain collection shows as "embedded (dense)" #}
+    <div class="stage"><div class="lbl"><span title="documents whose dense vectors are in place — here they arrive pre-embedded from the archive (plus local gap-fill). Label color: green = complete, orange = in progress, grey = idle."{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' and c.in_scope and c.embed_done < c.in_scope %} style="color:var(--brass)"{% endif %}>pre-embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
+      <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+    <div class="row" style="align-items:center;margin-top:6px">
+      <div style="flex:0 1 auto">
+        <label style="margin:0 0 2px">Local gap-fill —
+          <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
+                title="{{ 'the shared GPU encoder — one collection at a time, serial by design'
+                          if c.embed_device == 'gpu'
+                          else 'a CPU encoder container — runs alongside the GPU without competing' }}">
+            {{ c.embed_device|upper }} spending</span>
+        </label>
+        {# one knob per pre-embedded sub-box. Today a collection declares
+           one archive, and gap-fill targets DOCUMENTS the archive(s)
+           cannot cover — so this is also the collection-wide policy; if a
+           collection ever declares several archives, gap-fill still fills
+           the union of their gaps, one policy. #}
+        <select onchange="setEmbedMode('{{ c.name }}', this.value)"
+                title="archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
+          <option value="all" {{ 'selected' if c.embed_mode == 'all' }}>fix — embed the few docs the archive can’t cover</option>
+          <option value="lazy" {{ 'selected' if c.embed_mode == 'lazy' }}>fix on demand — only when a query hits one</option>
+          <option value="off" {{ 'selected' if c.embed_mode == 'off' }}>off — leave the gaps unembedded</option>
+        </select></div>
+    </div>
     {% endif %}
   </div>
-  {% endif %}
+  {% else %}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
-      <label style="margin:0 0 2px">{{ 'Local gap-fill' if c.genesis else 'Embed mode' }} —
+      <label style="margin:0 0 2px">Embed mode —
         {# which processor this collection's encoder actually spends: the
            GPU is the scarce, contended one; CPU encoders run beside it #}
         <span class="badge {{ 'lapis' if c.embed_device == 'gpu' else 'brass' }}"
@@ -164,22 +196,13 @@
          desired state, like create/ack) AND the runtime scope for
          immediate effect — it survives restarts #}
       <select onchange="setEmbedMode('{{ c.name }}', this.value)"
-              title="{{ 'archive import runs regardless; this only decides whether the local encoder fills what the archive cannot cover. ' if c.genesis else '' }}Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
-        {% if c.genesis %}
-        {# a pre-embedded collection's vectors arrive via the archive no
-           matter what; this knob only governs GAP-FILL of the few documents
-           the archive can never cover (articles straddling a shard
-           boundary), so the honest choices are fix / fix-on-demand / off #}
-        <option value="all" {{ 'selected' if c.embed_mode == 'all' }}>fix — embed the few docs the archive can’t cover</option>
-        <option value="lazy" {{ 'selected' if c.embed_mode == 'lazy' }}>fix on demand — only when a query hits one</option>
-        <option value="off" {{ 'selected' if c.embed_mode == 'off' }}>off — leave the gaps unembedded</option>
-        {% else %}
+              title="Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
         {% for m in ['off','lazy','all'] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>
         {% endfor %}
-        {% endif %}
       </select></div>
   </div>
+  {% endif %}
   <div class="actions">
     <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
     <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>

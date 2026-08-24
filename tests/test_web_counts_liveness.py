@@ -422,3 +422,36 @@ def test_remote_genesis_card_shows_indexing_progress_toward_import(isolated_conf
 
     cold = web._genesis_state(con, c, None)
     assert cold["index_pct"] is None, "a cold cache says counting, never 0%"
+
+
+def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
+    """A collection with a genesis archive is a 'double' plugin: its card
+    grows a sub-box for the pre-embedded data — own fetched (vectors) and
+    pre-embedded (dense) rows, the gap-fill knob, and the SAME space badge
+    as the main box — while the main box keeps fetched/parsed/indexed and
+    drops its embedded row."""
+    from dataclasses import replace
+    c = replace(collections_mod.default_collection(),
+                genesis_archive="medcpt-pubmed")
+    db.connect(c)
+    shelf = web._collection_shelf(c, {})
+    html = web.TEMPLATES.env.get_template("library.html").render(
+        request=None, active="library", shelves=[shelf], counts_age=0,
+        plugins=[], plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
+        corpus_mounts_dir="", worker_state="running")
+    assert "pre-embedded (dense)" in html
+    assert "fetched (vectors)" in html
+    assert "Local gap-fill" in html
+    assert html.count("space: %s" % shelf["space_id"]) == 2, \
+        "the sub-box repeats the main box's space badge"
+    assert "embedded (dense)" in html  # substring of pre-embedded — check exclusivity:
+    assert ">embedded (dense)</span>" not in html, \
+        "a genesis card's dense bar lives in the sub-box only"
+
+    plain = web._collection_shelf(collections_mod.default_collection(), {})
+    html2 = web.TEMPLATES.env.get_template("library.html").render(
+        request=None, active="library", shelves=[plain], counts_age=0,
+        plugins=[], plugin_profiles={}, plugin_extras={}, corpus_mounts=[],
+        corpus_mounts_dir="", worker_state="running")
+    assert ">embedded (dense)</span>" in html2
+    assert "pre-embedded (dense)" not in html2
