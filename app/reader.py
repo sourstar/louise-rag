@@ -52,7 +52,11 @@ def document(collection, book_id: int) -> dict | None:
     if row is None:
         return None
     row = dict(row)
-    chunks = _chunks_from_fts(collection, row, book_id) if row.get("fts_done") else []
+    # asked of the index regardless of fts_done: a re-index in progress
+    # (a chunker change, `reprocess lexical index`) clears the mark but the
+    # entries stay searchable until rewritten — and a hit that came from
+    # them must open (observed live on PubMed after the 2026-08-26 re-pin)
+    chunks = _chunks_from_fts(collection, row, book_id)
     source_store = "lexical index"
     if not chunks:
         chunks = _chunks_from_lance(collection, book_id)

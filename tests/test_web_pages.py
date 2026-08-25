@@ -350,3 +350,17 @@ def test_origin_links_per_source():
     assert reader.ORIGIN["wikipedia"]({"native_id": "x", "lang": "de", "title": "Albert Einstein"}) == \
         "https://de.wikipedia.org/wiki/Albert_Einstein"
     assert reader.ORIGIN["wikipedia"]({"native_id": "x", "lang": "de", "title": None}) is None
+
+
+def test_reader_serves_a_document_mid_reindex_from_the_entries_still_in_the_index(client):
+    """Live after the PubMed re-pin: fts_done was reset for every document
+    while the old entries stayed searchable until rewritten — a hit that
+    came from them must open, so the reader asks the index regardless of
+    the mark."""
+    from app import reader
+    _seed_one_book()
+    c = collections_mod.default_collection()
+    db.connect(c).execute("UPDATE documents SET fts_done=0 WHERE uid='gutenberg:1'")
+    doc = reader.document(c, 1)
+    assert doc["chunks"] and doc["header"]["text_from"] == "lexical index"
+    assert "lighthouse keeper lit the lamp" in client.get(f"/read/{c.name}/1").text
