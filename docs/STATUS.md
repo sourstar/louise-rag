@@ -407,7 +407,19 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   (title + abstract, truncated to the encoder's budget the way MedCPT
   did), bumped explicitly for pubmed's chunker id, which re-pins pubmed's
   space and invalidates its existing vectors (tens of thousands today —
-  cheap to redo now, not later). Operator decision required.
+  cheap to redo now, not later). **Operator approved 2026-08-25; to
+  build 2026-08-26.** Spec for the day: (a) `chunk_abstract` becomes
+  PubMed's chunker — one chunk per article, `title + "\n\n" + abstract`,
+  truncated to the recipe's token budget the way MedCPT was fed (512
+  tokens; measure the char/token ratio on a sample, never guess); (b)
+  the chunker id/version bump is PubMed-only (invariant 3 — no global
+  knob), with a golden test on a fixture container; (c) PubMed's space
+  re-pins: wipe its Lance table, `embed_done`, `genesis_imports` and the
+  genesis cache on both nodes, re-record the pin, and let the archive
+  re-apply — the ~160k vectors of 2026-08-25 are the whole cost; (d)
+  verify the shape gate now accepts abstract-bearing articles (the
+  per-document cosine diagnostic from 2026-08-25 doubles as the
+  acceptance test: sampled cosines ≥ 0.99, multi-chunk count ≈ 0).
 - **Library/Stats counts are cached ~2 minutes** (stale-while-revalidate).
   `invalidate_counts` is wired only to the reset endpoint, so any change made
   outside the web process — including direct SQL — lingers until the TTL.
