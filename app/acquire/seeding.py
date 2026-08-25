@@ -45,19 +45,30 @@ SEEDING_STATES = ("running", "acquire-only", "seed-only")   # worker states that
 def record_published(con, entry: dict) -> None:
     """Called by `torrent publish`: what this collection's seeder should
     serve. `entry` is PublishedTorrent.as_catalog_entry() plus
-    torrent_path and root (the directory that was hashed)."""
-    db.set_control(con, TORRENT_PUBLISHED_KEY, json.dumps(entry))
+    torrent_path and root (the directory that was hashed).
+
+    SEVERAL torrents per collection (STATUS 5h — one per language of the
+    pre-embedded corpus): the record is a list keyed on info_hash; a
+    re-publish of the same torrent replaces its entry, a new one joins."""
+    entries = [e for e in read_published(con)
+               if e.get("info_hash") != entry.get("info_hash")
+               and e.get("torrent_path") != entry.get("torrent_path")]
+    entries.append(entry)
+    db.set_control(con, TORRENT_PUBLISHED_KEY, json.dumps(entries))
 
 
-def read_published(con) -> dict | None:
+def read_published(con) -> list[dict]:
+    """Every torrent this collection has published (older records held a
+    single dict — read as a one-entry list)."""
     raw = db.get_control(con, TORRENT_PUBLISHED_KEY)
     if not raw:
-        return None
+        return []
     try:
-        entry = json.loads(raw)
+        value = json.loads(raw)
     except (ValueError, TypeError):
-        return None
-    return entry if isinstance(entry, dict) and entry.get("torrent_path") else None
+        return []
+    entries = value if isinstance(value, list) else [value]
+    return [e for e in entries if isinstance(e, dict) and e.get("torrent_path")]
 
 
 class Seeder:
@@ -175,14 +186,12 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
             con = cons.get(collection.name)
             if con is None:
                 continue
-            entry = read_published(con)
-            if entry is None:
-                continue
-            try:
-                seeder.ensure(collection, entry)
-            except Exception as e:   # noqa: BLE001 — one bad torrent, not the seeder
-                db.log_event(con, "warn", "seeding",
-                             f"cannot seed {entry.get('name')}: {type(e).__name__}: {e}"[:300])
+            for entry in read_published(con):
+                try:
+                    seeder.ensure(collection, entry)
+                except Exception as e:   # noqa: BLE001 — one bad torrent, not the seeder
+                    db.log_event(con, "warn", "seeding",
+                                 f"cannot seed {entry.get('name')}: {type(e).__name__}: {e}"[:300])
         seeder.account()
         db.set_control(control_con, SEEDING_TABLE_KEY,
                        json.dumps({"at": time.time(), "rows": seeder.table()}))

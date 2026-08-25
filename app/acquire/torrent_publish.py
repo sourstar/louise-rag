@@ -56,7 +56,8 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
                    web_seeds: tuple[str, ...] = (),
                    comment: str | None = None,
                    hybrid: bool = True,
-                   exclude_patterns: tuple[str, ...] = ()) -> PublishedTorrent:
+                   exclude_patterns: tuple[str, ...] = (),
+                   include_patterns: tuple[str, ...] = ()) -> PublishedTorrent:
     """Hash `corpus_dir` into a .torrent at `out_path`.
 
     Hashing reads every byte, so this is minutes of disk on a large corpus
@@ -84,11 +85,25 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
     # never published either: a plugin's derived caches live in a hidden
     # directory beside the archive (pubmed's `.pack/`), are rebuilt from
     # it, and must not become p2p material or change a snapshot's identity.
+    # `include_patterns` (STATUS 5h) publishes a SUBSET of the tree under
+    # the SAME root — e.g. one language of the pre-embedded corpus
+    # ("*/data/en/*" under root `data`), so a peer's files land in the
+    # layout the plugin expects and several such torrents combine.
+    includes = tuple(include_patterns or ())
+
     def _include(path: str) -> bool:
         rel = Path(path).as_posix()
         if _hidden(rel):
             return False
+        # libtorrent asks about DIRECTORIES too, and a False on one prunes
+        # its whole subtree — so a directory passes on the hidden check
+        # alone; include patterns judge files
+        if Path(path).is_dir():
+            return True
         base = rel.rsplit("/", 1)[-1]
+        if includes and not any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat)
+                                for pat in includes):
+            return False
         return not any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat)
                        for pat in patterns)
     lt.add_files(fs, str(corpus_dir), _include)

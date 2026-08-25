@@ -238,7 +238,11 @@ def _load_one(path: Path) -> Collection:
         embed=embed,
         genesis_archive=raw.get("genesis_archive"),
         extras=tuple(raw.get("extras") or ()),
-        peer_source=(str(raw["peer_source"]) if raw.get("peer_source") else None),
+        # one magnet/.torrent, or several (a TOML array, or one per line):
+        # the per-language torrents of a pre-embedded corpus (STATUS 5h)
+        peer_source=(("\n".join(str(x) for x in raw["peer_source"])
+                      if isinstance(raw.get("peer_source"), list)
+                      else str(raw["peer_source"])) if raw.get("peer_source") else None),
         snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
     )
 

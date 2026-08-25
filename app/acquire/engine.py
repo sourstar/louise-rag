@@ -249,14 +249,33 @@ def effective_spec(collection, spec: AcquisitionSpec) -> AcquisitionSpec:
     frozen snapshot). Mirrors/probing are origin concepts and are dropped.
     """
     from dataclasses import replace
-    peer = getattr(collection, "peer_source", None)
-    if not peer:
+    peers = peer_sources(collection)
+    if not peers:
         return spec
+    # SEVERAL torrents (STATUS 5h: one per language of a pre-embedded
+    # corpus) are several endpoints that each carry a DIFFERENT subset of
+    # the tree: the listing is their union, and run_acquisition fetches
+    # them one after the other in the order the TOML lists them — the
+    # first language is complete, and the pipeline busy on it, while the
+    # rest still arrives.
     return replace(spec,
                    transport=Transport.TORRENT,
-                   endpoints=(Endpoint(transport=Transport.TORRENT, url=peer),),
+                   endpoints=tuple(Endpoint(transport=Transport.TORRENT, url=p) for p in peers),
                    checksums=ChecksumSource(kind="none"),
                    probe_file=None, snapshot_files=None, snapshot_index=None)
+
+
+def peer_sources(collection) -> tuple[str, ...]:
+    """The collection's peer-plane sources: `peer_source` in the TOML is
+    one magnet/.torrent or several, one per line (or comma-separated)."""
+    raw = getattr(collection, "peer_source", None)
+    if not raw:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        items = [str(x) for x in raw]
+    else:
+        items = str(raw).replace(",", "\n").split("\n")
+    return tuple(s.strip() for s in items if s.strip())
 
 
 def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> AcquisitionPlan:
@@ -642,6 +661,21 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
         keepalive = _ClaimKeepalive(collection, spec.source_id)
         keepalive.start()
         try:
+            if spec.transport is Transport.TORRENT and len(spec.endpoints) > 1:
+                # several torrents carrying different subsets (STATUS 5h):
+                # ONE AT A TIME, in the listed order, so the first is
+                # complete — and being processed — before the next starts
+                from dataclasses import replace
+                total: dict = {}
+                for endpoint in spec.endpoints:
+                    if stop is not None and stop.is_set():
+                        break
+                    part = _run_acquisition_claimed(
+                        con, collection, replace(spec, endpoints=(endpoint,)),
+                        profile, stop, priority)
+                    for k, v in part.items():
+                        total[k] = total.get(k, 0) + v if isinstance(v, (int, float)) else v
+                return total
             return _run_acquisition_claimed(con, collection, spec, profile,
                                             stop, priority)
         finally:

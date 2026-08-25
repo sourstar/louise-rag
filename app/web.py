@@ -1004,7 +1004,16 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
     if peer_source:
         # peer plane: fetch from this magnet/.torrent instead of the origin
         # (engine.effective_spec). Carried on every rewrite like the rest.
-        lines.append(f'peer_source = "{peer_source}"')
+        # Several (one per language of a pre-embedded corpus, STATUS 5h)
+        # are written as a TOML array, in fetch order.
+        from .acquire.engine import peer_sources as _peer_sources
+        sources = _peer_sources(type("_P", (), {"peer_source": peer_source})())
+        if len(sources) > 1:
+            lines.append("peer_source = [")
+            lines.extend(f'  "{s}",' for s in sources)
+            lines.append("]")
+        else:
+            lines.append(f'peer_source = "{sources[0] if sources else peer_source}"')
     if embed_mode:
         lines.append(f'embed_mode = "{embed_mode}"')
     if snapshot:
@@ -1196,8 +1205,13 @@ def new_collection_create(body: CreateCollectionBody):
     if body.acquire_source == "peers" and not peer:
         raise HTTPException(400, "fetching from peers needs a magnet URI or a "
                                   ".torrent path (peer_source)")
-    if peer and not (peer.startswith("magnet:") or peer.endswith(".torrent")):
-        raise HTTPException(400, "peer_source must be a magnet: URI or a .torrent path")
+    # one source, or several one per line / comma-separated (the per-
+    # language torrents of a pre-embedded corpus, fetched in this order)
+    from .acquire.engine import peer_sources as _peer_sources
+    for src in _peer_sources(type("_P", (), {"peer_source": peer})()):
+        if not (src.startswith("magnet:") or src.endswith(".torrent")):
+            raise HTTPException(400, f"peer_source entry is neither a magnet: URI nor a "
+                                      f".torrent path: {src[:60]}")
     toml_path = collections_mod.config_toml_path(body.name)
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")

@@ -513,37 +513,71 @@ def cmd_torrent_publish(args) -> int:
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     exclude = tuple(pat for flt in (spec.extras.values() if spec else ())
                     for pat in flt.include)
-    root = collection.corpus_dir / args.subdir if args.subdir else collection.corpus_dir
-    try:
-        published = torrent_publish.publish_corpus(
-            root, out, name=collection.name,
-            trackers=tuple(args.tracker or ()),
-            web_seeds=tuple(args.web_seed or ()),
-            comment=f"louise-rag collection {collection.name}",
-            exclude_patterns=exclude)
-    except TransportError as e:
-        print(f"REFUSED: {e}", file=sys.stderr)
-        return 1
-    # the worker's seeder reads this record and serves the torrent from
-    # `root` (app/acquire/seeding.py); deleting the .torrent stops it
     from .acquire import seeding
-    seeding.record_published(db.connect(collection), {
-        **published.as_catalog_entry(),
-        "torrent_path": str(published.torrent_path), "root": str(root)})
-    magnet = published.magnet
-    if args.peer_hint:
-        magnet += f"&x.pe={args.peer_hint}"
-    print(f"torrent:   {published.torrent_path}")
-    print(f"root:      {root}")
-    print(f"files:     {published.files}")
-    print(f"bytes:     {published.total_bytes:,}")
-    print(f"info hash: {published.info_hash}")
-    print()
+    con = db.connect(collection)
+
+    # (root, out path, name, include patterns) per torrent to publish
+    jobs: list[tuple[Path, Path, str, tuple[str, ...]]] = []
+    if getattr(args, "per_language", False):
+        # STATUS 5h: one torrent per data/<lang>, ALL rooted at `data` so a
+        # peer's files land in the plugin's layout and the torrents combine
+        data_root = collection.corpus_dir / "data"
+        if not data_root.is_dir():
+            print(f"REFUSED: {data_root} is not a directory (per-language needs "
+                  f"the data/<lang>/ layout)", file=sys.stderr)
+            return 1
+        wanted = {s.strip() for s in args.languages.split(",") if s.strip()}
+        langs = sorted(p.name for p in data_root.iterdir()
+                       if p.is_dir() and not p.name.startswith(".")
+                       and (not wanted or p.name in wanted))
+        if not langs:
+            print("REFUSED: no language directories under data/", file=sys.stderr)
+            return 1
+        for lang in langs:
+            out_lang = (Path(args.out).with_name(f"{Path(args.out).stem}-{lang}.torrent")
+                        if args.out else
+                        collection.manifest_path.parent / f"{collection.name}-{lang}.torrent")
+            jobs.append((data_root, out_lang, f"{collection.name}-{lang}",
+                         (f"*data/{lang}/*",)))
+    else:
+        root = collection.corpus_dir / args.subdir if args.subdir else collection.corpus_dir
+        jobs.append((root, out, collection.name, ()))
+
+    for root, out_path, name, includes in jobs:
+        try:
+            published = torrent_publish.publish_corpus(
+                root, out_path, name=name,
+                trackers=tuple(args.tracker or ()),
+                web_seeds=tuple(args.web_seed or ()),
+                comment=f"louise-rag collection {collection.name}",
+                exclude_patterns=exclude, include_patterns=includes)
+        except TransportError as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 1
+        # the worker's seeder reads this record and serves the torrent from
+        # `root` (app/acquire/seeding.py); deleting the .torrent stops it
+        seeding.record_published(con, {
+            **published.as_catalog_entry(),
+            "torrent_path": str(published.torrent_path), "root": str(root)})
+        magnet = published.magnet
+        if args.peer_hint:
+            magnet += f"&x.pe={args.peer_hint}"
+        print(f"torrent:   {published.torrent_path}")
+        print(f"root:      {root}")
+        print(f"files:     {published.files}")
+        print(f"bytes:     {published.total_bytes:,}")
+        print(f"info hash: {published.info_hash}")
+        print(f"magnet:    {magnet}")
+        print()
     print("Recorded for the worker's seeder (starts within its next telemetry "
           "beat while the node runs, downloads/seeding only, or seeding only).")
-    print("Give a peer either the .torrent file above or this magnet"
-          + (" (with the direct-peer hint):" if args.peer_hint else ":"))
-    print(magnet)
+    if len(jobs) > 1:
+        print("A peer lists these magnets in its TOML `peer_source = [...]` in the "
+              "order it wants them; they are fetched one after the other.")
+    if len(jobs) == 1:
+        print("Give a peer either the .torrent file above or this magnet"
+              + (" (with the direct-peer hint):" if args.peer_hint else ":"))
+        print(magnet)
     if not args.tracker:
         print()
         print("No tracker is embedded. A peer that cannot reach this node "
@@ -852,6 +886,14 @@ def main(argv=None) -> int:
     t_pub.add_argument("--peer-hint", default="",
                        help="host:port a peer can dial directly (no tracker/DHT): "
                             "appended to the printed magnet as x.pe=")
+    t_pub.add_argument("--per-language", action="store_true",
+                       help="pre-embedded corpus (STATUS 5h): one torrent PER "
+                            "LANGUAGE directory under data/, all with root 'data', "
+                            "so a peer fetches and starts on one language while "
+                            "the rest arrives; every torrent is recorded for seeding")
+    t_pub.add_argument("--languages", default="",
+                       help="with --per-language: only these (comma-separated), "
+                            "default every data/<lang> directory")
     t_pub.set_defaults(func=cmd_torrent_publish)
 
     t_seed = torrent.add_parser("seed", help="serve a published torrent")

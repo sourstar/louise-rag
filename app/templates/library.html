@@ -260,7 +260,7 @@
         <option value="peers">fetch corpus from peers (torrent)</option>
       </select>
       <div id="nc_peer_wrap" style="display:none;margin-top:6px">
-        <input id="nc_peer_source" placeholder="magnet:?xt=urn:btih:…&x.pe=host:port  or  /config/x.torrent" style="width:100%">
+        <textarea id="nc_peer_source" rows="2" placeholder="magnet:?xt=urn:btih:…&x.pe=host:port  or  /config/x.torrent — several? one per line, fetched in this order (a pre-embedded corpus publishes one per language)" style="width:100%"></textarea>
       </div></div>
     <div><label>Corpus folder</label>
       {# No default option: a collection points at a real mounted dataset or

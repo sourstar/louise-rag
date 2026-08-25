@@ -398,15 +398,26 @@ block every other collection's embedding for each 300 s slice.
    tank; the `.pack/` copied into `tank/louise-corpora/pubmed` (5 GB) is
    unused under `PUBMED_PACK_DIR` and can go with them. Gutenberg
    (`ssd4/data/gutenberg`, 302 GB) stays on the NVMe.
-5h. **wikivec per-language torrents (operator approved 2026-08-25; to
-   build 2026-08-26).** The single 590 GB / 1,447-file torrent is split
-   into one torrent per language directory (`data/<lang>`: en 192 GB,
-   de 83, fr 75, ru 57, es 54, it 42, ja 33, pt 25, zh 14, fa 11, tr 8.4),
-   the seeding record holds several torrents per collection, and a peer
-   can fetch and start on one language while the rest arrives (the
-   "active while fetching" principle of amendment 37). It also resolves
-   the preflight refusal (`all` needs ~633 GB; 645 GB free at 1.05
-   headroom) once the languages move to `tank` (5i).
+5h. **wikivec per-language torrents (operator approved 2026-08-25; BUILT
+   2026-08-26).** `torrent publish <collection> --per-language
+   [--languages en,tr]` hashes one torrent per `data/<lang>` directory
+   (en 192 GB, de 83, fr 75, ru 57, es 54, it 42, ja 33, pt 25, zh 14,
+   fa 11, tr 8.4), ALL rooted at `data` with an include filter
+   (`publish_corpus(include_patterns=…)` — libtorrent's add_files asks
+   about directories too and a False prunes the subtree, so directories
+   pass and files are judged), so a peer's files land in the plugin's
+   own layout and the torrents combine. The seeding record is a list
+   (`seeding.record_published` merges by info_hash; older single-dict
+   records still read), the worker seeds every entry. On the peer,
+   `peer_source` is one magnet or several — a TOML array, one per line,
+   or comma-separated (`engine.peer_sources`); `effective_spec` makes
+   one endpoint per torrent, the listing is their union, and
+   `run_acquisition` fetches the torrents ONE AFTER THE OTHER in the
+   listed order — the first language is complete, and the pipeline busy
+   on it, while the rest arrives (amendment 37). The create dialog
+   validates every entry. `tests/acquire/test_per_language_torrents.py`.
+   The NAS publishes wikivec per language from `tank` (hashing 590 GB
+   at ~300 MB/s ≈ 35 min per full pass, run in the background).
 5g. **Pre-embedded archives: fetched like a corpus, applied as indexing
    goes, one knob (amendment 38; operator policy, 2026-08-24).** Live
    pubmed: 8.25M/40M indexed, 0/37 MedCPT shards, 44 embedded — the

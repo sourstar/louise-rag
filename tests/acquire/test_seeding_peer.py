@@ -144,7 +144,7 @@ def test_seeder_serves_published_torrents_and_credits_the_up_bucket(
     # deleting the .torrent is how seeding is stopped: a fresh seeder
     # refuses to serve it
     out.unlink()
-    assert seeding.Seeder().ensure(c, seeding.read_published(con)) is False
+    assert seeding.Seeder().ensure(c, seeding.read_published(con)[0]) is False
     leech.remove_torrent(h)
 
 
