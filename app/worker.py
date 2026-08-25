@@ -819,19 +819,23 @@ _vindex_last: dict[str, float] = {}     # lance dir -> last maintenance attempt
 def _maintain_vector_index(con, collection) -> bool:
     """The local vector index, off the GPU loop (pack-format.md §5): build
     once the table is big enough, fold new rows in when enough accumulated.
-    Throttled per collection; the Lance write lock is held so the embed
-    writer waits (a deferral) rather than racing a compaction. Returns True
-    when it did work this round."""
+    Throttled per collection. NO manifest lock is held: the vector write
+    lock is a SQLite write transaction on the collection's manifest, and
+    holding it for an hour-long build blocked every event, count and
+    discovery commit of that collection (observed live the minute it first
+    ran). An index over existing fragments needs no row lock — Lance
+    detects a conflicting concurrent commit itself and the loser retries;
+    a delete-then-insert that loses to a compaction is a deferred step,
+    never lost data (the mark follows the write). Returns True when it did
+    work this round."""
     from . import vector_index
-    from .bundles.writer_lock import vector_write_lock
     key = str(collection.lance_dir)
     now = time.time()
     if now - _vindex_last.get(key, 0.0) < config.VECTOR_INDEX_REFRESH_S:
         return False
     _vindex_last[key] = now
     try:
-        with vector_write_lock(con):
-            out = vector_index.ensure(collection, con)
+        out = vector_index.ensure(collection, con)
     except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
         db.log_event(con, "warn", "index",
                      f"vector index maintenance deferred: {type(e).__name__}: {e}"[:300])

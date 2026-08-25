@@ -143,7 +143,8 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
             db.log_event(con, "info", "index",
                          f"building the vector index over {st['rows']} rows "
                          f"({config.VECTOR_INDEX_TYPE}) — minutes to an hour on a large table; "
-                         f"this collection's vector writes wait meanwhile, queries keep scanning")
+                         f"queries keep scanning meanwhile, writes continue (a write that "
+                         f"collides with the build's commit is retried)")
         out = build(collection, log=log)
         if con is not None and out.get("built"):
             db.log_event(con, "info", "index",

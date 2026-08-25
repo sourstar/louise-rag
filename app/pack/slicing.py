@@ -129,7 +129,7 @@ def slice_hint(plugin_name: str, row) -> str | None:
             container, index = split_locator(row["path"])
             if index is None:
                 return None
-            date = pubmed_pack.record_fields(container, index).get("date")
+            date = pubmed_pack.record_dates(container).get(index)
             m = _YEAR.search(str(date or ""))
             if not m:
                 return "year=unknown"

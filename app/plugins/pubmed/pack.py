@@ -303,8 +303,36 @@ def record_fields(container: Path, index: int) -> dict:
     raise IndexError(f"{container.name}: record {index} not in the pack")
 
 
+_dates: OrderedDict = OrderedDict()          # pack path -> {index: date}
+_MAX_DATES = 2
+
+
+def record_dates(container: Path) -> dict[int, str | None]:
+    """index -> publication date for EVERY record of the container, two
+    small columns read once and cached (one slot per container): what the
+    pack planner needs per record, without the row group's abstracts.
+    record_fields() per record read a 1000-row group each time — 20
+    records/s on the 33M-row pubmed manifest."""
+    path = ensure(container)
+    key = str(path)
+    with _files_lock:
+        hit = _dates.get(key)
+        if hit is not None:
+            _dates.move_to_end(key)
+            return hit
+    table = _open(path).read(columns=["index", "date"])
+    out = dict(zip(table.column("index").to_pylist(), table.column("date").to_pylist()))
+    with _files_lock:
+        _dates[key] = out
+        _dates.move_to_end(key)
+        while len(_dates) > _MAX_DATES:
+            _dates.popitem(last=False)
+    return out
+
+
 def reset_caches() -> None:
     with _files_lock:
         _files.clear()
         _groups.clear()
         _fresh.clear()
+        _dates.clear()

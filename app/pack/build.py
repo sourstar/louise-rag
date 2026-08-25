@@ -36,6 +36,8 @@ RECORDS_DIR = "records"
 TERMS_FILE = "TERMS.txt"
 VALIDATION_FILE = "validation.json"
 PLAN_PAGE = 5000
+PLAN_PAGE_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FROM documents "
+                 "WHERE rowid>? ORDER BY rowid LIMIT ?")
 
 
 class BuildError(RuntimeError):
@@ -106,14 +108,18 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     while True:
         if stop is not None and stop.is_set():
             return planned
-        page = con_src.execute(
-            "SELECT rowid, uid, native_id, path, lang FROM documents "
-            "WHERE in_scope=1 AND error IS NULL AND rowid>? ORDER BY rowid LIMIT ?",
-            (last, PLAN_PAGE)).fetchall()
+        # A pure ROWID walk: with `in_scope=1 AND error IS NULL` in the
+        # WHERE clause SQLite may pick the scope index and sort every
+        # matching row for ORDER BY rowid (a TEMP B-TREE per page — the
+        # quadratic trap, observed as 500 rows/s on a 7M-row manifest).
+        # The filter is applied here instead; the page size is in rowids.
+        page = con_src.execute(PLAN_PAGE_SQL, (last, PLAN_PAGE)).fetchall()
         if not page:
             break
         rows = []
         for row in page:
+            if not row["in_scope"] or row["error"] is not None:
+                continue
             slice_name = slicing.slice_hint(origin, row)
             if slice_name is None:
                 try:

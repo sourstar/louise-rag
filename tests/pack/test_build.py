@@ -181,6 +181,34 @@ def test_manifest_is_signed_with_the_node_key_and_verifies(isolated_config, tmp_
         manifest_mod.verify(m)
 
 
+def test_the_plan_walk_is_a_rowid_scan_and_pubmed_hints_read_no_abstracts(isolated_config, tmp_path):
+    """Plan-checked (CLAUDE.md): the planning page must never sort — with
+    the scope filter in the WHERE clause SQLite sorted every matching row
+    per page (500 rows/s live on a 7M-row manifest). And a pubmed hint
+    costs two small columns per container, cached, not a row group of
+    abstracts per record (20 records/s live)."""
+    origin = _discovered(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    con = db.connect(origin)
+    plan = " ".join(r[3] for r in con.execute("EXPLAIN QUERY PLAN " + pack_build.PLAN_PAGE_SQL, (-1, 10)))
+    assert "TEMP B-TREE" not in plan and "USING INTEGER PRIMARY KEY" in plan, plan
+    from app.plugins.pubmed import pack as pubmed_pack
+    from app.plugins.pubmed.source import split_locator
+    rows = con.execute("SELECT uid, native_id, path, lang FROM documents WHERE error IS NULL").fetchall()
+    calls = []
+    real = pubmed_pack.record_fields
+    pubmed_pack.record_fields = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    try:
+        hints = {r["uid"]: slicing.slice_hint("pubmed", r) for r in rows}
+    finally:
+        pubmed_pack.record_fields = real
+    assert not calls, "the hint never reads a row group of abstracts"
+    for r in rows:
+        container, index = split_locator(r["path"])
+        assert pubmed_pack.record_dates(container)[index] == real(container, index)["date"]
+        assert hints[r["uid"]].startswith("year=")
+    con.close()
+
+
 def test_slicing_rules():
     from app.plugins.base import CanonicalDoc
     def doc(**kw):

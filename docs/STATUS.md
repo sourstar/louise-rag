@@ -357,9 +357,14 @@ deploy.
    `app/vector_index.py` — Lance IVF-PQ (IVF-FLAT by knob), built by
    the worker's pipeline thread once a table has VECTOR_INDEX_MIN_ROWS
    (100k), rows folded in by `optimize` past VECTOR_INDEX_REFRESH_ROWS,
-   the search probing (nprobes 30, refine 30) whenever an index exists;
-   the build holds the vector write lock, so that collection's embeds
-   wait meanwhile (once). Wikipedia's fetch caches the last decompressed
+   the search probing (nprobes 30, refine 30) whenever an index exists.
+   First live minute: the build held the vector write lock — a RESERVED
+   lock on the collection's MANIFEST — and every event, count and
+   discovery commit of that collection blocked for the build's duration;
+   fixed the same minute: no manifest lock for an index over existing
+   fragments (Lance's own commit conflict detection covers a concurrent
+   write; a delete-then-insert that loses is a deferred step, never lost
+   data). Wikipedia's fetch caches the last decompressed
    stream (one slot) — ~100x fewer decompressions for every stage. NAS:
    datasets `tank/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
    1M, lz4) mounted at `/packs` (PACK_MOUNTS_DIR; the create dialog
