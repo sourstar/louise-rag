@@ -276,6 +276,25 @@ block every other collection's embedding for each 300 s slice.
    magnet is also in `/config/wikivec-collection-magnet.txt`. A peer
    creates its wikivec collection with that one magnet and profile
    `tr` (8 GB), then grows to `tr,it` from the dialog.
+   **First peer, Louise2, 2026-08-26 (profile `demo`):** the index
+   resolved (11 members, hint), `demo` selected only `tr` (21 files,
+   8.97 GB), Turkish parquet files landed at LAN speed (2.5 GB in the
+   first two minutes). Three things it exposed, two fixed the same hour:
+   (1) the create dialog's default `[embed]` is the NODE's encoder — for
+   a pre-embedded corpus the recipe must be the ARCHIVE's function, or
+   the genesis proof rejects every shard; Louise2's wikivec now points
+   at the NAS's BGE-M3 endpoint (`192.168.178.10:30442`, byte-equal
+   recipe ⇒ the same space id `ed34b4b0…` as the NAS's wikivec), and a
+   wrong pin was dropped with `space repin`. To do: the create dialog
+   should offer the archive's recipe for a plugin with a declared
+   archive. (2) The torrent transport never credited its bytes to the
+   budget (invariant 5's accounting half): 2.5 GB arrived while Traffic
+   read 0 — fixed (`_credit_download`, per handle, tested). (3) A new
+   collection is unnoticed for the length of a GPU embed round: the
+   main loop sits in `_embed_parallel` until its in-flight documents
+   finish (six 500-chunk books at 3.5 chunks/s ≈ 15 min on Louise2)
+   and `_sync_collections` runs between rounds — recorded under *Known
+   gaps*; a restart of the worker was the workaround.
 5k. **PubMed container access — measured 2026-08-25, pack BUILT the same
    night (`app/plugins/pubmed/pack.py`).** One row per direct child of
    the container root, in document order (the record index the locators
@@ -656,6 +675,22 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   per batch shape, and its prompt cache can replay the corrupted result for
   later single-text requests. Use concurrency for throughput, never batching.
   This does **not** apply to encoders we host ourselves.
+- **The main loop is blind for the length of an embed round.**
+  `_sync_collections` (hot-add of a new TOML, config changes) and the
+  worker's own telemetry run between rounds, and a round of
+  `_embed_parallel` returns only when its in-flight DOCUMENTS finish —
+  six 500-chunk books on a 3.5 chunks/s GPU held Louise2's loop for
+  15+ minutes while a freshly created collection sat unnoticed
+  (2026-08-26). The stream deadline stops refilling, not waiting. Fix
+  to design: keep the executor across rounds and collect finished
+  documents at the next round's start, so a round returns at the
+  deadline; until then a worker restart is the workaround.
+- **The create dialog's default `[embed]` is the node's encoder** — right
+  for a corpus this node embeds, wrong for a pre-embedded one, whose
+  recipe must be the ARCHIVE's function (BGE-M3 for wikivec) or the
+  genesis proof rejects every shard. Offer the archive's recipe when the
+  plugin declares an archive; until then set `[embed]` by hand (Louise2:
+  the NAS's BGE-M3 endpoint) and `space repin` if a wrong pin landed.
 
 ## Lessons that cost real time
 

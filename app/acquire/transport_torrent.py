@@ -252,6 +252,32 @@ def save_root(dest: Path, rel_path: str) -> Path:
     return root
 
 
+# Bytes libtorrent pulled per torrent, already credited to the budget.
+# libtorrent moves bytes on its own threads, so nothing here calls
+# acquire_bytes() per chunk; the rate lease PACES it, and this credits what
+# arrived as external bytes (invariant 5's accounting half — the same
+# remedy as rsync's). Per HANDLE, under the session lock: several engine
+# workers may poll the same torrent for different files, and each delta
+# must be counted exactly once. Observed live: a peer pulled 2.5 GB of
+# wikivec while the Traffic panel read 0.
+_accounted: dict[str, int] = {}
+
+
+def _credit_download(key: str, handle) -> None:
+    try:
+        total = int(handle.status().total_download)
+    except Exception:   # noqa: BLE001 — a dead handle credits nothing
+        return
+    with _session_lock:
+        last = _accounted.get(key, 0)
+        delta = max(0, total - last)
+        if total > last:
+            _accounted[key] = total
+    if delta:
+        from . import budget
+        budget.note_external_bytes(delta)
+
+
 def _add_for_download(endpoint: Endpoint, save_path: Path):
     """The download handle for this torrent, created once per process and
     keyed on the torrent alone — a session refuses the same infohash twice,
@@ -418,9 +444,11 @@ class TorrentTransport:
         handle.resume()
 
         last_refresh = 0.0
+        key = endpoint.url.strip()
         with get_manager().rsync_lease(endpoint.url) as leased_bps:
             while True:
                 done = handle.file_progress()[index]
+                _credit_download(key, handle)
                 if done >= total:
                     break
                 if stop is not None and stop.is_set():

@@ -364,3 +364,27 @@ def test_publish_excludes_extra_format_files(tmp_path):
     listed = [f.rel_path for f in TorrentT().list_files(ep, None)]
     assert any(p.endswith("pg1.txt") for p in listed)
     assert not any(p.endswith(".epub") for p in listed)
+
+
+def test_downloaded_bytes_are_credited_to_the_budget(swarm, tmp_path):
+    """Invariant 5's accounting half: libtorrent moves bytes on its own
+    threads, so the transport credits each handle's download delta as
+    external bytes — the Network page's totals then see a torrent
+    download (live: 2.5 GB of wikivec arrived while the panel read 0)."""
+    from app.transfer.bucket import Priority
+    from app.transfer.manager import Direction, get_manager
+    before = get_manager().bucket(Direction.DOWN).core.granted[Priority.BACKFILL]
+    remote = RemoteFile(rel_path="corpus/alpha.bin", size=len(CONTENT["corpus/alpha.bin"]))
+    dest = tmp_path / "dl" / "corpus" / "alpha.bin"
+    t = threading.Thread(target=lambda: TorrentT().fetch_one(_endpoint(swarm), remote, dest, 0))
+    t.start()
+    for _ in range(100):
+        if tt._handles:
+            _connect_peer(swarm)
+            break
+        time.sleep(0.05)
+    t.join(60)
+    assert dest.read_bytes() == CONTENT["corpus/alpha.bin"]
+    after = get_manager().bucket(Direction.DOWN).core.granted[Priority.BACKFILL]
+    assert after - before >= len(CONTENT["corpus/alpha.bin"]), \
+        "every byte the torrent pulled must be credited to the budget"
