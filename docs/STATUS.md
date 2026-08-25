@@ -369,7 +369,16 @@ deploy.
    datasets `tank/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
    1M, lz4) mounted at `/packs` (PACK_MOUNTS_DIR; the create dialog
    lists them as "(pack)"), conversions started with `pack build` from
-   the existing collections' manifests (see the log paths below). NOT
+   the existing collections' manifests — detached inside the worker
+   container, logs `/data/pack-<name>.log`, relaunch after any app
+   restart with `docker exec -d ix-louise-rag-worker-1 sh -c "python -u
+   -m app.cli pack build <name> --out /packs/<name> >> /data/pack-<name>.log
+   2>&1"` (resumable; state in `<pack>/.build/build.db`). A finisher
+   (`/data/pack_finish.py <name>`, same container) waits for the
+   manifest, runs `pack verify --sample 0.02`, and creates the
+   `<name>-pack` collection (plugin `packed`, embed off, acquisition off,
+   the origin's [embed] recipe and license ack, paths under
+   `/data/<name>-pack/`) — delete that TOML to drop the collection. NOT
    built: deltas/snapshots, the call for contribution over packs, gossip,
    freshness, published centres/labels/bucket-ordered vectors,
    attestations, `records-vs-origin`, pack acquisition from a peer
