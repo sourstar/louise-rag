@@ -245,6 +245,38 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5j. **Ask tab: translated results and a document reader (operator
+   request 2026-08-25; to build).**
+   (1) *Results in another language, interface untouched.* A "show
+   results in" drop-down beside the mode selector (default *original*;
+   options = the languages indexed in scope plus the operator's default).
+   Only CONTENT is translated — snippets, the drawer text and the RAG
+   answer — never titles, authors or ids (a bibliographic reference must
+   read as published) and never the page chrome. Snippets: one LLM call
+   per result page (`POST /ask/translate {lang, items}` → JSON, batched
+   like `llm.translate_query`), a small "translated from de" badge, the
+   original kept in the provenance drawer, an in-memory LRU keyed on
+   (chunk_id, lang) so toggling is free; failure degrades to the original
+   with a note. The answer is not post-translated: `build_answer_messages`
+   gets the target language and the model answers in it directly
+   (cheaper, and citations [n] stay aligned).
+   (2) *Open the document from a hit.* The operator asked for a popup;
+   PROPOSAL (preferred): an in-page reader panel (slide-over) opened by
+   clicking the snippet or the reference — the whole document, the hit
+   chunk scrolled into view and highlighted, prev/next hit within the
+   document, a bibliographic header and a link to the origin (PubMed
+   `pubmed.ncbi.nlm.nih.gov/<pmid>/`, Gutenberg `gutenberg.org/ebooks/<id>`,
+   Wikipedia's article URL); the search stays visible behind it, no
+   popup blocker, and the same route (`/read/<collection>/<book_id>#c<seq>`)
+   is a standalone page for middle-click / new tab. The text comes from
+   the INDEX STORES — Lance chunk rows for embedded documents, the FTS
+   store otherwise — assembled by book_id and seq, never from the corpus
+   file on a click (a PubMed container costs 13–20 s to open; Gutenberg's
+   plain files are the only acceptable fallback). Citations [n] in the
+   answer become links into the same reader. Reference line per source
+   plugin (authors, title, id + link); PubMed's year/journal are not
+   persisted today (`documents` has no date column) — an additive `date`
+   column is the one schema change this would want, to be asked for.
 5i. **Storage tiers: main archive on HDD, working set on SSD (operator
    request 2026-08-25; evaluated, to implement 2026-08-26).** Today
    EVERYTHING sits on `ssd4` (NVMe, 1.81 TB, 569 GB free): corpora 923 GB
