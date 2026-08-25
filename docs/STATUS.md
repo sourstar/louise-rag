@@ -267,6 +267,15 @@ block every other collection's embedding for each 300 s slice.
    pointers are the follow-up for peers beyond one LAN).
    `tests/acquire/test_torrent_collection.py` (index round-trip, profile
    → members, an end-to-end resolve over a local swarm, seeding rows).
+   **Live on the NAS 2026-08-26:** `torrent publish wikivec
+   --collection-only --peer-hint 192.168.178.10:6881` built the index
+   from the eleven recorded members without re-hashing (and upgraded
+   those pre-`kind` records in place); the seeding table shows one
+   `wikivec-collection` row (2.4 MB, seeding, hint attached — "copy
+   collection magnet") above the eleven members labelled by slice. The
+   magnet is also in `/config/wikivec-collection-magnet.txt`. A peer
+   creates its wikivec collection with that one magnet and profile
+   `tr` (8 GB), then grows to `tr,it` from the dialog.
 5k. **PubMed container access — measured 2026-08-25, pack BUILT the same
    night (`app/plugins/pubmed/pack.py`).** One row per direct child of
    the container root, in document order (the record index the locators
