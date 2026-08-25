@@ -450,6 +450,23 @@ def cmd_genesis_status(args) -> int:
     return 0
 
 
+def cmd_genesis_retry(args) -> int:
+    """Put REJECTED shards back in line. A rejection recorded before the
+    per-archive proof (STATUS: pubmed shard 1, 2026-08-26 — a verdict on a
+    sample of one) is not evidence; under the current rule a retry either
+    imports or records a verdict on real evidence."""
+    from .bundles import genesis
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    reset = genesis.retry_rejected(con, shard=args.shard)
+    if not reset:
+        print("nothing rejected" + (f" for shard {args.shard}" if args.shard else ""))
+        return 0
+    for archive_id, shard in reset:
+        print(f"{archive_id}/{shard}: rejected -> fetched (the worker retries it)")
+    return 0
+
+
 def cmd_backend_check(args) -> int:
     from .verify import backend_gate
     collection = _collection_by_name(args.collection)
@@ -890,6 +907,11 @@ def main(argv=None) -> int:
     g_status = genesis_sub.add_parser("status")
     g_status.add_argument("collection")
     g_status.set_defaults(func=cmd_genesis_status)
+
+    g_retry = genesis_sub.add_parser("retry", help="put rejected shards back in line")
+    g_retry.add_argument("collection")
+    g_retry.add_argument("--shard", help="one shard (default: every rejected shard)")
+    g_retry.set_defaults(func=cmd_genesis_retry)
 
     backend_parser = top.add_parser("backend", help="embedding backend gate")
     backend = backend_parser.add_subparsers(dest="verb", required=True)

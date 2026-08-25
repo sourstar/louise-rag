@@ -14,10 +14,14 @@ are the ones that have drifted; prefer to add a test when you touch them.
 
 1. SPACES. Never mix embedding spaces. One collection = one space; a node
    runs several spaces side by side. `space_id` is computed by §3 as amended
-   (it names the encoder function AND the chunker — not `dim`, not chunk
-   geometry, not the device; compensating checks cover those at import).
-   A vector table whose dim/space mismatches config is a REFUSE-TO-BOOT
-   error, never a warning or auto-migration. *Enforced: boot.*
+   (it names the encoder function AND the collection's chunker LAYERS —
+   amendment 41: one chunker per layer, every document in exactly one
+   layer by a declared rule, the layer list fixed at creation; a collection
+   with one layer is the common case and its layer IS its chunker. Not
+   `dim`, not chunk geometry, not the device; compensating checks cover
+   those at import). A vector table whose dim/space mismatches config is a
+   REFUSE-TO-BOOT error, never a warning or auto-migration. *Enforced:
+   boot (layers: designed 2026-08-26, not built — review until they land).*
 2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id.
    Every stage is resumable and safe to re-run. A stage marks done only
    AFTER its durable commit, inside the same transaction — marking first is

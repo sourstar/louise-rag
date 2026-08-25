@@ -362,8 +362,8 @@ def _covered_ranges(con, collection) -> list[tuple[int, int]]:
     archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
     if archive is None or archive.local or not archive.ids_per_shard:
         return []
-    rows = con.execute("SELECT shard, state FROM genesis_imports WHERE archive=?",
-                       (archive.archive_id,)).fetchall()
+    rows = con.execute("SELECT shard, state, proven_at, docs FROM genesis_imports "
+                       "WHERE archive=?", (archive.archive_id,)).fetchall()
     if bundle_genesis.archive_stopped(rows):
         return []           # nothing proven, something rejected: not this function
     # a final shard delivered all it can; a rejected one (under a proven

@@ -47,7 +47,7 @@ the coordinator's lease mechanics (amendment 37) — the pack feeds them.
 ```
 collection "pubmed"                  identified by collection_id (publisher key + name), signed
 │
-├── manifest.json        WHAT THIS IS: id, snapshot chain, slicing scheme, chunker, spaces
+├── manifest.json        WHAT THIS IS: id, snapshot chain, slicing scheme, chunker layers, spaces
 │                        (encoder, calibration), every shard with its hash, index versions,
 │                        update cadence, torrent members                              [signed]
 ├── validation.json      HOW TO CHECK IT: the verification plan (which checks, sample sizes)
@@ -128,9 +128,10 @@ One node commonly plays several roles; any node may play any of them.
 1. **The hash is the truth; a version number is a hint.** A record is
    "changed" when the hash of its canonical text changes, whatever the
    origin's revision fields say. (§6)
-2. **One collection = one chunker = one space.** A different chunker or
-   encoder is a derived collection, never a per-chunk field. (§17,
-   invariant 1)
+2. **One collection = one space = one encoder.** Chunking is declared
+   per LAYER, every document in exactly one layer by a declared rule —
+   never a per-chunk field; a different encoder is a derived collection.
+   (§17, invariant 1 as amended)
 3. **A shard is closed once published.** New records go into new
    shards; a changed record re-issues its shard under the next snapshot;
    a deleted record is a tombstone. (§2)
@@ -474,7 +475,8 @@ monthly PubMed delta (~20k records) is three shards of work.
   "origin": {"plugin": "pubmed", "endpoints": [...], "snapshot": "2026-08-26", "checksums": "…", "parser": {"id": "pubmed", "version": 3}},
   "snapshot": "2026-08-26", "previous": "2026-07-26",
   "publisher": "<node public key>", "signature": "…",
-  "chunker": {"id": "abstract", "version": 1}, "cleaning_version": 1,
+  "layers": [{"chunker": {"id": "abstract", "version": 1}, "rule": "default"}],   one layer: the common case (§17.1)
+  "cleaning_version": 1,
   "slicing": {"keys": ["year"], "year": {"field": "date", "bins": ["<1950", "5y<2000", "1y"]}},
   "slices": {"year=1975-1979": {"shards": 41, "records": 1230000, "chunks": 1230000}, …},
   "shards": [{"slice": "year=1975-1979", "n": 17, "path": "records/year=1975-1979/00017.jsonl.zst",
@@ -727,8 +729,8 @@ peer needs to *check* it:
    re-fetch a sample of origin files by relative path + checksum and
    re-parse them with the same parser version.
 2. **Slice and pack** the records (§2, §3), **hash** every record and
-   every shard (§6), **chunk** — a pure function of the record, declared
-   once per collection.
+   every shard (§6), **chunk** — a pure function of the record and its
+   layer's chunker, declared at creation (§17.1).
 3. **Index** the text (§4), **train the centres** on a corpus-wide
    sample (§5.2), and **embed** — none, a part, or all of the chunks, in
    the declared space, labelling as it goes; `coverage` says how much. A
@@ -760,7 +762,7 @@ repository and versioned with it — parameterised by the collection:
 |---|---|---|---|
 | `roots` | every shard's bytes match the manifest's merkle roots (torrent v2 does this on download; the check re-hashes on demand) | one read of the collection | yes |
 | `records-vs-origin` | a random sample of shards (seeded) re-fetched from `origin` and re-parsed with `parser` reproduces the records byte-for-byte (`content_hash`) | network + parse per sampled shard | yes |
-| `chunks` | recomputing chunks from the records with the declared chunker reproduces every chunk id and text | CPU, ms per record; can be exhaustive | yes |
+| `chunks` | recomputing chunks from the records with the chunker of each record's layer (§17.1) reproduces every chunk id and text | CPU, ms per record; can be exhaustive | yes |
 | `vectors-sample` | a seeded sample of chunks re-embedded with the reference encoder (or a calibrated compliant one) reaches cosine ≥ `tolerance` on the quorum | GPU, seconds | statistical |
 | `calibration` | the reference vectors in the manifest reproduce on this node's encoder | GPU, one second | statistical |
 | `centres` | k-means from the declared sample, seed and iterations reproduces the published centres (within float tolerance) | CPU, minutes | yes, given the platform version |
@@ -814,19 +816,68 @@ resistance comes from the trust list and from weighting a verifier by
 the contributions of theirs that others have verified — not from
 counting keys.
 
-## 17. One chunker per collection; derived collections
+## 17. Chunkers: one per layer; derived collections
 
 The brief asks where to record which chunker a chunk came from, for
-cases like PubMed whose archive forced the abstract chunker. The answer
-the invariants already give: **one collection = one chunker = one
-space** (invariant 1, amendment 3), declared once in the manifest and
-hashed into the space id. Every chunk of a collection was cut the same
-way, or it does not belong to the collection; an archive is admitted
-only when its vectors map 1:1 onto that chunker's chunks (the shape
-gate). A per-chunk chunker field would be either always the same value
-or a licence to mix spaces.
+cases like PubMed whose archive forced the abstract chunker. Not per
+chunk: a per-chunk field would be either always the same value or a
+licence to mix. The chunker is a property of a **layer** (§17.1), a
+collection declares its layers once, and every document belongs to
+exactly one of them by a declared rule; the encoder is one per
+collection, so all vectors are comparable and are searched as one list.
+An archive is admitted only when its vectors map 1:1 onto the chunks of
+the document's layer (the shape gate). The common case is one layer,
+and then the layer simply *is* the collection's chunker — exactly the
+rule the invariants had before.
 
-What the case really needs is **derivation**:
+### 17.1 Layers — the MedCPT case
+
+A pre-embedded archive fixes the chunking of the documents it covers
+(MedCPT: one vector per article, title + abstract; Upstash: its own
+paragraphs, `verbatim`), and that chunking is not always the one we
+would choose for the documents the archive does *not* cover — new and
+changed articles, for years to come. Under "one chunker per collection"
+the only options were to imitate the archive forever or to re-embed
+everything (PubMed: ~10,000 GPU-hours). The operator's rule, adopted
+2026-08-26 by amending invariant 1: allow a bounded patchwork in v1 and
+let v2 clean it up when the community decides to.
+
+```json
+"layers": [
+  {"chunker": {"id": "verbatim",  "version": 1}, "rule": "archive:upstash-wikipedia-2024-06"},
+  {"chunker": {"id": "chunk_cdc", "version": 2}, "rule": "default"}
+]
+```
+
+- **One layer per document**, decided by a rule anyone can compute from
+  the record and the manifest alone: "covered by the archive's id set →
+  layer 0, otherwise layer 1". The record carries its layer in the pack;
+  the `chunks` check verifies it (§15).
+- **One encoder per collection.** The space id hashes the encoder and
+  the ordered layer chunkers, fixed at creation; a vector's header names
+  its layer beside its producer.
+- **Nothing else changes.** Upsert is per document, so idempotence and
+  bundle merging are untouched; the shape gate applies within the
+  document's layer; leases and the index (§5) do not care which layer a
+  chunk came from.
+- **Known cost:** short chunks outscore whole abstracts on specific
+  queries, so the finely chunked layer tends to dominate the top of a
+  list; a per-document best-chunk step before fusion removes most of it
+  — to be measured on the pubmed table before building.
+- **Where it pays:** not PubMed itself (abstracts are short; the only
+  real loss of `abstract@1` is the tail of long structured abstracts) —
+  pubmed v1 stays one layer. It pays where the archive's chunking is
+  *foreign*: wikivec keeps `verbatim` for the archive's articles and
+  gets `chunk_cdc` for new and changed ones, so monthly Wikipedia deltas
+  need not imitate Upstash.
+- **v2 = a derived collection** (below) with "changes: layers → one":
+  it reuses records and text index by hash, inherits every document
+  already embedded with the surviving chunker (same encoder, same
+  chunker, identical chunk ids → vectors copied forward), and its work
+  list is the other layer. The community pays only for the portion that
+  changes, when it decides to.
+
+What a *different encoder* needs is **derivation**:
 
 ```json
 "derived_from": {"collection_id": "urn:louise:pubmed:8f2c...", "snapshot": "2026-08-26",
@@ -902,7 +953,8 @@ records line, many spaces.
 | origin location in the manifest; any peer verifies against the original | adopted | `origin` = AcquisitionSpec + parser version; `records-vs-origin` re-fetches and re-parses a sample |
 | a validation script shipped with the collection | **changed** | a declarative plan run by platform code (§15): same inspectability, no remote code execution |
 | red-flag inconsistencies; unverified until a critical mass; levels as checks accumulate; voting | **refined** | deterministic checks flag on one reproduction, statistical ones on two; levels from coverage, not votes; local trust weighting (§16) |
-| which chunker per chunk | **changed** | per collection, hashed into the space; different chunking = a derived collection (§17) |
+| which chunker per chunk | **refined** | per LAYER, never per chunk: every document in one declared layer, the layers hashed into the space (§17.1) |
+| two chunkers in v1 (the archive's and ours), v2 derived by re-embedding the old-chunker portion | adopted — invariant 1 amended | layers (§17.1); v2 = a derived collection inheriting the surviving layer's vectors |
 | derived collections for a better embedder | adopted | `derived_from`, records and text index reused by info hash |
 | repack PubMed's pre-embedded archive into an inspectable form | adopted, generalised | JSONL + zstd frames for records (measured smaller than Parquet, same access), safetensors f16 for vectors (§9); the archive's `.npy` imported once through the proof |
 | everything readable with a text editor | **kept for records, relaxed for vectors** | records: yes, at no cost (§8); vectors: the header is readable, the array is a raw open layout — a printed float is neither practical (4x bytes) nor useful (only re-embedding checks a vector), §9 |

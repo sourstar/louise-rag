@@ -732,6 +732,136 @@ def test_a_proven_archive_survives_one_rejected_shard(collection, monkeypatch):
     assert {int(r["native_id"]) for r in worker._backfill_rows(con, declared, 100)} == set(range(1, 20))
 
 
+# --- the proof is per ARCHIVE and persists; a small failing sample is never a verdict ---
+
+def test_a_proven_shard_is_not_rejected_by_a_sample_of_one(collection):
+    """Live (pubmed shard 1, 2026-08-26): thirty revisit passes imported
+    950k vectors, each skipping the same stale document; the pass whose
+    ONLY eligible document was that one re-ran the proof on it alone —
+    0/1, REJECTED. A proof is taken once per archive and persisted; later
+    passes only screen for staleness, and a failing sample too small for
+    a verdict is stale documents, not evidence."""
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    archive = _archive(["0"])
+    stale = _stale_embed({"3"})
+    first = genesis.import_shard(con, collection, archive, "0",
+                                 embed_fn=stale, fetch=_fake_fetch(cache))
+    assert first["docs"] == 19 and set(first["residual_uids"]) == {"fake:3"}
+    rows = con.execute("SELECT state, proven_at, docs FROM genesis_imports").fetchall()
+    assert rows[0]["proven_at"] and genesis.archive_proven(rows)
+
+    # the revisit pass: document 3 is the only one still eligible
+    again = genesis.import_shard(con, collection, archive, "0", embed_fn=stale,
+                                 fetch=_fake_fetch(cache), revisit=True)
+    assert again["state"] != "rejected" and again["docs"] == 0
+    assert set(again["residual_uids"]) == {"fake:3"}
+    row = con.execute("SELECT state, detail FROM genesis_imports").fetchone()
+    assert row["state"] in ("applied", "final") and not row["detail"]
+    assert con.execute("SELECT embed_done FROM documents WHERE uid='fake:3'").fetchone()[0] == 0
+    stale_events = con.execute(
+        "SELECT COUNT(*) FROM events WHERE message LIKE '%stale under a proven function%'").fetchone()[0]
+    assert stale_events == 2, "both passes skipped it as stale; neither judged the archive"
+
+
+def test_an_unproven_archive_with_a_tiny_failing_sample_is_deferred_not_rejected(collection):
+    """Two eligible documents, both disagreeing with the encoder: that is
+    not enough to convict an archive nobody has proven — nothing written,
+    no verdict, retried when more documents are eligible. With the rest
+    indexed the same archive IS judged, on sixteen samples."""
+    con = db.connect(collection)
+    con.execute("UPDATE documents SET fts_done=0 WHERE CAST(native_id AS INTEGER) > 2")
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    with pytest.raises(GenesisUnavailable, match="inconclusive"):
+        genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_different_model_embed, fetch=_fake_fetch(cache))
+    row = con.execute("SELECT state, detail, proven_at FROM genesis_imports").fetchone()
+    assert row["state"] == "skipped" and "inconclusive" in row["detail"] and not row["proven_at"]
+    assert not genesis.archive_stopped([row])
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
+    assert embeddings.TABLE not in embeddings._conn(collection).table_names()
+
+    con.execute("UPDATE documents SET fts_done=1")
+    with pytest.raises(GenesisError, match="NOT produced by this"):
+        genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_different_model_embed, fetch=_fake_fetch(cache))
+    assert con.execute("SELECT state FROM genesis_imports").fetchone()["state"] == "rejected"
+
+
+def test_a_small_failing_sample_on_a_proven_archive_is_stale_not_a_verdict(collection):
+    """Second shard of a proven archive, four held documents, all changed
+    since the snapshot: evicted and left to the encoder; the shard stays
+    in line (it may cover more later); nothing is rejected."""
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 17))
+    _write_medcpt_shard(cache, "1", range(17, 21))
+    archive = _archive(["0", "1"])
+    embed = _stale_embed({"17", "18", "19", "20"})
+    r0 = genesis.import_shard(con, collection, archive, "0", embed_fn=embed, fetch=_fake_fetch(cache))
+    assert r0["docs"] == 16
+    r1 = genesis.import_shard(con, collection, archive, "1", embed_fn=embed, fetch=_fake_fetch(cache))
+    assert r1["state"] == "applied" and r1["docs"] == 0
+    assert set(r1["residual_uids"]) == {f"fake:{i}" for i in range(17, 21)}
+    states = {r["shard"]: r["state"] for r in con.execute("SELECT shard, state FROM genesis_imports")}
+    assert states == {"0": "applied", "1": "applied"}
+    assert embeddings._conn(collection).open_table(embeddings.TABLE).count_rows() == 16
+
+
+def test_ledger_rows_from_before_proven_at_count_by_their_imports():
+    """Rows written before `proven_at` existed (the NAS's shards 0-6)
+    prove the archive by what only a passed proof allowed: imports. A
+    pass cut by a crash (`applying`, nothing imported) never counts."""
+    assert genesis.archive_proven([{"state": "applied", "proven_at": None, "docs": 5}])
+    assert not genesis.archive_proven([{"state": "applied", "proven_at": None, "docs": 0}])
+    assert not genesis.archive_proven([{"state": "applying", "proven_at": None, "docs": 0}])
+    assert genesis.archive_proven([{"state": "applying", "proven_at": 1, "docs": 0}])
+    assert genesis.archive_stopped([{"state": "rejected", "proven_at": None, "docs": 0}])
+    assert not genesis.archive_stopped([{"state": "rejected", "proven_at": None, "docs": 0},
+                                        {"state": "final", "proven_at": None, "docs": 9}])
+
+
+def test_genesis_retry_puts_rejected_shards_back_in_line(collection):
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    with pytest.raises(GenesisError):
+        genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_different_model_embed, fetch=_fake_fetch(cache))
+    assert genesis.retry_rejected(con, shard="9") == []
+    assert genesis.retry_rejected(con) == [("test-arc", "0")]
+    row = con.execute("SELECT state, detail, next_pass_at FROM genesis_imports").fetchone()
+    assert row["state"] == "fetched" and row["detail"] is None and row["next_pass_at"] == 0
+    # and it imports once the encoder agrees (a wrong [embed] fixed meanwhile)
+    result = genesis.import_shard(con, collection, _archive(["0"]), "0",
+                                  embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    assert result["state"] == "applied" and result["docs"] == 10
+
+
+def test_the_card_says_rejected_only_while_nothing_has_proven_the_archive(collection, monkeypatch):
+    """Live: the card read REJECTED for the whole archive while six other
+    shards kept importing. The archive is rejected only while nothing has
+    proven it; a rejected shard beside a proven one is counted apart."""
+    from dataclasses import replace
+    from app import web
+    con = db.connect(collection)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", _declared_archive(["0", "1"]))
+    declared = replace(collection, genesis_archive="test-arc")
+    now = 1000
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,updated_at) VALUES('test-arc','1','rejected',0,?)", (now,))
+    state = web._genesis_state(con, declared)
+    assert state["rejected"] is True and state["rejected_shards"] == 1
+    # a proven shard (by its imports, an old row) beside it
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,updated_at) VALUES('test-arc','0','applied',500,?)", (now,))
+    state = web._genesis_state(con, declared)
+    assert state["rejected"] is False and state["rejected_shards"] == 1
+    # ...or by its recorded proof, nothing imported yet
+    con.execute("UPDATE genesis_imports SET docs=0, proven_at=? WHERE shard='0'", (now,))
+    assert web._genesis_state(con, declared)["rejected"] is False
+
+
 def test_a_remote_archive_is_drained_on_the_pipeline_thread_not_the_gpu_loop(
         collection, monkeypatch):
     """A remote shard's pass is CPU/IO work for minutes; on the GPU-serial

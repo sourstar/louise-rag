@@ -53,6 +53,16 @@ RE_ENCODE_TAU = 0.95      # same-function gate; calibrated tau supersedes later
 RE_ENCODE_SAMPLE = 16
 RE_ENCODE_MIN_SAMPLE = 1      # a shard with few held documents proves with what it has
 RE_ENCODE_QUORUM = 0.75
+# A verdict AGAINST an archive needs evidence: at least this many samples
+# failing the quorum. Fewer are not a verdict. Live on pubmed (2026-08-26):
+# shard 1 had proven and imported 950k vectors over thirty revisit passes,
+# each skipping the same one stale document, until a pass whose ONLY
+# eligible document was that stale one re-ran the proof on a sample of
+# one — 0/1, REJECTED. The proof is therefore taken once per ARCHIVE (one
+# producer, one function; persisted as `proven_at`) and later passes only
+# screen for staleness; a small failing sample is stale documents under a
+# proven archive and inconclusive (deferred) under an unproven one.
+RE_ENCODE_REJECT_MIN = 8
 APPLY_BATCH_DOCS = 500
 
 
@@ -63,6 +73,13 @@ class GenesisError(RuntimeError):
 class GenesisUnavailable(RuntimeError):
     """The embed endpoint (needed for the same-function proof) or the
     archive source is unreachable — retry later, no verdict recorded."""
+
+
+class GenesisInconclusive(GenesisUnavailable):
+    """The same-function sample was too small to judge an UNPROVEN archive
+    (below the quorum on fewer than RE_ENCODE_REJECT_MIN samples): nothing
+    was written, no verdict recorded — retried when more documents are
+    eligible. A GenesisUnavailable, so every retry path already applies."""
 
 
 @dataclass(frozen=True)
@@ -279,7 +296,24 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
     return list(demand.values())
 
 
-PROVEN_STATES = ("applying", "applied", "final")
+def row_proven(row) -> bool:
+    """A ledger row that carries a passed same-function proof: `proven_at`
+    is set, or — rows written before that column existed — the shard
+    imported documents, which only a passed proof allowed. A row selected
+    without those columns falls back to its state; `applying` never counts
+    (a pass cut by a crash before its proof)."""
+    keys = row.keys()
+    if "proven_at" in keys and row["proven_at"]:
+        return True
+    if "docs" in keys:
+        return row["state"] in ("applied", "final") and int(row["docs"] or 0) > 0
+    return row["state"] in ("applied", "final")
+
+
+def archive_proven(rows) -> bool:
+    """One shard's passed proof proves the ARCHIVE: one producer, one
+    function — the proof is about the function, not the shard."""
+    return any(row_proven(r) for r in rows)
 
 
 def archive_stopped(rows) -> bool:
@@ -290,8 +324,26 @@ def archive_stopped(rows) -> bool:
     released to the local encoder) — not evidence against the archive."""
     rows = list(rows)
     rejected = any(r["state"] == "rejected" for r in rows)
-    proven = any(r["state"] in PROVEN_STATES for r in rows)
-    return rejected and not proven
+    return rejected and not archive_proven(rows)
+
+
+def retry_rejected(con, archive_id: str | None = None, shard: str | None = None) -> list[tuple[str, str]]:
+    """Put REJECTED shards back in line (`genesis retry`): state `fetched`,
+    verdict cleared, revisit due now. Files still on disk apply at once;
+    files gone are re-fetched. Returns the (archive, shard) pairs reset."""
+    where, params = ["state='rejected'"], []
+    if archive_id:
+        where.append("archive=?"); params.append(archive_id)
+    if shard:
+        where.append("shard=?"); params.append(shard)
+    clause = " AND ".join(where)
+    rows = [(r["archive"], r["shard"]) for r in con.execute(
+        f"SELECT archive, shard FROM genesis_imports WHERE {clause}", params)]
+    if rows:
+        con.execute(
+            f"UPDATE genesis_imports SET state='fetched', detail=NULL, pending=NULL, "
+            f"next_pass_at=0, updated_at=? WHERE {clause}", [int(time.time()), *params])
+    return rows
 
 
 def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict | None:
@@ -311,8 +363,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     if archive is None:
         return None
     rows = {r["shard"]: r for r in con.execute(
-        "SELECT shard, state, updated_at, pending, next_pass_at FROM genesis_imports "
-        "WHERE archive=?", (archive.archive_id,))}
+        "SELECT shard, state, updated_at, pending, next_pass_at, proven_at, docs "
+        "FROM genesis_imports WHERE archive=?", (archive.archive_id,))}
     if archive_stopped(rows.values()):
         return None
     now = int(time.time())
@@ -565,21 +617,31 @@ def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
 
 
 def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],
-                      embed_fn) -> list[str]:
+                      embed_fn, *, proven: bool = False) -> list[str]:
     """The same-function proof: the collection's own encoder must reproduce
     the archive's vectors on held texts. This is what makes later gap-filling
     coherent — and what keeps an INCOMPATIBLE dataset out, however well-formed.
 
     `sampled` is [(uid, text, archived vector)]. Passes by QUORUM (see the
     constants) and returns the uids of the samples below tau — stale
-    documents the caller must not import. Raises GenesisError when the
-    quorum fails (the shard is refused whole) or the sample is too small
-    to prove anything."""
+    documents the caller must not import.
+
+    `proven`: the archive's function is already proven (another shard, or an
+    earlier pass of this one). The sample is then a STALENESS SCREEN, not a
+    proof: anything below tau is a document whose text changed since the
+    snapshot, and a failing quorum on fewer than RE_ENCODE_REJECT_MIN samples
+    is that many stale documents — never a verdict. On an UNPROVEN archive a
+    small failing sample is inconclusive (GenesisInconclusive: deferred,
+    nothing written). A failing sample of RE_ENCODE_REJECT_MIN or more is the
+    verdict either way: GenesisError, the shard refused whole."""
     if len(sampled) < RE_ENCODE_MIN_SAMPLE:
-        raise GenesisError(
+        if proven:
+            return []
+        raise GenesisInconclusive(
             f"only {len(sampled)} re-encode sample(s) within the local truncation "
             f"budget (need {RE_ENCODE_MIN_SAMPLE}) — cannot prove the archive "
-            f"matches this collection's encoder")
+            f"matches this collection's encoder yet; retried when more documents "
+            f"are eligible")
     texts, archived = [], []
     for _uid, text, vec in sampled:
         texts.append(text)
@@ -595,15 +657,23 @@ def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],
         f = np.asarray(f, dtype=np.float64)
         f /= (np.linalg.norm(f) or 1.0)
         cosines.append(float(a @ f))
-    passing = sum(1 for c in cosines if c >= RE_ENCODE_TAU)
+    below = [uid for (uid, _t, _v), c in zip(sampled, cosines) if c < RE_ENCODE_TAU]
+    passing = len(cosines) - len(below)
     median = float(np.median(cosines))
-    if median < RE_ENCODE_TAU or passing < RE_ENCODE_QUORUM * len(cosines):
+    if median >= RE_ENCODE_TAU and passing >= RE_ENCODE_QUORUM * len(cosines):
+        return below
+    verdict = (f"archive vs local encoder median cos {median:.4f}, "
+               f"{passing}/{len(cosines)} >= {RE_ENCODE_TAU}")
+    if len(cosines) >= RE_ENCODE_REJECT_MIN:
         raise GenesisError(
-            f"sample re-encode failed: archive vs local encoder median cos "
-            f"{median:.4f}, {passing}/{len(cosines)} >= {RE_ENCODE_TAU} — the "
-            f"archive was NOT produced by this collection's [embed] recipe; "
-            f"importing it would mix spaces")
-    return [uid for (uid, _t, _v), c in zip(sampled, cosines) if c < RE_ENCODE_TAU]
+            f"sample re-encode failed: {verdict} — the archive was NOT produced "
+            f"by this collection's [embed] recipe; importing it would mix spaces")
+    if proven:
+        return below            # that many stale documents under a proven function
+    raise GenesisInconclusive(
+        f"sample re-encode inconclusive: {verdict} on {len(cosines)} sample(s) "
+        f"(a verdict needs {RE_ENCODE_REJECT_MIN}) — retried when more documents "
+        f"are eligible")
 
 
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
@@ -613,12 +683,18 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     `revisit` (local archives) — re-running only touches documents that
     became eligible since, via the same delete-then-insert."""
     existing = con.execute(
-        "SELECT state, updated_at, next_pass_at FROM genesis_imports "
+        "SELECT state, updated_at, next_pass_at, proven_at, docs FROM genesis_imports "
         "WHERE archive=? AND shard=?", (archive.archive_id, shard)).fetchone()
     if existing and existing["state"] == "final":
         return {"shard": shard, "state": "already-applied"}   # complete: files gone
     if existing and existing["state"] == "applied" and not revisit:
         return {"shard": shard, "state": "already-applied"}
+    # the proof is per ARCHIVE and persists: any shard's passed proof (or
+    # its imports, for rows older than `proven_at`) makes this pass a
+    # staleness screen rather than a trial
+    archive_is_proven = archive_proven(con.execute(
+        "SELECT state, proven_at, docs FROM genesis_imports WHERE archive=?",
+        (archive.archive_id,)))
     # the revisit interval this pass inherits (per-shard backoff, remote)
     prev_interval = max(0, int((existing["next_pass_at"] or 0) - (existing["updated_at"] or 0))) \
         if existing else 0
@@ -739,6 +815,21 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         batch_rows, batch_native, batch_uids = [], [], []
         batch_chunk_ids = {}
 
+    def prove() -> None:
+        """The same-function proof (first pass of an unproven archive) or
+        the staleness screen (every later pass), over the sample gathered
+        so far; runs BEFORE the first flush, so a refusal writes nothing.
+        A passed proof is persisted on the row — the archive is proven
+        from here on, for this shard's later passes and every other shard."""
+        nonlocal proven, archive_is_proven
+        evict(_sample_re_encode(collection, sample, embed_fn,
+                                proven=archive_is_proven))
+        if not archive_is_proven:
+            con.execute("UPDATE genesis_imports SET proven_at=? WHERE archive=? AND shard=?",
+                        (int(time.time()), archive.archive_id, shard))
+            archive_is_proven = True
+        proven = True
+
     def evict(stale: list[str]) -> None:
         """Drop the STALE sample documents (below tau under a proven
         function: their text changed since the snapshot) from the pending
@@ -839,9 +930,10 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 # whole" must mean nothing was written. Structural is
                 # cheap; the same-function proof runs here on a partial
                 # sample if the full quota never accumulated (truncation-
-                # aware filter), and an EMPTY sample refuses the shard:
-                # vectors admitted without proof would be trust, not
-                # admission.
+                # aware filter), and an EMPTY sample on an unproven archive
+                # DEFERS the shard: vectors admitted without proof would be
+                # trust, not admission — and a refusal without evidence
+                # would be a verdict without one.
                 if not checked_structural:
                     ids = [r["id"] for r in batch_rows]
                     batch_vecs = [np.asarray(r["vector"], dtype=np.float32)
@@ -853,13 +945,26 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                             raise GenesisError(f"admission: {result.detail}")
                     checked_structural = True
                 if not proven:
-                    evict(_sample_re_encode(collection, sample, embed_fn))
-                    proven = True
+                    prove()
                 flush()
         if chunks_written and not proven:
-            evict(_sample_re_encode(collection, sample, embed_fn))
-            proven = True
+            prove()
         flush()
+    except GenesisInconclusive as e:
+        # not a verdict, nothing written: the shard waits for more eligible
+        # documents like a pass that imported nothing (per-shard backoff on
+        # the remote revisit path; the retryable 10-minute backoff elsewhere)
+        now = int(time.time())
+        interval = min(config.GENESIS_PASS_BACKOFF_MAX_SEC,
+                       max(config.GENESIS_MAX_WAIT_SEC, prev_interval * 2))
+        con.execute(
+            "UPDATE genesis_imports SET state=?, detail=?, pending=NULL, "
+            "next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
+            ("applied" if (revisit and not archive.local) else "skipped",
+             str(e)[:500], now + interval, now, archive.archive_id, shard))
+        db.log_event(con, "info", "genesis",
+                     f"{archive.archive_id}/{shard}: {e}"[:400])
+        raise
     except GenesisError as e:
         con.execute(
             "UPDATE genesis_imports SET state='rejected', detail=?, updated_at=? "

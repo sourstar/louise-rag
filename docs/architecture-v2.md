@@ -1124,3 +1124,51 @@ the live deployment:
     is a static index, so a re-publish is a new magnet (like a dated
     origin snapshot); BEP 46 mutable pointers keep the magnet stable and
     are the follow-up once peers live beyond one LAN.
+41. **§3/§8 — chunker LAYERS: the MedCPT case (2026-08-26; the operator
+    amended invariant 1).** A pre-embedded archive fixes the chunking of
+    the documents it covers (MedCPT: one vector per article; Upstash: its
+    own paragraphs, `verbatim`), and that chunking is not always the one
+    we would choose for the documents the archive does NOT cover — new
+    and changed articles, for years to come. Under "one collection = one
+    chunker" the only options were to imitate the archive forever or to
+    re-embed everything (PubMed: ~10,000 GPU-hours). Amended rule: a
+    collection declares an ordered list of LAYERS, each with a chunker;
+    every document belongs to exactly one layer by a rule computable from
+    the record and the manifest alone ("in the archive's id set → layer
+    0, else layer 1"); one encoder per collection; `space_id` hashes the
+    encoder and the ordered layer chunkers, fixed at creation. Vectors of
+    different layers are comparable — same function — and searched as one
+    list; upsert stays per document, so idempotence and bundle merging
+    are untouched; the archive's shape gate applies per document within
+    its layer; the pack's `chunks` check verifies per layer; provenance
+    names the layer. A collection with one layer is the common case and
+    its layer IS its chunker, so nothing pinned today changes. A v2 that
+    unifies the chunkers is a DERIVED collection (pack-format.md §17): it
+    inherits every document already embedded with the surviving chunker
+    (identical chunk ids) and its work list is the other layer — the
+    community pays only for the portion that changes, when it decides
+    to. Known cost: short chunks outscore whole abstracts on specific
+    queries; a per-document best-chunk step before fusion is to be
+    measured before building. Where it pays: not pubmed (abstracts are
+    short; one layer, `abstract@1`) but wikivec (`verbatim` for the
+    archive's articles, `chunk_cdc` for new and changed ones). Designed,
+    not built.
+42. **§8 — the same-function proof is per ARCHIVE and persists; a small
+    failing sample is never a verdict (2026-08-26).** Amendment 38's
+    quorum was re-run from scratch on EVERY revisit pass, on whatever
+    sample that pass had. Live: pubmed shard 1 proved and imported ~950k
+    vectors over thirty passes, each skipping the same one stale
+    document, until a pass whose only eligible document was that one
+    re-ran the proof on a sample of one — 0/1, REJECTED, its remaining
+    documents released to the encoder. Amended rules: (1) a passed proof
+    is recorded on the row (`proven_at`) and proves the ARCHIVE — one
+    producer, one function; rows from before the column count by their
+    imports, `applying` never does; (2) on a proven archive a pass only
+    SCREENS for staleness: every sample below τ is a stale document,
+    evicted and left to the encoder, however many; (3) a verdict against
+    an archive needs at least `RE_ENCODE_REJECT_MIN` (8) samples failing
+    the quorum — fewer, on an unproven archive, are INCONCLUSIVE: nothing
+    written, no verdict, the shard retried under its backoff when more
+    documents are eligible (an empty sample likewise defers instead of
+    refusing); (4) `genesis retry <collection> [--shard]` puts a rejected
+    shard back in line. Built 2026-08-26 — STATUS 5g.

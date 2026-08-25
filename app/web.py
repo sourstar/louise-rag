@@ -851,6 +851,9 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "SELECT COUNT(*) shards, SUM(state IN ('applied','final')) applied, "
         "SUM(state='final') final, SUM(docs) docs, "
         "SUM(state='rejected') rejected, "
+        # amendment 42: the archive is REJECTED only while nothing has proven
+        # it; a rejected shard beside a proven one is that shard's problem
+        "SUM(proven_at IS NOT NULL OR (state IN ('applied','final') AND COALESCE(docs,0)>0)) proven, "
         # amendment 38: what the fetcher has landed (on disk or already
         # consumed), what still sits on disk, and how many held documents
         # the resident shards are waiting on
@@ -917,7 +920,8 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "resident_bytes": totals["resident_bytes"] or 0,
         "pending": totals["pending"] or 0,
         "docs": totals["docs"] or 0,
-        "rejected": bool(totals["rejected"]),
+        "rejected": bool(totals["rejected"]) and not bool(totals["proven"]),
+        "rejected_shards": int(totals["rejected"] or 0),
         "waiting_docs": waiting_docs,
         "fetch_state": fetch_state,
         "index_done": index_done,

@@ -79,8 +79,8 @@ def next_shard_to_fetch(con, archive: GenesisArchive, now: int | None = None) ->
     burn 36 more downloads proving itself 36 more times."""
     now = int(time.time()) if now is None else now
     rows = {r["shard"]: r for r in con.execute(
-        "SELECT shard, state, updated_at FROM genesis_imports WHERE archive=?",
-        (archive.archive_id,))}
+        "SELECT shard, state, updated_at, proven_at, docs FROM genesis_imports "
+        "WHERE archive=?", (archive.archive_id,))}
     if archive_stopped(rows.values()):
         return None
     for shard in archive.shards:

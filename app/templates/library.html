@@ -155,7 +155,7 @@
       pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
     </div>
     {% if c.genesis.rejected %}
-    <div class="note">REJECTED — the archive was not produced by this collection's encoder; see the System log.</div>
+    <div class="note">REJECTED — the archive was not produced by this collection's encoder; see the System log. Once the [embed] recipe is right, <code>genesis retry {{ c.name }}</code> puts it back in line.</div>
     {% elif not c.genesis.known %}
     <div class="note">unknown archive id — nothing will import.</div>
     {% else %}
@@ -171,6 +171,9 @@
     <div class="stage"><div class="lbl"><span title="documents whose vectors came from the archive — no GPU spent. The main box's embedded (dense) row is this plus whatever the local encoder embedded. A document the archive turns out not to hold (no abstract, a chunk-shape mismatch) is released to the local encoder once its archive file is complete."{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>pre-embedded (dense)</span>
         <span>{{ c.genesis.docs|num }} / {{ 'counting…' if c.counts_pending else c.in_scope|num }}{% if c.genesis.pending %} <span class="note" title="documents in the landed files' ranges still waiting for indexing — they import for free when they get there">({{ c.genesis.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
       <div class="spine"><span style="width:{{ (100*c.genesis.docs/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+    {% if c.genesis.rejected_shards %}
+    <div class="note">{{ c.genesis.rejected_shards|num }} archive file(s) rejected by the same-function check while the rest imported — their ranges go to the local encoder; see the System log. <code>genesis retry {{ c.name }}</code> puts them back in line.</div>
+    {% endif %}
     {% if not c.license.acquire_enabled %}
     <div class="note">acquisition is off for this collection, so the archive is not fetched either — it follows the same switch and the same license gate as the corpus.</div>
     {% endif %}
@@ -181,7 +184,7 @@
      note — the pre-embedded (dense) row above already carries progress #}
   <div class="note">
     pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
-    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
+    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log; <code>genesis retry {{ c.name }}</code> once the recipe is right)
     {% elif not c.genesis.known %} — unknown archive id
     {% else %} — the corpus files above carry the vectors; import follows
     indexing, no GPU spent ({{ c.genesis.applied|num }}/{{ c.genesis.shard_total|num }} archive files read)

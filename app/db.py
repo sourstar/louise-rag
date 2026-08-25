@@ -256,9 +256,11 @@ def connect(collection=None) -> sqlite3.Connection:
     # finalised — the ledger row carries the shard's id range (coverage),
     # its size on disk, how many held documents still wait for fts, and
     # the per-shard backoff for revisit passes that imported nothing
+    # `proven_at`: when the shard's same-function proof passed — the proof
+    # is per archive and persists across passes (genesis.RE_ENCODE_REJECT_MIN)
     for column, decl in (("id_min", "INTEGER"), ("id_max", "INTEGER"),
                          ("bytes", "INTEGER"), ("pending", "INTEGER"),
-                         ("next_pass_at", "INTEGER")):
+                         ("next_pass_at", "INTEGER"), ("proven_at", "INTEGER")):
         try:
             con.execute(f"ALTER TABLE genesis_imports ADD COLUMN {column} {decl}")
         except sqlite3.OperationalError:

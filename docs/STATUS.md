@@ -219,6 +219,18 @@ the same evening: a remote archive's pass runs on the collection's
 PIPELINE thread (`_drain_remote_archive`), never on the GPU-serial main
 loop — a collection whose encoder is the shared GPU would otherwise
 block every other collection's embedding for each 300 s slice.
+**Resurfaced 2026-08-26 (amendment 42):** shard 1 proved and imported
+~950k vectors over thirty passes, each pass skipping the same one stale
+document, and was then REJECTED by a pass whose only eligible document
+was that one — the proof re-ran from scratch every pass, and
+`RE_ENCODE_MIN_SAMPLE = 1` let a sample of one be a verdict. Fixed at
+the root: the proof is per archive and persists (`proven_at`; older
+rows count by their imports), later passes only screen for staleness, a
+verdict needs ≥ 8 failing samples (`RE_ENCODE_REJECT_MIN`), fewer on an
+unproven archive are inconclusive (deferred, nothing written; an empty
+sample likewise), and `genesis retry <collection> [--shard N]` puts a
+rejected shard back in line — used on the NAS for shard 1 after the
+deploy.
 
 ## Designed, specified, not built
 
@@ -312,7 +324,13 @@ block every other collection's embedding for each 300 s slice.
    IVF-FLAT / HNSW-SQ answer in 5–6 ms at 98–99 % within 0.001, IVF-PQ
    without re-ranking drops to 66 % on MedCPT's tight cone. The local
    vector index, not compression, is the performance item (build order
-   step 3; known gap below).
+   step 3; known gap below). **Layers (2026-08-26; the operator amended
+   invariant 1 — amendment 41):** a collection may declare an ordered
+   list of chunker LAYERS with every document in exactly one layer by a
+   declared rule — the MedCPT case: the archive's chunking for what it
+   covers, ours for what it does not — one encoder, space id over encoder
+   + layers; a unifying v2 is a derived collection that inherits the
+   surviving layer's vectors. pack-format.md §17.1. Designed, not built.
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent
