@@ -187,6 +187,10 @@ LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 # idle cores. Batches are cut into sub-batches for this many low-priority
 # child processes; 1 = in-process, serial (tests, small nodes).
 PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or 2) - 1))))
+# a child is replaced after this many sub-batches: its plugin caches (row
+# groups, streams) grow with what it has parsed — measured +4 GB across
+# eleven children in fifteen minutes — and a fresh child starts small
+PARSE_TASKS_PER_CHILD = int(os.getenv("PARSE_TASKS_PER_CHILD", "500"))
 
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —

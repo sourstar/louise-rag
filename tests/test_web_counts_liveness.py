@@ -530,6 +530,32 @@ def test_stage_rates_survive_a_manifest_too_busy_to_write(isolated_config):
     assert web._stage_rate_memo[str(c.manifest_path)]["rdf"] == 100
 
 
+def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
+    """Operator report: pubmed's parsed (rdf) ETA read "TBD" for hours. It
+    was not stalled — rdf led fts by 4.2M documents, and the worker gives
+    the thread to fts while a full batch is ready (_next_book), so rdf
+    waits by design. The card says so, with the lead, instead of TBD."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(2000):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks) VALUES(?,'g',?,?,1,?,0,0,0)",
+                    (f"g:{i}", str(i), f"/x{i}", 1 if i < 1000 else 0))
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_etas"]["rdf"] == "after fts (1,000 ahead)"
+    assert shelf["stage_etas"]["fts"] == "TBD", "fts itself has no history yet"
+    html = _render_library(shelf)
+    assert "after fts (1,000 ahead)" in html and "waiting by design" in html
+    assert "+None" not in html
+    # once fts catches up to within a batch, rdf is judged on its own rate again
+    con.execute("UPDATE documents SET fts_done=1 WHERE CAST(native_id AS INTEGER) < 950")
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {})
+    assert shelf["stage_etas"]["rdf"] == "TBD"
+
+
 def test_embed_mode_persists_even_when_the_manifest_is_locked(isolated_config, monkeypatch, tmp_path):
     """Operator report: wikipedia switched to off reverted to on-demand on
     refresh. The endpoint wrote the runtime scope FIRST, and on a manifest

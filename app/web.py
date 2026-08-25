@@ -787,6 +787,14 @@ def _collection_shelf(collection: collections_mod.Collection,
                     # work remains and the rate is not yet trustworthy:
                     # say so, never a number that will be revised 10x
                     stage_etas[k] = "TBD"
+        # rdf is not stalled when it is simply AHEAD: the worker gives the
+        # thread to fts whenever a full batch is ready (_next_book), so a
+        # stage whose output already outruns its consumer by a batch or
+        # more waits by design — pubmed sat at rdf 12.1M / fts 7.9M and the
+        # card said "TBD", which reads as "unknown". Say what it is.
+        ahead = cur["rdf"] - cur["fts"]
+        if remaining["rdf"] > 0 and ahead >= config.FTS_BATCH_DOCS:
+            stage_etas["rdf"] = f"after fts ({ahead:,} ahead)"
 
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],

@@ -1302,4 +1302,8 @@ the live deployment:
     GROUPS a locator names instead of caching one whole 437 MB shard per
     process (a few MB per group, small LRU). Not parallelised: the embed
     step (encoder-bound), archive imports (already proportional to the
-    new documents), discovery.
+    new documents), discovery. Measured after the deploy: worker 232 % →
+    ~830 %, pubmed fts 35 → 392 docs/s, wikivec 20 → 515 docs/s,
+    wikipedia 450 docs/s, the GPU encoder unchanged; children are
+    recycled every `PARSE_TASKS_PER_CHILD` sub-batches to bound the
+    memory their caches accumulate.

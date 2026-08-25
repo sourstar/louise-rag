@@ -283,8 +283,15 @@ cores−1) spawned children at nice 10; writers stay in the worker; one
 row groups instead of caching a whole shard per process. Tests:
 `tests/test_parallel.py` (real children: same chunks/metadata/records as
 the serial path, byte-identical packs, a failing document alone), the
-embedded row-group test. Measure after deploy: the worker's total CPU
-and the fts docs/s per collection in the log.
+embedded row-group test. **Measured after the deploy** (12 minutes of
+manifest samples): worker 232 % → ~830 % of 12 cores, load 4 → 16, the
+GPU encoder unchanged; pubmed fts 35 → 392 docs/s, wikivec rdf+fts 20 →
+515 docs/s, wikipedia rdf+fts 450 docs/s — 11–25× on the parse-bound
+collections. Memory grew 11.7 → 15.8 GB in 15 minutes as the children's
+caches filled: children are now recycled every `PARSE_TASKS_PER_CHILD`
+(500) sub-batches. pubmed's "parsed (rdf) TBD" was not a stall: rdf led
+fts by 4.2M documents and the worker gives fts the thread while a full
+batch is ready — the card now says "after fts (N ahead)" (test).
 
 ## Designed, specified, not built
 

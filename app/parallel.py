@@ -71,7 +71,10 @@ def pool() -> ProcessPoolExecutor | None:
                 _pool.shutdown(wait=False, cancel_futures=True)
             _pool = ProcessPoolExecutor(
                 max_workers=n, mp_context=multiprocessing.get_context("spawn"),
-                initializer=_child_init, initargs=(_knobs(),))
+                initializer=_child_init, initargs=(_knobs(),),
+                # bounded memory: a child's plugin caches grow with what it
+                # parsed; it is replaced after this many sub-batches
+                max_tasks_per_child=max(1, int(config.PARSE_TASKS_PER_CHILD)))
             _pool_size = n
         return _pool
 
