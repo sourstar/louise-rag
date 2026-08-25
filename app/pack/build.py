@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import config, db, layers as layers_mod, plugin_io
+from .. import config, db, layers as layers_mod, parallel, plugin_io
 from ..plugins.base import UnindexableDocument
 from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
 
@@ -215,43 +215,61 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             buf, layer_counts = [], {}
 
         last_row = None
-        for i, prow in enumerate(rows):
+        done_rows = 0
+        # records are computed by the PARSE POOL (app/parallel.py) a page
+        # at a time — parse + chunk + hash per document is the whole cost
+        # of a pack pass, and it is pure Python (amendment 47)
+        page_size = max(50, min(records_per_shard, 500))
+        for page_start in range(0, len(rows), page_size):
             if stop is not None and stop.is_set():
                 log(f"[pack build] stop requested — {slice_name}: {len(buf)} buffered records "
                     f"discarded, resumes at shard {next_n}")
                 return written, n_records, n_chunks, n_skipped, True
-            src = con_src.execute(
-                "SELECT uid, native_id, path, lang FROM documents WHERE uid=?", (prow["uid"],)).fetchone()
-            if src is None:
-                n_skipped += 1
-                continue
-            try:
-                record, layer = _record_of(collection, plugin, src)
-            except (UnindexableDocument, Exception) as e:   # noqa: BLE001 — one record, never the build
-                n_skipped += 1
-                con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
-                                  (prow["uid"], f"pack: {type(e).__name__}: {e}"[:200]))
-                continue
-            if record["uid"] != src["uid"]:
-                n_skipped += 1
-                con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
-                                  (prow["uid"], f"pack: parsed uid {record['uid']} != manifest uid"))
-                continue
-            outside = cutoff_mod.excluded(origin, record, until)
-            if outside is not None:
-                n_skipped += 1
-                con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
-                                  (prow["uid"], f"cutoff: {outside}"[:200]))
-                continue
-            buf.append(record)
-            layer_counts[layer] = layer_counts.get(layer, 0) + 1
-            last_row = prow
-            if len(buf) >= records_per_shard:
-                close_shard(last_row)
-                if time.monotonic() - t0 > 30:
-                    log(f"[pack build] {slice_name}: shard {next_n - 1} written "
-                        f"({i + 1}/{len(rows)} records of the slice)")
-                    t0 = time.monotonic()
+            page = rows[page_start:page_start + page_size]
+            srcs = []
+            for prow in page:
+                src = con_src.execute(
+                    "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
+                    (prow["uid"],)).fetchone()
+                srcs.append(dict(src) if src is not None else None)
+            computed = iter(parallel.compute("record", collection, [s for s in srcs if s is not None]))
+            for prow, src in zip(page, srcs):
+                done_rows += 1
+                if src is None:
+                    n_skipped += 1
+                    continue
+                ok, value = next(computed)
+                if not ok:
+                    n_skipped += 1
+                    con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
+                                      (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
+                    continue
+                record, layer = value
+                if record["uid"] != src["uid"]:
+                    n_skipped += 1
+                    con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
+                                      (prow["uid"], f"pack: parsed uid {record['uid']} != manifest uid"))
+                    continue
+                outside = cutoff_mod.excluded(origin, record, until)
+                if outside is not None:
+                    n_skipped += 1
+                    con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
+                                      (prow["uid"], f"cutoff: {outside}"[:200]))
+                    continue
+                buf.append(record)
+                layer_counts[layer] = layer_counts.get(layer, 0) + 1
+                last_row = prow
+                if len(buf) >= records_per_shard:
+                    close_shard(last_row)
+                    if time.monotonic() - t0 > 30:
+                        log(f"[pack build] {slice_name}: shard {next_n - 1} written "
+                            f"({done_rows}/{len(rows)} records of the slice)")
+                        t0 = time.monotonic()
+                    if stop is not None and stop.is_set():
+                        # the unit is a shard: what the page still holds is
+                        # recomputed on resume
+                        log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
+                        return written, n_records, n_chunks, n_skipped, True
         close_shard(last_row)
         log(f"[pack build] {slice_name}: {next_n} shard(s)")
     return written, n_records, n_chunks, n_skipped, False

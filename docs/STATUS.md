@@ -272,6 +272,19 @@ for a yellow/red pack, the card and `/terms` speak for packs. Tests:
 `tests/test_license_gate.py`. Invariant 9's "ingestion gate designed,
 not built" is now built at the worker and the UI
 (`discovery.sync_collection` itself stays callable ungated).
+**The parse pool (2026-08-27, operator: "CPU close to 100 % when there's
+not much else to do"; amendment 47):** measured 12 cores, load ~4, the
+worker at 232 % with one Python thread at 87 % — the GIL — and the CPU
+encoders idle by design (the archives cover the indexed ranges).
+`app/parallel.py`: fetch/parse/chunk for an fts batch, metadata for an
+rdf batch and records for `pack build` run in `PARSE_PROCESSES` (default
+cores−1) spawned children at nice 10; writers stay in the worker; one
+(ok, value) per document, in order. The `embedded` plugin's fetch reads
+row groups instead of caching a whole shard per process. Tests:
+`tests/test_parallel.py` (real children: same chunks/metadata/records as
+the serial path, byte-identical packs, a failing document alone), the
+embedded row-group test. Measure after deploy: the worker's total CPU
+and the fts docs/s per collection in the log.
 
 ## Designed, specified, not built
 

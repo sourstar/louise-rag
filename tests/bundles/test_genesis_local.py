@@ -216,7 +216,10 @@ def test_a_candidate_read_touches_only_the_candidates_row_groups(collection, mon
                         lambda self, *a, **k: (whole.append(1), real_iter(self, *a, **k))[1])
     result = genesis.drain_next_shard(con, collection)
     assert result is not None and result["docs"] == 1
-    assert read_groups == [2] and not whole, (read_groups, whole)
+    # the archive read AND the text fetch for the proof touch group 2 only
+    # (the plugin's fetch reads row groups too, amendment 47) — never the
+    # other groups, never the whole shard
+    assert set(read_groups) == {2} and not whole, (read_groups, whole)
     assert con.execute("SELECT embed_done FROM documents WHERE uid=?", (uid,)).fetchone()[0] == 1
 
 

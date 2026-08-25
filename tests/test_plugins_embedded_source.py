@@ -144,29 +144,31 @@ def test_verbatim_chunking_preserves_producer_boundaries(corpus):
     assert chunks[1]["text"] == huge
 
 
-def test_fetch_uses_the_one_slot_shard_cache(corpus, monkeypatch):
-    """Every per-article fetch re-parsing a ~437 MB shard would make rdf/fts
-    unusable at ~95k articles per shard — consecutive fetches of the same
-    shard must parse it once (pubmed's container-cache lesson)."""
+def test_fetch_reads_only_the_articles_row_groups_and_caches_them(corpus, monkeypatch):
+    """A fetch used to read and cache the WHOLE ~437 MB shard (one slot);
+    with the parse pool several processes fetch one batch, and a whole-
+    shard cache per process would multiply that read. A locator names the
+    article's rows, so only their row groups are read, once, and kept in a
+    small LRU (amendment 47)."""
     import app.plugins.embedded.source as mod
-    mod._shard_cache.clear()
-    real = pq.read_table
-    calls = []
-
-    def counting(path, *a, **k):
-        calls.append(str(path))
-        return real(path, *a, **k)
-    # _shard_rows re-imports pyarrow.parquet at call time, so patching the
-    # module attribute is exactly what it sees
-    monkeypatch.setattr(pq, "read_table", counting)
+    mod._groups.clear()
+    mod._layouts.clear()
+    whole, groups = [], []
+    real_table = pq.read_table
+    real_group = pq.ParquetFile.read_row_group
+    monkeypatch.setattr(pq, "read_table", lambda path, *a, **k: (whole.append(str(path)), real_table(path, *a, **k))[1])
+    monkeypatch.setattr(pq.ParquetFile, "read_row_group",
+                        lambda self, g, *a, **k: (groups.append(g), real_group(self, g, *a, **k))[1])
 
     src = EmbeddedSource()
     refs = {r.extra["article"]: r
             for r in src.discover(DiscoverState(corpus_root=corpus, state_dir=None))}
-    src.fetch(refs["10"])
-    src.fetch(refs["11"])   # same shard — must hit the cache
-    shard_reads = [c for c in calls if c.endswith("000.parquet")]
-    assert len(shard_reads) == 1
+    groups.clear()
+    a = src.fetch(refs["10"])
+    b = src.fetch(refs["11"])   # same row group — served from the cache
+    assert not any(p.endswith("000.parquet") for p in whole), "never the whole shard"
+    assert len(groups) == 1, groups
+    assert a.raw_hash != b.raw_hash and a.data and b.data
 
 
 def test_chunker_dispatch_default_is_unchanged():

@@ -24,6 +24,7 @@ manifest rows rebuild refs with nothing but the locator (plugin_io).
 import hashlib
 import json
 import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from .. import cursor
@@ -32,28 +33,77 @@ from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability
 _SEG_SEP = "|"
 _LOCATOR_SEP = "::"
 
-# One-slot shard cache for fetch(): the worker walks documents in native_id
-# order, which is shard order, so consecutive fetches hit the same shard —
-# without this, EVERY per-article fetch re-parses a ~437 MB parquet file
-# (~95k articles per shard would make rdf/fts unusable; pubmed hit the same
-# wall and grew the same cache). Only the four text columns are held, never
-# `embedding`. Lock because the parallel embed stage fetches from threads.
-_shard_cache: dict = {}
+# ROW-GROUP reads for fetch(). The first cut cached one whole shard (the
+# four text columns of a ~437 MB parquet, ~10 s to read) because the worker
+# walks documents in shard order; with the PARSE POOL (amendment 47) a
+# batch's documents are fetched by several processes, and a whole-shard
+# cache per process would multiply that read and hold N x hundreds of MB.
+# A locator names the article's rows, so only the row groups holding them
+# are read — a few MB — and kept in a small LRU per process. Lock because
+# the parallel embed stage fetches from threads.
 _cache_lock = threading.Lock()
+_layouts: OrderedDict = OrderedDict()     # path -> (mtime, [row group start offsets], total)
+_groups: OrderedDict = OrderedDict()      # (path, group) -> (mtime, table)
+_MAX_LAYOUTS = 64
+_MAX_GROUPS = 8
 
 
-def _shard_rows(path: str) -> "object":
+def _layout(path: str) -> tuple[list[int], int]:
     import pyarrow.parquet as pq
     mtime = Path(path).stat().st_mtime_ns
     with _cache_lock:
-        hit = _shard_cache.get(path)
+        hit = _layouts.get(path)
         if hit is not None and hit[0] == mtime:
-            return hit[1]
-    table = pq.read_table(path, columns=["id", "url", "title", "text"])
+            _layouts.move_to_end(path)
+            return hit[1], hit[2]
+    meta = pq.ParquetFile(path).metadata
+    starts, off = [], 0
+    for g in range(meta.num_row_groups):
+        starts.append(off)
+        off += meta.row_group(g).num_rows
     with _cache_lock:
-        _shard_cache.clear()            # one slot: shards read sequentially
-        _shard_cache[path] = (mtime, table)
+        _layouts[path] = (mtime, starts, off)
+        _layouts.move_to_end(path)
+        while len(_layouts) > _MAX_LAYOUTS:
+            _layouts.popitem(last=False)
+    return starts, off
+
+
+def _group_table(path: str, g: int):
+    import pyarrow.parquet as pq
+    mtime = Path(path).stat().st_mtime_ns
+    key = (path, g)
+    with _cache_lock:
+        hit = _groups.get(key)
+        if hit is not None and hit[0] == mtime:
+            _groups.move_to_end(key)
+            return hit[1]
+    table = pq.ParquetFile(path).read_row_group(g, columns=["id", "url", "title", "text"])
+    with _cache_lock:
+        _groups[key] = (mtime, table)
+        _groups.move_to_end(key)
+        while len(_groups) > _MAX_GROUPS:
+            _groups.popitem(last=False)
     return table
+
+
+def _read_rows(path: str, start: int, end: int) -> list[dict]:
+    """Rows [start, end) of a shard as dicts, from their row groups only."""
+    starts, total = _layout(path)
+    end = min(end, total)
+    out: list[dict] = []
+    for g, g_start in enumerate(starts):
+        g_end = starts[g + 1] if g + 1 < len(starts) else total
+        if g_end <= start or g_start >= end:
+            continue
+        table = _group_table(path, g)
+        lo, hi = max(start, g_start) - g_start, min(end, g_end) - g_start
+        for i in range(lo, hi):
+            out.append({"id": table.column("id")[i].as_py(),
+                        "url": table.column("url")[i].as_py(),
+                        "title": table.column("title")[i].as_py(),
+                        "text": table.column("text")[i].as_py()})
+    return out
 
 # native_id must be int-castable and unique across languages, so it encodes
 # (language, article id) as ordinal * 10^10 + article_id. FROZEN: these
@@ -311,14 +361,7 @@ class EmbeddedSource:
     def fetch(self, ref: DocRef) -> RawDoc:
         rows: list[dict] = []
         for path, start, end in split_locator(ref.locator):
-            table = _shard_rows(path)
-            for i in range(start, min(end, table.num_rows)):
-                rows.append({
-                    "id": table.column("id")[i].as_py(),
-                    "url": table.column("url")[i].as_py(),
-                    "title": table.column("title")[i].as_py(),
-                    "text": table.column("text")[i].as_py(),
-                })
+            rows.extend(_read_rows(path, start, end))
         data = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")
         digest = hashlib.blake2b(data, digest_size=16).hexdigest()
         return RawDoc(ref=ref, raw_hash=digest, data=data)

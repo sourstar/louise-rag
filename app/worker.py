@@ -28,7 +28,7 @@ from pathlib import Path
 
 import httpx
 
-from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod,
+from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
                 embeddings, entities, fts, plugin_io, refs, spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -85,8 +85,9 @@ def _batch_log(con, stage: str, collection, msg: str) -> None:
         db.log_event(con, "info", stage, msg)
 
 
-def _rdf_one(con, row, collection, plugin, now: int) -> None:
-    meta = plugin_io.metadata(plugin, row)
+def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -> None:
+    if meta is None:
+        meta = plugin_io.metadata(plugin, row)
     con.execute(
         "UPDATE documents SET title=?,authors=?,lang=?,subjects=?,bookshelves=?,"
         "rdf_done=1,updated_at=? WHERE uid=?",
@@ -127,18 +128,27 @@ def stage_rdf(con, row, collection) -> None:
     plugin = collection.plugin_instance()
     now = int(time.time())
     t0 = time.monotonic()
-    _rdf_one(con, row, collection, plugin, now)   # unguarded: its failure IS the round's
-    n = 1
+    peers = []
     if config.RDF_BATCH_DOCS > 1:
         peers = con.execute(
             _RDF_BATCH_PEERS,
             (config.MAX_RETRIES, row["uid"], config.RDF_BATCH_DOCS - 1)).fetchall()
-        for peer in peers:
-            try:
-                _rdf_one(con, peer, collection, plugin, now)
-                n += 1
-            except Exception:   # noqa: BLE001 — a peer never fails the round
-                continue
+    # the batch's parse goes to the PARSE POOL (amendment 47); the writes
+    # stay here, inside the caller's transaction
+    metas = parallel.metadata_for_rows(collection, [row, *peers])
+    ok, first = metas[0]
+    if not ok:
+        parallel.raise_for(first)            # unguarded: its failure IS the round's
+    _rdf_one(con, row, collection, plugin, now, meta=first)
+    n = 1
+    for peer, (ok, meta) in zip(peers, metas[1:]):
+        if not ok:
+            continue                        # a peer never fails the round
+        try:
+            _rdf_one(con, peer, collection, plugin, now, meta=meta)
+            n += 1
+        except Exception:   # noqa: BLE001
+            continue
     if n > 1:
         _batch_log(con, "rdf", collection,
                    f"extracted {n} documents in one transaction "
@@ -187,23 +197,29 @@ def stage_fts(con, row, collection) -> None:
     # marks are SQLite writes, so the transaction opens just before them
     # (see the BEGIN IMMEDIATE below; _execute_step commits it).
     t0 = time.monotonic()
-    chunks = _load_chunks(row, collection)
-    batch = [(row, chunks)]
-    n_chunks = len(chunks)
+    peers = []
     if config.FTS_BATCH_DOCS > 1:
         peers = con.execute(
             _FTS_BATCH_PEERS,
             (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION,
              row["uid"], config.FTS_BATCH_DOCS - 1)).fetchall()
-        for peer in peers:
-            if n_chunks >= config.FTS_BATCH_CHUNKS:
-                break
-            try:
-                peer_chunks = _load_chunks(peer, collection)
-            except Exception:   # noqa: BLE001 — a peer never fails the round
-                continue
-            batch.append((peer, peer_chunks))
-            n_chunks += len(peer_chunks)
+    # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
+    # one (ok, chunks) per row, in order; the selected row's failure IS the
+    # round's, a peer's failure drops the peer
+    results = parallel.chunks_for_rows(collection, [row, *peers])
+    ok, first = results[0]
+    if not ok:
+        parallel.raise_for(first)
+    chunks = first
+    batch = [(row, chunks)]
+    n_chunks = len(chunks)
+    for peer, (ok, peer_chunks) in zip(peers, results[1:]):
+        if n_chunks >= config.FTS_BATCH_CHUNKS:
+            break
+        if not ok:
+            continue            # a peer never fails the round
+        batch.append((peer, peer_chunks))
+        n_chunks += len(peer_chunks)
 
     fts.index_books(((r["lang"], int(r["native_id"]), ch) for r, ch in batch),
                      collection)
@@ -1822,6 +1838,7 @@ def run_forever():
                 print(traceback.format_exc()[:1500], flush=True)
             time.sleep(5)
     _join_pipeline_threads()
+    parallel.shutdown()             # the parse pool's children go with the worker
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
 

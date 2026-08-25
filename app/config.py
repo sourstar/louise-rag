@@ -181,6 +181,13 @@ GENESIS_PASS_BACKOFF_MAX_SEC = int(os.getenv("GENESIS_PASS_BACKOFF_MAX_SEC", "21
 GENESIS_PASS_BUDGET_S = int(os.getenv("GENESIS_PASS_BUDGET_S", "300"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
+# The PARSE POOL (app/parallel.py): fetch/parse/chunk per document is pure
+# Python and every collection's pipeline thread shares ONE interpreter
+# lock — measured on the reference node as one thread at 87 % and eleven
+# idle cores. Batches are cut into sub-batches for this many low-priority
+# child processes; 1 = in-process, serial (tests, small nodes).
+PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or 2) - 1))))
+
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —
 # measured 13 s on 15.8M rows. An IVF index is built once a collection's

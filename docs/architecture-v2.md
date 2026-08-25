@@ -1278,3 +1278,28 @@ the live deployment:
     terms); the Library card and `/terms` speak for packs. Green needs
     nothing. `discovery.sync_collection` itself stays ungated (tools and
     tests call it); the gate is the worker's and the UI's.
+47. **§7 — the PARSE POOL: per-document work in child processes, the
+    writers in the worker (operator, 2026-08-27: "CPU close to 100 %
+    when there is not much else to do").** Measured on the reference node
+    (12 cores): the worker at 232 % — ONE Python thread at 87 %, whichever
+    pipeline held the interpreter lock — and eleven idle cores; the CPU
+    encoders at ~1 % because the archives cover everything indexed so far
+    (correct, so they cannot absorb the idle cores either). Amended
+    process model: `app/parallel.py` runs fetch/parse/chunk (fts),
+    metadata (rdf) and pack records (`pack build`) for a batch in
+    `PARSE_PROCESSES` SPAWNED children (never forked — the worker holds
+    SQLite connections and threads) at `nice 10`, so encoders, queries and
+    the UI keep priority; a batch is cut into ~2 sub-batches per child;
+    results return in order, one (ok, value) per document, so a failing
+    document costs itself (an UnindexableDocument stays that class) and
+    never its neighbours — the serial path's contract. Every WRITER stays
+    in the worker: the tantivy writer, the Lance table, the manifest
+    transactions and marks. The children receive the parent's chunking
+    knobs (`parallel.KNOBS`) so an override is honoured; a broken pool
+    falls back to serial for that batch and rebuilds. `PARSE_PROCESSES=1`
+    is the in-process path (tests, small nodes). Because several
+    processes now fetch one batch, the `embedded` plugin reads the ROW
+    GROUPS a locator names instead of caching one whole 437 MB shard per
+    process (a few MB per group, small LRU). Not parallelised: the embed
+    step (encoder-bound), archive imports (already proportional to the
+    new documents), discovery.

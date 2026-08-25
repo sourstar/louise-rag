@@ -12,6 +12,15 @@ import pytest
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
 
 
+@pytest.fixture(autouse=True)
+def serial_parse_pool(monkeypatch):
+    """Every test runs the in-process parse path (app/parallel.py): a
+    monkeypatch cannot reach a spawned child, and the pool's own tests opt
+    back in explicitly (PARSE_PROCESSES=2)."""
+    from app import config
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+
+
 @pytest.fixture
 def corpus_dir(tmp_path) -> Path:
     dest = tmp_path / "corpus"
@@ -46,6 +55,9 @@ def isolated_config(monkeypatch, corpus_dir, data_dir, config_dir):
     # pubmed's derived packs go beside the corpus by default — tests that
     # read the committed fixture in place must not leave a .pack/ in it
     monkeypatch.setattr(config, "PUBMED_PACK_DIR", data_dir / "pubmed-pack")
+    # the parse pool (app/parallel.py) is exercised by its own tests; every
+    # other test runs the in-process serial path — same results, no children
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
     config.ensure_dirs()
     return config
