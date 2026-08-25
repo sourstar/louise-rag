@@ -1619,7 +1619,9 @@ def run_forever():
     last_discover = _last_discover
     last_discover.update({c.name: time.time() for c in all_collections})
     last_idle_log: dict[str, float] = {}
-    control_con = cons[all_collections[0].name]
+    # zero collections (an empty collections/ directory): the node idles on
+    # the fallback control manifest until a TOML appears (hot-reloaded)
+    control_con = cons[all_collections[0].name] if all_collections else db.connect()
     # None, not the current name: the first round must run the adoption
     # (this startup may be the one that follows the wipe)
     last_control_name: str | None = None

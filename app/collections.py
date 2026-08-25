@@ -266,19 +266,43 @@ def config_toml_path(name: str) -> Path:
     return _config_dir() / "collections" / f"{name}.toml"
 
 
+def collections_dir() -> Path:
+    return _config_dir() / "collections"
+
+
 def load_all() -> list[Collection]:
-    cfg_dir = _config_dir() / "collections"
-    tomls = sorted(cfg_dir.glob("*.toml")) if cfg_dir.is_dir() else []
-    if not tomls:
+    """The collections this node has. TWO modes, decided by whether the
+    `collections/` directory EXISTS:
+
+      absent   — the legacy single-collection deployment: one synthesized
+                 default (gutenberg over CORPUS_DIR/DATA_DIR), no TOML.
+      present  — TOML mode: exactly the TOMLs in it, possibly NONE. An
+                 empty directory is a node with zero collections, not a
+                 legacy node: the synthesized default used to reappear the
+                 moment the last TOML was removed (Louise2, 2026-08-26 —
+                 "cannot delete all collections") and could not be removed
+                 again from the UI, because it has no file to retire.
+    """
+    cfg_dir = collections_dir()
+    if not cfg_dir.is_dir():
         return [_default_gutenberg_collection()]
-    return [_load_one(p) for p in tomls]
+    return [_load_one(p) for p in sorted(cfg_dir.glob("*.toml"))]
+
+
+def is_synthesized(collection) -> bool:
+    """True for the legacy default: no TOML, no collections/ directory."""
+    return not collections_dir().is_dir() and not config_toml_path(collection.name).exists()
 
 
 def default_collection() -> Collection:
     """The first collection load_all() returns — used wherever no explicit
     collection is given (single-collection call sites predating P0.5's
-    federation)."""
-    return load_all()[0]
+    federation), and as the CONTROL manifest (worker state, seeding table).
+    With zero collections the control manifest falls back to the legacy
+    default's path (DATA_DIR/manifest.db) so the node keeps running; that
+    collection is NOT listed anywhere and no pipeline runs on it."""
+    collections = load_all()
+    return collections[0] if collections else _default_gutenberg_collection()
 
 
 def by_name(name: str) -> Collection | None:

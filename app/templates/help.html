@@ -518,9 +518,10 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     imports it next round (the full admission ladder applies — an upload is
     delivery, never trust); <i>remove…</i> — retire the collection's TOML
     (renamed aside, restorable) while its manifest, index and vectors stay
-    on disk untouched. Removing the synthesized default collection isn't
-    possible from the UI. Create and remove both take effect live — the
-    worker hot-reloads collections every round.
+    on disk untouched. Removing the synthesized default collection (a node
+    that never declared a TOML) switches the node to TOML mode with zero
+    collections; a node can have none. Create and remove both take effect
+    live — the worker hot-reloads collections every round.
   </p>
 </div>
 

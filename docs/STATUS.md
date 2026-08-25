@@ -847,6 +847,17 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 Recorded because each was invisible until it wasn't, and each would be easy
 to reintroduce.
 
+- **A fallback that cannot be declined.** `load_all()` synthesized the
+  legacy default collection whenever no TOML existed — so on Louise2,
+  removing the last collection made "gutenberg" reappear, with no file to
+  retire (2026-08-26: "cannot delete all collections"). The mode switch
+  is now the `collections/` DIRECTORY existing: absent = legacy default;
+  present = exactly its TOMLs, possibly none. Removing the synthesized
+  default from the UI creates the empty directory; the create flow
+  captures the synthesized default BEFORE creating the directory (the
+  "79k books vanished" trap in a new coat); with zero collections the
+  control manifest falls back to the legacy path and the worker idles
+  until a TOML appears.
 - **A global knob that scopes per-thing.** `CHUNK_VERSION` entered every
   collection's `space_id` while chunking is per-plugin, so changing text
   chunking would have re-pinned collections whose chunker never changed —

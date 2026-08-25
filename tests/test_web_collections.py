@@ -156,11 +156,29 @@ def test_remove_retires_toml_and_keeps_data(client):
     assert collections_mod.by_name("temp1") is None
 
 
-def test_remove_refuses_the_synthesized_default(client):
-    # no collections/ TOMLs -> the default gutenberg collection is synthesized
+def test_removing_the_synthesized_default_leaves_zero_collections(client):
+    """Louise2, 2026-08-26: the operator could not delete every collection
+    — removing the last TOML made the synthesized default reappear, and
+    it had no file to retire. Removing it now creates the empty
+    collections/ directory: TOML mode, zero collections, data kept."""
+    # no collections/ directory -> the default gutenberg collection is synthesized
+    assert [c.name for c in collections_mod.load_all()] == ["gutenberg"]
     r = client.post("/admin/library/gutenberg/remove")
-    assert r.status_code == 400
-    assert "synthesized" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    assert r.json()["retired_toml"] is None and "zero collections" in r.json()["note"]
+    assert collections_mod.collections_dir().is_dir()
+    assert collections_mod.load_all() == []
+    assert collections_mod.by_name("gutenberg") is None
+    # the node keeps working with none: the Library renders, control state resolves
+    assert client.get("/admin/library").status_code == 200
+    assert db.worker_state(db.connect()) in ("paused", "running", "seed-only", "acquire-only")
+    # a second remove is a 404, not a crash; the default never comes back
+    assert client.post("/admin/library/gutenberg/remove").status_code == 404
+    # the next collection is declared explicitly and is the only one
+    assert create(client, "fresh", "pubmed").status_code == 200
+    assert [c.name for c in collections_mod.load_all()] == ["fresh"]
+    r = client.post("/admin/library/fresh/remove")
+    assert r.status_code == 200 and collections_mod.load_all() == []
 
 
 def test_bundle_import_upload_lands_in_inbox_unwrapped(client):

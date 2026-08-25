@@ -1354,16 +1354,18 @@ def new_collection_create(body: CreateCollectionBody):
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")
 
+    # The collections/ directory EXISTING is what flips load_all() from
+    # synthesized-default mode to TOML mode — without this, creating an
+    # empty new collection would silently disown the default collection
+    # and everything in it (observed live: 79k books vanished behind a
+    # test 'pubmed' TOML). Capture the synthesized default BEFORE the
+    # directory is created and materialize it, so what exists keeps
+    # existing. (An operator who removed the default on purpose has an
+    # existing, empty directory: nothing is synthesized, nothing comes back.)
+    legacy = [c for c in collections_mod.load_all() if collections_mod.is_synthesized(c)]
     toml_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Writing the FIRST TOML flips load_all() from synthesized-default mode
-    # to TOML-only mode — without this, creating an empty new collection
-    # would silently disown the default collection and everything in it
-    # (observed live: 79k books vanished behind a test 'pubmed' TOML).
-    # Materialize the currently-synthesized collections so what exists
-    # keeps existing.
-    if not any(toml_path.parent.glob("*.toml")):
-        for existing in collections_mod.load_all():
+    if legacy:
+        for existing in legacy:
             _write_collection_toml(
                 collections_mod.config_toml_path(existing.name),
                 plugin=existing.plugin, profile=existing.profile,
@@ -1510,10 +1512,25 @@ def collection_remove(name: str):
     collection = _collection_or_404(name)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
-        raise HTTPException(
-            400, f"{name!r} is the synthesized default collection (no TOML file) — "
-                 f"it exists as long as no collections/ directory defines others, "
-                 f"and cannot be removed from the UI")
+        if not collections_mod.is_synthesized(collection):
+            raise HTTPException(400, f"{name!r} has no TOML file to retire")
+        # The synthesized default (legacy mode: no collections/ directory).
+        # Creating the EMPTY directory switches the node to TOML mode with
+        # zero collections — the default is gone, its data stays on disk,
+        # and the create flow declares the next collection explicitly.
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        con = db.connect()
+        db.log_event(con, "info", "control",
+                     f"synthesized default collection {name!r} removed via admin UI "
+                     f"({toml_path.parent} created empty: TOML mode, zero collections; "
+                     f"data kept on disk)")
+        return {"ok": True, "retired_toml": None,
+                "data_kept": {"manifest": str(collection.manifest_path),
+                               "fts": str(collection.fts_dir),
+                               "lancedb": str(collection.lance_dir)},
+                "note": "This was the synthesized default (no TOML). The node now has "
+                         "zero collections; create one from the Library. Its data "
+                         "stays on disk."}
     retired = toml_path.with_name(f"{name}.toml.removed-{int(time.time())}")
     toml_path.rename(retired)
     con = db.connect()
