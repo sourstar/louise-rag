@@ -269,7 +269,18 @@ block every other collection's embedding for each 300 s slice.
    pins byte-identity on the fixture for plain and gzipped containers.
    The XML column (not just the six fields) is what makes it a cache
    with full fidelity — MeSH, references and grants stay available at
-   the same cost when entity work wants them.
+   the same cost when entity work wants them. **Live on the NAS
+   (deployed 6926a81, 2026-08-26 00:39):** builds take 14–33 s per
+   container under the full pipeline load (12–29 MiB each; older
+   containers are smaller), paid once — the genesis pass that first
+   touches five new containers spends ~125 s of its 300 s slice building
+   them (shard 3: 29,706 documents imported in 309 s including the
+   builds), rdf/fts continue at 1.4–15 s per 1,000-document transaction
+   with the same one-off build on their container; 1,334 containers ≈
+   9 CPU-hours spread over the pipeline, after which every record costs
+   ~0.6 ms. Same pass, same lesson as 5g: 70,941 of ~100k eligible
+   shard-3 documents were chunk-shape mismatches — the chunker change is
+   what unlocks the archive.
    *Original measurements and proposal:*
    The corpus is 1,334 gzipped XML containers, 51 GB; one container
    (`pubmed26n0600`) is 35.5 MB gz → 283 MB XML (8×), 30,000 records, so
