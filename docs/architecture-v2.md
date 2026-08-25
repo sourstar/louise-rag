@@ -1211,3 +1211,32 @@ the live deployment:
     is hand-populated over it). Storage: the reference NAS holds packs on
     `tank/louise-packs/<name>` (recordsize 1M, lz4), mounted at `/packs`
     (`PACK_MOUNTS_DIR`), offered by the create dialog as `packed` corpora.
+44. **§5 — a pack is a CLOSED snapshot; the origin hands over to it;
+    updates are derived, not authored (operator procedure, 2026-08-26).**
+    The first packs were built from origins still indexing. Amended
+    procedure: (1) the origin collection completes fetching, parsing and
+    indexing up to a cutoff date; (2) `pack build --until <date>` builds
+    the closed pack — records that existed at the origin on that date
+    (gutenberg by PG release date `dcterms:issued`, pubmed by
+    `DateRevised`/`DateCompleted`, wikipedia by the dump's date; a record
+    with no date under a rule is excluded and counted, never kept), the
+    rule recorded in the manifest (`origin.cutoff`, `closed: true`), a
+    resume under another cutoff refused; (3) the origin is turned off
+    and `pack adopt <origin> <packed>` moves its vector table and embed
+    marks (with `--fts` the text index) into the packed twin — no
+    re-embedding, because the twin yields the same uids and chunk ids
+    in the same pinned space (checked: config id and encoder hash must
+    agree; the twin's table must be empty; nothing may write meanwhile).
+    The first closed pack is Gutenberg to 2026-06-30; PubMed and
+    Wikipedia follow. UPDATES (pack-format.md §6.1): an update is a pure
+    function of (previous manifest, origin window, cutoff) — new shards
+    appended per slice in id order after the last listed, changed
+    records re-issue their shard, deletions are tombstones in the delta
+    — so two honest updaters produce byte-identical members and there is
+    nothing to reconcile; any peer may publish one (unverified on
+    arrival, chained by `previous`), and the maintainer-key policy that
+    promotes updates is a later, format-neutral addition
+    (`update.coordinator`). The updater itself is not built. Live:
+    `gutenberg-pack` paused (its TOML set aside) until the gutenberg
+    origin completes; the premature pubmed/wikipedia conversions and
+    their finishers stopped.

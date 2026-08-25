@@ -474,14 +474,42 @@ def cmd_pack_build(args) -> int:
     collection = _collection_by_name(args.collection)
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
-    result = pack_build.build(collection, Path(args.out), snapshot=args.snapshot, name=args.name,
-                              records_per_shard=args.records_per_shard, sign=not args.unsigned,
-                              stop=_stop)
+    try:
+        result = pack_build.build(collection, Path(args.out), snapshot=args.snapshot, name=args.name,
+                                  records_per_shard=args.records_per_shard, until=args.until,
+                                  sign=not args.unsigned, stop=_stop)
+    except (pack_build.BuildError, ValueError) as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 1
     if result.interrupted:
         print("interrupted — re-run to resume", file=sys.stderr)
         return 130
     print(f"{result.slices} slice(s), {result.shards} shard(s), {result.records} records, "
           f"{result.chunks} chunks, {result.skipped} skipped -> {result.manifest_path}")
+    return 0
+
+
+def cmd_pack_adopt(args) -> int:
+    """The origin collection hands over to its packed twin: vectors (and,
+    with --fts, the text index) move across without re-embedding. Both
+    collections must be pinned to the SAME space; run it with the worker
+    stopped or the origin's TOML retired — nothing may write meanwhile."""
+    from .pack import adopt as pack_adopt
+    origin = _collection_by_name(args.origin)
+    packed = _collection_by_name(args.packed)
+    if not args.yes:
+        print(f"This copies {origin.name}'s vector table into {packed.name}'s and marks the "
+              f"documents embedded{' (+ the text index)' if args.fts else ''}. Stop the worker "
+              f"first. Re-run with --yes.", file=sys.stderr)
+        return 1
+    try:
+        result = pack_adopt.adopt(origin, packed, fts=args.fts, log=print)
+    except pack_adopt.AdoptError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 1
+    print(f"adopted {result['vectors']} vectors for {result['documents']} documents"
+          f"{' and the text index' if result.get('fts') else ''}; "
+          f"{result['missing']} origin documents are not in the pack")
     return 0
 
 
@@ -1033,8 +1061,18 @@ def main(argv=None) -> int:
     p_build.add_argument("--name")
     p_build.add_argument("--snapshot")
     p_build.add_argument("--records-per-shard", type=int)
+    p_build.add_argument("--until", help="a CLOSED snapshot: keep records that existed at the "
+                                         "origin on this date (YYYY-MM-DD) and nothing later — "
+                                         "gutenberg by release date, pubmed by DateRevised")
     p_build.add_argument("--unsigned", action="store_true")
     p_build.set_defaults(func=cmd_pack_build)
+    p_adopt = pack_sub.add_parser(
+        "adopt", help="move an origin collection's vectors (and index) into its packed twin")
+    p_adopt.add_argument("origin", help="the collection indexed from the origin files")
+    p_adopt.add_argument("packed", help="the collection over the pack built from it")
+    p_adopt.add_argument("--fts", action="store_true", help="also adopt the text index")
+    p_adopt.add_argument("--yes", action="store_true")
+    p_adopt.set_defaults(func=cmd_pack_adopt)
     p_verify = pack_sub.add_parser("verify", help="run the pack's validation plan")
     p_verify.add_argument("pack")
     p_verify.add_argument("--checks", help="comma-separated subset: roots,records,chunks,license,signature")

@@ -172,7 +172,9 @@ class WikipediaSource:
             date=None,
             subjects=[],
             keys=[],
-            extra={},
+            # the revision's timestamp — informative in a dated snapshot (a
+            # dump IS the snapshot: pack build --until cuts on the dump date)
+            extra={"revised": (page.findtext("revision/timestamp") or "")[:10] or None},
             sections=sections,
             raw_hash=raw.raw_hash,
         )

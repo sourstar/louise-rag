@@ -467,6 +467,71 @@ ids that need vectors in each space. Unchanged records in a re-issued
 shard keep their chunk ids and their vectors are copied forward. The
 monthly PubMed delta (~20k records) is three shards of work.
 
+### 6.1 Closed packs and updates: who fetches, who publishes (2026-08-26)
+
+**A pack is closed.** The operator's procedure, decided 2026-08-26: the
+origin collection finishes fetching, parsing and indexing everything
+the origin held up to a cutoff date; the pack is built *from that
+completed origin* with `pack build --until <date>` (records that
+existed at the origin on that date and nothing later — gutenberg by
+release date, pubmed by DateRevised, wikipedia by the dump's date;
+`closed: true` and the rule in the manifest); the origin collection is
+then turned off and its content moves to the packed twin with `pack
+adopt <origin> <packed>` — the vector table and marks, optionally the
+text index, without re-embedding, because the twin yields the same uids
+and chunk ids in the same space (§18). The first closed pack is
+Gutenberg to 2026-06-30; PubMed and Wikipedia follow the same steps.
+A closed pack never changes: later content is an UPDATE.
+
+**An update is a pure function of (previous manifest, origin, cutoff).**
+This is the architectural choice that makes "anyone may publish an
+update" safe before any policy exists. An updater — a peer holding the
+pack and able to reach the origin — runs the origin plugin's
+acquisition for the window (PubMed's daily updatefiles, Gutenberg's new
+ids, the next Wikipedia dump), parses, and derives the update by rules
+the previous manifest fixes completely:
+
+- new records go into NEW shards appended per slice, in native-id
+  order, numbered after the last shard the previous manifest lists;
+- a changed record (a different `content_hash` for a uid the previous
+  snapshot holds) RE-ISSUES its shard under the new snapshot with the
+  same shard number — the manifest names it, a peer refetches it;
+- a deleted record is a tombstone in `deltas/<snapshot>.json`, applied
+  at the next re-issue of its shard;
+- the update's own cutoff (`until`) is the new `snapshot`; `previous` is
+  the pack it extends; `collection_id` is unchanged.
+
+Two honest updaters with the same origin window therefore produce
+BYTE-IDENTICAL shards and the same delta — the same torrent info hashes
+— so there is nothing to reconcile: the update is verifiable by anyone
+who re-derives it (`records-vs-origin`, §15), and the first valid one to
+reach a peer is the same as any other. Divergence can only come from a
+different origin window (a peer that fetched later sees more): the
+cutoff in the update's manifest says which, and a peer keeps the chain
+whose cutoffs match its needs.
+
+What travels: the new/re-issued record shards as members of the torrent
+collection (slice × kind, §10), the delta file, and the new manifest;
+vectors for the update's chunks follow through the call for
+contribution (§11) — the update's work list is the delta's chunk ids —
+so an updater needs no GPU.
+
+**Policy comes later, deliberately.** Until then: any peer may publish an
+update, every update is *unverified* on arrival (§16), a consumer applies
+an update only when its `previous` is the manifest it holds (a chain, no
+gaps), and `pack verify` reproduces its records from the origin on a
+sample. The slot for a lead exists in the manifest already —
+`update.coordinator` — and the intended policy is a maintainer key (or
+keys) whose signature promotes an update from *unverified* to
+*published*, with the cadence and deadline fields governing when the
+window closes. Nothing in the format changes when that policy lands:
+the derivation rules above are what make a lead's job checkable.
+
+Not built yet: the updater (`pack update <packed> --until <date>`: run
+acquisition for the window, derive, emit shards + delta + manifest),
+the consumer's chain check, and the coordinator promotion. Built: the
+closed pack (`--until`), the hand-over (`pack adopt`).
+
 ## 7. The manifest
 
 ```json

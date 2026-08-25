@@ -40,6 +40,8 @@ def main(argv=None) -> int:
     ap.add_argument("--name", help="collection name in the manifest (default: the plugin)")
     ap.add_argument("--snapshot", help="snapshot date (default: today)")
     ap.add_argument("--records-per-shard", type=int, help="override the plugin's shard size")
+    ap.add_argument("--until", help="a CLOSED snapshot: records that existed at the origin on this "
+                                    "date (YYYY-MM-DD) and nothing later")
     ap.add_argument("--unsigned", action="store_true", help="do not sign the manifest")
     ap.add_argument("--skip-discovery", action="store_true",
                     help="reuse the build manifest from a previous run without rescanning")
@@ -67,8 +69,8 @@ def main(argv=None) -> int:
         if stats.get("interrupted"):
             return 130
     result = pack_build.build(collection, out, snapshot=args.snapshot, name=args.name,
-                              records_per_shard=args.records_per_shard, sign=not args.unsigned,
-                              log=log, stop=_stop)
+                              records_per_shard=args.records_per_shard, until=args.until,
+                              sign=not args.unsigned, log=log, stop=_stop)
     if result.interrupted:
         log("[pack convert] interrupted — re-run to resume")
         return 130

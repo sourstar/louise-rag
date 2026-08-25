@@ -115,7 +115,7 @@ class GutenbergSource:
             title=meta["title"],
             creators=creators,
             language=meta["lang"],
-            date=None,
+            date=meta.get("issued"),        # the PG release date: the snapshot cutoff key
             subjects=subjects,
             keys=[],
             extra={"bookshelves": meta["bookshelves"]},

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .. import config, db, layers as layers_mod, plugin_io
 from ..plugins.base import UnindexableDocument
-from . import manifest as manifest_mod, records, slicing
+from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
 
 BUILD_DIR = ".build"
 BUILD_DB = "build.db"
@@ -167,9 +167,13 @@ def _record_of(collection, plugin, row) -> tuple[dict, int]:
 
 
 def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
-                log=print, stop=None) -> tuple[int, int, int, int, bool]:
-    """Pass 2. Returns (shards written, records, chunks, skipped, interrupted)."""
+                until: str | None = None, log=print, stop=None) -> tuple[int, int, int, int, bool]:
+    """Pass 2. Returns (shards written, records, chunks, skipped, interrupted).
+    `until`: the snapshot cutoff (cutoff.py) — records outside it are
+    skipped here, where the document is parsed anyway, so shards stay
+    full and the result is a pure function of (manifest, cutoff)."""
     plugin = collection.plugin_instance()
+    origin = _origin_plugin(collection)
     slices = [r["slice"] for r in con_build.execute("SELECT DISTINCT slice FROM plan ORDER BY slice")]
     written = n_records = n_chunks = n_skipped = 0
     for slice_name in slices:
@@ -233,6 +237,12 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                   (prow["uid"], f"pack: parsed uid {record['uid']} != manifest uid"))
                 continue
+            outside = cutoff_mod.excluded(origin, record, until)
+            if outside is not None:
+                n_skipped += 1
+                con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
+                                  (prow["uid"], f"cutoff: {outside}"[:200]))
+                continue
             buf.append(record)
             layer_counts[layer] = layer_counts.get(layer, 0) + 1
             last_row = prow
@@ -259,7 +269,8 @@ def _license_of(origin_plugin: str) -> tuple[str, Path | None]:
 
 
 def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name: str,
-                   records_per_shard: int, sign: bool = True, log=print) -> Path:
+                   records_per_shard: int, until: str | None = None, sign: bool = True,
+                   log=print) -> Path:
     import hashlib
     origin = _origin_plugin(collection)
     scheme = slicing.scheme_for(origin)
@@ -281,8 +292,10 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
         layers=[l.as_manifest() for l in layers_mod.layers_for(collection)],
         cleaning_version=config.CLEANING_VERSION,
         origin={"plugin": origin, "corpus_snapshot": getattr(collection, "snapshot", None),
-                "source_collection": collection.name},
+                "source_collection": collection.name,
+                "cutoff": {"until": until, "rule": cutoff_mod.rule_for(origin)} if until else None},
         publisher_hex=publisher)
+    m["closed"] = bool(until)      # a dated snapshot: nothing later belongs to it
     slices: dict[str, dict] = {}
     shards = []
     for r in con_build.execute("SELECT * FROM shards ORDER BY slice, n"):
@@ -314,13 +327,15 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
 
 
 def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str | None = None,
-          records_per_shard: int | None = None, sign: bool = True, log=print, stop=None) -> BuildResult:
+          records_per_shard: int | None = None, until: str | None = None, sign: bool = True,
+          log=print, stop=None) -> BuildResult:
     pack_dir = Path(pack_dir)
     pack_dir.mkdir(parents=True, exist_ok=True)
     origin = _origin_plugin(collection)
     scheme = slicing.scheme_for(origin)
     rps = int(records_per_shard or scheme.records_per_shard)
-    snapshot = snapshot or time.strftime("%Y-%m-%d", time.gmtime())
+    until = cutoff_mod.check_until(until)
+    snapshot = snapshot or until or time.strftime("%Y-%m-%d", time.gmtime())
     name = name or collection.name
     con_src = db.connect(collection)
     con_build = _build_db(pack_dir)
@@ -328,6 +343,13 @@ def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str 
         prior = _meta(con_build, "plugin")
         if prior and prior != origin:
             raise BuildError(f"{pack_dir} was started for plugin {prior}, not {origin}")
+        prior_until = _meta(con_build, "until")
+        if prior_until is not None and prior_until != (until or ""):
+            # the cutoff decides which records exist: resuming under another
+            # one would mix two snapshots in one pack
+            raise BuildError(f"{pack_dir} was started with --until {prior_until or 'none'}; "
+                             f"a different cutoff needs a new pack directory")
+        _set_meta(con_build, "until", until or "")
         _set_meta(con_build, "plugin", origin)
         _set_meta(con_build, "records_per_shard", rps)
         if _meta(con_build, "plan_done") != "1":
@@ -339,11 +361,13 @@ def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str 
             log(f"[pack build] plan: {total} documents in "
                 f"{con_build.execute('SELECT COUNT(DISTINCT slice) FROM plan').fetchone()[0]} slice(s)")
         written, n_rec, n_chunks, n_skip, interrupted = pack_slices(
-            collection, con_src, con_build, pack_dir, records_per_shard=rps, log=log, stop=stop)
+            collection, con_src, con_build, pack_dir, records_per_shard=rps, until=until,
+            log=log, stop=stop)
         if interrupted:
             return BuildResult(pack_dir, 0, written, n_rec, n_chunks, n_skip, True, None)
         manifest_path = write_manifest(collection, con_build, pack_dir, snapshot=snapshot,
-                                       name=name, records_per_shard=rps, sign=sign, log=log)
+                                       name=name, records_per_shard=rps, until=until, sign=sign,
+                                       log=log)
         totals = con_build.execute(
             "SELECT COUNT(*) n, COUNT(DISTINCT slice) s, SUM(records) r, SUM(chunks) c FROM shards").fetchone()
         skipped = con_build.execute("SELECT COUNT(*) FROM skipped").fetchone()[0]

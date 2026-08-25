@@ -384,6 +384,28 @@ deploy.
    attestations, `records-vs-origin`, pack acquisition from a peer
    through a `packed` collection (no acquisition spec yet — a torrent
    fills a folder, the collection is hand-populated over it).
+   **Procedure change (2026-08-26, operator; amendment 44): packs are
+   CLOSED snapshots built from a COMPLETED origin.** `gutenberg-pack`
+   is paused (`gutenberg-pack.toml.paused` on the NAS) until the
+   gutenberg origin finishes fetching/parsing/indexing to 2026-06-30;
+   the premature pubmed/wikipedia conversions and all finishers were
+   stopped (their partial packs under `/packs/*` are throwaway — the
+   real builds use `--until`). Built for it: `pack build --until
+   YYYY-MM-DD` (gutenberg by `dcterms:issued`, now parsed into
+   `CanonicalDoc.date`; pubmed by DateRevised/DateCompleted, now in
+   `extra.revised`; wikipedia by dump date; manifest `closed`,
+   `origin.cutoff`; a resume under another cutoff is refused) and `pack
+   adopt <origin> <packed> [--fts] --yes` (copies the Lance table, the
+   embed marks and chunk provenance — and the tantivy index — into the
+   twin; same pinned space required; the twin's table must be empty;
+   run with the worker stopped). THE HAND-OVER, when gutenberg is
+   complete: `pack build gutenberg --out /packs/gutenberg-2026-06
+   --until 2026-06-30` → create `gutenberg-pack` over it (the paused
+   TOML, corpus_dir updated) and let it discover → stop the worker →
+   `pack adopt gutenberg gutenberg-pack --fts --yes` → retire
+   `gutenberg.toml` → start. Updates are a derived, conflict-free
+   function of (previous manifest, origin window, cutoff) —
+   pack-format.md §6.1; the updater is the next build item.
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent

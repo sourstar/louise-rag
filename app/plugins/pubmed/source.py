@@ -162,7 +162,8 @@ class PubmedSource:
             date=None,
             subjects=meta["mesh"],
             keys=[],
-            extra={"journal": meta["journal"], "date": meta["date"]},
+            extra={"journal": meta["journal"], "date": meta["date"],
+                   "revised": meta.get("revised")},
             sections=sections,
             raw_hash=raw.raw_hash,
         )
