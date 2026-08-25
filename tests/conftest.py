@@ -43,6 +43,9 @@ def isolated_config(monkeypatch, corpus_dir, data_dir, config_dir):
     monkeypatch.setattr(config, "DB_PATH", data_dir / "manifest.db")
     monkeypatch.setattr(config, "FTS_DIR", data_dir / "fts")
     monkeypatch.setattr(config, "LANCE_DIR", data_dir / "lancedb")
+    # pubmed's derived packs go beside the corpus by default — tests that
+    # read the committed fixture in place must not leave a .pack/ in it
+    monkeypatch.setattr(config, "PUBMED_PACK_DIR", data_dir / "pubmed-pack")
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
     config.ensure_dirs()
     return config

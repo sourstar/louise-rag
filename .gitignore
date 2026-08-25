@@ -28,3 +28,6 @@ build/
 
 # local deployment reference material (LAN IPs, host paths) - never pushed
 deploy/reference/
+
+# derived per-container caches (pubmed pack) — rebuilt from the archive, never committed
+.pack/
