@@ -28,7 +28,7 @@ import hashlib
 import json
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -239,6 +239,7 @@ class ShardDemand:
     shard: str
     uids: list[str]
     oldest: int            # smallest updated_at among them (fts commit time)
+    locators: dict = field(default_factory=dict)   # uid -> locator: the rows to read
 
 
 def _shard_of_locator(root: Path, locator: str, split_locator) -> str | None:
@@ -287,9 +288,10 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
             d = demand.get(shard)
             ts = int(r["updated_at"] or 0)
             if d is None:
-                demand[shard] = ShardDemand(shard, [r["uid"]], ts)
+                demand[shard] = ShardDemand(shard, [r["uid"]], ts, {r["uid"]: r["path"]})
             else:
                 d.uids.append(r["uid"])
+                d.locators[r["uid"]] = r["path"]
                 d.oldest = min(d.oldest, ts)
         last_rowid = page[-1]["rowid"]
         scanned += len(page)
@@ -382,7 +384,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
                     and now - d.oldest < config.GENESIS_MAX_WAIT_SEC:
                 continue                # let the batch grow; rdf/fts run meanwhile
             try:
-                result = import_shard(con, collection, archive, d.shard, revisit=True)
+                result = import_shard(con, collection, archive, d.shard, revisit=True,
+                                      wanted=d.locators)
             except GenesisUnavailable:
                 return None             # recorded as skipped; retried later
             except GenesisError:
@@ -488,7 +491,15 @@ def _local_shards(collection) -> tuple[str, ...]:
 
 def _read_medcpt_shard(cache_dir: Path, shard: str,
                         fetch: Callable[[str, Path], None],
-                        uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
+                        uid_prefix: str, collection, wanted=None) -> tuple[Iterator, list[Path]]:
+    """`wanted` (uids, or None for every row): a revisit pass names the
+    documents that became eligible since, and reads ONLY their rows from
+    the memory-mapped array — proportional to the new documents, not to
+    the million-row shard. Live before this: every pass walked the shard
+    from row 0 with a manifest lookup per row, was cut by its 300 s
+    budget while re-skipping what earlier passes had imported, and each
+    pass imported less than the one before (86k, 101k, 87k, 72k, 68k,
+    58k, 49k) — half of pubmed's pipeline thread, spent re-reading."""
     npy = cache_dir / f"embeds_chunk_{shard}.npy"
     ids = cache_dir / f"pmids_chunk_{shard}.json"
     for name, path in ((f"embeds_chunk_{shard}.npy", npy),
@@ -502,14 +513,23 @@ def _read_medcpt_shard(cache_dir: Path, shard: str,
             f"shard {shard}: {len(pmids)} ids vs {len(vectors)} vectors")
 
     def rows():
-        for pmid, vec in zip(pmids, vectors):
-            yield f"{uid_prefix}{pmid}", [np.asarray(vec, dtype=np.float32)]
+        if wanted is None:
+            for pmid, vec in zip(pmids, vectors):
+                yield f"{uid_prefix}{pmid}", [np.asarray(vec, dtype=np.float32)]
+            return
+        # one pass over the id list (strings, in memory) to find the rows;
+        # then only those rows are touched in the mmap, in shard order
+        want = set(wanted)
+        for i, pmid in enumerate(pmids):
+            uid = f"{uid_prefix}{pmid}"
+            if uid in want:
+                yield uid, [np.asarray(vectors[i], dtype=np.float32)]
     return rows(), [npy, ids]
 
 
 def _read_parquet_shard(cache_dir: Path, shard: str,
                          fetch: Callable[[str, Path], None],
-                         uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
+                         uid_prefix: str, collection, wanted=None) -> tuple[Iterator, list[Path]]:
     """Generic adapter: any parquet with (id, vector) columns — the
     "bring your own compatible embeddings" path."""
     import pyarrow.parquet as pq
@@ -525,15 +545,34 @@ def _read_parquet_shard(cache_dir: Path, shard: str,
     return rows(), [path]
 
 
+def _row_groups_for(pf, ranges: list[tuple[int, int]]) -> list[int]:
+    """The parquet row groups that hold any of the [start, end) row ranges."""
+    groups = []
+    offset = 0
+    for g in range(pf.num_row_groups):
+        n = pf.metadata.row_group(g).num_rows
+        lo, hi = offset, offset + n
+        if any(start < hi and end > lo for start, end in ranges):
+            groups.append(g)
+        offset = hi
+    return groups
+
+
 def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
                                  fetch: Callable[[str, Path], None],
-                                 uid_prefix: str, collection) -> tuple[Iterator, list[Path]]:
+                                 uid_prefix: str, collection, wanted=None) -> tuple[Iterator, list[Path]]:
     """Amendment 11: the corpus IS the archive. `shard` is a corpus-relative
     parquet path (format v1: data/{lang}/NNN.parquet); rows of one article
     are consecutive with id "{article}_{seq}". Nothing is fetched and the
-    file is part of the corpus — import_shard never deletes it."""
+    file is part of the corpus — import_shard never deletes it.
+
+    `wanted` ({uid: locator}, or None for the whole shard): a candidate
+    read touches only the ROW GROUPS the candidates' locators name —
+    live, every 1,000-document fts batch triggered a read of the whole
+    437 MB shard to import those 1,000 documents (~20 % of each batch's
+    wall time)."""
     import pyarrow.parquet as pq
-    from ..plugins.embedded.source import LANG_ORDINAL, encode_native_id, split_row_id
+    from ..plugins.embedded.source import LANG_ORDINAL, encode_native_id, split_locator, split_row_id
     path = collection.corpus_dir / shard
     if not path.is_file():
         raise GenesisUnavailable(f"corpus shard missing: {path}")
@@ -541,6 +580,23 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
     if lang not in LANG_ORDINAL:
         raise GenesisError(f"shard {shard}: unrecognized language directory")
     pf = pq.ParquetFile(path)
+    groups: list[int] | None = None
+    want: set[str] | None = None
+    if wanted is not None:
+        want = set(wanted)
+        ranges: list[tuple[int, int]] = []
+        for uid, locator in wanted.items():
+            for seg_path, start, end in (split_locator(locator) if locator else ()):
+                if Path(seg_path) == path:
+                    ranges.append((start, end))
+        groups = _row_groups_for(pf, ranges) if ranges else list(range(pf.num_row_groups))
+
+    def batches():
+        if groups is None:
+            yield from pf.iter_batches(columns=["id", "embedding"], batch_size=1024)
+            return
+        for g in groups:
+            yield from pf.read_row_group(g, columns=["id", "embedding"]).to_batches(max_chunksize=1024)
 
     def rows():
         # An article straddling two shard files surfaces here with a PARTIAL
@@ -549,17 +605,20 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
         # shard boundary, and never a wrong import.
         current: str | None = None
         vecs: list[np.ndarray] = []
-        for batch in pf.iter_batches(columns=["id", "embedding"], batch_size=1024):
+        for batch in batches():
             for rid, vec in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist()):
                 article, _seq = split_row_id(rid)
                 if article != current:
                     if current is not None:
-                        yield (f"{uid_prefix}{encode_native_id(lang, int(current))}",
-                               vecs)
+                        uid = f"{uid_prefix}{encode_native_id(lang, int(current))}"
+                        if want is None or uid in want:
+                            yield uid, vecs
                     current, vecs = article, []
                 vecs.append(np.asarray(vec, dtype=np.float32))
         if current is not None:
-            yield f"{uid_prefix}{encode_native_id(lang, int(current))}", vecs
+            uid = f"{uid_prefix}{encode_native_id(lang, int(current))}"
+            if want is None or uid in want:
+                yield uid, vecs
     return rows(), [path]
 
 
@@ -677,10 +736,16 @@ def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],
 
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                  embed_fn=None, fetch=None, keep_cache: bool = False,
-                 revisit: bool = False, stop=None) -> dict:
+                 revisit: bool = False, stop=None, wanted=None) -> dict:
     """Admit one shard. Idempotent: an applied shard short-circuits, unless
     `revisit` (local archives) — re-running only touches documents that
-    became eligible since, via the same delete-then-insert."""
+    became eligible since, via the same delete-then-insert.
+
+    `wanted` narrows the read to named documents ({uid: locator} from a
+    local archive's candidates). For a REMOTE archive with declared
+    coverage a revisit pass narrows itself: one indexed range query on
+    the manifest names the eligible documents of the shard's id range,
+    and only their rows are read — the pass costs the new documents."""
     existing = con.execute(
         "SELECT state, updated_at, next_pass_at, proven_at, docs FROM genesis_imports "
         "WHERE archive=? AND shard=?", (archive.archive_id, shard)).fetchone()
@@ -705,8 +770,14 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     cache_dir = collection.manifest_path.parent / "genesis" / archive.archive_id
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    if wanted is None and revisit and not archive.local and archive.id_range_of(shard):
+        lo, hi = archive.id_range_of(shard)
+        wanted = {r["uid"]: None for r in con.execute(
+            "SELECT uid FROM documents WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
+            "AND in_scope=1 AND error IS NULL AND fts_done=1 AND embed_done=0", (lo, hi))}
     rows_iter, files = _ADAPTERS[archive.adapter](cache_dir, shard, fetch,
-                                                    archive.uid_prefix, collection)
+                                                    archive.uid_prefix, collection,
+                                                    wanted=wanted)
     # the fetcher digested a remote shard when it landed (3 GB, ~10 s);
     # a revisit pass on the embed thread must not pay that again
     prior_digest = con.execute(

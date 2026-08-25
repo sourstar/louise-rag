@@ -231,6 +231,31 @@ unproven archive are inconclusive (deferred, nothing written; an empty
 sample likewise), and `genesis retry <collection> [--shard N]` puts a
 rejected shard back in line — used on the NAS for shard 1 after the
 deploy.
+**Scheduling review (2026-08-27, operator: "is the scheduling of the two
+archives optimal?") — measured from the worker log, not optimal, three
+fixes each with a regression test (amendment 45):** (1) a MedCPT revisit
+pass walked the million-row shard from row 0 with a manifest lookup per
+row, was cut by its 300 s budget re-skipping what earlier passes had
+imported, and each pass imported less than the last (86k, 101k, 87k,
+72k, 68k, 58k, 49k) — half of pubmed's pipeline thread; now one indexed
+range query names the eligible documents of the shard's id range and
+only their rows are read from the mmap (`tests/bundles/test_genesis.py::
+test_a_revisit_pass_costs_the_new_documents_not_the_shard` counts the
+per-document lookups). (2) every 1,000-document wikivec fts batch
+triggered a read of the whole 437 MB shard to import those documents
+(`GENESIS_MIN_CANDIDATES` = the fts batch); a candidate read now opens
+only the row groups the candidates' locators name
+(`test_genesis_local.py::test_a_candidate_read_touches_only_the_
+candidates_row_groups`). (3) the vector-index refresh ran 41 minutes on
+wikivec's pipeline thread (`115k rows folded in (2448s)` — compaction
+of a 16.8M-row table on the HDD pool) and idled rdf/fts/archive for the
+duration; index maintenance now runs on its own thread
+(`index-maintainer`), marks the collection busy so the embed step and
+archive pass defer for it (rdf/fts continue), and a refresh is due at
+50k rows AND 2 % of the table (`VECTOR_INDEX_REFRESH_FRACTION`;
+`tests/test_vector_index.py`). Measured before the fixes: pubmed fts
+≈ 35 docs/s wall with ~50 % of its thread in archive passes; wikivec
+1,000 docs per ~50 s of which ~10 s was the shard read.
 
 ## Designed, specified, not built
 

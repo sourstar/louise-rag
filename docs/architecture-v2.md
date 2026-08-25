@@ -1240,3 +1240,21 @@ the live deployment:
     `gutenberg-pack` paused (its TOML set aside) until the gutenberg
     origin completes; the premature pubmed/wikipedia conversions and
     their finishers stopped.
+45. **§8 — an archive pass costs the new documents, never the shard;
+    index maintenance never on a pipeline thread (2026-08-27; the
+    engineering rule "a per-round cost scales with the work available,
+    never with the size of a list").** Measured on the reference node:
+    a MedCPT revisit pass re-walked its million rows per pass (half of
+    pubmed's pipeline thread), a wikivec candidate read re-read its
+    whole 437 MB shard per 1,000-document fts batch, and one vector-index
+    refresh idled wikivec's pipeline for 41 minutes. Amended rules: a
+    revisit pass over a declared-coverage shard names its eligible
+    documents with ONE indexed range query and reads only their rows; a
+    local archive read opens only the row groups the candidates' locators
+    name; the vector index is maintained by its own low-priority thread,
+    one collection at a time, which marks the collection busy — its
+    embed step and archive pass defer (rdf/fts and queries continue) —
+    and a refresh is due at `VECTOR_INDEX_REFRESH_ROWS` AND
+    `VECTOR_INDEX_REFRESH_FRACTION` of the table. Each rule is pinned by
+    a regression test that counts the work (lookups, row groups) rather
+    than timing it.

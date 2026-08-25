@@ -98,6 +98,46 @@ def test_search_falls_back_to_the_flat_scan_without_an_index(collection, monkeyp
     assert hits and hits[0]["chunk_id"] == "c7"
 
 
+def test_refresh_is_due_by_rows_and_by_fraction(monkeypatch):
+    """Regression (2026-08-27): a refresh compacted the 16.8M-row wikivec
+    table for 41 minutes after 115k new rows. It is due at 50k rows AND
+    2 % of the table — never every 50k rows on a table that size."""
+    monkeypatch.setattr(config, "VECTOR_INDEX_REFRESH_ROWS", 50_000)
+    monkeypatch.setattr(config, "VECTOR_INDEX_REFRESH_FRACTION", 0.02)
+    assert not vector_index.refresh_due({"indexed": True, "rows": 16_800_000, "unindexed_rows": 115_000})
+    assert vector_index.refresh_due({"indexed": True, "rows": 16_800_000, "unindexed_rows": 340_000})
+    assert vector_index.refresh_due({"indexed": True, "rows": 300_000, "unindexed_rows": 50_000})
+    assert not vector_index.refresh_due({"indexed": True, "rows": 300_000, "unindexed_rows": 49_999})
+    assert not vector_index.refresh_due({"indexed": False, "rows": 10, "unindexed_rows": None})
+    assert not vector_index.refresh_due(None)
+
+
+def test_maintenance_marks_the_collection_busy_and_the_writers_stand_down(collection, monkeypatch):
+    """Regression (2026-08-27): index maintenance ran on the pipeline
+    thread and idled it. It now runs on its own thread; while it holds a
+    collection, the worker's vector writers (embed step, archive pass)
+    skip that collection — rdf/fts continue — instead of racing it."""
+    from app import worker
+    _fill(collection, 300)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", "ivf_flat")
+    monkeypatch.setattr(vector_index, "partitions_for", lambda rows: 4)
+    seen = []
+    real_build = vector_index.build
+    monkeypatch.setattr(vector_index, "build",
+                        lambda c, **k: (seen.append(vector_index.busy(c)), real_build(c, **k))[1])
+    assert worker._vector_writes_allowed(collection)
+    assert vector_index.ensure(collection)["built"]
+    assert seen == [True], "busy for the duration of the build"
+    assert worker._vector_writes_allowed(collection), "released afterwards"
+    with vector_index.maintenance(collection):
+        assert not worker._vector_writes_allowed(collection)
+        # the archive pass and the embed step defer for a busy collection
+        from dataclasses import replace
+        assert worker._drain_remote_archive(None, replace(collection, genesis_archive="medcpt-pubmed"), None) is False
+    assert worker._vector_writes_allowed(collection)
+
+
 def test_the_worker_maintains_the_index_off_the_gpu_loop_and_throttled(collection, monkeypatch):
     from app import db, worker
     _fill(collection, 300)

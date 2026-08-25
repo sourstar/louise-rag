@@ -193,6 +193,10 @@ VECTOR_INDEX_TYPE = os.getenv("VECTOR_INDEX_TYPE", "ivf_pq")
 VECTOR_INDEX_NPROBES = int(os.getenv("VECTOR_INDEX_NPROBES", "30"))
 VECTOR_INDEX_REFINE = int(os.getenv("VECTOR_INDEX_REFINE", "30"))
 VECTOR_INDEX_REFRESH_ROWS = int(os.getenv("VECTOR_INDEX_REFRESH_ROWS", "50000"))
+# ...and at least this fraction of the table: a refresh compacts and
+# re-indexes, which cost 41 minutes on the 16.8M-row wikivec table (HDD)
+# for 115k new rows — it must not run every 50k rows there
+VECTOR_INDEX_REFRESH_FRACTION = float(os.getenv("VECTOR_INDEX_REFRESH_FRACTION", "0.02"))
 VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
 # The well-known root where PACKS are mounted (pack-format.md): the
 # create dialog offers the packs present here as `packed` corpora.

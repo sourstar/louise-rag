@@ -862,6 +862,37 @@ def test_the_card_says_rejected_only_while_nothing_has_proven_the_archive(collec
     assert web._genesis_state(con, declared)["rejected"] is False
 
 
+def test_a_revisit_pass_costs_the_new_documents_not_the_shard(collection, monkeypatch):
+    """Regression (2026-08-27, measured live): every revisit pass of a
+    MedCPT shard walked its million rows with a manifest lookup each,
+    re-skipping what earlier passes had imported, and was cut by its
+    budget — half of pubmed's pipeline thread. A pass now names the
+    eligible documents with ONE indexed range query and reads only their
+    rows: its manifest lookups are proportional to the new documents."""
+    con = db.connect(collection)
+    db.ensure_browse_index(con)
+    # a shard of 20 documents, 17 already embedded: 3 are new since the last pass
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    archive = _declared_archive(["0"], ids_per_shard=100)
+    con.execute("UPDATE documents SET embed_done=1 WHERE CAST(native_id AS INTEGER) NOT IN (5, 12, 19)")
+    fetched = _fake_fetch(cache)
+    cache_dir = collection.manifest_path.parent / "genesis" / "test-arc"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    fetched("embeds_chunk_0.npy", cache_dir / "embeds_chunk_0.npy")
+    fetched("pmids_chunk_0.json", cache_dir / "pmids_chunk_0.json")
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) VALUES('test-arc','0','applied',1)")
+    lookups = []
+    con.set_trace_callback(lambda sql: lookups.append(sql) if "FROM documents" in sql and "WHERE uid=?" in sql else None)
+    r = genesis.import_shard(con, collection, archive, "0", embed_fn=_same_function_embed,
+                             fetch=genesis._not_on_disk, revisit=True)
+    con.set_trace_callback(None)
+    assert r["docs"] == 3 and r["skipped_absent"] == 0
+    assert len(lookups) <= 3, f"{len(lookups)} per-document lookups for 3 new documents"
+    done = {int(x["native_id"]) for x in con.execute("SELECT native_id FROM documents WHERE embed_done=1")}
+    assert done == set(range(1, 21))
+
+
 def test_a_remote_archive_is_drained_on_the_pipeline_thread_not_the_gpu_loop(
         collection, monkeypatch):
     """A remote shard's pass is CPU/IO work for minutes; on the GPU-serial

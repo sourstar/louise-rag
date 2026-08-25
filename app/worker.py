@@ -817,17 +817,16 @@ _vindex_last: dict[str, float] = {}     # lance dir -> last maintenance attempt
 
 
 def _maintain_vector_index(con, collection) -> bool:
-    """The local vector index, off the GPU loop (pack-format.md §5): build
-    once the table is big enough, fold new rows in when enough accumulated.
-    Throttled per collection. NO manifest lock is held: the vector write
-    lock is a SQLite write transaction on the collection's manifest, and
-    holding it for an hour-long build blocked every event, count and
-    discovery commit of that collection (observed live the minute it first
-    ran). An index over existing fragments needs no row lock — Lance
-    detects a conflicting concurrent commit itself and the loser retries;
-    a delete-then-insert that loses to a compaction is a deferred step,
-    never lost data (the mark follows the write). Returns True when it did
-    work this round."""
+    """The local vector index (pack-format.md §5): build once the table is
+    big enough, fold new rows in when enough accumulated. Throttled per
+    collection; runs on the INDEX MAINTAINER thread — never on the GPU loop,
+    never on a pipeline thread: a refresh compacts the table, which took
+    41 minutes on the 16.8M-row wikivec table (HDD) and idled that
+    collection's rdf/fts/archive for the duration. NO manifest lock is
+    held either (that blocked every event and commit of the collection);
+    instead vector_index.maintenance() marks the collection busy and the
+    worker's vector writers stand down for it — a deferral, never a
+    conflict, never lost data. Returns True when it did work."""
     from . import vector_index
     key = str(collection.lance_dir)
     now = time.time()
@@ -843,6 +842,48 @@ def _maintain_vector_index(con, collection) -> bool:
     return bool(out)
 
 
+def _vector_writes_allowed(collection) -> bool:
+    """False while the maintainer builds or refreshes this collection's
+    index: the embed step and the archive pass skip the collection this
+    round (rdf/fts go on) instead of racing a compaction."""
+    from . import vector_index
+    return not vector_index.busy(collection)
+
+
+INDEX_MAINTAINER_INTERVAL_S = 60.0
+
+
+def _index_maintainer() -> None:
+    """One low-priority thread for every collection's vector index. Its
+    own connections (SQLite is thread-affine); idles while the node is
+    paused; one collection at a time, so two hour-long builds never run
+    together."""
+    cons: dict[str, object] = {}
+    while not _stop.wait(INDEX_MAINTAINER_INTERVAL_S):
+        try:
+            collections = collections_mod.load_all()
+            if not collections:
+                continue
+            control = db.connect(collections[0])
+            try:
+                state = db.worker_state(control)
+            finally:
+                control.close()
+            if state in ("paused", "seed-only"):
+                continue
+            for c in collections:
+                if _stop.is_set():
+                    break
+                key = str(c.manifest_path)
+                if key not in cons:
+                    cons[key] = db.connect(c)
+                _maintain_vector_index(cons[key], c)
+        except Exception:   # noqa: BLE001 — maintenance must never kill the worker
+            pass
+    for con in cons.values():
+        con.close()
+
+
 def _drain_remote_archive(con, collection, stop) -> bool:
     """One genesis round for the collection's declared archive: kick the
     fetcher (throttled inside), apply the next shard with work, and — when
@@ -852,6 +893,8 @@ def _drain_remote_archive(con, collection, stop) -> bool:
     drain_next_shard; anything unexpected is logged, never raised."""
     if not collection.genesis_archive:
         return False
+    if not _vector_writes_allowed(collection):
+        return False            # the index maintainer holds the table; next round
     _acquire_archive(con, collection, "round")
     try:
         result = bundle_genesis.drain_next_shard(
@@ -1207,8 +1250,6 @@ def _run_one_step(con, collection, last_idle_log: dict,
     if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
         if _drain_remote_archive(con, collection, _stop):
             return True
-    if not pipeline_active and _maintain_vector_index(con, collection):
-        return True
     scope = db.get_scope(con)
     if pipeline_active:
         stage, row = _next_embed(con, scope, collection)
@@ -1223,6 +1264,8 @@ def _run_one_step(con, collection, last_idle_log: dict,
             # transition and caches the verdict, so this costs nothing per
             # round until the TTL expires.
             stage, row = _next_book(con, scope, embed_allowed=False)
+    if stage == "embed" and not _vector_writes_allowed(collection):
+        return False            # index build/refresh in progress: deferred, not an error
     if stage == "embed":
         recipe = collections_mod.recipe_for(collection)
         if recipe.concurrency > 1:
@@ -1361,10 +1404,6 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # (observed live: gutenberg's embeds "done in 478 s"). Its
                 # budget/yield alternation is with THIS thread's rdf/fts.
                 if _drain_remote_archive(con, collection, gone):
-                    continue
-                # the local vector index is CPU/IO work too: this thread,
-                # throttled, never the GPU-serial main loop
-                if _maintain_vector_index(con, collection):
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)
@@ -1604,6 +1643,10 @@ def run_forever():
                          f"{len(stale)} bundle import(s) interrupted by a previous "
                          f"shutdown; affected documents will be re-embedded")
     threading.Thread(target=_stats_publisher, name="stats-publisher",
+                     daemon=True).start()
+    # the vector index maintainer: its own thread, so an hour-long build or
+    # a compaction never idles a pipeline thread or the GPU loop
+    threading.Thread(target=_index_maintainer, name="index-maintainer",
                      daemon=True).start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)
     # restart = new documents are considered. With pipeline threads this is

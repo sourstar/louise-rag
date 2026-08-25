@@ -33,6 +33,49 @@ VECTOR_COLUMN = "vector"
 _state_lock = threading.Lock()
 _has_index: dict[str, tuple[float, bool]] = {}     # lance dir -> (checked_at, has index)
 _HAS_INDEX_TTL_S = 60.0
+# Lance dirs under maintenance right now (a build or a refresh in this
+# process). The worker's vector WRITERS — the embed step, an archive pass —
+# stand down for that collection meanwhile (a deferral, never an error),
+# so a compaction never races a delete-then-insert; rdf/fts/discovery and
+# every query continue. Process-local: the maintainer and the writers are
+# threads of the one worker; the web process never writes vectors.
+_busy: set[str] = set()
+
+
+def busy(collection) -> bool:
+    with _state_lock:
+        return str(collection.lance_dir) in _busy
+
+
+class maintenance:
+    """`with maintenance(collection):` marks it busy for the duration."""
+    def __init__(self, collection):
+        self.key = str(collection.lance_dir)
+
+    def __enter__(self):
+        with _state_lock:
+            _busy.add(self.key)
+        return self
+
+    def __exit__(self, *exc):
+        with _state_lock:
+            _busy.discard(self.key)
+        return False
+
+
+def refresh_due(st: dict | None) -> bool:
+    """New rows since the build reach both the absolute and the
+    fractional threshold: 50k rows AND 2 % of the table by default — a
+    16.8M-row table refreshes every ~340k rows, a 300k-row table every
+    50k."""
+    if not st or not st.get("indexed"):
+        return False
+    unindexed = st.get("unindexed_rows")
+    if unindexed is None:
+        return False
+    need = max(config.VECTOR_INDEX_REFRESH_ROWS,
+               int(config.VECTOR_INDEX_REFRESH_FRACTION * int(st.get("rows") or 0)))
+    return unindexed >= need
 
 
 def _table(collection):
@@ -143,17 +186,18 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
             db.log_event(con, "info", "index",
                          f"building the vector index over {st['rows']} rows "
                          f"({config.VECTOR_INDEX_TYPE}) — minutes to an hour on a large table; "
-                         f"queries keep scanning meanwhile, writes continue (a write that "
-                         f"collides with the build's commit is retried)")
-        out = build(collection, log=log)
+                         f"queries keep scanning meanwhile; this collection's vector writes "
+                         f"wait (rdf/fts continue)")
+        with maintenance(collection):
+            out = build(collection, log=log)
         if con is not None and out.get("built"):
             db.log_event(con, "info", "index",
                          f"vector index built ({out['type']}, {out['partitions']} partitions, "
                          f"{out['rows']} rows, {out['seconds']}s) — semantic queries probe instead of scan")
         return out
-    unindexed = st.get("unindexed_rows")
-    if unindexed is not None and unindexed >= config.VECTOR_INDEX_REFRESH_ROWS:
-        return refresh(collection, con, log=log)
+    if refresh_due(st):
+        with maintenance(collection):
+            return refresh(collection, con, log=log)
     return None
 
 

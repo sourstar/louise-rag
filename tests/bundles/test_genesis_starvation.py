@@ -228,12 +228,13 @@ def test_a_residual_shard_is_not_reread_until_it_has_a_new_candidate(
         assert genesis.drain_next_shard(con, c) is None
     assert reads == [], "a straddler is known from its locator; it costs no read"
 
-    # a NEW candidate in the same shard: one read, and it imports; the
-    # straddler is still counted by the read (it walks every row) and
-    # still costs nothing afterwards
+    # a NEW candidate in the same shard: one read, and it imports. The read
+    # opens only the candidate's row groups (amendment 45), so the
+    # straddler is not even seen by it — it used to be walked and counted
+    # as a shape mismatch — and still costs nothing afterwards
     _eligible(con, [_uid(10)])
     r = genesis.drain_next_shard(con, c)
-    assert r is not None and r["docs"] == 1 and r["skipped_shape"] == 1
+    assert r is not None and r["docs"] == 1 and r["skipped_shape"] == 0
     assert reads == ["data/tr/000.parquet"]
     assert genesis.drain_next_shard(con, c) is None
     assert reads == ["data/tr/000.parquet"]

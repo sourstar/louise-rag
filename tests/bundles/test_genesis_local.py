@@ -182,6 +182,44 @@ def test_no_sample_within_truncation_budget_defers_then_imports_once_proven(coll
                        (big_uid,)).fetchone()["embed_done"] == 1
 
 
+def test_a_candidate_read_touches_only_the_candidates_row_groups(collection, monkeypatch):
+    """Regression (2026-08-27, measured live): every 1,000-document fts
+    batch triggered a read of the WHOLE 437 MB shard to import those
+    documents. A candidate read now opens only the row groups the
+    candidates' locators name."""
+    import pyarrow.parquet as pq
+    con = db.connect(collection)
+    # a shard of 6 articles in 3 row groups of 2 rows (one article per row)
+    shard = collection.corpus_dir / "data" / "tr" / "003.parquet"
+    specs = [(str(a), 0, f"T{a}", f"text {a}") for a in range(30, 36)]
+    shard.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({
+        "id": [f"{a}_{s}" for a, s, _, _ in specs],
+        "url": [f"https://x/{t}" for _, _, t, _ in specs],
+        "title": [t for _, _, t, _ in specs],
+        "text": [x for _, _, _, x in specs],
+        "embedding": [_unit(embed_input(t, x)).tolist() for _, _, t, x in specs],
+    }), shard, row_group_size=2)
+    discovery.sync_collection(con, collection)
+    assert pq.ParquetFile(shard).num_row_groups == 3
+    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    # only article 34 (row 4 -> row group 2) is eligible
+    uid = f"embedded:{10 * 10_000_000_000 + 34}"
+    _make_eligible(con, [uid])
+    read_groups = []
+    real = pq.ParquetFile.read_row_group
+    monkeypatch.setattr(pq.ParquetFile, "read_row_group",
+                        lambda self, g, *a, **k: (read_groups.append(g), real(self, g, *a, **k))[1])
+    whole = []
+    real_iter = pq.ParquetFile.iter_batches
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches",
+                        lambda self, *a, **k: (whole.append(1), real_iter(self, *a, **k))[1])
+    result = genesis.drain_next_shard(con, collection)
+    assert result is not None and result["docs"] == 1
+    assert read_groups == [2] and not whole, (read_groups, whole)
+    assert con.execute("SELECT embed_done FROM documents WHERE uid=?", (uid,)).fetchone()[0] == 1
+
+
 def test_local_shards_listing(collection):
     shards = genesis._local_shards(collection)
     assert shards == ("data/tr/000.parquet", "data/tr/001.parquet")
