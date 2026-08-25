@@ -268,7 +268,22 @@ block every other collection's embedding for each 300 s slice.
    checks flag on one reproduction, statistical ones on two — no votes),
    one chunker per collection with DERIVED collections for a new space
    (records + index reused by info hash), and inspectable formats: JSONL
-   in seekable zstd for records, safetensors for vectors.
+   in seekable zstd for records, safetensors for vectors. **Formats
+   MEASURED (2026-08-26, §9)** on 30k real PubMed records and 100k real
+   MedCPT vectors: JSONL in 1,000-record zstd frames is 4 % smaller than
+   Parquet at the same level and costs the same 1.0 ms per record, so
+   the text-editor rule is free for records and stays; a trained zstd
+   dictionary buys nothing at that frame size (the 20–30 % guess in the
+   first draft was wrong); OpenZL 0.2 (PyPI, manylinux only) equals
+   zstd-9 on JSONL text and gains 15 % over raw f16 on vectors (zstd:
+   8 %), int8 is −75 % but lossy (cosine 0.9989 to f32: it would pass the
+   0.95 same-function gate, but sits below the ≥ 0.999 the same model
+   reproduces across hardware — a visible degradation, so a separate
+   light space at most, never the reference). Decision: zstd-9 frames for records, vectors as raw f16
+   safetensors (readable header, no codec — the text-editor rule is
+   relaxed for the array by design: a printed float is neither practical
+   nor useful, re-embedding is the only real check), OpenZL deferred
+   behind the manifest's `codec` slot until its format stabilises.
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent

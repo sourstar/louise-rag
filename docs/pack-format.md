@@ -11,8 +11,8 @@ A **pack** is the unit a collection is distributed in. It is a directory
 of shards plus a signed manifest, published as a **torrent collection**
 (amendment 40: one magnet, several member torrents). The corpus shards
 hold *parsed records* — the text the platform actually uses, nothing
-else — in Parquet with zstd, so a record is a 16 ms row-group read and a
-shard is a few hundred MB. Vectors, the lexical index and the change
+else — as JSON Lines in independent zstd frames (§17), so a record is a
+1 ms frame read and a shard is a few hundred MB. Vectors, the lexical index and the change
 proofs are **separate member torrents** of the same collection, so a peer
 takes the corpus alone (a full peer that will embed), or corpus + index +
 vectors (a light peer that will only search). The manifest names the
@@ -44,17 +44,22 @@ in the manifest and recomputed by each peer (a few ms per record).
 ```
 <collection>/
   manifest.json                 signed (node key), see §4
-  records/<slice>/NNNNN.parquet corpus shards, member torrent "records-<slice>"
-  index/<slice>/NNNNN/          tantivy segment per shard, member "index-<slice>"  (optional)
-  vectors/<space_id>/<slice>/NNNNN.parquet   member "vectors-<space_id>-<slice>"   (optional)
-  deltas/<snapshot>.json        what changed since the previous snapshot
+  records/<slice>/NNNNN.jsonl.zst  corpus shards, member torrent "records-<slice>"  (+ NNNNN.idx)
+  index/<slice>/NNNNN/             tantivy segment per shard, member "index-<slice>"  (optional)
+  vectors/<space_id>/<slice>/NNNNN.safetensors   member "vectors-<space_id>-<slice>"   (optional)
+  deltas/<snapshot>.json           what changed since the previous snapshot
 ```
 
-**Record shard** (Parquet, zstd level 3 for text, row groups of 1,000
-records, one shard ≈ 5–10k chunks so that a shard is also one lease —
-amendment 37's unit):
+*(Formats were Parquet in the first draft; §17 replaced them with JSON
+Lines in seekable zstd frames and safetensors after the measurements of
+§9 — same access cost, smaller, and readable without our tools.)*
 
-| column | type | note |
+**Record shard** (JSON Lines: one record per line, UTF-8, keys in the
+order below; zstd level 9 in independent frames of 1,000 records with a
+frame index, so a record costs one frame; one shard ≈ 5–10k chunks so
+that a shard is also one lease — amendment 37's unit):
+
+| key | type | note |
 |---|---|---|
 | uid | string | `<plugin>:<native id>` (the platform's key) |
 | native_id | string | |
@@ -65,9 +70,10 @@ amendment 37's unit):
 | content_hash | binary(16) | blake2b of the canonical text — change detection |
 | origin_hash | binary(16) | hash of the origin bytes the record came from (today's raw_hash) |
 
-**Vector shard**: `chunk_id` (string), `vector` (fixed-size list<f16>),
-`producer` (string: who embedded it), row groups aligned with the record
-shard. One directory per **space id** — a corpus can have several spaces.
+**Vector shard**: a safetensors file — a JSON header (`chunk_ids`,
+`producer` per run, dtype f16, shape) followed by the raw array, rows
+aligned with the record shard's chunks. One directory per **space id** —
+a corpus can have several spaces.
 
 **Index shard**: the tantivy segment built from this shard's chunks,
 plus the index pin (FTS_VERSION, ENTITY_VERSION, chunker id/version,
@@ -201,35 +207,90 @@ next deadline, instead of a pasted magnet.
 | verify-on-use (T4) | vectors spot-checked at query time | + the freshness check (§6) on content |
 | staging (5i), per-language torrents (5h) | | shards land through staging; slices stay per language |
 
-## 9. Compression: zstd now, OpenZL as a slot
+## 9. Compression: measured — zstd for records, nothing for vectors, OpenZL deferred
 
-- **zstd** in Parquet is the right default: level 3 for text shards
-  (~200 MB/s to build, 12 MB per 30k PubMed records), a **trained
-  dictionary per corpus** for short records is the one measurable gain
-  left (PubMed abstracts and titles are dictionary-friendly; estimate
-  20–30 % on the text column — to measure with `zstd --train` on a
-  shard before adopting; Parquet's codec has no dictionary hook, so a
-  dictionary means a raw-zstd shard format, which costs the row-group
-  random access unless we frame it ourselves).
-- **Vectors** barely compress (f16 arrays, ~5 %). The wins are exact
-  ones: f32 → f16 (−50 %, no loss for cosine), and one vector per
-  article where the source allows it (amendment 39 halved PubMed's
-  vector count). int8 with a per-vector scale (−75 %) is *lossy* and
-  would be a second, explicitly different space for light peers — an
-  option, not the reference.
-- **OpenZL** (facebook/openzl): a format-aware compressor that learns a
-  plan per data shape; on typed numeric arrays it reports well beyond
-  zstd. It is v0.x, C++ with no Python binding in this stack, and it is
-  a *stream* codec, not a Parquet one. Position: a `codec` slot in the
-  manifest per member (`"zstd"` today), and an experiment on the vector
-  shards once a binding exists — the first place it could pay is the
-  295 GB of Wikipedia vectors. Not a dependency now (CLAUDE.md: new
-  dependencies are asked for, and this one would be load-bearing).
+*Measured 2026-08-26 on real data, in the worker image: one PubMed
+container (30,000 records, 39.6 MB as JSONL) and 100,000 real MedCPT
+article vectors (768-d, f32). `zstandard` 0.25, pyarrow 25, and `openzl` 0.2.0
+(PyPI, manylinux + macOS wheels, no Windows; `import openzl.ext as zl`,
+generic `zl.graphs.Compress()` graph, no training from samples — a
+pipeline is designed by hand per format). Script:
+scratchpad `pmbench/pack_bench.py`; the earlier draft of this section
+guessed, this one reports.*
+
+**Records** (one shard's worth; single-record access = one row group or
+one 1,000-record frame decompressed + one line parsed, mean of 300
+random ids):
+
+| form | size | one record |
+|---|---|---|
+| JSONL, raw | 39.6 MB | — |
+| Parquet, zstd-3, row groups of 1,000 | 13.3 MB | 1.06 ms |
+| Parquet, zstd-9 | 12.2 MB | |
+| **JSONL, zstd-9, independent frames of 1,000 records** | **11.7 MB** | **0.98 ms** |
+| JSONL, zstd-3 frames | 12.9 MB | 0.98 ms |
+| JSONL, zstd-19 frames | 10.9 MB | |
+| JSONL, zstd-3/9 frames + trained 110 KB dictionary | 13.1 / 12.0 MB | 0.96 ms |
+| JSONL, OpenZL generic graph, frames of 1,000 | 12.0 MB | 0.98 ms |
+| JSONL, zstd-19, one stream (no random access) | 9.5 MB | |
+
+What it says: columnar layout buys nothing on prose — **framed JSONL is
+4 % smaller than Parquet at the same level and equally fast**, so the
+text-editor rule (§17) is free for records. A trained dictionary buys
+*nothing* at 1,000-record frames (dictionaries pay on frames of a few
+KB; ours are ~1.3 MB) — the first draft's 20–30 % estimate was wrong.
+OpenZL's generic graph is zstd underneath for text and lands exactly
+there; a gain would need a hand-designed JSON-aware pipeline, which its
+Python API does not derive for us. Level 9 is the publisher's default
+(−9 % vs level 3 at the same read cost; the initiator pays the CPU
+once); level 19 is a further −7 % for anyone who wants it, and the
+format does not care.
+
+**Vectors** (100k × 768; f16 is the transport dtype — cosine to f32
+**1.000000** on these vectors, both raw archive scale and
+unit-normalised):
+
+| form | size | note |
+|---|---|---|
+| f32 raw (NCBI's `.npy`) | 307.2 MB | |
+| **f16 raw** | **153.6 MB** | mmap-able, zero-copy |
+| f16 + zstd-3 / -9 | 141.0 MB (−8 %) | levels indistinguishable |
+| f16 + OpenZL Numeric | 130.2 MB (−15 %) | 28 MB/s to compress, 500 MB/s to decompress, exact |
+| f32 + OpenZL Numeric | 257.4 MB (−16 %) | |
+| int8 + per-vector scale | 77.2 MB (−75 %) | **lossy**: cosine 0.9989 to f32 |
+| int8 + zstd-3 / OpenZL | 42.1 / 43.0 MB | the two codecs tie once the data is integer |
+
+What it says: a float mantissa is noise to any codec — zstd −8 %,
+OpenZL −15 %, and OpenZL's advertised wins are on integer and
+structured data (the int8 row confirms it: 56 % vs zstd's 55 %). The
+exact wins are the ones already taken: f32 → f16 (−50 %) and one vector
+per article (amendment 39). int8 would pass the 0.95 same-function gate
+(`RE_ENCODE_TAU`) but sits below the ≥ 0.999 the same model reproduces
+across hardware — a visible degradation, so at most a second, explicitly
+different space for light peers, never the reference.
+
+**Decisions.**
+
+- **Records: JSONL in zstd-9 frames of 1,000 records + frame index**
+  (§17). zstd is the whole dependency: stable format, `zstd -d` on every
+  machine, already in the image via pyarrow and available directly as
+  `zstandard` (to add when the pack is built — ask first, per the rules).
+- **Vectors: raw f16 in safetensors, no codec.** −8 % (zstd) is not
+  worth losing mmap/zero-copy and adding a decode step to the largest
+  member; −15 % (OpenZL) on PubMed's ~55 GB of f16 is ~8 GB per copy,
+  real but not worth a load-bearing dependency at version 0.2 whose
+  format is still versioned (`MAX_FORMAT_VERSION`) and which has no
+  Windows wheel. The manifest carries a per-member `codec` (`"zstd"`,
+  `"none"`) so a codec can be added later without a format break; OpenZL
+  is revisited at its 1.0, with 15 % as the known ceiling on f16.
+- The measured numbers scale PubMed to ~14 GB of records (from 47 GB
+  raw JSONL) and ~55 GB of f16 vectors for 36M articles; Wikipedia's
+  pre-embedded vectors from 590 GB to ~295 GB.
 
 ## 10. Improvements this brings, beyond the brief
 
 1. Peers need **no plugin parsers** and never hold origin files or
-   markup: a `packed` source serves CanonicalDocs from Parquet for every
+   markup: a `packed` source serves CanonicalDocs from record shards for every
    plugin. Discovery on a peer becomes reading shard metadata.
 2. **Wikipedia pre-embedded: f32 → f16** in the record/vector split — the
    590 GB collection becomes ~300 GB with identical search results.
@@ -259,8 +320,8 @@ next deadline, instead of a pasted magnet.
 - **Freshness check quotas**: the origins' API limits (NCBI 3 req/s
   without a key) bound how many results a query may verify; default the
   check to the top 5.
-- **OpenZL**: experiment only after a binding exists; the manifest slot
-  costs nothing now.
+- **OpenZL**: decided by measurement (§9) — not now; the manifest's
+  per-member `codec` slot keeps the door open.
 
 ## 12. Build order (each step useful on its own)
 
@@ -423,25 +484,36 @@ spaces.
 ## 17. Inspectable formats — the text-editor test
 
 The brief's rule: the uncompressed form must be readable with a text
-editor. Parquet (Part I) is open and tooled but fails that test
-literally — it needs a reader. The rule is worth honouring, because
-"anyone can check independently" includes people without our tools:
+editor. Parquet (the first draft of Part I) is open and tooled but fails
+that test literally — it needs a reader. The rule is worth honouring
+where it is free, and it is free for the records; for the vectors the
+operator's second thought (2026-08-26: "maybe too extreme — for the
+embeddings it might not be practical and even that useful") is right,
+and the measurements of §9 say exactly where the line falls:
 
 - **Records: JSON Lines**, one record per line, UTF-8, keys in a fixed
   order — `zstd -d shard.jsonl.zst | less` is the whole inspection.
   Compressed with **zstd's seekable format** (independent frames of
-  ~1,000 records, an index of frame offsets at the end): a record is one
-  frame decompressed (~1 MB, ~3 ms) plus one line parsed — the same cost
-  as a Parquet row group, and a per-shard `.idx` (uid -> frame, line)
-  keeps the lookup O(1). Size: within ~10 % of Parquet on text-heavy
-  records (columnar layout buys little on prose; measure on PubMed's
-  pack before committing).
-- **Vectors: safetensors**, one file per shard: a JSON header (the
-  text-editor-readable part: chunk ids, dtype f16, shape, producer)
-  followed by the raw array, mmap-able and zero-copy into NumPy/Lance.
-  Floats are never text-inspectable anyway; the header is, and the open
-  spec is one page. NCBI's MedCPT `.npy` + `pmids.json` becomes this at
-  half the size (f32 -> f16) with the proof recorded in the manifest.
+  1,000 records, an index of frame offsets at the end): a record is one
+  frame decompressed plus one line parsed. Measured on PubMed's records
+  (§9): **1.0 ms per record, the same as a Parquet row group, and 4 %
+  smaller than Parquet at the same level** — the rule costs nothing
+  here, so it holds. A per-shard `.idx` (uid -> frame, line) keeps the
+  lookup O(1).
+- **Vectors: safetensors, raw f16, uncompressed** — one file per shard:
+  a JSON header (chunk ids, dtype, shape, producer) followed by the
+  array. The rule is *relaxed* here on purpose: **the header is what a
+  person can check, the array is not.** A vector printed as text is
+  768 numbers nobody can read for meaning, 4x the bytes of f16, and
+  still says nothing about whether it is *right* — the only inspection
+  that means anything for an embedding is re-embedding the chunk and
+  comparing (the `vectors-sample` check, §14). So "no black boxes" for
+  vectors means: which chunk, whose run, which encoder, in a header
+  anyone can `head -c 4096`; an openly specified one-page layout for the
+  array (safetensors, mmap-able, zero-copy into NumPy/Lance); and a
+  reproducible proof. NCBI's MedCPT `.npy` + `pmids.json` becomes this at
+  half the size (f32 -> f16, cosine 1.000000 to f32 on 100k real vectors)
+  with the proof recorded in the manifest.
 - **Index**: tantivy segments as they are — a derived artefact that
   `index-sample` reproduces from the records; inspection is
   reproduction.
@@ -462,7 +534,9 @@ in the chain is ours alone: zstd, JSON, safetensors, BitTorrent v2.
 | red-flag inconsistencies; unverified until a critical mass; levels as checks accumulate; voting | **refined** | deterministic checks flag on one reproduction, statistical ones on two; levels from coverage, not votes; local trust weighting (§15) |
 | which chunker per chunk | **changed** | per collection, hashed into the space; different chunking = a derived collection (§16) |
 | derived collections for a better embedder | adopted | `derived_from`, records and index reused by info hash |
-| repack PubMed's pre-embedded archive into an inspectable form | adopted, generalised | JSONL + seekable zstd for records, safetensors for vectors (§17); the archive's `.npy` imported once through the proof |
+| repack PubMed's pre-embedded archive into an inspectable form | adopted, generalised | JSONL + seekable zstd for records (measured: smaller than Parquet, same access), safetensors f16 for vectors (§17); the archive's `.npy` imported once through the proof |
+| everything readable with a text editor | **kept for records, relaxed for vectors** | records: yes, at no cost (§9); vectors: the header is readable, the array is a raw open layout — a float printed as text is neither practical (4x bytes) nor useful (only re-embedding checks a vector), §17 |
+| zstd / OpenZL as the packing format | **zstd adopted, OpenZL measured and deferred** | zstd-9 frames for records; vectors raw (zstd −8 %, OpenZL −15 % on f16, OpenZL nothing on text; §9) |
 | no black boxes | adopted as the design rule | every artefact is JSON/JSONL/safetensors/BitTorrent; every check is open platform code |
 
 Risks that remain: (a) `records-vs-origin` needs the origin — PubMed's
