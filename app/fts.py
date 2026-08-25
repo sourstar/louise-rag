@@ -158,6 +158,27 @@ def delete_book(lang: str, book_id: int, collection=None):
     writer.commit()
     writer.wait_merging_threads()
 
+def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
+    """Every stored chunk of one document — the reader's text source
+    (STATUS 5j): a term query on the `book_id` fast field, no text query,
+    no corpus file. Order is the caller's (chunk ids carry the seq)."""
+    idx = get_index(group, collection)
+    idx.reload()
+    q = tantivy.Query.term_query(idx.schema, "book_id", int(book_id))
+    searcher = idx.searcher()
+    out = []
+    for _score, addr in searcher.search(q, 100_000).hits:
+        doc = searcher.doc(addr)
+        out.append({
+            "book_id": doc["book_id"][0],
+            "chunk_id": doc["chunk_id"][0],
+            "chapter": doc["chapter"][0] if doc["chapter"] else "",
+            "lang": doc["lang"][0],
+            "text": doc["body"][0],
+        })
+    return out
+
+
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
 def search(group: str, query: str, limit: int = 20, collection=None,

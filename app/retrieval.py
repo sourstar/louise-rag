@@ -367,7 +367,10 @@ ANSWER_SYSTEM = (
     "facts, not ranked evidence — use them but do not cite them with [n]."
 )
 
-def build_answer_messages(query: str, result: dict) -> list[dict]:
+def build_answer_messages(query: str, result: dict, answer_lang: str | None = None) -> list[dict]:
+    """`answer_lang` (an ISO code, STATUS 5j "show results in"): the model
+    answers in that language directly — cheaper than translating the
+    answer afterwards, and the [n] citations stay aligned."""
     blocks = []
     for fact in result.get("facts", []):
         label = fact.get("label") or fact["entity_id"]
@@ -389,7 +392,12 @@ def build_answer_messages(query: str, result: dict) -> list[dict]:
                         for c in result["catalog"][:8])
         blocks.append("[catalog matches]\n" + cat)
     context = "\n\n---\n\n".join(blocks) if blocks else "(no sources found)"
+    system = ANSWER_SYSTEM
+    if answer_lang:
+        system += (f" Write your whole answer in the language with ISO code "
+                   f"'{answer_lang}', whatever language the question or the "
+                   f"sources are in.")
     return [
-        {"role": "system", "content": ANSWER_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {query}"},
     ]

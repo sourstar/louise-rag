@@ -41,7 +41,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import (auth, collections as collections_mod, config, db, discovery,
+from . import (auth, collections as collections_mod, config, db, discovery, llm,
                 platform_config, query_service, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
@@ -141,10 +141,89 @@ class AskQueryBody(BaseModel):
     mode: str = "hybrid"
 
 
+# "show results in" — the CONTENT languages the Ask page offers (the page
+# chrome never changes language). The pre-embedded corpus's eleven plus the
+# common European ones; the model translates into any ISO code, so an
+# operator can type another into the TOML later without a code change.
+RESULT_LANGUAGES = (
+    ("en", "English"), ("de", "Deutsch"), ("fr", "Français"), ("it", "Italiano"),
+    ("es", "Español"), ("pt", "Português"), ("nl", "Nederlands"), ("pl", "Polski"),
+    ("ru", "Русский"), ("ja", "日本語"), ("zh", "中文"), ("tr", "Türkçe"), ("fa", "فارسی"),
+)
+
+
 @ask_router.get("/ask", response_class=HTMLResponse)
 def ask_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "ask.html", {
-        "active": "ask", "collections": collections_mod.load_all(), "result": None})
+        "active": "ask", "collections": collections_mod.load_all(), "result": None,
+        "result_languages": RESULT_LANGUAGES})
+
+
+class TranslateBody(BaseModel):
+    lang: str
+    items: list[dict]          # [{"id": ..., "text": ...}]
+
+
+# (chunk_id, lang) -> translation. Toggling the drop-down back and forth
+# must not pay the model twice; bounded so a long session cannot grow it.
+_translation_cache: dict = {}
+_TRANSLATION_CACHE_MAX = 4000
+
+
+@ask_router.post("/ask/translate")
+def ask_translate(body: TranslateBody):
+    """Translate result CONTENT (snippets, drawer text) into `lang` — never
+    titles, authors or ids, never the interface. One model call per page
+    of results; failure degrades to the originals with `failed` set so the
+    page can say so instead of pretending."""
+    lang = body.lang.strip().lower()
+    if not lang or lang == "original":
+        return {"lang": lang, "items": {}, "failed": False}
+    out: dict[str, str] = {}
+    pending: list[tuple[str, str]] = []
+    for item in body.items:
+        key = (str(item.get("id", "")), lang)
+        text = str(item.get("text", ""))
+        if not text.strip():
+            continue
+        hit = _translation_cache.get(key)
+        if hit is not None:
+            out[key[0]] = hit
+        else:
+            pending.append((key[0], text))
+    failed = False
+    if pending:
+        translated = llm.translate_texts([t for _, t in pending], lang)
+        if len(translated) != len(pending):
+            failed = True
+        else:
+            for (cid, _), value in zip(pending, translated):
+                out[cid] = value
+                if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
+                    _translation_cache.clear()
+                _translation_cache[(cid, lang)] = value
+    return {"lang": lang, "items": out, "failed": failed}
+
+
+@ask_router.get("/read/{collection}/{book_id}", response_class=HTMLResponse)
+def read_document(request: Request, collection: str, book_id: int,
+                  hl: str = "", fragment: int = 0):
+    """The document behind a hit — whole text from the index stores, the
+    highlighted chunk(s) `hl` (comma-separated chunk ids) marked. Open
+    like Ask (reader-facing). `fragment=1` returns the inner HTML for the
+    in-page reader panel; without it, a standalone page."""
+    from . import reader
+    c = reader.collection_by_name(collection)
+    if c is None:
+        raise HTTPException(404, f"no such collection: {collection}")
+    doc = reader.document(c, book_id)
+    if doc is None:
+        raise HTTPException(404, f"{collection} does not hold #{book_id}")
+    highlights = [h for h in hl.split(",") if h]
+    return TEMPLATES.TemplateResponse(request, "reader.html", {
+        "active": "ask", "collection": c.name, "book_id": book_id,
+        "doc": doc, "highlights": highlights, "fragment": bool(fragment),
+        "plugin_label": _plugin_label(c.plugin)})
 
 
 @ask_router.get("/help", response_class=HTMLResponse)
@@ -157,6 +236,15 @@ def help_page(request: Request):
 @ask_router.post("/ask/query", response_class=HTMLResponse)
 def ask_query(request: Request, body: AskQueryBody):
     result = query_service.run_search(body.collections, body.query, 12, body.mode, True)
+    # every hit names its COLLECTION for the reader panel: federated hits
+    # carry it; a single-collection hit is resolved from its source prefix
+    # (the plugin id) to the first collection of that plugin
+    by_plugin = {}
+    for c in collections_mod.load_all():
+        by_plugin.setdefault(c.plugin, c.name)
+    for h in result.get("hits", []):
+        if not h.get("source_collection"):
+            h["source_collection"] = by_plugin.get(str(h.get("chunk_id", "")).split(":", 1)[0])
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     db.log_query(con, "ask", body.query, body.mode, 12, result["timings"],
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))

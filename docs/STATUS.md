@@ -306,7 +306,27 @@ block every other collection's embedding for each 300 s slice.
    pack is a cache, never exchanged. Build cost ≈ 1,334 × 5 s ≈ 2 h of
    one core, amortised into the first pass over each container.
 5j. **Ask tab: translated results and a document reader (operator
-   request 2026-08-25; to build).**
+   request 2026-08-25; BUILT 2026-08-26).** As specified below, with
+   these concrete choices: `POST /ask/translate` (one `llm.translate_texts`
+   call per page — numbered JSON in and out, a dropped passage comes back
+   as its original; cache keyed on (chunk id, language), bounded; `failed`
+   in the reply makes the page say "translation unavailable" instead of
+   pretending), the answer language rides `ChatBody.answer_lang` into
+   `build_answer_messages` (the model is told to answer in that ISO code —
+   never post-translated, so [n] stays aligned), the drop-down offers
+   the pre-embedded corpus's eleven languages plus the common European
+   ones (`web.RESULT_LANGUAGES`). Reader: `app/reader.py` +
+   `GET /read/<collection>/<book_id>?hl=<chunk ids>[&fragment=1]` —
+   text from `fts.book_chunks` (a term query on the `book_id` fast field;
+   the lexical index stores every chunk's body) or, for an embedded-but-
+   not-indexed document, its Lance rows; never the corpus file; the
+   in-page panel (`<aside id="reader">`, Esc closes) is the same
+   template as the standalone page; hits carry `data-collection/book/
+   cid`; [n] in the answer becomes a link into the reader; the reference
+   line is authors — title — (PubMed: journal, date from the pack) —
+   (lang) — source:id, plus the origin link per plugin. Help updated.
+   Not done: PubMed's `date` column (the pack answers the reader instead).
+   *Original spec:*
    (1) *Results in another language, interface untouched.* A "show
    results in" drop-down beside the mode selector (default *original*;
    options = the languages indexed in scope plus the operator's default).

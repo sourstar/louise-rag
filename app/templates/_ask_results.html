@@ -25,16 +25,18 @@
 
 <div id="hits">
 {% for h in result.hits %}
-<div class="hit">
+<div class="hit" data-collection="{{ h.source_collection or (h.chunk_id.split(':')[0]) }}" data-book="{{ h.book_id }}" data-cid="{{ h.chunk_id }}" data-title="{{ h.title or ('#' ~ h.book_id) }}">
   <div class="head">
-    <span><b>{{ h.title or ('#' ~ h.book_id) }}</b></span>
+    <span><b title="open the document (the matched passage highlighted)">{{ h.title or ('#' ~ h.book_id) }}</b></span>
     <span class="badge">{{ h.authors or '' }}</span>
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
     <span class="badge">{{ h.chapter or '' }}</span>
   </div>
-  <div class="snip">[{{ loop.index }}] {{ h.text[:420] }}…</div>
+  {# content, translatable (data-cid keys the translation cache; the
+     original text stays in data-orig on the client and in the drawer) #}
+  <div class="snip" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" title="open the document at this passage">[{{ loop.index }}] {{ h.text[:420] }}…</div>
   <details class="drawer">
     <summary>provenance</summary>
     <div>uid: {{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}</div>

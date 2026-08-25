@@ -20,6 +20,16 @@ they are never ranked and never compete with search hits (CLAUDE.md invariant 4)
       <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
       <option value="dense">dense only</option><option value="catalog">catalog only</option>
     </select>
+    {# "show results in": CONTENT only — snippets and the answer are
+       translated / answered in this language; titles, authors, ids and
+       the page itself never change (STATUS 5j) #}
+    <select id="lang" style="width:auto" onchange="applyLanguage()"
+            title="Show the results' content in this language: snippets and the answer. Titles, authors and ids stay as published; the interface does not change.">
+      <option value="original">results in their own language</option>
+      {% for code, name in result_languages %}
+      <option value="{{ code }}">show results in {{ name }}</option>
+      {% endfor %}
+    </select>
     <button class="primary" onclick="search()">Search</button>
     <button onclick="ask()">Ask (RAG)</button>
   </div>
@@ -31,6 +41,38 @@ they are never ranked and never compete with search hits (CLAUDE.md invariant 4)
 </div>
 
 <div id="results">{% include "_ask_results.html" %}</div>
+
+{# The reader panel (STATUS 5j): the whole document behind a hit, the
+   matched passage scrolled into view, the search still visible behind it.
+   No popup: browsers block those, they lose the page behind, and they do
+   not work on a phone. The same document is a standalone page at
+   /read/<collection>/<id> for a new tab. #}
+<aside id="reader" style="display:none">
+  <div id="reader-bar">
+    <span id="reader-title" class="note"></span>
+    <span>
+      <a id="reader-tab" href="#" target="_blank" rel="noopener" title="open in its own tab">↗</a>
+      <button onclick="closeReader()" title="close">✕</button>
+    </span>
+  </div>
+  <div id="reader-content"><div class="note">loading…</div></div>
+</aside>
+<style>
+  #reader{position:fixed;top:0;right:0;height:100vh;width:min(48vw,760px);background:var(--panel,#fff);
+    border-left:1px solid var(--line,#ccc);box-shadow:-8px 0 24px rgba(0,0,0,.15);z-index:50;
+    display:flex;flex-direction:column}
+  #reader-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line,#ccc)}
+  #reader-bar button{padding:2px 8px}
+  #reader-content{overflow:auto;padding:12px 16px;flex:1}
+  .reader-chunk{white-space:pre-wrap;line-height:1.55;margin:0 0 12px}
+  .reader-chunk.hl{background:rgba(246,196,83,.22);border-left:3px solid var(--brass);padding:6px 8px;border-radius:4px}
+  .reader-body h3{margin:16px 0 6px}
+  .hit .snip,.hit .head b{cursor:pointer}
+  .hit .snip:hover{text-decoration:underline dotted}
+  .translated-from{margin-left:6px}
+  a.cite{cursor:pointer;text-decoration:underline dotted}
+  @media (max-width:900px){ #reader{width:100vw} }
+</style>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -40,12 +82,15 @@ function scopeCollections(){
   const on=chips.filter(c=>c.classList.contains('on')).map(c=>c.dataset.name);
   return on.length===chips.length ? null : on;   // null = all enabled (server default)
 }
+function selectedLang(){const v=document.getElementById('lang').value;return v==='original'?null:v}
 async function search(){
   const q=document.getElementById('q').value.trim(); if(!q)return;
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value})});
   document.getElementById('results').innerHTML=await r.text();
+  wireHits();
+  await applyLanguage();
 }
 async function ask(){
   const q=document.getElementById('q').value.trim(); if(!q)return;
@@ -53,7 +98,8 @@ async function ask(){
   const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
   pane.style.display='block'; a.textContent='thinking…';
   const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections()})});
+    body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
+                         answer_lang:selectedLang()})});
   const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
   for(;;){const {done,value}=await reader.read(); if(done)break;
     buf+=dec.decode(value,{stream:true});
@@ -63,6 +109,67 @@ async function ask(){
       const data=line.slice(5).trim(); if(data==='[DONE]')continue;
       try{const j=JSON.parse(data); a.textContent+=j.choices[0].delta.content||''}catch(e){}
     }}
+  linkCitations();
 }
+// ---- translated content (snippets only; titles/ids/interface untouched) ----
+async function applyLanguage(){
+  const lang=selectedLang();
+  const snips=[...document.querySelectorAll('#hits .snip[data-cid]')];
+  for(const s of snips){
+    if(s.dataset.orig===undefined)s.dataset.orig=s.textContent;
+    const badge=s.parentElement.querySelector('.translated-from'); if(badge)badge.remove();
+    if(!lang)s.textContent=s.dataset.orig;
+  }
+  if(!lang||!snips.length)return;
+  const items=snips.map(s=>({id:s.dataset.cid,text:s.dataset.orig}));
+  let d=null;
+  try{const r=await fetch('/ask/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({lang,items})}); d=await r.json();}catch(e){d=null}
+  if(!d||d.failed){
+    const note=document.createElement('div'); note.className='note translated-from';
+    note.textContent='translation unavailable right now — showing the originals';
+    const hits=document.getElementById('hits'); if(hits)hits.prepend(note);
+    return;
+  }
+  for(const s of snips){
+    const t=d.items[s.dataset.cid]; if(!t||t===s.dataset.orig)continue;
+    s.textContent=t;
+    const from=s.dataset.lang||'?';
+    const b=document.createElement('span'); b.className='badge translated-from';
+    b.title='translated by the local model; the original is in the provenance drawer';
+    b.textContent='translated from '+from; s.parentElement.insertBefore(b,s.nextSibling);
+  }
+}
+// ---- reader panel ----
+function wireHits(){
+  document.querySelectorAll('#hits .hit').forEach(h=>{
+    const open=()=>openReader(h.dataset.collection,h.dataset.book,h.dataset.cid,h.dataset.title);
+    const t=h.querySelector('.head b'); if(t)t.onclick=open;
+    const s=h.querySelector('.snip'); if(s)s.onclick=open;
+  });
+}
+async function openReader(collection,book,cid,title){
+  const panel=document.getElementById('reader'), body=document.getElementById('reader-content');
+  document.getElementById('reader-title').textContent=title||'';
+  const url='/read/'+encodeURIComponent(collection)+'/'+encodeURIComponent(book)+(cid?'?hl='+encodeURIComponent(cid):'');
+  document.getElementById('reader-tab').href=url;
+  panel.style.display='flex'; body.innerHTML='<div class="note">loading…</div>';
+  try{
+    const r=await fetch(url+(cid?'&':'?')+'fragment=1'); body.innerHTML=await r.text();
+    const hl=body.querySelector('.reader-chunk.hl'); if(hl)hl.scrollIntoView({block:'center'});
+  }catch(e){body.innerHTML='<div class="note">could not load the document: '+e+'</div>'}
+}
+function closeReader(){document.getElementById('reader').style.display='none'}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeReader()});
+// [n] in the answer opens hit n in the reader
+function linkCitations(){
+  const a=document.getElementById('answer'); const hits=[...document.querySelectorAll('#hits .hit')];
+  if(!hits.length)return;
+  a.innerHTML=a.textContent.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+    .replace(/\[(\d+)\]/g,(m,n)=>{const h=hits[parseInt(n,10)-1]; return h?'<a class="cite" data-n="'+n+'">'+m+'</a>':m});
+  a.querySelectorAll('a.cite').forEach(el=>{el.onclick=()=>{const h=hits[parseInt(el.dataset.n,10)-1];
+    if(h)openReader(h.dataset.collection,h.dataset.book,h.dataset.cid,h.dataset.title)}});
+}
+wireHits();
 </script>
 {% endblock %}
