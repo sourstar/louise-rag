@@ -383,6 +383,97 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
   </p>
 </div>
 
+<div class="panel" id="packs">
+  <h2>Packs — the distribution format</h2>
+  <p class="note lead"><b>In short:</b> a pack is a corpus repackaged into exactly what the
+    platform searches — parsed text, sliced by language or year, shard by shard — with a
+    signed manifest, so any node can take the part it wants, check it against the
+    origin, and run it with no origin files and no parser. The design is
+    <code>docs/pack-format.md</code>.</p>
+  <p class="note">
+    <b>What is in one.</b> A directory: <code>manifest.json</code> (what the collection is:
+    id, snapshot, slicing scheme, chunker layers, license, every shard with its hash —
+    signed with the node key), <code>validation.json</code> (which checks to run),
+    <code>TERMS.txt</code> (the license terms, byte-exact), and
+    <code>records/&lt;slice&gt;/NNNNN.jsonl.zst</code> — the corpus as JSON Lines, one record
+    per line, in independent zstd frames of 1,000 records with an index at the end.
+    <code>zstd -d shard.jsonl.zst | less</code> prints the records: nothing in a pack needs
+    our tools to be read. A <b>slice</b> is the human-facing part (Gutenberg
+    <code>lang=it</code>, PubMed <code>year=1975-1979</code>, Wikipedia
+    <code>lang=de/pages=2M</code>); a <b>shard</b> is the transfer unit inside it (~50 books,
+    30,000 abstracts, 2,000 articles), closed once written. Vectors and the text index are
+    planned as separate members; today a node builds both itself from the records.
+  </p>
+  <p class="note">
+    <b>A pack is a closed snapshot.</b> The procedure: the origin collection finishes
+    fetching, parsing and indexing up to a cutoff date; the pack is built from it with
+    <code>pack build &lt;collection&gt; --out DIR --until YYYY-MM-DD</code> — records that
+    existed at the origin on that date and nothing later (Gutenberg by release date, PubMed
+    by <i>DateRevised</i>, Wikipedia by the dump's date; the rule is recorded in the
+    manifest, and a resume under another cutoff is refused); then the origin hands over:
+    <code>pack adopt &lt;origin&gt; &lt;packed&gt; --fts --yes</code> moves its vector table,
+    embed marks and provenance (and the text index) into the packed twin with no
+    re-embedding — the twin yields the same document ids and chunk ids in the same space.
+    Run adopt with the worker stopped. Later content is an <i>update</i>: derived from the
+    previous manifest and the origin by fixed rules, so two honest updaters produce the same
+    bytes and there is nothing to reconcile (not built yet; see the design, §6.1).
+  </p>
+  <p class="note">
+    <b>Building one.</b> From an existing collection: <code>pack build</code> above (two
+    passes over the collection's manifest — plan the slices, then write shards — resumable,
+    state in <code>DIR/.build/</code>, logs one line per 30 s). From a raw corpus folder
+    without a collection: <code>python -m tools.pack_convert --plugin pubmed --corpus DIR
+    --out DIR [--until DATE]</code>. Only useful data enters a pack: parsed text and
+    metadata, never epubs, XML markup or dump indexes. On the reference node packs live on
+    their own datasets under <code>/packs</code> (<code>PACK_MOUNTS_DIR</code>).
+  </p>
+  <p class="note">
+    <b>Using one.</b> Create a collection with the <b>packed</b> plugin over a pack folder —
+    the create dialog lists the packs it finds under <code>/packs</code> marked
+    "(pack)". The collection needs no origin files and no parser; it keeps the origin's
+    document ids, chunker and license, so bundles, the genesis archive and derived
+    collections all apply to it unchanged. Acquisition from the origin is off for a packed
+    collection; a pack arrives whole (a copy, or the per-slice torrents below).
+  </p>
+  <p class="note">
+    <b>Checking one.</b> <code>pack verify DIR [--checks roots,records,chunks,license,signature]
+    [--sample 0.05]</code> runs the pack's validation plan with platform code — every shard's
+    bytes against the manifest's hashes, every record's content hash against its own text,
+    re-chunking against the declared counts, the terms text byte-for-byte, the signature.
+    Nothing shipped in a pack is ever executed. <code>pack status DIR</code>,
+    <code>pack cat DIR &lt;uid&gt;</code> (one record and its chunks as JSON) and
+    <code>pack dump &lt;shard&gt;</code> (plain JSONL) are the inspection tools.
+  </p>
+  <p class="note">
+    <b>Sharing one.</b> <code>torrent publish &lt;packed-collection&gt; --per-slice</code>
+    hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
+    publishes the torrent collection over them — a peer takes "PubMed before 1980" as the
+    members of those slices (see <a href="#acquire">Fetching from peers</a>).
+  </p>
+  <p class="note">
+    <b>Chunker layers.</b> A collection normally has one chunker. Where a pre-embedded archive
+    fixed the chunking of the documents it covers and a better one is wanted for the rest
+    (the "MedCPT case"), a collection may declare <b>layers</b> in its TOML —
+    <code>[[layers]] chunker = "verbatim" rule = "archive:&lt;id&gt;"</code> … then
+    <code>[[layers]] chunker = "cdc"</code> (the last is the default) — every document
+    belongs to exactly one layer by that rule, all under one encoder. Declaring more than
+    one layer changes the collection's space id (a <code>space repin</code>); one layer
+    changes nothing.
+  </p>
+  <p class="note">
+    <b>The vector index.</b> Without one, every semantic query scans the whole vector table
+    (13 s on 16 million rows, measured). The worker builds a local IVF index on its own once a
+    collection's table holds <code>VECTOR_INDEX_MIN_ROWS</code> (100,000) rows — off the GPU
+    loop, minutes to an hour on a large table, queries keep working meanwhile — and folds new
+    rows in as they arrive. Search then probes a few buckets and re-ranks against the stored
+    vectors (<code>VECTOR_INDEX_NPROBES</code> / <code>VECTOR_INDEX_REFINE</code>); the
+    default type is <code>ivf_pq</code> (compact codes), <code>ivf_flat</code> keeps a full
+    copy of the vectors for the best recall. <code>index vector status|build
+    &lt;collection&gt;</code> shows or forces it. The index is local, built over the vectors a
+    node holds; the pack design's shared bucket index is a later step.
+  </p>
+</div>
+
 <div class="panel" id="plugins">
   <h2>The plugins</h2>
   <p class="note lead"><b>In short:</b> a plugin knows one source — where its documents live, how to fetch them, and how to cut them into chunks.</p>
@@ -433,6 +524,18 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
       <td>green (consortium reference assemblies)</td>
       <td>reference genomes only — never personal genomes; all assemblies
         share one DNA space so cross-species retrieval works.</td></tr>
+    <tr><td><b>packed</b></td>
+      <td>a PACK (see <a href="#packs">Packs</a>): a corpus already parsed and
+        sliced by another node, or by this one from its origin collection.</td>
+      <td><code>records/&lt;slice&gt;/*.jsonl.zst</code> + manifest; one record
+        = one document; the chunker is the origin plugin's (or the pack's
+        declared layers), so chunk ids match the origin's exactly.</td>
+      <td>the pack's (recorded in its manifest; the terms text travels
+        with it)</td>
+      <td>no origin files, no parser, no acquisition from the origin;
+        document ids and possession hashes are the origin's, so bundles
+        and genesis archives apply unchanged. Create it over a "(pack)"
+        folder from the Library.</td></tr>
   </table></div>
 </div>
 
@@ -700,6 +803,24 @@ python -m app.cli backend check &lt;collection&gt;      # gate: endpoint vs base
 python -m app.cli backend rebaseline &lt;collection&gt; --yes
 
 python -m app.cli contribute &lt;collection&gt; &lt;coordinator-url&gt; [--count N]
+
+python -m app.cli genesis status &lt;collection&gt;      # the archive ledger, per shard
+python -m app.cli genesis retry &lt;collection&gt; [--shard N]   # put a rejected shard back in line
+
+python -m app.cli pack build &lt;collection&gt; --out DIR [--until YYYY-MM-DD] [--records-per-shard N] [--unsigned]
+python -m app.cli pack verify DIR [--checks roots,records,chunks,license,signature] [--sample F] [--seed N]
+python -m app.cli pack status DIR
+python -m app.cli pack cat DIR &lt;uid&gt;               # one record and its chunks, as JSON
+python -m app.cli pack dump &lt;shard.jsonl.zst&gt;      # plain JSONL (what zstd -d prints)
+python -m app.cli pack adopt &lt;origin&gt; &lt;packed&gt; [--fts] --yes   # the hand-over (worker stopped)
+python -m tools.pack_convert --plugin P --corpus DIR --out DIR [--until DATE]
+
+python -m app.cli index vector status &lt;collection&gt;
+python -m app.cli index vector build &lt;collection&gt; [--type ivf_pq|ivf_flat] [--partitions K]
+
+python -m app.cli torrent publish &lt;collection&gt; [--per-language | --per-slice | --collection-only] [--peer-hint host:port]
+python -m app.cli space repin &lt;collection&gt; --yes
+
 python -m tools.migrate_manifest --db /data/manifest.db [--dry-run]
 python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</pre>
 </div>
@@ -776,7 +897,7 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
     ["Basics", ["overview", "pages", "pipeline"]],
     ["Embedding", ["scope", "safety", "genesis"]],
     ["Collections & data", ["collections", "acquire", "config"]],
-    ["Sharing (P2P)", ["bundles"]],
+    ["Sharing (P2P)", ["bundles", "packs"]],
     ["Reference", ["cli", "api", "trouble"]],
   ];
   const known = new Set(TABS.flatMap(t => t[1]));
