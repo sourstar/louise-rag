@@ -245,6 +245,30 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5k. **PubMed container access — measured 2026-08-25, repack proposed.**
+   The corpus is 1,334 gzipped XML containers, 51 GB; one container
+   (`pubmed26n0600`) is 35.5 MB gz → 283 MB XML (8×), 30,000 records, so
+   the whole archive is ~380 GB uncompressed — never materialise it.
+   Per container: gunzip 0.8 s; our `ET.parse` DOM 8.5 s idle (13–20 s
+   live, under the pipeline's load) and hundreds of MB of tree, held in
+   a ONE-slot cache; `ET.iterparse` streaming with `clear()` 4.1 s;
+   extracting (pmid, title, abstract, authors, journal, year) and
+   writing a Parquet pack (zstd-9, 1,000-row groups) 4.8 s → **12.2 MB**
+   (34.5 MB of raw text; 25,331 of 30,000 records carry an abstract);
+   one record by PMID from the pack, via row-group statistics: **16 ms**
+   — against 8–20 s today (the container must be parsed whole). A
+   gzip stream is not seekable, so "one record" always costs the
+   gunzip of everything before it (0.4 s average) plus the parse.
+   PROPOSAL — `plugins/pubmed` keeps the gz XML as the archive (what is
+   fetched, checksummed and seeded) and builds, once per container, a
+   DERIVED pack beside it (`<name>.pack.parquet`, PMID-sorted, rebuilt
+   when the gz's checksum changes; ~16 GB for all of PubMed): rdf/fts/
+   embed/genesis read records from the pack (16 ms, no cache thrash),
+   the reader panel (5j) opens an article instantly, and year/journal
+   become available for the bibliographic line without a manifest
+   column. Deterministic from the gz, so invariant 3 is untouched; the
+   pack is a cache, never exchanged. Build cost ≈ 1,334 × 5 s ≈ 2 h of
+   one core, amortised into the first pass over each container.
 5j. **Ask tab: translated results and a document reader (operator
    request 2026-08-25; to build).**
    (1) *Results in another language, interface untouched.* A "show
