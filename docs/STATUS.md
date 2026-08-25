@@ -519,7 +519,15 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   fallback now shrinks in 20 % steps instead of halving. Tests:
   `tests/test_pubmed_abstract_chunker.py` (one chunk per fixture
   article through the worker, PubMed's id moves and book's does not,
-  the repin's every effect).
+  the repin's every effect). **Re-pinned on the NAS 2026-08-26 07:39
+  (5dd6250):** the old pin `b009849c…` held 1,587,743 archive vectors
+  (title-only records) and 12,119,490 lexical entries — all reset; the
+  worker pinned `41844ebb…` at boot, re-indexes at 1,000 documents /
+  1,000 chunks per batch (one per article, ~8–10 h for the 12.1M from
+  the packs), and the first archive pass over the re-indexed documents
+  reported **0 chunk-shape mismatches** — every article the archive
+  holds is now covered as it becomes indexed; the 8 fetched shards were
+  kept (`applied` → `fetched`), nothing re-downloaded.
 - **Library/Stats counts are cached ~2 minutes** (stale-while-revalidate).
   `invalidate_counts` is wired only to the reset endpoint, so any change made
   outside the web process — including direct SQL — lingers until the TTL.
