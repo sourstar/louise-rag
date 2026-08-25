@@ -245,6 +245,22 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5m. **The pack — one distribution format for corpus, vectors, index and
+   proofs (operator brief 2026-08-26; PROPOSAL in
+   [`pack-format.md`](pack-format.md), nothing built).** Parsed-record
+   Parquet shards (the PubMed pack generalised to every plugin — peers
+   never see origin files or parsers), vectors / index / deltas as
+   separate members of the torrent collection, a signed manifest with
+   collection id, snapshot chain, the space's encoder + reference
+   version + calibration tolerance, update cadence and deadline; deltas
+   at record (CDC: paragraph) granularity feed the coordinator's leases
+   (one shard = one lease); a search-time freshness check against the
+   origin (no re-embedding); anti-entropy digests + TTL-bounded events
+   for cross-advertising, DHT-published catalogues beyond direct peers;
+   zstd now with a manifest codec slot for OpenZL later. Improvements it
+   brings: Wikipedia pre-embedded f32→f16 (−295 GB), light peers with
+   zero compute, chunk-level provenance through merges. Build order in
+   §12; open questions in §11 — decide before building.
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent
