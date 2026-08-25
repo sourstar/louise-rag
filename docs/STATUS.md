@@ -250,9 +250,11 @@ block every other collection's embedding for each 300 s slice.
    EVERYTHING sits on `ssd4` (NVMe, 1.81 TB, 569 GB free): corpora 923 GB
    (wikivec 590, gutenberg 256, pubmed 51, wikipedia 26) plus `/data`
    250 GB (Lance 23 + wikivec vectors 127, tantivy 34, pubmed 36). The
-   HDD pool `tank` (raidz1, 8.9 TB free) reads 304 MB/s sequential
-   (direct) and 6.3 GB/s when the block is in ZFS's RAM cache (ARC: 25 GB
-   of 61 GB RAM, 99.8 % hit ratio). Measured stage costs are CPU/GPU, not
+   HDD pool `tank` (4 × 6 TB Toshiba in raidz1, 8.9 TB free; `ssd4` is a
+   2 TB Kingston NVMe) reads 304 MB/s sequential (direct), 121 MB/s in
+   64 KiB direct random reads (~1,900 reads/s — small-file corpora are
+   fine too), and 6.3 GB/s when the block is in ZFS's RAM cache (ARC:
+   25 GB of 61 GB RAM, 99.8 % hit ratio). Measured stage costs are CPU/GPU, not
    disk: a 30 MB pubmed container takes 13–20 s to gunzip+parse and 0.1 s
    to read from HDD; wikipedia rdf 33–68 s per 1000 documents; a 438 MB
    wikivec shard ~10 s to decode vs 1.5 s to read from HDD (and the
