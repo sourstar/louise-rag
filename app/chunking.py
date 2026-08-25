@@ -58,13 +58,26 @@ def chunk_book(uid: str, native_id, chapters: list[tuple[str, str]],
 
 def chunk_abstract(uid: str, native_id, sections: list[tuple[str, str]],
                     version=None):
-    """One chunk per record: chunking_profile='abstract' (e.g. PubMed) — the
-    whole title+abstract becomes a single chunk, no windowing/overlap."""
+    """One chunk per record: chunking_profile='abstract' (PubMed) — the
+    whole title+abstract becomes a single chunk, no windowing/overlap.
+
+    This is how MedCPT was fed (title + abstract, one vector per article,
+    the encoder truncating at its 512-token window — the embed client's
+    char budget plus the server's own truncation do the same here), so
+    the genesis shape gate (one archive vector per chunk) accepts every
+    article. Live 2026-08-25 with chunk_book: title and abstract became
+    two chunks, so 42–70 % of shard documents were shape mismatches and
+    the archive covered only title-only records. Measured against the
+    archive on 24 abstract-bearing articles: cosine median 0.988, min
+    0.960 for "title\\n\\nabstract" (the [SEP] join NCBI used scored
+    0.991 — not worth a marker in the displayed text).
+
+    No chapter label: the chunk IS the article. Versioned by
+    ABSTRACT_CHUNK_VERSION, its own number (invariant 3)."""
     text = "\n\n".join(body for _, body in sections if body).strip()
     if not text:
         return
-    yield _mk(uid, native_id, 0, sections[0][0] if sections else "", text,
-               version)
+    yield _mk(uid, native_id, 0, "", text, version)
 
 def chunk_verbatim(uid: str, native_id, sections: list[tuple[str, str]],
                     version=None):
@@ -205,6 +218,10 @@ _CHUNKERS = {BOOK: chunk_book, VERBATIM: chunk_verbatim,
 # Existing chunkers keep config.CHUNK_VERSION, so every existing collection's
 # space_id is unchanged to the byte.
 CDC_CHUNK_VERSION = 1
+# The abstract chunker (PubMed, 2026-08-26) has its own number for the same
+# reason: it enters ONLY PubMed's space id. Bump it — and only it — when
+# how an article becomes its one chunk changes.
+ABSTRACT_CHUNK_VERSION = 1
 
 
 def chunker_name(profile: str | None, mutability=None) -> str:
@@ -219,13 +236,22 @@ def chunker_name(profile: str | None, mutability=None) -> str:
 
     if profile == VERBATIM:
         return VERBATIM
+    if profile == ABSTRACT:
+        # one chunk per article (PubMed) — wired 2026-08-26; until then the
+        # profile was declared but fell through to BOOK, which cut title
+        # and abstract into separate chunks
+        return ABSTRACT
     if mutability == Mutability.MUTABLE:
         return CDC
     return BOOK
 
 
 def chunk_version_for(name: str) -> int:
-    return CDC_CHUNK_VERSION if name == CDC else config.CHUNK_VERSION
+    if name == CDC:
+        return CDC_CHUNK_VERSION
+    if name == ABSTRACT:
+        return ABSTRACT_CHUNK_VERSION
+    return config.CHUNK_VERSION
 
 
 def chunker_version_for_collection(collection) -> tuple[str, int]:

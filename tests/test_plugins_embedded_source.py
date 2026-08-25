@@ -177,7 +177,7 @@ def test_chunker_dispatch_default_is_unchanged():
     """
     sections = [("Intro", "para one.\n\npara two."), ("Next", "more text.")]
 
-    for profile in (None, "book", "abstract", "wiki"):
+    for profile in (None, "book", "wiki"):
         assert chunking.chunker_name(profile, None) == "book"
         assert list(chunking.chunker_for(profile)("u:1", 1, sections)) == \
             list(chunking.chunk_book("u:1", 1, sections)), profile
@@ -185,4 +185,10 @@ def test_chunker_dispatch_default_is_unchanged():
     assert chunking.chunker_name("verbatim", None) == "verbatim"
     assert list(chunking.chunker_for("verbatim")("u:1", 1, sections)) == \
         list(chunking.chunk_verbatim("u:1", 1, sections))
+    # "abstract" was the one declared profile that still fell through to
+    # book; since 2026-08-26 it is its own chunker (one chunk per record,
+    # its own version) — tests/test_pubmed_abstract_chunker.py pins it
+    assert chunking.chunker_name("abstract", None) == "abstract"
+    assert list(chunking.chunker_for("abstract")("u:1", 1, sections)) == \
+        list(chunking.chunk_abstract("u:1", 1, sections, chunking.ABSTRACT_CHUNK_VERSION))
 

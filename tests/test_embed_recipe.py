@@ -119,10 +119,12 @@ def test_recipe_ctx_bounds_the_char_budget(isolated_config, monkeypatch):
     assert len(calls[0]["json"]["input"][0]) == 512 * 4
 
 
-def test_413_from_bert_class_servers_halves_the_budget(isolated_config, monkeypatch):
+def test_413_from_bert_class_servers_shrinks_the_budget_gently(isolated_config, monkeypatch):
     """TEI (MedCPT et al.) answers over-long input with 413 and does not
     auto-truncate; the client must shrink and retry exactly as it does for
-    llama-server's 400."""
+    llama-server's 400 — in 20 % steps, not halves: on the MedCPT tokenizer
+    ctx*4 chars overshoots 512 tokens by ~5 % for dense text, and halving
+    threw away half of the abstract for it."""
     import httpx as httpx_mod
     attempts = []
 
@@ -146,8 +148,10 @@ def test_413_from_bert_class_servers_halves_the_budget(isolated_config, monkeypa
         url="http://tei:1", api="openai", model="medcpt", dtype="f16", ctx=512)
     out = embeddings.embed_texts(["A" * 10_000], recipe=recipe)
     assert len(out) == 1
-    assert attempts[0] == 2048 and attempts[-1] <= 1024, \
-        "budget must halve until the server accepts"
+    assert attempts[0] == 2048 and attempts[-1] <= 1000, \
+        "budget must shrink until the server accepts"
+    for prev, nxt in zip(attempts, attempts[1:]):
+        assert nxt == max(256, int(prev * 0.8)), attempts
 
 
 def test_space_components_come_from_the_recipe(isolated_config, config_dir):

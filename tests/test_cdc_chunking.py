@@ -109,7 +109,9 @@ def test_sections_are_chunked_independently():
 
 @pytest.mark.parametrize("profile,mutability,expected", [
     ("book", Mutability.IMMUTABLE, "book"),
-    ("abstract", Mutability.IMMUTABLE, "book"),
+    # one chunk per article (2026-08-26): declared long before, wired now —
+    # it is what lets the MedCPT archive cover abstract-bearing articles
+    ("abstract", Mutability.IMMUTABLE, "abstract"),
     ("sequence-window", Mutability.IMMUTABLE, "book"),
     ("wiki", Mutability.MUTABLE, "cdc"),
     # verbatim wins over everything: those boundaries belong to the producer
@@ -198,8 +200,14 @@ def test_adding_the_chunker_field_repins_nothing(isolated_config, tmp_path,
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
     components = spaces.gather_components(_collection(tmp_path, "g", "gutenberg"))
 
-    for name in ("book", "verbatim", "abstract"):
+    for name in ("book", "verbatim"):
         assert name in spaces.GRANDFATHERED_CHUNKERS
         variant = replace(components, chunker=name)
         assert spaces.compute_space_id(variant) == spaces.compute_space_id(components)
         assert spaces._config_id(variant) == spaces._config_id(components)
+    # "abstract" is deliberately NOT grandfathered (2026-08-26): no space was
+    # ever pinned under it, and wiring it re-cut PubMed — its id must move
+    assert "abstract" not in spaces.GRANDFATHERED_CHUNKERS
+    variant = replace(components, chunker="abstract")
+    assert spaces.compute_space_id(variant) != spaces.compute_space_id(components)
+    assert spaces._config_id(variant) != spaces._config_id(components)

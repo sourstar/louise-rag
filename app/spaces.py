@@ -167,7 +167,13 @@ def _chunk_version_for(collection) -> int:
 # every space pinned before the chunker became part of the identity keeps
 # exactly the id it already has (same reasoning as amendment 2, where
 # space_id deliberately does not hash dim).
-GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim", "abstract"})
+#
+# "abstract" is NOT grandfathered: no space was ever pinned under it (the
+# profile fell through to `book` until 2026-08-26), and wiring it is a
+# real change of segmentation for PubMed — the payload must carry it so
+# PubMed's space id changes and the boot check refuses until the operator
+# re-pins (`space repin`), exactly as invariant 3 demands.
+GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim"})
 
 
 def _chunker_payload(c: SpaceComponents) -> dict:

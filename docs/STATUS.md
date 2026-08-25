@@ -496,24 +496,30 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   938,691 609,182 (65 %), and the fraction rises with the year as
   abstracts become universal. So the archive can cover only the
   title-only records; every article with an abstract is skipped and
-  falls to the local encoder once its shard is final. The fix is the
-  pubmed-only chunker change this note refused: one chunk per article
-  (title + abstract, truncated to the encoder's budget the way MedCPT
-  did), bumped explicitly for pubmed's chunker id, which re-pins pubmed's
-  space and invalidates its existing vectors (tens of thousands today —
-  cheap to redo now, not later). **Operator approved 2026-08-25; to
-  build 2026-08-26.** Spec for the day: (a) `chunk_abstract` becomes
-  PubMed's chunker — one chunk per article, `title + "\n\n" + abstract`,
-  truncated to the recipe's token budget the way MedCPT was fed (512
-  tokens; measure the char/token ratio on a sample, never guess); (b)
-  the chunker id/version bump is PubMed-only (invariant 3 — no global
-  knob), with a golden test on a fixture container; (c) PubMed's space
-  re-pins: wipe its Lance table, `embed_done`, `genesis_imports` and the
-  genesis cache on both nodes, re-record the pin, and let the archive
-  re-apply — the ~160k vectors of 2026-08-25 are the whole cost; (d)
-  verify the shape gate now accepts abstract-bearing articles (the
-  per-document cosine diagnostic from 2026-08-25 doubles as the
-  acceptance test: sampled cosines ≥ 0.99, multi-chunk count ≈ 0).
+  falls to the local encoder once its shard is final. **Built
+  2026-08-26 (operator approved 2026-08-25; amendment 39):**
+  `chunker_name("abstract")` now returns the abstract chunker — one
+  chunk per article, `title\n\nabstract`, no chapter label — under its
+  own `ABSTRACT_CHUNK_VERSION` (PubMed-only, invariant 3), and
+  "abstract" is no longer grandfathered in the space payload, so
+  PubMed's space id moves and the boot check refuses the old pin;
+  `python -m app.cli space repin <collection> --yes` (worker stopped) is
+  the operator step: drops the pin, resets `embed_done` AND `fts_done`
+  (the lexical index held chunk ids cut by the old chunker — same id,
+  different text otherwise), clears the verification ledger, keeps
+  fetched archive shards (`applied` → `fetched`, no re-download), drops
+  finished rows, removes the Lance table. Measured before choosing the
+  text format, 24 abstract-bearing articles against the archive: cosine
+  median 0.988 / min 0.960 for `title\n\nabstract` (NCBI's `[SEP]` join
+  0.991 / 0.974 — not worth a marker in displayed text; abstract alone
+  0.976 / 0.945 — the title matters). The encoder is TEI (MedCPT
+  tokenizer 3.8–6.2 chars/token, median 5.0; TEI refuses >512 tokens
+  with 413 unless started with --auto-truncate), so the client's char
+  budget of ctx·4 = 2,048 chars is 410–530 tokens and its over-length
+  fallback now shrinks in 20 % steps instead of halving. Tests:
+  `tests/test_pubmed_abstract_chunker.py` (one chunk per fixture
+  article through the worker, PubMed's id moves and book's does not,
+  the repin's every effect).
 - **Library/Stats counts are cached ~2 minutes** (stale-while-revalidate).
   `invalidate_counts` is wired only to the reset endpoint, so any change made
   outside the web process — including direct SQL — lingers until the TTL.

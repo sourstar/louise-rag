@@ -1082,3 +1082,23 @@ the live deployment:
     `pending`, `next_pass_at` (additive, migrated on connect); states
     become fetching → fetched → applying → applied ⇄ applying → final |
     rejected | skipped. Built 2026-08-24/25 — STATUS.md 5g.
+39. **§3/§8 — PubMed is one chunk per article (2026-08-26; operator
+    approved 2026-08-25).** MedCPT holds one vector per article, made
+    from title + abstract in one 512-token window; the genesis shape gate
+    binds archive vectors to local chunks 1:1; and PubMed's declared
+    `abstract` profile had always fallen through to the book chunker,
+    which cut title and abstract into separate chunks — so the archive
+    could cover only title-only records (42–70 % of shard documents were
+    shape mismatches, live). Amended rule: the abstract chunker is wired
+    (`title\n\nabstract`, one chunk, no chapter label) under its OWN
+    version number, `ABSTRACT_CHUNK_VERSION`, and enters the space
+    payload — it is not grandfathered, because no space was ever pinned
+    under it — so PubMed's space id moves and nothing else's does. The
+    boot check refuses the old pin; `space repin` is the explicit
+    operator step (drop the pin, reset embed AND lexical marks — the old
+    chunk ids in the index would otherwise name different text — clear
+    the verification ledger, keep fetched archive shards, drop the vector
+    table). Truncation stays where it was: the client's char budget
+    (`ctx·4`) plus the server's own window, with a 20 % shrink on an
+    over-length answer. Chosen on measurement: cosine to the archive
+    median 0.988 / min 0.960 across 24 abstract-bearing articles.

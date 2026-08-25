@@ -139,6 +139,68 @@ def cmd_embed_materialize(args) -> int:
     return 0
 
 
+def cmd_space_repin(args) -> int:
+    """Adopt a NEW embedding space for one collection — the explicit,
+    operator-driven step behind every "wipe and re-embed" refusal the boot
+    check prints (invariant 1/3: never automatic). What it does, in one
+    manifest transaction and then on disk:
+
+      - drops the space pin (the worker pins the current recipe + chunker
+        at its next boot);
+      - marks every document embed_done=0 AND fts_done=0 — the chunk ids
+        the lexical index holds were cut by the old chunker and must not
+        outlive it (same id, different text, would mislead every hybrid
+        hit), so the fts stage re-cuts and rewrites them;
+      - clears the chunk verification ledger (provenance of vectors that
+        no longer exist);
+      - resets the genesis ledger: shards still on disk go back to
+        `fetched` (they re-apply against the new chunks — no re-download),
+        finished or failed rows are dropped;
+      - removes the Lance vector table.
+
+    Stop the worker first: it must not be mid-embed while this runs.
+    Refuses without --yes."""
+    import shutil
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    pinned = con.execute("SELECT space_id FROM space WHERE id=1").fetchone()
+    embedded = con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0]
+    indexed = con.execute("SELECT COUNT(*) FROM documents WHERE fts_done=1").fetchone()[0]
+    genesis_rows = con.execute("SELECT COUNT(*) FROM genesis_imports").fetchone()[0]
+    print(f"{collection.name}: pinned space {pinned['space_id'] if pinned else '(none)'}; "
+          f"{embedded} embedded, {indexed} indexed documents, {genesis_rows} genesis rows, "
+          f"vectors at {collection.lance_dir}")
+    if not args.yes:
+        print("  would: drop the pin, reset embed_done and fts_done for every document, "
+              "clear chunk_verification, reset genesis rows, delete the Lance table. "
+              "Re-run with --yes (worker stopped).")
+        return 2
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("DELETE FROM space")
+        con.execute("UPDATE documents SET embed_done=0, embed_version=0, fts_done=0")
+        con.execute("DELETE FROM chunk_verification")
+        con.execute("DELETE FROM genesis_imports WHERE state NOT IN "
+                    "('fetching','fetched','applying','applied')")
+        con.execute("UPDATE genesis_imports SET state='fetched', docs=0, chunks=0, "
+                    "pending=NULL, next_pass_at=0, detail=NULL WHERE state IN "
+                    "('applying','applied')")
+        db.log_event(con, "info", "spaces",
+                     f"space re-pin requested by the operator: {embedded} vectors and "
+                     f"{indexed} lexical entries reset — the next worker boot pins the "
+                     f"current recipe and chunker")
+        con.execute("COMMIT")
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    if collection.lance_dir.exists():
+        shutil.rmtree(collection.lance_dir)
+    print(f"  done: pin dropped, {embedded} documents to re-embed, {indexed} to re-index, "
+          f"Lance table removed. Start the worker; it pins the new space at boot.")
+    return 0
+
+
 def cmd_status(args) -> int:
     names = [args.collection] if args.collection else [c.name for c in collections_mod.load_all()]
     for name in names:
@@ -828,6 +890,17 @@ def main(argv=None) -> int:
              "space pin unchanged)")
     e_mat.add_argument("collection")
     e_mat.set_defaults(func=cmd_embed_materialize)
+
+    space_parser = top.add_parser("space", help="embedding space pins")
+    space_sub = space_parser.add_subparsers(dest="verb", required=True)
+    sp_repin = space_sub.add_parser(
+        "repin",
+        help="adopt a new space for a collection: drop the pin, reset embed "
+             "and lexical marks, clear vectors (operator-driven; worker stopped)")
+    sp_repin.add_argument("collection")
+    sp_repin.add_argument("--yes", action="store_true",
+                          help="actually do it (without it: report the plan)")
+    sp_repin.set_defaults(func=cmd_space_repin)
 
     args = p.parse_args(argv)
     return args.func(args)

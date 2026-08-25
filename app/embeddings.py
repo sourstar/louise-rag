@@ -62,16 +62,20 @@ def _embed_batch(batch: list[str], timeout: float,
     Other HTTP errors surface with the server's actual message."""
     budget = recipe.ctx * 4
     n_bad = 0
-    for attempt in range(6):
+    for attempt in range(10):
         cut = [t[:budget] for t in batch]
         try:
             vecs = _request_vectors(cut, timeout, recipe)
         except httpx.HTTPStatusError as e:
             # 400: llama-server's over-budget answer. 413: TEI's (BERT-class
             # servers enforce their 512-token window and do not auto-truncate
-            # unless started with --auto-truncate). Same remedy either way.
+            # unless started with --auto-truncate). Same remedy either way:
+            # a SMALLER cut, in 20 % steps — halving threw away half of a
+            # PubMed abstract for a 5 % overshoot (measured on the MedCPT
+            # tokenizer: 3.8–6.2 chars/token, so ctx*4 chars is 410–530
+            # tokens; the dense tail case needs ~10 % less, not 50 %).
             if e.response.status_code in (400, 413) and budget > 256:
-                budget //= 2
+                budget = max(256, int(budget * 0.8))
                 continue
             detail = e.response.text[:200].replace("\n", " ")
             raise RuntimeError(
