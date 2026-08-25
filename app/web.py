@@ -307,6 +307,35 @@ def _profile_order(plugin: str) -> list[dict]:
     return out
 
 
+def _offered_by_torrent_collection(collection: collections_mod.Collection) -> list[dict] | None:
+    """The slices a peer-sourced collection's TORRENT COLLECTION offers
+    (STATUS 5l), as grow options — or None when the collection fetches
+    from the origin or from plain torrents. Reads the resolved index from
+    the control table only; never the network on a page render."""
+    from .acquire import torrent_collection
+    sources = acquire_engine.peer_sources(collection)
+    if not sources:
+        return None
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    offered: list[dict] = []
+    seen: set[str] = set()
+    found = False
+    for source in sources:
+        index = torrent_collection.cached_index(collection, source)
+        if index is None:
+            continue
+        found = True
+        for s in torrent_collection.offered_slices(index):
+            if s["name"] in seen:
+                continue
+            seen.add(s["name"])
+            gloss = spec.profile_labels.get(s["name"]) if spec else None
+            label = f"{s['name']} — {gloss}" if gloss else s["name"]
+            offered.append({"name": s["name"],
+                            "label": f"{label} (~{_human_bytes(s['bytes'])}, {s['files']} files)"})
+    return offered if found else None
+
+
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     """What "grow" may offer, which depends on how the source's profiles
     relate (spec.profile_mode):
@@ -326,6 +355,12 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
         return []
+    offered = _offered_by_torrent_collection(collection)
+    if offered is not None:
+        # a collection fetched from a TORRENT COLLECTION (STATUS 5l) can
+        # only grow into what its publisher offers — those slices, with the
+        # publisher's sizes, are the options; nothing the origin might have
+        return offered
     if spec.profile_mode == "exclusive":
         return []
     if spec.profile_mode == "additive":
@@ -775,7 +810,9 @@ def _collection_shelf(collection: collections_mod.Collection,
         # first scan after a restart is still running (cold cache)
         "counts_age": counts_age,
         "counts_pending": counts_pending,
-        "profile_mode": (spec.profile_mode if spec else "incremental"),
+        # a torrent-collection peer combines slices like an additive source
+        "profile_mode": ("additive" if _offered_by_torrent_collection(collection) is not None
+                         else (spec.profile_mode if spec else "incremental")),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
         "embed_ready": embed_ready,

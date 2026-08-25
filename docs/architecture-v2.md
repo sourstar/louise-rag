@@ -1102,3 +1102,25 @@ the live deployment:
     (`ctx·4`) plus the server's own window, with a 20 % shrink on an
     over-length answer. Chosen on measurement: cosine to the archive
     median 0.988 / min 0.960 across 24 abstract-bearing articles.
+40. **§5 — a TORRENT COLLECTION is the unit a peer is handed
+    (2026-08-26; operator design).** Per-slice torrents (one per
+    language of a pre-embedded corpus) made a corpus fetchable a piece
+    at a time, but a peer had to be given every magnet and keep its TOML
+    in step with the publisher. Amended rule: a publisher that splits a
+    corpus also publishes an INDEX torrent — a tiny directory holding
+    `collection.json` (members: slice, the slice's include patterns,
+    magnet, info hash, size) and a copy of every member `.torrent` —
+    and hands out ITS magnet alone. A peer's collection is created with
+    that one magnet; which members it pulls is its PROFILE, resolved
+    against the index (a combined profile in its own order, "all"
+    smallest first, so the peer is busy on a small slice while the big
+    ones arrive — amendment 37's principle); growing the profile adds
+    members without touching the TOML, and the grow dialog offers only
+    what the publisher offers. The index is resolved once per source and
+    cached in the collection's control table; its content lives beside
+    the manifest, never in the corpus. The Network page groups a
+    node's seeded torrents under their collection and offers the
+    collection magnet to copy. BitTorrent has no collection object: this
+    is a static index, so a re-publish is a new magnet (like a dated
+    origin snapshot); BEP 46 mutable pointers keep the magnet stable and
+    are the follow-up once peers live beyond one LAN.

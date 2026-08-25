@@ -50,18 +50,25 @@
     <code>torrent publish</code> is seeded by the worker while the node runs,
     downloads/seeding only, or seeding only — paused stops it. Uploaded bytes
     are what the <b>upload</b> figure above measures.</div>
+  {# grouped per collection (STATUS 5l): one summary row per collection —
+     with its TORRENT COLLECTION magnet to copy when the publisher made one
+     — and the member torrents underneath, shown on demand #}
   <table id="seed-table">
-    <tr><th>collection</th><th>torrent</th><th>files</th><th>size</th><th>uploaded</th><th>peers</th><th>state</th></tr>
+    <tr><th></th><th>collection</th><th>torrent</th><th>files</th><th>size</th><th>uploaded</th><th>peers</th><th>state</th></tr>
   </table>
+  <div class="note" id="seed-copy-result"></div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const rate=n=>{n=Number(n||0);
   return n>=1e6?(n/1e6).toFixed(2)+' MB/s':n>=1e3?(n/1e3).toFixed(1)+' KB/s':n.toFixed(0)+' B/s'};
+const SEED_OPEN=new Set();   // collections expanded in the seeding table (survives refreshes)
+let lastSeedPayload='';
 try{
   const es=new EventSource('/admin/network/bandwidth/stream');
   es.onmessage=(ev)=>{
+    lastSeedPayload=ev.data;
     try{const d=JSON.parse(ev.data);
       const tot=d.totals||{};
       document.getElementById('bw-down-total').textContent=rate(tot.down);
@@ -90,14 +97,41 @@ try{
         [...tbl.querySelectorAll('tr.seed-row')].forEach(r=>r.remove());
         const bytes=n=>{n=Number(n||0);
           return n>=1e9?(n/1e9).toFixed(2)+' GB':n>=1e6?(n/1e6).toFixed(1)+' MB':n>=1e3?(n/1e3).toFixed(0)+' KB':n+' B'};
-        for(const r of rows){
-          const tr=document.createElement('tr'); tr.className='seed-row';
-          const state=r.error?r.error:(r.paused?'paused':(r.checking?'checking pieces':(r.seeding?'seeding':'starting')));
-          tr.innerHTML=`<td>${r.collection||''}</td><td>${r.name||''}<br><small>${(r.info_hash||'').slice(0,16)}…</small></td>`
-            +`<td>${r.files??''}</td><td>${bytes(r.bytes)}</td><td>${bytes(r.uploaded)}</td><td>${r.peers??0}</td><td>${state}</td>`;
+        const stateOf=r=>r.error?r.error:(r.paused?'paused':(r.checking?'checking pieces':(r.seeding?'seeding':'starting')));
+        const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        // one group per collection: the summary row carries the totals and
+        // the torrent-collection magnet; members show when expanded
+        const groups=new Map();
+        for(const r of rows){const k=r.collection||'?'; if(!groups.has(k))groups.set(k,[]); groups.get(k).push(r)}
+        for(const [coll,list] of groups){
+          const index=list.find(r=>r.kind==='collection');
+          const members=list.filter(r=>r.kind!=='collection');
+          const open=SEED_OPEN.has(coll);
+          const tot=members.reduce((a,r)=>({b:a.b+Number(r.bytes||0),u:a.u+Number(r.uploaded||0),p:a.p+Number(r.peers||0),f:a.f+Number(r.files||0)}),{b:0,u:0,p:0,f:0});
+          const states=[...new Set(members.map(stateOf))].join(', ');
+          const magnet=index&&index.magnet?(index.magnet+(index.peer_hint?'&x.pe='+index.peer_hint:'')):'';
+          const tr=document.createElement('tr'); tr.className='seed-row seed-group';
+          tr.innerHTML=`<td><a href="#" data-coll="${esc(coll)}" class="seed-toggle" title="show the single torrents">${open?'▾':'▸'}</a></td>`
+            +`<td><b>${esc(coll)}</b></td>`
+            +`<td>${members.length} torrent${members.length===1?'':'s'}${index?' · <button class="seed-copy" data-magnet="'+esc(magnet)+'" title="copy the torrent-collection magnet — the only thing a peer needs">copy collection magnet</button>':''}</td>`
+            +`<td>${tot.f}</td><td>${bytes(tot.b)}</td><td>${bytes(tot.u)}</td><td>${tot.p}</td><td>${esc(states)}</td>`;
           tbl.appendChild(tr);
+          if(open){
+            for(const r of members){
+              const mr=document.createElement('tr'); mr.className='seed-row seed-member';
+              mr.innerHTML=`<td></td><td class="note">${esc(r.slice?('slice '+r.slice):'')}</td><td>${esc(r.name||'')}<br><small>${esc((r.info_hash||'').slice(0,16))}…</small></td>`
+                +`<td>${r.files??''}</td><td>${bytes(r.bytes)}</td><td>${bytes(r.uploaded)}</td><td>${r.peers??0}</td><td>${esc(stateOf(r))}</td>`;
+              tbl.appendChild(mr);
+            }
+          }
         }
-        if(sb) sb.textContent=rows.length?rows.length+' torrent'+(rows.length===1?'':'s')+(sd.age_seconds!=null?' · sample '+sd.age_seconds+'s old':''):'no torrents published';
+        tbl.querySelectorAll('.seed-toggle').forEach(a=>a.onclick=e=>{e.preventDefault();const k=a.dataset.coll;
+          if(SEED_OPEN.has(k))SEED_OPEN.delete(k);else SEED_OPEN.add(k); es.dispatchEvent(new MessageEvent('message',{data:lastSeedPayload}))});
+        tbl.querySelectorAll('.seed-copy').forEach(b=>b.onclick=async()=>{
+          const out=document.getElementById('seed-copy-result');
+          try{await navigator.clipboard.writeText(b.dataset.magnet); out.textContent='copied: '+b.dataset.magnet.slice(0,72)+'…'}
+          catch(e){out.textContent=b.dataset.magnet}});
+        if(sb) sb.textContent=rows.length?groups.size+' collection'+(groups.size===1?'':'s')+', '+rows.length+' torrent'+(rows.length===1?'':'s')+(sd.age_seconds!=null?' · sample '+sd.age_seconds+'s old':''):'no torrents published';
       }
       const lim=d.limits||{};
       document.getElementById('bw-limits').textContent=

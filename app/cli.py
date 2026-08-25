@@ -518,7 +518,21 @@ def cmd_torrent_publish(args) -> int:
 
     # (root, out path, name, include patterns) per torrent to publish
     jobs: list[tuple[Path, Path, str, tuple[str, ...]]] = []
-    if getattr(args, "per_language", False):
+    per_language = bool(getattr(args, "per_language", False))
+    collection_only = bool(getattr(args, "collection_only", False))
+    recorded_members: list[dict] = []
+    if collection_only:
+        # the members were hashed earlier (their records carry everything
+        # the index needs); only the index torrent is (re)built
+        recorded_members = [e for e in seeding.read_published(con) if e.get("kind") == "member"]
+        if not recorded_members:
+            print("REFUSED: no member torrents recorded for this collection — publish "
+                  "with --per-language first", file=sys.stderr)
+            return 1
+        if not args.peer_hint:
+            args.peer_hint = next((e.get("peer_hint") for e in recorded_members
+                                   if e.get("peer_hint")), "")
+    elif per_language:
         # STATUS 5h: one torrent per data/<lang>, ALL rooted at `data` so a
         # peer's files land in the plugin's layout and the torrents combine
         data_root = collection.corpus_dir / "data"
@@ -543,6 +557,8 @@ def cmd_torrent_publish(args) -> int:
         root = collection.corpus_dir / args.subdir if args.subdir else collection.corpus_dir
         jobs.append((root, out, collection.name, ()))
 
+    from .acquire import torrent_collection
+    members: list[dict] = []
     for root, out_path, name, includes in jobs:
         try:
             published = torrent_publish.publish_corpus(
@@ -556,12 +572,19 @@ def cmd_torrent_publish(args) -> int:
             return 1
         # the worker's seeder reads this record and serves the torrent from
         # `root` (app/acquire/seeding.py); deleting the .torrent stops it
-        seeding.record_published(con, {
-            **published.as_catalog_entry(),
-            "torrent_path": str(published.torrent_path), "root": str(root)})
-        magnet = published.magnet
-        if args.peer_hint:
-            magnet += f"&x.pe={args.peer_hint}"
+        slice_name = name[len(collection.name) + 1:] if per_language else None
+        entry = {**published.as_catalog_entry(),
+                 "torrent_path": str(published.torrent_path), "root": str(root),
+                 "kind": "member" if per_language else "corpus",
+                 "slice": slice_name,
+                 # the spec's own patterns for this slice: what a peer's
+                 # profile resolves to, so it can pick members by profile
+                 "include": list((spec.profiles.get(slice_name).include
+                                  if spec and slice_name in spec.profiles else includes)),
+                 "peer_hint": args.peer_hint or ""}
+        seeding.record_published(con, entry)
+        members.append(entry)
+        magnet = torrent_collection.with_hint(published.magnet, args.peer_hint)
         print(f"torrent:   {published.torrent_path}")
         print(f"root:      {root}")
         print(f"files:     {published.files}")
@@ -571,9 +594,35 @@ def cmd_torrent_publish(args) -> int:
         print()
     print("Recorded for the worker's seeder (starts within its next telemetry "
           "beat while the node runs, downloads/seeding only, or seeding only).")
-    if len(jobs) > 1:
-        print("A peer lists these magnets in its TOML `peer_source = [...]` in the "
-              "order it wants them; they are fetched one after the other.")
+    if per_language or collection_only:
+        # THE TORRENT COLLECTION (STATUS 5l): one index torrent — a tiny
+        # directory of collection.json plus every member .torrent — whose
+        # magnet is the only thing a peer needs; its profile picks members.
+        members = members or recorded_members
+        index_dir = collection.manifest_path.parent / "collection"
+        torrent_collection.write_index(index_dir, collection=collection.name,
+                                       plugin=collection.plugin, members=members,
+                                       peer_hint=args.peer_hint or "")
+        index_out = collection.manifest_path.parent / f"{collection.name}.collection.torrent"
+        try:
+            index_pub = torrent_publish.publish_corpus(
+                index_dir, index_out, name=f"{collection.name}-collection",
+                trackers=tuple(args.tracker or ()),
+                comment=f"louise-rag torrent collection {collection.name}")
+        except TransportError as e:
+            print(f"REFUSED (collection index): {e}", file=sys.stderr)
+            return 1
+        seeding.record_published(con, {
+            **index_pub.as_catalog_entry(),
+            "torrent_path": str(index_pub.torrent_path), "root": str(index_dir),
+            "kind": "collection", "slice": None,
+            "members": [m["info_hash"] for m in members],
+            "peer_hint": args.peer_hint or ""})
+        magnet = torrent_collection.with_hint(index_pub.magnet, args.peer_hint)
+        print(f"TORRENT COLLECTION: {index_pub.torrent_path} ({len(members)} members)")
+        print("Give a peer THIS magnet alone — its profile chooses the languages, and")
+        print("growing the profile later adds members without touching its TOML:")
+        print(magnet)
     if len(jobs) == 1:
         print("Give a peer either the .torrent file above or this magnet"
               + (" (with the direct-peer hint):" if args.peer_hint else ":"))
@@ -894,6 +943,9 @@ def main(argv=None) -> int:
     t_pub.add_argument("--languages", default="",
                        help="with --per-language: only these (comma-separated), "
                             "default every data/<lang> directory")
+    t_pub.add_argument("--collection-only", action="store_true",
+                       help="(re)build and publish only the TORRENT COLLECTION index "
+                            "from the members already recorded — no re-hashing")
     t_pub.set_defaults(func=cmd_torrent_publish)
 
     t_seed = torrent.add_parser("seed", help="serve a published torrent")

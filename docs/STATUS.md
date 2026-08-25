@@ -245,6 +245,28 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
+5l. **Torrent COLLECTION — one magnet for a whole published corpus
+   (operator request 2026-08-26; BUILT the same day; amendment 40).**
+   `torrent publish <c> --per-language` now also writes an INDEX torrent
+   (`<c>.collection.torrent`: a tiny directory with `collection.json` —
+   members with slice name, the slice's include patterns, magnet, info
+   hash, size — plus a copy of every member `.torrent`) and prints its
+   magnet: the only thing a peer needs. On the peer, `effective_spec`
+   resolves the index once (`app/acquire/torrent_collection.py`; the
+   content lands under `<manifest dir>/peer-index/`, cached in the
+   control table keyed on the source), then expands the source into the
+   members the PROFILE selects, in fetch order (a combined profile's
+   order; "all" smallest first). Growing the profile adds members with
+   no TOML edit; the grow dialog offers exactly the slices the publisher
+   offers (`web._offered_by_torrent_collection`), and "growth options
+   are consequential" — the origin's static list is not shown for a
+   peer-sourced collection. The Network page's seeding table groups
+   torrents per collection (expand ▸ to see the single torrents) with a
+   **copy collection magnet** button; rows carry kind/slice. A re-publish
+   is a new index and a new magnet (a static index; BEP 46 mutable
+   pointers are the follow-up for peers beyond one LAN).
+   `tests/acquire/test_torrent_collection.py` (index round-trip, profile
+   → members, an end-to-end resolve over a local swarm, seeding rows).
 5k. **PubMed container access — measured 2026-08-25, pack BUILT the same
    night (`app/plugins/pubmed/pack.py`).** One row per direct child of
    the container root, in document order (the record index the locators

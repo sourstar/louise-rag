@@ -156,6 +156,13 @@ class Seeder:
                     "seeding": bool(st.is_seeding),
                     "checking": bool(getattr(st, "state", None) in (1, 2)),
                     "paused": self._paused,
+                    # torrent COLLECTIONS (STATUS 5l): the page groups the
+                    # members under their collection and offers its magnet
+                    "kind": meta.get("kind") or "corpus",
+                    "slice": meta.get("slice"),
+                    "magnet": meta.get("magnet"),
+                    "peer_hint": meta.get("peer_hint") or "",
+                    "members": meta.get("members") or [],
                 })
             except Exception:   # noqa: BLE001
                 rows.append({"collection": meta.get("collection"),

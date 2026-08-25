@@ -238,7 +238,8 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
     )
 
 
-def effective_spec(collection, spec: AcquisitionSpec) -> AcquisitionSpec:
+def effective_spec(collection, spec: AcquisitionSpec,
+                   profile: str | None = None) -> AcquisitionSpec:
     """The spec a collection ACTUALLY fetches by.
 
     `peer_source` (TOML; a magnet or .torrent path) redirects the whole
@@ -247,11 +248,27 @@ def effective_spec(collection, spec: AcquisitionSpec) -> AcquisitionSpec:
     torrent instead of the origin. The torrent's own piece hashes replace
     origin checksum sidecars; dated snapshots do not apply (a torrent IS a
     frozen snapshot). Mirrors/probing are origin concepts and are dropped.
+
+    A source that is a TORRENT COLLECTION (STATUS 5l: an index torrent
+    listing per-slice members) expands to the members the PROFILE selects,
+    in fetch order — one magnet on the peer, its profile choosing the
+    languages; growing the profile adds members without a TOML edit.
     """
     from dataclasses import replace
     peers = peer_sources(collection)
     if not peers:
         return spec
+    profile = profile or collection.profile or ""
+    urls: list[str] = []
+    for source in peers:
+        index = _index_for(collection, source)
+        if index is None:
+            urls.append(source)
+            continue
+        from . import torrent_collection
+        hint = index.get("peer_hint") or ""
+        for member in torrent_collection.members_for_profile(index, spec, profile):
+            urls.append(torrent_collection.with_hint(member["magnet"], hint))
     # SEVERAL torrents (STATUS 5h: one per language of a pre-embedded
     # corpus) are several endpoints that each carry a DIFFERENT subset of
     # the tree: the listing is their union, and run_acquisition fetches
@@ -260,9 +277,24 @@ def effective_spec(collection, spec: AcquisitionSpec) -> AcquisitionSpec:
     # rest still arrives.
     return replace(spec,
                    transport=Transport.TORRENT,
-                   endpoints=tuple(Endpoint(transport=Transport.TORRENT, url=p) for p in peers),
+                   endpoints=tuple(Endpoint(transport=Transport.TORRENT, url=u) for u in urls),
                    checksums=ChecksumSource(kind="none"),
                    probe_file=None, snapshot_files=None, snapshot_index=None)
+
+
+def _index_for(collection, source: str) -> dict | None:
+    """The torrent-collection index behind `source`, resolving it on first
+    sight (a few hundred KB from the swarm); None for a plain torrent or
+    when it cannot be reached yet (the source then stands as itself and
+    the transport reports the outage per file, never a crash here)."""
+    from . import torrent_collection
+    cached = torrent_collection.cached_index(collection, source)
+    if cached is not None:
+        return cached
+    try:
+        return torrent_collection.resolve(collection, source)
+    except Exception:   # noqa: BLE001 — unresolved is "plain torrent for now"
+        return None
 
 
 def peer_sources(collection) -> tuple[str, ...]:
@@ -282,7 +314,7 @@ def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> Ac
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
-    spec = effective_spec(collection, spec)
+    spec = effective_spec(collection, spec, profile)
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     return _plan_from_files(con, collection, spec, files)
 
@@ -656,7 +688,7 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     # a bare "fetched 0/0" with no fetching… badge (the badge reads the
     # claim) and a concurrent `corpus add` could have started a second
     # listing against the same origin.
-    spec = effective_spec(collection, spec)      # peer plane, when the TOML says so
+    spec = effective_spec(collection, spec, profile)   # peer plane, when the TOML says so
     with claim_mod.acquisition_claim(con, spec.source_id):
         keepalive = _ClaimKeepalive(collection, spec.source_id)
         keepalive.start()
