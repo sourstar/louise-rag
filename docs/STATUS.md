@@ -382,9 +382,22 @@ block every other collection's embedding for each 300 s slice.
    https/ftp/hf transports stream into staging on the NVMe, the verified
    file is moved into its corpus as one sequential copy; an interrupted
    `.part` resumes from staging; a file the area cannot hold lands in
-   place; torrents unchanged until 5h). The ssd4 originals are NOT
-   deleted by the switch — a separate decision once the node has run on
-   the datasets for a while. Gutenberg stays on the NVMe.
+   place; torrents unchanged until 5h). **Switched 2026-08-25 10:22
+   CEST:** delta sync moved 0 bytes, the app came back on the datasets,
+   discovery on all three reported 0 changed documents, PubMed's
+   re-index went on from the 193 packs copied to `/data/pubmed-pack`
+   (0 rebuilds), wikivec's archive reads its shards from tank. Lesson
+   that cost a failed `up`: `midclt call app.stop/app.start/app.update`
+   return a JOB and go on in the background — the window script's
+   `start` raced its own `update` and left two *Created* containers with
+   name conflicts; `midclt call -j …` waits, and is what the deploy
+   recipe uses now. The ssd4 originals were datasets too
+   (`ssd4/data/<name>`, which is why a plain `mv` said "resource busy");
+   they were `zfs rename`d to `ssd4/data/<name>.moved-to-tank` (675 GB,
+   reversible) — `zfs destroy` is the operator's call after a few days on
+   tank; the `.pack/` copied into `tank/louise-corpora/pubmed` (5 GB) is
+   unused under `PUBMED_PACK_DIR` and can go with them. Gutenberg
+   (`ssd4/data/gutenberg`, 302 GB) stays on the NVMe.
 5h. **wikivec per-language torrents (operator approved 2026-08-25; to
    build 2026-08-26).** The single 590 GB / 1,447-file torrent is split
    into one torrent per language directory (`data/<lang>`: en 192 GB,
