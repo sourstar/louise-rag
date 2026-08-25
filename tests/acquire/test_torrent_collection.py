@@ -220,7 +220,14 @@ def test_collection_only_understands_records_written_before_the_kind_field(
     monkeypatch.setitem(specs_mod.ACQUIRE_REGISTRY, "embedded",
                         replace(specs_mod.ACQUIRE_REGISTRY["embedded"], profiles=_spec().profiles))
     monkeypatch.setattr(cli, "ACQUIRE_REGISTRY", specs_mod.ACQUIRE_REGISTRY)
-    assert cli.main(["torrent", "publish", "wikivec", "--collection-only"]) == 0
+    assert cli.main(["torrent", "publish", "wikivec", "--collection-only",
+                     "--peer-hint", "10.0.0.9:6881"]) == 0
     index = json.loads((c.manifest_path.parent / "collection" / torrent_collection.INDEX_FILE).read_text())
     assert {m["slice"]: m["include"] for m in index["members"]} == \
         {"tr": ["data/tr/*"], "it": ["data/it/*"], "en": ["data/en/*"]}
+    assert index["peer_hint"] == "10.0.0.9:6881"
+    # the legacy records were upgraded in place: the seeding table can now
+    # label the members by slice
+    upgraded = {e["name"]: e for e in seeding.read_published(con) if e.get("kind") == "member"}
+    assert {e["slice"] for e in upgraded.values()} == {"tr", "it", "en"}
+    assert all(e["peer_hint"] == "10.0.0.9:6881" for e in upgraded.values())

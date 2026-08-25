@@ -538,8 +538,11 @@ def cmd_torrent_publish(args) -> int:
                 include = e.get("include") or list(
                     spec.profiles[slice_name].include
                     if spec and slice_name in spec.profiles else ())
-                recorded_members.append({**e, "kind": "member", "slice": slice_name,
-                                         "include": include})
+                member = {**e, "kind": "member", "slice": slice_name, "include": include,
+                          "peer_hint": e.get("peer_hint") or args.peer_hint or ""}
+                recorded_members.append(member)
+                if member != e:
+                    seeding.record_published(con, member)   # upgrade the legacy record
         if not recorded_members:
             print("REFUSED: no member torrents recorded for this collection — publish "
                   "with --per-language first", file=sys.stderr)
