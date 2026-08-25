@@ -895,6 +895,8 @@ def _drain_remote_archive(con, collection, stop) -> bool:
         return False
     if not _vector_writes_allowed(collection):
         return False            # the index maintainer holds the table; next round
+    if not _license_allows(con, collection, "archive import"):
+        return False            # vectors are USE of the corpus they describe
     _acquire_archive(con, collection, "round")
     try:
         result = bundle_genesis.drain_next_shard(
@@ -999,9 +1001,32 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
                      f"{stats.get('changed', 0)} changed books")
 
 
+_license_nagged: dict[str, float] = {}
+
+
+def _license_allows(con, collection, use: str) -> bool:
+    """Invariant 9 / amendment 36, for EVERY way data arrives: a yellow-
+    or red-class collection without a valid acknowledgement of its terms
+    (the origin's, or the pack's byte-exact copy) is not scanned and its
+    archive is not applied. Logged once an hour per collection."""
+    from . import licensing
+    if licensing.state_for(collection) != licensing.MISSING:
+        return True
+    now = time.time()
+    if now - _license_nagged.get(collection.name, 0.0) > 3600:
+        _license_nagged[collection.name] = now
+        db.log_event(con, "warn", "control",
+                     f"{use} withheld: license_class={licensing.license_class_for(collection)} "
+                     f"needs an acknowledgement of the terms (Library → acknowledge license…) "
+                     f"— a hand-populated or packed folder is not a bypass (invariant 9)")
+    return False
+
+
 def _discover(con, collection, reason: str, stop=None) -> None:
     _acquire(con, collection, reason)
     _acquire_archive(con, collection, reason)
+    if not _license_allows(con, collection, "corpus scan"):
+        return
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
     stats = discovery.sync_collection(con, collection, stop=stop)
     if stats.get("added") or stats.get("changed"):

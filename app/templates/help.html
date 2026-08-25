@@ -434,6 +434,10 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     document ids, chunker and license, so bundles, the genesis archive and derived
     collections all apply to it unchanged. Acquisition from the origin is off for a packed
     collection; a pack arrives whole (a copy, or the per-slice torrents below).
+    <b>The license is the origin's:</b> a yellow-class pack carries the origin's terms text
+    byte-exact, and the same acknowledgement (same sha256) is required before the node
+    scans it, applies an archive to it, or lets you create the collection at all — a
+    folder is not a bypass. The create dialog shows the pack's terms and records the ack.
   </p>
   <p class="note">
     <b>Checking one.</b> <code>pack verify DIR [--checks roots,records,chunks,license,signature]

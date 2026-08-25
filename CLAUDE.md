@@ -67,8 +67,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
    not a bypass (observed live: a peer-copied shard was indexed and
    imported ack-free). Terms text is byte-exact and never converted (a
    CRLF checkout would silently invalidate every recorded ack).
-   *Enforced: acquisition by test; ingestion gate designed, not built
-   (STATUS 5d) — review until it lands.*
+   Packs carry the origin's terms byte-exact, so one ack covers corpus,
+   pre-embeddings and pack (amendment 46; `app/licensing.py` is THE
+   resolution — never re-implement the check). *Enforced: acquisition by
+   test; ingestion by test (the worker withholds scan and archive, `pack
+   build` and the create dialog refuse — tests/test_license_gate.py).*
 10. CONFIG TIERS. Env = identity; TOML files = desired state; DB settings =
     runtime overrides that do NOT survive restart. Never write desired state
     into the DB. Concretely: every Tier-3 override either expires or is

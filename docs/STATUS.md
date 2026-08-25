@@ -255,7 +255,23 @@ archive pass defer for it (rdf/fts continue), and a refresh is due at
 50k rows AND 2 % of the table (`VECTOR_INDEX_REFRESH_FRACTION`;
 `tests/test_vector_index.py`). Measured before the fixes: pubmed fts
 ≈ 35 docs/s wall with ~50 % of its thread in archive passes; wikivec
-1,000 docs per ~50 s of which ~10 s was the shard read.
+1,000 docs per ~50 s of which ~10 s was the shard read. Measured after
+the deploy: the first pubmed pass imported 96,500 documents with zero
+rows walked in vain ("0 not held locally"), still cut at 300 s because
+that many documents were eligible — the budget now bounds real imports
+(~320 docs/s), not re-walks; the pubmed index refresh ran 41 s on the
+maintainer thread.
+**License gate for packs (2026-08-27, operator: the same license as the
+corpus and pre-embeddings; amendment 46):** `app/licensing.py` is the
+one resolution (class from the spec or the pack manifest, terms from the
+spec's file or the pack's byte-exact `TERMS.txt` — same sha256, one ack
+valid for both); the worker withholds the corpus scan and the archive
+pass without a valid ack, `pack build` refuses an unacknowledged origin,
+the create dialog shows the pack's terms and requires acknowledgement
+for a yellow/red pack, the card and `/terms` speak for packs. Tests:
+`tests/test_license_gate.py`. Invariant 9's "ingestion gate designed,
+not built" is now built at the worker and the UI
+(`discovery.sync_collection` itself stays callable ungated).
 
 ## Designed, specified, not built
 

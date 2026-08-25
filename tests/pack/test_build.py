@@ -18,11 +18,18 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def _collection(tmp_path, name, plugin, corpus_dir, **kw):
+    from dataclasses import replace
+    from app import licensing
     d = tmp_path / name
-    return collections_mod.Collection(
+    c = collections_mod.Collection(
         name=name, plugin=plugin, profile=None, embed_mode_default=None,
         corpus_dir=Path(corpus_dir), manifest_path=d / "manifest.db",
         fts_dir=d / "fts", lance_dir=d / "lancedb", **kw)
+    # a yellow-class origin (pubmed, wikipedia, a yellow pack) needs the
+    # acknowledgement before its data is packed or scanned (invariant 9)
+    if "license_ack" not in kw and licensing.state_for(c) == licensing.MISSING:
+        c = replace(c, license_ack=licensing.make_ack(c))
+    return c
 
 
 def _discovered(tmp_path, name, plugin, corpus_dir, **kw):

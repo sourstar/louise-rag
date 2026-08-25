@@ -564,11 +564,11 @@ async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
     // (two different terms texts) takes two modals, never re-asks
     if(String(e).startsWith('terms-acknowledgement-required')){
       let terms;
-      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile})}
+      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile,corpus_dir})}
       catch(_){terms={}}
       showModal(`<h2>License terms — ${esc(plugin)}</h2>
         <div class="note">This source requires acknowledging its terms before
-          the platform fetches a single byte.</div>
+          the platform fetches — or, for a pack, uses — a single byte.</div>
         <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
         <div class="actions">
           <button class="primary" onclick="hideModal();createCollection(true,${!!ackCompanion},true)">I acknowledge — create</button>

@@ -71,7 +71,9 @@ def _write_shard(path, specs):
 
 
 def _collection(tmp_path, name="wikivec"):
-    return collections_mod.Collection(
+    from dataclasses import replace
+    from app import licensing
+    c = collections_mod.Collection(
         name=name, plugin="embedded", profile=None, embed_mode_default=None,
         corpus_dir=tmp_path / "corpus", manifest_path=tmp_path / "manifest.db",
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lancedb",
@@ -79,6 +81,9 @@ def _collection(tmp_path, name="wikivec"):
         embed=collections_mod.EmbedRecipe(
             url="http://fake:1", api="openai", model="bge-m3-test",
             dtype="f16", ctx=512, dim=DIM))
+    # yellow class: the worker withholds the archive without the ack
+    # (amendment 46) — this file is about scheduling, so it is acknowledged
+    return replace(c, license_ack=licensing.make_ack(c))
 
 
 def _uid(article: int) -> str:

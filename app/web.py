@@ -934,16 +934,21 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
 
 
 def _license_state(collection: collections_mod.Collection) -> dict:
-    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    """One resolution for every plugin, packs included (app/licensing.py):
+    the class comes from the spec or the pack's manifest, the terms from
+    the spec's file or the pack's TERMS.txt, and the ack must match them."""
+    from . import licensing
+    cls = licensing.license_class_for(collection)
+    state = licensing.state_for(collection)
     return {
-        "class": spec.license_class.value if spec else None,
+        "class": None if cls == "unknown" else cls,
+        "state": state,
         "ack_recorded": bool(collection.license_ack),
         "acquire_enabled": collection.acquire_enabled,
-        # the ack button applies when acquisition is gated: yellow class,
-        # no recorded ack, and a TOML to write it into
+        # the ack button applies when use is gated: a yellow/red class, no
+        # VALID ack (missing, or for other terms), and a TOML to write it into
         "needs_ack": bool(
-            spec and spec.license_class.value == "yellow"
-            and not collection.license_ack
+            cls in ("yellow", "red") and state == licensing.MISSING
             and collections_mod.config_toml_path(collection.name).exists()),
     }
 
@@ -1089,6 +1094,7 @@ class NewCollectionBody(BaseModel):
     name: str
     plugin: str
     profile: str = "demo"
+    corpus_dir: str = ""      # a pack folder: its own terms text (packed plugin)
 
 
 @admin_router.post("/library/new/preview")
@@ -1102,6 +1108,16 @@ def new_collection_preview(body: NewCollectionBody):
     if spec and spec.terms_text_path and spec.terms_text_path.is_file():
         terms_text = spec.terms_text_path.read_text()[:2000]
         ack = acquire_engine.make_ack(spec.terms_text_path)
+    if body.plugin == "packed" and body.corpus_dir:
+        # a pack's terms are its own file — the origin's, byte-exact
+        from .pack import manifest as pack_manifest
+        from .plugins.packed import for_pack
+        if pack_manifest.is_pack_dir(body.corpus_dir):
+            src = for_pack(body.corpus_dir)
+            license_class = src.license_class.value
+            if src.terms_path is not None:
+                terms_text = src.terms_path.read_text(encoding="utf-8")[:2000]
+                ack = acquire_engine.make_ack(src.terms_path)
     toml_lines = [f'plugin = "{body.plugin}"', f'profile = "{body.profile}"', "acquire_enabled = true"]
     if ack:
         toml_lines.append(f'license_ack = "{ack}"')
@@ -1297,6 +1313,31 @@ def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
     return acquire_engine.make_ack(spec.terms_text_path)
 
 
+def _ack_for_pack(corpus_dir, acknowledged: bool) -> str | None:
+    """The same gate for a PACKED collection: the pack's manifest names the
+    class, its TERMS.txt is the byte-exact terms text (the origin's), and
+    a yellow/red pack needs the acknowledgement before the collection
+    exists at all — a folder is not a bypass (invariant 9)."""
+    from .pack import manifest as pack_manifest
+    from .plugins.packed import for_pack
+    if not pack_manifest.is_pack_dir(corpus_dir):
+        raise HTTPException(400, f"{corpus_dir}: not a pack (no manifest.json) — choose a "
+                                  f"folder listed as (pack)")
+    src = for_pack(corpus_dir)
+    if src.license_class.value not in ("yellow", "red"):
+        return None
+    terms = src.terms_path
+    if terms is None:
+        raise HTTPException(400, f"{corpus_dir}: the pack declares license class "
+                                  f"{src.license_class.value} but ships no TERMS.txt")
+    if not acknowledged:
+        raise HTTPException(
+            409, "terms-acknowledgement-required: this pack's license requires "
+                 "explicit acknowledgement before its records are used "
+                 "(license gate, never bypassed)")
+    return acquire_engine.make_ack(terms)
+
+
 @admin_router.post("/library/new/create")
 def new_collection_create(body: CreateCollectionBody):
     """Writes the collection's Tier-2 TOML — the same file an operator would
@@ -1392,6 +1433,8 @@ def new_collection_create(body: CreateCollectionBody):
 
     ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
                                 body.acknowledge_terms)
+    if body.plugin == "packed":
+        ack = _ack_for_pack(corpus_dir, body.acknowledge_terms)
 
     companion = None
     if body.companion_corpus_dir.strip():
@@ -1629,12 +1672,13 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
 @admin_router.get("/library/{name}/terms")
 def collection_terms(name: str):
     """The source's terms text, for the acknowledgement modal."""
+    from . import licensing
     collection = _collection_or_404(name)
-    spec = _spec_or_400(collection)
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
-        return {"license_class": spec.license_class.value, "terms_text": None}
-    return {"license_class": spec.license_class.value,
-            "terms_text": spec.terms_text_path.read_text()[:8000]}
+    path = licensing.terms_path_for(collection)
+    cls = licensing.license_class_for(collection)
+    if path is None:
+        return {"license_class": cls, "terms_text": None}
+    return {"license_class": cls, "terms_text": path.read_text(encoding="utf-8")[:8000]}
 
 
 @admin_router.post("/library/{name}/ack")
@@ -1643,18 +1687,21 @@ def collection_ack(name: str):
     enable acquisition — the UI path to what `corpus add --ack-terms` +
     hand-editing the TOML does. Rewrites the collection's TOML with
     license_ack and acquire_enabled=true; the worker hot-reloads it."""
+    from . import licensing
     collection = _collection_or_404(name)
-    spec = _spec_or_400(collection)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file to record the ack in")
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
+    if licensing.terms_path_for(collection) is None:
         raise HTTPException(400, f"{collection.plugin}: no terms text shipped — "
                                   f"nothing to acknowledge")
-    ack = acquire_engine.make_ack(spec.terms_text_path)
+    ack = licensing.make_ack(collection)
+    # acquisition follows the ack only where there is an origin to acquire
+    # from; a packed collection is fed by a folder or a torrent, not a spec
+    acquire = True if ACQUIRE_REGISTRY.get(collection.plugin) else collection.acquire_enabled
     _write_collection_toml(
         toml_path, plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=True, corpus_dir=collection.corpus_dir,
+        acquire_enabled=acquire, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=ack,
         genesis_archive=collection.genesis_archive,

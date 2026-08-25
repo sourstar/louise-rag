@@ -260,8 +260,5 @@ def _require_ack(collection) -> None:
     too — vectors are USE of the corpus they describe. Same check, same
     error, as the corpus fetch (engine._require_license_ack validates the
     recorded ack against the byte-exact terms text)."""
-    from ..acquire.engine import _require_license_ack
-    from ..acquire.specs import ACQUIRE_REGISTRY
-    spec = ACQUIRE_REGISTRY.get(collection.plugin)
-    if spec is not None:
-        _require_license_ack(spec, collection)
+    from .. import licensing
+    licensing.require_ack(collection, use="the archive is fetched")

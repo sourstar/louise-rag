@@ -1258,3 +1258,23 @@ the live deployment:
     `VECTOR_INDEX_REFRESH_FRACTION` of the table. Each rule is pinned by
     a regression test that counts the work (lookups, row groups) rather
     than timing it.
+46. **§8 / invariant 9 — ONE license gate, packs included (operator rule,
+    2026-08-27: "the license that applies to the corpus and its
+    pre-embeddings applies to the pack").** The acquisition gate covered
+    only plugins with an AcquisitionSpec; a `packed` collection had no
+    gate at all, and amendment 36's ingestion gate was designed, not
+    built. Amended: `app/licensing.py` is THE resolution — the class from
+    the spec or the pack's manifest, the terms text from the spec's file
+    or the pack's byte-exact `TERMS.txt` (the origin's, so the SAME
+    sha256 and one ack is valid for both), `state_for` = not_required |
+    acknowledged | missing. Enforced at every way data arrives: the
+    worker withholds the corpus SCAN and the ARCHIVE pass of a
+    yellow/red collection whose ack is missing or for other terms (logged
+    once an hour: "a hand-populated or packed folder is not a bypass");
+    the archive fetcher requires it; `pack build` refuses to pack an
+    unacknowledged origin; the create dialog shows the PACK's terms and
+    refuses a packed collection over a yellow/red pack without explicit
+    acknowledgement (the ack it records is computed from the pack's
+    terms); the Library card and `/terms` speak for packs. Green needs
+    nothing. `discovery.sync_collection` itself stays ungated (tools and
+    tests call it); the gate is the worker's and the UI's.

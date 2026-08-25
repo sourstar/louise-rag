@@ -329,6 +329,13 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
 def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str | None = None,
           records_per_shard: int | None = None, until: str | None = None, sign: bool = True,
           log=print, stop=None) -> BuildResult:
+    from .. import licensing
+    if licensing.state_for(collection) == licensing.MISSING:
+        # a pack carries the data onward: it must not carry data whose
+        # terms were never acknowledged here (invariant 9)
+        raise BuildError(
+            f"{collection.name}: license_class={licensing.license_class_for(collection)} "
+            f"requires an acknowledgement of the terms before its data is packed")
     pack_dir = Path(pack_dir)
     pack_dir.mkdir(parents=True, exist_ok=True)
     origin = _origin_plugin(collection)
