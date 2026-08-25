@@ -608,12 +608,11 @@ def _digest_files(paths: list[Path]) -> str:
 
 def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
     """[(chunk_id, text)] in seq order for one document."""
+    from .. import layers as layers_mod
     plugin = collection.plugin_instance()
-    native_id = int(row["native_id"])
     sections = plugin_io.sections(plugin, row)
-    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
     return [(c["id"], c["text"])
-            for c in chunk(row["uid"], native_id, sections)]
+            for c in layers_mod.chunks_for_document(collection, row, sections)]
 
 
 def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],

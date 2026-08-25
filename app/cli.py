@@ -467,6 +467,99 @@ def cmd_genesis_retry(args) -> int:
     return 0
 
 
+def cmd_pack_build(args) -> int:
+    """A collection's documents -> a pack (docs/pack-format.md): sliced
+    record shards + signed manifest, resumable."""
+    from .pack import build as pack_build
+    collection = _collection_by_name(args.collection)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
+    result = pack_build.build(collection, Path(args.out), snapshot=args.snapshot, name=args.name,
+                              records_per_shard=args.records_per_shard, sign=not args.unsigned,
+                              stop=_stop)
+    if result.interrupted:
+        print("interrupted — re-run to resume", file=sys.stderr)
+        return 130
+    print(f"{result.slices} slice(s), {result.shards} shard(s), {result.records} records, "
+          f"{result.chunks} chunks, {result.skipped} skipped -> {result.manifest_path}")
+    return 0
+
+
+def cmd_pack_verify(args) -> int:
+    from .pack import verify as pack_verify
+    checks = args.checks.split(",") if args.checks else None
+    report = pack_verify.run(Path(args.pack), checks=checks, sample=args.sample, seed=args.seed, log=print)
+    return 0 if all(r["ok"] for r in report) else 1
+
+
+def cmd_pack_status(args) -> int:
+    from .pack import manifest as manifest_mod
+    m = manifest_mod.load(Path(args.pack))
+    signed = "signed" if m.get("signature") else "unsigned"
+    print(f"{m['collection_id']} ({m['name']}, plugin {m['plugin']}, snapshot {m['snapshot']}, {signed})")
+    print(f"license {m['license']['class']}; layers "
+          + ", ".join(f"{l['chunker']['id']}@{l['chunker']['version']}[{l['rule']}]" for l in m["layers"]))
+    print(f"{m.get('records', 0)} records, {m.get('chunks', 0)} chunks, {len(m['shards'])} shards, "
+          f"{m.get('skipped', 0)} skipped")
+    for name, s in sorted(m["slices"].items()):
+        print(f"  {name}: {s['shards']} shard(s), {s['records']} records, {s['bytes'] >> 20} MiB")
+    return 0
+
+
+def cmd_pack_cat(args) -> int:
+    """One record and its chunks as JSON — the text-editor test, by hand."""
+    from .pack import manifest as manifest_mod, records as pack_records, verify as pack_verify
+    pack_dir = Path(args.pack)
+    m = manifest_mod.load(pack_dir)
+    for s in m["shards"]:
+        try:
+            rec = pack_records.read_record(pack_dir / s["path"], args.uid)
+        except KeyError:
+            continue
+        chunker = pack_verify._chunker_of(m, int(rec.get("layer") or 0))
+        chunks = list(chunker(rec["uid"], int(rec["native_id"]),
+                              [(a, b) for a, b in rec["sections"]])) if chunker else []
+        print(json.dumps({"shard": s["path"], "record": rec, "chunks": chunks},
+                         ensure_ascii=False, indent=1))
+        return 0
+    print(f"{args.uid}: not in this pack", file=sys.stderr)
+    return 1
+
+
+def cmd_pack_dump(args) -> int:
+    from .pack import records as pack_records
+    n = pack_records.dump_jsonl(Path(args.shard), sys.stdout.buffer)
+    print(f"{n} records", file=sys.stderr)
+    return 0
+
+
+def cmd_vindex_build(args) -> int:
+    """Build (or rebuild) a collection's local vector index now."""
+    from . import vector_index
+    collection = _collection_by_name(args.collection)
+    out = vector_index.build(collection, index_type=args.type, partitions=args.partitions, log=print)
+    if not out.get("built"):
+        print(f"not built: {out.get('reason')}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_vindex_status(args) -> int:
+    from . import vector_index
+    collection = _collection_by_name(args.collection)
+    st = vector_index.stats(collection)
+    if st is None:
+        print("no vector table")
+        return 0
+    if not st["indexed"]:
+        print(f"{st['rows']} rows, NO index (flat scan per query; built automatically at "
+              f"{config.VECTOR_INDEX_MIN_ROWS} rows, or `index vector build`)")
+    else:
+        print(f"{st['rows']} rows, index {st['name']} ({st['type']}), "
+              f"{st['unindexed_rows']} rows not yet folded in")
+    return 0
+
+
 def cmd_backend_check(args) -> int:
     from .verify import backend_gate
     collection = _collection_by_name(args.collection)
@@ -533,9 +626,10 @@ def cmd_torrent_publish(args) -> int:
     from .acquire import seeding
     con = db.connect(collection)
 
-    # (root, out path, name, include patterns) per torrent to publish
-    jobs: list[tuple[Path, Path, str, tuple[str, ...]]] = []
+    # (root, out path, name, include patterns, slice) per torrent to publish
+    jobs: list[tuple[Path, Path, str, tuple[str, ...], str | None]] = []
     per_language = bool(getattr(args, "per_language", False))
+    per_slice = bool(getattr(args, "per_slice", False))
     collection_only = bool(getattr(args, "collection_only", False))
     recorded_members: list[dict] = []
     if collection_only:
@@ -587,14 +681,33 @@ def cmd_torrent_publish(args) -> int:
                         if args.out else
                         collection.manifest_path.parent / f"{collection.name}-{lang}.torrent")
             jobs.append((data_root, out_lang, f"{collection.name}-{lang}",
-                         (f"*data/{lang}/*",)))
+                         (f"*data/{lang}/*",), lang))
+    elif per_slice:
+        # pack-format.md §10: member = slice x kind. One torrent per
+        # records/<slice>, all rooted at the PACK directory so a peer's
+        # files land in the pack layout and the members combine; plus one
+        # small "manifest" member (manifest, validation plan, terms).
+        from .pack import manifest as pack_manifest
+        try:
+            m = pack_manifest.load(collection.corpus_dir)
+        except pack_manifest.ManifestError as e:
+            print(f"REFUSED: {e} (per-slice needs a pack corpus)", file=sys.stderr)
+            return 1
+        base = collection.manifest_path.parent
+        jobs.append((collection.corpus_dir, base / f"{collection.name}-manifest.torrent",
+                     f"{collection.name}-manifest", ("manifest.json", "validation.json", "TERMS.txt"),
+                     "manifest"))
+        for slice_name in sorted(m.get("slices") or {}):
+            safe = slice_name.replace("/", "+")
+            jobs.append((collection.corpus_dir, base / f"{collection.name}-{safe}.torrent",
+                         f"{collection.name}-{safe}", (f"*records/{slice_name}/*",), slice_name))
     else:
         root = collection.corpus_dir / args.subdir if args.subdir else collection.corpus_dir
-        jobs.append((root, out, collection.name, ()))
+        jobs.append((root, out, collection.name, (), None))
 
     from .acquire import torrent_collection
     members: list[dict] = []
-    for root, out_path, name, includes in jobs:
+    for root, out_path, name, includes, slice_name in jobs:
         try:
             published = torrent_publish.publish_corpus(
                 root, out_path, name=name,
@@ -607,10 +720,9 @@ def cmd_torrent_publish(args) -> int:
             return 1
         # the worker's seeder reads this record and serves the torrent from
         # `root` (app/acquire/seeding.py); deleting the .torrent stops it
-        slice_name = name[len(collection.name) + 1:] if per_language else None
         entry = {**published.as_catalog_entry(),
                  "torrent_path": str(published.torrent_path), "root": str(root),
-                 "kind": "member" if per_language else "corpus",
+                 "kind": "member" if (per_language or per_slice) else "corpus",
                  "slice": slice_name,
                  # the spec's own patterns for this slice: what a peer's
                  # profile resolves to, so it can pick members by profile
@@ -629,7 +741,7 @@ def cmd_torrent_publish(args) -> int:
         print()
     print("Recorded for the worker's seeder (starts within its next telemetry "
           "beat while the node runs, downloads/seeding only, or seeding only).")
-    if per_language or collection_only:
+    if per_language or per_slice or collection_only:
         # THE TORRENT COLLECTION (STATUS 5l): one index torrent — a tiny
         # directory of collection.json plus every member .torrent — whose
         # magnet is the only thing a peer needs; its profile picks members.
@@ -913,6 +1025,46 @@ def main(argv=None) -> int:
     g_retry.add_argument("--shard", help="one shard (default: every rejected shard)")
     g_retry.set_defaults(func=cmd_genesis_retry)
 
+    pack_parser = top.add_parser("pack", help="the pack: build, verify, inspect (docs/pack-format.md)")
+    pack_sub = pack_parser.add_subparsers(dest="verb", required=True)
+    p_build = pack_sub.add_parser("build", help="pack a collection's documents into record shards")
+    p_build.add_argument("collection")
+    p_build.add_argument("--out", required=True, help="pack directory (a new dataset)")
+    p_build.add_argument("--name")
+    p_build.add_argument("--snapshot")
+    p_build.add_argument("--records-per-shard", type=int)
+    p_build.add_argument("--unsigned", action="store_true")
+    p_build.set_defaults(func=cmd_pack_build)
+    p_verify = pack_sub.add_parser("verify", help="run the pack's validation plan")
+    p_verify.add_argument("pack")
+    p_verify.add_argument("--checks", help="comma-separated subset: roots,records,chunks,license,signature")
+    p_verify.add_argument("--sample", type=float)
+    p_verify.add_argument("--seed", type=int, default=0)
+    p_verify.set_defaults(func=cmd_pack_verify)
+    p_status = pack_sub.add_parser("status", help="what a pack holds")
+    p_status.add_argument("pack")
+    p_status.set_defaults(func=cmd_pack_status)
+    p_cat = pack_sub.add_parser("cat", help="print one record and its chunks as JSON")
+    p_cat.add_argument("pack")
+    p_cat.add_argument("uid")
+    p_cat.set_defaults(func=cmd_pack_cat)
+    p_dump = pack_sub.add_parser("dump", help="stream a shard as plain JSONL")
+    p_dump.add_argument("shard")
+    p_dump.set_defaults(func=cmd_pack_dump)
+
+    vindex_parser = top.add_parser("index", help="local indexes")
+    vindex_sub = vindex_parser.add_subparsers(dest="verb", required=True)
+    v_vec = vindex_sub.add_parser("vector", help="the local vector (IVF) index")
+    v_sub = v_vec.add_subparsers(dest="action", required=True)
+    v_build = v_sub.add_parser("build", help="build or rebuild it now")
+    v_build.add_argument("collection")
+    v_build.add_argument("--type", choices=["ivf_flat", "ivf_pq"])
+    v_build.add_argument("--partitions", type=int)
+    v_build.set_defaults(func=cmd_vindex_build)
+    v_status = v_sub.add_parser("status")
+    v_status.add_argument("collection")
+    v_status.set_defaults(func=cmd_vindex_status)
+
     backend_parser = top.add_parser("backend", help="embedding backend gate")
     backend = backend_parser.add_subparsers(dest="verb", required=True)
 
@@ -983,6 +1135,10 @@ def main(argv=None) -> int:
     t_pub.add_argument("--languages", default="",
                        help="with --per-language: only these (comma-separated), "
                             "default every data/<lang> directory")
+    t_pub.add_argument("--per-slice", action="store_true",
+                       help="a PACK corpus (docs/pack-format.md): one torrent per "
+                            "records/<slice> plus a small manifest member, all rooted "
+                            "at the pack, and the torrent collection over them")
     t_pub.add_argument("--collection-only", action="store_true",
                        help="(re)build and publish only the TORRENT COLLECTION index "
                             "from the members already recorded — no re-hashing")

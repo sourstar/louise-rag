@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, genome, gutenberg, pubmed, wikipedia
+from .plugins import embedded, genome, gutenberg, packed, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "embedded": embedded.SOURCE,
     "genome": genome.SOURCE,
     "gutenberg": gutenberg.SOURCE,
+    "packed": packed.SOURCE,        # placeholder; a collection gets its per-pack instance
     "pubmed": pubmed.SOURCE,
     "wikipedia": wikipedia.SOURCE,
 }
@@ -181,8 +182,16 @@ class Collection:
     # old am I?". Pinning a date fixes all of that at the cost of an
     # explicit decision to move.
     snapshot: str | None = None
+    # Chunker LAYERS (amendment 41): None = the one implicit layer, the
+    # plugin's chunker — every collection that predates layers. TOML:
+    # [[layers]] chunker = "verbatim" rule = "archive:<id>" ... last "default".
+    layers: tuple | None = None
 
     def plugin_instance(self) -> CorpusSource:
+        if self.plugin == "packed":
+            # a pack's identity (origin plugin, license, chunker) is in its
+            # manifest, so the instance is per collection, not the registry's
+            return packed.for_pack(self.corpus_dir)
         return PLUGIN_REGISTRY[self.plugin]
 
 
@@ -219,6 +228,8 @@ def _load_one(path: Path) -> Collection:
     corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
 
     embed = parse_recipe(raw.get("embed"), where=str(path))
+    from . import layers as layers_mod
+    layers = layers_mod.parse_layers(raw.get("layers"), where=str(path))
     embed_mode = raw.get("embed_mode")
     if embed_mode is not None and embed_mode not in EMBED_MODES:
         raise ValueError(f"{path}: embed_mode must be one of "
@@ -244,6 +255,7 @@ def _load_one(path: Path) -> Collection:
                       if isinstance(raw.get("peer_source"), list)
                       else str(raw["peer_source"])) if raw.get("peer_source") else None),
         snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
+        layers=layers,
     )
 
 

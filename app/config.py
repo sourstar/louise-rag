@@ -181,6 +181,23 @@ GENESIS_PASS_BACKOFF_MAX_SEC = int(os.getenv("GENESIS_PASS_BACKOFF_MAX_SEC", "21
 GENESIS_PASS_BUDGET_S = int(os.getenv("GENESIS_PASS_BUDGET_S", "300"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
+# The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
+# A). Without one every semantic query is a flat scan of the Lance table —
+# measured 13 s on 15.8M rows. An IVF index is built once a collection's
+# table holds at least this many rows, and refreshed (new rows folded in)
+# by the worker off the GPU loop when enough unindexed rows accumulate.
+VECTOR_INDEX_MIN_ROWS = int(os.getenv("VECTOR_INDEX_MIN_ROWS", "100000"))
+# ivf_flat (a second copy of the vectors, best recall) | ivf_pq (compact
+# codes + re-ranking; the right choice on the biggest tables)
+VECTOR_INDEX_TYPE = os.getenv("VECTOR_INDEX_TYPE", "ivf_pq")
+VECTOR_INDEX_NPROBES = int(os.getenv("VECTOR_INDEX_NPROBES", "30"))
+VECTOR_INDEX_REFINE = int(os.getenv("VECTOR_INDEX_REFINE", "30"))
+VECTOR_INDEX_REFRESH_ROWS = int(os.getenv("VECTOR_INDEX_REFRESH_ROWS", "50000"))
+VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
+# The well-known root where PACKS are mounted (pack-format.md): the
+# create dialog offers the packs present here as `packed` corpora.
+PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
+
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
 # generic lowercase analyzer (still perfectly searchable, just unstemmed).
 STEMMER_LANGS = {

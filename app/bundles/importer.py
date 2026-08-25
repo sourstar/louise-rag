@@ -163,12 +163,11 @@ def _local_chunks(collection, row) -> dict[str, str]:
     non-null text column. It is also what makes possession structural — you
     cannot import vectors for a document whose bytes you do not hold.
     """
+    from .. import layers as layers_mod
     plugin = collection.plugin_instance()
-    native_id = int(row["native_id"])
     chapters = plugin_io.sections(plugin, row)
-    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
     return {c["id"]: c["text"]
-            for c in chunk(row["uid"], native_id, chapters)}
+            for c in layers_mod.chunks_for_document(collection, row, chapters)}
 
 
 def _document_rows(con, uids) -> dict[str, dict]:

@@ -52,6 +52,11 @@ class SpaceComponents:
     # from the payload, leaving every space id pinned before this change
     # byte-identical.
     chunker: str = "book"
+    # Chunker LAYERS (amendment 41): the ordered (chunker, version) pairs
+    # when a collection declares MORE than one layer; None for the one
+    # implicit layer, so every pre-layers pin keeps its exact id. Stored
+    # as a list in the pinned components JSON.
+    layers: list | None = None
 
 
 def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
@@ -136,7 +141,18 @@ def gather_components(collection=None) -> SpaceComponents:
         cleaning_version=config.CLEANING_VERSION,
         truncation_policy=f"ctx={recipe.ctx}",
         query_encoder_hash=query_hash,
+        layers=_layers_for(collection),
     )
+
+
+def _layers_for(collection) -> list | None:
+    """The ordered layer chunkers when more than one is declared."""
+    from . import layers as layers_mod
+    try:
+        payload = layers_mod.space_payload(collection)
+    except Exception:   # noqa: BLE001 — a space id must always be computable
+        return None
+    return payload.get("layers")
 
 
 
@@ -177,6 +193,10 @@ GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim"})
 
 
 def _chunker_payload(c: SpaceComponents) -> dict:
+    if c.layers:
+        # several layers: the ordered chunkers ARE the segmentation identity
+        # (amendment 41); a one-layer collection keeps the pre-layers payload
+        return {"layers": [list(l) for l in c.layers]}
     return {} if c.chunker in GRANDFATHERED_CHUNKERS else {"chunker": c.chunker}
 
 

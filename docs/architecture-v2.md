@@ -1172,3 +1172,42 @@ the live deployment:
     documents are eligible (an empty sample likewise defers instead of
     refusing); (4) `genesis retry <collection> [--shard]` puts a rejected
     shard back in line. Built 2026-08-26 — STATUS 5g.
+43. **§5/§8 — the pack, chunker layers and the local vector index are
+    BUILT, first cut (2026-08-26; operator: "do the heavy coding").**
+    What exists (pack-format.md §18 maps it): record shards as JSON Lines
+    in independent zstd frames with a trailing skippable-frame index
+    (`app/pack/records.py`, pyarrow's bundled zstd — no new dependency);
+    the slicing scheme per plugin (`slicing.py`: PubMed year bins,
+    Wikipedia language + page-id bins, Gutenberg language); a resumable
+    `pack build` over a collection's MANIFEST (never a fresh crawl —
+    dedup and tombstones come from discovery) with a signed manifest,
+    the terms text copied byte-exact, and a validation plan
+    (`build.py`, `manifest.py`); `pack verify` with the deterministic
+    checks roots / records / chunks / license / signature (`verify.py`);
+    the `packed` plugin, which serves a pack as a corpus and keeps three
+    identities — the record's uid, the origin hash as `raw_hash`, the
+    origin plugin's chunker — so a collection over a pack yields the same
+    uids, chunks and possession hashes as one over the origin (tested
+    for gutenberg, pubmed, wikipedia); `tools/pack_convert.py` for a
+    corpus without a collection; `torrent publish --per-slice` (member =
+    slice, rooted at the pack, plus a manifest member, under the torrent
+    collection); chunker LAYERS per amendment 41 (`app/layers.py`,
+    `[[layers]]` in the TOML, `chunks_for_document` in every stage, the
+    ordered layers in the space id only when more than one); and the
+    LOCAL VECTOR INDEX (`app/vector_index.py`: Lance IVF-PQ by default —
+    IVF-FLAT by knob — built by the worker off the GPU loop once a table
+    reaches `VECTOR_INDEX_MIN_ROWS`, new rows folded in by `optimize`
+    when `VECTOR_INDEX_REFRESH_ROWS` accumulate, the search probing with
+    `nprobes` + `refine_factor` whenever an index exists, `index vector
+    build|status`). Also: Wikipedia's fetch caches the last decompressed
+    multistream chunk (one slot) — every stage walks pages in stream
+    order, and each page paid its stream's decompression before. NOT
+    built: snapshots/deltas, the call for contribution over packs,
+    gossip, the freshness check, centres/labels/bucket-ordered vectors
+    as pack members (the local index is Lance's own for now), attestations
+    and trust levels, `records-vs-origin`, and acquiring a pack from a
+    peer through a `packed` collection (the plugin has no acquisition
+    spec yet: a pack arrives by torrent into a folder and the collection
+    is hand-populated over it). Storage: the reference NAS holds packs on
+    `tank/louise-packs/<name>` (recordsize 1M, lz4), mounted at `/packs`
+    (`PACK_MOUNTS_DIR`), offered by the create dialog as `packed` corpora.

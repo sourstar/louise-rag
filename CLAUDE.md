@@ -21,7 +21,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
    `dim`, not chunk geometry, not the device; compensating checks cover
    those at import). A vector table whose dim/space mismatches config is a
    REFUSE-TO-BOOT error, never a warning or auto-migration. *Enforced:
-   boot (layers: designed 2026-08-26, not built — review until they land).*
+   boot; layers by test (app/layers.py, tests/test_layers.py: one layer =
+   the pre-layers space id byte for byte; every stage cuts a document
+   through `layers.chunks_for_document`, never a plugin's chunker directly).*
 2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id.
    Every stage is resumable and safe to re-run. A stage marks done only
    AFTER its durable commit, inside the same transaction — marking first is

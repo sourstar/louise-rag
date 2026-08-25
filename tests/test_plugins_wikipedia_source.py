@@ -76,6 +76,25 @@ def test_discover_streams_the_index_with_stream_bounds(corpus):
     assert by_id["1"].extra["lang"] == "en"
 
 
+def test_pages_of_one_stream_share_one_decompression(corpus, monkeypatch):
+    """A stream holds ~100 pages and every stage walks them in order: the
+    second page of a stream must not decompress and parse it again."""
+    import bz2 as _bz2
+    from app.plugins.wikipedia import source as wsrc
+    calls = []
+    real = _bz2.decompress
+    monkeypatch.setattr(wsrc.bz2, "decompress", lambda blob: (calls.append(1), real(blob))[1])
+    wsrc._stream_cache.clear()
+    refs = {r.native_id: r for r in SOURCE.discover(DiscoverState(corpus_root=corpus))}
+    a = SOURCE.fetch(refs["1"])
+    b = SOURCE.fetch(refs["2"])          # same first stream
+    assert len(calls) == 1 and a.raw_hash != b.raw_hash
+    SOURCE.fetch(refs["3"])              # the second stream
+    assert len(calls) == 2
+    SOURCE.fetch(refs["1"])              # back to the first: one slot, re-read
+    assert len(calls) == 3
+
+
 def test_fetch_decompresses_only_one_stream_and_parse_cleans_wikitext(corpus):
     refs = {r.native_id: r for r in SOURCE.discover(DiscoverState(corpus_root=corpus))}
     doc = SOURCE.parse(SOURCE.fetch(refs["3"]))

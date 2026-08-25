@@ -330,7 +330,46 @@ deploy.
    declared rule — the MedCPT case: the archive's chunking for what it
    covers, ours for what it does not — one encoder, space id over encoder
    + layers; a unifying v2 is a derived collection that inherits the
-   surviving layer's vectors. pack-format.md §17.1. Designed, not built.
+   surviving layer's vectors. pack-format.md §17.1.
+   **BUILT, first cut (2026-08-26, unattended; amendment 43):**
+   `app/pack/` — `records.py` (JSONL in independent zstd frames + a
+   trailing skippable-frame index; pyarrow's bundled zstd, no new
+   dependency; `zstd -d shard.jsonl.zst` prints the records),
+   `slicing.py` (PubMed year bins, Wikipedia/wikivec language +
+   page-id bins, Gutenberg language; cheap slice hints so the planning
+   pass never parses what the locator already says), `build.py` (two
+   passes over the collection's MANIFEST — plan, then pack per slice in
+   id order; shards closed once written and recorded AFTER the rename;
+   a stop discards at most one shard's buffer; re-runs skip recorded
+   shards), `manifest.py` (Ed25519-signed with the node key; the terms
+   text copied byte-exact), `verify.py` (roots / records / chunks /
+   license / signature). The `packed` plugin serves a pack as a corpus
+   keeping the record's uid, the origin hash as raw_hash and the origin
+   plugin's chunker — TESTED: a collection over the pack has the same
+   uids, chunk ids/text and possession hashes as one over the origin,
+   for gutenberg, pubmed (tombstones excluded) and a synthesized
+   wikipedia dump. CLI: `pack build|verify|status|cat|dump`,
+   `tools/pack_convert.py` (discovers a raw corpus into a build-local
+   manifest, then builds), `torrent publish --per-slice`, `index vector
+   build|status`. LAYERS: `app/layers.py` + `[[layers]]` TOML — every
+   stage now cuts through `layers.chunks_for_document`; one layer keeps
+   every pinned space id byte-identical (test). VECTOR INDEX:
+   `app/vector_index.py` — Lance IVF-PQ (IVF-FLAT by knob), built by
+   the worker's pipeline thread once a table has VECTOR_INDEX_MIN_ROWS
+   (100k), rows folded in by `optimize` past VECTOR_INDEX_REFRESH_ROWS,
+   the search probing (nprobes 30, refine 30) whenever an index exists;
+   the build holds the vector write lock, so that collection's embeds
+   wait meanwhile (once). Wikipedia's fetch caches the last decompressed
+   stream (one slot) — ~100x fewer decompressions for every stage. NAS:
+   datasets `tank/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
+   1M, lz4) mounted at `/packs` (PACK_MOUNTS_DIR; the create dialog
+   lists them as "(pack)"), conversions started with `pack build` from
+   the existing collections' manifests (see the log paths below). NOT
+   built: deltas/snapshots, the call for contribution over packs, gossip,
+   freshness, published centres/labels/bucket-ordered vectors,
+   attestations, `records-vs-origin`, pack acquisition from a peer
+   through a `packed` collection (no acquisition spec yet — a torrent
+   fills a folder, the collection is hand-populated over it).
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent

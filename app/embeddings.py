@@ -229,7 +229,10 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         embed_texts([query], recipe=collections_mod.recipe_for(collection),
                     query=True)[0],
         dtype=_np_dtype_of_table(tbl))
-    q = tbl.search(qvec).limit(k)
+    from . import vector_index
+    # probe the local IVF index when the collection has one (nprobes /
+    # refine), else the flat scan it always was — vector_index.query decides
+    q = vector_index.query(tbl.search(qvec), collection).limit(k)
     if langs:
         # Lance filters are strings, so a lang containing a quote would break
         # out of the literal. Language codes come from the local manifest today,

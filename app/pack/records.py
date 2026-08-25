@@ -1,0 +1,303 @@
+"""Record shards — pack-format.md §3.
+
+One shard = JSON Lines, one record per line, UTF-8, keys in RECORD_KEYS
+order, compressed as INDEPENDENT zstd frames of FRAME_RECORDS records so
+that one record costs one frame (measured 1.0 ms), followed by a zstd
+SKIPPABLE frame holding the frame table and the uid index. Standard zstd
+tooling ignores skippable frames, so
+
+    zstd -d shard.jsonl.zst | less
+
+is the whole inspection, and no dependency beyond pyarrow's bundled zstd
+codec is needed to read or write one.
+
+Layout of the trailing skippable frame (all integers little-endian):
+
+    magic u32 = 0x184D2A5E   size u32   payload[size]
+    payload = TAG (16 bytes) | raw_len u32 | zstd(json index) | frame_len u32 | FOOTER (4 bytes)
+
+The reader takes the last 8 bytes (frame_len + FOOTER), seeks back
+frame_len bytes to the payload start, and decodes the index. The index:
+
+    {"records": N, "frames": [[offset, csize, rsize, n, first_uid], ...],
+     "uids": {uid: [frame, line], ...}}
+
+Frame offsets are absolute in the file, so a frame is one pread.
+"""
+import hashlib
+import io
+import json
+import os
+import struct
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Iterator
+
+import pyarrow as pa
+
+FRAME_RECORDS = 1000
+ZSTD_LEVEL = 9
+SKIPPABLE_MAGIC = 0x184D2A5E
+TAG = b"LOUISE-PACK-IDX1"          # 16 bytes
+FOOTER = b"LPK1"
+SUFFIX = ".jsonl.zst"
+
+# The record's keys, in the order they are written (a fixed order is what
+# makes two writers produce byte-identical lines for the same record).
+RECORD_KEYS = ("uid", "native_id", "lang", "title", "creators", "date",
+               "subjects", "keys", "sections", "extra", "layer", "chunks",
+               "content_hash", "origin_hash")
+
+
+class ShardFormatError(RuntimeError):
+    """The file is not a record shard this reader understands."""
+
+
+@dataclass(frozen=True)
+class ShardInfo:
+    path: Path
+    records: int
+    chunks: int
+    bytes: int
+    sha256: str
+    first_uid: str | None
+    last_uid: str | None
+    id_min: int | None
+    id_max: int | None
+
+
+def _codec(level: int | None = None):
+    return pa.Codec("zstd", compression_level=level) if level else pa.Codec("zstd")
+
+
+def canonical_line(record: dict) -> bytes:
+    """The record as one JSON line: RECORD_KEYS order, compact, UTF-8."""
+    ordered = {k: record.get(k) for k in RECORD_KEYS}
+    return json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+
+
+def content_hash(title: str, sections: list) -> str:
+    """BLAKE2b-128 of the CANONICAL text — the fields the chunker sees, in
+    a fixed encoding. Same hash → same chunks → same vectors, whatever the
+    origin's version fields say (pack-format.md §6)."""
+    blob = json.dumps([title or "", [[n or "", b or ""] for n, b in sections]],
+                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.blake2b(blob, digest_size=16).hexdigest()
+
+
+def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
+                frame_records: int = FRAME_RECORDS) -> ShardInfo:
+    """Write `records` (dicts with RECORD_KEYS) as one shard, atomically
+    (tmp + rename). Records are written in the order given."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    codec = _codec(level)
+    frames: list[list] = []
+    uids: dict[str, list[int]] = {}
+    n_records = n_chunks = 0
+    first_uid = last_uid = None
+    id_min = id_max = None
+    sha = hashlib.sha256()
+
+    def flush(buf: list[bytes], f) -> None:
+        nonlocal n_records
+        if not buf:
+            return
+        raw = b"".join(buf)
+        comp = bytes(codec.compress(raw))
+        offset = f.tell()
+        f.write(comp)
+        sha.update(comp)
+        frames.append([offset, len(comp), len(raw), len(buf), first_in_frame[0]])
+        buf.clear()
+
+    try:
+        with open(tmp, "wb") as f:
+            buf: list[bytes] = []
+            first_in_frame = [None]
+            for record in records:
+                uid = record["uid"]
+                if uid in uids:
+                    raise ShardFormatError(f"duplicate uid in shard: {uid}")
+                if not buf:
+                    first_in_frame[0] = uid
+                uids[uid] = [len(frames), len(buf)]
+                buf.append(canonical_line(record))
+                n_records += 1
+                n_chunks += int(record.get("chunks") or 0)
+                first_uid = first_uid or uid
+                last_uid = uid
+                try:
+                    nid = int(record.get("native_id"))
+                    id_min = nid if id_min is None else min(id_min, nid)
+                    id_max = nid if id_max is None else max(id_max, nid)
+                except (TypeError, ValueError):
+                    pass
+                if len(buf) >= frame_records:
+                    flush(buf, f)
+            flush(buf, f)
+            index = {"records": n_records, "chunks": n_chunks, "frames": frames, "uids": uids}
+            raw_index = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            comp_index = bytes(codec.compress(raw_index))
+            body = TAG + struct.pack("<I", len(raw_index)) + comp_index
+            # frame_len = the WHOLE skippable frame: 8-byte header + payload,
+            # where payload = body + this u32 + FOOTER
+            payload = body + struct.pack("<I", len(body) + 16) + FOOTER
+            frame = struct.pack("<II", SKIPPABLE_MAGIC, len(payload)) + payload
+            f.write(frame)
+            sha.update(frame)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return ShardInfo(path=path, records=n_records, chunks=n_chunks,
+                     bytes=path.stat().st_size, sha256=sha.hexdigest(),
+                     first_uid=first_uid, last_uid=last_uid, id_min=id_min, id_max=id_max)
+
+
+@dataclass
+class ShardIndex:
+    path: Path
+    mtime_ns: int
+    records: int
+    chunks: int
+    frames: list[list]                 # [offset, csize, rsize, n, first_uid]
+    uids: dict[str, list[int]]         # uid -> [frame, line]
+
+
+def read_index(path: Path) -> ShardIndex:
+    """Parse the trailing skippable frame. Two small reads."""
+    path = Path(path)
+    st = path.stat()
+    with open(path, "rb") as f:
+        if st.st_size < 16:
+            raise ShardFormatError(f"{path.name}: too short to be a shard")
+        f.seek(st.st_size - 8)
+        frame_len, footer = struct.unpack("<I", f.read(4))[0], f.read(4)
+        if footer != FOOTER:
+            raise ShardFormatError(f"{path.name}: no pack index footer")
+        start = st.st_size - frame_len
+        if start < 0:
+            raise ShardFormatError(f"{path.name}: index frame length exceeds the file")
+        f.seek(start)
+        magic, size = struct.unpack("<II", f.read(8))
+        if magic != SKIPPABLE_MAGIC or size != frame_len - 8:
+            raise ShardFormatError(f"{path.name}: index frame is not a zstd skippable frame")
+        payload = f.read(size)
+    if payload[:16] != TAG:
+        raise ShardFormatError(f"{path.name}: unknown index tag")
+    raw_len = struct.unpack("<I", payload[16:20])[0]
+    comp = payload[20:len(payload) - 8]
+    raw = bytes(_codec().decompress(comp, decompressed_size=raw_len))
+    index = json.loads(raw.decode("utf-8"))
+    return ShardIndex(path=path, mtime_ns=st.st_mtime_ns, records=int(index["records"]),
+                      chunks=int(index.get("chunks") or 0), frames=index["frames"],
+                      uids=index["uids"])
+
+
+def read_frame(path: Path, index: ShardIndex, k: int) -> list[bytes]:
+    """The lines of frame k (one pread + one decompress)."""
+    offset, csize, rsize, n, _first = index.frames[k]
+    with open(path, "rb") as f:
+        f.seek(offset)
+        comp = f.read(csize)
+    raw = bytes(_codec().decompress(comp, decompressed_size=rsize))
+    lines = raw.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    if len(lines) != n:
+        raise ShardFormatError(f"{path.name}: frame {k} holds {len(lines)} lines, index says {n}")
+    return lines
+
+
+def iter_records(path: Path) -> Iterator[dict]:
+    """Stream every record of a shard, in order."""
+    index = read_index(path)
+    for k in range(len(index.frames)):
+        for line in read_frame(path, index, k):
+            yield json.loads(line)
+
+
+# ---- cached single-record access (the reader panel, the packed source) ----
+
+_lock = threading.Lock()
+_indexes: OrderedDict = OrderedDict()      # path -> ShardIndex
+_frames: OrderedDict = OrderedDict()       # (path, k) -> list[bytes]
+_MAX_INDEXES = 64
+_MAX_FRAMES = 16
+
+
+def cached_index(path: Path) -> ShardIndex:
+    key = str(path)
+    mtime = Path(path).stat().st_mtime_ns
+    with _lock:
+        hit = _indexes.get(key)
+        if hit is not None and hit.mtime_ns == mtime:
+            _indexes.move_to_end(key)
+            return hit
+    index = read_index(path)
+    with _lock:
+        _indexes[key] = index
+        _indexes.move_to_end(key)
+        while len(_indexes) > _MAX_INDEXES:
+            _indexes.popitem(last=False)
+        for k in [k for k in _frames if k[0] == key]:
+            _frames.pop(k, None)
+    return index
+
+
+def cached_frame(path: Path, k: int) -> list[bytes]:
+    key = (str(path), k)
+    with _lock:
+        hit = _frames.get(key)
+        if hit is not None:
+            _frames.move_to_end(key)
+            return hit
+    lines = read_frame(path, cached_index(path), k)
+    with _lock:
+        _frames[key] = lines
+        _frames.move_to_end(key)
+        while len(_frames) > _MAX_FRAMES:
+            _frames.popitem(last=False)
+    return lines
+
+
+def read_record(path: Path, uid: str) -> dict:
+    index = cached_index(path)
+    loc = index.uids.get(uid)
+    if loc is None:
+        raise KeyError(f"{Path(path).name}: no record {uid}")
+    frame, line = loc
+    return json.loads(cached_frame(path, frame)[line])
+
+
+def read_record_at(path: Path, frame: int, line: int) -> dict:
+    return json.loads(cached_frame(path, frame)[line])
+
+
+def reset_caches() -> None:
+    with _lock:
+        _indexes.clear()
+        _frames.clear()
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def dump_jsonl(path: Path, out: io.RawIOBase | io.BufferedIOBase) -> int:
+    """`pack dump`: the shard as plain JSONL — what `zstd -d` would print."""
+    index = read_index(path)
+    n = 0
+    for k in range(len(index.frames)):
+        for line in read_frame(path, index, k):
+            out.write(line + b"\n")
+            n += 1
+    return n

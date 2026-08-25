@@ -1207,7 +1207,16 @@ def _corpus_mounts() -> list[dict]:
         for entry in sorted(root.iterdir()):
             if entry.is_dir():
                 mounts.append({"path": entry.as_posix(),
-                                "used_by": used.get(entry.as_posix())})
+                                "used_by": used.get(entry.as_posix()), "kind": "corpus"})
+    # PACKS (docs/pack-format.md): a directory holding a manifest is a
+    # corpus for the `packed` plugin — offered beside the origin corpora
+    from .pack import manifest as pack_manifest
+    packs = config.PACK_MOUNTS_DIR
+    if packs.is_dir() and packs != root:
+        for entry in sorted(packs.iterdir()):
+            if entry.is_dir() and pack_manifest.is_pack_dir(entry):
+                mounts.append({"path": entry.as_posix(),
+                                "used_by": used.get(entry.as_posix()), "kind": "pack"})
     return mounts
 
 

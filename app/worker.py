@@ -28,7 +28,7 @@ from pathlib import Path
 
 import httpx
 
-from . import (chunking, collections as collections_mod, config, db, discovery,
+from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod,
                 embeddings, entities, fts, plugin_io, refs, spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -62,11 +62,10 @@ def _handle_sigterm(signum, frame):
 
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
-    native_id = int(row["native_id"])
     chapters = plugin_io.sections(plugin, row)
-    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None),
-                                  getattr(plugin, "mutability", None))
-    return list(chunk(row["uid"], native_id, chapters))
+    # the document's LAYER decides the chunker (amendment 41); one layer =
+    # the plugin's chunker, exactly as before
+    return layers_mod.chunks_for_document(collection, row, chapters)
 
 _RDF_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=0 AND error IS NULL "
@@ -814,6 +813,32 @@ def _remote_archive(collection) -> bool:
     return archive is not None and not archive.local
 
 
+_vindex_last: dict[str, float] = {}     # lance dir -> last maintenance attempt
+
+
+def _maintain_vector_index(con, collection) -> bool:
+    """The local vector index, off the GPU loop (pack-format.md §5): build
+    once the table is big enough, fold new rows in when enough accumulated.
+    Throttled per collection; the Lance write lock is held so the embed
+    writer waits (a deferral) rather than racing a compaction. Returns True
+    when it did work this round."""
+    from . import vector_index
+    from .bundles.writer_lock import vector_write_lock
+    key = str(collection.lance_dir)
+    now = time.time()
+    if now - _vindex_last.get(key, 0.0) < config.VECTOR_INDEX_REFRESH_S:
+        return False
+    _vindex_last[key] = now
+    try:
+        with vector_write_lock(con):
+            out = vector_index.ensure(collection, con)
+    except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
+        db.log_event(con, "warn", "index",
+                     f"vector index maintenance deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    return bool(out)
+
+
 def _drain_remote_archive(con, collection, stop) -> bool:
     """One genesis round for the collection's declared archive: kick the
     fetcher (throttled inside), apply the next shard with work, and — when
@@ -1178,6 +1203,8 @@ def _run_one_step(con, collection, last_idle_log: dict,
     if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
         if _drain_remote_archive(con, collection, _stop):
             return True
+    if not pipeline_active and _maintain_vector_index(con, collection):
+        return True
     scope = db.get_scope(con)
     if pipeline_active:
         stage, row = _next_embed(con, scope, collection)
@@ -1330,6 +1357,10 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # (observed live: gutenberg's embeds "done in 478 s"). Its
                 # budget/yield alternation is with THIS thread's rdf/fts.
                 if _drain_remote_archive(con, collection, gone):
+                    continue
+                # the local vector index is CPU/IO work too: this thread,
+                # throttled, never the GPU-serial main loop
+                if _maintain_vector_index(con, collection):
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False)

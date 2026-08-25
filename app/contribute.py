@@ -72,11 +72,11 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
             ready.append(uid)
             continue
         try:
+            from . import layers as layers_mod
             plugin = collection.plugin_instance()
             native_id = int(row["native_id"])
             chapters = plugin_io.sections(plugin, row)
-            chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
-            chunks = list(chunk(uid, native_id, chapters))
+            chunks = layers_mod.chunks_for_document(collection, row, chapters)
             if not chunks:
                 continue
             embeddings.upsert_book(native_id, row["lang"], chunks, collection,

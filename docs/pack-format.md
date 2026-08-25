@@ -1,11 +1,13 @@
 # The pack: how a collection is packaged, shared and checked
 
-*Design, 2026-08-26. Status: PROPOSAL — nothing here is built yet except
-the pieces it reuses (§18). Numbers are measured on this node's data
-unless marked "estimate". Written from three operator briefs (a common
-open distribution format; governance and verification; the vector index
-and versioning) and restructured to read from the general picture down
-to the details.*
+*Design, 2026-08-26. Status: PARTLY BUILT the same day — the record
+shards, slicing, `pack build` / `verify`, the `packed` plugin, per-slice
+torrents, chunker layers and the local vector index exist (amendment 43;
+§18 maps what is built onto this document; §22 marks the build order).
+Numbers are measured on this node's data unless marked "estimate".
+Written from three operator briefs (a common open distribution format;
+governance and verification; the vector index and versioning) and
+restructured to read from the general picture down to the details.*
 
 ---
 
@@ -914,7 +916,12 @@ records line, many spaces.
 | dated snapshots (`snapshot_files`) | origin URLs pinned per date | the pack's `snapshot`/`previous` chain (§6) |
 | verify-on-use (T4) | vectors spot-checked at query time | + the freshness check (§12) on content |
 | staging (5i) | streaming transports land on fast storage | shards land through staging (§10) |
-| vector search (`embeddings.search`) | flat scan of the Lance table, **no index** (13 s on 15.8M rows) | the bucket index (§5); local build from labels, or the bucket-ordered member |
+| vector search (`embeddings.search`) | **BUILT 2026-08-26:** `app/vector_index.py` — Lance IVF-PQ (or IVF-FLAT) built by the worker off the GPU loop, refreshed as rows arrive, probed by search with nprobes + refine | the bucket index of §5 with published centres/labels is the next step; today's index is Lance's own, local |
+| record shards, slicing, manifest | **BUILT:** `app/pack/{records,slicing,manifest,build}.py`, `pack build`, `tools/pack_convert.py` | §2, §3, §7 as designed; JSONL + zstd frames + skippable-frame index |
+| the pack as a corpus | **BUILT:** the `packed` plugin — same uids, chunks and possession hashes as the origin | §10's light/full peers start here |
+| `pack verify` | **BUILT:** roots, records, chunks, license, signature (deterministic, local) | §15; attestations, `records-vs-origin`, `vectors-sample` not yet |
+| chunker layers | **BUILT:** `app/layers.py`, `[[layers]]` in the TOML | §17.1 |
+| per-slice members | **BUILT:** `torrent publish --per-slice` | §10 |
 
 ## 19. Improvements this brings, beyond the briefs
 
@@ -1003,17 +1010,22 @@ codes in RAM with re-ranking) is a measurement to make before building
 
 ## 22. Build order (each step useful on its own)
 
-1. `packed` source + `pack build <collection>`: sliced record shards from
-   any plugin; PubMed's pack becomes this (its pack.py is the seed).
-2. Manifest with slicing, shards, spaces, calibration, cadence; `torrent
-   publish` emits records/index/vectors as members = slice × kind; peers
-   consume through the torrent collection (already there).
-3. **The local vector index** — the one item that is a performance
-   problem today (13 s per query on wikivec): centres trained locally,
-   labels, bucket search on Lance; measured against the flat scan.
-4. `pack verify` with `roots`, `chunks`, `calibration`, `license`,
-   `labels` (all local, deterministic or already built as the genesis
-   proof); attestations as events.
+1. ✅ `packed` source + `pack build <collection>`: sliced record shards
+   from any plugin (2026-08-26; PubMed's per-container pack.py stays as
+   the origin reader).
+2. ◐ Manifest with slicing, shards, layers, license (✅); spaces /
+   calibration / cadence in the manifest (not yet); `torrent publish
+   --per-slice` emits records members = slice + a manifest member (✅);
+   vectors and text-index members (not yet); peers consume through the
+   torrent collection (already there), but a `packed` collection cannot
+   yet ACQUIRE a pack from a peer (no acquisition spec) — it is
+   hand-populated over a folder the torrent filled.
+3. ◐ **The local vector index** — built as Lance's own IVF (PQ by
+   default) with worker maintenance and probing at search (✅); published
+   centres, labels, bucket-ordered members (§5.2–5.5) not yet.
+4. ◐ `pack verify` with `roots`, `records`, `chunks`, `license`,
+   `signature` (✅); `calibration`, `labels`, attestations as events (not
+   yet).
 5. Deltas: snapshot N+1 from `content_hash` diffs; the work list feeds
    the coordinator's leases; bundles carry labels and merge into the
    vectors member; additive index versions with `index_min`.
