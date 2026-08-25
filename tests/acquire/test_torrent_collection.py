@@ -199,3 +199,28 @@ def test_collection_only_rebuilds_the_index_from_recorded_members_without_hashin
     assert sorted(index_entry["members"]) == sorted(m["info_hash"] for m in members)
     index = json.loads((c.manifest_path.parent / "collection" / torrent_collection.INDEX_FILE).read_text())
     assert [m["slice"] for m in index["members"]] == ["tr", "it", "en"] and index["peer_hint"] == "127.0.0.1:6881"
+
+
+def test_collection_only_understands_records_written_before_the_kind_field(
+        isolated_config, tmp_path, monkeypatch):
+    """The NAS published its eleven members a day before `kind` existed:
+    a record named <collection>-<slice> IS a member, its slice is the
+    suffix, its patterns come from the spec."""
+    from app import cli
+    from app.acquire import specs as specs_mod
+    corpus, members = _publish_members(tmp_path)
+    c = replace(collections_mod.default_collection(), name="wikivec", plugin="embedded",
+                corpus_dir=corpus, manifest_path=tmp_path / "m2" / "manifest.db")
+    c.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    con = db.connect(c)
+    for m in members:
+        legacy = {k: v for k, v in m.items() if k not in ("kind", "slice", "include")}
+        seeding.record_published(con, legacy)
+    monkeypatch.setattr(cli, "_collection_by_name", lambda name: c)
+    monkeypatch.setitem(specs_mod.ACQUIRE_REGISTRY, "embedded",
+                        replace(specs_mod.ACQUIRE_REGISTRY["embedded"], profiles=_spec().profiles))
+    monkeypatch.setattr(cli, "ACQUIRE_REGISTRY", specs_mod.ACQUIRE_REGISTRY)
+    assert cli.main(["torrent", "publish", "wikivec", "--collection-only"]) == 0
+    index = json.loads((c.manifest_path.parent / "collection" / torrent_collection.INDEX_FILE).read_text())
+    assert {m["slice"]: m["include"] for m in index["members"]} == \
+        {"tr": ["data/tr/*"], "it": ["data/it/*"], "en": ["data/en/*"]}

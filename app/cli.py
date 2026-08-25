@@ -523,8 +523,23 @@ def cmd_torrent_publish(args) -> int:
     recorded_members: list[dict] = []
     if collection_only:
         # the members were hashed earlier (their records carry everything
-        # the index needs); only the index torrent is (re)built
-        recorded_members = [e for e in seeding.read_published(con) if e.get("kind") == "member"]
+        # the index needs); only the index torrent is (re)built. Records
+        # written before the `kind` field (5h's first day) are recognised
+        # by their name — `<collection>-<slice>` — and completed from the
+        # spec: slice and its include patterns.
+        prefix = f"{collection.name}-"
+        recorded_members = []
+        for e in seeding.read_published(con):
+            kind = e.get("kind")
+            name = e.get("name") or ""
+            if kind == "member" or (kind is None and name.startswith(prefix)
+                                    and not name.endswith("-collection")):
+                slice_name = e.get("slice") or name[len(prefix):]
+                include = e.get("include") or list(
+                    spec.profiles[slice_name].include
+                    if spec and slice_name in spec.profiles else ())
+                recorded_members.append({**e, "kind": "member", "slice": slice_name,
+                                         "include": include})
         if not recorded_members:
             print("REFUSED: no member torrents recorded for this collection — publish "
                   "with --per-language first", file=sys.stderr)
