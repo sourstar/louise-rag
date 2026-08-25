@@ -367,6 +367,24 @@ block every other collection's embedding for each 300 s slice.
    isolates the incomplete file; the engine's preflight bounds the
    staging area); (5) no L2ARC — it excludes streaming reads by default
    and the ARC hit ratio leaves nothing for it.
+   **Built 2026-08-26 (operator: "datasets, not folders").** Datasets
+   `tank/louise-corpora/{wikivec,pubmed,wikipedia}` (recordsize 1M, lz4,
+   atime off, root:root 770 like the originals); bulk `rsync -aH` while
+   the app kept running (wikipedia 26 GB in 64 s, pubmed 51 GB in
+   2.6 min, wikivec 590 GB at 200–570 MB/s), then a stop → delta sync →
+   mount switch → start window (`/root/switch_window.sh` +
+   `/root/switch_mounts.py` on the NAS, which edits the custom app's
+   compose config through `midclt call app.update` — only the three host
+   paths change, the in-container paths and therefore every locator stay
+   identical). Two knobs went in with the switch: `PUBMED_PACK_DIR=
+   /data/pubmed-pack` (the packs on the NVMe; the ones already built were
+   copied over) and `ACQUIRE_STAGING_DIR=/data/staging` (ff84884: the
+   https/ftp/hf transports stream into staging on the NVMe, the verified
+   file is moved into its corpus as one sequential copy; an interrupted
+   `.part` resumes from staging; a file the area cannot hold lands in
+   place; torrents unchanged until 5h). The ssd4 originals are NOT
+   deleted by the switch — a separate decision once the node has run on
+   the datasets for a while. Gutenberg stays on the NVMe.
 5h. **wikivec per-language torrents (operator approved 2026-08-25; to
    build 2026-08-26).** The single 590 GB / 1,447-file torrent is split
    into one torrent per language directory (`data/<lang>`: en 192 GB,
