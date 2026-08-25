@@ -326,6 +326,15 @@ block every other collection's embedding for each 300 s slice.
    line is authors — title — (PubMed: journal, date from the pack) —
    (lang) — source:id, plus the origin link per plugin. Help updated.
    Not done: PubMed's `date` column (the pack answers the reader instead).
+   Verified on both nodes: Louise2's reader opened gutenberg 10218 with
+   the hit highlighted (60 chunks, origin link) and translated a snippet
+   ("ciao"); the NAS's PubMed hit 10329736 opened with the reference
+   "… — J Biol Chem — 1999-May — (en) — pubmed:10329736" and an Italian
+   snippet from the local model — but with NO text: after the re-pin
+   every PubMed row has `fts_done=0` while the old entries stay
+   searchable until rewritten, and the reader had gated its index read
+   on the mark. Fixed the same hour: the reader asks the index
+   regardless (`test_reader_serves_a_document_mid_reindex…`).
    *Original spec:*
    (1) *Results in another language, interface untouched.* A "show
    results in" drop-down beside the mode selector (default *original*;
@@ -436,8 +445,16 @@ block every other collection's embedding for each 300 s slice.
    listed order — the first language is complete, and the pipeline busy
    on it, while the rest arrives (amendment 37). The create dialog
    validates every entry. `tests/acquire/test_per_language_torrents.py`.
-   The NAS publishes wikivec per language from `tank` (hashing 590 GB
-   at ~300 MB/s ≈ 35 min per full pass, run in the background).
+   **Published on the NAS 2026-08-26:** eleven torrents, 589 GiB, all
+   seeding (the Network page's table shows them); hashing ran at
+   ~500 MB/s from `tank` with the ARC still warm from the copy (de 82 GB
+   in ~3 min, en 191 GB in ~5 min). Lesson: a `nohup docker exec … &`
+   started over ssh dies with the session (the first pass lost its log
+   and stopped after two languages); `docker exec -d` runs detached
+   inside the container — use it for anything that outlives the ssh
+   call. The worker's control manifest (seeding table, worker state) is
+   the DEFAULT collection's (`/data/genome-dm6/manifest.db` on the NAS),
+   not `/data/manifest.db` — read it through `db.connect()`.
 5g. **Pre-embedded archives: fetched like a corpus, applied as indexing
    goes, one knob (amendment 38; operator policy, 2026-08-24).** Live
    pubmed: 8.25M/40M indexed, 0/37 MedCPT shards, 44 embedded — the
