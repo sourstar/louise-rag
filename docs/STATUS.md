@@ -260,7 +260,15 @@ block every other collection's embedding for each 300 s slice.
    zstd now with a manifest codec slot for OpenZL later. Improvements it
    brings: Wikipedia pre-embedded f32→f16 (−295 GB), light peers with
    zero compute, chunk-level provenance through merges. Build order in
-   §12; open questions in §11 — decide before building.
+   §12; open questions in §11 — decide before building. **Part II**
+   (same day, second brief): the initiator role, a DECLARATIVE
+   validation plan run by open platform code (never a shipped script —
+   that is remote code execution), signed attestations with local trust
+   levels (unverified → checked → verified by coverage; deterministic
+   checks flag on one reproduction, statistical ones on two — no votes),
+   one chunker per collection with DERIVED collections for a new space
+   (records + index reused by info hash), and inspectable formats: JSONL
+   in seekable zstd for records, safetensors for vectors.
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent

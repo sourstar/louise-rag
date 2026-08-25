@@ -274,3 +274,208 @@ next deadline, instead of a pasted magnet.
 4. Gossip: digests + events over the node API; DHT catalogue.
 5. Freshness check in the Ask reader.
 6. Wikipedia f16 repack; index members; OpenZL experiment.
+
+---
+
+# Part II — Governance: who makes a collection, and how anyone checks it
+
+*Added 2026-08-26 after the operator's second brief: an initiator packs
+the corpus in a compliant way and writes a self-consistent manifest; any
+peer can verify it against the ORIGINAL material; no black boxes; trust
+grows from independent checks; derived collections for better encoders;
+PubMed's archive repacked into an inspectable form. Evaluation and the
+resulting design.*
+
+## 13. The initiator
+
+Any node may initiate a collection. Initiating means producing, from the
+origin, everything a peer needs to *use* the collection and everything a
+peer needs to *check* it:
+
+1. **Fetch** the origin exactly as a peer would (the plugin's
+   AcquisitionSpec, a dated snapshot, checksums) — and record in the
+   manifest WHERE it came from: `origin: {plugin, endpoints, snapshot,
+   checksum source, parser: {id, version}}`. This is the AcquisitionSpec
+   serialised, plus the parser version: a verifier must be able to
+   re-fetch a sample of origin files by relative path + checksum and
+   re-parse them with the same parser version. (Plugins gain an explicit
+   `PARSER_VERSION`, like chunkers have: a parser change is a new
+   snapshot, never a silent drift.)
+2. **Pack** the records (§3), **hash** every record (`content_hash`) and
+   every shard (torrent v2 roots), **chunk** — a pure function of the
+   record, declared once per collection (`chunker: {id, version}`).
+3. **Index** (optional member) and **embed** — none, a part, or all of
+   the chunks, in the declared space; `coverage` in the manifest says
+   how much. A pre-embedded origin (MedCPT, Upstash) is *imported* here:
+   its vectors are admitted through the same-function proof against the
+   declared reference encoder and become the vectors member, with
+   `producer` naming the archive.
+4. **Sign** the manifest with the node key.
+
+The collection is then advertised (§7) at trust level *unverified*.
+
+## 14. Verification: a declarative plan, never a script
+
+The brief asks for a validation script any peer can run and inspect.
+The principle is right — trust comes from independent reproduction, not
+from the publisher's word — but a script is the wrong vehicle: code
+shipped inside a collection and executed by peers is remote code
+execution by construction, and "you can read it first" does not scale
+to eleven thousand lines of a Wikipedia parser. It would make the black
+box a trojan.
+
+The design keeps the principle and drops the vehicle. A collection
+ships `validation.json`: a **plan** made of check types the platform
+implements — open source, the same code for everyone, inspectable in the
+repository and versioned with it — parameterised by the collection:
+
+| check | what it proves | cost | deterministic? |
+|---|---|---|---|
+| `roots` | every shard's bytes match the manifest's merkle roots (torrent v2 does this on download; the check re-hashes on demand) | one read of the collection | yes |
+| `records-vs-origin` | a random sample of shards (seeded) re-fetched from `origin` and re-parsed with `parser` reproduces the records byte-for-byte (`content_hash`) | network + parse per sampled shard | yes |
+| `chunks` | recomputing chunks from the records with the declared chunker reproduces every chunk id and text | CPU, ms per record; can be exhaustive | yes |
+| `vectors-sample` | a seeded sample of chunks re-embedded with the reference encoder (or a calibrated compliant one) reaches cosine >= `tolerance` on the quorum | GPU, seconds | statistical |
+| `calibration` | the reference vectors in the manifest reproduce on this node's encoder | GPU, one second | statistical |
+| `index-sample` | re-indexing a sampled shard reproduces its postings under the same pin | CPU, seconds | yes |
+| `license` | the terms text hashes to the manifest's `terms_sha256` | trivial | yes |
+
+Anything a collection needs that is not in this table is not a script:
+it is a plugin or parser version contributed to the platform, reviewed
+like any code. That is the one place "inspect the validator" is real.
+
+`python -m app.cli pack verify <collection> [--checks ...] [--sample 0.05]
+[--seed N]` runs the plan and prints a report; the same report is what
+the worker produces in the background at a configurable cadence.
+
+## 15. Attestations and trust levels — reproduction, not votes
+
+Each completed check yields an **attestation**: `{collection_id,
+snapshot, check, seed, sampled shards, result, platform version, encoder
+id/version (for statistical checks), verifier key, time, signature}`.
+Attestations travel like events (§7) and are stored beside the catalogue.
+
+A collection's level, as seen by a node, is computed **locally** from
+the attestations it accepts — the keys on its trust list count fully,
+unknown keys count with a small weight, its own checks count most. There
+is no global consensus to reach and no ballot to stuff:
+
+- **unverified** — only the publisher's word (the default for anything
+  new; usable, marked as such in the Library and on results).
+- **checked** — at least *k* independent verifiers (default 3) passed
+  `roots`, `chunks` and `calibration`, and at least one passed
+  `records-vs-origin` on a sample.
+- **verified** — at least *K* verifiers (default 8) and the union of
+  their samples covers >= 25 % of shards for `records-vs-origin` and
+  >= 10 % for `vectors-sample`; later attestations keep raising the
+  covered fraction, which is shown ("42 % of shards independently
+  reproduced by 14 verifiers").
+- **flagged** — a failing attestation on a *deterministic* check is a
+  proof, not an opinion: one is enough to flag, and it names the shard.
+  A failing *statistical* check (vectors below tolerance) asks for
+  reproduction: the event invites two other verifiers to re-run the
+  same sample; two independent failures flag the space (not the
+  records). A flagged collection stays searchable but is marked, and
+  its publisher's key loses standing on the flagging node.
+
+"Critical mass" therefore applies only where variance exists (encoder
+tolerance); everything else is reproducible by anyone from the origin,
+and one honest reproduction outweighs any number of votes. Sybil
+resistance comes from the trust list and from weighting a verifier by
+the contributions of theirs that others have verified — not from
+counting keys.
+
+What the operator asked for is delivered by this: any inconsistency is
+red-flagged reliably (deterministic checks), the level rises as random
+checks accumulate (coverage is explicit), and nothing is a black box —
+the checks are platform code, the plan is data, the report is readable.
+
+## 16. Chunker per chunk — no: per collection, and derived collections
+
+The brief asks where to record which chunker a chunk came from, for
+cases like PubMed whose archive forced the abstract chunker. The answer
+the invariants already give: **one collection = one chunker = one
+space** (invariant 1, amendment 3), declared once in the manifest and
+hashed into the space id. Every chunk of a collection was cut the same
+way, or it does not belong to the collection; an archive is admitted
+only when its vectors map 1:1 onto that chunker's chunks (the shape
+gate). A per-chunk chunker field would be either always the same value
+or a licence to mix spaces.
+
+What the case really needs is **derivation**:
+
+```json
+"derived_from": {"collection_id": "urn:louise:pubmed:8f2c...", "snapshot": "2026-08-26",
+                 "keeps": ["records", "index"], "changes": ["space"]}
+```
+
+A derived collection reuses the parent's record shards and index
+*verbatim* — the same member torrents by info hash, zero duplication,
+already verified — and declares a new space (a better encoder, a
+different chunker, or both). Its vectors start empty (`coverage: 0`) and
+fill through the call for contribution; it is searchable as it fills.
+"PubMed re-embedded with encoder X" is a derived collection whose
+`chunker` is still `abstract@1` and whose `spaces[0].encoder` is X; a
+peer holding both searches both and fuses by RRF like any two legs.
+When the parent updates, the child inherits the delta (its work list is
+the parent's changed chunks) — one origin, one records line, many
+spaces.
+
+## 17. Inspectable formats — the text-editor test
+
+The brief's rule: the uncompressed form must be readable with a text
+editor. Parquet (Part I) is open and tooled but fails that test
+literally — it needs a reader. The rule is worth honouring, because
+"anyone can check independently" includes people without our tools:
+
+- **Records: JSON Lines**, one record per line, UTF-8, keys in a fixed
+  order — `zstd -d shard.jsonl.zst | less` is the whole inspection.
+  Compressed with **zstd's seekable format** (independent frames of
+  ~1,000 records, an index of frame offsets at the end): a record is one
+  frame decompressed (~1 MB, ~3 ms) plus one line parsed — the same cost
+  as a Parquet row group, and a per-shard `.idx` (uid -> frame, line)
+  keeps the lookup O(1). Size: within ~10 % of Parquet on text-heavy
+  records (columnar layout buys little on prose; measure on PubMed's
+  pack before committing).
+- **Vectors: safetensors**, one file per shard: a JSON header (the
+  text-editor-readable part: chunk ids, dtype f16, shape, producer)
+  followed by the raw array, mmap-able and zero-copy into NumPy/Lance.
+  Floats are never text-inspectable anyway; the header is, and the open
+  spec is one page. NCBI's MedCPT `.npy` + `pmids.json` becomes this at
+  half the size (f32 -> f16) with the proof recorded in the manifest.
+- **Index**: tantivy segments as they are — a derived artefact that
+  `index-sample` reproduces from the records; inspection is
+  reproduction.
+- **Everything about the collection** — manifest, deltas, validation
+  plan, attestations — is JSON.
+
+`python -m app.cli pack cat <collection> <uid>` prints a record and its
+chunks as JSON; `pack dump <shard>` streams a shard as JSONL. No tool
+in the chain is ours alone: zstd, JSON, safetensors, BitTorrent v2.
+
+## 18. Evaluation of the brief, point by point
+
+| brief | verdict | design |
+|---|---|---|
+| an initiator packs, writes the manifest, hashes, indexes, embeds partly or fully | adopted | §13; `coverage` makes partial embedding a first-class state |
+| origin location in the manifest; any peer verifies against the original | adopted | `origin` = AcquisitionSpec + parser version; `records-vs-origin` re-fetches and re-parses a sample |
+| a validation script shipped with the collection | **changed** | a declarative plan run by platform code (§14): same inspectability, no remote code execution |
+| red-flag inconsistencies; unverified until a critical mass; levels as checks accumulate; voting | **refined** | deterministic checks flag on one reproduction, statistical ones on two; levels from coverage, not votes; local trust weighting (§15) |
+| which chunker per chunk | **changed** | per collection, hashed into the space; different chunking = a derived collection (§16) |
+| derived collections for a better embedder | adopted | `derived_from`, records and index reused by info hash |
+| repack PubMed's pre-embedded archive into an inspectable form | adopted, generalised | JSONL + seekable zstd for records, safetensors for vectors (§17); the archive's `.npy` imported once through the proof |
+| no black boxes | adopted as the design rule | every artefact is JSON/JSONL/safetensors/BitTorrent; every check is open platform code |
+
+Risks that remain: (a) `records-vs-origin` needs the origin — PubMed's
+mirrors rate-limit, so sampling is small and slow, and a verifier
+without the origin can only check internal consistency; (b) parser
+drift across platform versions makes old attestations less meaningful —
+attestations carry the platform and parser versions, and a level is
+computed against the current ones; (c) trust lists are per node, so two
+nodes can disagree about a collection's level — that is a feature, and
+the UI shows *why* (whose attestations counted).
+
+Build order addendum (after §12's step 2): `pack verify` with `roots`,
+`chunks`, `calibration`, `license` first (all local, all deterministic
+or already built as the genesis proof), attestations as events next,
+`records-vs-origin` and `index-sample` with the gossip, derived
+collections with the second space.
