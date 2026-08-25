@@ -298,3 +298,70 @@ def test_kill_mid_acquisition_then_restart_resumes(tmp_path, mock_server):
     assert dest.is_file()
     assert dest.read_bytes() == content
     assert not part.exists()
+
+
+# ---------------- STATUS 5i: staging on fast storage ----------------
+
+def test_staged_fetch_streams_into_staging_and_lands_in_the_corpus(tmp_path, mock_server, monkeypatch):
+    """With ACQUIRE_STAGING_DIR set, the transport writes under staging and
+    the verified file is moved into the corpus in one copy; nothing of it
+    stays in the staging area; the manifest row is the same as an in-place
+    fetch. An interrupted file's .part lives in staging and resumes from
+    there; a file the area cannot hold lands in place."""
+    from app import config as config_mod
+    staging = tmp_path / "ssd-staging"
+    monkeypatch.setattr(config_mod, "ACQUIRE_STAGING_DIR", staging)
+    content = bytes((i % 251 for i in range(300_000)))
+    _write_origin_file(mock_server, "big.dat", content)
+    _write_origin_file(mock_server, "small.txt", b"tiny")
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+
+    # a stall mid-file: the partial lives in STAGING, the corpus stays clean
+    mock_server.stall_after_bytes("big.dat", 150_000)
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["failed"] == 1 and result["fetched"] == 1
+    part = staging / collection.name / "big.dat.part"
+    assert part.is_file() and 0 < part.stat().st_size <= 150_000
+    assert not (collection.corpus_dir / "big.dat.part").exists()
+    assert (collection.corpus_dir / "small.txt").read_bytes() == b"tiny"
+    assert not (staging / collection.name / "small.txt").exists(), "promoted, not copied"
+
+    # resume from the staging partial; the finished file lands in the corpus
+    mock_server.unstall("big.dat")
+    result2 = engine.run_acquisition(con, collection, spec, "demo")
+    assert result2["fetched"] == 1 and result2["skipped"] == 1
+    assert mock_server.last_range("big.dat").startswith("bytes=")
+    dest = collection.corpus_dir / "big.dat"
+    assert dest.read_bytes() == content
+    assert not part.exists() and not (staging / collection.name / "big.dat").exists()
+    row = con.execute("SELECT fetch_done, bytes_fetched FROM fetch_files WHERE rel_path='big.dat'").fetchone()
+    assert row["fetch_done"] == 1 and row["bytes_fetched"] == len(content)
+
+
+def test_a_file_the_staging_area_cannot_hold_lands_in_place(tmp_path, mock_server, monkeypatch):
+    from app import config as config_mod
+    import shutil as shutil_mod
+    from app.acquire import engine as engine_mod
+    staging = tmp_path / "ssd-staging"
+    monkeypatch.setattr(config_mod, "ACQUIRE_STAGING_DIR", staging)
+    _write_origin_file(mock_server, "huge.dat", b"h" * 1000)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    # pretend the staging area has no room
+    real = shutil_mod.disk_usage
+
+    class Usage:
+        free = 10
+    monkeypatch.setattr(engine_mod.shutil, "disk_usage",
+                        lambda p: Usage if str(p).startswith(str(staging)) else real(p))
+    f = RemoteFile(rel_path="huge.dat", size=1000)
+    dest = collection.corpus_dir / "huge.dat"
+    assert engine_mod._staging_target(collection, f, dest) == dest
+    # and with room, the staging path
+    monkeypatch.setattr(engine_mod.shutil, "disk_usage", real)
+    assert engine_mod._staging_target(collection, f, dest) == staging / collection.name / "huge.dat"
+    # unset: always in place
+    monkeypatch.setattr(config_mod, "ACQUIRE_STAGING_DIR", None)
+    assert engine_mod._staging_target(collection, f, dest) == dest

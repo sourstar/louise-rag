@@ -443,6 +443,37 @@ def _adopt_one_file(f: RemoteFile, collection, spec: AcquisitionSpec) -> _FileRe
                         digest=digest, adopted=True)
 
 
+def _staging_target(collection, f: RemoteFile, dest: Path) -> Path:
+    """Where the streaming transports WRITE (STATUS 5i): the staging area
+    on fast storage when config.ACQUIRE_STAGING_DIR names one and it has
+    room for this file, else the destination itself. A download arrives as
+    a sequential stream either way; what staging buys is that the corpus
+    volume (an HDD pool) sees one sequential copy per file instead of the
+    transport's chunk-by-chunk fsync'd writes, and the `.part` of an
+    interrupted file resumes from the staging area."""
+    base = config.ACQUIRE_STAGING_DIR
+    if base is None:
+        return dest
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(base).free
+    except OSError:
+        return dest
+    need = int((f.size or 0) * 1.2) + (64 << 20)
+    if free < need:
+        return dest                     # too big for the staging area: in place
+    target = base / collection.name / f.rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _promote(land: Path, dest: Path) -> None:
+    """Move a verified file from the staging area into the corpus — one
+    sequential copy across volumes, then the staging copy is gone."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(land), str(dest))
+
+
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
@@ -451,7 +482,8 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
         adopted = _adopt_one_file(f, collection, spec)
         if adopted is not None:
             return adopted
-    part = dest.with_name(dest.name + ".part")
+    land = _staging_target(collection, f, dest)
+    part = land.with_name(land.name + ".part")
     # Read at fetch time, never hoisted with the pending list: a file retried
     # within the same run would otherwise resume from a stale offset.
     resume_from = part.stat().st_size if part.is_file() else 0
@@ -460,24 +492,28 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
     try:
         if segments > 1:
             try:
-                size = transport.fetch_segments(endpoint, f, dest, segments)
+                size = transport.fetch_segments(endpoint, f, land, segments)
                 elapsed = time.monotonic() - started
                 manager.record_throughput(endpoint_key, size, elapsed)
+                digest = checksum.digest_and_verify(land, spec.checksums)
+                if land != dest:
+                    _promote(land, dest)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
-                                    status="fetched", size=size,
-                                    digest=checksum.digest_and_verify(dest, spec.checksums),
+                                    status="fetched", size=size, digest=digest,
                                     moved=size, seconds=elapsed)
             except RangeUnsupported:
                 # The origin will not serve ranges. Clear the segmented
                 # scratch state — its offsets describe a layout we are
                 # abandoning — and fall through to one stream.
                 part.unlink(missing_ok=True)
-                transport_https._sidecar_path(dest).unlink(missing_ok=True)
+                transport_https._sidecar_path(land).unlink(missing_ok=True)
                 resume_from = 0
-        size = transport.fetch_one(endpoint, f, dest, resume_from)
+        size = transport.fetch_one(endpoint, f, land, resume_from)
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
-        digest = checksum.digest_and_verify(dest, spec.checksums)
+        digest = checksum.digest_and_verify(land, spec.checksums)
+        if land != dest:
+            _promote(land, dest)
         elapsed = time.monotonic() - started
         manager.record_throughput(endpoint_key, size - resume_from, elapsed)
         return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",

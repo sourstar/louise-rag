@@ -14,6 +14,11 @@ CORPUS_MOUNTS_DIR = Path(os.getenv("CORPUS_MOUNTS_DIR", "/corpora"))
 # directory beside the containers (same volume as the archive); set this to
 # keep the working set on faster storage (STATUS 5i).
 PUBMED_PACK_DIR = Path(os.getenv("PUBMED_PACK_DIR")) if os.getenv("PUBMED_PACK_DIR") else None
+# Acquisition STAGING (STATUS 5i): streaming transports write here (fast
+# storage) and a verified file is moved into its corpus in one sequential
+# copy — an HDD pool then never sees the transport's chunk-by-chunk fsync'd
+# writes. None = write in place. A file the area cannot hold lands in place.
+ACQUIRE_STAGING_DIR = Path(os.getenv("ACQUIRE_STAGING_DIR")) if os.getenv("ACQUIRE_STAGING_DIR") else None
 
 DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"
