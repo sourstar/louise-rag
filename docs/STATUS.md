@@ -260,7 +260,7 @@ block every other collection's embedding for each 300 s slice.
    zstd now with a manifest codec slot for OpenZL later. Improvements it
    brings: Wikipedia pre-embedded f32→f16 (−295 GB), light peers with
    zero compute, chunk-level provenance through merges. Build order in
-   §12; open questions in §11 — decide before building. **Part II**
+   §22; open questions in §21 — decide before building. **Part II**
    (same day, second brief): the initiator role, a DECLARATIVE
    validation plan run by open platform code (never a shipped script —
    that is remote code execution), signed attestations with local trust
@@ -269,7 +269,7 @@ block every other collection's embedding for each 300 s slice.
    one chunker per collection with DERIVED collections for a new space
    (records + index reused by info hash), and inspectable formats: JSONL
    in seekable zstd for records, safetensors for vectors. **Formats
-   MEASURED (2026-08-26, §9)** on 30k real PubMed records and 100k real
+   MEASURED (2026-08-26, §8)** on 30k real PubMed records and 100k real
    MedCPT vectors: JSONL in 1,000-record zstd frames is 4 % smaller than
    Parquet at the same level and costs the same 1.0 ms per record, so
    the text-editor rule is free for records and stays; a trained zstd
@@ -284,6 +284,35 @@ block every other collection's embedding for each 300 s slice.
    relaxed for the array by design: a printed float is neither practical
    nor useful, re-embedding is the only real check), OpenZL deferred
    behind the manifest's `codec` slot until its format stabilises.
+   **RESTRUCTURED (2026-08-26, operator: "start from the general
+   picture and scope, then go into detail")**: Part 0 (scope, a sketch
+   of the components of a collection, roles, lifecycle, the rules in
+   one place), then Parts I–IV (artefacts / operation / governance /
+   status and plan) and an appendix of measurements. Three additions
+   from the vector-index discussion: a SLICING scheme (§2: slice =
+   plugin-declared path of stable record fields — PubMed year bins,
+   Wikipedia lang + page-id range; shards closed once published,
+   append-only per slice, tombstones; member = slice × kind, so a peer
+   fetches "PubMed before 1980" alone); the VECTOR INDEX as a pack
+   member (§5: k-means centres trained once on a corpus-wide sample and
+   published; every embedder labels its vectors with the nearest centre
+   — a 2-byte column — so the index reassembles by concatenation;
+   optional bucket-ordered vectors for light peers and topical
+   downloads; versions ADDITIVE within an epoch, so a per-shard
+   `index_min` is computed from labels, not declared, and a peer never
+   fetches a version it does not need — a label is correct at every
+   version, older is slower never wrong; a from-scratch retrain is an
+   announced epoch); and the HASH RULES (§6: `content_hash` of the
+   canonical text is the truth, origin version numbers are hints,
+   silent changes recorded in the delta). Query-side MEASURED
+   (appendix A): both live tables are f16 with NO vector index — flat
+   scans cost 0.75 s on pubmed (2.2M rows) and 13 s on wikivec (15.8M);
+   on 100k real vectors f16 loses nothing (every top-10 "miss" is within
+   0.001 cosine of the 10th), int8 swaps ~2 % at the boundary,
+   IVF-FLAT / HNSW-SQ answer in 5–6 ms at 98–99 % within 0.001, IVF-PQ
+   without re-ranking drops to 66 % on MedCPT's tight cone. The local
+   vector index, not compression, is the performance item (build order
+   step 3; known gap below).
 5l. **Torrent COLLECTION — one magnet for a whole published corpus
    (operator request 2026-08-26; BUILT the same day; amendment 40).**
    `torrent publish <c> --per-language` now also writes an INDEX torrent
@@ -647,6 +676,17 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 
+- **No vector index — every semantic query is a flat scan of the Lance
+  table** (`embeddings.search`: `tbl.search(qvec).limit(k)`, no
+  `create_index` anywhere). Measured 2026-08-26 with a random unit
+  vector: pubmed 2.2M rows 0.75 s, wikivec 15.8M rows **13 s** per
+  query, Louise2's 100k-row wikivec 0.05 s; cost is linear in rows ×
+  bytes (f16 already halves it). The fix is design work, not a knob:
+  Lance indexes do not cover rows added after the build (new rows stay
+  flat-scanned until an optimize step), our delete-then-insert write
+  pattern needs an index-maintenance stage in the worker, and HNSW at
+  15.8M rows is ~14 GB of RAM — the bucket (IVF) family on disk is the
+  realistic choice (pack-format.md §5, appendix A; build order step 3).
 - **Locators are absolute paths.** Moving a corpus invalidates every one.
   Discovery now detects and repairs this automatically, but storing locators
   relative to `corpus_dir` would remove the failure mode instead of healing
