@@ -245,7 +245,32 @@ block every other collection's embedding for each 300 s slice.
    distinct reporters for exactly this.
 5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
    Poll the *content* plane, never the vector plane.
-5k. **PubMed container access — measured 2026-08-25, repack proposed.**
+5k. **PubMed container access — measured 2026-08-25, pack BUILT the same
+   night (`app/plugins/pubmed/pack.py`).** One row per direct child of
+   the container root, in document order (the record index the locators
+   carry): the child's exact serialised XML (tail included — emitted only
+   once the next sibling has started, so `raw_hash` is byte-identical to
+   the DOM path; discovery compares it to detect changed records) plus
+   pmid/title/abstract/journal/date/authors for the reader. Row groups
+   of 1,000, zstd-3; record i sits in row group i // 1000. Built lazily
+   on first sight (discovery) or first fetch, one builder per container,
+   atomic tmp+rename, rebuilt when the container's (size, mtime) or
+   `PACK_VERSION` changes; freshness memoised per container (the
+   footer read cost 3 ms per record, a stat costs microseconds). Lives in
+   a hidden `.pack/` beside the containers (discovery lists files only;
+   torrent publishing and `corpus_digest` skip hidden entries — cache,
+   never p2p material) or in `PUBMED_PACK_DIR` for faster storage (5i).
+   Measured on `pubmed26n0600` (30,000 records): build ≈ one DOM parse
+   (10.8 s on the Windows box where the DOM parse takes 10.4 s; ~6 s on
+   the NAS), **44.9 MB** with the XML kept (the gz is 35.5 MB — ~60 GB
+   for all of PubMed), first record 31–48 ms cold, **0.6 ms** warm,
+   discovery's three columns 30 ms, reader fields 8 ms, 0 fidelity
+   mismatches on a spread sample; `tests/test_plugins_pubmed_pack.py`
+   pins byte-identity on the fixture for plain and gzipped containers.
+   The XML column (not just the six fields) is what makes it a cache
+   with full fidelity — MeSH, references and grants stay available at
+   the same cost when entity work wants them.
+   *Original measurements and proposal:*
    The corpus is 1,334 gzipped XML containers, 51 GB; one container
    (`pubmed26n0600`) is 35.5 MB gz → 283 MB XML (8×), 30,000 records, so
    the whole archive is ~380 GB uncompressed — never materialise it.

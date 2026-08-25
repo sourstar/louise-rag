@@ -9,6 +9,11 @@ CORPUS_DIR = Path(os.getenv("CORPUS_DIR", "/corpus"))  # gutenberg-epub root (on
 # collection-create UI offers exactly the folders present here — operators
 # choose from real mounts instead of typing arbitrary container paths.
 CORPUS_MOUNTS_DIR = Path(os.getenv("CORPUS_MOUNTS_DIR", "/corpora"))
+# Derived per-container packs for PubMed (plugins/pubmed/pack.py): a cache
+# rebuilt from the gz XML, never exchanged. Default: a hidden `.pack/`
+# directory beside the containers (same volume as the archive); set this to
+# keep the working set on faster storage (STATUS 5i).
+PUBMED_PACK_DIR = Path(os.getenv("PUBMED_PACK_DIR")) if os.getenv("PUBMED_PACK_DIR") else None
 
 DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"

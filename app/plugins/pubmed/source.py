@@ -13,10 +13,7 @@ from further stage processing by the existing `WHERE error IS NULL` gates —
 no manifest schema change needed. A later baseline/updatefile pass over the
 same files re-derives the identical tombstone (idempotent).
 """
-import gzip
 import hashlib
-import sys
-import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -24,7 +21,7 @@ from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
 from .. import cursor
 from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
-from . import medline
+from . import medline, pack
 
 DELETE_MARKER = "deleted (DeleteCitation)"
 _MD5_SIDECAR = ChecksumSource(kind="sidecar", sidecar_suffix=".md5", sidecar_algo="md5")
@@ -43,45 +40,15 @@ def split_locator(locator: str) -> tuple[Path, int | None]:
     return Path(locator), None
 
 
-def _open_container(path: Path):
-    return gzip.open(path, "rb") if path.name.endswith(".gz") else open(path, "rb")
-
-
-# One-slot caches keyed on (path, mtime): the worker walks documents in
-# PMID order, which is container order — without this, EVERY record access
-# would re-verify and re-parse a ~16 MB container (observed live: 30k
-# records per container file). Guarded by a lock: the parallel embed stage
-# (recipe.concurrency > 1) fetches from multiple threads, and neighbors in
-# PMID order share a container, so one thread parses and the rest reuse.
+# Record access goes through the per-container PACK (pack.py, STATUS 5k):
+# a derived Parquet file, built once per container by a streaming pass
+# and read one row group at a time. The DOM cache it replaced parsed the
+# whole 283 MB container (8–20 s, one slot) to serve a single record, and
+# two stages walking different containers evicted each other every batch.
 import threading
 
 _cache_lock = threading.Lock()
-_parsed_cache: dict = {}
 _verified_cache: set = set()
-
-
-def _parse_container(path: Path) -> ET.Element:
-    key = (str(path), path.stat().st_mtime_ns)
-    with _cache_lock:
-        if _parsed_cache.get("key") == key:
-            return _parsed_cache["root"]
-        # Cold parses are ~6.5 s each (measured live), so every one must be
-        # visible: name the container coming in and the one evicted. A
-        # healthy walk logs one line per container (~150 batches); a line
-        # per batch means the cache is thrashing and this IS the pipeline's
-        # cost. Straight to stderr — the manifest may be mid-transaction.
-        prev = _parsed_cache.get("key")
-        t0 = time.monotonic()
-        with _open_container(path) as f:
-            root = ET.parse(f).getroot()
-        print(f"[pubmed cache] cold parse {path.name} "
-              f"({time.monotonic() - t0:.1f}s), evicted "
-              f"{prev[0].rsplit('/', 1)[-1] if prev else '(empty)'}",
-              file=sys.stderr, flush=True)
-        _parsed_cache.clear()
-        _parsed_cache["key"] = key
-        _parsed_cache["root"] = root
-        return root
 
 
 def _verify_md5_sidecar(container: Path) -> None:
@@ -122,7 +89,10 @@ class PubmedSource:
                 continue     # already enumerated at this (mtime, size)
             st = container.stat()
             try:
-                root_el = _parse_container(container)
+                # builds the pack on first sight (one streaming pass — the
+                # only full read a container ever gets), then enumerates
+                # three small columns
+                children = pack.index_columns(container)
             except Exception as e:  # noqa: BLE001 — ParseError, zlib.error, EOFError, OSError:
                 # a truncated/corrupt container (e.g. a download that failed
                 # checksum, or one racing the background fetch) must cost ONE
@@ -133,18 +103,16 @@ class PubmedSource:
                              error=f"unparseable container {container.name}: "
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
-            for i, child in enumerate(root_el):
-                if child.tag == "PubmedArticle":
-                    pmid_el = child.find("MedlineCitation/PMID")
-                    pmid = pmid_el.text.strip() if pmid_el is not None and pmid_el.text else ""
+            for i, tag, pmid, delete_pmids in children:
+                if tag == "PubmedArticle":
                     if not pmid:
                         continue
                     yield DocRef(source_id=self.source_id, native_id=pmid,
                                  locator=f"{container}{_LOCATOR_SEP}{i}",
                                  mtime=int(st.st_mtime), size=st.st_size,
                                  extra={"record_index": i, "kind": "article"})
-                elif child.tag == "DeleteCitation":
-                    for pmid in medline.parse_delete_pmids(child):
+                elif tag == "DeleteCitation":
+                    for pmid in delete_pmids:
                         yield DocRef(source_id=self.source_id, native_id=pmid,
                                      locator=f"{container}{_LOCATOR_SEP}{i}",
                                      mtime=int(st.st_mtime), size=st.st_size,
@@ -174,9 +142,9 @@ class PubmedSource:
         if index is None:
             raise ValueError(f"pubmed locator carries no record index: {ref.locator!r}")
         _verify_md5_sidecar(container)
-        root_el = _parse_container(container)
-        elem = root_el[index]
-        data = ET.tostring(elem, encoding="unicode").encode("utf-8")
+        # byte-identical to the former ET.tostring(root[index]) — pinned by
+        # tests: raw_hash is how discovery detects a changed record
+        data = pack.record_xml(container, index)
         h = hashlib.blake2b(data, digest_size=16)
         return RawDoc(ref=ref, raw_hash=h.hexdigest(), data=data)
 
