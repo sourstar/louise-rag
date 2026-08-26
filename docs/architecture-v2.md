@@ -1418,3 +1418,43 @@ the live deployment:
     pre-change checklist — with `tools/sched_report.py` as its
     instrument; CLAUDE.md requires reading it before changing what runs
     when. Amendments 37, 38, 42, 45, 47–52 are its incident history.
+
+53. **§7 — FAIR SHARE across collections: the encoder rotation is deficit
+    round-robin (2026-08-26; operator: "each plugin, whose embedding is not
+    over, has the same share of the same resource, if they need it").** The
+    rotation was a fixed time budget per collection, spent in list order,
+    whether or not that collection had work; nothing measured what a
+    collection consumed and nothing reacted to it, so requirement B had no
+    implementation at all. Observed live: six collections with unfinished
+    embedding, two of them consuming everything (pubmed 70.6 embeds/s,
+    wikivec 174.7/s, the other four exactly 0). `app/sched.py` is now DRR
+    per named resource — `encoder:<url>`, named per ENDPOINT so two
+    collections on one GPU contend and two on different containers do not.
+    Three operator refinements fixed its shape: a plugin owns its budget
+    INTERNALLY (the scheduler hands out a slot and never looks inside);
+    a plugin that released reclaims only on its NEXT turn (re-entry at the
+    tail, which is what makes an honest early release safe and removes the
+    loan bookkeeping an earlier draft had proposed — a flow out of the
+    rotation simply is not served, and the others come round faster); and
+    the minimum slot must fit the plugin's MINIMUM EFFICIENT UNIT, so the
+    floor is measured (p90 of that flow's unit costs, capped) rather than
+    configured, which makes worst-case re-entry latency a DERIVED quantity
+    — the sum of the other flows' quanta — tunable only by having fewer
+    flows or smaller units. Overrun becomes debt (nothing here is
+    preemptible), clamped at one quantum. Deferrals and empty queues
+    release the slot immediately; demand is ANNOUNCED by the pipeline
+    thread when an fts step completes, not polled. Three defects were
+    found while building it, each now a regression test and each of which
+    would have passed a behavioural test unchanged: a stale-flow probe
+    that fired only when the rotation was empty (so a busy collection kept
+    a stranded one out forever), an `acquire()` that returned None while a
+    flow paid off debt (telling the worker to SLEEP with a full queue —
+    a third of the throughput at a 9 s unit), and a re-declare that wiped
+    the measured floor on every pass. `SCHED_FAIR_SHARE=0` restores the
+    previous behaviour. Still unbuilt and named in `docs/scheduling.md`
+    §11: per-collection queues in the parse pool, the index maintainer's
+    service order, the per-plugin PHASE controller (B1's other half, and
+    the regular embedding pace of A4), unit sizing by duration, and a
+    caller for `reserve()`. (The commit that introduced this called it
+    amendment 52; 52 was already taken by the index-maintenance pass —
+    it is this one, 53.)
