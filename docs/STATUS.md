@@ -847,6 +847,21 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    consequence). Who chooses the embedder at all, and what happens when the
    choice was wrong, is generalised in
    [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md).
+   **ELI** (European Legislation Identifier) is adopted as the general
+   template for EU-country legal plugins —
+   [`eli-legal-plugins.md`](eli-legal-plugins.md) — with a clash check
+   against the pack format that found no incompatibility, one gap (the
+   manifest has no `jurisdiction`), one structural friction (`native_id`
+   must be an integer while ELI is URI-addressed; `uid`/`keys` absorb it),
+   one strong fit (**`snapshot` IS an ELI point-in-time coordinate**, which
+   makes a consolidated legal corpus reproducible — two peers fetching a
+   week apart get identical bytes because the Expression is named in the
+   URL, not implied by the calendar), and one defect it corrected: **repeal
+   is metadata, not a tombstone** — `eli:repeals` relates Works and
+   `in_force` is an Expression property, so a repealed act stays indexed
+   and labelled rather than being excluded like a PubMed DeleteCitation,
+   which would have discarded law that still governs facts predating its
+   repeal.
    The reranker is the opposite kind of decision —
    `RERANK_URL` is not in `space_id`, so it is measured after the collection
    exists, not before; three things in the current `_rerank` would bite this
