@@ -438,6 +438,7 @@ choice is leaving on the table.
 | voyage-law-2 | #1 on MMTEB *legal* retrieval | 1024 | 16k | **closed — reference only** |
 | BAAI/bge-m3 | well below the leaders | 1024 | 8192 | open |
 | intfloat/multilingual-e5-large | below | 1024 | 512 | open |
+| jurifindit/DAR-legal-it | not benchmarked on MMTEB | unverified | unverified | open — **the Italian-legal domain specialist**, §7.3 |
 | dlicari/Italian-Legal-BERT | — | 768 | 512 | **not an embedder** |
 
 **The two to measure are KaLM-Gemma3-12B and Qwen3-8B.** Both are open,
@@ -472,36 +473,103 @@ retrieval, that is a finding, and a cheap collection.
 
 MMTEB's multilingual mean is not Italian legal retrieval, and choosing on it
 alone would repeat the mistake of choosing on availability — a different
-proxy, the same error. Two Italian evaluation sets exist and both fit this
-plugin's shape:
+proxy, the same error. The evaluation set the choice should hinge on:
 
-- **JuriFindIT** (Findings of EACL 2026) — an Italian legal retrieval
-  dataset: annotated questions with fine-grained topics and **the list of
-  relevant statutory article IDs**. Article-level ground truth, which is
-  exactly the chunk unit §5 proposes. This is the primary metric.
-- **IT-RAG-Bench** — synthetic Italian benchmark including articles of the
-  codice civile, useful as a second, independently-built signal.
-- Plus ~50 hand-written questions over the pilot's own acts, because a
-  benchmark's questions are never quite the ones your users ask.
+**JuriFindIT** — Dalla Noce, Colla, Farhang Doust, De Mattei & Bacciu,
+*Findings of EACL 2026*, pp. 4223–4241. The first **Statutory Article
+Retrieval** dataset for Italian, and the first to explicitly encode
+cross-article references extracted from the national legal code.
 
-Procedure: pilot collection of ~5,000 acts, one per candidate, recall@k and
-nDCG@10 on the above, `docs/calibration.md` to set the tolerance, then
-delete the pilots and create the real collection against the winner. The
-pilots are cheap; a wrong pin is a re-index of the whole corpus.
+| property | value |
+|---|---|
+| task | SAR — natural-language question → the statutory articles that answer it |
+| macro-areas | civil, criminal, anti-money-laundering / counter-terrorism, privacy |
+| questions | **895 expert-authored** + **169,301 generated** |
+| target articles | **> 23,000** |
+| per-entry fields | question, fine-grained topics, broader normative area, **list of relevant statutory article IDs** |
 
-### 7.3 The upside path, and its cost
+Why this one and not a general benchmark: the ground truth is a **list of
+article IDs**, which is exactly the chunk unit §5 proposes. Recall@k against
+it measures the thing this plugin is actually for, with no mapping layer in
+between. The 895 expert questions are the honest metric; the 169k generated
+ones are training-scale, and using them as the *test* set would measure
+agreement with the generator.
 
-**LEMUR** (EACL 2026) fine-tunes three multilingual embedding models
-contrastively on EU legislation and finds that legal-domain fine-tuning
-consistently improves top-k retrieval over strong baselines, and that the
-gain **transfers to languages not in the fine-tuning set** — i.e. it is
-learning content-level legal structure, not language cues. Normattiva plus
-EUR-Lex's Italian corpus is exactly the material such a fine-tune needs.
+**Availability: NOT VERIFIED — this is an open item, see §12.4.** What is
+established: the paper is in the ACL Anthology
+(`2026.findings-eacl.221`), and a Hugging Face organisation `jurifindit`
+exists and has published at least one artifact from the work
+(`jurifindit/DAR-legal-it`, §7.1). What could **not** be established from
+this session — the egress policy blocks every page fetch, so only search
+summaries were readable — is the dataset's own repository URL, its licence,
+and its file format. The per-entry description implies a JSON/JSONL
+question file plus an article collection, i.e. a conventional qrels shape,
+**but that is inference, not verification.** Do not plan the pilot around
+it until someone has actually opened the page.
 
-Worth planning for, with the cost stated plainly: a fine-tuned encoder is a
-**different space**. It does not migrate; it re-embeds from zero, or it
-lives as a second collection. So it is a phase-3 decision, and the honest
-version of "we might fine-tune later" is "we will pay for the corpus twice".
+Verification is three commands from any unrestricted machine:
+
+    # 1. does the org publish the dataset, and under what licence?
+    curl -s https://huggingface.co/api/datasets?author=jurifindit | jq .
+    curl -s https://huggingface.co/api/models?author=jurifindit  | jq .
+    # 2. the paper's own data-availability statement and repo link
+    curl -sL https://aclanthology.org/2026.findings-eacl.221.pdf -o jurifindit.pdf
+
+**If it turns out not to be downloadable**, the fallback is not "give up on
+measuring" — it is a smaller, hand-built set, and the plugin's own corpus
+makes that cheap: ~50–100 questions written against known articles of the
+codice civile and the CAD, with the article ID as ground truth. Lower
+statistical power, same shape, and it is the set we would want anyway
+(§7.2's third bullet). Secondary signals, both also unverified for
+availability: **IT-RAG-Bench** (synthetic Italian, includes codice civile
+articles) and the **NLLP 2023** 363k-title classification corpus (§1.4),
+which is not retrieval but does give labelled Italian legislative text.
+
+Procedure once a set exists: pilot collection of ~5,000 acts, one per
+candidate encoder, recall@k and nDCG@10, `docs/calibration.md` to set the
+tolerance, then delete the pilots and create the real collection against the
+winner. The pilots are cheap; a wrong pin is a re-index of the whole corpus.
+
+### 7.3 Domain fine-tuning: no longer hypothetical
+
+The first draft filed "fine-tune an encoder on Italian law" under future
+work. The JuriFindIT search turned up that someone has already done it and
+released the result.
+
+**`jurifindit/DAR-legal-it`** — a `sentence-transformers` dense-retrieval
+model for Italian, GTE architecture, trained with
+`CachedMultipleNegativesRankingLoss` on ~24,661 pairs, published by the
+JuriFindIT authors. The paper's own pipeline goes further: dense encoders
+combined with a **heterogeneous legislative graph**, reported as
+consistently improving over prior SAR approaches.
+
+Two consequences for this proposal:
+
+1. **It belongs in the bake-off** (§7.1), as the domain-and-language
+   specialist against the general leaders. Expect it to punch above its
+   size on in-domain queries and below it elsewhere — a ~0.6B-class GTE
+   base fine-tuned on 24k pairs is not going to beat an 8–12B general model
+   on breadth. That is a hypothesis to measure, not to assume, and it is
+   cheap to include. Its base model, dimension and licence are unverified
+   for the same reason as the dataset (§7.2).
+2. **The legislative graph corroborates §6.** The paper's gain comes partly
+   from modelling cross-article references explicitly — which is exactly the
+   `RefLink citation: articoli.cites_urn -> atti.urn` edge proposed there.
+   That raises the ReferenceSource from "nice phase 2" to "the published
+   state of the art says this is where the gain is".
+
+**LEMUR** (EACL SRW 2026) points the same way from the EU side: fine-tuning
+multilingual embedding models contrastively on EU legislation consistently
+improves top-k retrieval, and the gain **transfers to languages not in the
+fine-tuning set** — it is learning content-level legal structure, not
+language cues.
+
+The cost stays what it was, and it is worth restating because "a fine-tuned
+model exists" makes it tempting: a fine-tuned encoder is a **different
+space**. Adopting one later does not migrate — it re-embeds from zero, or it
+lives as a second collection. Which is an argument for including
+DAR-legal-it in the *pilot*, where switching is free, rather than adopting
+it after the real collection exists.
 
 ### 7.4 The reranker
 
@@ -767,6 +835,12 @@ unresolved problems, both of which is why §2 puts it second:
    it is the one that sets query latency until there is a vector index.
 5. **Whether the GU issue stream is in scope at all**, given §10's privacy
    problem. If it is not, say so in this document and stop re-discovering it.
+6. **Verify JuriFindIT's availability, licence and format** (§7.2), from a
+   machine that can actually fetch pages. This gates the encoder bake-off:
+   with it, the choice is measured on article-level ground truth; without
+   it, the fallback is a hand-built 50–100 question set and the decision
+   rests on weaker evidence. Same visit answers §7.3's open fields for
+   `jurifindit/DAR-legal-it` (base model, dimension, licence).
 
 ## Sources
 
@@ -792,7 +866,9 @@ unresolved problems, both of which is why §2 puts it second:
   (MRL: [vLLM `is_matryoshka`](https://github.com/vllm-project/vllm/issues/20899)),
   [Gemini Embedding](https://arxiv.org/pdf/2503.07891),
   [Benchmarking multilingual dense retrieval, 2026](https://arxiv.org/pdf/2605.23618)
-- Italian legal evaluation: [JuriFindIT (Findings of EACL 2026)](https://aclanthology.org/2026.findings-eacl.221.pdf),
+- Italian legal evaluation: [JuriFindIT (Findings of EACL 2026)](https://aclanthology.org/2026.findings-eacl.221/)
+  — Dalla Noce, Colla, Farhang Doust, De Mattei, Bacciu, pp. 4223–4241;
+  [`jurifindit` on Hugging Face](https://huggingface.co/jurifindit/DAR-legal-it);
   IT-RAG-Bench (via the benchmarking paper above)
 - Legal-domain fine-tuning: [LEMUR (EACL SRW 2026)](https://aclanthology.org/2026.eacl-srw.18.pdf),
   [arXiv version](https://arxiv.org/html/2602.09570)
