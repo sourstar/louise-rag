@@ -81,7 +81,7 @@ Two ownership rules follow from the table and are load-bearing:
    a pool that did not answer: the document is untouched and retried; no
    error is written to it.
 
-## 4. What things cost — measured on the reference node, 2026-08-28
+## 4. What things cost — measured on the reference node, 2026-08-26
 
 > **Read §9 before using these numbers.** They were taken while the
 > collections were in DIFFERENT phases (two finished, one parse-bound,
@@ -279,7 +279,7 @@ and tests reset process-level state between cases (`conftest.py`'s
 
 ## 9. What happens when everything fires at once
 
-*The operator's question, 2026-08-28: "always ask yourself what happens
+*The operator's question, 2026-08-26: "always ask yourself what happens
 if a great number of processes of the same kind fire all together?" —
 and the observation that killed the credibility of §4's numbers: the
 collections were in DIFFERENT PHASES when I measured (wikipedia and
@@ -311,7 +311,7 @@ have mostly been in different phases — which is exactly the condition
 that made my measurements unrepresentative.
 
 **What that looks like on the reference node** (`sched_report --rates`,
-120 s, 2026-08-28 — the instrument's first run, and the clearest
+120 s, 2026-08-26 — the instrument's first run, and the clearest
 statement of the gap):
 
 | collection | rdf/s | fts/s | embed/s | documents still to embed | ETA |
@@ -351,6 +351,17 @@ assigned none). A collection that does not consume its slot has it
 progressively reduced, down to a floor, and the freed time is
 distributed among the collections that overran theirs — balanced.
 
+The mechanics of that share, stated by the operator:
+
+1. **A plugin manages its own budget internally.** The scheduler hands a
+   plugin a share of a named resource; the plugin decides which of its
+   own phases spends it. Two levels, not one.
+2. **A plugin on hold can claim its full slot the moment it needs it.**
+   Being idle costs a plugin its current occupancy, never its
+   entitlement.
+3. **A plugin can release a resource before its slot expires**, and the
+   remainder is redistributed immediately, not at the next round.
+
 ### Where today's design stands
 
 | requirement | today | gap |
@@ -361,6 +372,9 @@ distributed among the collections that overran theirs — balanced.
 | **A4** regular embedding pace | none | embedding is bursty by construction: 1,900 docs/s during an archive pass, 0 during the parse phases |
 | **A5** query priority | the lazy queue is consulted FIRST in selection, so a query-driven embed jumps the line | that is the only mechanism. A query's embedding call queues behind the worker's at the same endpoint; a query's reader load queues behind the pool's FIFO |
 | **B** fair share, need-aware, work-conserving | none. Threads compete; the GPU is round-robin per round | no accounting of what a collection consumed, no slots, no shrinking, no redistribution |
+| **B1** plugin manages its own budget | no budget exists to manage: each phase decides for itself, from constants | the phase controller (proposal 3) is the plugin-side half of this, and does not exist yet |
+| **B2** an on-hold plugin reclaims its full slot | nothing to reclaim: a collection with nothing to do is skipped and re-tried next round | while the GPU is inside another collection's 300 s archive pass, a newly-ready collection waits for it to end — up to 300 s |
+| **B3** release before the slot expires | genesis yields at its 300 s budget or when the range empties, whichever comes first; the pool holds its children for a whole batch | releases are coarse. A phase that finds nothing to do still holds its thread until its own loop decides to return |
 
 ### The proposal
 
@@ -413,6 +427,56 @@ reserved slot at each endpoint (the worker's batch yields between
 documents, never mid-call); the parse pool keeps one child free for
 query-time work (the reader panel), so a 500-document batch never delays
 a reader by 10 s.
+
+### The contract between the scheduler and a plugin (B1–B3)
+
+These three are what makes B's shrinking slot safe instead of punitive,
+and they constrain the design more than they look.
+
+**Entitlement is not occupancy.** Keep two numbers per (collection,
+resource): the ENTITLEMENT — the fair share, which changes only when the
+set of needy collections changes — and the LOAN, capacity someone else
+is currently borrowing. What shrinks when a plugin does not consume its
+slot is the LOAN it grants, never the entitlement. That is the whole of
+B2: a plugin on hold is lending, not forfeiting. The tempting
+implementation — decay the share of whoever is idle, let them earn it
+back over rounds — is the bug this rules out, because it punishes
+exactly the plugins whose input arrives in bursts (the fetch-driven
+ones), which is the opposite of A1.
+
+**Lend for one quantum at a time.** A loan must never outlive the
+quantum that granted it. That is what bounds a returning plugin's wait
+to a single quantum — and it means the quantum floor (`min_share`) is
+really the WORST-CASE re-entry latency. Pick the floor from that side
+("how long may a newly-ready collection wait for the GPU?"), not from
+"how small can a slice be before the overhead hurts".
+
+**Demand is announced, not discovered.** "Upon need" means the plugin
+signals when it becomes runnable — its fetch returned, its queue crossed
+a watermark. A scheduler that learns only by polling makes a plugin that
+became ready just after being skipped wait a whole round to say so. The
+signal already exists (the inter-phase queue depths of proposal 3); it
+has to be pushed on transition rather than read on rotation.
+
+**Releasing early must be free.** A plugin that hands back unused
+quantum keeps its entitlement intact — otherwise the rational move is to
+burn the slot on make-work, and a scheduler that charges for honesty
+gets exactly that. The remainder is redistributed within the SAME round.
+
+**A release needs a yield point.** You can only release at a unit
+boundary, so B3's granularity is decided by proposal 4: a 300 s archive
+pass, or a 37 s gutenberg fts commit, cannot release. Bounding every
+unit to a target DURATION is therefore not merely about switching
+overhead — it is the precondition for both B2 and B3, and the strongest
+argument for doing proposal 4 early rather than last.
+
+**Guard against churn.** Release-early plus reclaim-immediately can
+oscillate, which would contradict A3. Two cheap guards: a minimum hold
+once a resource is ACQUIRED (keep it for at least one floor-quantum even
+if you go briefly idle), and the observation that a plugin managing its
+own budget (B1) is the only party that knows whether it will want the
+resource again shortly. That decision belongs on the plugin side — which
+is itself the argument for the two-level split.
 
 ### What this changes about measuring
 
