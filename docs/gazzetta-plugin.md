@@ -503,22 +503,91 @@ Worth planning for, with the cost stated plainly: a fine-tuned encoder is a
 lives as a second collection. So it is a phase-3 decision, and the honest
 version of "we might fine-tune later" is "we will pay for the corpus twice".
 
-### 7.4 The reranker is not a forever decision
+### 7.4 The reranker
 
-`RERANK_URL` is wired (`app/retrieval.py:77`) and unused by default. On
-multilingual MIRACL, **Qwen3-Reranker-8B scores 68.97 against
-bge-reranker-v2-m3's 67.64**; both are open and TEI-servable.
+Reranking deserves more than a footnote here, because legal answers are won
+or lost at precision@5 and because the retrieval shape this plugin produces
+is unusually favourable to it: chunks are articles, so a reranker judges a
+self-contained legal unit rather than an arbitrary window.
 
-The asymmetry is what matters here: **the reranker is not part of
-`space_id`.** Swapping it costs one config change and zero re-embedding.
-So the encoder gets the careful, measured, one-way decision, and the
-reranker gets tried, swapped and re-tried freely. For legal answers, where
-precision at k=5 is the whole game, that freedom is worth using.
+**What is already wired.** `app/retrieval.py:77` posts
+`{"query", "texts"}` to `RERANK_URL` and reads back TEI's
+`[{"index", "score"}]` — a pointwise cross-encoder contract. It runs over
+`max(k * 4, 40)` candidates after RRF (`retrieval.py:234` single-collection,
+`:333` federated), and it is **off by default** (empty `RERANK_URL`).
+
+**And what it correctly does not touch:** pinned facts. `_build_pinned_facts`
+runs beside the ranked path, never through RRF and never through `_rerank`,
+and the prompt tells the model they are "facts, not ranked evidence — use
+them but do not cite them with [n]" (`retrieval.py:367`). That is invariant 4
+holding at the query layer, and it is exactly what the citation resolver of
+§6 needs: a resolved article arrives pinned and unranked, and no reranker
+gets to demote it below a passage that merely mentions it.
+
+#### Candidates
+
+| model | multilingual | shape | size | notes |
+|---|---|---|---|---|
+| **Qwen3-Reranker-8B** | **68.97 MIRACL** | pointwise generative | 8B | highest raw score; 32k ctx; Apache-2.0 |
+| **jina-reranker-v3** | 66.50 MIRACL (18 langs), 61.94 nDCG@10 BEIR | **listwise** | ~0.6B | +5.43% over bge-v2-m3 at the same scale; up to 64 docs in one 131k window |
+| Qwen3-Reranker-4B / 0.6B | below the 8B | pointwise | 4B / 0.6B | the realistic latency rungs |
+| bge-reranker-v2-m3 | 67.64 MIRACL | cross-encoder | 568M | the baseline to beat; Apache-2.0 |
+| mxbai-rerank-v2 | — | cross-encoder | small | fast Apache-2.0 option |
+
+Two shapes, and the difference is not cosmetic. **Pointwise** scores each
+candidate independently — 40 forward passes per query, which at 8B is
+seconds, not milliseconds. **Listwise** (jina-v3) puts the whole candidate
+set in one context and ranks them against each other; 40 candidates fit
+inside its 64-document window comfortably, so the whole rerank is one
+forward pass of a 0.6B model. For a query path where the user is waiting,
+that is the difference between a reranker you can leave on and one you
+cannot. The client's contract would need a small adapter — it expects a
+score per text, and a listwise model returns an ordering.
+
+#### Three things in the current implementation that would bite this plugin
+
+1. **`h["text"][:2000]` is a hard truncation** (`retrieval.py:83`). At the
+   ~5 chars/token this repo measured, that is ~400 tokens — so a reranker
+   with a 32k context would judge a long articolo on its first two
+   paragraphs while the *encoder* saw the whole thing. Legal articles run
+   past 2000 characters routinely. The constant should become a per-model
+   budget before the reranker is trusted on this corpus.
+2. **A failing reranker degrades silently** (`except Exception: return
+   hits[:top_n]`). Degrading to RRF order is the right behaviour on a query
+   path — but nothing records that it happened, so a skipped rerank and a
+   rerank that changed nothing look identical in the timings. One flag in
+   the payload fixes it, and this repo's own rule applies: an honest "not
+   done" is a value; a blank is indistinguishable from success.
+3. **`RERANK_URL` is Tier-1 env and node-global** — it is not in
+   `EmbedRecipe` and not on `Collection`, so unlike the encoder it cannot be
+   set per collection. For a federated query producing one final ordering
+   across collections that is arguably right; it does mean choosing an
+   Italian-legal-tuned reranker is a decision for the *whole node*, not for
+   this collection. Worth knowing before assuming it is free.
+
+#### The asymmetry that decides how much care to spend
+
+**The reranker is not part of `space_id`.** Swapping it costs one config
+change and zero re-embedding, where swapping the encoder costs the corpus.
+So: the encoder gets the careful, measured, one-way decision (§7.2); the
+reranker gets tried, swapped and re-tried freely, on the same JuriFindIT
+set, *after* the collection exists. Do not hold up the collection for it —
+but do measure it, because on an article-level corpus it is the cheapest
+quality left on the table.
+
+One option worth pricing, since the node already runs it: **listwise
+reranking with the local chat model** over `CHAT_URL`. No new service, and
+LLM listwise reranking is strong — at the cost of query latency measured in
+seconds and of an ordering that is not reproducible run to run. Probably
+a research baseline for "how much is the reranker leaving on the table",
+not a production path.
 
 **And do not skip the lexical leg.** Legal queries are citation- and
 term-heavy, Italian stemming is already wired (§3.3), and RRF over
 FTS + dense is the platform's default for good reason. Expect the FTS leg to
-carry more weight here than in any existing collection.
+carry more weight here than in any existing collection — and expect the
+reranker to matter most exactly where it does not: when a query names no
+citation at all.
 
 ## 8. Acquisition spec sketch
 
@@ -662,7 +731,12 @@ unresolved problems, both of which is why §2 puts it second:
 6. `NORMATTIVA_SPEC` and the acquisition path, once §12.1 is answered.
 7. Full collection; watch the worker log as a time series before optimising
    anything (the first benchmark, every time).
-8. Phase 2: `refs/normattiva.py` + citation EntityResolver — §6 — which is
+8. **Reranker**, once the collection is real and queryable: fix the
+   2000-character truncation, then measure jina-reranker-v3 (listwise, one
+   pass) against Qwen3-Reranker and bge-v2-m3 on the same JuriFindIT set —
+   §7.4. Deliberately after the collection, because unlike the encoder it
+   costs nothing to change later.
+9. Phase 2: `refs/normattiva.py` + citation EntityResolver — §6 — which is
    where the retrieval quality is.
 
 ---
@@ -725,4 +799,6 @@ unresolved problems, both of which is why §2 puts it second:
 - Why not a domain MLM: [ITALIAN-LEGAL-BERT](https://ceur-ws.org/Vol-3256/km4law3.pdf),
   and this repo's own [`dna-search-axes.md`](dna-search-axes.md) §2
 - Rerankers: [Qwen3-Reranker](https://qwenlm.github.io/blog/qwen3-embedding/),
-  [reranker comparisons, 2026](https://futureagi.com/blog/best-rerankers-for-rag-2026/)
+  [jina-reranker-v3](https://jina.ai/en-US/models/jina-reranker-v3/),
+  [reranker comparisons, 2026](https://futureagi.com/blog/best-rerankers-for-rag-2026/),
+  [Mixpeek's tested ranking](https://mixpeek.com/curated-lists/best-rerankers)

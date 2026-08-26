@@ -836,8 +836,15 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    pinned dimension is a separate decision from the model; closed API models
    are excluded as space owners because a peer must reproduce vectors at
    cos ≥ 0.999. Italian-Legal-BERT is an MLM and would walk straight into
-   item 6's anisotropy trap. The GU's own issue stream (concorsi,
-   inserzioni) is deliberately NOT scoped: unread terms plus personal data.
+   item 6's anisotropy trap. The reranker is the opposite kind of decision —
+   `RERANK_URL` is not in `space_id`, so it is measured after the collection
+   exists, not before; three things in the current `_rerank` would bite this
+   corpus first (a hard `[:2000]` truncation that cuts a long articolo the
+   encoder saw whole, a silent degrade to RRF order that no timing records,
+   and node-global scope). Pinned facts already bypass RRF and rerank both,
+   which is what the citation resolver needs. The GU's own issue stream
+   (concorsi, inserzioni) is deliberately NOT scoped: unread terms plus
+   personal data.
 
 ## Invariants review (2026-08-23 — amendments 30, 31)
 
