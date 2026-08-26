@@ -1072,6 +1072,17 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
+- **Should the manifest declare an ELI profile for legal corpora?**
+  Proposal in [`eli-legal-plugins.md`](eli-legal-plugins.md): adopting the
+  European Legislation Identifier as the template for EU-country legal
+  plugins costs two additive manifest fields (`eli.jurisdiction` + the URI
+  template / ontology version / pinned expression) and buys a standard
+  identity and relation vocabulary across jurisdictions. The clash analysis
+  found no incompatibility and one strong FIT: **`snapshot` is already an
+  ELI point-in-time coordinate** — putting it in the fetch URL makes a
+  consolidated legal corpus reproducible, which it otherwise is not. The
+  one structural friction is `native_id`'s integer requirement against
+  ELI's URI-addressability premise; `uid` + `keys` absorb it.
 - **Should a space publish its evaluation score, and how is a bad choice
   remedied?** Proposal in
   [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md):

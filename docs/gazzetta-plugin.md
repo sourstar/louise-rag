@@ -81,7 +81,17 @@ plugin, not background reading:
 - the profile by which **OASIS LegalDocML / Akoma Ntoso** was adopted for
   Normattiva's acts — the contract `akn.py` parses against;
 - the **permanent ELI URI** specification. The chosen URI form is the
-  *"maggiormente parlante"* one, **based on the act's coordinates**.
+  *"maggiormente parlante"* one, **based on the act's coordinates** — live
+  examples confirm the shape, and it decomposes exactly along ELI's FRBR
+  axes:
+
+      /eli/stato/DECRETO_LEGISLATIVO/2017/03/06/40/CONSOLIDATED/20180504
+           └ jurisdiction └ type      └ date   └n  └── Expression ────┘
+           └────────── Work: the act's coordinates ─┘
+
+  ELI is adopted as the **general template for EU legal plugins** in
+  [`eli-legal-plugins.md`](eli-legal-plugins.md), which also checks it
+  against the pack architecture.
 
 That last detail independently corroborates §3.1: the origin itself treats
 (type, date, number) as the act's identifying coordinates, which is exactly
@@ -249,12 +259,22 @@ tree, not remembered.
    byte-exact, never converted; `.gitattributes` already guards line endings
    for the existing ones and must cover this one.
 
-7. **Discovery never prunes unseen documents** (STATUS.md). Abrogated acts
-   would live forever. Normattiva marks abrogation explicitly — map it to a
-   tombstone the way `pubmed` maps `DeleteCitation` (a `DocRef` with `error`
-   set; the orchestrator upserts the row and every `WHERE error IS NULL`
-   gate excludes it, idempotently on every rescan). This is free reuse of an
-   existing mechanism and should be in v1, not deferred.
+7. **Repeal is metadata, not a tombstone — and an earlier draft of this
+   document got that wrong.** It proposed mapping abrogation onto PubMed's
+   `DeleteCitation` tombstone (a `DocRef` with `error` set, permanently
+   excluded by every `WHERE error IS NULL` gate). Adopting ELI
+   ([`eli-legal-plugins.md`](eli-legal-plugins.md) §5.7) shows why that
+   loses legally relevant content: `eli:repeals` is a **relation between
+   Works** and `in_force` a **property of an Expression**. A repealed act
+   still governed facts occurring before its repeal, and is asked about
+   constantly. PubMed's DeleteCitation is a different assertion entirely —
+   the publisher saying a record should never have existed.
+   So: a repealed act stays indexed and retrievable, carries
+   `in_force: false` and its `repealed_by` edge, and is **labelled**;
+   filtering by force-status is a query concern. Tombstones are reserved
+   for records actually *withdrawn* from the origin's database.
+   The underlying platform gap stands: discovery never prunes unseen
+   documents, so a withdrawn act would still live forever.
 
 ---
 
@@ -1135,15 +1155,16 @@ unresolved problems, both of which is why §2 puts it second:
    it, the fallback is a hand-built 50–100 question set and the decision
    rests on weaker evidence. Same visit answers §7.3's open fields for
    `jurifindit/DAR-legal-it` (base model, dimension, licence).
-7. **Fetch the corpus as *vigente-at-fetch-time*, or as *originaria + the
-   modification graph*?** (§6.) The first is simpler and is what "index the
-   vigente text" assumes, but it is a **moving target under a pinned
-   snapshot**: two peers fetching a week apart hold different bytes for the
-   same act, with nothing recording why. The second is reproducible, which
-   is what a signed pack needs, at the cost of reconstructing consolidated
-   text locally. This did not exist as a question until §1.1 established
-   that the origin serves all three versions.
-
+7. ~~**Fetch the corpus as *vigente-at-fetch-time*, or as *originaria + the
+   modification graph*?**~~ **RESOLVED 2026-08-26 by ELI compliance**
+   ([`eli-legal-plugins.md`](eli-legal-plugins.md) §5.1). It was only a
+   moving target because the fetch did not name the date. Normattiva's ELI
+   URIs carry the point-in-time as a path segment
+   (`…/40/CONSOLIDATED/20180504`), so the collection's **`snapshot` IS the
+   ELI point-in-time coordinate** and goes into the fetch URL. Two peers
+   fetching a week apart hold identical bytes, because the Expression is
+   named rather than implied — and a snapshot delta becomes what it should
+   be, the corpus advancing from one Expression set to the next.
 
 ## Sources
 
