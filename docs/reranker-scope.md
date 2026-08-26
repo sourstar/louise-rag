@@ -1,251 +1,267 @@
-# Where does a reranker belong? — pack, plugin, or node
+# Where does a reranker belong? — plugin, pack, or node
 
 **Status: PROPOSAL for evaluation. Nothing built, nothing agreed.**
-Written 2026-08-26, prompted by the question the Gazzetta plugin raised
-(`gazzetta-plugin.md` §7.4) and deliberately answered in general terms: if a
-plugin has a reranker that suits its corpus, should a **pack** be able to
-carry it — tied, or recommended?
+Written 2026-08-26; restructured the same day around a sharper framing from
+the operator. Prompted by `gazzetta-plugin.md` §7.4 and answered in general
+terms, because the answer is a platform rule, not an Italian-law one.
 
-Short answer: **recommended, never tied — and "recommended" should mean
-signed evidence, not configuration.** The reasoning below matters more than
-the verdict, because two of the three arguments generalise to anything else
-a pack might one day want to tell a consumer to do.
+## 0. The framing, and why it is the right one
+
+The question is not "may a pack carry a reranker" but a three-part one:
+
+1. For a plugin where a reranker is **applicable**, is its use **compulsory**
+   or **optional**?
+2. If compulsory — is there exactly **one** compulsory reranker, or a **set**
+   from which a peer must pick?
+3. If the reranker **does not affect the pack's common content**, a peer may
+   use whatever reranker it likes.
+
+Clause 3 is the load-bearing one, and it is a better discriminator than the
+"correctness pin vs. advisory metadata" split this document argued in its
+first draft. That split classified fields by what they look like. This one
+classifies them by a **checkable property of the output**:
+
+> Does anything derived from the reranker end up in bytes that travel
+> between peers, or in what a peer contributes to a shared space?
+
+Everything below is that test, applied.
 
 ---
 
-## 1. A reranker is not the same class of thing as anything a pack carries
+## 1. What "the pack's common content" is, precisely
 
-The manifest (`pack-format.md` §7) carries exactly three kinds of field:
+From `pack-format.md` §7 and §10, the bytes that travel are: record shards,
+the text index, vectors per space, bucket files (the vector index), and the
+manifest that names them. Plus, from §11 and `app/contribute.py`, what a
+peer *produces* for others: vectors for leased uids, exported as a signed
+bundle.
 
-| class | examples | why it must travel with the data |
+So "common content" = **shard bytes + contributed vectors**. Two properties
+of that set matter here:
+
+- **It is content-determined.** A vector is `f(encoder, chunk text)`; a chunk
+  is `f(chunker, cleaned text)`. Both functions are pinned — in `space_id`
+  and in `layers` — precisely because two peers must produce identical
+  output from identical input.
+- **Its *extent* is explicitly allowed to vary.** The manifest carries
+  `"coverage": 0.62` per space. Which documents a given peer has embedded is
+  a free variable of the format; *what* the vector for a given chunk is, is
+  not.
+
+That distinction — **what vs. which** — turns out to decide the whole
+question.
+
+## 2. The test applied: where a reranker could sit
+
+| where the reranker runs | does its output reach common content? | binding? |
 |---|---|---|
-| **identity / correctness pins** | `space_id`, `layers`, `cleaning_version`, `dim`, `dtype` | without them the bytes are **uninterpretable** — vectors cut by an unknown chunker, in an unknown space, are noise |
-| **verification contracts** | `calibration` + `tolerance`, `terms_sha256`, merkle roots | they let the receiver **check** something they could not otherwise check |
-| **coordination metadata** | `update.cadence`, `coordinator`, `members` | they say how the artefact is kept alive and distributed |
+| **query time**, after RRF (today: `retrieval.py:234`, `:333`) | no — the ordering is returned to one user and discarded | **optional; free peer choice** |
+| **query time → lazy-embed enqueue** (today, see §3) | *which* documents get embedded, never *what* the vectors are | **optional** — it moves coverage, which the format already lets vary |
+| **contribute time**, choosing what to embed for a lease | no — the coordinator's `/work` list orders the lease, not the local reranker (`contribute.py`'s docstring is explicit that re-sorting would fight it) | **optional** |
+| **build time**, selecting which chunks enter the pack | **yes** — a different reranker yields different shard bytes | **compulsory, and must be pinned** |
+| **build time**, supervising index construction (bucket centres, §5.2) | **yes** — the index files differ | **compulsory** |
+| **build time**, mining hard negatives for a fine-tuned encoder | no, indirectly — it changes the *encoder*, which `space_id` already pins | already covered |
+| **a pack shipping precomputed rerank scores** | **yes** — the scores are shard bytes | **compulsory** |
 
-A reranker is in none of these classes.
+Read down the table and the pattern is clean: **a reranker binds exactly
+when it runs at build time.** At query time it cannot bind, because nothing
+durable is downstream of it.
 
-- It is not a correctness pin: the pack's vectors mean exactly the same
-  thing whether the consumer reranks with model X, model Y, or not at all.
-  Contrast the encoder, which the pack *must* declare — that is what
-  `space_id` is for, and getting it wrong silently corrupts retrieval.
-- It verifies nothing.
-- It coordinates nothing.
+## 3. The one leak in today's code, and why it does not bind
 
-**A pack describes data. A reranker is a property of the query path.** That
-is the prima facie architectural objection, and it holds regardless of how
-good the recommendation is.
+I want to record this because I missed it in the first draft and it is the
+sort of thing that looks like a counter-example.
 
-## 2. But the producer does hold a signal the consumer cannot cheaply re-derive
+`_attach_metadata_and_enqueue` is called with `final` — the **reranked**
+list — and in `lazy` embed_mode it does `_enqueue_lazy_embed(con, ids[:10],
+collection)` (`retrieval.py:209`). So the reranker genuinely does decide
+which ten documents this node embeds next. That is a real feedback path from
+a query-time component into durable local state, and from there into what
+this node could later export.
 
-The counter-argument is real and should not be waved away. Whoever built a
-pack knows things the consumer does not: the corpus's chunk shape, its
-query mix, and — if they were rigorous — a *measured* retrieval evaluation
-on it. "We measured nDCG@10 at 0.41 fused, 0.52 with reranker X over 40
-candidates" is genuinely useful, genuinely expensive to reproduce, and
-genuinely the producer's to state.
+It still does not bind, and the reason is §1's distinction: it changes
+**which** documents have vectors, never **what** a vector is. Two peers with
+different rerankers converge on different *coverage* and identical *content*
+— and coverage is already a declared, per-space, freely-varying quantity in
+the manifest. The leak lands exactly on the axis the format treats as free.
 
-That is **evidence**, though, not configuration. The distinction is the
-whole answer:
+Worth stating as a rule, because it is the tripwire for everything in §2's
+lower half:
 
-> A pack may carry what its publisher **measured**.
-> A pack may not carry what the consumer's node **does**.
+> **A reranker may influence *which* records are processed. The moment it
+> influences *what* a record's bytes are, it becomes a pinned function.**
 
-And the codebase already has this exact shape, in `platform.toml`:
-`[trust] space_authors` names keys whose signed space artefacts apply *as
-measured*; everyone else's load as **advisory** — able to tighten a
-tolerance, never to loosen one. A reranker hint is the same ladder with the
-teeth removed entirely, because nothing about a reranker can ever be
-binding.
+## 4. "One compulsory reranker, or a list?" — neither; a predicate
 
-## 3. Three reasons "tied" is wrong, in decreasing order of severity
+This is the part of the framing worth pushing on hardest, because the
+codebase has already solved it once for encoders and the solution is neither
+"one" nor "a list".
 
-### 3.1 Security: a pack must never name an endpoint the node calls
+A pack does **not** name the encoder a peer must run. It ships a
+`calibration` block — sixteen chunk IDs plus a `vectors_root` — and a
+`tolerance`. Any encoder reproducing those vectors within tolerance is
+admissible. That defines the acceptable set **by a predicate**, and it has
+three properties an enumeration cannot have:
 
-This one is decisive on its own. A pack is an artefact from a **peer**,
-verified only in the sense that its signature matches a key — which says
-who wrote it, not that they are honest. `_rerank` (`app/retrieval.py:77`)
-POSTs `{"query", "texts"}` to `RERANK_URL`. So a manifest field that could
-set that URL would mean: **a remote publisher chooses a host to which this
-node sends the user's query together with the passages it retrieved.**
+- **It admits models that did not exist when the pack was published.** A
+  newer TEI, a Vulkan build, a re-quantised GGUF — all fine if they pass.
+  A name list would have frozen the set at publication.
+- **It excludes a model that shares its name but drifted.** This is not
+  hypothetical here: `approved-encoders.md` opens with a moving tag that
+  silently corrupted 714 books, which is why every build in that file is
+  pinned by digest. A list of names is exactly the artefact that incident
+  argues against.
+- **It states the bar, so disagreement is resolvable.** "Use one of these
+  five" gives a peer no way to answer "is my sixth one equivalent?"
 
-That is a query-exfiltration channel wearing a configuration field's
-clothes, and it would be the first place in the system where received data
-selects an outbound destination. The rule to write down, wider than
-rerankers:
+So the recommendation on clause 2 of the framing: **if a reranker is ever
+compulsory, define the admissible set by an equivalence test, not by one
+name and not by a list of names.** A list may accompany it as a convenience
+— "these are known to pass" — the way `approved-encoders.md` is a
+procurement list beside the behavioural gate, and explicitly not a
+substitute for it.
 
-> **A pack may carry a model *identity* — a name and a digest. It may never
-> carry a URL, host, or path the node will contact.**
+## 5. What a rank-equivalence test would look like
 
-Same instinct as invariant 8 (secrets by path, never by value) and as the
-advisory-only trust ladder: an untrusted artefact may inform a decision, it
-may never *be* the decision.
-
-### 3.2 Federation: per-pack rerankers produce scores that do not compare
-
-`_rerank` runs **once**, after `_merge_rrf_federated`, over the fused list
-from every queried collection (`retrieval.py:333`). That is not an
-implementation accident — it is what makes one ordering across collections
-meaningful.
-
-If each pack brought its own reranker, a federated query has N scorers and
-two bad options:
-
-1. **Rerank per collection, then fuse the reranked lists.** This discards
-   precisely the cross-collection calibration the reranker existed to
-   provide, and re-introduces the problem RRF was chosen to solve.
-2. **Pick one of the N.** At which point the other N−1 declarations were
-   decoration — and worse, *silent* decoration: a field that is present,
-   plausible, and inert is the most expensive kind of configuration,
-   because someone will set it and believe it took effect.
-
-This is invariant 4's warning one level down. That invariant says two
-ranked lists answering different questions must not be fused. Here it is
-sharper still: scores from two different scorers are not on a common scale
-at all, so they cannot be fused even in principle.
-
-### 3.3 Config tiers: received data is not desired state
-
-Invariant 10 fixes three tiers — env is identity, TOML files are desired
-state, DB settings are runtime overrides that do not survive restart — and
-forbids writing desired state into the DB. A pack is a **fourth** thing the
-tier model does not currently name: data received from a producer.
-
-Nothing in the model lets received data become desired state, and it should
-stay that way. A pack's recommendation must land somewhere an operator
-**explicitly accepts** it — a TOML edit they make — not somewhere it takes
-effect at import. Anything else means a peer's artefact silently changed
-how this node answers questions.
-
-## 4. The prior question: today this is not expressible at all
-
-Worth stating plainly before choosing a design, because it changes what is
-being asked. **`RERANK_URL` is Tier-1 env and node-global** (`config.py:32`).
-It is not in `EmbedRecipe`, not on `Collection`, not in `platform.toml`.
-Unlike the encoder — which `collections.recipe_for()` resolves per
-collection through a three-step fallback — the reranker has no per-anything
-scope whatsoever.
-
-So "a reranker tied to a pack" is not merely inadvisable; it is currently
-inexpressible, and the real proposal on the table is *how much scope to give
-the reranker at all*. Three options:
-
-**Option A — keep it node-global; packs carry evidence only. (Recommended.)**
-The manifest gains an optional advisory hint (§5). The Library card shows it.
-An operator reads it and decides for the node. **Zero change to the query
-path**, zero new failure modes, and the producer's measurement is still
-delivered — which was the entire legitimate motivation.
-
-**Option B — per-collection reranker, node-global in federation.**
-More expressive, and it buys: two code paths; the incomparable-scores
-problem of §3.2 the moment a second collection is queried; and a
-per-collection field that is *silently ignored* in the federated case. I
-would not build this without a measured case that a single node reranker
-demonstrably fails on some collection.
-
-**Option C — per-plugin default, mirroring `[embed_defaults.<plugin>]`.**
-Tempting because that pattern exists and works. But note the disanalogy that
-justified it: a genome collection embedded with a text encoder is not
-*worse*, it is **wrong** — DNA is not a language and the spaces are not
-comparable, which is why that default exists at all (`platform.toml.example`
-records the two collections that pinned a text space over DNA before anyone
-noticed). For text rerankers there is no wrongness, only better and worse.
-The pattern does not transfer on its own merits.
-
-## 5. What a hint would look like, if Option A is accepted
-
-Optional, advisory, additive to the manifest:
+The encoder's test is cheap because vectors compare pointwise. Rankings do
+not: two rerankers agree or disagree over an *ordering*, which needs
+(query, candidate set) pairs to even evaluate. That is the real obstacle to
+a compulsory reranker, and it is constructible:
 
 ```json
-"rerank_hint": {
-  "model": "jinaai/jina-reranker-v3",
-  "digest": "sha256:…",
-  "shape": "listwise",
-  "eval": {"set": "JuriFindIT-expert", "metric": "ndcg@10",
-           "baseline_fused": 0.41, "with_hint": 0.52,
-           "candidates": 40, "truncation_chars": null},
-  "measured_by": "<publisher pubkey>"
+"rank_calibration": {
+  "cases": [{"query": "…", "candidates": ["pubmed:10329736:0:1", …40],
+             "reference_order": [7, 2, 19, …]}, …16],
+  "metric": "kendall_tau_b",
+  "tolerance": 0.90,
+  "conditions": {"candidates": 40, "truncation_chars": 2000}
 }
 ```
 
-Properties that make it safe:
+Properties: the candidates are chunk IDs **already in the pack**, so the
+test costs no extra bytes and cannot be run against the wrong text. The
+queries are the *producer's*, synthesised from their own corpus — never a
+user's, which keeps this out of privacy territory. And `conditions` is part
+of the claim, because a ranking is not a property of the model alone (§8).
 
-- **No URL.** Model identity and digest only (§3.1).
-- **Signed for free.** `manifest.canonical_bytes` signs every field but
-  `signature`, so an added field is covered automatically, and a reader
-  that ignores it still verifies the signature correctly. Backward
-  compatible in both directions.
-- **Inert on import.** Displayed, never applied. Accepting it is an operator
-  action, and the thing they edit is env or TOML — not the pack.
-- **Trust-laddered.** From a key in `[trust] space_authors`, show it as
-  measured. From anyone else, show it as *claimed, unverified* — the same
-  distinction that already governs space artefacts.
-- **Carries its conditions.** `candidates` and `truncation_chars` are part
-  of the claim, because a reranker's gain is not a property of the model
-  alone (§6).
+Two honest problems with it:
 
-Adding a field to a signed wire format is an "ask first" change under
-CLAUDE.md, and whether it needs `VERSION: 2` is an operator call — the
-signature argument above suggests it does not.
+1. **A tolerance on τ has no natural value.** Cosine ≥ 0.999 means "the same
+   function"; τ ≥ 0.90 means "usually orders things similarly", which is a
+   quality judgement wearing an equivalence test's clothes.
+2. **`pack-format.md` §16 prefers reproduction to assertion**, and this is
+   reproducible — but only of the producer's own frozen cases, which is a
+   weaker claim than reproducing a vector.
 
-## 6. Why the consumer must measure anyway, and the hint stays a hint
+Both are arguments for keeping the compulsory arm **specified but unused**
+(§9), not for leaving it unspecified.
 
-A reranker's measured gain depends on at least three things the producer
-does not control:
+## 6. The peer that cannot comply
 
-1. **The candidate budget** — `max(k * 4, 40)` (`retrieval.py:234`, `:333`).
-   Reranking 40 candidates and reranking 200 are different experiments.
-2. **The truncation** — `h["text"][:2000]` (`retrieval.py:83`), a hard
-   constant, roughly 400 tokens at this repo's measured chars/token. A
-   model with 32k of context judging a chunk cut at 2000 characters is not
-   the model the producer benchmarked.
-3. **The query mix.** The producer's eval set is not this node's users.
+If a reranker is ever compulsory, the format already has the right answer
+shape, and it should be reused verbatim. From `pack-format.md` §7: a peer
+failing the encoder's calibration proof **may still search with what it
+holds; it may not contribute** to that space.
 
-So even a perfectly honest, signed, reproduced hint is a *prior*, not a
-result. Which is another way of saying Option A is not a compromise — it is
-the accurate model of what the producer actually knows.
+The same ladder for a compulsory reranker:
 
-## 7. When a plugin-level declaration *would* earn its place
+- **Search** — always permitted, with or without the reranker. A peer with
+  no reranker at all gets RRF order, which is what happens today with
+  `RERANK_URL` empty. Nothing about a pack may make its data unreadable.
+- **Contribute** — permitted only when the peer passes the predicate, and
+  only for artefacts the reranker actually determined.
 
-There is one case where this stops being about quality, and the test is
-worth writing down:
+That preserves the property that matters most in a P2P system: **you cannot
+force anyone's stack**, and a pack that tried would simply not be adopted.
 
-> Declare a reranker at the plugin level only when the general-purpose
-> model would be **wrong**, not merely worse.
+## 7. Security holds regardless — and compulsoriness raises the stakes
 
-`genome` is the clean example: a text cross-encoder scoring DNA sequences is
-not a weaker reranker, it is a category error — the same argument that
-gave genome its own encoder default. A legal or biomedical corpus is *not*
-such a case: a general multilingual reranker is worse there, not wrong.
+Unchanged from the first draft, and more important under this framing, not
+less. `_rerank` POSTs `{"query", "texts"}` to `RERANK_URL`
+(`retrieval.py:82`) — the user's query together with the passages retrieved
+for it. A manifest field able to set that URL would let a remote publisher
+choose where this node sends both.
 
-If that case is ever real, the right shape is a **class**, not a model: the
-plugin declares `rerank_class = "text" | "dna" | null`, and the node warns
-when its configured reranker is of the wrong class. That is a wrongness
-check, cheap and static — not a quality knob, and not a per-collection
-endpoint.
+> **A pack may carry a model *identity* — name plus digest — and a
+> predicate. It may never carry a URL, host, or path the node will
+> contact.**
 
-## 8. What this proposal deliberately does not propose
+A *compulsory* reranker naming a URL would be strictly worse than an
+optional one: a mandatory outbound call to a publisher-chosen host. Same
+instinct as invariant 8 (secrets by path, never by value).
 
-- No `rerank_url` anywhere in a pack, ever (§3.1).
-- No automatic application of a hint on import (§3.3).
-- No per-collection reranker until a measured case demands it (§4, Option B).
-- No change to the invariant that **pinned facts bypass RRF and rerank
-  both** (`retrieval.py:227`, `:367`) — that is invariant 4 holding at the
-  query layer and nothing here touches it.
+## 8. Why the node measures anyway, even under a predicate
 
-## 9. Open questions
+A reranker's behaviour is not a property of the model alone. At least three
+conditions belong to the consumer:
 
-1. **Is the producer's measurement worth a wire-format change at all?**
-   The honest alternative is that it belongs in the pack's README or the
-   publisher's page, and the manifest stays a description of data. That
-   position is defensible and cheaper.
-2. **Should the hint be reproducible rather than merely signed?**
-   `pack-format.md` §16 prefers *reproduction* over votes. There is no
-   obvious cheap reproduction of a retrieval-quality claim — it needs the
-   eval set, which may not be redistributable (JuriFindIT's licence is
-   itself unverified, `gazzetta-plugin.md` §7.2).
-3. **Does the reranker deserve any scope below the node**, given that
-   `RERANK_URL` is a single env var and every federated query collapses to
-   one scorer anyway?
-4. **Is `rerank_class` (§7) worth having before a second non-text plugin
-   exists?** Today it would guard exactly one collection type.
+1. **Candidate budget** — `max(k * 4, 40)` (`retrieval.py:234`, `:333`).
+2. **Truncation** — `h["text"][:2000]` (`retrieval.py:83`), a hard constant,
+   ~400 tokens at this repo's measured chars/token. A 32k-context model
+   judging a 2000-character prefix is not the model anyone benchmarked.
+3. **Query mix** — the producer's cases are not this node's users.
+
+Hence `conditions` inside the calibration block (§5): a predicate that does
+not state its conditions is not reproducible.
+
+## 9. The proposal, in three tiers
+
+Mirroring the config tiers rather than inventing a new axis:
+
+| tier | declares | value | binding? |
+|---|---|---|---|
+| **plugin** (code) | **applicability** — `rerank_class = "text" \| "dna" \| null` | static, per source | a *wrongness* check only: warn when the node's reranker is of the wrong class. A text cross-encoder scoring DNA is a category error, the same argument that gave `genome` its own encoder default — not a quality knob |
+| **pack** (manifest) | **bindingness** — `optional` (default) or `required` + predicate | per published artefact | `required` is legitimate **only** when the pack ships something the reranker determined (§2's lower half). Identity + digest + predicate; never a URL |
+| **node** (env / TOML) | **which model actually runs** | `RERANK_URL`, operator-set | always the operator's, subject to the predicate when one exists |
+
+And the recommendation for **today**: every plugin is `optional`, because
+nothing in the current pipeline consumes rerank output durably. `RERANK_URL`
+stays node-global (it is Tier-1 env, `config.py:32` — not in `EmbedRecipe`,
+not on `Collection`), a pack may carry an advisory hint with a measured
+delta, and peers choose freely — which is clause 3 of the framing, and it
+holds for every plugin that exists.
+
+The value of specifying the compulsory arm now is the tripwire it creates:
+
+> **Any future feature that makes rerank output durable — build-time chunk
+> selection, reranker-supervised index construction, precomputed scores in a
+> shard — must declare the reranker in the manifest with a predicate, or it
+> is publishing bytes no peer can reproduce.**
+
+That rule costs nothing today and is the one thing that would be expensive
+to retrofit, because it would be discovered as a reproducibility failure
+across an already-distributed pack.
+
+## 10. What this deliberately does not propose
+
+- No `rerank_url` in a pack, ever (§7).
+- No automatic application of a hint or predicate on import — a pack is data
+  received from a producer, and invariant 10's tiers give received data no
+  route to desired state.
+- No per-collection reranker (`RERANK_URL` is node-global) until a measured
+  case shows one node-wide choice failing some collection. Note the
+  federation problem it would create: `_rerank` runs **once** over the fused
+  cross-collection list, so N per-collection rerankers give N incomparable
+  score scales — either fuse reranked lists, discarding the cross-collection
+  calibration the reranker existed to provide, or pick one and leave the
+  rest silently inert.
+- No change to pinned facts bypassing RRF and rerank both
+  (`retrieval.py:227`, `:367`) — invariant 4 at the query layer.
+
+## 11. Open questions
+
+1. **Is the compulsory arm worth specifying before a use for it exists?**
+   The tripwire in §9 is the argument for; YAGNI is the argument against.
+2. **Is a τ tolerance an equivalence test or a quality threshold in
+   disguise?** (§5.1.) If the latter, "compulsory" may be unachievable for
+   rerankers in principle, and the honest format would say so.
+3. **Does a hint/predicate justify a wire-format field at all**, or does the
+   producer's measurement belong in the pack's README, leaving the manifest
+   a pure description of data?
+4. **Is `rerank_class` worth having** while `genome` is the only non-text
+   plugin it would guard?
+5. **Should the lazy-embed enqueue path (§3) read the *fused* order rather
+   than the *reranked* one?** It would remove the leak entirely and make the
+   "query time cannot bind" claim unconditional. Against: the reranked order
+   is the better answer to "what is this node's user actually interested
+   in", which is the whole point of lazy embedding.

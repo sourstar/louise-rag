@@ -635,13 +635,17 @@ score per text, and a listwise model returns an ordering.
 
 #### Scope: node, collection, or pack?
 
-The question this section raised in general — may a *pack* carry or
+The question this section raised in general — may a *pack* require or
 recommend a reranker — is answered separately in
 [`reranker-scope.md`](reranker-scope.md), because it is a platform
-question rather than an Italian-law one. Its conclusion, for this
-plugin's purposes: the reranker stays node-global and operator-set, a
-published pack may carry a signed advisory *hint* (model identity plus a
-measured delta, never a URL), and nothing applies automatically.
+question rather than an Italian-law one. Its conclusion for this plugin:
+**optional**, like every plugin today. A reranker binds only when its
+output reaches bytes that travel between peers, which happens at build
+time and not at query time; nothing in the current pipeline consumes a
+rerank ordering durably. So the reranker stays node-global and
+operator-set, a published Normattiva pack may carry a signed advisory
+hint (model identity and a measured delta, never a URL), and a peer
+running its own reranker — or none — is holding the same pack.
 
 #### The asymmetry that decides how much care to spend
 

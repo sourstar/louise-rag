@@ -1072,13 +1072,20 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
-- **Should a pack recommend a reranker?** Proposal and analysis in
-  [`reranker-scope.md`](reranker-scope.md): advisory signed *evidence*
-  (model identity + digest + measured delta) yes; binding configuration
-  no, and a URL never — a manifest field that selected an outbound
-  endpoint would let a publisher choose where this node sends user
-  queries. Unresolved: whether the producer's measurement justifies a
-  wire-format field at all, or belongs in the pack's README.
+- **May a pack require a reranker, or only recommend one?** Proposal in
+  [`reranker-scope.md`](reranker-scope.md). The discriminator is whether
+  rerank output reaches common content: at query time it cannot, so every
+  plugin today is *optional* and a peer chooses freely; at BUILD time
+  (chunk selection, index supervision, precomputed scores) it determines
+  shard bytes and would have to be pinned. If it is ever compulsory, the
+  admissible set should be a **predicate** — a `rank_calibration` block
+  in the shape of §7's encoder `calibration`/`tolerance` — never one name
+  and never a list of names (the moving-tag incident in
+  `approved-encoders.md` is the argument). A pack may name a model
+  identity and digest; never a URL the node contacts. Unresolved: whether
+  a Kendall-τ tolerance is an equivalence test or a quality threshold in
+  disguise, and whether to specify the compulsory arm before a use for it
+  exists.
 
 ## 22. Build order (each step useful on its own)
 
