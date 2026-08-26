@@ -78,7 +78,11 @@ def queries(names) -> bool:
             ("rdf batch peers", worker._RDF_BATCH_PEERS, (config.MAX_RETRIES, "x", 999)),
             ("fts batch peers (fresh)", worker._FTS_FRESH_PEERS,
              (config.MAX_RETRIES, "x", 999)),
-            ("fts reindex window", worker._FTS_REINDEX_WINDOWED,
+            # NOTE: timed at the STATIC default width. The width the worker
+            # actually uses is adapted in ITS process (app/sizing.py) and is
+            # invisible from here, so this row is the "before" number by
+            # construction — read `--shares` for the live widths.
+            ("fts reindex window (default width)", worker._FTS_REINDEX_WINDOWED,
              (0, min(worker._REINDEX_WINDOW, top), config.MAX_RETRIES,
               config.FTS_VERSION, config.ENTITY_VERSION)),
             ("fts reindex peers", worker._FTS_REINDEX_PEERS,

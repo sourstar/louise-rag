@@ -557,6 +557,14 @@ _FTS_BACKLOG = (
     "AND fts_done=0 AND error IS NULL AND retries<? LIMIT ?)")
 
 
+_PHASE_POLL_S = 2.0
+_phase_seen: dict[str, tuple[float, bool]] = {}
+
+
+def reset_phase_memo() -> None:
+    _phase_seen.clear()
+
+
 def _archive_yields(con, collection) -> bool:
     """Should the archive pass stand aside and let fts have the thread?
 
@@ -581,9 +589,31 @@ def _archive_yields(con, collection) -> bool:
     ready = con.execute(_FTS_BACKLOG, (config.MAX_RETRIES, 1)).fetchone()[0]
     if not ready:
         return False                 # nothing to feed it with; let the archive run
+    # MEASURED on the node (pubmed 40M, wikivec 22M): this count costs
+    # 46.9 ms cold and 3.5 ms warm, because `error IS NULL AND retries<?`
+    # are not in idx_documents_scope (in_scope, rdf_done, fts_done,
+    # embed_done) and so cost one table lookup per row counted.
+    #
+    # Dropping those two filters makes it a COVERING index scan at 0.1 ms —
+    # 470x cheaper — and that is the WRONG trade, which is worth writing
+    # down because the plan output makes it look free. Errored documents
+    # would then count as "waiting for a vector", inflating the queue, and
+    # an inflated queue is the one direction that hurts: the archive keeps
+    # the thread while the encoder actually starves. Undercounting merely
+    # delays the archive by one fts batch, and that batch is never wasted.
+    #
+    # So: keep the exact count, and bound what it can cost by asking it at
+    # most every PHASE_POLL_S. The queue moves far more slowly than that.
+    key = str(getattr(con, "collection_name", "") or id(con))
+    now = time.monotonic()
+    seen = _phase_seen.get(key)
+    if seen is not None and now - seen[0] < _PHASE_POLL_S:
+        return seen[1]
     waiting = con.execute(
         _EMBED_BACKLOG, (config.MAX_RETRIES, config.PHASE_EMBED_LOW)).fetchone()[0]
-    return waiting < config.PHASE_EMBED_LOW
+    verdict = waiting < config.PHASE_EMBED_LOW
+    _phase_seen[key] = (now, verdict)
+    return verdict
 
 
 # ---- amendment 38: coverage-aware dense backfill ---------------------------
@@ -2133,6 +2163,14 @@ def _log_shares(con) -> None:
             f"{k.rsplit('/', 1)[-1]}: {v * 1000:.1f} ms/doc" if v < 1
             else f"{k.rsplit('/', 1)[-1]}: {v:.1f} s/doc"
             for k, v in sorted(sizes["rates"].items())))
+    # The adapted window widths. These live only in this process, so
+    # `sched_report --queries` CANNOT see them — it times the static
+    # default and therefore always reports the "before" number. Without
+    # this line there is no way to tell whether the controller is working.
+    if sizes["windows"]:
+        db.log_event(con, "info", "sched", "windows — " + "; ".join(
+            f"{k.rsplit('/', 1)[-1]}: {v:,} rowids"
+            for k, v in sorted(sizes["windows"].items())))
 
 
 def _stats_publisher() -> None:
