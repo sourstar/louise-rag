@@ -813,6 +813,24 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    questions, and RRF-ing them yields neither. Measure before amending
    anything; there is currently no baseline to judge any model against.
 
+7. **Italian law plugin (Gazzetta Ufficiale / Normattiva)** —
+   [`gazzetta-plugin.md`](gazzetta-plugin.md). **Research done, nothing
+   built, three operator decisions open.** Normattiva's data went CC BY 4.0
+   on 2026-01-01 with an OpenData portal and API (Akoma Ntoso, XML-NIR,
+   JSON, ELI) — that, not the IPZS site, is the origin worth building on:
+   structured, identified, versioned, openly licensed. Three findings that
+   shape any implementation: `native_id` must be integer-parseable
+   (`layers.py:120`, `worker.py:260`, the Lance `book_id` column), so a URN
+   cannot be one and a synthetic sortable key is needed; the natural chunk
+   is the **articolo**, which neither the fixed-width nor the CDC chunker
+   cuts on, so a new chunker enters a new `space_id`; and multivigenza is a
+   ReferenceSource question (facts-by-key, invariant 4), never N versions of
+   one article competing in RRF. Italian-Legal-BERT is an MLM and would walk
+   straight into item 6's anisotropy trap — bge-m3 is already approved and
+   is the default to beat, measured on a throwaway pilot before anything is
+   pinned. The GU's own issue stream (concorsi, inserzioni) is deliberately
+   NOT scoped: unread terms plus personal data.
+
 ## Invariants review (2026-08-23 — amendments 30, 31)
 
 The ten CLAUDE.md invariants were re-read against what was built. They
