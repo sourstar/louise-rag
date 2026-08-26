@@ -433,23 +433,32 @@ a reader by 10 s.
 These three are what makes B's shrinking slot safe instead of punitive,
 and they constrain the design more than they look.
 
-**Entitlement is not occupancy.** Keep two numbers per (collection,
-resource): the ENTITLEMENT — the fair share, which changes only when the
-set of needy collections changes — and the LOAN, capacity someone else
-is currently borrowing. What shrinks when a plugin does not consume its
-slot is the LOAN it grants, never the entitlement. That is the whole of
-B2: a plugin on hold is lending, not forfeiting. The tempting
-implementation — decay the share of whoever is idle, let them earn it
-back over rounds — is the bug this rules out, because it punishes
-exactly the plugins whose input arrives in bursts (the fetch-driven
-ones), which is the opposite of A1.
+**Entitlement is not occupancy.** The ENTITLEMENT is the quantum: a
+property of the flow, which changes only when the set of needy
+collections changes. What a plugin loses by being idle is its
+OCCUPANCY — its place in the rotation and any credit it had accrued —
+never its entitlement. The tempting implementation, decaying the share
+of whoever is idle and letting them earn it back over rounds, is the bug
+this rules out: it punishes exactly the plugins whose input arrives in
+bursts (the fetch-driven ones), which is the opposite of A1.
 
-**Lend for one quantum at a time.** A loan must never outlive the
-quantum that granted it. That is what bounds a returning plugin's wait
-to a single quantum — and it means the quantum floor (`min_share`) is
-really the WORST-CASE re-entry latency. Pick the floor from that side
-("how long may a newly-ready collection wait for the GPU?"), not from
-"how small can a slice be before the overhead hurts".
+*(Superseded, and worth keeping as a record of a wrong turn: an earlier
+draft of this section proposed tracking an explicit LOAN — capacity
+lent to others while a plugin is idle, recalled when it returns. Once
+re-entry is "at your next turn" rather than "immediately", the loan is
+unnecessary: a flow that is not in the rotation simply is not served,
+and the others come round faster on their own. There is nothing to
+lend, nothing to recall, and no bookkeeping to get wrong.)*
+
+**Re-entry is at the TAIL, and costs one rotation.** A plugin that
+released — whether it ran out of work or handed the slot back early —
+rejoins behind everyone already waiting. So the worst-case wait for a
+collection that has just become ready is the sum of the OTHER flows'
+quanta. That number is DERIVED, not chosen: each flow's quantum is at
+least its own minimum efficient unit, so the latency follows from
+everyone's unit costs. If it is too long, the levers are fewer
+concurrent flows or smaller units of work — never a smaller floor, which
+would only leave the plugins unable to do anything useful in their slot.
 
 **Demand is announced, not discovered.** "Upon need" means the plugin
 signals when it becomes runnable — its fetch returned, its queue crossed
@@ -470,13 +479,14 @@ unit to a target DURATION is therefore not merely about switching
 overhead — it is the precondition for both B2 and B3, and the strongest
 argument for doing proposal 4 early rather than last.
 
-**Guard against churn.** Release-early plus reclaim-immediately can
-oscillate, which would contradict A3. Two cheap guards: a minimum hold
-once a resource is ACQUIRED (keep it for at least one floor-quantum even
-if you go briefly idle), and the observation that a plugin managing its
-own budget (B1) is the only party that knows whether it will want the
-resource again shortly. That decision belongs on the plugin side — which
-is itself the argument for the two-level split.
+**Churn needs no guard, once re-entry is at the tail.** An earlier draft
+worried that release-early plus reclaim-immediately would oscillate, and
+proposed a minimum hold to damp it. Tail re-entry removes the problem at
+the root: releasing costs you your place, so there is nothing to gain by
+releasing and immediately asking again, and a plugin that manages its
+own budget (B1) already knows whether it will want the resource shortly.
+The guard would have been machinery protecting against an incentive that
+does not exist.
 
 ### What this changes about measuring
 
@@ -487,3 +497,86 @@ collection AND per phase, what each resource delivered, so a change can
 be judged on the general picture rather than on whichever collection
 happened to be busy.
 
+
+## 11. The scheduler as built
+
+`app/sched.py`, wired into the encoder rotation in `app/worker.py`. This
+section is what EXISTS; §10's proposal list is what it was measured
+against, and the parts still outstanding are named at the end.
+
+### The core (`app/sched.py`)
+
+Deficit round-robin per named resource. A resource is a contended thing —
+`encoder:<url>` (per ENDPOINT: two collections on one GPU contend, two on
+different containers do not), and in future `parse`, `index`. A flow is
+one collection's claim on one resource.
+
+| the model says | how it is implemented |
+|---|---|
+| equal share of what a collection needs | equal quanta among the flows in the rotation; a collection with no work is not in it |
+| unused capacity is redistributed | nothing to redistribute: an idle flow leaves and the others come round faster. Work-conserving by construction |
+| a plugin can release early (B3) | `Turn.release(idle=True)` — used for every deferral and every empty queue |
+| released, then wanted again → next turn (B2) | re-entry appends at the TAIL; the quantum is untouched, the deficit is reset |
+| idle must not cost the entitlement | the quantum is a property of the flow. Only the deficit is reset |
+| minimum slot = minimum efficient unit | the floor is MEASURED — p90 of that flow's actual unit costs, after ≥8 samples, capped at `SCHED_FLOOR_CAP_S`. Never guessed, and never below `SCHED_QUANTUM_S` |
+| query work outranks regular work (A5) | `reserve()` — served before the rotation, and it neither spends the collection's quantum nor moves its place |
+
+Three things are deliberate and each rules out a plausible wrong version:
+
+1. **A turn that overruns is charged as debt**, and the debt is clamped
+   at one quantum. Nothing here can be preempted — a Lance write or an
+   encoder call finishes — so the only lever is the NEXT turn. The clamp
+   means a single 300 s unit against a 10 s quantum costs its collection
+   one turn, not thirty; the oversized unit itself is reported (an
+   overrun, plus `suggest_floor_s`) rather than silently absorbed.
+2. **Demand is announced, not polled.** The pipeline thread calls
+   `demand()` when an fts step completes — that is the moment a document
+   becomes embeddable — so a collection that becomes ready right after
+   being skipped does not wait a rotation to say so.
+3. **A stale flow is readmitted for one probing turn** every
+   `IDLE_REPROBE_S`. Announced demand can miss an edge, and a collection
+   stranded by a missed signal must cost one delayed probe, never a
+   collection that stops for good. The first cut offered that probe only
+   when the rotation was EMPTY, which is no safety net at all — a
+   collection with work holds the rotation open indefinitely. That is a
+   regression test now (`test_a_stranded_flow_is_readmitted_while_the_others_stay_busy`).
+
+### The wiring (`app/worker.py`)
+
+`_serve_rotation` replaces "a fixed budget per collection, in list order,
+whether or not it had work". Per pass each flow gets at most one turn and
+the loop returns — the caller owns telemetry, the control state and
+discovery, and a rotation that never came back up would make all three
+wait for it. `_serve_turn` spends the slot over as many units as fit, and
+hands it back the moment a step defers or the queue empties.
+
+`SCHED_FAIR_SHARE=0` restores the previous behaviour (`_serve_in_order`)
+without a redeploy.
+
+### Reading it back
+
+The worker logs each resource's accounting every `SHARES_LOG_INTERVAL_S`
+(stage `sched`), from the stats thread — telemetry is never published by
+the thread doing the work. `python -m tools.sched_report --shares` prints
+the recent lines. Without this the fair share is an assertion; with it, a
+change can be judged on the general picture.
+
+### Not built yet
+
+Named here so nobody assumes otherwise:
+
+- **the parse pool is still FIFO** — no per-collection queues, so the
+  collection with the biggest batches still takes the most children;
+- **the index maintainer still serves in list order**, not by
+  `unindexed × staleness`;
+- **B1 is only half done**: the scheduler hands a plugin a slot, but
+  inside it the phases are still chosen as before (`_next_book`'s
+  rdf/fts watermark). The phase controller on inter-phase queue
+  watermarks — which is what makes embedding's pace regular (A4) — is
+  designed in §10 and unimplemented;
+- **units are not yet sized by duration** (§10, proposal 4). This is the
+  precondition for B2 and B3 to be fine-grained rather than coarse: a
+  300 s archive pass still cannot release early. The scheduler now
+  MEASURES what units cost (`suggest_floor_s`), which is the input that
+  work needs;
+- **`reserve()` exists but no query path calls it yet.**

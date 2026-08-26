@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 
 from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                embeddings, entities, fts, plugin_io, refs, spaces, stats)
+                embeddings, entities, fts, plugin_io, refs, sched, spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -1598,6 +1598,125 @@ def owns_own_embed(collection) -> bool:
     return collections_mod.recipe_for(collection).spends == "cpu"
 
 
+def servable_collections(all_collections, pipeline: bool) -> list:
+    """Who the encoder rotation may serve.
+
+    A collection that owns its own embed is excluded and the exclusion
+    happens HERE, before any work is selected: serving it on this loop
+    would put two embed writers on one collection, and would let a CPU
+    encoder hold the GPU's turn for the length of a batch — the starvation
+    that the per-collection thread split exists to fix.
+    """
+    return [c for c in all_collections
+            if not (pipeline and owns_own_embed(c))]
+
+
+def embed_resource(collection) -> str:
+    """The scheduler's name for what this collection's embedding contends
+    for. Per ENDPOINT, not per collection: two collections pointed at one
+    GPU contend and must share it; two pointed at different containers do
+    not, and the name is the only thing that tells them apart."""
+    return sched.encoder(collections_mod.recipe_for(collection).url)
+
+
+def _serve_turn(con, collection, turn, last_idle_log, pipeline) -> bool:
+    """One collection's slot on the encoder: work until the slot is spent,
+    or until the collection has nothing left to do — whichever is first.
+
+    A step that returns False is a DEFERRAL or an empty queue, and either
+    way this collection cannot use the resource now. It releases at once
+    (`idle=True`) instead of sitting on a slot it cannot spend, and rejoins
+    the rotation at the tail when its work reappears — the operator's "a
+    plugin can release a resource without waiting for the end of its time
+    slot", and the reason releasing honestly is safe: re-entry is at the
+    tail, so an early release can never be used to cut back in.
+    """
+    worked = False
+    try:
+        while not _stop.is_set():
+            t0 = time.monotonic()
+            did = _run_one_step(con, collection, last_idle_log,
+                                pipeline_active=pipeline)
+            dt = time.monotonic() - t0
+            if not did:
+                # charged for the time it took to find out, but not as a
+                # unit: nothing was processed, so it must not pollute the
+                # measured cost of this collection's units
+                turn.spent(dt, units=0)
+                turn.release(idle=True)
+                return worked
+            worked = True
+            turn.spent(dt)
+            if not turn.may_continue():
+                break
+    finally:
+        turn.release(idle=False)        # a no-op if already released above
+    return worked
+
+
+def _serve_rotation(cons, servable, last_idle_log, pipeline) -> bool:
+    """The encoder rotation across collections, as deficit round-robin
+    (app/sched.py, docs/scheduling.md §10).
+
+    What this replaces: a fixed budget per collection, spent in list order,
+    on every collection whether or not it had work. That gave a collection
+    with nothing to do the same place in the queue as one with millions of
+    documents pending, and it made the worst-case wait for a collection
+    that just became ready the sum of everyone else's FULL budgets.
+
+    One pass hands each flow at most one turn and returns. The bound
+    matters: the caller owns telemetry, the control state (pause, SIGTERM)
+    and discovery, and a rotation that never came back up here would
+    make all three wait for it.
+    """
+    s = sched.scheduler()
+    by_resource: dict[str, dict] = {}
+    for c in servable:
+        by_resource.setdefault(embed_resource(c), {})[c.name] = c
+    worked = False
+    for resource, members in by_resource.items():
+        s.sync(resource, members)
+        for name in members:
+            # no floor: a flow's minimum efficient unit is MEASURED from what
+            # its units actually cost (sched.Scheduler._learn), never set
+            # here — and passing one every pass would overwrite the
+            # measurement before it could ever take effect
+            s.declare(resource, name)
+        for _ in range(len(members)):
+            if _stop.is_set():
+                break
+            turn = s.acquire(resource)
+            if turn is None:
+                break
+            collection = members.get(turn.collection)
+            if collection is None:
+                turn.release(idle=True)
+                continue
+            if _serve_turn(cons[collection.name], collection, turn,
+                           last_idle_log, pipeline):
+                worked = True
+    return worked
+
+
+def _serve_in_order(cons, servable, last_idle_log, pipeline) -> bool:
+    """The pre-scheduler behaviour, kept behind SCHED_FAIR_SHARE=0 as an
+    escape hatch: a fixed time budget per collection, in list order."""
+    worked = False
+    for collection in servable:
+        if _stop.is_set():
+            break
+        con = cons[collection.name]
+        round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
+        while not _stop.is_set():
+            if not _run_one_step(con, collection, last_idle_log,
+                                 pipeline_active=pipeline):
+                break
+            worked = True
+            if time.time() >= round_deadline:
+                break
+    return worked
+
+
 def _pipeline_worker(collection, gone: threading.Event) -> None:
     con = db.connect(collection)
     db.log_event(con, "info", "worker",
@@ -1652,7 +1771,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                         last_idle = time.time()
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
-                _execute_step(con, collection, stage, row)
+                if _execute_step(con, collection, stage, row) and stage == "fts":
+                    # A document just became embeddable. ANNOUNCE it (§10,
+                    # B2) instead of leaving the encoder rotation to find
+                    # out on its next sweep: a collection that becomes
+                    # runnable just after being skipped would otherwise wait
+                    # a whole rotation to say so.
+                    sched.scheduler().demand(embed_resource(collection),
+                                             collection.name)
             except Exception as e:   # noqa: BLE001 — a pipeline thread must outlive any step
                 if manifest_contended(e):
                     # a writer outside _execute_step's own handling (queue
@@ -1816,6 +1942,38 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
 # backwards. A tiny dedicated thread keeps the Stats and Network pages honest
 # while the loop is busy.
 STATS_PUBLISH_INTERVAL_S = 10.0
+# How often the scheduler's own accounting reaches the worker log. Rarely:
+# it is a slow-moving fairness statement, not a rate, and the log read as a
+# time series is the first benchmark anyone has (docs/scheduling.md §7).
+SHARES_LOG_INTERVAL_S = 600.0
+_last_shares_log = 0.0
+
+
+def _log_shares(con) -> None:
+    """Publish what each collection actually GOT from each contended
+    resource. Without this the fair share is an assertion; with it, a
+    scheduling change can be judged on the general picture instead of on
+    whichever collection happened to be busy when someone looked."""
+    global _last_shares_log
+    now = time.time()
+    if now - _last_shares_log < SHARES_LOG_INTERVAL_S:
+        return
+    _last_shares_log = now
+    for resource, flows in sched.scheduler().snapshot().items():
+        busy = {n: e for n, e in flows.items() if e["turns"]}
+        if not busy:
+            continue
+        parts = [
+            f"{n}: {e['share']:.0%} in {e['turns']} turns "
+            f"({e['seconds']:.0f}s, {e['units']} units, "
+            f"quantum {e['quantum_s']:.1f}s"
+            + (f", {e['overruns']} overruns" if e["overruns"] else "")
+            + (f", units cost {e['suggest_floor_s']:.1f}s"
+               if e["suggest_floor_s"] else "")
+            + ")"
+            for n, e in sorted(busy.items())
+        ]
+        db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
 
 
 def _stats_publisher() -> None:
@@ -1845,6 +2003,7 @@ def _stats_publisher() -> None:
                     seed_cons[c.name] = db.connect(c)
             seeding.tick(collections, seed_cons, con, db.worker_state(con))
             db.publish_worker_rates(con, get_manager().rates())
+            _log_shares(con)
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
     for c_con in seed_cons.values():
@@ -1880,6 +2039,11 @@ def run_forever():
             db.log_event(cons[c.name], "warn", "bundle",
                          f"{len(stale)} bundle import(s) interrupted by a previous "
                          f"shutdown; affected documents will be re-embedded")
+    sched.scheduler().configure(
+        base_quantum_s=config.SCHED_QUANTUM_S,
+        floor_cap_s=config.SCHED_FLOOR_CAP_S,
+        # the minimum efficient unit is a measurement, not a setting
+        learn_floor=True)
     threading.Thread(target=_stats_publisher, name="stats-publisher",
                      daemon=True).start()
     # the vector index maintainer: its own thread, so an hour-long build or
@@ -1986,32 +2150,21 @@ def run_forever():
                     else:
                         _discover(con, collection, "interval")
                         last_discover[collection.name] = time.time()
-                # Time-budgeted round: each collection works until the budget
-                # elapses, not exactly one document. One-doc rounds starved
-                # cheap stages behind expensive neighbors (observed live: a
-                # 0.1s pubmed rdf step per 30-90s gutenberg embed = 10 days
-                # for 30k articles). An expensive single step still exceeds
-                # the budget after one iteration, so fairness is unchanged
-                # where it mattered; the stop event is honored per step.
-                # With pipeline threads on, this loop is the EMBED loop: rdf/
-                # fts run on per-collection threads and the budget only paces
-                # embed work plus bundles/genesis.
-                if state == "acquire-only":
-                    continue   # discovery above still runs; nothing heavy here
-                if pipeline and owns_own_embed(collection):
-                    # Owned end to end by its own thread. Touching it here
-                    # would put two embed writers on one collection AND let a
-                    # CPU encoder block the GPU's turn, which is the bug this
-                    # split exists to fix.
-                    continue
-                round_deadline = time.time() + config.WORKER_ROUND_BUDGET_S
-                while not _stop.is_set():
-                    if not _run_one_step(con, collection, last_idle_log,
-                                          pipeline_active=pipeline):
-                        break
-                    any_work = True
-                    if time.time() >= round_deadline:
-                        break
+            # The heavy work, after the discovery housekeeping above (which
+            # runs for every collection in every mode). acquire-only stands
+            # the CPU/GPU stages down and keeps the bytes moving.
+            #
+            # With pipeline threads on, this is the EMBED loop: rdf/fts run
+            # on per-collection threads, and what is scheduled here is embed
+            # work plus bundles/genesis. A collection that owns its own
+            # embed is excluded — touching it here would put two embed
+            # writers on one collection AND let a CPU encoder block the
+            # GPU's turn, which is the bug that split exists to fix.
+            if state != "acquire-only":
+                servable = servable_collections(all_collections, pipeline)
+                serve = (_serve_rotation if config.SCHED_FAIR_SHARE
+                         else _serve_in_order)
+                any_work = serve(cons, servable, last_idle_log, pipeline)
             if not any_work:
                 time.sleep(config.WORKER_IDLE_SLEEP)
         except Exception as e:

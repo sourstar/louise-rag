@@ -136,6 +136,18 @@ DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))
 # index), while the main loop keeps embed (GPU-serial across collections by
 # doctrine), genesis, bundles and control. 0 = legacy single-thread rounds.
 WORKER_PIPELINE_THREADS = int(os.getenv("WORKER_PIPELINE_THREADS", "1"))
+# Fair share across collections (app/sched.py, docs/scheduling.md §10): the
+# encoder rotation is deficit round-robin over the collections that actually
+# have work, instead of a fixed budget per collection in list order. 0 =
+# the previous behaviour, kept as an escape hatch while this is young.
+SCHED_FAIR_SHARE = int(os.getenv("SCHED_FAIR_SHARE", "1"))
+# The base quantum — the fair share itself. A flow's slot is never smaller
+# than its own minimum efficient unit, which is MEASURED, not set here.
+SCHED_QUANTUM_S = float(os.getenv("SCHED_QUANTUM_S", str(WORKER_ROUND_BUDGET_S)))
+# ...and never larger than this, however expensive that collection's units
+# turn out to be. An oversized unit is a unit to fix (it shows up as an
+# overrun), not a reason to hand one collection the resource for minutes.
+SCHED_FLOOR_CAP_S = float(os.getenv("SCHED_FLOOR_CAP_S", "60"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # How many documents one fts round commits through a single tantivy writer.

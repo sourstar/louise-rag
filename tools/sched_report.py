@@ -8,7 +8,8 @@ measurement, and each one missed what the next had to fix:
     python -m tools.sched_report --phases wikivec       where an archive pass goes
     python -m tools.sched_report --rates --seconds 120  documents/s per stage
     python -m tools.sched_report --pool                 parse pool health
-    python -m tools.sched_report --all                  queries + rates + pool
+    python -m tools.sched_report --shares               fair-share accounting
+    python -m tools.sched_report --all                  all of the above
 
 Run it INSIDE the worker container (it needs the manifests and the app):
 
@@ -191,6 +192,42 @@ def pool_health() -> None:
     print("  a thread gone quiet: see docs/scheduling.md §7 (py-spy sidecar)")
 
 
+def shares(names, limit: int = 12) -> None:
+    """What each collection actually GOT from each contended resource.
+
+    Read out of the worker's own log rather than measured here: the
+    scheduler's accounting lives in the worker process (app/sched.py), and
+    a second process cannot see it. The worker publishes a line per
+    resource every SHARES_LOG_INTERVAL_S; this prints the most recent ones.
+    """
+    print("=== shares (from the worker log; app/sched.py accounting):")
+    seen = 0
+    for name in _names(names):
+        col = next((c for c in c_mod.load_all() if c.name == name), None)
+        if col is None:
+            continue
+        con = db.connect(col)
+        try:
+            rows = list(con.execute(
+                "SELECT ts, message FROM events WHERE stage='sched' "
+                "ORDER BY ts DESC LIMIT ?", (limit,)))
+        except Exception as e:            # noqa: BLE001 — an old manifest
+            print(f"  {name}: {e}")
+            continue
+        finally:
+            con.close()
+        for ts, message in rows:
+            print(f"  [{ts}] {message}")
+            seen += 1
+        if rows:
+            break            # node-wide state: one collection's log has it all
+    if not seen:
+        print("  nothing logged yet — the worker publishes every "
+              f"{worker.SHARES_LOG_INTERVAL_S:.0f}s once a rotation has run,"
+              "\n  and only for resources that had turns. SCHED_FAIR_SHARE=0"
+              " disables the rotation entirely.")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -198,11 +235,15 @@ def main(argv=None) -> int:
     ap.add_argument("--phases", metavar="COLLECTION", help="where an archive pass's time goes")
     ap.add_argument("--rates", action="store_true", help="documents/s per stage")
     ap.add_argument("--pool", action="store_true", help="parse pool health")
-    ap.add_argument("--all", action="store_true", help="queries + rates + pool")
+    ap.add_argument("--shares", action="store_true",
+                    help="what each collection got from each resource")
+    ap.add_argument("--all", action="store_true",
+                    help="queries + shares + rates + pool")
     ap.add_argument("--seconds", type=int, default=120, help="rates sampling window")
     ap.add_argument("collections", nargs="*")
     args = ap.parse_args(argv)
-    if not any((args.queries, args.phases, args.rates, args.pool, args.all)):
+    if not any((args.queries, args.phases, args.rates, args.pool, args.shares,
+                args.all)):
         ap.print_help()
         return 2
     ok = True
@@ -210,6 +251,8 @@ def main(argv=None) -> int:
         ok = queries(args.collections) and ok
     if args.phases:
         phases(args.phases)
+    if args.shares or args.all:
+        shares(args.collections)
     if args.rates or args.all:
         rates(args.collections, args.seconds)
     if args.pool or args.all:
