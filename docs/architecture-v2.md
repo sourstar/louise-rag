@@ -1458,3 +1458,39 @@ the live deployment:
     caller for `reserve()`. (The commit that introduced this called it
     amendment 52; 52 was already taken by the index-maintenance pass —
     it is this one, 53.)
+
+54. **§7 — the rest of the scheduling model: units sized by DURATION,
+    a phase controller, one order for index maintenance, pool admission,
+    and query priority across processes (2026-08-27).** Amendment 53
+    decided which collection gets a resource; this decides what a
+    collection does with its slot and who may interrupt it.
+    `app/sizing.py` replaces fixed batch counts with a target duration —
+    `FTS_BATCH_DOCS=200` was 0.4 s of work for pubmed and 14–37 s for
+    gutenberg, one setting buying two different things — and adjusts the
+    re-index window multiplicatively from what the last probe cost (AIMD;
+    the fixed 200k window measured 498 ms on pubmed EVERY round of a
+    caught-up collection). Unit duration is also what bounds B2/B3: a slot
+    can only be handed back at a unit boundary.
+    `worker._archive_yields` is the phase controller (A2/A4): an archive
+    pass holds its thread for up to 300 s and nothing reaches `fts_done`
+    while it does, so the encoder runs dry — if the embed queue is below
+    `PHASE_EMBED_LOW` and fts has work, fts goes first. It needs no model
+    of who needs what because genesis imports vectors only for `fts_done`
+    documents, so fts is the archive's upstream as well as the encoder's
+    and the work is never wasted. Index maintenance is served by the same
+    rotation (`sched.RES_INDEX`) rather than list order — one collection
+    at a time is deliberate, which is exactly why the order matters.
+    Query priority (A5) could not be arranged inside either process — the
+    query is answered by the WEB process and the backfill runs in the
+    WORKER — so the reservation crosses through the control table
+    (`db.claim_query_priority`), read by the worker between documents,
+    which stands down and keeps its place. Parse-pool submissions are
+    capped at their share of the children while other collections are
+    active; that is ADMISSION control, and the CPU weighting between
+    running children is deliberately left to cgroups v2 `cpu.weight`
+    rather than reimplemented in Python (operator rule: do not reinvent
+    the wheel — DRR, AIMD and CFS are the wheels used here).
+    Open, in `docs/scheduling.md` §11: query priority reserves the encoder
+    but not a pool child; the archive yields only between shards; and if
+    the encoder moves to vLLM, A5 becomes a per-request `priority` field
+    on the server and this reservation should be retired, not extended.
