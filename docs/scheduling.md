@@ -83,6 +83,14 @@ Two ownership rules follow from the table and are load-bearing:
 
 ## 4. What things cost — measured on the reference node, 2026-08-28
 
+> **Read §9 before using these numbers.** They were taken while the
+> collections were in DIFFERENT phases (two finished, one parse-bound,
+> one archive-bound), so the cross-collection comparisons describe one
+> unbalanced snapshot. Per-phase costs (a batch, a query, a pass) are
+> sound; anything that looks like a share or a ratio between collections
+> is not, and must be re-measured under a balanced load before it
+> becomes a constant.
+
 12 cores, 62 GB; pubmed 40M documents, wikivec 22M (35M vectors),
 wikipedia 19.4M, gutenberg 74k. Numbers are the point of this section:
 when something looks slow, compare against these before theorising.
@@ -268,3 +276,129 @@ and tests reset process-level state between cases (`conftest.py`'s
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
 | the knobs | `app/config.py` (`WORKER_*`, `FTS_BATCH_*`, `RDF_BATCH_DOCS`, `GENESIS_*`, `PARSE_*`, `VECTOR_INDEX_*`) |
 | the history and the incidents | `docs/architecture-v2.md` §17 amendments 37, 38, 42, 45, 47–51; `docs/STATUS.md` |
+
+## 9. What happens when everything fires at once
+
+*The operator's question, 2026-08-28: "always ask yourself what happens
+if a great number of processes of the same kind fire all together?" —
+and the observation that killed the credibility of §4's numbers: the
+collections were in DIFFERENT PHASES when I measured (wikipedia and
+gutenberg finished, pubmed parse-bound, wikivec archive-bound), so every
+cross-collection comparison in this file describes one snapshot of an
+unbalanced system, not the machine. Numbers taken that way must never be
+turned into constants without re-measuring under a balanced load.*
+
+Today's design has **no global resource model**. Each collection runs its
+own thread with local rules, and the resources are shared by accident —
+by the OS scheduler, by FIFO queues, by whoever asks first. What that
+means when N collections are all busy at once:
+
+| resource | how it is shared today | what happens at N busy collections |
+|---|---|---|
+| CPU (parse pool) | ONE FIFO pool of `cores−1` children | the collection submitting the biggest batches gets the most children; a 1,000-document batch queues ahead of a 10-document one and delays it by its whole duration. No fairness, no reservation, no preemption |
+| CPU (parent, GIL) | every pipeline thread + acquisition + maintainer share one interpreter | whoever holds the GIL wins; a collection doing cheap work in a tight loop starves one doing rare expensive work |
+| GPU encoder | serialised on the main loop, one collection per round | fair-ish by round-robin, but a round is a whole document — worst-case latency for a collection is (N−1) × a document's embed time |
+| CPU encoders | one endpoint per collection | no contention — but also no way to lend an idle endpoint to anyone |
+| fetch bandwidth | central token bucket with priority classes (interactive > delta > backfill > archive > seeding) | the ONE resource that IS budgeted globally today |
+| disk | nothing | N archive passes read N × 437 MB shards concurrently; on the HDD pool that is thrash |
+| manifest write lock | per collection | no cross-collection effect — correct by construction |
+| vector store | per collection, MVCC | no cross-collection effect since amendment 52 |
+| index maintenance | one thread, one collection at a time | a 41-minute compaction makes the other collections wait their turn — one slow table delays everyone's index freshness |
+
+So the honest summary: **fetch is scheduled, everything else is
+first-come-first-served.** It has held up so far because the collections
+have mostly been in different phases — which is exactly the condition
+that made my measurements unrepresentative.
+
+## 10. The target model, and how today's design measures against it
+
+The operator's model, stated as requirements:
+
+**A. Within one collection**
+1. Fetching has the least predictable throughput: never starve it of
+   CPU. (Throttling it for the global bandwidth budget is fine.)
+2. Spend the budget so that no phase starves for want of input from the
+   previous one.
+3. Minimise phase-switching overhead: dimension the batches sensibly.
+4. Embedding should proceed at a REGULAR pace, not in bursts.
+5. Query-related work outranks regular processing.
+
+**B. Across collections**
+Every collection whose embedding is unfinished gets an equal share of
+each resource **it actually needs** (a collection that uses no GPU is
+assigned none). A collection that does not consume its slot has it
+progressively reduced, down to a floor, and the freed time is
+distributed among the collections that overran theirs — balanced.
+
+### Where today's design stands
+
+| requirement | today | gap |
+|---|---|---|
+| **A1** fetch never CPU-starved | acquisition runs on its own threads; the parse pool's children are `nice 10`, so fetch outranks them; parse/chunk left the parent (amendment 47), which removed most GIL pressure | satisfied **by accident, not by design**: nothing measures whether fetch is achieving its budgeted rate, and nothing reacts if it is not |
+| **A2** no phase starves for input | rdf and fts interleave on a watermark: fts takes the thread only when a full batch is ready, else rdf runs ahead (`_next_book`) | only for rdf→fts. fts→embed has no watermark: the encoder simply takes what exists, and the archive can hold the thread for 300 s while the encoder idles |
+| **A3** batch dimensioning | fixed constants: `RDF_BATCH_DOCS=1000`, `FTS_BATCH_DOCS=1000` capped at 20,000 chunks, `APPLY_BATCH_DOCS=500`, genesis pass 300 s | constants, not measurements. A gutenberg fts commit takes 14–37 s (20k chunks), pubmed's 0.4 s (1k chunks) — the same "1000 documents" means two different things |
+| **A4** regular embedding pace | none | embedding is bursty by construction: 1,900 docs/s during an archive pass, 0 during the parse phases |
+| **A5** query priority | the lazy queue is consulted FIRST in selection, so a query-driven embed jumps the line | that is the only mechanism. A query's embedding call queues behind the worker's at the same endpoint; a query's reader load queues behind the pool's FIFO |
+| **B** fair share, need-aware, work-conserving | none. Threads compete; the GPU is round-robin per round | no accounting of what a collection consumed, no slots, no shrinking, no redistribution |
+
+### The proposal
+
+A scheduler that owns the *resources*, with the pipeline threads asking
+it what to do rather than deciding for themselves. Four parts, each
+useful alone and in this order:
+
+**1. Name and account the resources.** A `Resource` per contended thing:
+`parse` (pool slots), `index` (tantivy writer time), `encoder:<endpoint>`
+(one per endpoint, GPU or CPU), `fetch` (already the token bucket),
+`store` (vector writes), `disk:<pool>`. Every unit of work declares which
+resource it consumes and for how long it ran — the recorder in
+`app/stats.py` already measures most of this; it becomes the scheduler's
+input rather than a display.
+
+**2. Deficit round-robin per resource (requirement B).** For each
+resource, the collections that NEED it (pending work for that resource
+and embedding unfinished) each hold a quantum. A collection runs until
+its quantum is spent, then yields. Unused quantum shrinks the next
+assignment geometrically to a floor (`min_share`); the freed capacity is
+split among collections that exhausted theirs. This is the operator's
+rule exactly, and it is a solved algorithm (DRR) — cheap, no clock
+skew, work-conserving by construction.
+*Concretely:* the parse pool gets per-collection queues instead of FIFO;
+the GPU gets a run queue with quanta instead of round-robin-per-round;
+the index maintainer serves the collection with the largest
+`unindexed × staleness` product rather than list order.
+
+**3. A per-collection phase controller (A2, A4).** Between phases there
+are queues whose depth is already in the manifest:
+`q(rdf→fts) = rdf_done ∧ ¬fts_done`, `q(fts→embed) = fts_done ∧ ¬embed_done ∧ ¬archive-covered`.
+Keep each between a low and a high watermark: run the phase whose
+DOWNSTREAM queue is below its low watermark; if all are healthy, run the
+phase with the deepest input. Embedding then gets a continuously
+non-empty queue, which is what makes its pace regular (A4) — and the
+archive's 300 s budget stops being a fixed constant: it yields as soon
+as the embed queue is full enough, and keeps the thread when it is not.
+
+**4. Adaptive batch sizing (A3).** Replace the fixed counts with a target
+batch DURATION (2–5 s), and size each batch from the collection's own
+measured throughput (the same EMA the ETAs use), bounded by the existing
+memory caps. Gutenberg then commits ~200 documents and pubmed ~5,000,
+both taking about the same time — which is what "minimise switching
+overhead" actually means when documents differ by two orders of
+magnitude.
+
+**5. Query priority as a real reservation (A5).** Two additions: the
+embed client takes a priority argument, and query embeddings hold a
+reserved slot at each endpoint (the worker's batch yields between
+documents, never mid-call); the parse pool keeps one child free for
+query-time work (the reader panel), so a 500-document batch never delays
+a reader by 10 s.
+
+### What this changes about measuring
+
+Any of the above must be evaluated under a **balanced** load — every
+collection with work in every phase — not the accidental mix that
+produced §4. The instrument grows a `--scenario` mode that reports, per
+collection AND per phase, what each resource delivered, so a change can
+be judged on the general picture rather than on whichever collection
+happened to be busy.
+
