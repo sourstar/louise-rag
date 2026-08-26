@@ -2129,6 +2129,18 @@ SHARES_LOG_INTERVAL_S = 600.0
 _last_shares_log = 0.0
 
 
+def _sizing_label(key: str) -> str:
+    """A sizing key is `[stage:]<manifest path>`, and every collection's
+    manifest is called `manifest.db` — so the FILENAME identifies nothing.
+    The collection is its parent directory (the same reason the keys hold
+    a path at all: two collections can share a name)."""
+    stage, sep, path = key.partition(":")
+    if not sep:
+        stage, path = "", key
+    name = Path(path).parent.name or Path(path).name
+    return f"{stage} {name}".strip()
+
+
 def _log_shares(con) -> None:
     """Publish what each collection actually GOT from each contended
     resource. Without this the fair share is an assertion; with it, a
@@ -2160,8 +2172,8 @@ def _log_shares(con) -> None:
     sizes = sizing.sizer().snapshot()
     if sizes["rates"]:
         db.log_event(con, "info", "sched", "unit costs — " + "; ".join(
-            f"{k.rsplit('/', 1)[-1]}: {v * 1000:.1f} ms/doc" if v < 1
-            else f"{k.rsplit('/', 1)[-1]}: {v:.1f} s/doc"
+            f"{_sizing_label(k)}: {v * 1000:.1f} ms/doc" if v < 1
+            else f"{_sizing_label(k)}: {v:.1f} s/doc"
             for k, v in sorted(sizes["rates"].items())))
     # The adapted window widths. These live only in this process, so
     # `sched_report --queries` CANNOT see them — it times the static
@@ -2169,7 +2181,7 @@ def _log_shares(con) -> None:
     # this line there is no way to tell whether the controller is working.
     if sizes["windows"]:
         db.log_event(con, "info", "sched", "windows — " + "; ".join(
-            f"{k.rsplit('/', 1)[-1]}: {v:,} rowids"
+            f"{_sizing_label(k)}: {v:,} rowids"
             for k, v in sorted(sizes["windows"].items())))
 
 

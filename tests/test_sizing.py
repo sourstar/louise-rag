@@ -121,6 +121,18 @@ def test_the_worker_keys_sizing_per_collection_and_stage(tmp_path):
     assert worker._batch_key(a, "fts") != worker._batch_key(a, "rdf")
 
 
+def test_sizing_labels_name_the_collection_not_the_file(tmp_path):
+    """Every collection's manifest is called `manifest.db`, so a label
+    taken from the filename identifies nothing — the first version of the
+    log line read `manifest.db: 250,000 rowids` five times over."""
+    assert worker._sizing_label("fts:/data/pubmed/manifest.db") == "fts pubmed"
+    assert worker._sizing_label("/data/wikivec/manifest.db") == "wikivec"
+    assert worker._sizing_label("rdf:/data/gutenberg/manifest.db") == "rdf gutenberg"
+    labels = {worker._sizing_label(f"fts:/data/{n}/manifest.db")
+              for n in ("pubmed", "wikivec", "gutenberg")}
+    assert len(labels) == 3
+
+
 def test_the_worker_falls_back_to_the_configured_counts(tmp_path, isolated_config):
     from app import collections as collections_mod
     c = collections_mod.Collection(
