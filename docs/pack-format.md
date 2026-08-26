@@ -1072,6 +1072,13 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
+- **Should a pack recommend a reranker?** Proposal and analysis in
+  [`reranker-scope.md`](reranker-scope.md): advisory signed *evidence*
+  (model identity + digest + measured delta) yes; binding configuration
+  no, and a URL never — a manifest field that selected an outbound
+  endpoint would let a publisher choose where this node sends user
+  queries. Unresolved: whether the producer's measurement justifies a
+  wire-format field at all, or belongs in the pack's README.
 
 ## 22. Build order (each step useful on its own)
 

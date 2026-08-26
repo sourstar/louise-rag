@@ -633,6 +633,16 @@ score per text, and a listwise model returns an ordering.
    Italian-legal-tuned reranker is a decision for the *whole node*, not for
    this collection. Worth knowing before assuming it is free.
 
+#### Scope: node, collection, or pack?
+
+The question this section raised in general — may a *pack* carry or
+recommend a reranker — is answered separately in
+[`reranker-scope.md`](reranker-scope.md), because it is a platform
+question rather than an Italian-law one. Its conclusion, for this
+plugin's purposes: the reranker stays node-global and operator-set, a
+published pack may carry a signed advisory *hint* (model identity plus a
+measured delta, never a URL), and nothing applies automatically.
+
 #### The asymmetry that decides how much care to spend
 
 **The reranker is not part of `space_id`.** Swapping it costs one config
