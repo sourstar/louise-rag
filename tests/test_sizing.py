@@ -122,15 +122,27 @@ def test_the_worker_keys_sizing_per_collection_and_stage(tmp_path):
 
 
 def test_sizing_labels_name_the_collection_not_the_file(tmp_path):
-    """Every collection's manifest is called `manifest.db`, so a label
-    taken from the filename identifies nothing — the first version of the
-    log line read `manifest.db: 250,000 rowids` five times over."""
-    assert worker._sizing_label("fts:/data/pubmed/manifest.db") == "fts pubmed"
+    """Observed live, twice. Every collection's manifest is called
+    `manifest.db`, so a label taken from the filename read
+    `manifest.db: 250,000 rowids` five times over; taken from the parent
+    directory it then read `data` for the default collection, whose
+    manifest sits at the data root rather than in a directory named after
+    it. The name is registered beside the key instead."""
+    from app import collections as collections_mod
+
+    def made(name, manifest):
+        return collections_mod.Collection(
+            name=name, plugin="gutenberg", profile=None, embed_mode_default=None,
+            corpus_dir=tmp_path, manifest_path=manifest,
+            fts_dir=tmp_path / "f", lance_dir=tmp_path / "l", embed=None)
+
+    # the default collection: its manifest is NOT under a directory of its name
+    default = made("gutenberg", tmp_path / "manifest.db")
+    normal = made("pubmed", tmp_path / "pubmed" / "manifest.db")
+    assert worker._sizing_label(worker._batch_key(default, "fts")) == "fts gutenberg"
+    assert worker._sizing_label(worker._batch_key(normal, "rdf")) == "rdf pubmed"
+    # and the path fallback still works for a key nobody registered
     assert worker._sizing_label("/data/wikivec/manifest.db") == "wikivec"
-    assert worker._sizing_label("rdf:/data/gutenberg/manifest.db") == "rdf gutenberg"
-    labels = {worker._sizing_label(f"fts:/data/{n}/manifest.db")
-              for n in ("pubmed", "wikivec", "gutenberg")}
-    assert len(labels) == 3
 
 
 def test_the_worker_falls_back_to_the_configured_counts(tmp_path, isolated_config):

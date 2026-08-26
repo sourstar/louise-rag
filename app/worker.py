@@ -111,7 +111,9 @@ def _batch_key(collection, stage: str) -> str:
     """Sizing is per collection AND per stage, keyed on the manifest PATH:
     two collections can share a name and point at different corpora, and a
     document costs what its own corpus makes it cost."""
-    return f"{stage}:{collection.manifest_path}"
+    key = f"{stage}:{collection.manifest_path}"
+    _remember_label(key, f"{stage} {collection.name}")
+    return key
 
 
 def batch_docs(collection, stage: str, default: int) -> int:
@@ -502,7 +504,9 @@ def _reindex_key(con, collection) -> str:
     which collection it belongs to; keying those on "" made ONE finished
     walk suppress every other collection's re-index."""
     if collection is not None:
-        return str(collection.manifest_path)
+        key = str(collection.manifest_path)
+        _remember_label(key, collection.name)
+        return key
     return str(getattr(con, "collection_name", "") or id(con))
 
 
@@ -2129,11 +2133,25 @@ SHARES_LOG_INTERVAL_S = 600.0
 _last_shares_log = 0.0
 
 
+# Sizing keys hold a manifest PATH, because that is the only identity two
+# collections cannot share (CLAUDE.md: key on physical identity, never on a
+# name). A path is the wrong thing to PRINT, though: every manifest is
+# called `manifest.db`, and the default collection's sits at the data root
+# rather than in a directory named after it — so deriving a label from the
+# path gave "manifest.db" five times, and then "data". The name is
+# registered here beside the key instead: physical identity for the
+# lookups, a human name for the log.
+_sizing_names: dict[str, str] = {}
+
+
+def _remember_label(key: str, label: str) -> None:
+    _sizing_names[key] = label
+
+
 def _sizing_label(key: str) -> str:
-    """A sizing key is `[stage:]<manifest path>`, and every collection's
-    manifest is called `manifest.db` — so the FILENAME identifies nothing.
-    The collection is its parent directory (the same reason the keys hold
-    a path at all: two collections can share a name)."""
+    known = _sizing_names.get(key)
+    if known:
+        return known
     stage, sep, path = key.partition(":")
     if not sep:
         stage, path = "", key
