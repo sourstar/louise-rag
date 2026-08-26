@@ -3,9 +3,9 @@
 **Status: PROPOSAL, nothing built.** This is the research pass that has to
 happen before a `gazzetta` plugin is written: what material exists, in what
 form, what the platform's own constraints allow, and which encoder the
-collection would be pinned to *forever* (invariant 1). Three decisions in
+collection would be pinned to *forever* (invariant 1). The decisions in
 here belong to the operator, not to an implementer — they are collected in
-§11. Do not start coding before §11 is answered; the expensive mistake in
+§12. Do not start coding before §12 is answered; the expensive mistake in
 this codebase has always been pinning a space before measuring it.
 
 Written 2026-08-26.
@@ -15,7 +15,7 @@ restricted — search results were readable, pages were not. Every fact below
 that came from a search-result summary rather than from the page itself is
 marked *(unverified)*. The three that matter most — the Normattiva OpenData
 API's bulk shape, its delta mechanism, and the exact terms text — are
-exactly the unverified ones, and §11 asks for them first.
+exactly the unverified ones, and §12 asks for them first.
 
 ---
 
@@ -76,7 +76,7 @@ Issues resolve to PDF **and** HTML; individual acts resolve to HTML only —
 What the GU has that Normattiva does not: everything **non-normative** —
 ministerial decrees that never get a number, comunicati, concorsi, bandi,
 inserzioni. That material is only reachable by walking the issue index, it
-carries no URN, and (see §9) parts of it contain personal data.
+carries no URN, and (see §10) parts of it contain personal data.
 
 ### 1.3 Au.G.U.Sto — historic GU 1860–1946
 
@@ -96,7 +96,7 @@ Useful for *evaluation and bootstrap*, never as the corpus of record:
   **MultiLegalPile** (689 GB multilingual legal corpus).
 - The NLLP 2023 corpus of **363,000 act titles, 1988–2022**, multi-label
   classified — the one *measured* volume figure in this document, and a
-  ready-made evaluation set for the encoder bake-off in §6.
+  ready-made evaluation set for the encoder bake-off in §7.
 
 ### 1.5 Volume — to be measured, not guessed
 
@@ -119,7 +119,7 @@ Three candidate units, and they are not interchangeable:
 | the **act** (un atto) | URN:NIR / ELI | **revised indefinitely** (multivigenza) | Normattiva |
 | the **article** (un articolo) | URN + `~art5` | revised, one comma at a time | Normattiva AKN |
 
-The act is the document; the article is the chunk (§4); the issue is a
+The act is the document; the article is the chunk (§5); the issue is a
 metadata attribute, not a document. That falls out of what people actually
 ask — nobody asks a question of *Gazzetta n. 156 of 2026*, they ask what the
 law says — and it is what the origin's identifiers are built around.
@@ -127,7 +127,7 @@ law says — and it is what the origin's identifiers are built around.
 **Consequence, and it is the load-bearing one:** the corpus is
 **`Mutability.MUTABLE`**. An act's consolidated text changes when it is
 amended. That is the same class as Wikipedia, and it is why `chunk_cdc`
-exists — but see §4, because legal text has something Wikipedia does not: a
+exists — but see §5, because legal text has something Wikipedia does not: a
 stable, numbered, semantically real unit.
 
 **Recommendation: two source_ids, shipped in order, not one plugin with two
@@ -137,7 +137,7 @@ with different licences, different mutability and different chunkers.
 
 1. **`normattiva`** — the normative corpus, AKN, MUTABLE. Build this.
 2. **`gazzetta`** — the issue stream (concorsi, inserzioni, unnumbered
-   decrees), HTML, IMMUTABLE. Only after §9 is settled; it is the half with
+   decrees), HTML, IMMUTABLE. Only after §10 is settled; it is the half with
    the licence and privacy problems.
 
 ---
@@ -182,9 +182,10 @@ tree, not remembered.
 4. **No vector index yet** (STATUS.md, "Known gaps"). Every semantic query
    is a flat scan: measured 15.8M rows × dim 1024 f16 = **13 s**. Scaling
    that, a Normattiva corpus chunked per article (order 1–5M chunks) costs
-   ~0.8–4 s per query at dim 1024, and **four times that at Qwen3's dim
-   4096**. This is an argument about encoder choice (§6), today, not a
-   future concern.
+   ~0.8–4 s per query at dim 1024, and four times that at dim 4096. Note
+   what this does and does not constrain: it is an argument about **which
+   dimension gets pinned**, not about which model wins — Matryoshka
+   truncation separates the two (§7.1).
 
 5. **GPU boundary** (invariant 7): the app never imports torch. Any encoder
    must be reachable over HTTP — TEI or llama.cpp server — and must pass the
@@ -205,7 +206,143 @@ tree, not remembered.
 
 ---
 
-## 4. Chunking: the article is the unit
+## 4. The rendition: a canonical text form for embedding
+
+AKN is an excellent *interchange* format and a poor *embedding input*: the
+encoder would see markup, `eId` attributes and namespace noise, and the
+tokens spent on them are tokens not spent on the norm. So the corpus is
+processed into a canonical text form — the **rendition** — under three
+constraints, in this order:
+
+1. **structure preserved** — every partition, article number (`5-bis`
+   included), comma, lettera, allegato and rubrica survives, and survives
+   *recoverably*, not just visually;
+2. **readable in a plain text editor** — someone who opens the file with
+   `less` reads a law, not a serialisation;
+3. **better for the encoder** — prose, no markup, no attribute soup.
+
+### 4.1 The format
+
+One file per act: YAML front matter, then the text. Markdown-shaped because
+that is what "readable in an editor" converges on anyway, but the rules
+below are the specification — not "whatever a Markdown writer emits".
+
+```
+---
+urn: urn:nir:stato:decreto.legislativo:2005-03-07;82
+eli: https://www.gazzettaufficiale.it/eli/id/2005/05/16/005G0104/sg
+tipo: decreto legislativo
+numero: 82
+data: 2005-03-07
+titolo: Codice dell'amministrazione digitale
+gazzetta: {serie: sg, numero: 112, data: 2005-05-16, supplemento: 93}
+vigenza: 2026-08-26
+stato: vigente
+rendition: normattiva/1
+fonte: "Normattiva, CC BY 4.0 — testo non ufficiale (fa fede la GU)"
+---
+
+# Decreto legislativo 7 marzo 2005, n. 82
+Codice dell'amministrazione digitale
+
+## Capo I — Principi generali
+## Sezione I — Definizioni, finalità e ambito di applicazione
+
+### Art. 1 — Definizioni
+
+1. Ai fini del presente codice si intende per:
+   a) allegato informatico: una parte del documento informatico […];
+   b) autenticazione del documento informatico: la validazione […];
+
+2. Ai fini del presente codice si intendono altresì per […].
+
+> nota: comma modificato dall'art. 2 del d.lgs. 13 dicembre 2017, n. 217.
+
+### Art. 2 — Finalità e ambito di applicazione
+[…]
+
+### Art. 7 — (abrogato)
+```
+
+Rules, all of them load-bearing:
+
+- **`# `** the act's denomination, once. The line under it is its title.
+- **`## `** a partition — Libro, Parte, Titolo, Capo, Sezione. The nesting
+  depth is carried by the Italian partition *word*, which is canonical in
+  legal drafting, **not** by the number of `#` — so a codice nested six
+  deep does not run out of heading levels.
+- **`### Art. N — Rubrica`** an article. `N` is verbatim from the source,
+  `5-bis` and `2-septies` included. **This is the only line the chunker
+  cuts on** (§5).
+- **`N. `** a comma, at the left margin; `a) ` a lettera, indented three
+  spaces; `i) ` a numero, six. Indentation is structural, not decorative.
+- **`> nota: `** annotations — amendment history, Normattiva's `((…))`
+  modification markers resolved into prose. **Quoted lines are excluded
+  from the embedded text** and shown to the reader. This is how "the source
+  says this passage was amended" survives without polluting the vector with
+  editorial apparatus.
+- **`(abrogato)`** an article repealed in place: it keeps its heading, has
+  no body, and produces **no chunk** — visible to a reader, absent from
+  retrieval.
+- **Byte-level discipline**: UTF-8 NFC, LF, no trailing whitespace, exactly
+  one blank line between blocks, **no hard wrapping** (a re-flow would make
+  every diff meaningless and every re-render a false change).
+
+### 4.2 Where it lives, and what travels
+
+**The rendition is to Normattiva what `pack.py` is to PubMed**: a derived
+artifact, built once per act, materialised on disk beside the source,
+rebuilt from the source whenever its version changes. That framing settles
+three questions at once.
+
+- **What is the corpus of record?** The AKN from the origin. `raw_hash` is
+  over *those* bytes, so idempotence and change-detection (invariant 2) key
+  on the origin's truth, never on our own rendering of it.
+- **What travels to peers?** The AKN. A peer re-renders deterministically
+  from the same source at the same version and gets the same bytes —
+  shipping the rendition would be shipping something the receiver can
+  compute, which is the same policy call amendment 35 made for extras.
+- **Why materialise it at all, then?** Because constraint 2 is a real
+  requirement, not a nicety: an operator debugging a bad answer needs to
+  open the exact text the encoder saw. Parse-time-only rendering makes that
+  text unobservable.
+
+### 4.3 Versioning — and the global-knob trap, again
+
+`SpaceComponents` already carries a `cleaning_version` (`app/spaces.py:38`)
+— and `app/config.py:59` makes it **one global env knob**. Bumping it for a
+Normattiva rendering fix would re-pin every collection on the node, which is
+precisely the mistake CLAUDE.md records for `CHUNK_VERSION` ("a global knob
+that scopes per-thing"), in a second coat.
+
+The way out needs no amendment: **fold the rendition version into the
+chunker's own version.** `akn_article` (§5) owns the whole path from source
+XML to chunk, so `AKN_CHUNK_VERSION` covers rendering *and* cutting, and it
+is bumped by a change to either. That is not a conflation — any rendition
+change genuinely does change the text and genuinely must re-embed. It also
+keeps the per-chunker versioning that amendment 39 established for
+`ABSTRACT_CHUNK_VERSION`, and leaves every existing pin untouched.
+
+The materialised files carry `rendition: normattiva/<version>` in their
+front matter, so a version mismatch is a cheap per-file check and a
+re-render, not a corpus-wide guess.
+
+### 4.4 How "structure preserved" stops being an aspiration
+
+A test, not a promise: parse the rendition text back into a structural
+skeleton — the ordered list of (partition path, article number, comma
+numbers) — and assert it equals the skeleton read from the AKN. Round-trip
+of the *skeleton*, not of the bytes; the prose is allowed to lose markup,
+the structure is not allowed to lose anything.
+
+Golden fixtures must cover the shapes that break renderers: a codice with
+six partition levels, a two-article law, an act with allegati and tables,
+an act with repealed articles, an act with `((…))` modification markers,
+and an old act available only as XML-NIR rather than AKN.
+
+---
+
+## 5. Chunking: the article is the unit
 
 `chunker_name()` today would route a MUTABLE source to `chunk_cdc`.
 Content-defined chunking is the right *answer to the wrong question* here.
@@ -213,34 +350,36 @@ It solves boundary drift, which legal text does have — but it solves it
 blindly, cutting mid-comma, when the text already carries the exact unit
 both the amendment mechanism and the citation convention use.
 
-**Proposal: an `akn_article` chunker, one chunk per `<article>`.**
+**Proposal: an `akn_article` chunker, one chunk per `### Art.` block.**
 
-- An AKN act gives `<article>`/`<paragraph>` (articolo/comma) explicitly.
-  One chunk per articolo, labelled `"Art. 5"` in the chunk's `chapter`
-  field — which is what the reader UI shows and what a citation resolves to.
-- Oversized articles (a codice's art. 2359, an allegato tecnico) split by
-  comma, and a comma that is still oversized splits by CDC *within itself*.
-  All three levels stay a pure function of (cleaned text, chunker id,
-  chunker version) — invariant 3 holds.
+- One chunk per articolo. Its `chapter` field (which `_mk` already carries
+  and the reader UI already shows) gets the breadcrumb —
+  `"Capo I › Sezione I › Art. 1 — Definizioni"` — so a hit knows where in
+  the act it sits without re-reading the act.
+- Oversized articles (a codice's art. 2359, a technical allegato) split by
+  comma; a comma still oversized splits by CDC *within itself*. All three
+  levels stay a pure function of (rendition text, chunker id, chunker
+  version) — invariant 3 holds.
+- `> nota:` lines and `(abrogato)` bodies are excluded (§4.1).
 - **The amendment case, which is the whole point:** amending one comma
-  changes that article's chunks and nothing else. Fixed-width chunking would
-  re-embed the act from the amendment onwards; CDC would limit the damage to
-  a neighbourhood but at an arbitrary boundary.
-- Acts whose AKN carries no article structure (older material, allegati)
-  degrade **inside the same chunker** to CDC over the flat text. Keeping the
-  fallback inside `akn_article` rather than declaring a second layer avoids
-  needing a new layer *rule* — `app/layers.py` today knows only `default`
-  and `archive:<id>`, and a rule like "has AKN structure" would be an
-  architecture amendment. If the fallback turns out to be common enough to
-  want separate accounting, *that* is when to propose the amendment.
+  changes that article's chunks and nothing else. Fixed-width chunking
+  would re-embed the act from the amendment onwards; CDC would limit the
+  blast radius to an arbitrary boundary.
+- Acts whose source carries no article structure at all degrade **inside
+  the same chunker** to CDC over the flat rendition. Keeping the fallback
+  inside `akn_article` rather than declaring a second layer avoids needing
+  a new layer *rule* — `app/layers.py` knows only `default` and
+  `archive:<id>`, and "has article structure" would be an architecture
+  amendment. If the fallback turns out common enough to want separate
+  accounting, *that* is when to propose one.
 
 New chunker ⇒ new `AKN_CHUNK_VERSION`, versioned independently exactly as
-`ABSTRACT_CHUNK_VERSION` is (invariant 3: never a global knob). Needs the
-"ask first" approval, §11.
+`ABSTRACT_CHUNK_VERSION` is, and covering the rendition too (§4.3). Needs
+the "ask first" approval, §12.
 
 ---
 
-## 5. Vigenza: index the current text, serve history by key
+## 6. Vigenza: index the current text, serve history by key
 
 The multivigente corpus holds N versions of every amended article. Three
 options:
@@ -272,70 +411,118 @@ and it is where most of the retrieval quality in this domain actually lives.
 
 ---
 
-## 6. Encoders
+## 7. Encoders
 
-### Candidates
+**The encoder is chosen on retrieval quality on Italian legal text.** What
+this node happens to be running is not an input to that decision — it is a
+consequence of it, and a procurement problem (`approved-encoders.md`) to be
+solved *after* the winner is known.
 
-| model | dim | ctx | served by | verdict |
+One filter does apply before quality, and it is not about hardware: **the
+space must stay reproducible.** `approved-encoders.md` sets the bar at a
+peer reproducing the space's vectors at cosine ≥ 0.999 from pinned weights.
+A proprietary API model cannot meet that — it can be revised or withdrawn
+under a pinned collection, and no peer can ever reproduce it. So closed
+models are excluded as *space owners*, while remaining useful as a **quality
+ceiling** in the bake-off: measuring against them tells you what the open
+choice is leaving on the table.
+
+### 7.1 Candidates, ranked by measured quality
+
+| model | MMTEB mean / retrieval | dim (MRL) | ctx | weights |
 |---|---|---|---|---|
-| **BAAI/bge-m3** | 1024 | 8192 | TEI `cpu-1.8` — **already approved** (`approved-encoders.md`) | **recommended default** |
-| intfloat/multilingual-e5-large | 1024 | 512 | TEI | strong alternative; needs `query:`/`passage:` prefixes |
-| Qwen3-Embedding-8B Q4_K_M | 4096 | 32k | llama.cpp SYCL on the Arc — the node's production text encoder | quality option, expensive here |
-| Qwen3-Embedding-0.6B / 4B | 1024 / 2560 | 32k | llama.cpp / TEI | the middle rung if 8B is too costly |
-| dlicari/Italian-Legal-BERT | 768 | 512 | — | **do not use as an embedder** |
+| **KaLM-Embedding-Gemma3-12B-2511** (Tencent, 11.8B) | **72.32 / 75.66** — #1 | 3840 → 2048/1024/512/… | 32k | open (`tencent-kalm-embedding-community`) |
+| **Qwen3-Embedding-8B** (Alibaba) | 70.58 / 70.88 | 4096 → 2560/1024/… | 32k | open (Apache-2.0) |
+| Qwen3-Embedding-4B / 0.6B | lower (0.6B: 64.34) | 2560 / 1024, MRL | 32k | open |
+| gemini-embedding-001 | 68.32 / 67.71 | 3072, MRL | 2k | **closed — reference only** |
+| voyage-law-2 | #1 on MMTEB *legal* retrieval | 1024 | 16k | **closed — reference only** |
+| BAAI/bge-m3 | well below the leaders | 1024 | 8192 | open |
+| intfloat/multilingual-e5-large | below | 1024 | 512 | open |
+| dlicari/Italian-Legal-BERT | — | 768 | 512 | **not an embedder** |
 
-**Why bge-m3 as the default.** It is already approved and already running on
-this node for wikivec, so it carries zero procurement risk; its 8192-token
-context means a whole articolo — usually a whole short act — fits in one
-chunk without splitting; it is XLM-R-based, so Italian is first-class rather
-than an afterthought; and being multilingual it makes an EU-law leg
-retrievable in the same space later, for free. Dim 1024 keeps the flat-scan
-cost (§3.4) tolerable.
+**The two to measure are KaLM-Gemma3-12B and Qwen3-8B.** Both are open,
+both take instructions (real asymmetric query/document handling), both have
+32k context — an entire codice article with all its commi fits many times
+over, so the rendition never has to be mutilated to fit — and, decisively,
+**both support Matryoshka truncation**.
+
+That last point kills the objection I raised in the first draft. I argued
+against high-dimensional encoders on flat-scan cost (§3.4): dim 4096 is 4×
+the bytes per row, and there is still no vector index. With MRL that is not
+a trade at all — **you can pin dim 1024 out of a 3840- or 4096-dim model**
+and keep most of the quality of the larger model, because MRL trains the
+prefix to be a usable vector on its own. The truncation is part of the
+pinned recipe, so it is decided once, in the pilot, and measured like
+everything else.
 
 **Why not Italian-Legal-BERT, despite the name.** It is a masked language
 model — ITALIAN XXL BERT continued on ~3.7 GB of jurisprudence. MLM never
 asks unrelated texts to sit apart, so mean-pooled vectors collapse into a
-narrow cone. This codebase has already paid for that lesson once and written
-it down: `docs/dna-search-axes.md` §2, where unrelated DNA sequences score
-0.98 cosine for exactly this reason. Domain pretraining without a contrastive
-objective is not a retrieval model. It would be a good *starting point* for a
-fine-tune we are not set up to do.
+narrow cone. This codebase has already paid for that lesson and written it
+down: `dna-search-axes.md` §2, where unrelated DNA sequences score 0.98
+cosine for exactly this reason. Domain pretraining without a contrastive
+objective is not a retrieval model — it is a good *base* for a fine-tune.
 
-**Why Qwen3-8B is the quality option and not the default.** It is better,
-it takes instruction prefixes (real asymmetric query/document handling), and
-its 4096 dims cost 4× the bytes per row — which, with no vector index, is 4×
-on every query — while competing with gutenberg for the same GPU.
+**bge-m3 and mE5-large are now the floor, not the recommendation.** They
+are what the bake-off has to *beat*, and they are worth keeping in it for
+exactly that reason — if the leaders do not beat them on Italian legal
+retrieval, that is a finding, and a cheap collection.
 
-**Reranking.** `RERANK_URL` is already wired (`app/retrieval.py:77`) and
-unused by default. `BAAI/bge-reranker-v2-m3` on TEI is the natural pairing
-with bge-m3 and is worth measuring in the same pass — legal answers live or
-die on precision at k=5.
+### 7.2 The measurement that actually decides
 
-**Do not skip the lexical leg.** Legal queries are citation- and
+MMTEB's multilingual mean is not Italian legal retrieval, and choosing on it
+alone would repeat the mistake of choosing on availability — a different
+proxy, the same error. Two Italian evaluation sets exist and both fit this
+plugin's shape:
+
+- **JuriFindIT** (Findings of EACL 2026) — an Italian legal retrieval
+  dataset: annotated questions with fine-grained topics and **the list of
+  relevant statutory article IDs**. Article-level ground truth, which is
+  exactly the chunk unit §5 proposes. This is the primary metric.
+- **IT-RAG-Bench** — synthetic Italian benchmark including articles of the
+  codice civile, useful as a second, independently-built signal.
+- Plus ~50 hand-written questions over the pilot's own acts, because a
+  benchmark's questions are never quite the ones your users ask.
+
+Procedure: pilot collection of ~5,000 acts, one per candidate, recall@k and
+nDCG@10 on the above, `docs/calibration.md` to set the tolerance, then
+delete the pilots and create the real collection against the winner. The
+pilots are cheap; a wrong pin is a re-index of the whole corpus.
+
+### 7.3 The upside path, and its cost
+
+**LEMUR** (EACL 2026) fine-tunes three multilingual embedding models
+contrastively on EU legislation and finds that legal-domain fine-tuning
+consistently improves top-k retrieval over strong baselines, and that the
+gain **transfers to languages not in the fine-tuning set** — i.e. it is
+learning content-level legal structure, not language cues. Normattiva plus
+EUR-Lex's Italian corpus is exactly the material such a fine-tune needs.
+
+Worth planning for, with the cost stated plainly: a fine-tuned encoder is a
+**different space**. It does not migrate; it re-embeds from zero, or it
+lives as a second collection. So it is a phase-3 decision, and the honest
+version of "we might fine-tune later" is "we will pay for the corpus twice".
+
+### 7.4 The reranker is not a forever decision
+
+`RERANK_URL` is wired (`app/retrieval.py:77`) and unused by default. On
+multilingual MIRACL, **Qwen3-Reranker-8B scores 68.97 against
+bge-reranker-v2-m3's 67.64**; both are open and TEI-servable.
+
+The asymmetry is what matters here: **the reranker is not part of
+`space_id`.** Swapping it costs one config change and zero re-embedding.
+So the encoder gets the careful, measured, one-way decision, and the
+reranker gets tried, swapped and re-tried freely. For legal answers, where
+precision at k=5 is the whole game, that freedom is worth using.
+
+**And do not skip the lexical leg.** Legal queries are citation- and
 term-heavy, Italian stemming is already wired (§3.3), and RRF over
 FTS + dense is the platform's default for good reason. Expect the FTS leg to
 carry more weight here than in any existing collection.
 
-### How to choose — measure, don't reason
+## 8. Acquisition spec sketch
 
-The encoder is pinned into `space_id` at collection creation and changing it
-means re-embedding from zero. So:
-
-1. Build a **pilot collection of ~5,000 acts**, one per candidate encoder.
-2. Score them on an Italian legal eval set — the NLLP 363k-title corpus
-   (§1.4) gives labelled material for free, plus ~50 hand-written questions
-   with known correct articles.
-3. Run the `docs/calibration.md` machinery to set the tolerance, then let
-   the backend gate hold it.
-4. Throw the pilots away and create the real collection against the winner.
-
-The pilots are cheap. A wrong pin is a re-index of the whole corpus.
-
----
-
-## 7. Acquisition spec sketch
-
-Shape only — the fields marked `# VERIFY` are the ones §11 needs answered
+Shape only — the fields marked `# VERIFY` are the ones §12 needs answered
 from the API specification PDF before this can be written for real.
 
 ```python
@@ -360,7 +547,7 @@ NORMATTIVA_SPEC = AcquisitionSpec(
     },
     profile_mode="incremental",
     estimated_bytes={...},                      # VERIFY: probe, never guess
-    license_class=LicenseClass.YELLOW,          # §9 — operator's call
+    license_class=LicenseClass.YELLOW,          # §10 — operator's call
     terms_text_path=... / "plugins" / "normattiva" / "TERMS.txt",
 )
 ```
@@ -376,30 +563,35 @@ plugin must not fetch 10⁵ acts one HTTP request at a time**. In that case
 build the corpus once with a supervised, throttled harvest into a
 hand-populated collection and treat the origin as delta-only afterwards —
 which is a different, and much less pleasant, plugin. Answering this is why
-§11.1 is first.
+§12.1 is first.
 
 ---
 
-## 8. Module layout
+## 9. Module layout
 
 Following the existing plugins' shape exactly:
 
     app/plugins/normattiva/
         __init__.py        SOURCE = NormattivaSource()
         source.py          discover / fetch / parse   (~200 lines, cf. wikipedia)
-        akn.py             Akoma Ntoso + XML-NIR -> CanonicalDoc.sections
+        akn.py             Akoma Ntoso + XML-NIR -> the structural skeleton
+        rendition.py       skeleton -> the canonical text of §4; owns the
+                           format's rules and its byte-level discipline
         urn.py             URN:NIR <-> ELI <-> (type, date, number); native_id
-                           synthesis (§3.1); citation-string parsing (§5)
+                           synthesis (§3.1); citation-string parsing (§6)
         TERMS.txt          CC BY 4.0 + Normattiva terms, byte-exact
     app/acquire/specs.py   + NORMATTIVA_SPEC, + registry entry
     app/collections.py     + PLUGIN_REGISTRY["normattiva"]
     app/chunking.py        + chunk_akn_article, AKN_CHUNK_VERSION
-    app/refs/normattiva.py phase 2 — the ReferenceSource of §5
+    app/refs/normattiva.py phase 2 — the ReferenceSource of §6
     tests/
         test_normattiva_urn.py         URN <-> native_id, round-trip, collisions
-        test_normattiva_akn.py         AKN -> sections, golden fixtures
-        test_akn_article_chunker.py    golden chunks; version isolation
-                                       (only this space's id moves)
+        test_normattiva_akn.py         AKN + XML-NIR -> skeleton, golden fixtures
+        test_normattiva_rendition.py   golden renditions; SKELETON ROUND-TRIP
+                                       (§4.4); byte discipline; the six shapes
+        test_akn_article_chunker.py    golden chunks; notes and (abrogato)
+                                       excluded; version isolation (only this
+                                       space's id moves)
         test_normattiva_tombstones.py  abrogation -> tombstone, idempotent
 
 `CanonicalDoc` maps cleanly:
@@ -421,7 +613,7 @@ pattern is opaque-by-design.
 
 ---
 
-## 9. Licence and privacy classification
+## 10. Licence and privacy classification
 
 **Normattiva (CC BY 4.0): propose YELLOW.** Green means no gate at all.
 CC BY imposes an attribution obligation that follows the data into every
@@ -429,7 +621,7 @@ redistribution — and this platform redistributes, by design, over P2P.
 Yellow costs one acknowledgement (a timestamp and a sha256 of the terms
 text) and makes the obligation visible at exactly the moments amendment 36
 cares about: discovery, import, exchange. Green is defensible; yellow is
-cheap and honest. **Operator's call (§11.2).**
+cheap and honest. **Operator's call (§12.2).**
 
 Also worth recording in the plugin's docstring: Normattiva's own notice says
 its texts are **not official** — the printed Gazzetta prevails. A RAG system
@@ -453,43 +645,53 @@ unresolved problems, both of which is why §2 puts it second:
 
 ---
 
-## 10. Build order
+## 11. Build order
 
-1. **Verify §11.** No code before it.
-2. `urn.py` + `akn.py` + tests, against a handful of hand-downloaded acts —
-   pure functions, no network, no manifest.
+1. **Verify §12.** No code before it.
+2. `urn.py` + `akn.py` + `rendition.py` + tests, against a handful of
+   hand-downloaded acts — pure functions, no network, no manifest. The
+   skeleton round-trip test (§4.4) lands here, not later: it is what makes
+   "structure preserved" checkable rather than claimed.
 3. `source.py` over a hand-populated corpus directory (the `adoption` path
    already supports files that are simply on disk). This gets a real
-   collection indexing without touching acquisition.
-4. **Pilot: 5,000 acts × 3 encoders**, §6. Measure. Decide. Delete.
-5. `akn_article` chunker with its own version, once §11.3 approves it.
-6. `NORMATTIVA_SPEC` and the acquisition path, once §11.1 is answered.
+   collection indexing without touching acquisition — and the materialised
+   renditions are readable on disk from this step onward.
+4. **Pilot: ~5,000 acts, one collection per candidate encoder**, scored on
+   JuriFindIT (§7.2). Measure. Decide. Delete the pilots.
+5. `akn_article` chunker with its own version, once §12.3 approves it.
+6. `NORMATTIVA_SPEC` and the acquisition path, once §12.1 is answered.
 7. Full collection; watch the worker log as a time series before optimising
    anything (the first benchmark, every time).
-8. Phase 2: `refs/normattiva.py` + citation EntityResolver — §5 — which is
+8. Phase 2: `refs/normattiva.py` + citation EntityResolver — §6 — which is
    where the retrieval quality is.
 
 ---
 
-## 11. What a human has to decide before this starts
+## 12. What a human has to decide before this starts
 
 1. **The bulk shape of the Normattiva OpenData API** — read
    `dati.normattiva.it/assets/come_fare_per/API_Normattiva_OpenData.pdf`.
    Three answers needed: is there a bulk download unit (and how big), is
    there an incremental/delta feed or only full re-listing, and is there
-   auth/rate limiting? §7 cannot be written without these, and the answer to
+   auth/rate limiting? §8 cannot be written without these, and the answer to
    the first one decides whether this is a pleasant plugin or an unpleasant
    one.
 2. **Licence class for `normattiva`: yellow or green?** §9. If yellow,
    capture `TERMS.txt` byte-exact — CC BY 4.0's text plus Normattiva's own
    conditions — and add it to `.gitattributes` so no checkout ever converts
    its line endings.
-3. **Approval for a new chunker** (`akn_article` + `AKN_CHUNK_VERSION`),
-   §4. This is the "ask first" case in CLAUDE.md: it changes chunking and it
-   enters a `space_id`.
-4. **Which encoder the pilot pins** — or rather, agreement that a pilot
-   happens at all before the real collection is created. §6.
-5. **Whether the GU issue stream is in scope at all**, given §9's privacy
+3. **Approval for the rendition format and a new chunker** — the §4 text
+   format plus `akn_article` / `AKN_CHUNK_VERSION` (§5), which covers both.
+   This is the "ask first" case in CLAUDE.md: it changes cleaning AND
+   chunking, and it enters a `space_id`. Worth reviewing the §4.1 example
+   as a *format decision*, because every act in the corpus will look like
+   it and changing it later re-embeds everything.
+4. **Agreement that the pilot happens before the real collection exists**,
+   and on what counts as winning (§7.2 proposes recall@k and nDCG@10 on
+   JuriFindIT as primary). Also: **which dimension gets pinned** — MRL
+   makes that a separate, measurable decision from which model wins, and
+   it is the one that sets query latency until there is a vector index.
+5. **Whether the GU issue stream is in scope at all**, given §10's privacy
    problem. If it is not, say so in this document and stop re-discovering it.
 
 ## Sources
@@ -508,6 +710,19 @@ unresolved problems, both of which is why §2 puts it second:
   [ondata/normattiva_2_md](https://github.com/ondata/normattiva_2_md),
   [MultiLegalPile](https://arxiv.org/html/2306.02069v3),
   [Italian Legislative Text Classification for Gazzetta Ufficiale (NLLP 2023)](https://aclanthology.org/2023.nllp-1.6/)
-- Encoders: [ITALIAN-LEGAL-BERT](https://ceur-ws.org/Vol-3256/km4law3.pdf),
-  [LEMUR: multilingual law embedding fine-tuning corpus](https://arxiv.org/pdf/2602.09570),
+- Encoder quality: [MTEB leaderboard, 2026](https://www.codesota.com/benchmarks/mteb),
+  [tencent/KaLM-Embedding-Gemma3-12B-2511](https://huggingface.co/tencent/KaLM-Embedding-Gemma3-12B-2511)
+  and [KaLM-Embedding-V2](https://arxiv.org/pdf/2506.20923),
+  [Qwen3-Embedding](https://qwenlm.github.io/blog/qwen3-embedding/) /
+  [QwenLM/Qwen3-Embedding](https://github.com/QwenLM/Qwen3-Embedding)
+  (MRL: [vLLM `is_matryoshka`](https://github.com/vllm-project/vllm/issues/20899)),
+  [Gemini Embedding](https://arxiv.org/pdf/2503.07891),
   [Benchmarking multilingual dense retrieval, 2026](https://arxiv.org/pdf/2605.23618)
+- Italian legal evaluation: [JuriFindIT (Findings of EACL 2026)](https://aclanthology.org/2026.findings-eacl.221.pdf),
+  IT-RAG-Bench (via the benchmarking paper above)
+- Legal-domain fine-tuning: [LEMUR (EACL SRW 2026)](https://aclanthology.org/2026.eacl-srw.18.pdf),
+  [arXiv version](https://arxiv.org/html/2602.09570)
+- Why not a domain MLM: [ITALIAN-LEGAL-BERT](https://ceur-ws.org/Vol-3256/km4law3.pdf),
+  and this repo's own [`dna-search-axes.md`](dna-search-axes.md) §2
+- Rerankers: [Qwen3-Reranker](https://qwenlm.github.io/blog/qwen3-embedding/),
+  [reranker comparisons, 2026](https://futureagi.com/blog/best-rerankers-for-rag-2026/)

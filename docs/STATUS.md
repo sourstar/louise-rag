@@ -825,11 +825,19 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    is the **articolo**, which neither the fixed-width nor the CDC chunker
    cuts on, so a new chunker enters a new `space_id`; and multivigenza is a
    ReferenceSource question (facts-by-key, invariant 4), never N versions of
-   one article competing in RRF. Italian-Legal-BERT is an MLM and would walk
-   straight into item 6's anisotropy trap — bge-m3 is already approved and
-   is the default to beat, measured on a throwaway pilot before anything is
-   pinned. The GU's own issue stream (concorsi, inserzioni) is deliberately
-   NOT scoped: unread terms plus personal data.
+   one article competing in RRF. The corpus is rendered into a **canonical
+   text form** first — structure-preserving, editor-readable, byte-stable,
+   verified by a skeleton round-trip test — derived and local exactly as
+   pubmed's pack is, with its version folded into the chunker's so it never
+   touches the global `CLEANING_VERSION` (the global-knob lesson, second
+   coat). Encoder: chosen on measured Italian legal retrieval (JuriFindIT),
+   not on what this node runs — KaLM-Embedding-Gemma3-12B (MMTEB #1) and
+   Qwen3-Embedding-8B are the open-weight candidates, both MRL, so the
+   pinned dimension is a separate decision from the model; closed API models
+   are excluded as space owners because a peer must reproduce vectors at
+   cos ≥ 0.999. Italian-Legal-BERT is an MLM and would walk straight into
+   item 6's anisotropy trap. The GU's own issue stream (concorsi,
+   inserzioni) is deliberately NOT scoped: unread terms plus personal data.
 
 ## Invariants review (2026-08-23 — amendments 30, 31)
 
