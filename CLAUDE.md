@@ -86,6 +86,23 @@ are the ones that have drifted; prefer to add a test when you touch them.
     effective value shown anywhere comes from the same resolution function
     the worker uses (`collections.recipe_for`, `db.apply_desired_embed_mode`).
     *Enforced: test.*
+11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
+    a way that prevents verification against the original form. Dropping
+    what we do not use (epubs, XML markup, dump indexes) is fine; losing
+    the ability to re-fetch the origin and reproduce what we kept is not.
+    Concretely: every record carries `origin_hash` — the hash of the origin
+    bytes it was parsed from — and `origin` names the AcquisitionSpec and
+    parser version that produced it, so `records-vs-origin` can re-fetch a
+    sample and reproduce it. A record with no `origin_hash` is REFUSED at
+    pack build, never warned about: a pack whose records all verify
+    internally while being permanently unverifiable against the source is
+    the worst artefact we could ship, and it is published once and adopted
+    by peers who cannot repair it.
+    WHERE SEVERAL ORIGIN FORMS EXIST (epub vs plain text, XML baseline vs
+    API, dump vs live), choose the one that best fits our goals and RECORD
+    the choice with its reason beside the plugin — the form is part of what
+    a verifier needs in order to reproduce our records. *Enforced: build +
+    test (tests/pack/test_origin_fidelity.py); the form choice by review.*
 
 ## Engineering rules (blocking in review; each one was paid for)
 - A per-round cost scales with the work available, never with the size of

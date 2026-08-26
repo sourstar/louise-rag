@@ -441,7 +441,29 @@ sees changed.
   recorded in the delta as a *silent change*: information about the
   origin, not an error.
 - `origin_hash` — the hash of the raw origin bytes the record was parsed
-  from: provenance, for `records-vs-origin` (§15).
+  from: provenance, for `records-vs-origin` (§15). **Mandatory.** A
+  record without one is refused at build (`pack_slices`) and reported by
+  `pack verify --checks records`, because a pack whose records all verify
+  internally while being unverifiable against their source is a worse
+  artefact than a build that failed — and it is adopted by peers who
+  cannot repair it. See CLAUDE.md invariant 11 (corpus fidelity).
+
+#### Which origin form, and why
+
+A corpus may be pruned — nothing we do not use is packed — but never in a
+way that costs us the ability to reproduce what we kept from the origin.
+Where an origin publishes SEVERAL forms, the choice is part of what a
+verifier needs, so it is recorded here with its reason:
+
+| plugin | form taken | why, and what is left behind |
+|---|---|---|
+| gutenberg | the per-book **`.txt`** (`pg_text.scan_dir`), hashed as it is read | plain text is the form the chunker actually consumes; epub/mobi/html are re-renderings of it. A title published *solely* as epub/mobi/html is recorded `no txt file` — declared unindexable, never silently dropped |
+| pubmed | the **baseline `*.xml.gz`** containers + `updatefiles` deltas | the archival form the origin itself versions and checksums (`.md5` sidecars), and the only one carrying `DeleteCitation` tombstones. The E-utilities API returns the same records without the versioning |
+| wikipedia | the **multistream `pages-articles.xml.bz2`** + its index | the index makes the dump seekable per page, so a record can be re-derived without re-reading the dump. Cirrus/HTML dumps are pre-rendered and lossy for our purposes |
+
+The rule for a new plugin: prefer the form the ORIGIN versions and
+checksums, at the lowest level of processing we can consume, because that
+is the form a verifier can re-fetch and reproduce byte-for-byte.
 - **Chunk ids** include the chunker and its version; **chunk hashes**
   come from the chunk text. A changed record re-embeds only the chunks
   whose hash changed — with content-defined chunking (Wikipedia's

@@ -105,6 +105,15 @@ def run(pack_dir: Path, *, checks=None, sample: float | None = None, seed: int =
                 if "records" in checks:
                     if records.content_hash(rec.get("title") or "", sections) != rec.get("content_hash"):
                         bad_records.append(f"{rec['uid']}: content_hash")
+                    # CORPUS FIDELITY (invariant 11): content_hash proves the
+                    # record is internally consistent, which a wholly
+                    # fabricated record also is. origin_hash is what ties it
+                    # to origin bytes, and without it `records-vs-origin` has
+                    # nothing to check against — so its ABSENCE is a defect
+                    # here, cheap and local, long before anyone re-fetches.
+                    if not rec.get("origin_hash"):
+                        bad_records.append(f"{rec['uid']}: no origin_hash "
+                                           f"(unverifiable against the origin)")
                 if "chunks" in checks:
                     chunker = _chunker_of(manifest, int(rec.get("layer") or 0))
                     if chunker is None:

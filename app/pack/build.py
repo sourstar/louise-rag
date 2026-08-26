@@ -163,6 +163,11 @@ def _record_of(collection, plugin, row) -> tuple[dict, int]:
         "content_hash": records.content_hash(doc.title or "", sections),
         "origin_hash": doc.raw_hash,
     }
+    # NOTE: no validation here. This runs in a parse-pool child, where an
+    # exception becomes one skipped row rather than a failed build — so a
+    # fidelity defect raised here would quietly DROP documents from the
+    # pack, which is worse than what it was meant to prevent. The check
+    # belongs in pack_slices, in the process that can abort.
     return record, layer
 
 
@@ -245,6 +250,24 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                                       (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
                     continue
                 record, layer = value
+                if not record.get("origin_hash"):
+                    # CORPUS FIDELITY (invariant 11). `origin_hash` is the
+                    # only link between a packed record and the origin bytes
+                    # it was parsed from, and it is what `records-vs-origin`
+                    # checks against. A pack written with nulls here looks
+                    # entirely valid — every content_hash verifies, every
+                    # shard hashes, the manifest signs — while being
+                    # permanently unverifiable against its source.
+                    #
+                    # So this aborts the BUILD. Skipping the record instead
+                    # would ship a quietly incomplete pack, and a pack is
+                    # published once and adopted by peers who cannot repair
+                    # either fault.
+                    raise ValueError(
+                        f"{record['uid']}: the {collection.plugin!r} plugin "
+                        f"returned no raw_hash, so this record could never be "
+                        f"verified against its origin (CLAUDE.md invariant 11). "
+                        f"Fix the plugin's canonical_doc; do not pack.")
                 if record["uid"] != src["uid"]:
                     n_skipped += 1
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
