@@ -10,6 +10,17 @@ this codebase has always been pinning a space before measuring it.
 
 Written 2026-08-26.
 
+**Standing directive (operator, 2026-08-26):** where a choice trades answer
+quality against cost, this document takes the **quality** side; where the
+quality path is *definitely* more expensive, it is flagged for confirmation
+rather than silently downgraded. With one refinement the operator added when
+the first such choice came up: **latency is part of quality, not a cost to
+be traded against it** — "no one will use a system that takes ages to answer
+on reasonable hardware", and a system nobody uses has no answer quality at
+all. So the rule is: maximise quality subject to a stated latency budget,
+and never trade *fidelity* (what is stored, what is pinned) for latency when
+an engineering fix buys the latency back instead.
+
 **Research caveat, stated up front:** this session's network egress is
 restricted — search results were readable, pages were not. Every fact below
 that came from a search-result summary rather than from the page itself is
@@ -360,6 +371,14 @@ both the amendment mechanism and the citation convention use.
   comma; a comma still oversized splits by CDC *within itself*. All three
   levels stay a pure function of (rendition text, chunker id, chunker
   version) — invariant 3 holds.
+- **What counts as "oversized" is measured, not assumed.** Both leading
+  encoders carry 32k of context (§7.1), so almost every articolo fits whole
+  — but a long article compressed into one vector loses specificity, and
+  which effect wins is an empirical question, not a reasoned one. The pilot
+  therefore carries a granularity arm: *whole article, never split* against
+  *split at N tokens*, for two or three values of N, scored on the same eval
+  set. Cheap (it reuses the pilot infrastructure) and it settles a parameter
+  that is otherwise pinned on a guess.
 - `> nota:` lines and `(abrogato)` bodies are excluded (§4.1).
 - **The amendment case, which is the whole point:** amending one comma
   changes that article's chunks and nothing else. Fixed-width chunking
@@ -525,10 +544,26 @@ availability: **IT-RAG-Bench** (synthetic Italian, includes codice civile
 articles) and the **NLLP 2023** 363k-title classification corpus (§1.4),
 which is not retrieval but does give labelled Italian legislative text.
 
-Procedure once a set exists: pilot collection of ~5,000 acts, one per
-candidate encoder, recall@k and nDCG@10, `docs/calibration.md` to set the
-tolerance, then delete the pilots and create the real collection against the
-winner. The pilots are cheap; a wrong pin is a re-index of the whole corpus.
+**Correction to an earlier draft of this section.** It proposed a pilot of
+"~5,000 acts". That is wrong, and not by a little: recall@k is only defined
+if the corpus *contains* the articles the eval set points at. JuriFindIT
+targets **> 23,000 statutory articles** across civil, criminal, AML/CTF and
+privacy law, so a pilot of arbitrary acts would score near zero for reasons
+that have nothing to do with the encoder.
+
+The pilot corpus is therefore **defined by the eval set, not by a size**:
+the codici (civile, penale, and the two procedure codes), the AML/CTF
+legislation, and the privacy corpus — every act containing a target article,
+plus enough neighbouring material to make retrieval non-trivial. Size falls
+out of that; it is not an input. A first sanity check before any measurement
+is a **coverage assertion**: every target article ID in the eval set resolves
+to a chunk in the pilot, and the run aborts if it does not.
+
+Procedure, once the corpus is defined: one pilot collection per candidate
+encoder, recall@k and nDCG@10 on the 895 expert questions,
+`docs/calibration.md` to set the tolerance, then delete the pilots and create
+the real collection against the winner. The pilots are cheap; a wrong pin is
+a re-index of the whole corpus.
 
 ### 7.3 Domain fine-tuning: no longer hypothetical
 
@@ -571,7 +606,81 @@ lives as a second collection. Which is an argument for including
 DAR-legal-it in the *pilot*, where switching is free, rather than adopting
 it after the real collection exists.
 
-### 7.4 The reranker
+**Where this decision actually sits (operator, 2026-08-26).** Benchmarking
+is a **separate activity** from building the collection, and the choice of
+embedder belongs to the **collection's creator** — pinning freezes it,
+because from that moment the community contributes against it. The
+collection therefore publishes its **embedder score**, so any peer can
+re-run it and, disagreeing, ask the author for a review; a review that
+carries produces a **derived collection** superseding the old one, sharing
+its record shards so peers re-fetch only vectors. The mechanism is proposed
+in [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md).
+
+Two consequences specific to this plugin. First, "should we fine-tune?" is
+not a blocking decision here: it is one more candidate the creator
+benchmarks, and if a fine-tune wins later it becomes a derived collection
+rather than a regret. Second, that path is only cheap **early** — the
+re-fetch bill scales with `coverage × dim` — so this collection should
+publish its score at creation and invite review *before* mass contribution,
+not after.
+
+### 7.4 What dimension to pin — and what the measurement actually produces
+
+The operator's question on this was the right one: *what is the outcome of
+the scoring, and what is the practical result?* Answering it properly changes
+the recommendation, so the reasoning is here rather than in a decision list.
+
+**What the measurement costs: almost nothing.** Matryoshka truncation is not
+a different embedding run — it is taking the first *n* components of a
+full-dimension vector and re-normalising. So the pilot embeds **once**, at
+full dimension, and every candidate dimension is a numpy slice away. The
+output is a four-row table per encoder:
+
+| dim | nDCG@10 | % of full | flat-scan latency, projected | vector bytes |
+|---|---|---|---|---|
+| 3840 (full) | — | 100% | ~4.6 s | 11.5 GB |
+| 2048 | — | — | ~2.5 s | 6.1 GB |
+| 1024 | — | — | ~1.2 s | 3.1 GB |
+| 512 | — | — | ~0.6 s | 1.5 GB |
+
+The latency column is derived from this repo's own measurement — wikivec,
+15.8M rows, dim 1024 f16, **13 s per query**, cost linear in rows × bytes —
+projected onto ~1.5M chunks (order 10⁵ acts × 10–20 articles; a working
+figure, not a denominator). The quality column is what the pilot fills in.
+
+**What published work says to expect**, as a prior only — these are
+general-domain results, not Italian legal retrieval, which is exactly why the
+pilot exists: truncating to ~50% of full dimension typically costs **1–4
+nDCG@10 points**; to ~25%, **5–10 points**; one multi-model study found
+512 dims retaining **94–98%** of full-dimension nDCG@10, with
+higher-original-dimension models (4096) truncating *more* gracefully than
+2048–2560 ones. Note that 1024-out-of-3840 is the 25% regime, i.e. the one
+where the published range gets uncomfortable.
+
+**The practical result, and the recommendation.** Under the quality directive
+the answer is not "truncate to keep queries fast":
+
+> Truncation buys latency by **destroying information permanently**, in a
+> value pinned into `space_id` and unfixable afterwards. A vector index buys
+> the same latency by **changing how vectors are searched**, losing nothing.
+> When two paths buy the same thing and one of them is lossy, the lossy one
+> is not a trade-off, it is a worse engineering choice.
+
+So: **pin the largest dimension whose quality the pilot cannot distinguish
+from full**, and treat the flat-scan latency as the vector index's problem —
+STATUS.md's known gap ("no vector index — every semantic query is a flat
+scan"), which the IVF-on-disk design in `pack-format.md` §5 already
+anticipates. The latency budget of §7.5 is then met by the index, not by
+throwing away 3 000 dimensions of a model chosen for its quality.
+
+**[COST]** — this makes the vector index a *prerequisite* for this
+collection rather than a later improvement, and that is the one genuinely
+expensive consequence of the quality directive in this document. If the
+index is not on the table, the honest fallback is dim 2048 (the 1–4 point
+regime) rather than 1024, and the pilot table is what makes even that a
+number rather than a guess.
+
+### 7.5 The reranker
 
 Reranking deserves more than a footnote here, because legal answers are won
 or lost at precision@5 and because the retrieval shape this plugin produces
@@ -618,8 +727,11 @@ score per text, and a listwise model returns an ordering.
    ~5 chars/token this repo measured, that is ~400 tokens — so a reranker
    with a 32k context would judge a long articolo on its first two
    paragraphs while the *encoder* saw the whole thing. Legal articles run
-   past 2000 characters routinely. The constant should become a per-model
-   budget before the reranker is trusted on this corpus.
+   past 2000 characters routinely. **Under the quality directive this is a
+   prerequisite, not a follow-up**: the constant becomes a per-model budget
+   *before* the reranker is used on this corpus at all, because measuring a
+   32k-context model against a 400-token prefix measures the wrong thing and
+   would produce a decision built on it.
 2. **A failing reranker degrades silently** (`except Exception: return
    hits[:top_n]`). Degrading to RRF order is the right behaviour on a query
    path — but nothing records that it happened, so a skipped rerank and a
@@ -656,6 +768,27 @@ reranker gets tried, swapped and re-tried freely, on the same JuriFindIT
 set, *after* the collection exists. Do not hold up the collection for it —
 but do measure it, because on an article-level corpus it is the cheapest
 quality left on the table.
+
+**It should also be ON by default for this collection**, which reverses the
+platform default of an empty `RERANK_URL`. A reranker is the single largest
+uncosted quality gain available at query time, and "off unless configured"
+is a cost-side default.
+
+**Which model: `jina-reranker-v3`, under a stated latency budget** (operator
+decision, 2026-08-26). Qwen3-Reranker-8B scores ~2.5 MIRACL points higher,
+but it is pointwise — 40 forward passes of an 8B model on every query, which
+is seconds. jina-v3 is listwise: all 40 candidates in one window, one pass of
+a ~0.6B model. This is the latency-is-quality rule doing real work: the 8B
+model's extra precision is worth less than a reranker that can stay
+permanently on, and a reranker that gets switched off under load contributes
+zero. Qwen3-Reranker-8B stays in the bake-off as a **ceiling reference** —
+run it offline on the eval set to measure what the latency budget costs, so
+the trade is a number rather than an assumption.
+
+Propose the budget explicitly, as a number the design is accountable to:
+**p95 end-to-end query latency ≤ 2 s**, of which the reranker owns ≤ 400 ms.
+Any component that cannot meet its share is not adopted, however well it
+scores.
 
 One option worth pricing, since the node already runs it: **listwise
 reranking with the local chat model** over `CHAT_URL`. No new service, and
@@ -842,13 +975,18 @@ unresolved problems, both of which is why §2 puts it second:
    chunking, and it enters a `space_id`. Worth reviewing the §4.1 example
    as a *format decision*, because every act in the corpus will look like
    it and changing it later re-embeds everything.
-4. **Agreement that the pilot happens before the real collection exists**,
-   and on what counts as winning (§7.2 proposes recall@k and nDCG@10 on
-   JuriFindIT as primary). Also: **which dimension gets pinned** — MRL
-   makes that a separate, measurable decision from which model wins, and
-   it is the one that sets query latency until there is a vector index.
-5. **Whether the GU issue stream is in scope at all**, given §10's privacy
-   problem. If it is not, say so in this document and stop re-discovering it.
+4. **Is the vector index a prerequisite for this collection?** (§7.4,
+   marked **[COST]** — the one genuinely expensive consequence of the
+   quality directive here.) The pilot's dimension table decides *what* to
+   pin; this decides whether the resulting latency is paid for by an IVF
+   index (lossless, and STATUS.md's known gap) or by truncating the vectors
+   (lossy, permanent, and pinned into `space_id`). Recommended: the index,
+   with dim 2048 as the honest fallback if it is not on the table.
+5. ~~**Whether the GU issue stream is in scope.**~~ **RESOLVED
+   2026-08-26: Normattiva only.** The numbered normative corpus, 1861 to
+   today, CC BY 4.0, structured AKN. The GU issue stream, Au.G.U.Sto and
+   EUR-Lex were all considered and declined for now — recorded in §1 and
+   §10 so they are not re-discovered as opportunities.
 6. **Verify JuriFindIT's availability, licence and format** (§7.2), from a
    machine that can actually fetch pages. This gates the encoder bake-off:
    with it, the choice is measured on article-level ground truth; without

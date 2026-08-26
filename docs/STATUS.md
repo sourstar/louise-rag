@@ -836,7 +836,18 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    pinned dimension is a separate decision from the model; closed API models
    are excluded as space owners because a peer must reproduce vectors at
    cos ≥ 0.999. Italian-Legal-BERT is an MLM and would walk straight into
-   item 6's anisotropy trap. The reranker is the opposite kind of decision —
+   item 6's anisotropy trap. Operator decisions 2026-08-26: scope is
+   **Normattiva only**; the reranker is **jina-reranker-v3** (listwise, one
+   pass) under a stated **p95 ≤ 2 s** budget, because latency is part of
+   answer quality and a reranker switched off under load contributes zero;
+   and the pinned DIMENSION is not to be truncated to buy latency — MRL
+   truncation destroys information permanently in a value pinned into
+   `space_id`, where a vector index buys the same latency losslessly, which
+   makes the index a prerequisite rather than a later fix (the one costed
+   consequence). Who chooses the embedder at all, and what happens when the
+   choice was wrong, is generalised in
+   [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md).
+   The reranker is the opposite kind of decision —
    `RERANK_URL` is not in `space_id`, so it is measured after the collection
    exists, not before; three things in the current `_rerank` would bite this
    corpus first (a hard `[:2000]` truncation that cuts a long articolo the

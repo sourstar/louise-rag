@@ -1072,6 +1072,17 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
+- **Should a space publish its evaluation score, and how is a bad choice
+  remedied?** Proposal in
+  [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md):
+  the embedder is the collection creator's choice and pinning freezes it, so
+  each space carries an `evaluation` block (suite + hash, metric, conditions,
+  a coverage check that the suite's targets resolve in *this* pack, and a
+  reproducible/asserted tier) that any peer can re-run. A review that carries
+  produces a DERIVED collection over the same record shards — `derived_from`
+  already exists in §7; `superseded_by` would need adding. The re-fetch bill
+  scales with `coverage × dim`, which is why supersession has to be cheap
+  early or not at all.
 - **May a pack require a reranker, or only recommend one?** Proposal in
   [`reranker-scope.md`](reranker-scope.md). The discriminator is whether
   rerank output reaches common content: at query time it cannot, so every
