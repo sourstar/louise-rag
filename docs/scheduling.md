@@ -121,6 +121,41 @@ flow and nothing to give it. A busy CPU and an idle GPU at the same time
 is not a scheduling fault; it is a spending decision the scheduler cannot
 make. Do not "fix" it by taking CPU work away.
 
+**The gutenberg encoder — where the vectors actually cost their time
+(measured 2026-08-27, and the reason "feed the GPU" is not a scheduling
+question)**
+
+| reading | value |
+|---|---|
+| endpoint | `llama.cpp` server, `Qwen3-Embedding-8B-Q4_K_M.gguf`, `-ngl 999 -np 4`, Intel Arc |
+| chunk size, this corpus | ~4,000 chars = **~3,528 tokens** per chunk |
+| server throughput | ~1,640 tokens/s across 2 concurrent requests (~2.15 s/chunk) |
+| `EMBED_CONCURRENCY` | 2 — while the server was started with **4 slots** |
+| remaining work | 63,764 documents = **7,182,952 chunks** (avg 113, max 13,003) |
+| projection at that rate | **~178 days** |
+
+Three conclusions, each of which cost a measurement:
+
+1. **Batching is not available here, however tempting the numbers look.**
+   Batch 16 measured 2.5 s/chunk against batch 1's 7.8 s — and it returns
+   WRONG VECTORS: two of four 4,000-char texts came back at cosine 0.73
+   against their single-text embeddings, while short texts were identical.
+   That is `config.EMBED_BATCH`'s 2026-08-17 warning reproduced on the
+   very server it was written about. Never raise it without re-running
+   that comparison.
+2. **Concurrency measurements taken while the worker is running are
+   polluted.** Mine were: the worker holds 2 slots continuously, so a
+   "concurrency 4" probe actually asked the server for 6. The flat result
+   (conc 2 → 0.277 chunks/s, conc 4 → 0.275) says the server saturates
+   near its 4 slots, NOT that concurrency does not help. The worker using
+   2 of 4 slots is the readable fact, and it is the cheap thing to fix.
+3. **The bottleneck is the model, not the pipeline.** 7.18M chunks ×
+   ~3,528 tokens is ~25 billion tokens through an 8B embedder. No
+   scheduling change touches that number; only a smaller model, smaller
+   chunks, or more time will. Both of the first two change `space_id`
+   (invariant 1/3) and mean re-embedding — which is cheapest NOW, at 16 %
+   done, and never gets cheaper.
+
 **An archive pass (wikivec, 18,020 documents / 100,000 vectors, ~150 s)**
 
 | phase | cost |
