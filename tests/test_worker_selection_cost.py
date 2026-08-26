@@ -417,7 +417,12 @@ def test_the_reindex_walk_is_windowed_and_then_free(tmp_path, monkeypatch):
                     "fts_done,embed_done,fts_version,entity_version) "
                     "VALUES(?,'g',?,?,1,1,1,0,?,?)",
                     (f"p:{i}", str(i), f"/x{i}", config.FTS_VERSION, config.ENTITY_VERSION))
+    # pin the width: this test is about the WALK (one window per round,
+    # terminating, then free). That the width itself adapts to what a probe
+    # costs is app/sizing.py's job and is tested separately.
     monkeypatch.setattr(worker, "_REINDEX_WINDOW", 100)
+    monkeypatch.setattr(worker, "_REINDEX_WINDOW_MIN", 100)
+    monkeypatch.setattr(worker, "_REINDEX_WINDOW_MAX", 100)
     worker.reset_reindex_cursors()
     top = con.execute("SELECT MAX(rowid) FROM documents").fetchone()[0]
 

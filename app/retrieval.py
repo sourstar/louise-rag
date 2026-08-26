@@ -167,6 +167,11 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         # whatever vectors exist. With no table, embeddings.search returns []
         # and an unreachable endpoint degrades via the except below.
         t0 = time.time()
+        # A5: claim the encoder before using it. The worker reads this
+        # between documents and stands its own embedding down, so a query
+        # waits for at most the document already in flight instead of
+        # queueing behind a whole backfill batch (db.claim_query_priority).
+        db.claim_query_priority(con, getattr(collection, "name", "") or "")
         try:
             lists.append(embeddings.search(query, k=max(k, 20), collection=collection))
         except Exception as e:

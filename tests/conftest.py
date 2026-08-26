@@ -17,14 +17,17 @@ def fresh_worker_state():
     """Module-level cursors and memos are per PROCESS, so one test's
     completed walk must not decide the next test's selection (that leak
     is exactly the bug the re-index cursor's key had in production)."""
-    from app import parallel, sched, worker
+    from app import parallel, sched, sizing, worker
     from app.bundles import genesis
     sched.scheduler().reset()
+    sizing.sizer().reset()
     worker.reset_reindex_cursors()
+    worker.reset_query_priority_memo()
     worker._prefetch_last.clear()
     worker._vindex_last.clear()
     genesis.reset_revisit_state()
     parallel.forget_prefetched()
+    parallel.forget_users()
     parallel.reset_failures()
     yield
 

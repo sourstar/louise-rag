@@ -71,6 +71,10 @@ def queries(names) -> bool:
             ("fts selection (fresh)", worker._FTS_FRESH, (config.MAX_RETRIES,)),
             ("fts backlog count", worker._FTS_BACKLOG,
              (config.MAX_RETRIES, config.FTS_BATCH_DOCS)),
+            # the phase controller's second watermark: it runs on the same
+            # hot path, so it is checked on the same terms
+            ("embed backlog count", worker._EMBED_BACKLOG,
+             (config.MAX_RETRIES, config.PHASE_EMBED_LOW)),
             ("rdf batch peers", worker._RDF_BATCH_PEERS, (config.MAX_RETRIES, "x", 999)),
             ("fts batch peers (fresh)", worker._FTS_FRESH_PEERS,
              (config.MAX_RETRIES, "x", 999)),

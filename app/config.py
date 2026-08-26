@@ -148,6 +148,23 @@ SCHED_QUANTUM_S = float(os.getenv("SCHED_QUANTUM_S", str(WORKER_ROUND_BUDGET_S))
 # turn out to be. An oversized unit is a unit to fix (it shows up as an
 # overrun), not a reason to hand one collection the resource for minutes.
 SCHED_FLOOR_CAP_S = float(os.getenv("SCHED_FLOOR_CAP_S", "60"))
+# How long a batch should LAST (app/sizing.py). The counts below are the
+# starting point; once a collection's real cost per document is measured,
+# the batch is sized to hit this instead — the same setting then buys the
+# same thing on a 400-word abstract and a 300-page book. A unit's duration
+# is also the granularity at which a resource can be handed back, so this
+# is what bounds B2/B3 in docs/scheduling.md §10.
+BATCH_TARGET_S = float(os.getenv("BATCH_TARGET_S", "3"))
+# The re-index probe is a WINDOW over rowids, not a batch: its cost depends
+# on how many rows the window happens to hold. Measured live at 498 ms
+# (pubmed) for a fixed 200k window; the width is now adjusted to hit this.
+REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
+# The phase controller's low watermark (worker._archive_yields): when fewer
+# than this many documents are waiting for a vector AND fts has work ready,
+# fts takes the collection's thread ahead of an archive pass. Feeding the
+# encoder is never wasted — genesis imports vectors only for fts_done
+# documents, so fts is the archive's upstream too. 0 disables the rule.
+PHASE_EMBED_LOW = int(os.getenv("PHASE_EMBED_LOW", "500"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # How many documents one fts round commits through a single tantivy writer.

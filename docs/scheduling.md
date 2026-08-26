@@ -561,22 +561,80 @@ the thread doing the work. `python -m tools.sched_report --shares` prints
 the recent lines. Without this the fair share is an assertion; with it, a
 change can be judged on the general picture.
 
-### Not built yet
+### The rest of the model, as built
 
-Named here so nobody assumes otherwise:
+The four items §10 listed after the rotation, and the one thing that is
+deliberately not ours to build.
 
-- **the parse pool is still FIFO** — no per-collection queues, so the
-  collection with the biggest batches still takes the most children;
-- **the index maintainer still serves in list order**, not by
-  `unindexed × staleness`;
-- **B1 is only half done**: the scheduler hands a plugin a slot, but
-  inside it the phases are still chosen as before (`_next_book`'s
-  rdf/fts watermark). The phase controller on inter-phase queue
-  watermarks — which is what makes embedding's pace regular (A4) — is
-  designed in §10 and unimplemented;
-- **units are not yet sized by duration** (§10, proposal 4). This is the
-  precondition for B2 and B3 to be fine-grained rather than coarse: a
-  300 s archive pass still cannot release early. The scheduler now
-  MEASURES what units cost (`suggest_floor_s`), which is the input that
-  work needs;
-- **`reserve()` exists but no query path calls it yet.**
+**Units sized by duration (`app/sizing.py`, A3).** Fixed counts were the
+wrong unit: `FTS_BATCH_DOCS=200` is 0.4 s of work for pubmed and 14–37 s
+for gutenberg, so one setting bought two different things and neither was
+chosen. A batch is now sized from that collection's own measured cost per
+document to last `BATCH_TARGET_S`, clamped, with the configured count
+standing until there is a measurement — it never replaces a guess with
+another guess. This is also the precondition for B2 and B3 being
+fine-grained: a slot can only be handed back at a unit boundary.
+
+The re-index probe needed a different treatment. It is a rowid RANGE and
+its cost depends on how many rows the range happens to hold, so there is
+no rate to size it from; the width is adjusted from the last probe
+instead — halve when it is over target, grow a quarter when it is
+comfortably under. AIMD, for the reason TCP uses it: it converges without
+a model of what makes the window expensive. Measured live at 498 ms
+(pubmed) with a fixed 200k window, on a query that runs every round of a
+caught-up collection.
+
+**The phase controller (`worker._archive_yields`, A2 + A4).** An archive
+pass holds its collection's thread for up to 300 s, and while it does,
+nothing reaches `fts_done` — so nothing new becomes embeddable and the
+encoder runs dry. That is the source of A4's burstiness. The rule is one
+line and deliberately one-directional: *if the encoder's queue is below
+its low watermark and fts has work ready, fts goes first.*
+
+What makes it safe without modelling who needs what: genesis imports
+vectors ONLY for documents with `fts_done=1`, so fts is the archive's
+upstream as well as the encoder's. Running fts is never wasted for either
+of them, so the rule cannot rob the archive in the long run. Both
+watermark counts are bounded by a LIMIT inside the subquery and
+plan-checked against the scope index.
+
+**The index maintainer's order.** One collection at a time is deliberate
+— two hour-long builds must never run together — which is exactly why the
+order matters: whoever is served last waits for everyone ahead. It now
+uses the SAME rotation as the encoder (`sched.RES_INDEX`) rather than list
+order, which gives longest-waiting-first and starvation-freedom without a
+second ordering heuristic to get wrong. A collection that is not due
+releases idle and drops out instead of holding a place.
+
+**Query priority (A5).** This one could not be solved inside either
+process: the query is answered by the WEB process and the backfill runs in
+the WORKER, so neither one's in-process scheduler can see the other's
+demand. The reservation crosses the boundary through the control table —
+`db.claim_query_priority` stamped by the query path before it embeds,
+read by the worker between documents, which then stands its own embedding
+down and keeps its place in the rotation (yielding for a query is not the
+same as having nothing to do). Short TTL, memoised on the read side: at
+175 embeds/s an unmemoised check would be a SELECT per document. Losing a
+claim costs a query one document's wait; holding one too long costs
+everybody, which is the right way round.
+
+**Parse-pool admission — and the part that is NOT ours.** The executor is
+FIFO and a submission is ~2 tasks per child, so whichever collection
+submits first takes every child, and one whose documents cost 30 s each
+holds them for the whole batch. A submission may now occupy at most its
+share of the children while other collections are active; alone, it gets
+all of them and nothing changes.
+
+That is admission control, not CPU weighting. How the kernel divides CPU
+*between* the running children is `cgroups v2 cpu.weight`'s job, and the
+right move there is to use it rather than write a second scheduler in
+Python — it is kernel-enforced and already proven. Not done here: it needs
+cgroup delegation into the container, and the pool spawns children per
+task rather than per collection, so it would need partitioning either way.
+
+**Still open, and honest about it:** query priority reserves the ENCODER
+but not a pool child, so a reader-panel load can still queue behind a
+batch; the archive pass yields only between shards, so B3's granularity
+there is still coarse; and if the encoder ever moves from Ollama to vLLM,
+A5 becomes a per-request `priority` field on the server and this
+reservation should be retired rather than extended.

@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 
 from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                embeddings, entities, fts, plugin_io, refs, sched, spaces, stats)
+                embeddings, entities, fts, plugin_io, refs, sched, sizing, spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -107,6 +107,23 @@ def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -
          meta["subjects"], meta["bookshelves"]))
 
 
+def _batch_key(collection, stage: str) -> str:
+    """Sizing is per collection AND per stage, keyed on the manifest PATH:
+    two collections can share a name and point at different corpora, and a
+    document costs what its own corpus makes it cost."""
+    return f"{stage}:{collection.manifest_path}"
+
+
+def batch_docs(collection, stage: str, default: int) -> int:
+    """How many documents this stage should take, from what they have
+    actually cost here (app/sizing.py). The configured count is the
+    starting point and the floor of the clamp — never a guess replaced by
+    another guess."""
+    return sizing.sizer().size(
+        _batch_key(collection, stage), target_s=config.BATCH_TARGET_S,
+        default=default, lo=1, hi=max(default, 1) * 20)
+
+
 def stage_rdf(con, row, collection) -> None:
     """Extract metadata for `row`, and for as many other rdf-pending
     documents as RDF_BATCH_DOCS allows, inside the ONE transaction the
@@ -129,10 +146,11 @@ def stage_rdf(con, row, collection) -> None:
     now = int(time.time())
     t0 = time.monotonic()
     peers = []
-    if config.RDF_BATCH_DOCS > 1:
+    want = batch_docs(collection, "rdf", config.RDF_BATCH_DOCS)
+    if want > 1:
         peers = con.execute(
             _RDF_BATCH_PEERS,
-            (config.MAX_RETRIES, row["uid"], config.RDF_BATCH_DOCS - 1)).fetchall()
+            (config.MAX_RETRIES, row["uid"], want - 1)).fetchall()
     _prefetch_ahead(con, collection, "rdf", row)
     # the batch's parse goes to the PARSE POOL (amendment 47); the writes
     # stay here, inside the caller's transaction
@@ -150,10 +168,12 @@ def stage_rdf(con, row, collection) -> None:
             n += 1
         except Exception:   # noqa: BLE001
             continue
+    took = time.monotonic() - t0
+    sizing.sizer().record(_batch_key(collection, "rdf"), n, took)
     if n > 1:
         _batch_log(con, "rdf", collection,
                    f"extracted {n} documents in one transaction "
-                   f"({time.monotonic() - t0:.1f}s)")
+                   f"({took:.1f}s)")
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -300,8 +320,9 @@ def stage_fts(con, row, collection) -> None:
     # (see the BEGIN IMMEDIATE below; _execute_step commits it).
     t0 = time.monotonic()
     peers = []
-    if config.FTS_BATCH_DOCS > 1:
-        peers = _fts_peers(con, collection, row, config.FTS_BATCH_DOCS - 1)
+    want = batch_docs(collection, "fts", config.FTS_BATCH_DOCS)
+    if want > 1:
+        peers = _fts_peers(con, collection, row, want - 1)
     _prefetch_ahead(con, collection, "fts", row)
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
@@ -344,10 +365,12 @@ def stage_fts(con, row, collection) -> None:
             _mark_indexed(con, peer, peer_chunks, now)
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
+    took = time.monotonic() - t0
+    sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
     if len(batch) > 1:
         _batch_log(con, "fts", collection,
                    f"indexed {len(batch)} documents / {n_chunks} chunks "
-                   f"in one commit ({time.monotonic() - t0:.1f}s)")
+                   f"in one commit ({took:.1f}s)")
 
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)
@@ -456,7 +479,9 @@ _FTS_REINDEX = (
 # whole 28M-row (1,1,1) range: 5.4 s per window, measured, which is the
 # same defect one level down. Forced onto the integer primary key a window
 # visits exactly its own rows (~0.3 s per 200k), and the walk ends.
-_REINDEX_WINDOW = 200_000
+_REINDEX_WINDOW = 200_000        # the starting width; sizing.py adjusts it
+_REINDEX_WINDOW_MIN = 1_000      # below this the walk would never finish
+_REINDEX_WINDOW_MAX = 2_000_000
 _FTS_REINDEX_WINDOWED = (
     "SELECT * FROM documents WHERE rowid>? AND rowid<=? "
     "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
@@ -492,9 +517,22 @@ def _next_reindex(con, collection):
     if state[4]:
         return None                      # nothing to re-index at these versions
     start = state[2]
-    end = min(start + _REINDEX_WINDOW, state[3])
+    # The window is a rowid RANGE, and what it costs depends on how many
+    # rows it happens to hold — not on its width, so there is no rate to
+    # size it from. It is adjusted from the last probe instead
+    # (app/sizing.py `note_window`). Measured live at 498 ms on pubmed with
+    # a fixed 200k window, on a query that runs every round of a
+    # caught-up collection.
+    width = sizing.sizer().window(key, default=_REINDEX_WINDOW,
+                                  lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
+    end = min(start + width, state[3])
+    probe = time.monotonic()
     row = con.execute(_FTS_REINDEX_WINDOWED,
                       (start, end, config.MAX_RETRIES, *versions)).fetchone()
+    sizing.sizer().note_window(
+        key, seconds=time.monotonic() - probe,
+        target_s=config.REINDEX_PROBE_TARGET_S, default=_REINDEX_WINDOW,
+        lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
     if row is not None:
         # stay in this window: the batch takes its peers from it, and the
         # next round re-enters here until the window is clean
@@ -504,11 +542,48 @@ def _next_reindex(con, collection):
     _reindex_cursor[key] = (*versions, end, state[3], done)
     return None
 
+# The inter-phase queue BELOW fts: documents that have cleared the index
+# and are waiting for a vector. Bounded by the same LIMIT trick as
+# _FTS_BACKLOG — the question is "are there at least N", never "how many".
+_EMBED_BACKLOG = (
+    "SELECT COUNT(*) FROM (SELECT 1 FROM documents WHERE in_scope=1 AND rdf_done=1 "
+    "AND fts_done=1 AND embed_done=0 AND error IS NULL AND retries<? LIMIT ?)")
+
+
 # Bounded on purpose: the inner LIMIT stops the count at one batch, so this
 # never walks a 33M-row backlog to answer "is there a batch yet".
 _FTS_BACKLOG = (
     "SELECT COUNT(*) FROM (SELECT 1 FROM documents WHERE in_scope=1 AND rdf_done=1 "
     "AND fts_done=0 AND error IS NULL AND retries<? LIMIT ?)")
+
+
+def _archive_yields(con, collection) -> bool:
+    """Should the archive pass stand aside and let fts have the thread?
+
+    THE PHASE CONTROLLER (docs/scheduling.md §10, A2 and A4). A collection's
+    stages share one thread, so whichever holds it decides what every stage
+    downstream gets to do. An archive pass holds it for up to
+    GENESIS_PASS_BUDGET_S — 300 s — and during that time no document
+    reaches `fts_done`, so nothing new becomes embeddable and the encoder
+    runs dry. That is exactly the burstiness A4 is about: 1,900 embeds/s
+    during a pass, zero during the parse phases.
+
+    The rule is deliberately one-directional and cheap: **if the encoder's
+    queue is below its low watermark and fts has work ready, fts goes
+    first.** Nothing else is inferred, and it cannot rob the archive of its
+    thread in the long run, because genesis imports vectors ONLY for
+    documents with `fts_done=1` — fts is the archive's upstream as well as
+    the encoder's. Running fts is never wasted work for either of them,
+    which is what makes this safe without modelling who needs what.
+    """
+    if config.PHASE_EMBED_LOW <= 0:
+        return False
+    ready = con.execute(_FTS_BACKLOG, (config.MAX_RETRIES, 1)).fetchone()[0]
+    if not ready:
+        return False                 # nothing to feed it with; let the archive run
+    waiting = con.execute(
+        _EMBED_BACKLOG, (config.MAX_RETRIES, config.PHASE_EMBED_LOW)).fetchone()[0]
+    return waiting < config.PHASE_EMBED_LOW
 
 
 # ---- amendment 38: coverage-aware dense backfill ---------------------------
@@ -654,9 +729,14 @@ def _next_book(con, scope, embed_allowed=True, collection=None):
     # exactly to one-for-one alternation.
     fts_row = con.execute(_FTS_FRESH, (config.MAX_RETRIES,)).fetchone()
     if fts_row is not None:
+        # the watermark is what fts will ACTUALLY take (app/sizing.py), not
+        # the configured count: sized batches would otherwise wait for a
+        # watermark of 200 and then commit 4,000
+        want = (batch_docs(collection, "fts", config.FTS_BATCH_DOCS)
+                if collection is not None else config.FTS_BATCH_DOCS)
         ready = con.execute(
-            _FTS_BACKLOG, (config.MAX_RETRIES, config.FTS_BATCH_DOCS)).fetchone()[0]
-        if ready >= config.FTS_BATCH_DOCS:
+            _FTS_BACKLOG, (config.MAX_RETRIES, want)).fetchone()[0]
+        if ready >= want:
             return "fts", fts_row
     r = con.execute(_RDF_PENDING, (config.MAX_RETRIES,)).fetchone()
     if r:
@@ -1076,13 +1156,38 @@ def _index_maintainer() -> None:
                 control.close()
             if state in ("paused", "seed-only"):
                 continue
-            for c in collections:
+            # Served by the SAME fair-share rotation as the encoder
+            # (app/sched.py), not in list order. One collection at a time is
+            # deliberate — two hour-long builds must never run together —
+            # which is exactly what makes the order matter: whoever is
+            # served last waits for everyone ahead. DRR gives
+            # longest-waiting-first and starvation-freedom without a second
+            # ordering heuristic to get wrong, and a collection that is not
+            # due drops out of the rotation instead of holding a place.
+            s = sched.scheduler()
+            by_name = {c.name: c for c in collections}
+            s.sync(sched.RES_INDEX, by_name)
+            for name in by_name:
+                s.declare(sched.RES_INDEX, name)
+            for _ in range(len(by_name)):
                 if _stop.is_set():
                     break
+                turn = s.acquire(sched.RES_INDEX)
+                if turn is None:
+                    break
+                c = by_name.get(turn.collection)
+                if c is None:
+                    turn.release(idle=True)
+                    continue
                 key = str(c.manifest_path)
                 if key not in cons:
                     cons[key] = db.connect(c)
-                _maintain_vector_index(cons[key], c)
+                t0 = time.monotonic()
+                did = _maintain_vector_index(cons[key], c)
+                turn.spent(time.monotonic() - t0, units=1 if did else 0)
+                # not due, or nothing to fold in: give the slot back rather
+                # than sit on it, and rejoin at the tail when there is work
+                turn.release(idle=not did)
         except Exception:   # noqa: BLE001 — maintenance must never kill the worker
             pass
     for con in cons.values():
@@ -1486,7 +1591,10 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # here on the GPU-serial main loop; a local archive, or any archive of
     # a collection that runs its whole pipeline here, is drained here.
     if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
-        if _drain_remote_archive(con, collection, _stop):
+        # same phase rule as the pipeline thread (_archive_yields): a pass
+        # that would starve the encoder waits for one fts batch first
+        if not _archive_yields(con, collection) and \
+                _drain_remote_archive(con, collection, _stop):
             return True
     scope = db.get_scope(con)
     if pipeline_active:
@@ -1619,6 +1727,35 @@ def embed_resource(collection) -> str:
     return sched.encoder(collections_mod.recipe_for(collection).url)
 
 
+_QUERY_PRIORITY_POLL_S = 0.5
+_query_priority_seen: dict[str, tuple[float, bool]] = {}
+
+
+def query_waiting(con) -> bool:
+    """Is a human waiting on this encoder right now (A5)?
+
+    Memoised for _QUERY_PRIORITY_POLL_S: the answer is read between
+    documents, and at 175 embeds/s an unmemoised read would put a needless
+    SELECT on the control table for every document. Half a second is far
+    below the cost of the document it protects, so the memo cannot make a
+    query wait measurably longer."""
+    key = str(getattr(con, "collection_name", "") or id(con))
+    now = time.monotonic()
+    seen = _query_priority_seen.get(key)
+    if seen is not None and now - seen[0] < _QUERY_PRIORITY_POLL_S:
+        return seen[1]
+    try:
+        active = db.query_priority_claimed(con)
+    except Exception:   # noqa: BLE001 — a reservation is an optimisation
+        active = False
+    _query_priority_seen[key] = (now, active)
+    return active
+
+
+def reset_query_priority_memo() -> None:
+    _query_priority_seen.clear()
+
+
 def _serve_turn(con, collection, turn, last_idle_log, pipeline) -> bool:
     """One collection's slot on the encoder: work until the slot is spent,
     or until the collection has nothing left to do — whichever is first.
@@ -1647,6 +1784,14 @@ def _serve_turn(con, collection, turn, last_idle_log, pipeline) -> bool:
                 return worked
             worked = True
             turn.spent(dt)
+            if query_waiting(con):
+                # A5: a human is on the encoder. Yield BETWEEN documents —
+                # never mid-call, which would waste the work already done —
+                # and keep our place in the rotation (idle=False), because
+                # standing aside for a query is not the same as having
+                # nothing to do.
+                turn.release(idle=False)
+                return worked
             if not turn.may_continue():
                 break
     finally:
@@ -1760,7 +1905,12 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # every other collection's embedding for its whole budget
                 # (observed live: gutenberg's embeds "done in 478 s"). Its
                 # budget/yield alternation is with THIS thread's rdf/fts.
-                if _drain_remote_archive(con, collection, gone):
+                # the phase controller: an archive pass can hold this thread
+                # for 300 s, and while it does nothing new becomes
+                # embeddable. If the encoder is running dry and fts has
+                # work, fts goes first (_archive_yields).
+                if not _archive_yields(con, collection) and \
+                        _drain_remote_archive(con, collection, gone):
                     continue
                 scope = db.get_scope(con)
                 stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
@@ -1974,6 +2124,15 @@ def _log_shares(con) -> None:
             for n, e in sorted(busy.items())
         ]
         db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
+    # ...and what the units themselves now cost, which is what the sizes
+    # above are derived from (app/sizing.py). A batch that drifts away from
+    # BATCH_TARGET_S is visible here before it is visible as unfairness.
+    sizes = sizing.sizer().snapshot()
+    if sizes["rates"]:
+        db.log_event(con, "info", "sched", "unit costs — " + "; ".join(
+            f"{k.rsplit('/', 1)[-1]}: {v * 1000:.1f} ms/doc" if v < 1
+            else f"{k.rsplit('/', 1)[-1]}: {v:.1f} s/doc"
+            for k, v in sorted(sizes["rates"].items())))
 
 
 def _stats_publisher() -> None:

@@ -169,6 +169,27 @@ def raise_for(err: dict):
     raise RuntimeError(f"{err.get('type')}: {err.get('msg')}")
 
 
+# Which collections have used the pool lately — the denominator of the
+# admission share below. A name is enough here: this decides how many
+# children a submission may occupy, not what anything is keyed on.
+_recent_users: dict[str, float] = {}
+ACTIVE_WINDOW_S = 30.0
+
+
+def active_users(name: str | None = None) -> int:
+    """How many collections are currently competing for the pool."""
+    now = time.monotonic()
+    if name is not None:
+        _recent_users[name] = now
+    for stale in [k for k, t in _recent_users.items() if now - t > ACTIVE_WINDOW_S]:
+        del _recent_users[stale]
+    return max(1, len(_recent_users))
+
+
+def forget_users() -> None:
+    _recent_users.clear()
+
+
 def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     """chunks | metadata | record for every row, in order. `rows` may be
     sqlite3.Row objects (converted; only plain fields travel)."""
@@ -183,6 +204,19 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # never smaller than 4 rows, or the pickling outweighs the work
     size = max(4, -(-len(plain) // (n * 2)))
     parts = [plain[i:i + size] for i in range(0, len(plain), size)]
+    # ADMISSION (docs/scheduling.md §10, B). The executor is FIFO, and a
+    # submission is ~2 tasks per child — so whichever collection submits
+    # first takes every child, and one whose documents cost 30 s each holds
+    # them for the whole batch while a collection with 2 ms documents
+    # waits. Each collection may occupy at most its share of the children
+    # while others are active; alone, it gets all of them and nothing
+    # changes.
+    #
+    # Note what this is NOT: it is admission control, not CPU weighting.
+    # How the kernel divides CPU BETWEEN the running children is
+    # cgroups' job (cpu.weight), not ours — see §11.
+    share = max(1, n // active_users(getattr(collection, "name", None)))
+    wave = max(1, share * 2)          # the same ~2 tasks per child, capped
     # BOUNDED: the pool is an optimisation, and a caller that waits on it
     # forever is worse than no pool at all — live 2026-08-28, pubmed's
     # pipeline thread sat in the executor with every child gone, so the
@@ -192,11 +226,13 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # stops using children until it restarts.
     futures = []
     try:
-        futures = [ex.submit(_compute, kind, collection, part) for part in parts]
         deadline = time.monotonic() + config.PARSE_TIMEOUT_S
         out: list[tuple[bool, object]] = []
-        for f in futures:
-            out.extend(f.result(timeout=max(1.0, deadline - time.monotonic())))
+        for start in range(0, len(parts), wave):
+            futures = [ex.submit(_compute, kind, collection, part)
+                       for part in parts[start:start + wave]]
+            for f in futures:
+                out.extend(f.result(timeout=max(1.0, deadline - time.monotonic())))
         _note_success()
         return out
     except (BrokenProcessPool, TimeoutError, OSError) as e:
