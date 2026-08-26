@@ -38,29 +38,70 @@ and conflating them is the first way this plugin goes wrong.
 
 ### 1.1 Normattiva OpenData — `dati.normattiva.it` (the one to build on)
 
-The important development, and the reason this is worth doing now: **since
-1 January 2026 Normattiva's data are open data under CC BY 4.0**, and in
-February 2026 an OpenData portal went live alongside them *(unverified —
-ANSA, 2026-02-24, and the portal's own pages)*.
+**Primary source, supplied by the operator 2026-08-26: the portal's own
+"Dati disponibili" page.** This section is no longer inference from search
+summaries, with one caveat noted at the end.
 
-- **Content**: every *numbered* State normative act published in the
-  Gazzetta Ufficiale **from 1861 to today**, in its *multivigente* form —
-  i.e. each act with all of its versions through time, not just the text as
-  first published.
-- **Formats**: Akoma Ntoso (`akn`), XML-NIR (the older AIPA/CR40 circular
-  format), HTML, JSON, and ELI URIs for identification; PDF/EPUB/RTF for
-  human consultation only.
-- **Access**: a REST API (`api.normattiva.it`, a `bff-opendata/v1` surface —
-  a `collections/collection-predefinite` endpoint and an `atto/dettaglio`
-  endpoint are both attested) plus **pre-packaged collections** and
-  **user-defined dynamic collections** *(unverified)*. The specification is
-  published as `dati.normattiva.it/assets/come_fare_per/API_Normattiva_OpenData.pdf`.
-- **Identity**: URN:NIR (`urn:nir:stato:decreto.legislativo:2005-03-07;82`)
-  and ELI, both stable and both official.
+**Content and versions.** Every *numbered* State normative act published in
+the Gazzetta Ufficiale from 1861 to today, in three distinct renditions the
+portal names explicitly:
 
-This is the origin a plugin should target. It is structured, identified,
+| version | what it is |
+|---|---|
+| **originaria** | the act as first published |
+| **vigente ad una qualsiasi data** ("point-in-time") | the consolidated text in force on a date the caller chooses |
+| **multi-vigente** | all versions through time |
+
+That the origin serves **point-in-time as a query parameter** is a load-
+bearing discovery, and §6 is rewritten around it.
+
+**Licence, and its history — which matters more than it looks.** The
+portal launched in a *sperimentale* phase under **CC BY 4.0 NC**
+(non-commercial), moved to plain **CC BY 4.0** for the window 1 July –
+31 December 2025, and from **1 January 2026** offers all three versions
+under CC BY 4.0 with attribution ("medesima paternità"). So the licence
+attached to a copy depends on **when it was fetched** — see §10, where this
+changes the classification argument.
+
+**Bulk unit: the *collection* (`collezione`)**, in two flavours, which map
+cleanly onto `AcquisitionSpec`:
+
+| flavour | how it is obtained | formats |
+|---|---|---|
+| **precompiled** | downloaded straight from the portal home page | AKN, XML-NIR, JSON, HTML, PDF, EPUB, RTF, ELI URI |
+| **on demand** | computed from the user's own search parameters | AKN, XML-NIR, JSON, HTML, ELI URI |
+
+Each is available in originaria / vigente / multivigente. Note the asymmetry:
+the human-facing formats (PDF, EPUB, RTF) exist only for precompiled
+collections — which is fine, since none of them is an ingestion input.
+
+**Two normative specifications are published** and are direct inputs to the
+plugin, not background reading:
+
+- the profile by which **OASIS LegalDocML / Akoma Ntoso** was adopted for
+  Normattiva's acts — the contract `akn.py` parses against;
+- the **permanent ELI URI** specification. The chosen URI form is the
+  *"maggiormente parlante"* one, **based on the act's coordinates**.
+
+That last detail independently corroborates §3.1: the origin itself treats
+(type, date, number) as the act's identifying coordinates, which is exactly
+the tuple the proposed integer `native_id` is synthesised from.
+
+**Planned, not yet available:** act metadata exported as **DCAT-AP_IT**. If
+it lands it is the natural satisfier of the LISTING CONTRACT (§8) — a
+machine-readable catalogue of everything published, which is what every
+honest denominator downstream needs.
+
+**The caveat.** The page describes its phases in the future tense ("sarà
+possibile", "si prevede di aggiungere"), i.e. it was written during 2025,
+while ANSA reports the portal going live on **2026-02-24** — *after* the
+announced 1 January 2026 transition. Either the page is stale or the
+timeline slipped. **Confirm the current licence and functional state on the
+live portal before relying on either** (§12.1).
+
+This is the origin a plugin should target: structured, identified,
 versioned, machine-readable, bulk-oriented and openly licensed — every
-property the other three lack.
+property the other three sources lack.
 
 ### 1.2 `gazzettaufficiale.it` — the Gazzetta itself (IPZS)
 
@@ -398,7 +439,7 @@ the "ask first" approval, §12.
 
 ---
 
-## 6. Vigenza: index the current text, serve history by key
+## 6. Vigenza: index the vigente text, resolve history against the origin
 
 The multivigente corpus holds N versions of every amended article. Three
 options:
@@ -407,26 +448,59 @@ options:
   say now", silently wrong for any question about a past state.
 - **(b) index every version** — N× the corpus, and RRF happily returns five
   near-identical versions of the same article as five hits. Actively bad.
-- **(c) index the vigente text; expose history as a ReferenceSource.**
+- **(c) index the vigente text; serve history by key.**
 
-**Recommend (c)**, and note that invariant 4 already has the category for
-it: a ReferenceSource lookup is *facts-by-key*, it goes into the LLM context
-as a pinned block, and it **never enters RRF**. "The text of art. 5 d.lgs.
-82/2005 as in force on 2019-06-01" is a key lookup, not a ranked list. So is
-"what does art. 5 say" — a citation in the query should resolve, not
-compete.
+**Recommend (c)**, and invariant 4 already has the category: a lookup by key
+is *facts-by-key*, it enters the LLM context as a pinned block, and it
+**never enters RRF**. "The text of art. 5 d.lgs. 82/2005 as in force on
+2019-06-01" is a key lookup, not a ranked list. So is "what does art. 5
+say" — a citation in the query should **resolve**, not compete.
 
-That gives a natural phase 2 for this plugin:
+**What the primary source changes (§1.1).** The earlier draft assumed we
+would have to *store* every version to answer historical questions. We do
+not: the origin serves **"vigente ad una qualsiasi data" as a query
+parameter**. Point-in-time is the origin's capability, not ours to rebuild.
+That makes option (c) substantially cheaper and moves the design onto
+machinery this project already has:
+
+> Historical vigenza is the **freshness-check pattern** of `pack-format.md`
+> §12, pointed backwards in time instead of forwards. Rate-limited, **opt-in
+> per query**, the fetched text **pinned as a fact** beside the indexed one,
+> never re-embedded and never fed to the index.
+
+That precedent settles three things at once. It keeps the origin out of the
+default query path, which the §7.5 latency budget requires — a network round
+trip cannot sit inside a p95 of 2 s. It reuses an existing, rate-limited,
+opt-in mechanism rather than inventing one. And "pinned as a fact" is
+exactly the invariant-4 treatment a point-in-time answer deserves.
+
+**What the ReferenceSource then holds** is the cheap, stable part —
+identity and structure, not text-through-time:
 
     app/refs/normattiva.py
       RefTable "atti"     PK urn      — type, date, number, title, eli, status
-      RefTable "articoli" PK urn#art  — text, in-force-from, in-force-to
+      RefTable "articoli" PK urn#art  — in-force-from, in-force-to, cites
       RefLink  citation: articoli.cites_urn -> atti.urn
 
-plus an **EntityResolver over citation strings** — `art. 5, comma 3, d.lgs.
+Note what left the schema: `articoli.text` per version. The dates and the
+citation graph are small, derivable and worth holding locally; the text of
+every historical version is large, and one API call away when actually
+asked for. **Multivigente stays an acquisition option, not a requirement** —
+a node that wants offline historical answers can fetch it; a node that does
+not, still answers the question with a round trip and an honest label.
+
+Plus an **EntityResolver over citation strings** — `art. 5, comma 3, d.lgs.
 7 marzo 2005, n. 82` / `l. 633/1941` / `DPR 445/2000` all normalising to a
-URN. Italian legal citation is highly regular; this is a tractable parser
-and it is where most of the retrieval quality in this domain actually lives.
+URN. Italian legal citation is highly regular; this is a tractable parser,
+and per JuriFindIT's own result (§7.3) modelling cross-article references is
+where the measured gain in this domain lives.
+
+**Open, and it belongs to acquisition rather than to this section:**
+whether the corpus is fetched as *vigente-at-fetch-time* (a moving target
+that changes under a pinned snapshot) or as *originaria + the modification
+graph*. The first is simpler and is what "index the vigente text" assumes;
+the second is reproducible in a way a moving target is not, which matters
+for a signed pack whose consumers must reproduce it. §12.7.
 
 ---
 
@@ -809,6 +883,15 @@ citation at all.
 Shape only — the fields marked `# VERIFY` are the ones §12 needs answered
 from the API specification PDF before this can be written for real.
 
+**The bulk unit is now known: the *collection*** (§1.1), in two flavours,
+and they map onto the two halves of `AcquisitionSpec` almost exactly.
+**Precompiled** collections are a fixed, enumerable list published on the
+portal home page — that is `Endpoint.static_files`, the mechanism that
+exists precisely for transports with no directory-listing protocol.
+**On-demand** collections are computed from search parameters — a
+*parameterised* fetch that `static_files` cannot express, and the natural
+home for profiles.
+
 ```python
 NORMATTIVA_SPEC = AcquisitionSpec(
     source_id="normattiva",
@@ -817,24 +900,41 @@ NORMATTIVA_SPEC = AcquisitionSpec(
         Endpoint(transport=Transport.HTTPS,
                  url="https://api.normattiva.it/...",   # VERIFY: base + auth
                  max_conns=2,                            # etiquette: a public service
-                 static_files=_predefined_collections()),# VERIFY: bulk unit
+                 static_files=_precompiled_collections()),  # the portal's own list
     ),
-    layout="container-files",      # VERIFY: if collections are archives of AKN
+    layout="container-files",      # a collection holds many acts
     filters=("*.akn.xml", "*.zip"),
     checksums=ChecksumSource(kind="none"),      # VERIFY: any published digests?
     delta=DeltaSpec(mode="full-resync"),        # VERIFY: incremental feed?
     etiquette=RateLimit(max_conns=2),
     profiles={
-        "demo":    Filter(max_files=...),       # one code, e.g. the CAD
+        "demo":    Filter(...),                 # one code, e.g. the CAD
         "starter": Filter(include=("codici/*",)),
         "full":    Filter(),
     },
     profile_mode="incremental",
     estimated_bytes={...},                      # VERIFY: probe, never guess
-    license_class=LicenseClass.YELLOW,          # §10 — operator's call
+    license_class=LicenseClass.YELLOW,          # §10
     terms_text_path=... / "plugins" / "normattiva" / "TERMS.txt",
 )
 ```
+
+**Which format to fetch.** AKN is the ingestion input — it is the only one
+carrying the structure §4's rendition needs, and the portal publishes the
+profile by which it adopted the standard. JSON is worth evaluating as the
+*metadata* source for the front matter, where AKN's own metadata is more
+awkward to read; that is an implementation choice inside `akn.py`, not an
+acquisition one. PDF/EPUB/RTF are never fetched — they exist for human
+consultation and, per the extras policy (amendment 35), would be a
+local-only convenience at best.
+
+**The LISTING CONTRACT has a candidate satisfier.** The portal plans
+**DCAT-AP_IT** metadata export (§1.1). If it ships, it is a machine-readable
+catalogue of everything published — which is exactly what the contract asks
+for and what every denominator and ETA downstream reads. Until then, the
+precompiled collection list is the enumerable surface and the on-demand
+query is not enumerable at all, which is a reason to build the collection
+from precompiled units where possible.
 
 Two rules this spec must not violate, both already paid for elsewhere in
 this codebase: the listing must be **enumerated completely** every pass (the
@@ -899,13 +999,39 @@ pattern is opaque-by-design.
 
 ## 10. Licence and privacy classification
 
-**Normattiva (CC BY 4.0): propose YELLOW.** Green means no gate at all.
-CC BY imposes an attribution obligation that follows the data into every
-redistribution — and this platform redistributes, by design, over P2P.
-Yellow costs one acknowledgement (a timestamp and a sha256 of the terms
-text) and makes the obligation visible at exactly the moments amendment 36
-cares about: discovery, import, exchange. Green is defensible; yellow is
-cheap and honest. **Operator's call (§12.2).**
+**Normattiva: YELLOW, and the primary source turns this from a preference
+into an argument.** The first draft proposed yellow on the general ground
+that CC BY's attribution obligation follows the data into every
+redistribution, and this platform redistributes by design. That still holds.
+But §1.1 adds a decisive fact: **the licence depends on when the data was
+fetched.** The portal ran a *sperimentale* phase under **CC BY 4.0 NC**,
+then plain CC BY 4.0 from 1 July 2025, then full coverage from 1 January
+2026.
+
+A **non-commercial** clause is not merely a stricter attribution rule — it
+is a restriction this platform structurally cannot honour downstream, since
+a P2P network cannot police what a receiving peer does with a corpus. So:
+
+- Data fetched during the NC window is **not** redistributable under
+  Louise's own model, and a collection built from it must not be exchanged.
+  Whether any such copy exists is a question for whoever fetched it.
+- Data fetched after the transition is CC BY 4.0 and exchanges fine, with
+  attribution carried.
+- **The two are indistinguishable once on disk.** Nothing in a downloaded
+  AKN file records which licence window it came from.
+
+That last point is exactly what invariant 9's mechanism is for, and it is
+why yellow is now the right answer rather than merely a defensible one: the
+ack records **a timestamp and the sha256 of the terms text**, so the
+recorded ack *is* the evidence of which licence a corpus was taken under.
+A green classification would keep no such record and would make the NC
+question unanswerable after the fact.
+
+Practical consequence for `TERMS.txt`: capture the CC BY 4.0 text **plus
+Normattiva's own conditions as published at fetch time**, byte-exact, and
+re-ack if the origin's terms change — the sha256 comparison in
+`licensing.state_for` already turns a changed terms text into a re-ack
+prompt rather than a silent drift.
 
 Also worth recording in the plugin's docstring: Normattiva's own notice says
 its texts are **not official** — the printed Gazzetta prevails. A RAG system
@@ -958,17 +1084,33 @@ unresolved problems, both of which is why §2 puts it second:
 
 ## 12. What a human has to decide before this starts
 
-1. **The bulk shape of the Normattiva OpenData API** — read
-   `dati.normattiva.it/assets/come_fare_per/API_Normattiva_OpenData.pdf`.
-   Three answers needed: is there a bulk download unit (and how big), is
-   there an incremental/delta feed or only full re-listing, and is there
-   auth/rate limiting? §8 cannot be written without these, and the answer to
-   the first one decides whether this is a pleasant plugin or an unpleasant
-   one.
-2. **Licence class for `normattiva`: yellow or green?** §9. If yellow,
-   capture `TERMS.txt` byte-exact — CC BY 4.0's text plus Normattiva's own
-   conditions — and add it to `.gitattributes` so no checkout ever converts
-   its line endings.
+1. **The Normattiva OpenData API — PARTLY ANSWERED 2026-08-26** from the
+   portal's "Dati disponibili" page (§1.1). Settled: the bulk unit is the
+   **collection**, precompiled or on-demand; the formats; the three
+   versions; the licence phases. **Still open**, and still needing
+   `dati.normattiva.it/assets/come_fare_per/API_Normattiva_OpenData.pdf`
+   plus the "Come scaricare i dati" page:
+   *(a)* how big a precompiled collection is, and how many there are —
+   `estimated_bytes` must be probed, never guessed;
+   *(b)* whether there is an **incremental/delta feed** or only full
+   re-listing, which sets `DeltaSpec.mode`;
+   *(c)* **auth and rate limits**;
+   *(d)* whether **DCAT-AP_IT** has shipped, which would satisfy the
+   LISTING CONTRACT outright;
+   *(e)* the two normative specs — the AKN adoption profile and the ELI
+   permanent-URI spec — which are direct inputs to `akn.py` and `urn.py`.
+   Also: **confirm the live licence and functional state**, since the page
+   reads as written during 2025 while the portal launched 2026-02-24, after
+   the transition it describes in the future tense.
+2. **Licence class: YELLOW** — §10 now argues this rather than merely
+   preferring it, because the origin ran a **CC BY 4.0 NC** phase and a
+   downloaded file does not record which licence window it came from. The
+   ack (timestamp + sha256 of the terms text) is the only durable evidence
+   of what a corpus was taken under. What remains for a human: capture
+   `TERMS.txt` byte-exact — the CC BY 4.0 text plus Normattiva's own
+   conditions **as published at fetch time** — add it to `.gitattributes`
+   so no checkout converts its line endings, and establish whether any
+   NC-window copy exists locally.
 3. **Approval for the rendition format and a new chunker** — the §4 text
    format plus `akn_article` / `AKN_CHUNK_VERSION` (§5), which covers both.
    This is the "ask first" case in CLAUDE.md: it changes cleaning AND
@@ -993,6 +1135,15 @@ unresolved problems, both of which is why §2 puts it second:
    it, the fallback is a hand-built 50–100 question set and the decision
    rests on weaker evidence. Same visit answers §7.3's open fields for
    `jurifindit/DAR-legal-it` (base model, dimension, licence).
+7. **Fetch the corpus as *vigente-at-fetch-time*, or as *originaria + the
+   modification graph*?** (§6.) The first is simpler and is what "index the
+   vigente text" assumes, but it is a **moving target under a pinned
+   snapshot**: two peers fetching a week apart hold different bytes for the
+   same act, with nothing recording why. The second is reproducible, which
+   is what a signed pack needs, at the cost of reconstructing consolidated
+   text locally. This did not exist as a question until §1.1 established
+   that the origin serves all three versions.
+
 
 ## Sources
 
