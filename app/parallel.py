@@ -26,7 +26,9 @@ under test.
 """
 import multiprocessing
 import os
+import sys
 import threading
+import time
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -41,6 +43,8 @@ KNOBS = ("CHUNK_TOKENS", "CHUNK_OVERLAP", "CHUNK_VERSION", "CLEANING_VERSION",
 _lock = threading.Lock()
 _pool: ProcessPoolExecutor | None = None
 _pool_size = 0
+_failures = 0
+_disabled = False
 
 
 def _child_init(knobs: dict) -> None:
@@ -61,10 +65,10 @@ def processes() -> int:
 
 
 def pool() -> ProcessPoolExecutor | None:
-    """The executor, created on first use; None when serial."""
+    """The executor, created on first use; None when serial or DISABLED."""
     global _pool, _pool_size
     n = processes()
-    if n <= 1:
+    if n <= 1 or _disabled:
         return None
     with _lock:
         if _pool is None or _pool_size != n:
@@ -87,6 +91,42 @@ def shutdown() -> None:
             _pool.shutdown(wait=False, cancel_futures=True)
             _pool = None
             _pool_size = 0
+
+
+def _note_success() -> None:
+    global _failures
+    if _failures:
+        with _lock:
+            _failures = 0
+
+
+def _note_failure(exc: BaseException) -> None:
+    """A pool that did not answer: rebuild it, and give up on children
+    entirely if it keeps happening. Printed, not log_event'd — this module
+    has no manifest connection, and the worker's stdout IS the log."""
+    global _failures, _disabled
+    shutdown()
+    with _lock:
+        _failures += 1
+        failures = _failures
+        if failures >= max(1, config.PARSE_MAX_FAILURES) and not _disabled:
+            _disabled = True
+    print(f"[parse pool] {type(exc).__name__}: computing this batch in-process "
+          f"(failure {failures} of {config.PARSE_MAX_FAILURES})"
+          + ("; children DISABLED until restart" if _disabled else ""),
+          file=sys.stderr, flush=True)
+
+
+def reset_failures() -> None:
+    global _failures, _disabled
+    with _lock:
+        _failures = 0
+        _disabled = False
+
+
+def health() -> dict:
+    return {"processes": processes(), "pool": _pool is not None,
+            "failures": _failures, "disabled": _disabled}
 
 
 # ---- the work ---------------------------------------------------------------
@@ -143,14 +183,27 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # never smaller than 4 rows, or the pickling outweighs the work
     size = max(4, -(-len(plain) // (n * 2)))
     parts = [plain[i:i + size] for i in range(0, len(plain), size)]
+    # BOUNDED: the pool is an optimisation, and a caller that waits on it
+    # forever is worse than no pool at all — live 2026-08-28, pubmed's
+    # pipeline thread sat in the executor with every child gone, so the
+    # collection stopped and SIGTERM could not have been honoured either.
+    # On a timeout or a broken pool the batch is computed in-process and
+    # the pool is rebuilt; after PARSE_MAX_FAILURES in a row this process
+    # stops using children until it restarts.
+    futures = []
     try:
-        results = list(ex.map(_compute, [kind] * len(parts), [collection] * len(parts), parts))
-    except BrokenProcessPool:
-        # a child died (OOM, a native crash): this batch runs serially and
-        # the next call rebuilds the pool
-        shutdown()
+        futures = [ex.submit(_compute, kind, collection, part) for part in parts]
+        deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+        out: list[tuple[bool, object]] = []
+        for f in futures:
+            out.extend(f.result(timeout=max(1.0, deadline - time.monotonic())))
+        _note_success()
+        return out
+    except (BrokenProcessPool, TimeoutError, OSError) as e:
+        for f in futures:
+            f.cancel()
+        _note_failure(e)
         return _compute(kind, collection, plain)
-    return [item for part in results for item in part]
 
 
 def chunks_for_rows(collection, rows) -> list[tuple[bool, object]]:

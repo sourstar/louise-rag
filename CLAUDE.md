@@ -96,6 +96,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
 - Deferral is not failure: an unreachable endpoint or a locked manifest
   never writes an error to a document. An error removes the document from
   every selection until a human intervenes.
+- A pipeline thread NEVER waits without a bound on an optional subsystem.
+  The parse pool hung with its children gone and pubmed stopped dead for
+  hours (amendment 51): every such wait takes a timeout and falls back to
+  doing the work in-process, because a worker that cannot finish also
+  cannot honour SIGTERM.
 - Caches, cursors and bookkeeping key on physical identity (a path), never
   on a name. Two objects can share a name and point at different files.
 - Telemetry is published by someone other than the thread doing the work.

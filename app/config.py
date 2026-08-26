@@ -191,6 +191,16 @@ PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or
 # groups, streams) grow with what it has parsed — measured +4 GB across
 # eleven children in fifteen minutes — and a fresh child starts small
 PARSE_TASKS_PER_CHILD = int(os.getenv("PARSE_TASKS_PER_CHILD", "500"))
+# How long a batch may wait for the pool before the caller computes it
+# in-process instead. The pool is an OPTIMISATION: a pipeline thread that
+# blocks on it forever stops a collection dead and cannot honour SIGTERM —
+# observed live 2026-08-28, pubmed's thread parked in the executor with no
+# children left alive. Generous (a child may be building a container pack),
+# but finite.
+PARSE_TIMEOUT_S = float(os.getenv("PARSE_TIMEOUT_S", "120"))
+# Consecutive pool failures after which this process stops using children
+# altogether and computes in-process until the next restart.
+PARSE_MAX_FAILURES = int(os.getenv("PARSE_MAX_FAILURES", "3"))
 
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —

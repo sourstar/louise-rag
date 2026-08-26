@@ -146,3 +146,63 @@ def test_pack_records_are_computed_by_the_pool(isolated_config, tmp_path, corpus
     pack_build.build(c, serial_dir, records_per_shard=2, sign=False, log=lambda *_: None)
     for s in m["shards"]:
         assert (pack_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes()
+
+
+def test_a_pool_that_does_not_answer_never_blocks_the_caller(isolated_config, tmp_path,
+                                                              corpus_dir, monkeypatch):
+    """Regression (2026-08-28, found with py-spy on the live node): the
+    pubmed pipeline thread sat in the executor forever — every child gone,
+    the futures never completing — so the collection stopped dead and a
+    SIGTERM could not have been honoured either. The pool is an
+    OPTIMISATION: a batch it does not answer within PARSE_TIMEOUT_S is
+    computed in-process, and the pool is rebuilt."""
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    expected = parallel.compute("chunks", c, rows)      # serial truth
+    parallel.reset_failures()
+
+    class DeadFuture:
+        def result(self, timeout=None):
+            raise TimeoutError("the pool never answered")
+
+        def cancel(self):
+            return True
+
+    class DeadPool:
+        def submit(self, *a, **k):
+            return DeadFuture()
+
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(parallel, "pool", lambda: DeadPool())
+    got = parallel.compute("chunks", c, rows)
+    assert got == expected, "the batch is computed in-process, correctly"
+    assert parallel.health()["failures"] == 1
+
+    # it keeps working, and after PARSE_MAX_FAILURES it stops trying children
+    monkeypatch.setattr(config, "PARSE_MAX_FAILURES", 2)
+    assert parallel.compute("chunks", c, rows) == expected
+    assert parallel.health()["disabled"] is True
+    monkeypatch.undo()
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    assert parallel.pool() is None, "disabled: no children until a restart"
+    parallel.reset_failures()
+
+
+def test_a_broken_pool_falls_back_and_recovers(isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """A child that dies (the executor raises BrokenProcessPool) costs the
+    batch nothing but a serial recompute, and the next call rebuilds."""
+    from concurrent.futures.process import BrokenProcessPool
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    expected = parallel.compute("chunks", c, rows)
+    parallel.reset_failures()
+
+    class BrokenPool:
+        def submit(self, *a, **k):
+            raise BrokenProcessPool("a child died")
+
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    monkeypatch.setattr(parallel, "pool", lambda: BrokenPool())
+    assert parallel.compute("chunks", c, rows) == expected
+    assert parallel.health()["failures"] == 1
+    parallel.reset_failures()
+    assert parallel.health() == {"processes": 4, "pool": False, "failures": 0, "disabled": False}

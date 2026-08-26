@@ -1376,3 +1376,18 @@ the live deployment:
     a document whose text will not load still costs itself alone (both
     pinned by tests). The remaining write time is the next target: 100k
     ledger rows and 36 Lance delete+add pairs per pass.
+51. **§7 — the parse pool is an OPTIMISATION and every wait on it is
+    bounded (2026-08-28, found live).** Fifteen minutes after amendment
+    50 went out, pubmed stopped: no rdf, no fts, no archive, no error.
+    `py-spy` on the running worker (a sidecar sharing its PID namespace
+    with `--cap-add=SYS_PTRACE`) showed `pipeline-pubmed` parked in
+    `concurrent.futures.process` waiting on a result, and `docker top`
+    showed NO pool children alive — the executor hung instead of raising
+    (no OOM kill, no memory limit, nothing in dmesg). Amended rule: a
+    batch waits `PARSE_TIMEOUT_S` (120 s) and then computes in-process;
+    the pool is rebuilt on the next call; after `PARSE_MAX_FAILURES`
+    consecutive failures this process stops using children until it
+    restarts, saying so once on stdout; `parallel.health()` reports it.
+    The general rule now in CLAUDE.md: a pipeline thread never waits
+    without a bound on an optional subsystem — a worker that cannot
+    finish also cannot honour SIGTERM.
