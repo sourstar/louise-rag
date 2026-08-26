@@ -120,6 +120,17 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
         results = [_embed_batch(b, timeout, recipe) for b in batches]
     return [v for part in results for v in part]
 
+# A document with more chunks than this is not resumed by reading its text
+# back — the read would cost more than the re-embedding it saves.
+_RESUME_SCAN_MAX = 200_000
+
+
+class EmbedInterrupted(RuntimeError):
+    """Shutdown arrived between slices of one document. Not an error on the
+    document: what was written is durable, nothing is marked done, and the
+    next run continues from there."""
+
+
 def _np_dtype_of_table(tbl):
     try:
         vt = tbl.schema.field("vector").type.value_type
@@ -143,61 +154,142 @@ def _book_filter(book_id) -> str:
     """
     return f"book_id = {int(book_id)}"
 
+def _written_chunks(db, book_id: int) -> dict[str, str]:
+    """id -> text for the vectors this document already has. Reading the
+    TEXT back is what makes a resume exact: chunk ids are positional
+    (`{uid}:{seq}:{version}`, chunking.py), so an id alone cannot say
+    whether the vector behind it still belongs to the current text."""
+    if TABLE not in db.table_names():
+        return {}
+    try:
+        tbl = db.open_table(TABLE)
+        return {r["id"]: r["text"] for r in
+                tbl.search().where(_book_filter(book_id))
+                   .select(["id", "text"]).limit(_RESUME_SCAN_MAX).to_list()}
+    except Exception:   # noqa: BLE001 — a resume is an optimisation
+        return {}
+
+
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
-                lock_con=None) -> int:
-    """Write one document's vectors, delete-then-insert (invariant 2).
+                lock_con=None, stop=None) -> int:
+    """Write one document's vectors, delete-then-insert (invariant 2),
+    INCREMENTALLY and resumably.
+
+    Why not in one shot, as this used to do. A document is one unit of work,
+    but a document is not a bounded amount of work: measured live, gutenberg
+    4656 is a 21 MB book that chunks into 5,335 pieces, and at this
+    endpoint's ~3.6 s per chunk that is 5.3 HOURS inside a single call. The
+    old shape embedded every chunk into memory and wrote once at the end, so
+    every restart in those 5.3 hours threw the whole thing away — four
+    restarts in one afternoon meant the GPU produced nothing that survived,
+    while `embed_done` never moved and every rate on the Stats page read
+    zero. It also broke invariant 2's promise that SIGTERM finishes the
+    current unit in bounded time, and CLAUDE.md's own rule that the unit is
+    "a document where that is possible, smaller where it is not".
+
+    So the vectors land in slices of EMBED_SLICE_CHUNKS, and a re-run
+    reuses what is already there. The resume is exact rather than
+    optimistic: a stored chunk counts as done only when its text is
+    byte-identical to what the chunker produces now. If anything already
+    stored does NOT match the current chunking — the document changed, or
+    it shrank — the whole document's rows are deleted and it is rebuilt,
+    which is the old behaviour and the safe one.
+
+    `embed_done` is still marked by the caller, only after this returns, so
+    a partially embedded document simply runs again (invariant 2).
 
     `lock_con`, when given, is a manifest connection used to serialize the
     delete+add pair against other processes — see app/bundles/writer_lock.py.
     It is optional so existing single-writer callers are unaffected, but the
     worker passes it, because a lock only the importer respects protects
-    nothing.
+    nothing. The lock is now taken per SLICE, so it is also held for far
+    shorter stretches than before.
+
+    `stop`, when given, is checked between slices: the work already written
+    stays written and the document resumes on the next run.
     """
     if not chunks:
         return 0
-    # Embedding happens OUTSIDE the lock: it is the slow part, it touches the
-    # network, and holding a cross-process write lock across it would serialize
-    # every writer on the slowest endpoint call.
     recipe = collections_mod.recipe_for(collection)
-    vectors = embed_texts([c["text"] for c in chunks], recipe=recipe)
     db = _conn(collection)
     exists = TABLE in db.table_names()
     dtype = _np_dtype_of_table(db.open_table(TABLE)) if exists else _np_dtype_of_recipe(recipe)
-    rows = [{
-        "id": c["id"], "book_id": book_id, "lang": lang or "und",
-        "seq": c["seq"], "chapter": c["chapter"] or "",
-        "text": c["text"], "vector": np.asarray(vectors[j], dtype=dtype),
-    } for j, c in enumerate(chunks)]
 
-    with _write_lock(lock_con):
-        # existence re-checked INSIDE the lock: the pre-lock check picked the
-        # dtype, but two concurrent FIRST writers (the parallel embed stage on
-        # a fresh collection) would otherwise both see "missing" and race
-        # create_table — caught by test_worker_parallel_embed before it could
-        # happen live
-        if TABLE in db.table_names():
-            tbl = db.open_table(TABLE)
-            tbl.delete(_book_filter(book_id))
-            tbl.add(rows)
-        else:
-            dim = len(rows[0]["vector"])
-            vt = pa.float16() if dtype is np.float16 else pa.float32()
-            schema = pa.schema([
-                pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
-                pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
-                pa.field("chapter", pa.string()), pa.field("text", pa.string()),
-                pa.field("vector", pa.list_(vt, dim)),
-            ])
-            try:
-                db.create_table(TABLE, data=rows, schema=schema)
-            except ValueError:
-                # lost a create race despite the lock (a writer without
-                # lock_con, or a cross-process writer between our check and
-                # create) — converge on the append path
+    have = _written_chunks(db, book_id)
+    wanted = {c["id"]: c["text"] for c in chunks}
+    done = {i for i, text in have.items() if wanted.get(i) == text}
+    # Anything stored that is not a byte-exact chunk of the CURRENT document
+    # means the document changed under us: rebuild it whole.
+    rebuild = bool(set(have) - done)
+    if rebuild:
+        done = set()
+    todo = [c for c in chunks if c["id"] not in done]
+    if not todo:
+        return len(chunks)          # already complete; nothing to embed
+
+    written = 0
+    purge = rebuild
+    for start in range(0, len(todo), config.EMBED_SLICE_CHUNKS):
+        part = todo[start:start + config.EMBED_SLICE_CHUNKS]
+        # Embedding happens OUTSIDE the lock: it is the slow part, it touches
+        # the network, and holding a cross-process write lock across it would
+        # serialize every writer on the slowest endpoint call.
+        vectors = embed_texts([c["text"] for c in part], recipe=recipe)
+        rows = [{
+            "id": c["id"], "book_id": book_id, "lang": lang or "und",
+            "seq": c["seq"], "chapter": c["chapter"] or "",
+            "text": c["text"], "vector": np.asarray(vectors[j], dtype=dtype),
+        } for j, c in enumerate(part)]
+
+        with _write_lock(lock_con):
+            # existence re-checked INSIDE the lock: the pre-lock check picked
+            # the dtype, but two concurrent FIRST writers (the parallel embed
+            # stage on a fresh collection) would otherwise both see "missing"
+            # and race create_table — caught by test_worker_parallel_embed
+            # before it could happen live
+            if TABLE in db.table_names():
                 tbl = db.open_table(TABLE)
-                tbl.delete(_book_filter(book_id))
+                if purge:
+                    # once, and only when the document must be rebuilt: the
+                    # slices that follow are additions to a document whose
+                    # remaining rows were verified byte-identical above
+                    tbl.delete(_book_filter(book_id))
+                    purge = False
                 tbl.add(rows)
-    return len(rows)
+            else:
+                dim = len(rows[0]["vector"])
+                vt = pa.float16() if dtype is np.float16 else pa.float32()
+                schema = pa.schema([
+                    pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+                    pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+                    pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+                    pa.field("vector", pa.list_(vt, dim)),
+                ])
+                try:
+                    db.create_table(TABLE, data=rows, schema=schema)
+                    purge = False
+                except ValueError:
+                    # lost a create race despite the lock (a writer without
+                    # lock_con, or a cross-process writer between our check
+                    # and create) — converge on the append path
+                    tbl = db.open_table(TABLE)
+                    if purge:
+                        tbl.delete(_book_filter(book_id))
+                        purge = False
+                    tbl.add(rows)
+        written += len(rows)
+        if stop is not None and stop.is_set() and start + len(part) < len(todo):
+            # SIGTERM between slices. The slices already written STAY
+            # written, but this document is not finished — and returning
+            # normally here would let the caller mark it embed_done, which
+            # is the one outcome that loses data. Raising is what keeps
+            # invariant 2 honest: the caller treats it as a deferral, the
+            # document keeps embed_done=0, and the next run resumes from the
+            # vectors on disk.
+            raise EmbedInterrupted(
+                f"stopped after {written} of {len(todo)} chunks; "
+                f"the document resumes from what is already written")
+    return written + len(done)
 
 @contextmanager
 def _write_lock(lock_con):

@@ -41,6 +41,14 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
 # EMBED_CONCURRENCY for throughput instead.
 EMBED_BATCH = int(os.getenv("EMBED_BATCH", "1"))
 EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "1"))  # parallel embed requests in flight
+# How many chunks of ONE document are embedded before its vectors are
+# written. A document is the unit of work but NOT a bounded amount of it:
+# gutenberg 4656 chunks into 5,335 pieces, which is 5.3 h at this endpoint's
+# measured 3.6 s/chunk. Writing only at the end meant every restart in that
+# window discarded the lot (observed live). Smaller = less work at risk per
+# restart and a tighter SIGTERM; larger = fewer Lance fragments to compact.
+# Documents below this size are written in one go exactly as before.
+EMBED_SLICE_CHUNKS = int(os.getenv("EMBED_SLICE_CHUNKS", "64"))
 # Behavioral backend gate (app/verify/backend_gate.py): before writing any
 # vectors the worker verifies the endpoint still reproduces its recorded
 # probe baseline — the check the weak (name-derived) model hash cannot do.

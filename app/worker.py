@@ -382,8 +382,12 @@ def stage_embed(con, row, collection) -> None:
     started = time.time()
     stats.recorder().set_in_flight(collection.name, 1)
     try:
+        # `stop` bounds SIGTERM to one slice: a 5,335-chunk document is
+        # 5.3 h of encoder time, and "finish the current unit" has to mean
+        # something shorter than that (invariant 2 — smaller where a
+        # document is not possible). What is written stays written.
         n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
-                                    collection, lock_con=con)
+                                    collection, lock_con=con, stop=_stop)
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
     # Timed around the encoder call only — not around _load_chunks, and not
@@ -1544,6 +1548,13 @@ def _execute_step(con, collection, stage, row) -> bool:
                 con.execute("ROLLBACK")
         except sqlite3.OperationalError:
             pass        # nothing to roll back, or still contended: not fatal
+        if isinstance(e, embeddings.EmbedInterrupted):
+            # shutdown between slices of a long document: the vectors already
+            # written are durable and the document itself is untouched, so
+            # this is a deferral like any other — never an error on the row
+            db.log_event(con, "info", stage,
+                         f"{stage} interrupted by shutdown ({e})")
+            return False
         if manifest_contended(e):
             # Another writer had the manifest. Nothing is wrong with this
             # document, so nothing is written to it — and in particular we do
