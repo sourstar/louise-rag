@@ -1363,3 +1363,16 @@ the live deployment:
     key (`+in_scope=1 …`), plan-checked; a window then visits its own
     ~200k rows (~0.3 s) and the walk ends after the corpus, once per
     version pair, instead of 127.9 s per round forever.
+50. **§8 — the archive apply loop chunks a BATCH through the parse pool
+    (2026-08-28; operator: "cpu load is below 50 % and wikivec pre-embed
+    ETA is ~2 d").** A 150 s wikivec pass was measured phase by phase:
+    reading the shard's 100,000 vectors 6.3 s, manifest lookups 0.4 s,
+    **fetch+parse+chunk of its 18,020 documents 51.7 s** (2.87 ms each,
+    one core, eleven idle), the writes ~91 s. The loop now HOLDS the
+    documents whose vectors are in hand and chunks them
+    `APPLY_BATCH_DOCS` at a time through `parallel.chunks_for_rows`
+    (amendment 47's pool); the shape gate, the same-function proof, the
+    stale eviction, the flush ordering and invariant 2 are untouched, and
+    a document whose text will not load still costs itself alone (both
+    pinned by tests). The remaining write time is the next target: 100k
+    ledger rows and 36 Lance delete+add pairs per pass.

@@ -34,7 +34,7 @@ from typing import Callable, Iterator
 
 import numpy as np
 
-from .. import chunking, config, db, embeddings, plugin_io
+from .. import chunking, config, db, embeddings, parallel, plugin_io
 from ..collections import recipe_for
 from . import ledger
 from .checks import check_degenerate, check_structural
@@ -705,7 +705,12 @@ def _digest_files(paths: list[Path]) -> str:
 
 
 def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
-    """[(chunk_id, text)] in seq order for one document."""
+    """[(chunk_id, text)] in seq order for one document.
+
+    The apply loop no longer calls this per document — it chunks a whole
+    batch through the parse pool (`parallel.chunks_for_rows`), which is the
+    same computation and eleven times the cores. Kept because it IS that
+    computation for one document, and tools and tests read it as such."""
     from .. import layers as layers_mod
     plugin = collection.plugin_instance()
     sections = plugin_io.sections(plugin, row)
@@ -968,52 +973,40 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     sample_char_budget = recipe.ctx * 4
 
     try:
-        for uid, vecs in rows_iter:
-            if budget is not None and (time.time() - t_start > budget
-                                       or (stop is not None and stop.is_set())):
-                partial = True
-                stopped = stop is not None and stop.is_set()
-                break
-            row = con.execute(
-                "SELECT uid, native_id, path, lang FROM documents "
-                "WHERE uid=? AND error IS NULL AND fts_done=1 AND embed_done=0",
-                (uid,)).fetchone()
-            if row is None:
-                skipped_absent += 1
-                if probe_pending:
-                    held = con.execute(
-                        "SELECT 1 FROM documents WHERE uid=? AND in_scope=1 "
-                        "AND error IS NULL AND fts_done=0", (uid,)).fetchone()
-                    if held is not None:
-                        pending_probe["n"] += 1
-                continue
+        # The documents whose vectors are in hand, waiting for their chunk
+        # TEXTS: fetch+parse+chunk is per-document Python and was called one
+        # document at a time inside this loop — 2.87 ms each, 51.7 s of a
+        # 150 s wikivec pass, on one core with eleven idle (measured
+        # 2026-08-28). It goes to the PARSE POOL a batch at a time; the
+        # writes, the proof and the ordering below are untouched.
+        held: list[tuple] = []            # (row, vecs, units)
 
-            units = []
-            for vec in vecs:
-                if header_dim is None:
-                    header_dim = int(vec.shape[0])
-                    if recipe.dim is not None and header_dim != recipe.dim:
-                        raise GenesisError(
-                            f"archive dim {header_dim} != recipe dim {recipe.dim}")
-                norm = float(np.linalg.norm(vec))
-                if not np.isfinite(vec).all() or norm == 0.0:
-                    raise GenesisError(f"{uid}: non-finite or zero archive vector")
-                units.append((vec / norm).astype(np_dtype))
+        def drain_held():
+            """Chunk the held documents (pooled) and append their rows."""
+            nonlocal skipped_absent, skipped_shape, chunks_written, held
+            if not held:
+                return
+            computed = parallel.chunks_for_rows(collection, [r for r, _, _ in held])
+            for (row, vecs, units), (ok, chunks) in zip(held, computed):
+                uid = row["uid"]
+                if not ok:
+                    skipped_absent += 1
+                    residual_uids.append(uid)
+                    continue
+                chunk_texts = [(c["id"], c["text"]) for c in chunks]
+                if len(chunk_texts) != len(vecs):
+                    # vectors bind to chunks 1:1; a count mismatch would leave
+                    # the document half-embedded (or mis-attached) — skip it,
+                    # local gap-fill covers it in the same proven space
+                    skipped_shape += 1
+                    residual_uids.append(uid)
+                    continue
+                _append_document(row, chunk_texts, vecs, units)
+            held = []
 
-            try:
-                chunk_texts = _local_chunk_texts(collection, row)
-            except Exception:
-                skipped_absent += 1
-                residual_uids.append(uid)
-                continue
-            if len(chunk_texts) != len(vecs):
-                # vectors bind to chunks 1:1; a count mismatch would leave
-                # the document half-embedded (or mis-attached) — skip it,
-                # local gap-fill covers it in the same proven space
-                skipped_shape += 1
-                residual_uids.append(uid)
-                continue
-
+        def _append_document(row, chunk_texts, vecs, units):
+            nonlocal chunks_written, docs, checked_structural
+            uid = row["uid"]
             for seq, ((chunk_id, text), vec, unit) in enumerate(
                     zip(chunk_texts, vecs, units)):
                 if not proven and len(sample) < RE_ENCODE_SAMPLE \
@@ -1054,6 +1047,43 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 if not proven:
                     prove()
                 flush()
+
+        for uid, vecs in rows_iter:
+            if budget is not None and (time.time() - t_start > budget
+                                       or (stop is not None and stop.is_set())):
+                partial = True
+                stopped = stop is not None and stop.is_set()
+                break
+            row = con.execute(
+                "SELECT uid, native_id, path, lang FROM documents "
+                "WHERE uid=? AND error IS NULL AND fts_done=1 AND embed_done=0",
+                (uid,)).fetchone()
+            if row is None:
+                skipped_absent += 1
+                if probe_pending:
+                    held_row = con.execute(
+                        "SELECT 1 FROM documents WHERE uid=? AND in_scope=1 "
+                        "AND error IS NULL AND fts_done=0", (uid,)).fetchone()
+                    if held_row is not None:
+                        pending_probe["n"] += 1
+                continue
+
+            units = []
+            for vec in vecs:
+                if header_dim is None:
+                    header_dim = int(vec.shape[0])
+                    if recipe.dim is not None and header_dim != recipe.dim:
+                        raise GenesisError(
+                            f"archive dim {header_dim} != recipe dim {recipe.dim}")
+                norm = float(np.linalg.norm(vec))
+                if not np.isfinite(vec).all() or norm == 0.0:
+                    raise GenesisError(f"{uid}: non-finite or zero archive vector")
+                units.append((vec / norm).astype(np_dtype))
+
+            held.append((dict(row), vecs, units))
+            if len(held) >= APPLY_BATCH_DOCS:
+                drain_held()
+        drain_held()
         if chunks_written and not proven:
             prove()
         flush()

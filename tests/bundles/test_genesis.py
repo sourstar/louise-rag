@@ -950,3 +950,48 @@ def test_the_shard_range_queries_use_the_browse_index(collection):
     assert eligible == {f"fake:{i}" for i in range(1, 6)}
     assert con.execute(genesis.pending_in_range_sql(con), (1, 20)).fetchone()[0] == 15
     assert con.execute(genesis.pending_in_range_sql(con), (1, 5)).fetchone()[0] == 0
+
+
+def test_the_apply_loop_chunks_a_batch_at_a_time(collection, monkeypatch):
+    """Regression (2026-08-28, measured): the apply loop called
+    fetch+parse+chunk ONE DOCUMENT AT A TIME — 2.87 ms each, 51.7 s of a
+    150 s wikivec pass, on one core while eleven idled. It now chunks the
+    held batch through the parse pool; the results, the shape gate and the
+    proof are unchanged."""
+    from app import parallel
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    calls = []
+    real = parallel.chunks_for_rows
+    monkeypatch.setattr(parallel, "chunks_for_rows",
+                        lambda coll, rows: (calls.append(len(rows)), real(coll, rows))[1])
+    monkeypatch.setattr(genesis, "APPLY_BATCH_DOCS", 8)
+    r = genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    assert r["docs"] == 20 and r["chunks"] == 20
+    # batches of 8, not 20 calls of 1
+    assert calls and max(calls) > 1 and sum(calls) == 20, calls
+    assert len(calls) <= 4, f"one pooled call per batch, got {calls}"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 20
+
+
+def test_a_document_whose_text_will_not_load_is_skipped_by_the_batch(collection, monkeypatch):
+    """One unreadable document costs itself, not its batch — the contract
+    the per-document call had, kept through the pool."""
+    from app import parallel, plugin_io
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    real = plugin_io.sections
+
+    def flaky(plugin, row):
+        if row["uid"] == "fake:4":
+            raise OSError("gone")
+        return real(plugin, row)
+    monkeypatch.setattr(plugin_io, "sections", flaky)
+    r = genesis.import_shard(con, collection, _archive(["0"]), "0",
+                             embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    assert r["docs"] == 9 and "fake:4" in r["residual_uids"]
+    done = {x["uid"] for x in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
+    assert "fake:4" not in done and len(done) == 9

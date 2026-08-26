@@ -344,6 +344,17 @@ shard's 1M-id range (one row fetch per candidate), 0.6 % of a 300 s pass
 after each deploy, log `/data/sched_watch.log`) prints per-collection
 rdf/fts/embed rates every two minutes; it dies with the container and is
 purely diagnostic.
+**Then the archive apply loop itself (amendment 50; operator: "cpu load
+is below 50 % and wikivec pre-embed ETA is ~2 d").** A 150 s wikivec pass
+measured phase by phase (`probe_genesis_cost.py`, read-only — it replays
+an already-applied shard so nothing is written): vectors read 6.3 s
+(15,800 vec/s), manifest lookups 0.4 s, **chunk texts 51.7 s** (2.87 ms
+per document, one core), writes ~91 s. The chunking now goes through the
+parse pool a batch at a time. The writes are what is left: ~1,100
+vectors/s = 36 Lance delete+add pairs and 100k `chunk_verification`
+inserts per pass — the next thing to measure if the ETA still matters.
+Note wikivec's rate in DOCUMENTS looks low against pubmed's only because
+its documents carry ~5.8 chunks each: ~670 vectors/s vs ~900.
 NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
 while gutenberg holds 59,627 indexed, unembedded documents, because
 gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M

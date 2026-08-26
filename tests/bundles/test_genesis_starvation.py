@@ -40,7 +40,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from app import collections as collections_mod, config, db, discovery, embeddings, worker
+from app import (collections as collections_mod, config, db, discovery, embeddings,
+                 plugin_io, worker)
 from app.bundles import genesis
 from app.plugins.embedded.source import embed_input
 
@@ -264,8 +265,10 @@ def test_an_unloadable_candidate_is_residual_after_one_read(
     con = db.connect(c)
     discovery.sync_collection(con, c)
     _eligible(con)
-    monkeypatch.setattr(genesis, "_local_chunk_texts",
-                        lambda collection, row: (_ for _ in ()).throw(OSError("gone")))
+    # the seam a missing/unreadable shard actually breaks at, for the
+    # pooled apply loop as for the serial one it replaced
+    monkeypatch.setattr(plugin_io, "sections",
+                        lambda plugin, row: (_ for _ in ()).throw(OSError("gone")))
     r = genesis.drain_next_shard(con, c)
     assert r is not None and r["docs"] == 0 and r["residual_uids"] == [_uid(10)]
     assert reads == ["data/tr/000.parquet"]
@@ -291,13 +294,14 @@ def test_residual_state_is_keyed_on_the_manifest_not_the_name(isolated_config, t
     _eligible(con_a)
     _eligible(con_b)
     # a's chunk text will not load (its residual class); b's is fine
-    real = genesis._local_chunk_texts
+    real = plugin_io.sections
+    a_corpus = str(a.corpus_dir)
 
-    def flaky(collection, row):
-        if collection.manifest_path == a.manifest_path:
+    def flaky(plugin, row):
+        if str(row["path"]).startswith(a_corpus):
             raise OSError("gone")
-        return real(collection, row)
-    monkeypatch.setattr(genesis, "_local_chunk_texts", flaky)
+        return real(plugin, row)
+    monkeypatch.setattr(plugin_io, "sections", flaky)
 
     r = genesis.drain_next_shard(con_a, a)
     assert r is not None and r["docs"] == 0
