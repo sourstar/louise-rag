@@ -1327,3 +1327,31 @@ the live deployment:
     write waits behind its absence), before the vector index, reports it
     in `index vector status`, and `index vector build --book-id-only`
     forces it.
+49. **§7 — every hot query TIMED against the real manifests, not only
+    plan-checked (2026-08-28; the operator: "check twice, it's not the
+    first time you leave some inefficiency behind").** A plan that reads
+    as indexed can still be a full walk: `SEARCH … USING INDEX
+    idx_documents_scope (in_scope=?)` means SQLite took one equality off a
+    four-column index and filtered the rest of the collection. Three such
+    queries were costing more than everything they served, and none of
+    them looked wrong:
+    - the version-driven RE-INDEX selection (`fts_version < ?` matches no
+      index) ran on EVERY round of a caught-up collection to conclude
+      there was nothing to do — **16.7 s wikivec, 18.3 s wikipedia,
+      127.9 s pubmed, per round**. It now walks rowid WINDOWS
+      (`_REINDEX_WINDOW`) from a per-collection cursor keyed on
+      (fts_version, entity_version); when the walk ends the collection is
+      marked done and costs NOTHING until a version bumps — the only
+      thing that can create work there.
+    - the fts batch's PEERS carried the same `OR`: 19.3 s on wikivec,
+      15.9 s on wikipedia. Fresh peers are now an index prefix (0.4 ms);
+      re-index peers stay inside the selection's window.
+    - both archive range queries (`CAST(native_id AS INTEGER) BETWEEN`)
+      were planned onto the scope index and filtered the whole
+      collection: **19.1 s** to list a shard's eligible documents and
+      **9.5 s** to count its pending ones, ~28 s of every 300 s pass.
+      They are hinted onto the browse index (`INDEXED BY
+      idx_documents_native_int`) when it exists.
+    Rule added to CLAUDE.md's engineering list: a plan check proves the
+    shape, a TIMING against production-sized data proves the cost — new
+    hot-path queries need both.

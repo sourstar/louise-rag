@@ -133,7 +133,7 @@ def stage_rdf(con, row, collection) -> None:
         peers = con.execute(
             _RDF_BATCH_PEERS,
             (config.MAX_RETRIES, row["uid"], config.RDF_BATCH_DOCS - 1)).fetchall()
-    _prefetch_ahead(con, collection, "rdf")
+    _prefetch_ahead(con, collection, "rdf", row)
     # the batch's parse goes to the PARSE POOL (amendment 47); the writes
     # stay here, inside the caller's transaction
     metas = parallel.metadata_for_rows(collection, [row, *peers])
@@ -160,37 +160,99 @@ _FTS_BATCH_PEERS = (
     "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
     "AND uid<>? LIMIT ?")
 
+# The batch's peers, split for the same reason the SELECTION is split: the
+# `OR` above cannot use fts_done, so on a collection whose fresh work has
+# just run out it walked the whole (in_scope, rdf_done) range to fill a
+# batch — 19.3 s on wikivec, 15.9 s on wikipedia, measured. Fresh peers are
+# an index prefix (0.4 ms); re-index peers stay inside the window the
+# selection is walking (_next_reindex).
+_FTS_FRESH_PEERS = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 "
+    "AND error IS NULL AND retries<? AND uid<>? LIMIT ?")
+_FTS_REINDEX_PEERS = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
+    "AND error IS NULL AND retries<? AND rowid>? AND rowid<=? "
+    "AND (fts_version<? OR entity_version<?) AND uid<>? LIMIT ?")
+
+
+def _fts_peers(con, collection, row, limit: int):
+    """Batch peers for the selected fts document — fresh or re-index."""
+    if limit <= 0:
+        return []
+    keys = row.keys() if hasattr(row, "keys") else row
+    if not ("fts_done" in keys and row["fts_done"]):
+        return con.execute(_FTS_FRESH_PEERS,
+                           (config.MAX_RETRIES, row["uid"], limit)).fetchall()
+    state = _reindex_cursor.get(str(collection.manifest_path) if collection is not None else "")
+    if state is None:
+        # a direct caller (tests, tools) that did not come through the
+        # windowed selection: the unwindowed query is correct, just slower
+        return con.execute(_FTS_BATCH_PEERS,
+                           (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION,
+                            row["uid"], limit)).fetchall()
+    start = state[2]
+    end = min(start + _REINDEX_WINDOW, state[3])
+    return con.execute(_FTS_REINDEX_PEERS,
+                       (config.MAX_RETRIES, start, end, config.FTS_VERSION,
+                        config.ENTITY_VERSION, row["uid"], limit)).fetchall()
+
 # PREFETCH (amendment 48): what the stage will need in a few thousand
 # documents' time — for a container-based plugin, the next container's
-# derived pack. Probed by OFFSET into the SAME pending set the stage
-# selects from, so it costs an index walk and returns two rows; the
-# distances straddle a pubmed container (30,000 records) so the next one
-# or two are always in view.
+# derived pack. The probe is ANCHORED on the current document's rowid and
+# walks FORWARD from it: `OFFSET k` alone made SQLite start at rowid 1 and
+# re-filter the 28.6M documents already done to find the frontier — three
+# full scans per call, measured live as 10.5 s rdf batches (the engineering
+# rule this breaks is the first one: a per-round cost that scales with the
+# corpus). With `rowid > ?` it is k index steps from where the stage is.
 _PREFETCH_OFFSETS = (5_000, 20_000, 40_000)
 _PREFETCH_INTERVAL_S = 10.0
 _prefetch_last: dict[tuple[str, str], float] = {}
+# Both probes constrain the WHOLE `idx_documents_scope` prefix
+# (in_scope, rdf_done, fts_done, embed_done) by equality, so the index's
+# implicit rowid tail already gives `ORDER BY rowid` — the same trick the
+# candidate walk uses. Constraining only part of it made SQLite sort the
+# whole pending set in a TEMP B-TREE instead (caught by the plan check in
+# tests/test_worker_selection_cost.py, which is why that check exists).
 _RDF_AHEAD = (
-    "SELECT uid, native_id, path, lang FROM documents WHERE in_scope=1 AND rdf_done=0 "
+    "SELECT uid, native_id, path, lang FROM documents "
+    "WHERE in_scope=1 AND rdf_done=0 AND fts_done=0 AND embed_done=0 AND rowid>? "
     "AND error IS NULL AND retries<? ORDER BY rowid LIMIT 1 OFFSET ?")
 _FTS_AHEAD = (
-    "SELECT uid, native_id, path, lang FROM documents WHERE in_scope=1 AND rdf_done=1 "
-    "AND fts_done=0 AND error IS NULL AND retries<? ORDER BY rowid LIMIT 1 OFFSET ?")
+    "SELECT uid, native_id, path, lang FROM documents "
+    "WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 AND embed_done=0 AND rowid>? "
+    "AND error IS NULL AND retries<? ORDER BY rowid LIMIT 1 OFFSET ?")
 
 
-def _prefetch_ahead(con, collection, stage: str) -> None:
+def _prefetch_ahead(con, collection, stage: str, row) -> None:
     """Submit the preparation of what this stage will read next, to the
-    parse pool. Throttled per (collection, stage) and never fatal: a
-    prefetch that does not happen costs exactly what it cost before."""
+    parse pool. Anchored on `row` (the document the stage is on), throttled
+    per (collection, stage), and never fatal: a prefetch that does not
+    happen costs exactly what it cost before."""
     key = (collection.name, stage)
     now = time.monotonic()
     if now - _prefetch_last.get(key, 0.0) < _PREFETCH_INTERVAL_S:
         return
     _prefetch_last[key] = now
+    # Nothing to prepare, or nowhere to prepare it: do not pay for the
+    # probes at all. Four of five plugins have no derived cache, and a
+    # serial node has no background — running the lookahead for them would
+    # be pure cost on the hot path.
+    if parallel.pool() is None:
+        return
+    try:
+        if not hasattr(collection.plugin_instance(), "prepare"):
+            return
+    except Exception:   # noqa: BLE001
+        return
     sql = _RDF_AHEAD if stage == "rdf" else _FTS_AHEAD
     try:
+        anchor = con.execute("SELECT rowid FROM documents WHERE uid=?",
+                             (row["uid"],)).fetchone()
+        if anchor is None:
+            return
         rows = []
         for offset in _PREFETCH_OFFSETS:
-            r = con.execute(sql, (config.MAX_RETRIES, offset)).fetchone()
+            r = con.execute(sql, (anchor[0], config.MAX_RETRIES, offset)).fetchone()
             if r is not None:
                 rows.append(dict(r))
         if rows:
@@ -238,11 +300,8 @@ def stage_fts(con, row, collection) -> None:
     t0 = time.monotonic()
     peers = []
     if config.FTS_BATCH_DOCS > 1:
-        peers = con.execute(
-            _FTS_BATCH_PEERS,
-            (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION,
-             row["uid"], config.FTS_BATCH_DOCS - 1)).fetchall()
-    _prefetch_ahead(con, collection, "fts")
+        peers = _fts_peers(con, collection, row, config.FTS_BATCH_DOCS - 1)
+    _prefetch_ahead(con, collection, "fts", row)
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
     # round's, a peer's failure drops the peer
@@ -375,6 +434,54 @@ _FTS_REINDEX = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
     "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) "
     "LIMIT 1")
+
+# The reindex selection above is the ONE query here that no index can
+# answer: `fts_version < ?` is not in idx_documents_scope, so SQLite walks
+# the whole (in_scope, rdf_done, fts_done=1) range to decide there is
+# nothing to re-index. Measured on the live node: 16.7 s on wikivec, 18.3 s
+# on wikipedia, 127.9 s on pubmed — PER ROUND, on exactly the collections
+# that are caught up and should be cheap to skip.
+#
+# It is therefore walked in WINDOWS of rowid, from a per-collection cursor,
+# so no round pays more than one window; when the walk reaches the end
+# without a candidate the collection is marked done for this (fts_version,
+# entity_version) pair and costs nothing at all until a version bumps —
+# which is the only thing that can create work here.
+_REINDEX_WINDOW = 200_000
+_FTS_REINDEX_WINDOWED = (
+    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
+    "AND error IS NULL AND retries<? AND rowid>? AND rowid<=? "
+    "AND (fts_version<? OR entity_version<?) LIMIT 1")
+# path -> (fts_version, entity_version, cursor rowid, max rowid, done)
+_reindex_cursor: dict[str, tuple[int, int, int, int, bool]] = {}
+
+
+def reset_reindex_cursors() -> None:
+    _reindex_cursor.clear()
+
+
+def _next_reindex(con, collection):
+    """One window of the version-driven re-index walk, or None."""
+    key = str(collection.manifest_path) if collection is not None else ""
+    versions = (config.FTS_VERSION, config.ENTITY_VERSION)
+    state = _reindex_cursor.get(key)
+    if state is None or state[:2] != versions:
+        top = con.execute("SELECT MAX(rowid) FROM documents").fetchone()[0] or 0
+        state = (*versions, 0, int(top), False)
+    if state[4]:
+        return None                      # nothing to re-index at these versions
+    start = state[2]
+    end = min(start + _REINDEX_WINDOW, state[3])
+    row = con.execute(_FTS_REINDEX_WINDOWED,
+                      (config.MAX_RETRIES, start, end, *versions)).fetchone()
+    if row is not None:
+        # stay in this window: the batch takes its peers from it, and the
+        # next round re-enters here until the window is clean
+        _reindex_cursor[key] = (*versions, start, state[3], False)
+        return row
+    done = end >= state[3]
+    _reindex_cursor[key] = (*versions, end, state[3], done)
+    return None
 
 # Bounded on purpose: the inner LIMIT stops the count at one batch, so this
 # never walks a 33M-row backlog to answer "is there a batch yet".
@@ -543,9 +650,7 @@ def _next_book(con, scope, embed_allowed=True, collection=None):
     # ingestion of new documents for the length of a full re-index. It is
     # also the one selection here that cannot use the fts_done column, so
     # keeping it last means it is only reached on a caught-up collection.
-    r = con.execute(
-        _FTS_REINDEX,
-        (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION)).fetchone()
+    r = _next_reindex(con, collection)
     if r:
         return "fts", r
     # 4. dense backfill only in 'all' mode — coverage-aware (amendment 38):

@@ -188,6 +188,45 @@ _residual_lock = threading.Lock()
 _coverage_epoch = 0
 
 
+# A shard's id RANGE is answered by the browse index over
+# CAST(native_id AS INTEGER) — and only by it. Left to choose, SQLite takes
+# `idx_documents_scope (in_scope=?)` instead and filters the whole
+# collection: measured live at 19.1 s to list one shard's eligible
+# documents on pubmed (40M rows) and 9.5 s to count one shard's pending
+# ones — ~28 s of every 300 s pass, on a plan that looks indexed. The hint
+# is applied only when the index exists (the worker builds it at startup;
+# `ensure_browse_index`), so a fresh manifest still works, just slowly.
+_NATIVE_INT_INDEX = "idx_documents_native_int"
+
+
+def _has_native_index(con) -> bool:
+    try:
+        return con.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                            (_NATIVE_INT_INDEX,)).fetchone() is not None
+    except Exception:   # noqa: BLE001
+        return False
+
+
+def _hint(con) -> str:
+    return f" INDEXED BY {_NATIVE_INT_INDEX}" if _has_native_index(con) else ""
+
+
+def eligible_in_range_sql(con) -> str:
+    """The documents of a shard's id range this node holds, indexed and
+    still unembedded — what a revisit pass reads rows for."""
+    return (f"SELECT uid FROM documents{_hint(con)} "
+            f"WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
+            f"AND in_scope=1 AND error IS NULL AND fts_done=1 AND embed_done=0")
+
+
+def pending_in_range_sql(con) -> str:
+    """How many documents of a shard's id range have not cleared fts —
+    what decides whether the shard is FINAL."""
+    return (f"SELECT COUNT(*) FROM documents{_hint(con)} "
+            f"WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
+            f"AND in_scope=1 AND error IS NULL AND fts_done=0")
+
+
 def coverage_epoch() -> int:
     return _coverage_epoch
 
@@ -772,9 +811,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     if wanted is None and revisit and not archive.local and archive.id_range_of(shard):
         lo, hi = archive.id_range_of(shard)
-        wanted = {r["uid"]: None for r in con.execute(
-            "SELECT uid FROM documents WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
-            "AND in_scope=1 AND error IS NULL AND fts_done=1 AND embed_done=0", (lo, hi))}
+        wanted = {r["uid"]: None for r in con.execute(eligible_in_range_sql(con), (lo, hi))}
     rows_iter, files = _ADAPTERS[archive.adapter](cache_dir, shard, fetch,
                                                     archive.uid_prefix, collection,
                                                     wanted=wanted)
@@ -1124,9 +1161,7 @@ def _pending_for_shard(con, archive: GenesisArchive, shard: str,
     if id_range is None:
         return int(pending_probe.get("n", 0))
     lo, hi = id_range
-    return int(con.execute(
-        "SELECT COUNT(*) FROM documents WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
-        "AND in_scope=1 AND error IS NULL AND fts_done=0", (lo, hi)).fetchone()[0])
+    return int(con.execute(pending_in_range_sql(con), (lo, hi)).fetchone()[0])
 
 
 def import_archive(con, collection, archive: GenesisArchive, *,

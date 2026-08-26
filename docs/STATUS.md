@@ -305,6 +305,23 @@ stages prefetch a few thousand documents ahead into the pool
 delete-then-insert write filters on — 0.90 s per 500-document flush on
 wikivec (35M rows), 0.59 s on pubmed (16M) — the maintainer now builds a
 BTREE on it before the vector index (`tests/test_vector_index.py`).
+**Checked twice (operator: "it's not the first time you leave some
+inefficiency behind") — amendment 49, and the double-check found more
+than the first pass.** Every hot query was then TIMED against the live
+manifests, not just plan-checked. My own prefetch probe was the first
+casualty (`OFFSET k` over the whole pending set → SQLite restarted at
+rowid 1 and re-filtered 28.6M done documents, three times per call:
+the 10.5 s rdf batches); anchored on the current rowid it is 0–27 ms,
+and constraining the FULL scope-index prefix avoids the TEMP B-TREE the
+first anchored version still had. It also now costs NOTHING for the four
+plugins with no derived cache and on serial nodes. Then three
+pre-existing queries, all reading as indexed: the re-index selection at
+**16.7 s (wikivec) / 18.3 s (wikipedia) / 127.9 s (pubmed) per round** on
+caught-up collections — now a windowed cursor walk that ends and stays
+ended until a version bump; its batch peers (19.3 s / 15.9 s) — now an
+index prefix for the fresh case; and both archive range queries (19.1 s
+and 9.5 s per pass) — now hinted onto the browse index. Instrument:
+scratchpad `probe_plans.py` (plan + timing, per collection).
 NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
 while gutenberg holds 59,627 indexed, unembedded documents, because
 gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M

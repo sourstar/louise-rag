@@ -922,3 +922,31 @@ def test_a_remote_archive_is_drained_on_the_pipeline_thread_not_the_gpu_loop(
     # a collection running its whole pipeline on one thread drains both
     worker._run_one_step(con, remote, {}, pipeline_active=False)
     assert drained[-1] == "test-arc"
+
+
+def test_the_shard_range_queries_use_the_browse_index(collection):
+    """Regression (2026-08-28, measured on the live 40M-row pubmed
+    manifest): both range queries of a revisit pass were planned on
+    `idx_documents_scope (in_scope=?)` and then filtered the whole
+    collection — 19.1 s to list a shard's eligible documents and 9.5 s to
+    count its pending ones, ~28 s of every 300 s pass, on a plan that
+    reads as indexed. They are hinted onto the browse index; without that
+    index they still work."""
+    con = db.connect(collection)
+    # no browse index yet: no hint, and the query still runs
+    assert "INDEXED BY" not in genesis.eligible_in_range_sql(con)
+    assert con.execute(genesis.eligible_in_range_sql(con), (1, 10)).fetchall() is not None
+    assert con.execute(genesis.pending_in_range_sql(con), (1, 10)).fetchone()[0] >= 0
+
+    db.ensure_browse_index(con)
+    for sql in (genesis.eligible_in_range_sql(con), genesis.pending_in_range_sql(con)):
+        assert "INDEXED BY idx_documents_native_int" in sql
+        plan = " ".join(r[3] for r in con.execute("EXPLAIN QUERY PLAN " + sql, (1, 10)))
+        assert "idx_documents_native_int" in plan, plan
+        assert "idx_documents_scope" not in plan, plan
+    # and they still answer correctly: only 1-5 have cleared fts
+    con.execute("UPDATE documents SET fts_done=0 WHERE CAST(native_id AS INTEGER) > 5")
+    eligible = {r["uid"] for r in con.execute(genesis.eligible_in_range_sql(con), (1, 20))}
+    assert eligible == {f"fake:{i}" for i in range(1, 6)}
+    assert con.execute(genesis.pending_in_range_sql(con), (1, 20)).fetchone()[0] == 15
+    assert con.execute(genesis.pending_in_range_sql(con), (1, 5)).fetchone()[0] == 0

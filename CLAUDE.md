@@ -88,6 +88,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
   nothing must not win the round from the stages behind it.
 - Selection queries are plan-checked in tests — no `TEMP B-TREE`, no
   `LIST SUBQUERY`. A merely slow query passes every behavioural test.
+  And a plan check is not enough: `SEARCH ... USING INDEX
+  idx_documents_scope (in_scope=?)` reads as indexed while SQLite filters
+  the rest of the corpus. TIME every new hot-path query against a real
+  manifest (amendment 49 found three costing 16–128 s PER ROUND that way);
+  if no index can answer it, walk it in windows from a cursor and stop.
 - Deferral is not failure: an unreachable endpoint or a locked manifest
   never writes an error to a document. An error removes the document from
   every selection until a human intervenes.
