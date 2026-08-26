@@ -104,6 +104,23 @@ when something looks slow, compare against these before theorising.
 | worker CPU, whole node | 232 % (1 Python core) | 830–1115 % |
 | pubmed rdf+fts | 35 docs/s | 510–1245 docs/s |
 
+**After the scheduler (amendments 53–54), measured 2026-08-27**
+
+| reading | value |
+|---|---|
+| worker container CPU | 692–721 % of 1200 %, dipping to ~101 % between phases |
+| node load average (12 cores) | 18–20 — the run queue is deep, i.e. saturated |
+| GPU encoder container | **0.00 %** |
+
+The operator's target ("CPU close to 100 % when there is not much else to
+do") is met, and it is worth being precise about what that means: the node
+is saturated with PARSE and INDEX work. The GPU encoder is idle at 0.00 %
+because the only collection in the encoder rotation is gutenberg, which is
+in `lazy` mode with ~64,000 documents unembedded — so the rotation has one
+flow and nothing to give it. A busy CPU and an idle GPU at the same time
+is not a scheduling fault; it is a spending decision the scheduler cannot
+make. Do not "fix" it by taking CPU work away.
+
 **An archive pass (wikivec, 18,020 documents / 100,000 vectors, ~150 s)**
 
 | phase | cost |
