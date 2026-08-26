@@ -133,6 +133,7 @@ def stage_rdf(con, row, collection) -> None:
         peers = con.execute(
             _RDF_BATCH_PEERS,
             (config.MAX_RETRIES, row["uid"], config.RDF_BATCH_DOCS - 1)).fetchall()
+    _prefetch_ahead(con, collection, "rdf")
     # the batch's parse goes to the PARSE POOL (amendment 47); the writes
     # stay here, inside the caller's transaction
     metas = parallel.metadata_for_rows(collection, [row, *peers])
@@ -158,6 +159,44 @@ _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
     "AND retries<? AND (fts_done=0 OR fts_version<? OR entity_version<?) "
     "AND uid<>? LIMIT ?")
+
+# PREFETCH (amendment 48): what the stage will need in a few thousand
+# documents' time — for a container-based plugin, the next container's
+# derived pack. Probed by OFFSET into the SAME pending set the stage
+# selects from, so it costs an index walk and returns two rows; the
+# distances straddle a pubmed container (30,000 records) so the next one
+# or two are always in view.
+_PREFETCH_OFFSETS = (5_000, 20_000, 40_000)
+_PREFETCH_INTERVAL_S = 10.0
+_prefetch_last: dict[tuple[str, str], float] = {}
+_RDF_AHEAD = (
+    "SELECT uid, native_id, path, lang FROM documents WHERE in_scope=1 AND rdf_done=0 "
+    "AND error IS NULL AND retries<? ORDER BY rowid LIMIT 1 OFFSET ?")
+_FTS_AHEAD = (
+    "SELECT uid, native_id, path, lang FROM documents WHERE in_scope=1 AND rdf_done=1 "
+    "AND fts_done=0 AND error IS NULL AND retries<? ORDER BY rowid LIMIT 1 OFFSET ?")
+
+
+def _prefetch_ahead(con, collection, stage: str) -> None:
+    """Submit the preparation of what this stage will read next, to the
+    parse pool. Throttled per (collection, stage) and never fatal: a
+    prefetch that does not happen costs exactly what it cost before."""
+    key = (collection.name, stage)
+    now = time.monotonic()
+    if now - _prefetch_last.get(key, 0.0) < _PREFETCH_INTERVAL_S:
+        return
+    _prefetch_last[key] = now
+    sql = _RDF_AHEAD if stage == "rdf" else _FTS_AHEAD
+    try:
+        rows = []
+        for offset in _PREFETCH_OFFSETS:
+            r = con.execute(sql, (config.MAX_RETRIES, offset)).fetchone()
+            if r is not None:
+                rows.append(dict(r))
+        if rows:
+            parallel.prefetch(collection, rows)
+    except Exception:   # noqa: BLE001 — an optimisation, never a round's problem
+        pass
 
 
 def _mark_indexed(con, row, chunks, now: int) -> None:
@@ -203,6 +242,7 @@ def stage_fts(con, row, collection) -> None:
             _FTS_BATCH_PEERS,
             (config.MAX_RETRIES, config.FTS_VERSION, config.ENTITY_VERSION,
              row["uid"], config.FTS_BATCH_DOCS - 1)).fetchall()
+    _prefetch_ahead(con, collection, "fts")
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
     # round's, a peer's failure drops the peer

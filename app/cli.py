@@ -562,12 +562,20 @@ def cmd_pack_dump(args) -> int:
 
 
 def cmd_vindex_build(args) -> int:
-    """Build (or rebuild) a collection's local vector index now."""
+    """Build (or rebuild) a collection's local indexes now: the book_id
+    index every write filters on, then the vector index queries probe."""
     from . import vector_index
     collection = _collection_by_name(args.collection)
+    if not args.vector_only:
+        out = vector_index.build_scalar(collection, log=print)
+        if not out.get("built"):
+            print(f"book_id index not built: {out.get('reason')}", file=sys.stderr)
+            return 1
+    if args.book_id_only:
+        return 0
     out = vector_index.build(collection, index_type=args.type, partitions=args.partitions, log=print)
     if not out.get("built"):
-        print(f"not built: {out.get('reason')}", file=sys.stderr)
+        print(f"vector index not built: {out.get('reason')}", file=sys.stderr)
         return 1
     return 0
 
@@ -580,11 +588,16 @@ def cmd_vindex_status(args) -> int:
         print("no vector table")
         return 0
     if not st["indexed"]:
-        print(f"{st['rows']} rows, NO index (flat scan per query; built automatically at "
+        print(f"{st['rows']} rows, NO vector index (flat scan per query; built automatically at "
               f"{config.VECTOR_INDEX_MIN_ROWS} rows, or `index vector build`)")
     else:
         print(f"{st['rows']} rows, index {st['name']} ({st['type']}), "
               f"{st['unindexed_rows']} rows not yet folded in")
+    if st.get("book_id_indexed"):
+        print("book_id index: yes")
+    else:
+        print("book_id index: NO — every delete-then-insert write scans the table "
+              "(`index vector build --book-id-only`)")
     return 0
 
 
@@ -1094,10 +1107,14 @@ def main(argv=None) -> int:
     vindex_sub = vindex_parser.add_subparsers(dest="verb", required=True)
     v_vec = vindex_sub.add_parser("vector", help="the local vector (IVF) index")
     v_sub = v_vec.add_subparsers(dest="action", required=True)
-    v_build = v_sub.add_parser("build", help="build or rebuild it now")
+    v_build = v_sub.add_parser("build", help="build or rebuild it now (book_id, then vector)")
     v_build.add_argument("collection")
     v_build.add_argument("--type", choices=["ivf_flat", "ivf_pq"])
     v_build.add_argument("--partitions", type=int)
+    v_build.add_argument("--book-id-only", action="store_true",
+                          help="only the book_id index every write filters on (minutes)")
+    v_build.add_argument("--vector-only", action="store_true",
+                          help="skip the book_id index")
     v_build.set_defaults(func=cmd_vindex_build)
     v_status = v_sub.add_parser("status")
     v_status.add_argument("collection")

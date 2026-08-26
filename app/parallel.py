@@ -27,6 +27,7 @@ under test.
 import multiprocessing
 import os
 import threading
+from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
@@ -101,6 +102,8 @@ def _one(kind: str, collection, row: dict):
     if kind == "record":
         from .pack.build import _record_of
         return _record_of(collection, plugin, row)
+    if kind == "prepare":
+        return plugin_io.prepare(plugin, row)
     raise ValueError(f"unknown work kind {kind!r}")
 
 
@@ -156,3 +159,58 @@ def chunks_for_rows(collection, rows) -> list[tuple[bool, object]]:
 
 def metadata_for_rows(collection, rows) -> list[tuple[bool, object]]:
     return compute("metadata", collection, rows)
+
+
+# ---- prefetch: prepare what the NEXT batches will need, in the background --
+
+_prefetched: OrderedDict = OrderedDict()      # (collection, key) -> True
+_MAX_PREFETCH_MEMO = 512
+
+
+def prefetch(collection, rows) -> list[str]:
+    """Fire-and-forget: ask the pool to PREPARE what documents ahead of the
+    current batch will need — a plugin's derived cache, built once and
+    reused (pubmed: the per-container pack, 17 s of every ~38 s of its
+    pipeline before this existed, paid by the batch that first touched a
+    container while eleven pool children idled).
+
+    Deduplicated on the plugin's `prepare_key` (the container, not the
+    document), so a container is submitted once. A no-op when the pool is
+    serial: there is no background to do it in, and doing it inline would
+    just move the same cost earlier. Never waits, never raises — a failed
+    preparation simply means the stage pays for it later, as before."""
+    from . import plugin_io
+    ex = pool()
+    if ex is None:
+        return []
+    try:
+        plugin = collection.plugin_instance()
+    except Exception:   # noqa: BLE001
+        return []
+    submitted = []
+    for row in rows:
+        row = dict(row) if not isinstance(row, dict) else row
+        key = plugin_io.prepare_key(plugin, row)
+        if not key:
+            continue
+        memo_key = (collection.name, key)
+        with _lock:
+            if memo_key in _prefetched:
+                _prefetched.move_to_end(memo_key)
+                continue
+            _prefetched[memo_key] = True
+            while len(_prefetched) > _MAX_PREFETCH_MEMO:
+                _prefetched.popitem(last=False)
+        try:
+            ex.submit(_compute, "prepare", collection, [row])
+        except Exception:   # noqa: BLE001 — a broken pool is handled by the next compute()
+            with _lock:
+                _prefetched.pop(memo_key, None)
+            break
+        submitted.append(key)
+    return submitted
+
+
+def forget_prefetched() -> None:
+    with _lock:
+        _prefetched.clear()

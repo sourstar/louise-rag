@@ -1307,3 +1307,23 @@ the live deployment:
     wikipedia 450 docs/s, the GPU encoder unchanged; children are
     recycled every `PARSE_TASKS_PER_CHILD` sub-batches to bound the
     memory their caches accumulate.
+48. **§7/§8 — prepare the next container ahead; index the column every
+    write filters on (2026-08-28, measured while monitoring the
+    schedule).** Two costs that neither the parse pool nor the archive
+    fixes reached: (1) the first batch to touch a pubmed container built
+    its ~17 s pack INLINE — 34 builds an hour, ~45 % of that pipeline's
+    non-archive time — while eleven pool children idled; a plugin may now
+    declare `prepare(row)` (its derived cache for that document's
+    CONTAINER) and `prepare_key(row)` (the container, so one submission
+    covers it), and the rdf/fts stages submit the documents a few
+    thousand rows ahead to the pool, fire-and-forget, deduplicated and
+    throttled — a preparation that does not happen costs exactly what it
+    cost before. (2) NO index existed on `book_id`, the column every
+    vector write filters on (delete-then-insert, invariant 2): measured
+    0.90 s per 500-document genesis flush on wikivec's 35M rows and
+    0.59 s on pubmed's 16M — about a fifth of an archive pass, paid again
+    by every local embed and every reader lookup. The index maintainer
+    now builds a BTREE scalar index on `book_id` FIRST (cheap, and every
+    write waits behind its absence), before the vector index, reports it
+    in `index vector status`, and `index vector build --book-id-only`
+    forces it.

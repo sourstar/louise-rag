@@ -1,6 +1,7 @@
 """The parse pool (app/parallel.py, amendment 47): child processes compute
 chunks, metadata and pack records — the same results as the serial path,
 one failure per document, and the writers stay in the worker."""
+import time
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,58 @@ def test_the_fts_and_rdf_stages_index_through_the_pool(isolated_config, tmp_path
     assert all(titles.values()), "metadata from the children landed in the manifest"
     assert any(Path(c.fts_dir).rglob("*")), "the tantivy index was written by the worker"
     con.close()
+
+
+def test_prefetch_prepares_the_next_container_once_in_the_background(isolated_config, tmp_path,
+                                                                      two_processes, monkeypatch):
+    """Regression (2026-08-28, measured): pubmed's pipeline spent 17 s of
+    every ~38 s building the pack of the container a batch first touched,
+    while eleven pool children idled — 34 builds an hour, each blocking a
+    batch. The pool now PREPARES containers ahead, once per container."""
+    from dataclasses import replace
+    from app import licensing
+    from app.plugins.pubmed import pack
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "pubmed-mini"
+    d = tmp_path / "pm"
+    c = collections_mod.Collection(
+        name="pm", plugin="pubmed", profile=None, embed_mode_default=None, corpus_dir=fixtures,
+        manifest_path=d / "manifest.db", fts_dir=d / "fts", lance_dir=d / "lancedb")
+    c = replace(c, license_ack=licensing.make_ack(c))       # yellow class (invariant 9)
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    rows = [dict(r) for r in con.execute(
+        "SELECT uid, native_id, path, lang FROM documents WHERE error IS NULL ORDER BY rowid")]
+    con.close()
+    plugin = c.plugin_instance()
+    # the key is the CONTAINER, not the document
+    keys = {plugin_io.prepare_key(plugin, r) for r in rows}
+    assert len(keys) < len(rows) and all(str(k).endswith(".xml") for k in keys)
+    # discovery already built the packs; drop them to watch a prepare rebuild
+    for container in keys:
+        pack.pack_path(Path(container)).unlink(missing_ok=True)
+    pack.reset_caches()
+    parallel.forget_prefetched()
+
+    first = parallel.prefetch(c, rows)
+    assert sorted(first) == sorted(keys), "one submission per container"
+    assert parallel.prefetch(c, rows) == [], "already prepared: never submitted twice"
+    # the children build them in the background; the packs appear
+    deadline = time.time() + 60
+    while time.time() < deadline and not all(pack.pack_path(Path(k)).is_file() for k in keys):
+        time.sleep(0.2)
+    assert all(pack.pack_path(Path(k)).is_file() for k in keys), "prepared by the pool"
+    # ...and the stage that needs one no longer builds it
+    built = []
+    monkeypatch.setattr(pack, "build", lambda *a, **k: built.append(a) or 0)
+    for r in rows[:3]:
+        plugin_io.prepare(plugin, r)
+    assert built == [], "a fresh pack is never rebuilt"
+
+
+def test_prefetch_is_a_noop_without_a_pool(isolated_config, tmp_path, corpus_dir):
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    parallel.forget_prefetched()
+    assert parallel.prefetch(c, rows) == [], "serial: nothing to prepare in the background"
 
 
 def test_serial_path_needs_no_children(isolated_config, tmp_path, corpus_dir):

@@ -40,3 +40,25 @@ def full_text(plugin, row) -> str:
     if hasattr(plugin, "read_text"):
         return plugin.read_text(Path(row["path"]), int(row["native_id"]))
     return "\n\n".join(body for _, body in sections(plugin, row))
+
+
+def prepare(plugin, row) -> str | None:
+    """Build whatever derived cache this document's CONTAINER needs, ahead
+    of the stage that will read it (app/parallel.py's prefetch). Optional:
+    a plugin without the hook has nothing to prepare. Returns the key
+    prepared, for the log."""
+    if not hasattr(plugin, "prepare"):
+        return None
+    plugin.prepare(row)
+    return prepare_key(plugin, row)
+
+
+def prepare_key(plugin, row) -> str | None:
+    """What `prepare` would work on — the CONTAINER, not the document, so a
+    prefetch is submitted once per container instead of once per row.
+    Plugins with no derived cache return None and are never submitted."""
+    if not hasattr(plugin, "prepare"):
+        return None
+    if hasattr(plugin, "prepare_key"):
+        return plugin.prepare_key(row)
+    return str(row.get("path") or "") or None

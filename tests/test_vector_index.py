@@ -47,7 +47,8 @@ def _flat_top(collection, q, k=5):
 @pytest.mark.parametrize("kind", ["ivf_flat", "ivf_pq"])
 def test_build_probe_and_refresh(collection, monkeypatch, kind):
     vecs = _fill(collection, 600)
-    assert vector_index.stats(collection) == {"rows": 600, "indexed": False}
+    assert vector_index.stats(collection) == {"rows": 600, "indexed": False,
+                                              "book_id_indexed": False}
     assert not vector_index.has_index(collection)
     monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", kind)
     out = vector_index.build(collection, partitions=4)
@@ -82,10 +83,13 @@ def test_ensure_builds_only_past_the_row_threshold(collection, monkeypatch):
     monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 1000)
     assert vector_index.ensure(collection) is None
     assert not vector_index.has_index(collection)
+    assert not vector_index.stats(collection)["book_id_indexed"]
     monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
     monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", "ivf_flat")
     monkeypatch.setattr(vector_index, "partitions_for", lambda rows: 4)
-    out = vector_index.ensure(collection)
+    first = vector_index.ensure(collection)             # book_id first (cheap)
+    assert first and first["kind"] == "btree"
+    out = vector_index.ensure(collection)               # then the vector index
     assert out and out["built"] and out["partitions"] == 4
     assert vector_index.stats(collection)["indexed"]
 
@@ -96,6 +100,42 @@ def test_search_falls_back_to_the_flat_scan_without_an_index(collection, monkeyp
                         lambda texts, timeout=300, recipe=None, query=False: [vecs[7].tolist()])
     hits = embeddings.search("anything", k=3, collection=collection)
     assert hits and hits[0]["chunk_id"] == "c7"
+
+
+def test_the_book_id_index_is_built_first_and_writes_still_agree(collection, monkeypatch):
+    """Regression (2026-08-28, measured): every vector write is
+    delete-then-insert keyed on book_id, and without an index the
+    predicate scanned the whole table — 0.90 s per 500-document genesis
+    flush on wikivec's 35M rows, about a fifth of an archive pass. The
+    maintainer builds the book_id index BEFORE the vector index, and the
+    filtered reads/writes return exactly what they did."""
+    vecs = _fill(collection, 300)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", "ivf_flat")
+    monkeypatch.setattr(vector_index, "partitions_for", lambda rows: 4)
+    st = vector_index.stats(collection)
+    assert st["indexed"] is False and not st.get("book_id_indexed")
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    before = [r["id"] for r in tbl.search().where("book_id IN (7,9)").limit(10).to_list()]
+
+    first = vector_index.ensure(collection)
+    assert first["built"] and first["kind"] == "btree" and first["column"] == "book_id"
+    assert vector_index.stats(collection)["book_id_indexed"] is True
+    assert not vector_index.stats(collection)["indexed"], "the vector index is the NEXT round"
+    # the same rows, through the index
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert [r["id"] for r in tbl.search().where("book_id IN (7,9)").limit(10).to_list()] == before
+    # the next round builds the vector index, and a third does neither
+    second = vector_index.ensure(collection)
+    assert second["built"] and second["type"] == "ivf_flat"
+    assert vector_index.ensure(collection) is None
+    # writes still delete-then-insert correctly under the index
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False: [vecs[0].tolist()])
+    embeddings.upsert_book(7, "en", [{"id": "c7", "seq": 0, "chapter": "", "text": "t7"}], collection)
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    rows = [r for r in tbl.search().where("book_id = 7").limit(10).to_list()]
+    assert len(rows) == 1 and rows[0]["id"] == "c7"
 
 
 def test_refresh_is_due_by_rows_and_by_fraction(monkeypatch):
@@ -127,6 +167,7 @@ def test_maintenance_marks_the_collection_busy_and_the_writers_stand_down(collec
     monkeypatch.setattr(vector_index, "build",
                         lambda c, **k: (seen.append(vector_index.busy(c)), real_build(c, **k))[1])
     assert worker._vector_writes_allowed(collection)
+    assert vector_index.ensure(collection)["kind"] == "btree"   # book_id index first
     assert vector_index.ensure(collection)["built"]
     assert seen == [True], "busy for the duration of the build"
     assert worker._vector_writes_allowed(collection), "released afterwards"
@@ -146,10 +187,13 @@ def test_the_worker_maintains_the_index_off_the_gpu_loop_and_throttled(collectio
     monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", "ivf_flat")
     monkeypatch.setattr(vector_index, "partitions_for", lambda rows: 4)
     worker._vindex_last.clear()
-    assert worker._maintain_vector_index(con, collection) is True
+    assert worker._maintain_vector_index(con, collection) is True      # book_id index
+    worker._vindex_last.clear()
+    assert worker._maintain_vector_index(con, collection) is True      # vector index
     assert vector_index.stats(collection)["indexed"]
     events = [r["message"] for r in con.execute("SELECT message FROM events WHERE stage='index'")]
     assert any("vector index built" in m for m in events)
+    assert any("book_id index built" in m for m in events)
     # within the refresh interval nothing runs again, however many rows arrived
     _fill(collection, 100, seed=2, start=300)
     assert worker._maintain_vector_index(con, collection) is False

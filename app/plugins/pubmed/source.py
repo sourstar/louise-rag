@@ -129,6 +129,22 @@ class PubmedSource:
             progress.stage(container)
         progress.flush()
 
+    def prepare(self, row) -> None:
+        """Build this document's CONTAINER pack if it is missing — the one
+        expensive derived artefact of this plugin (a streaming parse of a
+        ~280 MB gz container, ~17 s). Called by the parse pool ahead of the
+        stage that will read it (app/parallel.py: prefetch), so the batch
+        that first touches a container no longer waits for it. Idempotent
+        and cheap when the pack is fresh."""
+        container, _index = split_locator(str(row.get("path") or ""))
+        if container.is_file():
+            pack.ensure(container)
+
+    def prepare_key(self, row) -> str | None:
+        """The CONTAINER — one preparation per container, not per record."""
+        container, _index = split_locator(str(row.get("path") or ""))
+        return str(container) or None
+
     def fetch(self, ref: DocRef) -> RawDoc:
         if ref.extra.get("kind") == "delete":
             raise ValueError("fetch() must not be called on a DeleteCitation ref "

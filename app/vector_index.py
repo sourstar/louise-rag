@@ -29,6 +29,7 @@ import time
 from . import config, db, embeddings
 
 VECTOR_COLUMN = "vector"
+BOOK_COLUMN = "book_id"
 
 _state_lock = threading.Lock()
 _has_index: dict[str, tuple[float, bool]] = {}     # lance dir -> (checked_at, has index)
@@ -92,6 +93,38 @@ def _vector_indices(tbl) -> list:
                 and "IVF" in str(getattr(ix, "index_type", "")).upper()]
     except Exception:   # noqa: BLE001 — an older table/format simply has none
         return []
+
+
+def _scalar_indices(tbl) -> list:
+    try:
+        return [ix for ix in tbl.list_indices()
+                if BOOK_COLUMN in (getattr(ix, "columns", None) or [])]
+    except Exception:   # noqa: BLE001
+        return []
+
+
+def build_scalar(collection, *, log=None) -> dict:
+    """A BTREE index on `book_id` — the column EVERY write filters on.
+
+    Every vector write is delete-then-insert keyed on the document
+    (invariant 2), so each one evaluates `book_id IN (...)` over the whole
+    table: measured on the reference node at 0.90 s per 500-document
+    genesis flush on wikivec (35M rows) and 0.59 s on pubmed (16M) — about
+    a fifth of an archive pass, paid again by every local embed and by
+    every reader lookup. Minutes to build, then those predicates are index
+    probes."""
+    tbl = _table(collection)
+    if tbl is None:
+        return {"built": False, "reason": "no vector table"}
+    rows = tbl.count_rows()
+    t0 = time.monotonic()
+    tbl.create_scalar_index(BOOK_COLUMN, index_type="BTREE", replace=True)
+    dt = time.monotonic() - t0
+    out = {"built": True, "kind": "btree", "column": BOOK_COLUMN, "rows": rows,
+           "seconds": round(dt, 1)}
+    if log:
+        log(f"book_id index built over {rows} rows in {dt:.0f}s")
+    return out
 
 
 def has_index(collection) -> bool:
@@ -158,8 +191,9 @@ def stats(collection) -> dict | None:
         return None
     rows = tbl.count_rows()
     indices = _vector_indices(tbl)
+    book_id_indexed = bool(_scalar_indices(tbl))
     if not indices:
-        return {"rows": rows, "indexed": False}
+        return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed}
     name = getattr(indices[0], "name", None)
     unindexed = None
     try:
@@ -169,7 +203,8 @@ def stats(collection) -> dict | None:
         pass
     return {"rows": rows, "indexed": True, "name": name,
             "type": str(getattr(indices[0], "index_type", "")),
-            "unindexed_rows": unindexed}
+            "unindexed_rows": unindexed,
+            "book_id_indexed": book_id_indexed}
 
 
 def ensure(collection, con=None, *, log=None) -> dict | None:
@@ -179,6 +214,17 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
     st = stats(collection)
     if st is None:
         return None
+    # the book_id index FIRST: it is cheap and every write pays for its
+    # absence (build_scalar explains), including the writes the vector
+    # index build itself waits behind
+    if st["rows"] >= config.VECTOR_INDEX_MIN_ROWS and not st.get("book_id_indexed", False):
+        with maintenance(collection):
+            out = build_scalar(collection, log=log)
+        if con is not None and out.get("built"):
+            db.log_event(con, "info", "index",
+                         f"book_id index built ({out['rows']} rows, {out['seconds']}s) — "
+                         f"delete-then-insert writes probe instead of scanning")
+        return out
     if not st["indexed"]:
         if st["rows"] < config.VECTOR_INDEX_MIN_ROWS:
             return None

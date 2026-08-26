@@ -292,6 +292,24 @@ caches filled: children are now recycled every `PARSE_TASKS_PER_CHILD`
 (500) sub-batches. pubmed's "parsed (rdf) TBD" was not a stall: rdf led
 fts by 4.2M documents and the worker gives fts the thread while a full
 batch is ready — the card now says "after fts (N ahead)" (test).
+**Scheduling monitored again 2026-08-28 (operator: "not yet optimal"),
+amendment 48.** Measured live (12 cores): pubmed rdf+fts 510–790 docs/s
+through the pool, worker 1115 % / load 19.6 — the CPU side IS saturated
+now; wikivec's archive 96–115 docs/s; pubmed's archive 943 docs/s while
+a pass runs, 0 during its 300 s yield (≈470 average). Two limiters
+found and fixed: (1) 34 pubmed pack builds/hour × ~17 s were paid INLINE
+by the batch that first touched a container (~45 % of that pipeline's
+non-archive time) — plugins now declare `prepare`/`prepare_key` and the
+stages prefetch a few thousand documents ahead into the pool
+(`tests/test_parallel.py`); (2) no index on `book_id`, the column every
+delete-then-insert write filters on — 0.90 s per 500-document flush on
+wikivec (35M rows), 0.59 s on pubmed (16M) — the maintainer now builds a
+BTREE on it before the vector index (`tests/test_vector_index.py`).
+NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
+while gutenberg holds 59,627 indexed, unembedded documents, because
+gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M
+(embed_mode lazy, its dense side is meant to come from wikivec). The
+gutenberg pack plan needs those vectors before the hand-over.
 
 ## Designed, specified, not built
 
