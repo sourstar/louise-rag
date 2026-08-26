@@ -5,6 +5,13 @@
   docs/architecture-v2.md for the sections named in the task prompt — §17's
   amendments are where the design was corrected in flight. If the task
   conflicts with the doc, stop and ask — the doc wins until amended.
+- **Touching WHAT RUNS WHEN — the round loop, a stage's selection or
+  batching, archive passes, the pools, the maintainers — read
+  docs/scheduling.md FIRST and follow its checklist (§6).** It is the
+  single reference: the model, the measured costs, and a catalogue of
+  the pitfalls that have already cost six reworks. Measure with
+  `tools/sched_report.py` before proposing anything; a scheduling change
+  whose commit message has no numbers in it is a guess.
 - Read the existing code in app/ for conventions before writing new modules.
 
 ## Invariants (violating any of these is a blocking bug)

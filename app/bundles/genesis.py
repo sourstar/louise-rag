@@ -1116,6 +1116,22 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             "updated_at=? WHERE archive=? AND shard=?",
             (int(time.time()), archive.archive_id, shard))
         raise
+    except Exception as e:      # noqa: BLE001 — narrowed immediately, LAST so the
+        # specific handlers above keep their state transitions
+        from ..worker import vector_store_contended
+        if not vector_store_contended(e):
+            raise
+        # the index maintainer (or another writer) committed first: what
+        # this pass already wrote stands, the shard keeps its state and the
+        # pass is retried — a deferral, like a busy manifest
+        con.execute(
+            "UPDATE genesis_imports SET state='skipped', detail='vector store busy', "
+            "updated_at=? WHERE archive=? AND shard=?",
+            (int(time.time()), archive.archive_id, shard))
+        db.log_event(con, "warn", "genesis",
+                     f"{archive.archive_id}/{shard}: pass deferred — vector store "
+                     f"busy ({type(e).__name__}); resumes next round")
+        raise GenesisUnavailable(f"vector store busy: {type(e).__name__}") from e
 
     now = int(time.time())
     state = "applied"

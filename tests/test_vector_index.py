@@ -152,11 +152,11 @@ def test_refresh_is_due_by_rows_and_by_fraction(monkeypatch):
     assert not vector_index.refresh_due(None)
 
 
-def test_maintenance_marks_the_collection_busy_and_the_writers_stand_down(collection, monkeypatch):
-    """Regression (2026-08-27): index maintenance ran on the pipeline
-    thread and idled it. It now runs on its own thread; while it holds a
-    collection, the worker's vector writers (embed step, archive pass)
-    skip that collection — rdf/fts continue — instead of racing it."""
+def test_maintenance_marks_itself_busy_for_its_own_sake(collection, monkeypatch):
+    """Index maintenance runs on its own thread (2026-08-27) and marks the
+    collection busy — for ONE reason only: two maintenance passes must not
+    run on the same table at once. It does NOT stop that collection's
+    writers; see the test below for why that rule was reversed."""
     from app import worker
     _fill(collection, 300)
     monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
@@ -166,16 +166,10 @@ def test_maintenance_marks_the_collection_busy_and_the_writers_stand_down(collec
     real_build = vector_index.build
     monkeypatch.setattr(vector_index, "build",
                         lambda c, **k: (seen.append(vector_index.busy(c)), real_build(c, **k))[1])
-    assert worker._vector_writes_allowed(collection)
     assert vector_index.ensure(collection)["kind"] == "btree"   # book_id index first
     assert vector_index.ensure(collection)["built"]
     assert seen == [True], "busy for the duration of the build"
-    assert worker._vector_writes_allowed(collection), "released afterwards"
-    with vector_index.maintenance(collection):
-        assert not worker._vector_writes_allowed(collection)
-        # the archive pass and the embed step defer for a busy collection
-        from dataclasses import replace
-        assert worker._drain_remote_archive(None, replace(collection, genesis_archive="medcpt-pubmed"), None) is False
+    assert not vector_index.busy(collection), "released afterwards"
     assert worker._vector_writes_allowed(collection)
 
 
@@ -203,3 +197,43 @@ def test_the_worker_maintains_the_index_off_the_gpu_loop_and_throttled(collectio
     monkeypatch.setattr(config, "VECTOR_INDEX_REFRESH_ROWS", 50)
     assert worker._maintain_vector_index(con, collection) is True
     assert vector_index.stats(collection)["unindexed_rows"] == 0
+
+
+def test_writers_keep_working_while_the_index_is_maintained(collection, monkeypatch):
+    """Regression (2026-08-28, measured live): the maintainer marked a
+    collection busy and its embed step AND archive pass stood down for the
+    whole maintenance window — 41 minutes for wikivec's 70 GB table, hit
+    every few minutes of work, so the collection spent most of its life
+    idle. Lance is MVCC (measured: 210 concurrent delete+add writes during
+    optimize(), zero errors); writers now keep going and a rare commit
+    conflict is a DEFERRAL, never an error on the document."""
+    from app import worker
+    _fill(collection, 300)
+    with vector_index.maintenance(collection):
+        assert vector_index.busy(collection) is True, "maintenance still marks itself"
+        assert worker._vector_writes_allowed(collection) is True, "writers are NOT blocked"
+
+
+def test_a_vector_store_conflict_defers_the_document_instead_of_erroring_it(collection, monkeypatch):
+    from app import db, embeddings, worker
+    _fill(collection, 10)
+    con = db.connect(collection)
+    con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,fts_done,"
+                "embed_done) VALUES('g:1','g','1','/x',1,1,1,0)")
+    row = con.execute("SELECT * FROM documents WHERE uid='g:1'").fetchone()
+
+    class Conflict(RuntimeError):
+        pass
+    monkeypatch.setattr(worker, "_load_chunks",
+                        lambda r, c: [{"id": "g:1:0:1", "seq": 0, "chapter": "", "text": "t"}])
+    monkeypatch.setattr(embeddings, "upsert_book",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            Conflict("Commit conflict: concurrent update to the dataset")))
+    assert worker.vector_store_contended(Conflict("Commit conflict: x")) is True
+    assert worker.vector_store_contended(ValueError("a real bug")) is False
+    assert worker._execute_step(con, collection, "embed", row) is False, "deferred"
+    got = con.execute("SELECT embed_done, error, retries FROM documents WHERE uid='g:1'").fetchone()
+    assert got["embed_done"] == 0 and got["error"] is None and got["retries"] == 0, dict(got)
+    events = [r["message"] for r in con.execute("SELECT message FROM events WHERE level='warn'")]
+    assert any("vector store busy" in m for m in events)
+    con.close()

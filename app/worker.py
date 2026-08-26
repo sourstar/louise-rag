@@ -469,9 +469,21 @@ def reset_reindex_cursors() -> None:
     _reindex_cursor.clear()
 
 
+def _reindex_key(con, collection) -> str:
+    """The cursor's identity: the manifest PATH (two collections can share
+    a name and point at different files — the rule the residual sets and
+    the counts cache each learned separately). Callers that pass no
+    collection still get their own entry from the connection, which knows
+    which collection it belongs to; keying those on "" made ONE finished
+    walk suppress every other collection's re-index."""
+    if collection is not None:
+        return str(collection.manifest_path)
+    return str(getattr(con, "collection_name", "") or id(con))
+
+
 def _next_reindex(con, collection):
     """One window of the version-driven re-index walk, or None."""
-    key = str(collection.manifest_path) if collection is not None else ""
+    key = _reindex_key(con, collection)
     versions = (config.FTS_VERSION, config.ENTITY_VERSION)
     state = _reindex_cursor.get(key)
     if state is None or state[:2] != versions:
@@ -1013,11 +1025,34 @@ def _maintain_vector_index(con, collection) -> bool:
 
 
 def _vector_writes_allowed(collection) -> bool:
-    """False while the maintainer builds or refreshes this collection's
-    index: the embed step and the archive pass skip the collection this
-    round (rdf/fts go on) instead of racing a compaction."""
-    from . import vector_index
-    return not vector_index.busy(collection)
+    """Whether this collection's vector writers may run.
+
+    They ALWAYS may. This used to answer "not while the index maintainer
+    is working", which was over-cautious and expensive: a compaction of
+    wikivec's 70 GB table takes ~41 minutes, and the collection did no
+    embedding and no archive import for the whole of it — measured live,
+    and with the refresh threshold reached every few minutes of work the
+    collection would have spent most of its life standing down.
+
+    Lance is MVCC: a concurrent delete+add during `optimize()` is
+    supported (measured: 210 writes during a maintenance pass, zero
+    errors), and a rare commit conflict surfaces as an exception that
+    `vector_store_contended` turns into a deferral — the document is
+    untouched and retried, never errored. The maintainer's `busy` flag
+    survives for what it is actually for: not running two maintenance
+    operations on one table at once."""
+    return True
+
+
+def vector_store_contended(exc: BaseException) -> bool:
+    """Is this failure the vector store's optimistic concurrency (another
+    writer or a maintenance pass committing first) rather than the
+    document's fault? Then it is a DEFERRAL: nothing is written to the
+    document and it is retried, exactly as for a busy manifest."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(s in text for s in (
+        "commit conflict", "commitconflict", "concurrent update",
+        "retryable commit", "conflicting transaction", "version conflict"))
 
 
 INDEX_MAINTAINER_INTERVAL_S = 60.0
@@ -1379,6 +1414,14 @@ def _execute_step(con, collection, stage, row) -> bool:
                          f"{stage} deferred — manifest busy ({e}); "
                          f"the document is untouched and will be retried")
             return False
+        if vector_store_contended(e):
+            # the vector store's optimistic concurrency: another writer or
+            # the index maintainer committed first. Same rule as above —
+            # a deferral, never an error on the document.
+            db.log_event(con, "warn", stage,
+                         f"{stage} deferred — vector store busy ({e}); "
+                         f"the document is untouched and will be retried")
+            return False
         if endpoint_unavailable(e):
             # Nothing is wrong with this document, so nothing is written to
             # it: no error, no retry increment. The backend gate owns the
@@ -1458,7 +1501,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
             # while rdf/fts work continues. embed_allowed() logged the
             # transition and caches the verdict, so this costs nothing per
             # round until the TTL expires.
-            stage, row = _next_book(con, scope, embed_allowed=False)
+            stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
     if stage == "embed" and not _vector_writes_allowed(collection):
         return False            # index build/refresh in progress: deferred, not an error
     if stage == "embed":
@@ -1601,7 +1644,7 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 if _drain_remote_archive(con, collection, gone):
                     continue
                 scope = db.get_scope(con)
-                stage, row = _next_book(con, scope, embed_allowed=False)
+                stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
                 if row is None:
                     if time.time() - last_idle > 300:
                         db.log_event(con, "info", "worker",

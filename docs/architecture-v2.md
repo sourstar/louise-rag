@@ -274,6 +274,12 @@ Watermarking in the strict sense cannot work here: anyone with the model produce
 
 ## 7. Community workload sharing
 
+> **The node's own scheduling — what runs on which thread, what it costs
+> and the pitfalls already paid for — is [`scheduling.md`](scheduling.md),
+> the single reference (amendments 37, 38, 42, 45, 47–51 are its incident
+> history). Read it and follow its checklist before changing what runs
+> when; measure with `tools/sched_report.py`.**
+
 No standing "BOINC for embeddings" exists; every real instance (LAION, BOINC, Prime Intellect) is the same four verbs: **partition, claim, compute-and-upload, validate-and-aggregate**. Your manifest already *is* the work tracker — the community layer is that state machine exposed over HTTP.
 
 **Coordinator** (per collection+space, ~200 lines FastAPI, holds no bulk data):
@@ -1391,3 +1397,24 @@ the live deployment:
     The general rule now in CLAUDE.md: a pipeline thread never waits
     without a bound on an optional subsystem — a worker that cannot
     finish also cannot honour SIGTERM.
+52. **§8 — index maintenance no longer stops a collection's writers, and
+    the scheduling knowledge is one document (2026-08-28; operator: "we
+    keep reworking the scheduling again and again").** Amendment 45's
+    `busy` flag made the embed step and the archive pass stand down for
+    the whole maintenance window; wikivec's 70 GB compaction takes ~41
+    minutes and its refresh threshold is reached every few minutes of
+    work, so the collection sat idle most of its life (observed live: no
+    imports for 7+ minutes with the maintainer inside `optimize()`). The
+    guard was protecting against a risk that does not exist — Lance is
+    MVCC, and 210 concurrent delete+add writes during `optimize()`
+    produced zero errors (measured). Writers now always run; `busy`
+    survives only to keep two maintenance passes off one table; a commit
+    conflict is a DEFERRAL (`worker.vector_store_contended`, honoured by
+    `_execute_step` and by the archive pass), never an error on a
+    document. The same pass fixed a cursor keyed on `""` that let one
+    collection's finished re-index walk suppress every other's.
+    **`docs/scheduling.md` is now the single reference** — the model, the
+    measured cost tables, a twelve-entry pitfall catalogue and a
+    pre-change checklist — with `tools/sched_report.py` as its
+    instrument; CLAUDE.md requires reading it before changing what runs
+    when. Amendments 37, 38, 42, 45, 47–52 are its incident history.

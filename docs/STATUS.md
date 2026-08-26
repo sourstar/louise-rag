@@ -305,6 +305,15 @@ stages prefetch a few thousand documents ahead into the pool
 delete-then-insert write filters on — 0.90 s per 500-document flush on
 wikivec (35M rows), 0.59 s on pubmed (16M) — the maintainer now builds a
 BTREE on it before the vector index (`tests/test_vector_index.py`).
+**→ All of this now lives in [`scheduling.md`](scheduling.md)** (operator,
+2026-08-28: "keep all these informations about scheduling together… we
+keep reworking the scheduling again and again"). That file is the single
+reference — the runner/resource model, the measured cost tables, a
+ten-entry pitfall catalogue and a pre-change checklist — and
+`tools/sched_report.py` is its instrument (`--queries` plan+time the hot
+queries, `--phases` where an archive pass goes, `--rates`, `--pool`).
+CLAUDE.md now requires reading it before any change to what runs when.
+The entries below are the incident history that produced it.
 **Checked twice (operator: "it's not the first time you leave some
 inefficiency behind") — amendment 49, and the double-check found more
 than the first pass.** Every hot query was then TIMED against the live
