@@ -1072,6 +1072,17 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
+- **Should a collection declare a content class, and should the manifest
+  carry it?** Proposal in [`collection-classes.md`](collection-classes.md):
+  not one bundled "type" (the reason `license_class` and `privacy_class` are
+  separate applies again) but two orthogonal axes — **`modality`** (what the
+  bytes are, making whole encoder/reranker families *wrong* rather than
+  worse; the incident behind `[embed_defaults.<plugin>]` is the argument)
+  and **`erasure`** (append-only / retractable / erasable). One consequence
+  lands directly on this format: **erasure and exchange are incompatible**,
+  because a seeded shard cannot be un-published — so `erasable` implies
+  never-share, and **a pack can only ever carry an append-only or a
+  retractable collection**, checkable at `pack build`.
 - **Should the manifest declare an ELI profile for legal corpora?**
   Proposal in [`eli-legal-plugins.md`](eli-legal-plugins.md): adopting the
   European Legislation Identifier as the template for EU-country legal

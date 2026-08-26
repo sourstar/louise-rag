@@ -862,6 +862,22 @@ batch is ready — the card now says "after fts (N ahead)" (test).
    and labelled rather than being excluded like a PubMed DeleteCitation,
    which would have discarded law that still governs facts predating its
    repeal.
+   Reading the Italian ELI spec in full also **overturned** the readable
+   `native_id` scheme: `/eli/stato/{type}/{date}/{number}` is an alias that
+   the spec's own example resolves to TWO acts, the unique permalink is
+   `/eli/id/{date}/{codiceRedazionale}`, and `codiceRedazionale` is
+   alphanumeric — so `native_id` becomes a date-prefixed hash that discovery
+   must collision-check. Whether a collection should declare a **content
+   class** at all is answered in
+   [`collection-classes.md`](collection-classes.md): not a bundled type but
+   two axes — `modality` (absorbing the `rerank_class` idea: one declaration
+   governing encoder AND reranker eligibility, refused at create and boot,
+   which is the checkable form of the incident behind
+   `[embed_defaults.<plugin>]`) and `erasure` (append-only / retractable /
+   erasable). Its sharpest result: **erasure and exchange are incompatible**
+   — a seeded shard cannot be un-published — so `erasable` implies
+   never-share and a pack can only ever carry an append-only or retractable
+   collection.
    The reranker is the opposite kind of decision —
    `RERANK_URL` is not in `space_id`, so it is measured after the collection
    exists, not before; three things in the current `_rerank` would bite this
