@@ -310,6 +310,27 @@ first-come-first-served.** It has held up so far because the collections
 have mostly been in different phases — which is exactly the condition
 that made my measurements unrepresentative.
 
+**What that looks like on the reference node** (`sched_report --rates`,
+120 s, 2026-08-28 — the instrument's first run, and the clearest
+statement of the gap):
+
+| collection | rdf/s | fts/s | embed/s | documents still to embed | ETA |
+|---|---|---|---|---|---|
+| pubmed | 1125 | 1125 | 70.6 | 17,873,169 | 70.3 h |
+| wikivec | 0 | 0 | 174.7 | 17,566,801 | 27.9 h |
+| gutenberg | 0 | 0 | **0** | 63,060 | never |
+| wikipedia | 0 | 0 | **0** | 19,402,204 | never |
+| genome-dm6 / hg38 | 0 | 0 | **0** | 2,294 | never |
+
+Six collections have unfinished embedding. Two of them consume
+everything; four get nothing — gutenberg's share of the idle GPU is zero,
+wikipedia's share of an idle BGE-M3 is zero. Some of that is the
+operator's `embed_mode` (a spending decision, correctly theirs), but
+NOTHING in the design would give those collections a share even if the
+knob said yes: there is no notion of "a collection with unfinished
+embedding is entitled to a share of what it needs". That is requirement
+B, and its absence is not a tuning problem — it is a missing component.
+
 ## 10. The target model, and how today's design measures against it
 
 The operator's model, stated as requirements:
