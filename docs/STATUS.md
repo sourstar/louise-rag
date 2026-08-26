@@ -330,8 +330,20 @@ manifests afterwards: archive range queries 19.1 s → 1.9 s and 9.5 s →
 row fetch per candidate in a 1M-id range — proportional to the shard,
 not the corpus); fts fresh peers 0.2–1.2 ms everywhere. The windowed
 re-index walk needed a SECOND fix — see amendment 49's tail: the window
-is now a forced rowid range (~0.3 s per 200k rows) instead of a 5.4 s
-re-walk of the whole range per window.
+is now a forced rowid range instead of a 5.4 s re-walk of the whole range
+per window. FINAL verified numbers on the live manifests (0f241db):
+re-index window 5.4 s → **0.30 s** (pubmed), 0.13 s (wikivec), 0.09 s
+(wikipedia), and gutenberg's walk ENDS after one window (0.0 ms
+thereafter) — so a caught-up collection costs one bounded window per
+round until the walk completes, then nothing until a version bump,
+against 16.7–127.9 s per round forever; fts fresh peers 0.2–7.1 ms; the
+archive range queries 1.8 s and 1.1 s on pubmed, proportional to a
+shard's 1M-id range (one row fetch per candidate), 0.6 % of a 300 s pass
+— a covering index would remove that too and is NOT worth a second
+40M-row index. The scheduling watcher (`/data/sched_watch.py`, restarted
+after each deploy, log `/data/sched_watch.log`) prints per-collection
+rdf/fts/embed rates every two minutes; it dies with the container and is
+purely diagnostic.
 NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
 while gutenberg holds 59,627 indexed, unembedded documents, because
 gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M
