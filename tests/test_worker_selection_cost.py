@@ -466,3 +466,22 @@ def test_fresh_fts_peers_use_the_index_prefix(tmp_path):
     if row is not None:
         peers = worker._fts_peers(con, c, row, 10)
         assert all(p["uid"] != row["uid"] and not p["fts_done"] for p in peers)
+
+
+def test_the_reindex_window_is_a_rowid_range_not_an_index_walk(tmp_path):
+    """Regression within the regression (2026-08-28): windowing the walk was
+    not enough — with the scope columns indexable SQLite could not use
+    `rowid>?` as a range (embed_done sits between the constrained prefix
+    and the index's rowid tail), so every window still re-walked the whole
+    (in_scope, rdf_done, fts_done) range: 5.4s per window on pubmed,
+    measured. The `+` prefixes force the integer primary key."""
+    c, con = _discovered(tmp_path)
+    for sql, params in (
+            (worker._FTS_REINDEX_WINDOWED, (0, 100, config.MAX_RETRIES,
+                                            config.FTS_VERSION, config.ENTITY_VERSION)),
+            (worker._FTS_REINDEX_PEERS, (0, 100, config.MAX_RETRIES, config.FTS_VERSION,
+                                         config.ENTITY_VERSION, "x", 10))):
+        plan = _plan(con, sql, params)
+        assert "USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in plan, plan
+        assert "idx_documents_scope" not in plan, plan
+        assert "TEMP B-TREE" not in plan.upper(), plan

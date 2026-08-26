@@ -1354,4 +1354,12 @@ the live deployment:
       idx_documents_native_int`) when it exists.
     Rule added to CLAUDE.md's engineering list: a plan check proves the
     shape, a TIMING against production-sized data proves the cost — new
-    hot-path queries need both.
+    hot-path queries need both. The lesson repeated one level down, which
+    is why the rule is worth its words: WINDOWING the re-index walk was
+    not enough, because with the scope columns indexable SQLite cannot use
+    `rowid>?` as a range (embed_done sits between the constrained prefix
+    and the index's rowid tail) and every window re-walked the whole
+    28M-row range at 5.4 s. The window is forced onto the integer primary
+    key (`+in_scope=1 …`), plan-checked; a window then visits its own
+    ~200k rows (~0.3 s) and the walk ends after the corpus, once per
+    version pair, instead of 127.9 s per round forever.

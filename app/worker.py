@@ -170,9 +170,10 @@ _FTS_FRESH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=0 "
     "AND error IS NULL AND retries<? AND uid<>? LIMIT ?")
 _FTS_REINDEX_PEERS = (
-    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
-    "AND error IS NULL AND retries<? AND rowid>? AND rowid<=? "
-    "AND (fts_version<? OR entity_version<?) AND uid<>? LIMIT ?")
+    "SELECT * FROM documents WHERE rowid>? AND rowid<=? "
+    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
+    "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) "
+    "AND uid<>? LIMIT ?")
 
 
 def _fts_peers(con, collection, row, limit: int):
@@ -193,7 +194,7 @@ def _fts_peers(con, collection, row, limit: int):
     start = state[2]
     end = min(start + _REINDEX_WINDOW, state[3])
     return con.execute(_FTS_REINDEX_PEERS,
-                       (config.MAX_RETRIES, start, end, config.FTS_VERSION,
+                       (start, end, config.MAX_RETRIES, config.FTS_VERSION,
                         config.ENTITY_VERSION, row["uid"], limit)).fetchall()
 
 # PREFETCH (amendment 48): what the stage will need in a few thousand
@@ -447,11 +448,19 @@ _FTS_REINDEX = (
 # without a candidate the collection is marked done for this (fts_version,
 # entity_version) pair and costs nothing at all until a version bumps —
 # which is the only thing that can create work here.
+# The window is a ROWID range, and the `+` prefixes are what make it one:
+# with the scope columns indexable SQLite prefers idx_documents_scope
+# (in_scope, rdf_done, fts_done, embed_done, rowid) and — because
+# embed_done sits between the constrained prefix and the rowid tail — it
+# cannot use `rowid>?` as a range at all, so every window re-walked the
+# whole 28M-row (1,1,1) range: 5.4 s per window, measured, which is the
+# same defect one level down. Forced onto the integer primary key a window
+# visits exactly its own rows (~0.3 s per 200k), and the walk ends.
 _REINDEX_WINDOW = 200_000
 _FTS_REINDEX_WINDOWED = (
-    "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND fts_done=1 "
-    "AND error IS NULL AND retries<? AND rowid>? AND rowid<=? "
-    "AND (fts_version<? OR entity_version<?) LIMIT 1")
+    "SELECT * FROM documents WHERE rowid>? AND rowid<=? "
+    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
+    "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) LIMIT 1")
 # path -> (fts_version, entity_version, cursor rowid, max rowid, done)
 _reindex_cursor: dict[str, tuple[int, int, int, int, bool]] = {}
 
@@ -473,7 +482,7 @@ def _next_reindex(con, collection):
     start = state[2]
     end = min(start + _REINDEX_WINDOW, state[3])
     row = con.execute(_FTS_REINDEX_WINDOWED,
-                      (config.MAX_RETRIES, start, end, *versions)).fetchone()
+                      (start, end, config.MAX_RETRIES, *versions)).fetchone()
     if row is not None:
         # stay in this window: the batch takes its peers from it, and the
         # next round re-enters here until the window is clean

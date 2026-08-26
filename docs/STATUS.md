@@ -321,7 +321,17 @@ caught-up collections — now a windowed cursor walk that ends and stays
 ended until a version bump; its batch peers (19.3 s / 15.9 s) — now an
 index prefix for the fresh case; and both archive range queries (19.1 s
 and 9.5 s per pass) — now hinted onto the browse index. Instrument:
-scratchpad `probe_plans.py` (plan + timing, per collection).
+scratchpad `probe_plans.py` (plan + timing, per collection) and
+`probe_after.py` — which must call the code's OWN sql builders: the first
+verification pass measured hand-copied SQL and reported the archive fix
+as ineffective when it was not even testing it. Verified on the live
+manifests afterwards: archive range queries 19.1 s → 1.9 s and 9.5 s →
+1.1 s on pubmed (now `idx_documents_native_int`, and the residue is one
+row fetch per candidate in a 1M-id range — proportional to the shard,
+not the corpus); fts fresh peers 0.2–1.2 ms everywhere. The windowed
+re-index walk needed a SECOND fix — see amendment 49's tail: the window
+is now a forced rowid range (~0.3 s per 200k rows) instead of a 5.4 s
+re-walk of the whole range per window.
 NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
 while gutenberg holds 59,627 indexed, unembedded documents, because
 gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M
