@@ -31,6 +31,30 @@ confirms baseline reproduction on the first embed after the swap.
 |---|---|---|---|
 | b10603 | `sha256:33927f8a9af7657469e5b3a65027a1b2d0419f185385cc82f7be59790590a74d` | **approved (in production, 2026-08-24)** | trial vs b10450 on the Arc, Qwen3-Embedding-8B-Q4_K_M: cosine min/mean **1.000000** over 16 texts; interleaved A/B **+1.5% faster** (1.95 vs 1.92 texts/s under a live embed workload) |
 | b10450 | `sha256:5a47f527e1b06b0351bf43e9b2f3baf14a06b097526cc37d2cdd9c77de9a3ec2` | approved (superseded by b10603) | served gutenberg's space until 2026-08-24; baseline reproduced across restarts |
+| **b10630** | `sha256:37dd060b3616c35a7f1b9ff8684a3ebcb59b57cf5e40b0d3f578d209279f3fc7` | **UNAPPROVED — found running in production 2026-08-28** | never trialled. Tag `server-intel-b10630`, started 2026-08-27T21:46:45Z, `restarts=0`. Note the transposition: the approved build is b106**03**, this is b106**30** |
+
+> **The drift this file exists to prevent happened again, and this time it
+> is measured.** On 2026-08-28 the production Arc encoder was serving
+> `server-intel-b10630` — a build that appears in no row above. Against
+> gutenberg's stored vectors, `tools/vector_compliance gutenberg` found
+> **13 of 163 sampled chunks (8.0%) below TAU**, worst cosine **0.338**,
+> median 1.000000. Every failure was a 4,000-char chunk, and they cluster
+> by book (4643 and 4639 at 21% bad; 4646, 4642, 4640 at 0%).
+>
+> The corrupt side is the STORED vector, not the comparison: for each
+> failing chunk, six fresh draws agreed with each other at cosine
+> 1.000000 and disagreed with the stored one at an identical cosine every
+> time. So these vectors were written wrong at some earlier point and have
+> been sitting in the table since.
+>
+> **What could NOT be reproduced on demand**: the endpoint tested clean
+> afterwards at every concurrency (1/4/8), with identical and with
+> distinct long texts, serially and in parallel — all 1.000000. Short
+> tests do not catch this, which is precisely why the approval trial (16
+> texts) and the backend gate (a handful of probes) both pass while the
+> corpus takes damage. Treat "the endpoint tests clean" as necessary and
+> NOT sufficient; the corpus-side check is
+> `python -m tools.vector_compliance <collection>`.
 
 <!-- encoder_trial verdicts are appended here -->
 
