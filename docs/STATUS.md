@@ -907,6 +907,22 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 
+- **8% of gutenberg's stored vectors are corrupt, and the encoder that
+  wrote them was an UNAPPROVED build (2026-08-28).** `tools/vector_compliance
+  gutenberg` over 163 sampled chunks: 13 below TAU (8.0%), worst cosine
+  **0.338**, median 1.000000; every failure a 4,000-char chunk, clustered by
+  book (4643, 4639 at 21%; others at 0%). The STORED side is the corrupt one
+  — six fresh draws agree with each other at 1.000000 and disagree with the
+  stored vector at an identical cosine each time. The production Arc was
+  serving `server-intel-b10630` while the approval table pins b106**03**
+  (digits transposed; see docs/approved-encoders.md). `gutenberg.embed_mode`
+  is now `off` in its TOML so nothing further is written.
+  **The trap for whoever picks this up: the endpoint tests CLEAN.** Afterwards
+  it reproduced at 1.000000 at every concurrency (1/4/8), identical and
+  distinct long texts, serial and parallel. A short probe cannot clear this
+  backend — which is exactly why the 16-text approval trial and the backend
+  gate's probes both passed while the corpus took damage. Check the CORPUS
+  (`vector_compliance`), not just the endpoint.
 - **No vector index — every semantic query is a flat scan of the Lance
   table** (`embeddings.search`: `tbl.search(qvec).limit(k)`, no
   `create_index` anywhere). Measured 2026-08-26 with a random unit
