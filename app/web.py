@@ -1047,7 +1047,7 @@ def grow_run(name: str, body: GrowBody):
         # reason the [embed] block is: a rewrite that drops it would reset
         # the collection to 'lazy' at the next restart.
         embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default,
+        embed_mode=collection.embed_mode_default, layers=collection.layers,
         snapshot=collection.snapshot, extras=extras,
         peer_source=collection.peer_source)
     con = db.connect(collection)
@@ -1152,7 +1152,8 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             embed=None, embed_mode: str | None = None,
                             snapshot: str | None = None,
                             extras: tuple[str, ...] = (),
-                            peer_source: str | None = None) -> None:
+                            peer_source: str | None = None,
+                            layers=None) -> None:
     lines = [f'plugin = "{plugin}"']
     if peer_source:
         # peer plane: fetch from this magnet/.torrent instead of the origin
@@ -1206,6 +1207,18 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
             lines.append(f"concurrency = {embed.concurrency}")
         if getattr(embed, "device", None):
             lines.append(f'device = "{embed.device}"')
+    if layers:
+        # CHUNKER LAYERS (amendment 41). These are part of space_id
+        # (invariant 1 as amended), so dropping them on a rewrite does not
+        # merely lose a setting — it silently redefines the collection's
+        # SPACE, and the next boot either refuses or, worse, accepts a
+        # collection whose stored vectors belong to a different function.
+        # `version` is deliberately not written: parse_layers derives it
+        # from the chunker, so writing it back would let a stale number
+        # outlive a chunker bump.
+        for layer in layers:
+            lines += ["", "[[layers]]", f'chunker = "{layer.chunker}"',
+                      f'rule = "{layer.rule}"']
     lines += [
         "",
         "[paths]",
@@ -1425,6 +1438,7 @@ def new_collection_create(body: CreateCollectionBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
+                layers=existing.layers,
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source)
 
@@ -1642,6 +1656,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 genesis_archive=existing.genesis_archive,
                 embed=collections_mod.recipe_for(existing),
                 embed_mode=existing.embed_mode_default,
+                layers=existing.layers,
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source)
     _write_collection_toml(
@@ -1652,7 +1667,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
-        embed_mode=body.mode, snapshot=collection.snapshot,
+        embed_mode=body.mode, layers=collection.layers,
+        snapshot=collection.snapshot,
         extras=collection.extras, peer_source=collection.peer_source)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
@@ -1714,8 +1730,11 @@ def collection_ack(name: str):
         lancedb=collection.lance_dir, license_ack=ack,
         genesis_archive=collection.genesis_archive,
         embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default,
-        snapshot=collection.snapshot, extras=collection.extras)
+        embed_mode=collection.embed_mode_default, layers=collection.layers,
+        snapshot=collection.snapshot, extras=collection.extras,
+        # peer_source was missing here: acknowledging a licence would
+        # silently un-declare a collection fed from a peer torrent
+        peer_source=collection.peer_source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

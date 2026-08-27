@@ -130,7 +130,16 @@ def cmd_embed_materialize(args) -> int:
         corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive, embed=recipe)
+        genesis_archive=collection.genesis_archive, embed=recipe,
+        # Everything else the TOML already declared has to be carried, or
+        # "make the recipe explicit" quietly un-declares the rest: layers
+        # are part of space_id (invariant 1), a dropped snapshot moves the
+        # collection back to "whatever the origin calls latest", a dropped
+        # embed_mode resets it to 'lazy' at the next boot, and a dropped
+        # peer_source sends acquisition back to the origin.
+        embed_mode=collection.embed_mode_default, layers=collection.layers,
+        snapshot=collection.snapshot, extras=collection.extras,
+        peer_source=collection.peer_source)
     print(f"{collection.name}: materialized the env recipe into {toml_path}")
     print(f"  model={recipe.model} url={recipe.url} api={recipe.api} "
           f"dtype={recipe.dtype} ctx={recipe.ctx} dim={recipe.dim}")
