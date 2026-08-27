@@ -58,6 +58,39 @@ Flags replicate the production app exactly (`--embeddings --pooling last
 |---|---|---|
 | DNABERT-2-117M | `dnabert2-embed:local` | approved for parse/index era; embedding parked pending dna-search-axes review |
 
+## Bitwise reproducibility, by vendor
+
+Context for the consistency bar above, which is cosine and stays cosine. Each
+vendor scopes its bitwise guarantee to its own hardware, so bitwise agreement
+cannot be a cross-peer property.
+
+| stack | bitwise mode | scope of the guarantee | control |
+|---|---|---|---|
+| NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` |
+| AMD rocBLAS | yes | identical GFX target ISA, single HIP stream, same ROCm version | `ROCBLAS_DEFAULT_ATOMICS_MODE=0` |
+| Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var |
+| Intel oneMKL | CNR | fixed thread count; GPU since 2024.1, BLAS-3 under OpenMP offload | `MKL_CBWR` |
+| CPU (llama.cpp) | none offered | — | — |
+
+Notes:
+
+- No vendor claims agreement across different hardware. NVIDIA's lapses even
+  between its own models, since SM count differs.
+- IEEE 754-2019 requires correct rounding for `+ − × ÷ √` but only
+  *recommends* it for `exp`, `log`, `tanh`. Softmax and the activation use
+  those, so cross-vendor bitwise identity is unreachable without emulating the
+  special functions.
+- Measured on the reference deployment: the same model file and the same
+  llama.cpp build produce different vectors on its GPU backend and its CPU
+  backend, and the CPU backend does not reproduce its own output run to run.
+
+Sources: [cuBLAS](https://docs.nvidia.com/cuda/cublas/) ·
+[rocBLAS](https://rocm.docs.amd.com/projects/rocBLAS/en/docs-6.4.0/how-to/what-is-rocblas.html) ·
+[oneDNN deterministic mode](https://uxlfoundation.github.io/oneDNN/dev_guide_attributes_deterministic.html) ·
+[oneMKL CNR](https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2023-0/set-env-var-for-cond-numerical-reproducibility.html) ·
+[Defeating Nondeterminism in LLM Inference](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) ·
+[Bit-Exact AI Inference Verification](https://arxiv.org/abs/2606.00279)
+
 ## Adding a device class
 
 New peers with other hardware (AMD ROCm/Vulkan, NVIDIA CUDA, Apple Metal)
