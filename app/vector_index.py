@@ -65,6 +65,15 @@ class maintenance:
         return False
 
 
+def free_bytes(collection) -> int | None:
+    """Free space on the filesystem holding this collection's vectors."""
+    try:
+        import shutil
+        return shutil.disk_usage(collection.lance_dir).free
+    except Exception:   # noqa: BLE001 — a missing dir must not stop maintenance
+        return None
+
+
 def refresh_due(st: dict | None) -> bool:
     """New rows since the build reach both the absolute and the
     fractional threshold: 50k rows AND 2 % of the table by default — a
@@ -263,6 +272,22 @@ def refresh(collection, con=None, *, log=None) -> dict:
     tbl = _table(collection)
     if tbl is None:
         return {"refreshed": False}
+    free = free_bytes(collection)
+    if free is not None and free < config.VECTOR_INDEX_MIN_FREE_GB * 2**30:
+        # optimize() COMPACTS before it prunes: it writes the new fragments
+        # first and only then deletes the old ones, so it needs headroom and
+        # temporarily makes a full disk fuller. Observed on the reference
+        # node at 92% full — a compaction of wikivec's 291 GB table took
+        # free space DOWN from 116 GB to 93 GB before it had freed anything.
+        # A maintenance pass must never be the thing that fills the pool.
+        msg = (f"vector index refresh SKIPPED: {free / 2**30:.0f} GiB free is "
+               f"below VECTOR_INDEX_MIN_FREE_GB={config.VECTOR_INDEX_MIN_FREE_GB}; "
+               f"compaction needs headroom before it releases any")
+        if con is not None:
+            db.log_event(con, "warn", "index", msg)
+        elif log:
+            log(msg)
+        return {"refreshed": False, "reason": "low disk", "free_gb": free / 2**30}
     before = stats(collection) or {}
     t0 = time.monotonic()
     tbl.optimize(cleanup_older_than=timedelta(

@@ -267,6 +267,14 @@ VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
 # A derived vector store is rebuildable and nothing time-travels it, so the
 # window only has to outlive a reader that is mid-query. Hours, not days.
 VECTOR_INDEX_KEEP_VERSIONS_H = float(os.getenv("VECTOR_INDEX_KEEP_VERSIONS_H", "2"))
+# Below this much free space, a vector-index refresh is SKIPPED rather than
+# attempted. `optimize()` compacts before it prunes — it writes the new
+# fragments first and deletes the old ones after — so on a nearly-full pool
+# it makes things worse before (if ever) making them better. Measured on the
+# reference node at 92% full: a wikivec compaction took free space from
+# 116 GB down to 93 GB without releasing anything. Maintenance must never be
+# the thing that fills the disk.
+VECTOR_INDEX_MIN_FREE_GB = float(os.getenv("VECTOR_INDEX_MIN_FREE_GB", "150"))
 # The well-known root where PACKS are mounted (pack-format.md): the
 # create dialog offers the packs present here as `packed` corpora.
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))

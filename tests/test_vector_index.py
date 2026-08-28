@@ -237,3 +237,37 @@ def test_a_vector_store_conflict_defers_the_document_instead_of_erroring_it(coll
     events = [r["message"] for r in con.execute("SELECT message FROM events WHERE level='warn'")]
     assert any("vector store busy" in m for m in events)
     con.close()
+
+
+def test_refresh_is_skipped_when_the_disk_is_nearly_full(isolated_config, tmp_path,
+                                                          monkeypatch):
+    """optimize() COMPACTS before it prunes, so on a full pool it makes
+    things worse before it makes them better. Measured on the reference node
+    at 92% full: a compaction took free space from 116 GB to 93 GB without
+    releasing anything. A maintenance pass must never fill the disk."""
+    from app import collections as collections_mod, vector_index
+
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+
+    called = {"optimize": False}
+
+    class FakeTable:
+        def optimize(self, **kw):
+            called["optimize"] = True
+
+    monkeypatch.setattr(vector_index, "_table", lambda coll: FakeTable())
+    monkeypatch.setattr(vector_index, "free_bytes", lambda coll: 10 * 2**30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_FREE_GB", 150.0)
+
+    out = vector_index.refresh(c)
+    assert out["refreshed"] is False and out["reason"] == "low disk"
+    assert called["optimize"] is False, "compacted anyway on a full disk"
+
+    # with headroom it proceeds
+    monkeypatch.setattr(vector_index, "free_bytes", lambda coll: 500 * 2**30)
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {"rows": 1})
+    vector_index.refresh(c)
+    assert called["optimize"] is True
