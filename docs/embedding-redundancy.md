@@ -60,22 +60,81 @@ The ordering matters: **a single careless version bump costs more than every
 coordination failure combined.** That is the headline, and it is why §6 is
 in this document at all.
 
+## 2a. The whole node, measured (2026-08-28)
+
+Gutenberg is not the hard case. Every collection on this node:
+
+| collection | documents | chunks | chunks/doc | embedded | archive |
+|---|---|---|---|---|---|
+| gutenberg | 77,861 | 8,705,239 | 111.8 | 1,370,181 (16%) | — |
+| gutenberg-pack | 77,389 | 8,661,545 | 111.9 | 0 | — |
+| **pubmed** | 39,994,988 | 39,958,399 | **1.00** | 32,660,007 (82%) | medcpt-pubmed |
+| **wikipedia** | 19,402,137 | 32,536,168 | 1.68 | **121 (0.0004%)** | **none** |
+| **wikivec** | 21,983,119 | **144,137,255** | 6.56 | 58,233,661 (40%) | upstash |
+| genome-hg38 | 455 | 911,911 | **2004.2** | 0 | — |
+| genome-dm6 / sacCer3 | 1,887 | 45,231 | 22 / 203 | 34,846 | — |
+| **total** | | **234,955,748** | | | |
+
+**5,786 GPU-days to embed all of it once** at this node's 0.47 chunks/s.
+
+Three things follow that gutenberg alone would not have shown:
+
+- **Wikipedia is the real problem, not Gutenberg.** 32.5M chunks, **no
+  genesis archive**, and 121 chunks embedded — 0.0004%. That is **801
+  GPU-days** of genuinely uncoordinated community work waiting to happen.
+  Gutenberg's 213 days is second.
+- **PubMed and wikivec are mostly a DISTRIBUTION problem, not a computation
+  one.** Both have archives supplying vectors (82% and 40% imported
+  already), so the community's job there is moving bytes and verifying them,
+  not spending GPU. The redundancy to avoid is re-importing and
+  re-verifying, not re-embedding.
+- **Chunks per document vary by four orders of magnitude** — 1.00 for a
+  PubMed abstract, 111.8 for a Gutenberg book, 2004 for a human chromosome.
+  Any design that assumes a typical document is wrong for something here.
+
 ## 3. The mechanism: a coverage map small enough to gossip
 
-Everything else follows from one primitive — *can a peer cheaply answer "has
-someone already embedded this chunk?"*
+Everything else follows from one primitive — *can a peer cheaply answer
+"has someone already embedded this?"*
 
-For a space, publish a **coverage bitmap**: one bit per chunk, in the
-manifest's chunk order.
+**Granularity: per DOCUMENT.** My first draft said per chunk; the numbers
+above say that is the wrong unit, for three independent reasons.
 
-```
-8,661,545 chunks / 8 = 1.08 MB raw, and it is mostly runs — a few hundred
-KB compressed for the whole of Gutenberg.
-```
+1. **It matches the unit of work.** A document is embedded and published
+   atomically — `upsert_book` writes a document's chunks together,
+   `embed_done` is a per-document flag, and a bundle carries documents.
+   There is no such thing as a published half-document.
+2. **It matches the question the lazy path asks.** The selector picks a
+   DOCUMENT to embed (`_next_embed`), so "is this document covered?" is
+   exactly the lookup needed. A chunk bitmap would answer a question nobody
+   asks.
+3. **It is three times smaller overall, and a hundred times smaller where
+   documents are large:**
 
-That is small enough to gossip with the catalogue digests (§13), and
-updates are bit-deltas measured in kilobytes. Per-shard fill fractions
-(1,591 numbers) ride along for cheap coarse decisions.
+| space | per-chunk bitmap | **per-document bitmap** |
+|---|---|---|
+| gutenberg | 1.0 MB | **9.7 KB** |
+| pubmed | 4.8 MB | 4.8 MB (identical — 1.00 chunks/doc) |
+| wikipedia | 3.9 MB | 2.3 MB |
+| wikivec | 17.2 MB | 2.6 MB |
+| **all spaces** | **28.0 MB** | **≈ 9.7 MB** |
+
+PubMed is the case that shows the unit is right rather than merely cheap:
+at exactly 1.00 chunks per document the two maps are the same object, so
+there is nothing to trade off.
+
+**Per shard is still too coarse**, which was the original question: a shard
+holds thousands of documents and is almost always partially covered, so a
+shard-level map cannot answer the lazy-path lookup at all.
+
+**Work remaining needs a second number.** A document bitmap says *what* is
+left but not *how much*, and with 1 to 2,004 chunks per document those are
+very different questions. The manifest already carries per-shard record and
+chunk counts, so scheduling reads: bitmap for "is it done", shard totals for
+"how expensive is the gap". No new artefact.
+
+Updates are bit-deltas measured in kilobytes, gossiped with the catalogue
+digests (§13).
 
 With that one artefact, every other decision becomes **local and
 coordination-free**:
@@ -152,8 +211,10 @@ procedural, not algorithmic:
 In order, because each step is useful alone and the earlier ones make the
 later ones cheap:
 
-1. **The coverage bitmap** — published per space, gossiped, with per-shard
-   fill fractions. Nothing else works without it.
+1. **The coverage bitmap, per DOCUMENT** — published per space, gossiped,
+   with the manifest's existing per-shard chunk totals for cost. Nothing
+   else works without it. Start with wikipedia, which needs it most and has
+   almost nothing to lose by being the pilot.
 2. **Fetch-before-compute in the lazy path** — the smallest change with the
    largest immediate effect, and it directly answers the operator's doubt.
 3. **Partial publication cadence** — bundles every few hundred chunks.
@@ -165,15 +226,22 @@ later ones cheap:
 1. **Bitmap freshness vs size.** A stale map causes duplicate work; a
    too-frequent one costs gossip. What staleness is acceptable — minutes,
    hours?
-2. **Does coverage need to be per chunk, or is per shard enough?** Per
-   shard is ~1,591 numbers and would make the lazy-path check useless
-   (a shard is partially covered almost always). Per chunk costs ~1 MB.
-   Proposal takes per chunk; the cost seems affordable but it is the main
-   size decision.
-3. **Trust of the coverage map itself.** A peer that lies about coverage
+2. **Does a document bitmap need an ordering that survives updates?** A bit
+   position must mean the same document to every peer. The manifest's shard
+   list plus in-shard record order gives one; a new shard appends, so
+   positions are stable — but a RE-ISSUED shard (§6.1, a changed record)
+   keeps its number while its contents may shift. Either bits are keyed by
+   (shard, index-within-shard) and a re-issue invalidates only that shard's
+   range, or the map is a sorted uid list, which is larger. The first looks
+   right and needs checking against the re-issue rule.
+3. **Wikipedia has no archive and no plan.** 801 GPU-days, 0.0004% done. It
+   is the collection this whole design exists for, and it is the one nobody
+   has started. Does it get an archive (like pubmed and wikivec), or is it
+   the first corpus the community genuinely embeds together?
+4. **Trust of the coverage map itself.** A peer that lies about coverage
    ("everything is done") suppresses work. Signed per-publisher maps and
    union-of-claims would bound that; worth deciding before it matters.
-4. **Should lazy-embedded vectors be published at all?** They are free to
+5. **Should lazy-embedded vectors be published at all?** They are free to
    offer once computed, and §3 makes them rare. Proposal: yes, as
    unsolicited bundles (pack-live-edge.md §3.4) — but as a by-product, never
    as the mechanism.
