@@ -4,6 +4,8 @@ The tool DELETES vectors, so the two things worth pinning are that it walks
 the order the operator specified, and that it cannot be talked into deleting
 a healthy book by one bad draw from an encoder that has a history of them.
 """
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -26,7 +28,10 @@ def collection(tmp_path, isolated_config, corpus_dir):
 
 
 def good_vec(text):
-    h = abs(hash(text))
+    """hashlib, not hash(): str hashing is salted per process, so `hash()`
+    makes a test of reproducibility itself irreproducible."""
+    h = int.from_bytes(hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest(),
+                       "big")
     return [float((h >> (8 * i)) & 0xFF) + 1.0 for i in range(4)]
 
 

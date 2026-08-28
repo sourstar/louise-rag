@@ -5,6 +5,8 @@ failure direction are worth pinning: a clean endpoint must read COMPLIANT,
 a drifting one must read NOT COMPLIANT and exit non-zero, and a document
 that was simply re-chunked must be distinguishable from a bad endpoint.
 """
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -32,8 +34,15 @@ def embed_as(fn, monkeypatch):
 
 
 def stable(text):
-    """A deterministic 'encoder': the same text always gives the same vector."""
-    h = abs(hash(text))
+    """A deterministic 'encoder': the same text always gives the same vector.
+
+    hashlib, not hash(): str hashing is salted per process (PYTHONHASHSEED),
+    so `hash()` gave a different vector every run and the drift test failed
+    on the runs where the permuted vector happened to land near the
+    original. A test for reproducibility must itself be reproducible.
+    """
+    h = int.from_bytes(hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest(),
+                       "big")
     return [float((h >> (8 * i)) & 0xFF) + 1.0 for i in range(4)]
 
 
@@ -67,8 +76,10 @@ def test_a_drifting_endpoint_reads_not_compliant(collection, monkeypatch):
     embed_everything(collection, monkeypatch)
 
     def drifted(text):
+        # a genuinely different direction, not a permutation: permuting can
+        # land near the original whenever two components happen to be close
         v = stable(text)
-        return [v[1], v[0], v[3], v[2]]     # same magnitudes, different answer
+        return [-v[0], v[1], -v[2], v[3]]
 
     embed_as(drifted, monkeypatch)
     report = vc.check_stored(collection, books=3, chunks=10, tau=0.995)
