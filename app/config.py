@@ -256,6 +256,17 @@ VECTOR_INDEX_REFRESH_ROWS = int(os.getenv("VECTOR_INDEX_REFRESH_ROWS", "50000"))
 # for 115k new rows — it must not run every 50k rows there
 VECTOR_INDEX_REFRESH_FRACTION = float(os.getenv("VECTOR_INDEX_REFRESH_FRACTION", "0.02"))
 VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
+# How long Lance keeps SUPERSEDED versions of a vector table. This is not a
+# tuning knob, it is a disk-usage decision, and the default was costing more
+# than everything else on the pool: `optimize()` with no argument prunes
+# versions older than SEVEN DAYS, and every archive flush (delete+add on 500
+# book ids) makes a version. Measured 2026-08-28 on this node: wikivec held
+# 522,650 versions = 177 GB of _versions beside 291 GB of live data, with
+# 116 GB free on the pool.
+#
+# A derived vector store is rebuildable and nothing time-travels it, so the
+# window only has to outlive a reader that is mid-query. Hours, not days.
+VECTOR_INDEX_KEEP_VERSIONS_H = float(os.getenv("VECTOR_INDEX_KEEP_VERSIONS_H", "2"))
 # The well-known root where PACKS are mounted (pack-format.md): the
 # create dialog offers the packs present here as `packed` corpora.
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))

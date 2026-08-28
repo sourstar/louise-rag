@@ -25,6 +25,7 @@ which orders exactly like cosine — the same metric the flat scan used.
 import math
 import threading
 import time
+from datetime import timedelta
 
 from . import config, db, embeddings
 
@@ -249,13 +250,23 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
 
 def refresh(collection, con=None, *, log=None) -> dict:
     """Fold the rows added since the build into the index (Lance's
-    optimize: compaction + index update)."""
+    optimize: compaction + index update) AND prune superseded versions.
+
+    The pruning window is explicit because the default is not a tuning
+    choice, it is a disk bill: `optimize()` with no argument keeps seven
+    days of versions, and a collection fed by archive import makes a version
+    per flush. Measured on the reference node: wikivec at 522,650 retained
+    versions, 177 GB of `_versions` beside 291 GB of live data, on a pool
+    with 116 GB free. `delete_unverified` stays False so a file that might
+    still be referenced by an in-flight reader is never removed.
+    """
     tbl = _table(collection)
     if tbl is None:
         return {"refreshed": False}
     before = stats(collection) or {}
     t0 = time.monotonic()
-    tbl.optimize()
+    tbl.optimize(cleanup_older_than=timedelta(
+        hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
     forget(collection)
     dt = time.monotonic() - t0
     after = stats(collection) or {}
