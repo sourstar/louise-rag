@@ -4,7 +4,8 @@
 `no-central-node.md`: that document removes every required authority
 from open collections; this one reintroduces exactly one, on purpose,
 and says what it may and may not do. Amends `pack-format.md` §7, §10,
-§13, §15, §16; proposed amendments 61–65. Facts about the Gazzetta
+§13, §15, §16; proposed amendments 62–66 (61 is the toolchain
+hash, in `no-central-node.md`). Facts about the Gazzetta
 Ufficiale and the EU trusted lists are from the publishers' own pages,
 checked 2026-09-05.*
 
@@ -268,30 +269,35 @@ and must be made knowingly:
   *different* file, and the collection trusts IPZS to keep the two
   aligned.
 
-For a certified collection: the sealed PDF, with `PARSER_VERSION` pinned
-to an exact extraction library build, because authenticity is the whole
-point and parser drift is caught by `records-vs-origin` on the next
-verification pass. Recorded beside the plugin as §6 requires.
+For a certified collection: the sealed PDF, because authenticity is the
+whole point. What makes the fragile side bearable is the frozen
+toolchain of `no-central-node.md` §5.1: the Codex carries the digest of
+the platform image, which pins the extraction library together with the
+parser — `PARSER_VERSION` alone never did, since the same parser source
+over a different library build produces different bytes. Drift is then
+not an accident that goes unnoticed but a different image, which either
+proves itself equivalent by reproducing the sample byte-for-byte or is
+refused. The form choice is recorded beside the plugin as §6 requires.
 
 ## 8. Proposed amendments
 
-61. **`pack-format.md` §7** — the Codex gains `publication`, `certifier`
+62. **`pack-format.md` §7** — the Codex gains `publication`, `certifier`
     (key, anchor URL, `is_origin`), `embedding`, `succession`; and, for
     certified collections, the fixed `content: manifest-only`.
-62. **`pack-format.md` §10** — shard promotion refuses any shard whose
+63. **`pack-format.md` §10** — shard promotion refuses any shard whose
     root is not in the current signed and anchored snapshot; for
     certified collections this is a refuse-class invariant with a test
     that promotes a foreign shard and expects rejection. A violation
     found after promotion halts the space on that node.
-63. **`pack-format.md` §13** — the BEP 44 mutable "latest snapshot" item
+64. **`pack-format.md` §13** — the BEP 44 mutable "latest snapshot" item
     is retained for certified collections only, signed by the certifier;
     the anchor URL is the fallback.
-64. **`pack-format.md` §15** — new checks: `anchor` (key fingerprint
+65. **`pack-format.md` §15** — new checks: `anchor` (key fingerprint
     matches the well-known/DNS anchor), `origin-seal` (live and
     archival). `checks.required` in a certified Codex lists what must
     pass before the collection is *shown* as certified, not merely what
     may be run.
-65. **`pack-format.md` §16** — an attestation signed by the certifier's
+66. **`pack-format.md` §16** — an attestation signed by the certifier's
     key on `vectors-sample` is the *endorsed* embedding level; the Library
     shows certification and trust level as two axes ("certified by X ·
     reproduced by N verifiers"), never one.

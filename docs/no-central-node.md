@@ -124,13 +124,21 @@ vectors corrupted by an untrialled b10630 build).
 ```
 codex = {
   kind: "louise-codex", version: 1,
-  plugin, parser: {id, version}, origin: <AcquisitionSpec, minus credentials>,
-  cleaning_version, layers, slicing,
-  space: {encoder, reference_version, dim, dtype, ctx, tolerance, calibration},
+  plugin, origin: <AcquisitionSpec, minus credentials>,
+  toolchain: {
+    platform_commit: "<git sha>",            -- names the parser, chunker, cleaner, validator
+    image_digest: "sha256:…",                -- the platform image: code AND its dependency closure
+    encoder_image_digest: "sha256:…"         -- the encoder build; replaces reference_version
+  },
+  parser: {id, version}, cleaning_version,   -- human-readable aliases of what the toolchain contains
+  layers, slicing,
+  space: {encoder, dim, dtype, ctx, tolerance, calibration, epoch},   -- epoch: see lineage.md §6
   license: {class, terms_sha256},
   update: {cadence, cutoff: "origin-clock-midnight", grace_days},
   publication: "open",                       -- or "certified"; see certified-collections.md
-  derived_from: <codex hash> | null
+  continues: <codex hash> | null,            -- daughter; see lineage.md
+  derived_from: <codex hash> | null,         -- sister
+  replaces: {codex, defect} | null           -- corrective sister
 }
 collection_id = H(canonical-json(codex))
 ```
@@ -140,9 +148,44 @@ same collection, wherever they started. A different encoder or chunker
 is a different Codex and therefore a *derived* collection, exactly as
 §17 already says — the rule does not change, only where the id comes
 from. The creator's key is recorded as an *attestation* ("first
-published by") in the catalogue, not as part of the identity. Nothing
-executable is in the Codex; the parser and chunker are named by id and
-version and live in the platform, as §15 requires.
+published by") in the catalogue, not as part of the identity.
+
+**The toolchain is frozen by hash, not by version.** Nothing executable
+is in the Codex, as §15 requires: the peer runs its *own* platform code,
+and the hashes tell it whether that code is the one the Codex demands.
+This is rule 1 of the pack ("the hash is the truth; a version number is
+a hint") applied to the tools. `parser: {id, version}` stays as a
+readable alias; it no longer carries the guarantee. Three points make
+this workable rather than brittle:
+
+- **Hash the closure, not the file.** The bytes a parser produces depend
+  on the extraction library, the interpreter and the tokenizer at least
+  as much as on the plugin source (`certified-collections.md` §7). An
+  image digest — the platform is already container-based — pins all of
+  it at once. The encoder gets the same treatment: this node's 8 % of
+  corrupt Gutenberg vectors came from an encoder build that an
+  *approved list* named by label (b10603) while the node ran b10630. A
+  digest in the Codex makes that impossible to do by accident.
+- **Equivalence by attestation, or every refactor forks the
+  collection.** With the toolchain hash inside the Codex, a changed
+  comment in the parser would be a new `collection_id`. So the Codex
+  freezes the *reference* toolchain, and any other toolchain must prove
+  itself equivalent: `records-vs-origin` run with a different image
+  that reproduces the sampled records byte-for-byte is a deterministic
+  check and therefore an attestation under §16 ("image Y is equivalent
+  to the reference for this collection"). Equivalences live in the
+  attestations, not in the Codex; the identity does not move. The
+  platform's golden tests (`tests/capture_golden.py`) are the same
+  mechanism run locally before a release.
+- **The hash removes ambiguity, not bugs.** A wrong parser, hashed and
+  frozen, is a wrong parser faithfully reproduced by everyone forever —
+  and `records-vs-origin` *passes* it, because it re-parses with the
+  same code. The check proves fidelity to the pipeline, not to the
+  "true text". No hash fixes that; code review of the plugin in the
+  platform does (§15: "reviewed like any code"), and for certified
+  collections the origin's seal on the bytes *upstream* of the parser
+  does (`certified-collections.md` §4.2). Anyone reading "frozen hash"
+  as "correct by construction" has read it wrong.
 
 **5.2 Snapshots are content-addressed and permissionless.**
 
@@ -269,6 +312,15 @@ No step names a specific other node.
 60. **`pack-format.md` §16** — a second compliant bundle for the same
     chunks yields a `vectors-sample` attestation naming both producers;
     duplicates are the verification budget, not waste.
+61. **`pack-format.md` §7, §15 and `approved-encoders.md`** — the Codex
+    freezes the reference **toolchain by hash** (platform image digest,
+    encoder image digest); `parser.version`, `chunker.version` and
+    `reference_version` become readable aliases without guarantee.
+    `records-vs-origin` run under a different image that reproduces the
+    sample byte-for-byte is a deterministic **equivalence attestation**;
+    equivalences live in attestations, never in the Codex. The approved
+    encoder list is superseded by the digest in each Codex.
+    (`certified-collections.md` renumbers its amendments 62–66.)
 
 ## 9. Open questions
 
@@ -291,3 +343,11 @@ No step names a specific other node.
    publisher-keyed `collection_id`. `tools/migrate_manifest.py` would
    emit the Codex and the first content-addressed snapshot; the old id
    stays as an alias in the catalogue for one cadence.
+6. **Equivalence for the encoder.** Parser equivalence is bit-exact and
+   therefore a proof. Encoder equivalence is statistical (cosine ≥
+   `tolerance` on the calibration chunks — today's backend gate). Is a
+   passed gate enough to call an encoder image "equivalent" in the
+   attestation sense, or does that word need reserving for deterministic
+   equivalence, with the encoder case called "compliant" as now? Two
+   words for two guarantees is the safer choice; the document above uses
+   "equivalent" only for the parser.
