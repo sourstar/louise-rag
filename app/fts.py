@@ -54,7 +54,7 @@ def _analyzer_for(group: str) -> tantivy.TextAnalyzer:
     base = base.filter(tantivy.Filter.remove_long(64)).filter(tantivy.Filter.lowercase())
     # PYSTEM_LANGS are stemmed by app/stemming.py before they get here, so
     # tantivy must not stem them again — and for Greek it cannot: its
-    # stemmer panics (docs/upstream-rust-stemmers-greek.md).
+    # stemmer panics (docs/notes/upstream-rust-stemmers-greek.md).
     if group in config.STEMMER_LANGS and not pystem_algorithm(group):
         base = base.filter(tantivy.Filter.stemmer(config.STEMMER_LANGS[group]))
     return base.build()

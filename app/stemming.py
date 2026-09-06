@@ -4,7 +4,7 @@ WHY NOT tantivy's built-in stemmer filter: it compiles rust-stemmers 1.2.0,
 whose last release was November 2019 and whose Greek algorithm PANICS on
 ordinary words — the panic kills the whole document's indexing, and an
 unindexed document cannot be found at all. See
-docs/upstream-rust-stemmers-greek.md for the repro and the mechanism.
+docs/notes/upstream-rust-stemmers-greek.md for the repro and the mechanism.
 
 WHY PyStemmer: it wraps the Snowball project's own libstemmer, was last
 released 2024-10-10, ships prebuilt manylinux cp312 wheels (no toolchain in
