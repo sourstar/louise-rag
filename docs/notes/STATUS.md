@@ -890,6 +890,81 @@ gutenberg pack plan needs those vectors before the hand-over.
    questions, and RRF-ing them yields neither. Measure before amending
    anything; there is currently no baseline to judge any model against.
 
+7. **Italian law plugin (Gazzetta Ufficiale / Normattiva)** —
+   [`gazzetta-plugin.md`](gazzetta-plugin.md). **Research done, nothing
+   built, three operator decisions open.** Normattiva's data went CC BY 4.0
+   on 2026-01-01 with an OpenData portal and API (Akoma Ntoso, XML-NIR,
+   JSON, ELI) — that, not the IPZS site, is the origin worth building on:
+   structured, identified, versioned, openly licensed. Three findings that
+   shape any implementation: `native_id` must be integer-parseable
+   (`layers.py:120`, `worker.py:260`, the Lance `book_id` column), so a URN
+   cannot be one and a synthetic sortable key is needed; the natural chunk
+   is the **articolo**, which neither the fixed-width nor the CDC chunker
+   cuts on, so a new chunker enters a new `space_id`; and multivigenza is a
+   ReferenceSource question (facts-by-key, invariant 4), never N versions of
+   one article competing in RRF. The corpus is rendered into a **canonical
+   text form** first — structure-preserving, editor-readable, byte-stable,
+   verified by a skeleton round-trip test — derived and local exactly as
+   pubmed's pack is, with its version folded into the chunker's so it never
+   touches the global `CLEANING_VERSION` (the global-knob lesson, second
+   coat). Encoder: chosen on measured Italian legal retrieval (JuriFindIT),
+   not on what this node runs — KaLM-Embedding-Gemma3-12B (MMTEB #1) and
+   Qwen3-Embedding-8B are the open-weight candidates, both MRL, so the
+   pinned dimension is a separate decision from the model; closed API models
+   are excluded as space owners because a peer must reproduce vectors at
+   cos ≥ 0.999. Italian-Legal-BERT is an MLM and would walk straight into
+   item 6's anisotropy trap. Operator decisions 2026-08-26: scope is
+   **Normattiva only**; the reranker is **jina-reranker-v3** (listwise, one
+   pass) under a stated **p95 ≤ 2 s** budget, because latency is part of
+   answer quality and a reranker switched off under load contributes zero;
+   and the pinned DIMENSION is not to be truncated to buy latency — MRL
+   truncation destroys information permanently in a value pinned into
+   `space_id`, where a vector index buys the same latency losslessly, which
+   makes the index a prerequisite rather than a later fix (the one costed
+   consequence). Who chooses the embedder at all, and what happens when the
+   choice was wrong, is generalised in
+   [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md).
+   **ELI** (European Legislation Identifier) is adopted as the general
+   template for EU-country legal plugins —
+   [`eli-legal-plugins.md`](eli-legal-plugins.md) — with a clash check
+   against the pack format that found no incompatibility, one gap (the
+   manifest has no `jurisdiction`), one structural friction (`native_id`
+   must be an integer while ELI is URI-addressed; `uid`/`keys` absorb it),
+   one strong fit (**`snapshot` IS an ELI point-in-time coordinate**, which
+   makes a consolidated legal corpus reproducible — two peers fetching a
+   week apart get identical bytes because the Expression is named in the
+   URL, not implied by the calendar), and one defect it corrected: **repeal
+   is metadata, not a tombstone** — `eli:repeals` relates Works and
+   `in_force` is an Expression property, so a repealed act stays indexed
+   and labelled rather than being excluded like a PubMed DeleteCitation,
+   which would have discarded law that still governs facts predating its
+   repeal.
+   Reading the Italian ELI spec in full also **overturned** the readable
+   `native_id` scheme: `/eli/stato/{type}/{date}/{number}` is an alias that
+   the spec's own example resolves to TWO acts, the unique permalink is
+   `/eli/id/{date}/{codiceRedazionale}`, and `codiceRedazionale` is
+   alphanumeric — so `native_id` becomes a date-prefixed hash that discovery
+   must collision-check. Whether a collection should declare a **content
+   class** at all is answered in
+   [`collection-classes.md`](collection-classes.md): not a bundled type but
+   two axes — `modality` (absorbing the `rerank_class` idea: one declaration
+   governing encoder AND reranker eligibility, refused at create and boot,
+   which is the checkable form of the incident behind
+   `[embed_defaults.<plugin>]`) and `erasure` (append-only / retractable /
+   erasable). Its sharpest result: **erasure and exchange are incompatible**
+   — a seeded shard cannot be un-published — so `erasable` implies
+   never-share and a pack can only ever carry an append-only or retractable
+   collection.
+   The reranker is the opposite kind of decision —
+   `RERANK_URL` is not in `space_id`, so it is measured after the collection
+   exists, not before; three things in the current `_rerank` would bite this
+   corpus first (a hard `[:2000]` truncation that cuts a long articolo the
+   encoder saw whole, a silent degrade to RRF order that no timing records,
+   and node-global scope). Pinned facts already bypass RRF and rerank both,
+   which is what the citation resolver needs. The GU's own issue stream
+   (concorsi, inserzioni) is deliberately NOT scoped: unread terms plus
+   personal data.
+
 ## Invariants review (2026-08-23 — amendments 30, 31)
 
 The ten CLAUDE.md invariants were re-read against what was built. They

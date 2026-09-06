@@ -1094,6 +1094,53 @@ codes in RAM with re-ranking) is a measurement to make before building
   default the check to the top 5.
 - **OpenZL**: decided by measurement (§8) — not now; the manifest's
   per-member `codec` slot keeps the door open.
+- **Should a collection declare a content class, and should the manifest
+  carry it?** Proposal in [`collection-classes.md`](collection-classes.md):
+  not one bundled "type" (the reason `license_class` and `privacy_class` are
+  separate applies again) but two orthogonal axes — **`modality`** (what the
+  bytes are, making whole encoder/reranker families *wrong* rather than
+  worse; the incident behind `[embed_defaults.<plugin>]` is the argument)
+  and **`erasure`** (append-only / retractable / erasable). One consequence
+  lands directly on this format: **erasure and exchange are incompatible**,
+  because a seeded shard cannot be un-published — so `erasable` implies
+  never-share, and **a pack can only ever carry an append-only or a
+  retractable collection**, checkable at `pack build`.
+- **Should the manifest declare an ELI profile for legal corpora?**
+  Proposal in [`eli-legal-plugins.md`](eli-legal-plugins.md): adopting the
+  European Legislation Identifier as the template for EU-country legal
+  plugins costs two additive manifest fields (`eli.jurisdiction` + the URI
+  template / ontology version / pinned expression) and buys a standard
+  identity and relation vocabulary across jurisdictions. The clash analysis
+  found no incompatibility and one strong FIT: **`snapshot` is already an
+  ELI point-in-time coordinate** — putting it in the fetch URL makes a
+  consolidated legal corpus reproducible, which it otherwise is not. The
+  one structural friction is `native_id`'s integer requirement against
+  ELI's URI-addressability premise; `uid` + `keys` absorb it.
+- **Should a space publish its evaluation score, and how is a bad choice
+  remedied?** Proposal in
+  [`embedder-choice-and-supersession.md`](embedder-choice-and-supersession.md):
+  the embedder is the collection creator's choice and pinning freezes it, so
+  each space carries an `evaluation` block (suite + hash, metric, conditions,
+  a coverage check that the suite's targets resolve in *this* pack, and a
+  reproducible/asserted tier) that any peer can re-run. A review that carries
+  produces a DERIVED collection over the same record shards — `derived_from`
+  already exists in §7; `superseded_by` would need adding. The re-fetch bill
+  scales with `coverage × dim`, which is why supersession has to be cheap
+  early or not at all.
+- **May a pack require a reranker, or only recommend one?** Proposal in
+  [`reranker-scope.md`](reranker-scope.md). The discriminator is whether
+  rerank output reaches common content: at query time it cannot, so every
+  plugin today is *optional* and a peer chooses freely; at BUILD time
+  (chunk selection, index supervision, precomputed scores) it determines
+  shard bytes and would have to be pinned. If it is ever compulsory, the
+  admissible set should be a **predicate** — a `rank_calibration` block
+  in the shape of §7's encoder `calibration`/`tolerance` — never one name
+  and never a list of names (the moving-tag incident in
+  `approved-encoders.md` is the argument). A pack may name a model
+  identity and digest; never a URL the node contacts. Unresolved: whether
+  a Kendall-τ tolerance is an equivalence test or a quality threshold in
+  disguise, and whether to specify the compulsory arm before a use for it
+  exists.
 
 ## 22. Build order (each step useful on its own)
 

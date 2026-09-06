@@ -19,7 +19,7 @@ section saved as `CLAUDE.md` at the repo root.
 
 ## CLAUDE.md
 
-The canonical text lives at the repo root: [`CLAUDE.md`](../CLAUDE.md). It used
+The canonical text lives at the repo root: [`CLAUDE.md`](../../CLAUDE.md). It used
 to be copied here verbatim; two copies of a rules file drift (the invariants
 were amended on 2026-08-23 — enforcement tags, engineering rules, corrected
 wording for 1/3/8/9/10), so this section is now a pointer. Task prompts

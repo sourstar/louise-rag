@@ -15,6 +15,9 @@ What is here, and why it is kept:
 | `calibration.md`, `calibration.live.md`, `approved-encoders.md` | how the tolerance was measured, and which encoder builds were found compliant on which hardware |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
 | `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
+| `gazzetta-plugin.md`, `eli-legal-plugins.md` | the Italian law corpus researched to a design, and ELI adopted as the template for EU legal plugins — with the clash check that found the pack format compatible |
+| `collection-classes.md`, `embedder-choice-and-supersession.md`, `reranker-scope.md` | the three general questions that corpus forced: what a collection must declare about its bytes, who chooses the encoder and what is done when the choice was wrong, and whether a pack may ever require a reranker |
+| `embedder-pool-spec.md` | the external container that serves embeddings for query and creation — specified, not built |
 | `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
 | `migration-plan.md` | the ordered steps from the current code to the documented architecture, for the `louise` branch; deleted when the last step lands |
 
