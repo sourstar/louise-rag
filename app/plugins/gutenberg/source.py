@@ -8,11 +8,11 @@ I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
 """
 import hashlib
-import time
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass,
+                    Mutability, PrivacyClass, RawDoc, UnindexableDocument)
 from . import pg_text, rdf
 
 
@@ -42,13 +42,12 @@ class GutenbergSource:
         # changes it. An external mirror rewriting a file IN PLACE would
         # not be seen — the Library's "rescan" button clears the cursor for
         # exactly that case.
-        scan = cursor.load(state.state_dir, self.source_id)
-        started_ns = time.time_ns()   # see cursor.mark_if_settled
+        progress = cursor.Progress(state, self.source_id)
         stubs = 0
         for entry in root.iterdir():
             if not entry.is_dir() or not entry.name.isdigit():
                 continue
-            if cursor.unchanged(scan, entry, root):
+            if progress.unchanged(entry):
                 continue
             book_id = int(entry.name)
             # One pass answers both questions (see pg_text.scan_dir): where
@@ -61,13 +60,15 @@ class GutenbergSource:
             # errors & retry" could never fix (the next scan re-applied the
             # error) and that held every progress bar short of 100%.
             txt, is_stub = pg_text.scan_dir(entry, book_id)
-            # marked either way: a stub examined once should not be
-            # re-examined until something lands in it. mark_if_settled
+            # staged either way — AFTER its ref is yielded, so the cursor
+            # can never remember a book whose row was lost with an
+            # interrupted scan (cursor.Progress): a stub examined once should
+            # not be re-examined until something lands in it. Staging
             # declines when the directory changed during this scan, so a
             # concurrent rsync cannot make us skip it forever.
-            cursor.mark_if_settled(scan, entry, started_ns, root)
             if is_stub:
                 stubs += 1
+                progress.stage(entry)
                 continue
             if txt is None:
                 # files present but no text: a real Gutenberg entry whose
@@ -75,11 +76,13 @@ class GutenbergSource:
                 # format). That IS a document, and it keeps its error.
                 yield DocRef(source_id=self.source_id, native_id=str(book_id),
                              locator=str(entry), error="no txt file")
+                progress.stage(entry)
                 continue
             st = txt.stat()
             yield DocRef(source_id=self.source_id, native_id=str(book_id),
                          locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
                          extra={"txt_name": txt.name})
+            progress.stage(entry)
         if stubs:
             # one scan report, not 21,000 documents
             yield DocRef(source_id=self.source_id, native_id="(scan)",
@@ -87,12 +90,12 @@ class GutenbergSource:
                          error=f"skipped {stubs} empty book director"
                                f"{'y' if stubs == 1 else 'ies'} (transfer "
                                f"stubs: the mirror had no .txt/.rdf to copy)")
-        cursor.save(state.state_dir, self.source_id, scan)
+        progress.flush()
 
     def fetch(self, ref: DocRef) -> RawDoc:
         txt = pg_text.find_txt(Path(ref.locator), int(ref.native_id))
         if txt is None:
-            raise RuntimeError(f"no txt file for book {ref.native_id}")
+            raise UnindexableDocument(f"no txt file for book {ref.native_id}")
         h = hashlib.blake2b(digest_size=16)
         with open(txt, "rb") as f:
             for block in iter(lambda: f.read(1 << 20), b""):
@@ -112,7 +115,7 @@ class GutenbergSource:
             title=meta["title"],
             creators=creators,
             language=meta["lang"],
-            date=None,
+            date=meta.get("issued"),        # the PG release date: the snapshot cutoff key
             subjects=subjects,
             keys=[],
             extra={"bookshelves": meta["bookshelves"]},
@@ -129,7 +132,8 @@ class GutenbergSource:
     def read_text(self, book_dir: Path, native_id: int) -> str:
         txt = pg_text.find_txt(book_dir, native_id)
         if txt is None:
-            raise RuntimeError(f"no txt file for book {native_id}")
+            # the CORPUS fact, not a stage failure — see UnindexableDocument
+            raise UnindexableDocument(f"no txt file for book {native_id}")
         return pg_text.read_clean(txt)
 
     def split_text(self, text: str) -> list[tuple[str, str]]:

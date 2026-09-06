@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 from app import config, db, spaces, web
 from app.api import app
 
-MODES = {"running": "run everything", "acquire-only": "download only",
+MODES = {"running": "run everything", "acquire-only": "download/seeding only",
+         "seed-only": "seeding only",
          "paused": "pause"}
 
 
@@ -69,10 +70,11 @@ def test_rescan_is_grey_only_while_paused(client):
     returns at the pause gate before servicing discovery requests, so the
     rescan sits queued until the node runs again. A button that silently
     queues is worse than one that says it can't."""
-    db.set_worker_state(db.connect(), "paused")
-    btn = _button(client.get("/admin/library").text, "rescan all collections")
-    assert "disabled" in btn
-    assert "paused" in btn        # the title says why
+    for state in ("paused", "seed-only"):
+        db.set_worker_state(db.connect(), state)
+        btn = _button(client.get("/admin/library").text, "rescan all collections")
+        assert "disabled" in btn, state
+        assert "discovery does not run" in btn    # the title says why
 
     for state in ("running", "acquire-only"):
         db.set_worker_state(db.connect(), state)

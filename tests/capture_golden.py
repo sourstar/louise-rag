@@ -1,6 +1,6 @@
 """One-time capture of golden pipeline output from *today's unmodified* app/
 code, run against tests/fixtures/gutenberg-mini/corpus and committed as
-golden.json — the P0.1 refactor's test oracle (see docs/architecture-v2.md
+golden.json — the P0.1 refactor's test oracle (see docs/notes/architecture-v2.md
 task P0.1 and CLAUDE.md).
 
 Run this ONCE, before any refactor code lands, then commit the resulting

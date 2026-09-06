@@ -382,6 +382,7 @@ class ChatBody(BaseModel):
     temperature: float = 0.3
     collections: list[str] | None = None   # None = all enabled
     verify: bool = False                   # blocking verify-on-use (§6 T4)
+    answer_lang: str | None = None         # ISO code: answer in this language (Ask's "show results in")
 
 @app.post("/v1/chat/completions")
 def chat_completions(body: ChatBody):
@@ -392,7 +393,7 @@ def chat_completions(body: ChatBody):
     query = str(user_msgs[-1].get("content", ""))
     t0 = time.time()
     result = _run_search(body.collections, query, 10, "hybrid", True, verify=body.verify)
-    messages = retrieval.build_answer_messages(query, result)
+    messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
     # keep prior turns for conversational context (before the sources turn)
     history = [m for m in body.messages[:-1] if m.get("role") in ("user", "assistant")]
     messages = [messages[0]] + history[-6:] + [messages[1]]

@@ -77,12 +77,13 @@ def test_documents_embed_concurrently_and_queue_drains(collection, monkeypatch):
     assert worker._embed_parallel(con, collection, recipe) is True
     assert active["peak"] >= 2, "documents must actually overlap in flight"
     done = con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0]
-    assert done == len(observed) == 6   # concurrency*2 candidates per call
+    # a sliding window: one call streams through EVERY candidate (it used to
+    # stop after one batch of concurrency*2 and leave a GPU-idle tail)
+    assert done == len(observed) == 8
     # the queued doc was among them and its queue entry is gone
     assert con.execute("SELECT COUNT(*) FROM embed_queue").fetchone()[0] == 0
 
-    # a second call finishes the rest; a third finds nothing
-    assert worker._embed_parallel(con, collection, recipe) is True
+    # nothing left: the next call finds no work
     assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=0").fetchone()[0] == 0
     assert worker._embed_parallel(con, collection, recipe) is False
 

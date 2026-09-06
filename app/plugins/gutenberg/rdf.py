@@ -10,7 +10,8 @@ NS = {
 
 def parse(book_dir: Path, book_id: int) -> dict:
     path = book_dir / f"pg{book_id}.rdf"
-    out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": ""}
+    out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": "",
+           "issued": None}
     if not path.is_file():
         return out
     try:
@@ -25,6 +26,12 @@ def parse(book_dir: Path, book_id: int) -> dict:
     t = ebook.find("dcterms:title", NS)
     if t is not None and t.text:
         out["title"] = " ".join(t.text.split())[:500]
+
+    # the PG release date ("YYYY-MM-DD"): what a dated snapshot of the
+    # catalogue cuts on (pack build --until) — never the text's own date
+    issued = ebook.find("dcterms:issued", NS)
+    if issued is not None and issued.text and issued.text.strip():
+        out["issued"] = issued.text.strip()[:10]
 
     authors = []
     for agent in ebook.findall(".//pgterms:agent", NS):

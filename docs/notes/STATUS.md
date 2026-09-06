@@ -1,0 +1,1104 @@
+# Project status
+
+**Last updated: 2026-08-24.** What exists, what is designed but unbuilt, and
+what is deliberately not being built. Read this before planning work; read
+[`architecture-v2.md`](architecture-v2.md) for the design it implements, and
+its §17 amendments (1–37) for every place the design was corrected in flight.
+
+Node-specific facts — addresses, paths, ports, the live collection inventory —
+are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
+which is gitignored, because this file is public to anyone who clones.
+(Working from a machine without that file: a current copy is kept on the
+node itself, beside the deployment, readable over the same SSH access used
+to deploy.)
+
+## Bootstrapping a new development machine
+
+Everything except two items travels through this repository.
+
+1. `git clone` — code, tests, docs, CLAUDE.md. Read this file first.
+2. Fetch the node reference from the node into the local clone (the app
+   root is the directory the deploy procedure tars into; the file sits one
+   level above `src/`):
+   `scp <node>:<app-root>/DEPLOYMENT.md deploy/reference/DEPLOYMENT.md`
+   After editing it locally, copy it back the same way — the node-side copy
+   is what the *next* machine bootstraps from.
+3. **The SSH key does not travel** — not through git, chat, or any log
+   (invariant 8). Move it between machines yourself, or authorize a fresh
+   key on the node.
+4. Reaching the node from outside its LAN: substitute your remote
+   host/tunnel for the LAN address in every DEPLOYMENT.md command; nothing
+   else changes.
+5. No local Python is assumed anywhere: `docker build -t louise-rag:dev .`
+   recreates the test image, and tests run as in Conventions below.
+
+---
+
+## Where the roadmap stands
+
+| phase | state |
+|---|---|
+| **Phase 0** — generalize, no network | **done.** CorpusSource + collections + `space_id`, five plugins, ReferenceSource/EntityResolver/`doc_keys`, query federation, acquisition layer with profiles, transfer manager. |
+| **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
+| **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
+| **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+
+## Built and running
+
+- **Five plugins**: gutenberg, pubmed, wikipedia, embedded (pre-embedded
+  corpora), genome. Each declares `license_class`, `privacy_class`,
+  `chunking_profile` and `mutability`.
+- **Per-collection embedding spaces.** `collections.recipe_for()` is THE
+  resolution point: collection `[embed]` block → `platform.toml`
+  `[embed_defaults.<plugin>]` → Tier-1 env, each a fallback and never an
+  override. A node runs several encoders at once.
+- **`space_id` immutability.** Pinned per collection; refuse-to-boot on
+  mismatch, never auto-migration. Includes the chunker (amendment 28).
+- **Acquisition**: declarative `AcquisitionSpec` per source, profiles
+  (incremental / exclusive / additive), delta gate, checksum sidecars,
+  license gates, disk preflight, resumable at byte granularity, **adoption**
+  of files already on disk.
+- **Transfer manager**: central token bucket, priority classes, schedule
+  windows, per-endpoint etiquette, multi-connection single-file downloads
+  (off by default).
+- **Verification ladder** T0–T4 with quarantine and verify-on-use; genesis
+  import for reusing published vectors.
+- **Web UI**: Ask / Library / Stats / Network / System, server-rendered.
+- **Snapshots and deltas**: manifests, parent-chained deltas with
+  tombstones, vector deltas as ordinary bundles.
+- **BitTorrent v2** transport and corpus publishing.
+
+## Pipeline performance (2026-08-21/22 review — measured, not estimated)
+
+A profiling pass over the ingestion pipeline on a 33M-document manifest
+removed four independent per-document costs. All numbers were measured live
+before and after; the commit messages carry the full evidence.
+
+| defect | cost before | after |
+|---|---|---|
+| tantivy writer+commit per document (`fts.index_books` now batches) | 136.9 ms/doc | 0.6 ms |
+| HGNC symbol dict rebuilt per document (resolver now memoised on `ref_meta` version) | 75.6 ms/doc | 0.03 ms |
+| `DELETE FROM catalog_fts WHERE uid=?` scans the FTS5 shadow table (`uid UNINDEXED`) — **extraction was O(N²)** | 14.02 ms/doc at 36k rows, growing | INSERT OR REPLACE by `documents.rowid`, size-independent |
+| `ORDER BY CAST(native_id AS INTEGER)` sorting the whole set per browse page | ~10 s/page | 1 ms (expression index, worker-built) |
+
+Net: **rdf 16.0 → 0.36 ms/doc; fts ~130 → ~1 ms/doc warm.** Structural rules
+that came with this, worth preserving:
+
+- **rdf and fts interleave a batch at a time** (`RDF_BATCH_DOCS` /
+  `FTS_BATCH_DOCS`, default 200): fts lags rdf by at most one batch, never
+  by the corpus. Mark done only AFTER the commit, inside one transaction.
+- **A locked manifest or unreachable encoder is a deferral, never a
+  document error** (`manifest_contended` / `endpoint_unavailable`): recording
+  an error removes the document from every selection until a human clears it.
+- **Selection queries must be plan-checked, not just behaviour-checked** —
+  tests assert no `TEMP B-TREE` / `LIST SUBQUERY`; a merely-slow query
+  passes every behavioural test.
+- **Scan cursors key on path relative to the corpus root**, with a legacy
+  bare-name fallback on exact signature match.
+- **Cold single-document probes measure the container, not the pipeline**
+  (gzip cannot seek): pubmed rdf is 5.8 s cold and was 0.36 ms warm.
+  Benchmark warm, over hundreds of documents.
+
+**2026-08-24 — the queue-eligible join was the pipeline's ~20-40x brake.**
+The lazy-queue selection at the top of every `_next_book` let the planner
+invert its join: SEARCH over ALL in_scope rdf_done=1 documents (3.6M on
+pubmed, growing with progress) probing the usually-empty queue per row,
+plus a TEMP B-TREE — 4.9 s per step, measured live, in every collection
+with embed_mode lazy/all. CROSS JOIN pins queue→documents; measured
+after: pubmed rdf+fts at 894k docs/h (was ~18-54k/h), remaining corpus
+~40 h, not weeks. The plan test asserts join order — behaviour alone
+returns the same rows either way. Batch sizes bumped to 1000 in the
+node's worker env. Diagnosis chain preserved in commit and
+DEPLOYMENT.md; the container-cache cold-parse log and batch timings that
+found it stay in.
+
+**2026-08-24 — extra formats, and the p2p exchange policy** (amendment 35).
+Peers exchange only the data that fulfils Louise's purpose. An origin's
+alternative formats (gutenberg's epubs) are now declarable per spec
+(`spec.extras`) and opt-in per collection (TOML `extras = ["epub"]`,
+chosen at create or in grow) — fetched from the corpus source as a LOCAL
+convenience, classified exclusively (`fetch_files.extra`, split
+`acquire_listing` totals), shown as a separate `(+ e/E)` pair on the
+Library card, and excluded unconditionally from published corpus torrents.
+Explanation lives in Help's Acquisition tab; the GUI stays clean.
+
+**2026-08-23 — discovery is batched, resumable and off-thread** (amendment
+32). The startup scan used to hold the collection's pipeline thread (wikivec:
+1,083 s per restart, no rdf/fts/genesis meanwhile), ran in autocommit (one
+transaction per row — that WAS the 1,083 s), and saved its cursor only at
+the end, so a restart mid-scan threw the whole pass away. Now:
+`sync_collection` commits every `DISCOVER_BATCH_REFS` (2,000) refs and
+signals the plugin (`DiscoverState.received/committed/on_commit`);
+`cursor.Progress` promotes a container into the saved cursor only once its
+last ref is committed, so an interrupted scan resumes exactly where its
+rows are durable; the worker runs each collection's scan on its own thread
+(`_start_scan`, one at a time, stop-aware on SIGTERM and removal, joined at
+shutdown). The embedded plugin's boundary straddler made this subtle and
+exposed two latent locator bugs, both fixed: a rescanned shard whose
+neighbour is skipped now completes the carry from that neighbour's tail or
+head (it used to mint or "relocate" the straddler with one segment), and
+an embedded ref's `size` is the article's row count, not its shard's byte
+size (a straddler gaining a segment is now a change, never a relocation).
+`tests/test_discovery_resumable.py` pins it, including every interruption
+point of a straddling fixture. The genome collections are parsing/indexing
+only by operator decision — embedding awaits an architectural review
+([`dna-search-axes.md`](dna-search-axes.md)).
+
+**2026-08-23 — local genesis archives no longer sweep the shard list.**
+Measured live on wikivec (959 shards, CPU encoder, so the pipeline thread
+owns rdf + fts + genesis): with 200 embed-eligible documents present,
+genesis claimed every round re-reading the next shard oldest-first (~437 MB,
+~10 s, "imported 0 vectors across 0 documents") and rdf/fts got one turn
+per full sweep — **200 documents per 3.2 hours, 13.5 M pending.** Now the
+candidates' own locators name the shards worth reading (an index range over
+`idx_documents_scope`, plan-checked), a shard nobody waits for is never
+opened, documents a read cannot cover (boundary straddlers) are remembered
+as residual per shard, and while rdf/fts still have work a read waits for a
+batch (`GENESIS_MIN_CANDIDATES`) or an age cap (`GENESIS_MAX_WAIT_SEC`).
+`tests/bundles/test_genesis_starvation.py` pins all of it, through the
+worker — keep it passing across any rework of this path. Open follow-on:
+the read still loads a whole shard's `embedding` column for the ~200–1000
+documents it wants; the locators carry row ranges, so reading only those
+row groups would cut it to a fraction (and would make straddlers
+importable by reading both segments).
+
+**2026-08-25 — remote genesis archives are fetched like a corpus and
+applied as indexing goes (amendment 38).** Live pubmed after weeks:
+8.25M of 40M indexed, **0 of 37 MedCPT shards fetched, 44 documents
+embedded** — the post-settle gate (apply once, after the whole collection
+had passed rdf/fts) held the free vectors back for the months the
+indexing takes, and the embed thread would have downloaded each 3 GB
+shard inline when it finally ran. Now `app/bundles/genesis_fetch.py`
+lands shards on its own thread under the `archive` budget class (below
+`backfill`: the corpus wins the link), bounded on disk
+(`GENESIS_CACHE_BYTES`, default 24 GiB ≈ the active shard and a few
+ahead) with a disk preflight; `drain_next_shard` applies whatever is on
+disk for the documents indexed so far, revisits with a per-shard
+geometric backoff (`GENESIS_MAX_WAIT_SEC` doubling to
+`GENESIS_PASS_BACKOFF_MAX_SEC` after empty passes), and finalises — files
+deleted, `coverage_epoch` bumped — once its id range has no document
+waiting. MedCPT's coverage is declared (`ids_per_shard=1_000_000`,
+verified exact against chunks 0/1/36), so the worker's "all" backfill
+excludes covered ranges by predicate and walks the scope index from a
+rowid cursor (`_backfill_rows`; plan-checked: no TEMP B-TREE — the old
+`ORDER BY (lang='en')` sorted every candidate per round). Per-flush
+manifest writes in `import_shard` are now one `BEGIN IMMEDIATE`
+transaction (they were one commit per UPDATE). Observed on the NAS the
+same evening: shards 0–2 landed at 7.5–10.8 MB/s; the first pass over
+shard 0 ran at **~150 documents/s** on pubmed's own pipeline thread —
+a container parse per 30k documents (0.6 ms/doc) plus one Lance
+`delete` PER DOCUMENT on a growing table (the quadratic trap again) —
+i.e. ~1.8 h per shard with rdf/fts stalled meanwhile. Two fixes in the
+same change: the flush deletes ONCE per batch (`book_id IN (...)`), and
+a pass is **budgeted** (`GENESIS_PASS_BUDGET_S`, 300 s): it commits what
+it has, records the row as `applied` with unknown coverage, and resumes
+after an equal share for rdf/fts; a stop (SIGTERM) resumes at once on
+restart, and a row left `applying` by a crash resumes the same way.
+`idx_documents_native_int` is what makes the pending range count cheap
+— the worker builds it at startup. Then the restart's first pass went
+to shard 1 and **its same-function proof failed at worst-of-8 cos
+0.874** — while shard 0 had proved and imported, and a per-document
+check of shard 1's single-chunk samples sat at ≥ 0.993: one sampled
+document whose text changed since NCBI's 2023 snapshot. A snapshot of a
+living corpus always has some. The proof is now a **quorum** (16
+samples, median ≥ τ and 75 % ≥ τ; the samples below τ are stale
+documents, evicted from the batch and left to the encoder, never
+imported), and a rejected shard stops the archive ONLY while nothing has
+proven it — under a proven archive the rejected shard alone is out and
+its id range is released to the local encoder. (Shard 1 on the NAS,
+rejected under the old rule, was reset to `fetched` by hand —
+`UPDATE genesis_imports SET state='fetched', detail=NULL WHERE
+shard='1'` — and re-proved; the recipe for any future case.)
+Also measured: roughly half of the sampled 1970s-era shard-1 documents
+chunk into TWO pieces locally, so the shape gate skips them (the
+`chunk_abstract` follow-up in *Known gaps* is what would lift that).
+Deployed and re-run: shard 1's quorum proof passed with exactly one
+stale sample skipped; the cache bound held the fetcher at 8 shards
+(22 GiB, "next fetch when one is final"). One more placement fix from
+the same evening: a remote archive's pass runs on the collection's
+PIPELINE thread (`_drain_remote_archive`), never on the GPU-serial main
+loop — a collection whose encoder is the shared GPU would otherwise
+block every other collection's embedding for each 300 s slice.
+**Resurfaced 2026-08-26 (amendment 42):** shard 1 proved and imported
+~950k vectors over thirty passes, each pass skipping the same one stale
+document, and was then REJECTED by a pass whose only eligible document
+was that one — the proof re-ran from scratch every pass, and
+`RE_ENCODE_MIN_SAMPLE = 1` let a sample of one be a verdict. Fixed at
+the root: the proof is per archive and persists (`proven_at`; older
+rows count by their imports), later passes only screen for staleness, a
+verdict needs ≥ 8 failing samples (`RE_ENCODE_REJECT_MIN`), fewer on an
+unproven archive are inconclusive (deferred, nothing written; an empty
+sample likewise), and `genesis retry <collection> [--shard N]` puts a
+rejected shard back in line — used on the NAS for shard 1 after the
+deploy.
+**Scheduling review (2026-08-27, operator: "is the scheduling of the two
+archives optimal?") — measured from the worker log, not optimal, three
+fixes each with a regression test (amendment 45):** (1) a MedCPT revisit
+pass walked the million-row shard from row 0 with a manifest lookup per
+row, was cut by its 300 s budget re-skipping what earlier passes had
+imported, and each pass imported less than the last (86k, 101k, 87k,
+72k, 68k, 58k, 49k) — half of pubmed's pipeline thread; now one indexed
+range query names the eligible documents of the shard's id range and
+only their rows are read from the mmap (`tests/bundles/test_genesis.py::
+test_a_revisit_pass_costs_the_new_documents_not_the_shard` counts the
+per-document lookups). (2) every 1,000-document wikivec fts batch
+triggered a read of the whole 437 MB shard to import those documents
+(`GENESIS_MIN_CANDIDATES` = the fts batch); a candidate read now opens
+only the row groups the candidates' locators name
+(`test_genesis_local.py::test_a_candidate_read_touches_only_the_
+candidates_row_groups`). (3) the vector-index refresh ran 41 minutes on
+wikivec's pipeline thread (`115k rows folded in (2448s)` — compaction
+of a 16.8M-row table on the HDD pool) and idled rdf/fts/archive for the
+duration; index maintenance now runs on its own thread
+(`index-maintainer`), marks the collection busy so the embed step and
+archive pass defer for it (rdf/fts continue), and a refresh is due at
+50k rows AND 2 % of the table (`VECTOR_INDEX_REFRESH_FRACTION`;
+`tests/test_vector_index.py`). Measured before the fixes: pubmed fts
+≈ 35 docs/s wall with ~50 % of its thread in archive passes; wikivec
+1,000 docs per ~50 s of which ~10 s was the shard read. Measured after
+the deploy: the first pubmed pass imported 96,500 documents with zero
+rows walked in vain ("0 not held locally"), still cut at 300 s because
+that many documents were eligible — the budget now bounds real imports
+(~320 docs/s), not re-walks; the pubmed index refresh ran 41 s on the
+maintainer thread.
+**License gate for packs (2026-08-27, operator: the same license as the
+corpus and pre-embeddings; amendment 46):** `app/licensing.py` is the
+one resolution (class from the spec or the pack manifest, terms from the
+spec's file or the pack's byte-exact `TERMS.txt` — same sha256, one ack
+valid for both); the worker withholds the corpus scan and the archive
+pass without a valid ack, `pack build` refuses an unacknowledged origin,
+the create dialog shows the pack's terms and requires acknowledgement
+for a yellow/red pack, the card and `/terms` speak for packs. Tests:
+`tests/test_license_gate.py`. Invariant 9's "ingestion gate designed,
+not built" is now built at the worker and the UI
+(`discovery.sync_collection` itself stays callable ungated).
+**The parse pool (2026-08-27, operator: "CPU close to 100 % when there's
+not much else to do"; amendment 47):** measured 12 cores, load ~4, the
+worker at 232 % with one Python thread at 87 % — the GIL — and the CPU
+encoders idle by design (the archives cover the indexed ranges).
+`app/parallel.py`: fetch/parse/chunk for an fts batch, metadata for an
+rdf batch and records for `pack build` run in `PARSE_PROCESSES` (default
+cores−1) spawned children at nice 10; writers stay in the worker; one
+(ok, value) per document, in order. The `embedded` plugin's fetch reads
+row groups instead of caching a whole shard per process. Tests:
+`tests/test_parallel.py` (real children: same chunks/metadata/records as
+the serial path, byte-identical packs, a failing document alone), the
+embedded row-group test. **Measured after the deploy** (12 minutes of
+manifest samples): worker 232 % → ~830 % of 12 cores, load 4 → 16, the
+GPU encoder unchanged; pubmed fts 35 → 392 docs/s, wikivec rdf+fts 20 →
+515 docs/s, wikipedia rdf+fts 450 docs/s — 11–25× on the parse-bound
+collections. Memory grew 11.7 → 15.8 GB in 15 minutes as the children's
+caches filled: children are now recycled every `PARSE_TASKS_PER_CHILD`
+(500) sub-batches. pubmed's "parsed (rdf) TBD" was not a stall: rdf led
+fts by 4.2M documents and the worker gives fts the thread while a full
+batch is ready — the card now says "after fts (N ahead)" (test).
+**Scheduling monitored again 2026-08-28 (operator: "not yet optimal"),
+amendment 48.** Measured live (12 cores): pubmed rdf+fts 510–790 docs/s
+through the pool, worker 1115 % / load 19.6 — the CPU side IS saturated
+now; wikivec's archive 96–115 docs/s; pubmed's archive 943 docs/s while
+a pass runs, 0 during its 300 s yield (≈470 average). Two limiters
+found and fixed: (1) 34 pubmed pack builds/hour × ~17 s were paid INLINE
+by the batch that first touched a container (~45 % of that pipeline's
+non-archive time) — plugins now declare `prepare`/`prepare_key` and the
+stages prefetch a few thousand documents ahead into the pool
+(`tests/test_parallel.py`); (2) no index on `book_id`, the column every
+delete-then-insert write filters on — 0.90 s per 500-document flush on
+wikivec (35M rows), 0.59 s on pubmed (16M) — the maintainer now builds a
+BTREE on it before the vector index (`tests/test_vector_index.py`).
+**→ All of this now lives in [`scheduling.md`](scheduling.md)** (operator,
+2026-08-28: "keep all these informations about scheduling together… we
+keep reworking the scheduling again and again"). That file is the single
+reference — the runner/resource model, the measured cost tables, a
+ten-entry pitfall catalogue and a pre-change checklist — and
+`tools/sched_report.py` is its instrument (`--queries` plan+time the hot
+queries, `--phases` where an archive pass goes, `--rates`, `--pool`).
+CLAUDE.md now requires reading it before any change to what runs when.
+The entries below are the incident history that produced it.
+**Checked twice (operator: "it's not the first time you leave some
+inefficiency behind") — amendment 49, and the double-check found more
+than the first pass.** Every hot query was then TIMED against the live
+manifests, not just plan-checked. My own prefetch probe was the first
+casualty (`OFFSET k` over the whole pending set → SQLite restarted at
+rowid 1 and re-filtered 28.6M done documents, three times per call:
+the 10.5 s rdf batches); anchored on the current rowid it is 0–27 ms,
+and constraining the FULL scope-index prefix avoids the TEMP B-TREE the
+first anchored version still had. It also now costs NOTHING for the four
+plugins with no derived cache and on serial nodes. Then three
+pre-existing queries, all reading as indexed: the re-index selection at
+**16.7 s (wikivec) / 18.3 s (wikipedia) / 127.9 s (pubmed) per round** on
+caught-up collections — now a windowed cursor walk that ends and stays
+ended until a version bump; its batch peers (19.3 s / 15.9 s) — now an
+index prefix for the fresh case; and both archive range queries (19.1 s
+and 9.5 s per pass) — now hinted onto the browse index. Instrument:
+scratchpad `probe_plans.py` (plan + timing, per collection) and
+`probe_after.py` — which must call the code's OWN sql builders: the first
+verification pass measured hand-copied SQL and reported the archive fix
+as ineffective when it was not even testing it. Verified on the live
+manifests afterwards: archive range queries 19.1 s → 1.9 s and 9.5 s →
+1.1 s on pubmed (now `idx_documents_native_int`, and the residue is one
+row fetch per candidate in a 1M-id range — proportional to the shard,
+not the corpus); fts fresh peers 0.2–1.2 ms everywhere. The windowed
+re-index walk needed a SECOND fix — see amendment 49's tail: the window
+is now a forced rowid range instead of a 5.4 s re-walk of the whole range
+per window. FINAL verified numbers on the live manifests (0f241db):
+re-index window 5.4 s → **0.30 s** (pubmed), 0.13 s (wikivec), 0.09 s
+(wikipedia), and gutenberg's walk ENDS after one window (0.0 ms
+thereafter) — so a caught-up collection costs one bounded window per
+round until the walk completes, then nothing until a version bump,
+against 16.7–127.9 s per round forever; fts fresh peers 0.2–7.1 ms; the
+archive range queries 1.8 s and 1.1 s on pubmed, proportional to a
+shard's 1M-id range (one row fetch per candidate), 0.6 % of a 300 s pass
+— a covering index would remove that too and is NOT worth a second
+40M-row index. The scheduling watcher (`/data/sched_watch.py`, restarted
+after each deploy, log `/data/sched_watch.log`) prints per-collection
+rdf/fts/embed rates every two minutes; it dies with the container and is
+purely diagnostic.
+**Then the archive apply loop itself (amendment 50; operator: "cpu load
+is below 50 % and wikivec pre-embed ETA is ~2 d").** A 150 s wikivec pass
+measured phase by phase (`probe_genesis_cost.py`, read-only — it replays
+an already-applied shard so nothing is written): vectors read 6.3 s
+(15,800 vec/s), manifest lookups 0.4 s, **chunk texts 51.7 s** (2.87 ms
+per document, one core), writes ~91 s. The chunking now goes through the
+parse pool a batch at a time. The writes are what is left: ~1,100
+vectors/s = 36 Lance delete+add pairs and 100k `chunk_verification`
+inserts per pass — the next thing to measure if the ETA still matters.
+Note wikivec's rate in DOCUMENTS looks low against pubmed's only because
+its documents carry ~5.8 chunks each: ~670 vectors/s vs ~900.
+NOT a code problem, an operator decision: the **GPU encoder sits at 0 %**
+while gutenberg holds 59,627 indexed, unembedded documents, because
+gutenberg's embed_mode is `lazy`; the same for wikipedia's 19.4M
+(embed_mode lazy, its dense side is meant to come from wikivec). The
+gutenberg pack plan needs those vectors before the hand-over.
+
+## Designed, specified, not built
+
+1. **Peer and collection discovery** — [`p2p-discovery.md`](p2p-discovery.md).
+   A signed per-node catalogue whose first field is `space_id`; peers via a
+   pinned list, then the coordinator, then the DHT. The load-bearing point:
+   a DHT finds peers for an *infohash* and can say nothing about whether that
+   infohash holds a corpus in your embedding space under a licence you may
+   redistribute.
+2. **Applying a delta.** Deltas can be computed and published but not
+   consumed — `check_applicable` refuses a bad one and then nothing happens.
+   Tombstones must delete documents and their vectors; added/changed must be
+   marked for re-embed; the snapshot pin must advance. **The format is
+   currently write-only**, and this is the gap that stops the whole
+   reference-plus-chain model closing.
+3. **Query-triggered freshness** — a query that lands on stale content
+   enqueues a revision check and a re-embed, answering from what is held and
+   improving on the next query. Zipf makes this dramatically cheaper than
+   re-embedding a whole delta. Must never block the query, must respect
+   `worker_state`, must be rate-limited, and must show which revision
+   answered.
+4. **Sharing the demand signal.** "N nodes found this stale" is a few bytes
+   and lets one node do the work for everyone; the coordinator already counts
+   distinct reporters for exactly this.
+5. **LOCKSS-style possession audit** — [`lockss-p2p-evaluation.md`](lockss-p2p-evaluation.md).
+   Poll the *content* plane, never the vector plane.
+5m. **The pack — one distribution format for corpus, vectors, index and
+   proofs (operator brief 2026-08-26; PROPOSAL in
+   [`pack-format.md`](pack-format.md), nothing built).** Parsed-record
+   Parquet shards (the PubMed pack generalised to every plugin — peers
+   never see origin files or parsers), vectors / index / deltas as
+   separate members of the torrent collection, a signed manifest with
+   collection id, snapshot chain, the space's encoder + reference
+   version + calibration tolerance, update cadence and deadline; deltas
+   at record (CDC: paragraph) granularity feed the coordinator's leases
+   (one shard = one lease); a search-time freshness check against the
+   origin (no re-embedding); anti-entropy digests + TTL-bounded events
+   for cross-advertising, DHT-published catalogues beyond direct peers;
+   zstd now with a manifest codec slot for OpenZL later. Improvements it
+   brings: Wikipedia pre-embedded f32→f16 (−295 GB), light peers with
+   zero compute, chunk-level provenance through merges. Build order in
+   §22; open questions in §21 — decide before building. **Part II**
+   (same day, second brief): the initiator role, a DECLARATIVE
+   validation plan run by open platform code (never a shipped script —
+   that is remote code execution), signed attestations with local trust
+   levels (unverified → checked → verified by coverage; deterministic
+   checks flag on one reproduction, statistical ones on two — no votes),
+   one chunker per collection with DERIVED collections for a new space
+   (records + index reused by info hash), and inspectable formats: JSONL
+   in seekable zstd for records, safetensors for vectors. **Formats
+   MEASURED (2026-08-26, §8)** on 30k real PubMed records and 100k real
+   MedCPT vectors: JSONL in 1,000-record zstd frames is 4 % smaller than
+   Parquet at the same level and costs the same 1.0 ms per record, so
+   the text-editor rule is free for records and stays; a trained zstd
+   dictionary buys nothing at that frame size (the 20–30 % guess in the
+   first draft was wrong); OpenZL 0.2 (PyPI, manylinux only) equals
+   zstd-9 on JSONL text and gains 15 % over raw f16 on vectors (zstd:
+   8 %), int8 is −75 % but lossy (cosine 0.9989 to f32: it would pass the
+   0.95 same-function gate, but sits below the ≥ 0.999 the same model
+   reproduces across hardware — a visible degradation, so a separate
+   light space at most, never the reference). Decision: zstd-9 frames for records, vectors as raw f16
+   safetensors (readable header, no codec — the text-editor rule is
+   relaxed for the array by design: a printed float is neither practical
+   nor useful, re-embedding is the only real check), OpenZL deferred
+   behind the manifest's `codec` slot until its format stabilises.
+   **RESTRUCTURED (2026-08-26, operator: "start from the general
+   picture and scope, then go into detail")**: Part 0 (scope, a sketch
+   of the components of a collection, roles, lifecycle, the rules in
+   one place), then Parts I–IV (artefacts / operation / governance /
+   status and plan) and an appendix of measurements. Three additions
+   from the vector-index discussion: a SLICING scheme (§2: slice =
+   plugin-declared path of stable record fields — PubMed year bins,
+   Wikipedia lang + page-id range; shards closed once published,
+   append-only per slice, tombstones; member = slice × kind, so a peer
+   fetches "PubMed before 1980" alone); the VECTOR INDEX as a pack
+   member (§5: k-means centres trained once on a corpus-wide sample and
+   published; every embedder labels its vectors with the nearest centre
+   — a 2-byte column — so the index reassembles by concatenation;
+   optional bucket-ordered vectors for light peers and topical
+   downloads; versions ADDITIVE within an epoch, so a per-shard
+   `index_min` is computed from labels, not declared, and a peer never
+   fetches a version it does not need — a label is correct at every
+   version, older is slower never wrong; a from-scratch retrain is an
+   announced epoch); and the HASH RULES (§6: `content_hash` of the
+   canonical text is the truth, origin version numbers are hints,
+   silent changes recorded in the delta). Query-side MEASURED
+   (appendix A): both live tables are f16 with NO vector index — flat
+   scans cost 0.75 s on pubmed (2.2M rows) and 13 s on wikivec (15.8M);
+   on 100k real vectors f16 loses nothing (every top-10 "miss" is within
+   0.001 cosine of the 10th), int8 swaps ~2 % at the boundary,
+   IVF-FLAT / HNSW-SQ answer in 5–6 ms at 98–99 % within 0.001, IVF-PQ
+   without re-ranking drops to 66 % on MedCPT's tight cone. The local
+   vector index, not compression, is the performance item (build order
+   step 3; known gap below). **Layers (2026-08-26; the operator amended
+   invariant 1 — amendment 41):** a collection may declare an ordered
+   list of chunker LAYERS with every document in exactly one layer by a
+   declared rule — the MedCPT case: the archive's chunking for what it
+   covers, ours for what it does not — one encoder, space id over encoder
+   + layers; a unifying v2 is a derived collection that inherits the
+   surviving layer's vectors. pack-format.md §17.1.
+   **BUILT, first cut (2026-08-26, unattended; amendment 43):**
+   `app/pack/` — `records.py` (JSONL in independent zstd frames + a
+   trailing skippable-frame index; pyarrow's bundled zstd, no new
+   dependency; `zstd -d shard.jsonl.zst` prints the records),
+   `slicing.py` (PubMed year bins, Wikipedia/wikivec language +
+   page-id bins, Gutenberg language; cheap slice hints so the planning
+   pass never parses what the locator already says), `build.py` (two
+   passes over the collection's MANIFEST — plan, then pack per slice in
+   id order; shards closed once written and recorded AFTER the rename;
+   a stop discards at most one shard's buffer; re-runs skip recorded
+   shards), `manifest.py` (Ed25519-signed with the node key; the terms
+   text copied byte-exact), `verify.py` (roots / records / chunks /
+   license / signature). The `packed` plugin serves a pack as a corpus
+   keeping the record's uid, the origin hash as raw_hash and the origin
+   plugin's chunker — TESTED: a collection over the pack has the same
+   uids, chunk ids/text and possession hashes as one over the origin,
+   for gutenberg, pubmed (tombstones excluded) and a synthesized
+   wikipedia dump. CLI: `pack build|verify|status|cat|dump`,
+   `tools/pack_convert.py` (discovers a raw corpus into a build-local
+   manifest, then builds), `torrent publish --per-slice`, `index vector
+   build|status`. LAYERS: `app/layers.py` + `[[layers]]` TOML — every
+   stage now cuts through `layers.chunks_for_document`; one layer keeps
+   every pinned space id byte-identical (test). VECTOR INDEX:
+   `app/vector_index.py` — Lance IVF-PQ (IVF-FLAT by knob), built by
+   the worker's pipeline thread once a table has VECTOR_INDEX_MIN_ROWS
+   (100k), rows folded in by `optimize` past VECTOR_INDEX_REFRESH_ROWS,
+   the search probing (nprobes 30, refine 30) whenever an index exists.
+   First live minute: the build held the vector write lock — a RESERVED
+   lock on the collection's MANIFEST — and every event, count and
+   discovery commit of that collection blocked for the build's duration;
+   fixed the same minute: no manifest lock for an index over existing
+   fragments (Lance's own commit conflict detection covers a concurrent
+   write; a delete-then-insert that loses is a deferred step, never lost
+   data). Wikipedia's fetch caches the last decompressed
+   stream (one slot) — ~100x fewer decompressions for every stage. NAS:
+   datasets `tank/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
+   1M, lz4) mounted at `/packs` (PACK_MOUNTS_DIR; the create dialog
+   lists them as "(pack)"), conversions started with `pack build` from
+   the existing collections' manifests — detached inside the worker
+   container, logs `/data/pack-<name>.log`, relaunch after any app
+   restart with `docker exec -d ix-louise-rag-worker-1 sh -c "python -u
+   -m app.cli pack build <name> --out /packs/<name> >> /data/pack-<name>.log
+   2>&1"` (resumable; state in `<pack>/.build/build.db`). A finisher
+   (`/data/pack_finish.py <name>`, same container) waits for the
+   manifest, runs `pack verify --sample 0.02`, and creates the
+   `<name>-pack` collection (plugin `packed`, embed off, acquisition off,
+   the origin's [embed] recipe and license ack, paths under
+   `/data/<name>-pack/`) — delete that TOML to drop the collection. NOT
+   built: deltas/snapshots, the call for contribution over packs, gossip,
+   freshness, published centres/labels/bucket-ordered vectors,
+   attestations, `records-vs-origin`, pack acquisition from a peer
+   through a `packed` collection (no acquisition spec yet — a torrent
+   fills a folder, the collection is hand-populated over it).
+   **Procedure change (2026-08-26, operator; amendment 44): packs are
+   CLOSED snapshots built from a COMPLETED origin.** `gutenberg-pack`
+   is paused (`gutenberg-pack.toml.paused` on the NAS) until the
+   gutenberg origin finishes fetching/parsing/indexing to 2026-06-30;
+   the premature pubmed/wikipedia conversions and all finishers were
+   stopped (their partial packs under `/packs/*` are throwaway — the
+   real builds use `--until`). Built for it: `pack build --until
+   YYYY-MM-DD` (gutenberg by `dcterms:issued`, now parsed into
+   `CanonicalDoc.date`; pubmed by DateRevised/DateCompleted, now in
+   `extra.revised`; wikipedia by dump date; manifest `closed`,
+   `origin.cutoff`; a resume under another cutoff is refused) and `pack
+   adopt <origin> <packed> [--fts] --yes` (copies the Lance table, the
+   embed marks and chunk provenance — and the tantivy index — into the
+   twin; same pinned space required; the twin's table must be empty;
+   run with the worker stopped). THE HAND-OVER, when gutenberg is
+   complete: `pack build gutenberg --out /packs/gutenberg-2026-06
+   --until 2026-06-30` → create `gutenberg-pack` over it (the paused
+   TOML, corpus_dir updated) and let it discover → stop the worker →
+   `pack adopt gutenberg gutenberg-pack --fts --yes` → retire
+   `gutenberg.toml` → start. Updates are a derived, conflict-free
+   function of (previous manifest, origin window, cutoff) —
+   pack-format.md §6.1; the updater is the next build item.
+5l. **Torrent COLLECTION — one magnet for a whole published corpus
+   (operator request 2026-08-26; BUILT the same day; amendment 40).**
+   `torrent publish <c> --per-language` now also writes an INDEX torrent
+   (`<c>.collection.torrent`: a tiny directory with `collection.json` —
+   members with slice name, the slice's include patterns, magnet, info
+   hash, size — plus a copy of every member `.torrent`) and prints its
+   magnet: the only thing a peer needs. On the peer, `effective_spec`
+   resolves the index once (`app/acquire/torrent_collection.py`; the
+   content lands under `<manifest dir>/peer-index/`, cached in the
+   control table keyed on the source), then expands the source into the
+   members the PROFILE selects, in fetch order (a combined profile's
+   order; "all" smallest first). Growing the profile adds members with
+   no TOML edit; the grow dialog offers exactly the slices the publisher
+   offers (`web._offered_by_torrent_collection`), and "growth options
+   are consequential" — the origin's static list is not shown for a
+   peer-sourced collection. The Network page's seeding table groups
+   torrents per collection (expand ▸ to see the single torrents) with a
+   **copy collection magnet** button; rows carry kind/slice. A re-publish
+   is a new index and a new magnet (a static index; BEP 46 mutable
+   pointers are the follow-up for peers beyond one LAN).
+   `tests/acquire/test_torrent_collection.py` (index round-trip, profile
+   → members, an end-to-end resolve over a local swarm, seeding rows).
+   **Live on the NAS 2026-08-26:** `torrent publish wikivec
+   --collection-only --peer-hint 192.168.178.10:6881` built the index
+   from the eleven recorded members without re-hashing (and upgraded
+   those pre-`kind` records in place); the seeding table shows one
+   `wikivec-collection` row (2.4 MB, seeding, hint attached — "copy
+   collection magnet") above the eleven members labelled by slice. The
+   magnet is also in `/config/wikivec-collection-magnet.txt`. A peer
+   creates its wikivec collection with that one magnet and profile
+   `tr` (8 GB), then grows to `tr,it` from the dialog.
+   **First peer, Louise2, 2026-08-26 (profile `demo`):** the index
+   resolved (11 members, hint), `demo` selected only `tr` (21 files,
+   8.97 GB), Turkish parquet files landed at LAN speed (2.5 GB in the
+   first two minutes). Three things it exposed, two fixed the same hour:
+   (1) the create dialog's default `[embed]` is the NODE's encoder — for
+   a pre-embedded corpus the recipe must be the ARCHIVE's function, or
+   the genesis proof rejects every shard; Louise2's wikivec now points
+   at the NAS's BGE-M3 endpoint (`192.168.178.10:30442`, byte-equal
+   recipe ⇒ the same space id `ed34b4b0…` as the NAS's wikivec), and a
+   wrong pin was dropped with `space repin`. To do: the create dialog
+   should offer the archive's recipe for a plugin with a declared
+   archive. (2) The torrent transport never credited its bytes to the
+   budget (invariant 5's accounting half): 2.5 GB arrived while Traffic
+   read 0 — fixed (`_credit_download`, per handle, tested). (3) A new
+   collection is unnoticed for the length of a GPU embed round: the
+   main loop sits in `_embed_parallel` until its in-flight documents
+   finish (six 500-chunk books at 3.5 chunks/s ≈ 15 min on Louise2)
+   and `_sync_collections` runs between rounds — recorded under *Known
+   gaps*; a restart of the worker was the workaround.
+5k. **PubMed container access — measured 2026-08-25, pack BUILT the same
+   night (`app/plugins/pubmed/pack.py`).** One row per direct child of
+   the container root, in document order (the record index the locators
+   carry): the child's exact serialised XML (tail included — emitted only
+   once the next sibling has started, so `raw_hash` is byte-identical to
+   the DOM path; discovery compares it to detect changed records) plus
+   pmid/title/abstract/journal/date/authors for the reader. Row groups
+   of 1,000, zstd-3; record i sits in row group i // 1000. Built lazily
+   on first sight (discovery) or first fetch, one builder per container,
+   atomic tmp+rename, rebuilt when the container's (size, mtime) or
+   `PACK_VERSION` changes; freshness memoised per container (the
+   footer read cost 3 ms per record, a stat costs microseconds). Lives in
+   a hidden `.pack/` beside the containers (discovery lists files only;
+   torrent publishing and `corpus_digest` skip hidden entries — cache,
+   never p2p material) or in `PUBMED_PACK_DIR` for faster storage (5i).
+   Measured on `pubmed26n0600` (30,000 records): build ≈ one DOM parse
+   (10.8 s on the Windows box where the DOM parse takes 10.4 s; ~6 s on
+   the NAS), **44.9 MB** with the XML kept (the gz is 35.5 MB — ~60 GB
+   for all of PubMed), first record 31–48 ms cold, **0.6 ms** warm,
+   discovery's three columns 30 ms, reader fields 8 ms, 0 fidelity
+   mismatches on a spread sample; `tests/test_plugins_pubmed_pack.py`
+   pins byte-identity on the fixture for plain and gzipped containers.
+   The XML column (not just the six fields) is what makes it a cache
+   with full fidelity — MeSH, references and grants stay available at
+   the same cost when entity work wants them. **Live on the NAS
+   (deployed 6926a81, 2026-08-26 00:39):** builds take 14–33 s per
+   container under the full pipeline load (12–29 MiB each; older
+   containers are smaller), paid once — the genesis pass that first
+   touches five new containers spends ~125 s of its 300 s slice building
+   them (shard 3: 29,706 documents imported in 309 s including the
+   builds), rdf/fts continue at 1.4–15 s per 1,000-document transaction
+   with the same one-off build on their container; 1,334 containers ≈
+   9 CPU-hours spread over the pipeline, after which every record costs
+   ~0.6 ms. Same pass, same lesson as 5g: 70,941 of ~100k eligible
+   shard-3 documents were chunk-shape mismatches — the chunker change is
+   what unlocks the archive.
+   *Original measurements and proposal:*
+   The corpus is 1,334 gzipped XML containers, 51 GB; one container
+   (`pubmed26n0600`) is 35.5 MB gz → 283 MB XML (8×), 30,000 records, so
+   the whole archive is ~380 GB uncompressed — never materialise it.
+   Per container: gunzip 0.8 s; our `ET.parse` DOM 8.5 s idle (13–20 s
+   live, under the pipeline's load) and hundreds of MB of tree, held in
+   a ONE-slot cache; `ET.iterparse` streaming with `clear()` 4.1 s;
+   extracting (pmid, title, abstract, authors, journal, year) and
+   writing a Parquet pack (zstd-9, 1,000-row groups) 4.8 s → **12.2 MB**
+   (34.5 MB of raw text; 25,331 of 30,000 records carry an abstract);
+   one record by PMID from the pack, via row-group statistics: **16 ms**
+   — against 8–20 s today (the container must be parsed whole). A
+   gzip stream is not seekable, so "one record" always costs the
+   gunzip of everything before it (0.4 s average) plus the parse.
+   PROPOSAL — `plugins/pubmed` keeps the gz XML as the archive (what is
+   fetched, checksummed and seeded) and builds, once per container, a
+   DERIVED pack beside it (`<name>.pack.parquet`, PMID-sorted, rebuilt
+   when the gz's checksum changes; ~16 GB for all of PubMed): rdf/fts/
+   embed/genesis read records from the pack (16 ms, no cache thrash),
+   the reader panel (5j) opens an article instantly, and year/journal
+   become available for the bibliographic line without a manifest
+   column. Deterministic from the gz, so invariant 3 is untouched; the
+   pack is a cache, never exchanged. Build cost ≈ 1,334 × 5 s ≈ 2 h of
+   one core, amortised into the first pass over each container.
+5j. **Ask tab: translated results and a document reader (operator
+   request 2026-08-25; BUILT 2026-08-26).** As specified below, with
+   these concrete choices: `POST /ask/translate` (one `llm.translate_texts`
+   call per page — numbered JSON in and out, a dropped passage comes back
+   as its original; cache keyed on (chunk id, language), bounded; `failed`
+   in the reply makes the page say "translation unavailable" instead of
+   pretending), the answer language rides `ChatBody.answer_lang` into
+   `build_answer_messages` (the model is told to answer in that ISO code —
+   never post-translated, so [n] stays aligned), the drop-down offers
+   the pre-embedded corpus's eleven languages plus the common European
+   ones (`web.RESULT_LANGUAGES`). Reader: `app/reader.py` +
+   `GET /read/<collection>/<book_id>?hl=<chunk ids>[&fragment=1]` —
+   text from `fts.book_chunks` (a term query on the `book_id` fast field;
+   the lexical index stores every chunk's body) or, for an embedded-but-
+   not-indexed document, its Lance rows; never the corpus file; the
+   in-page panel (`<aside id="reader">`, Esc closes) is the same
+   template as the standalone page; hits carry `data-collection/book/
+   cid`; [n] in the answer becomes a link into the reader; the reference
+   line is authors — title — (PubMed: journal, date from the pack) —
+   (lang) — source:id, plus the origin link per plugin. Help updated.
+   Not done: PubMed's `date` column (the pack answers the reader instead).
+   Verified on both nodes: Louise2's reader opened gutenberg 10218 with
+   the hit highlighted (60 chunks, origin link) and translated a snippet
+   ("ciao"); the NAS's PubMed hit 10329736 opened with the reference
+   "… — J Biol Chem — 1999-May — (en) — pubmed:10329736" and an Italian
+   snippet from the local model — but with NO text: after the re-pin
+   every PubMed row has `fts_done=0` while the old entries stay
+   searchable until rewritten, and the reader had gated its index read
+   on the mark. Fixed the same hour: the reader asks the index
+   regardless (`test_reader_serves_a_document_mid_reindex…`).
+   *Original spec:*
+   (1) *Results in another language, interface untouched.* A "show
+   results in" drop-down beside the mode selector (default *original*;
+   options = the languages indexed in scope plus the operator's default).
+   Only CONTENT is translated — snippets, the drawer text and the RAG
+   answer — never titles, authors or ids (a bibliographic reference must
+   read as published) and never the page chrome. Snippets: one LLM call
+   per result page (`POST /ask/translate {lang, items}` → JSON, batched
+   like `llm.translate_query`), a small "translated from de" badge, the
+   original kept in the provenance drawer, an in-memory LRU keyed on
+   (chunk_id, lang) so toggling is free; failure degrades to the original
+   with a note. The answer is not post-translated: `build_answer_messages`
+   gets the target language and the model answers in it directly
+   (cheaper, and citations [n] stay aligned).
+   (2) *Open the document from a hit.* The operator asked for a popup;
+   PROPOSAL (preferred): an in-page reader panel (slide-over) opened by
+   clicking the snippet or the reference — the whole document, the hit
+   chunk scrolled into view and highlighted, prev/next hit within the
+   document, a bibliographic header and a link to the origin (PubMed
+   `pubmed.ncbi.nlm.nih.gov/<pmid>/`, Gutenberg `gutenberg.org/ebooks/<id>`,
+   Wikipedia's article URL); the search stays visible behind it, no
+   popup blocker, and the same route (`/read/<collection>/<book_id>#c<seq>`)
+   is a standalone page for middle-click / new tab. The text comes from
+   the INDEX STORES — Lance chunk rows for embedded documents, the FTS
+   store otherwise — assembled by book_id and seq, never from the corpus
+   file on a click (a PubMed container costs 13–20 s to open; Gutenberg's
+   plain files are the only acceptable fallback). Citations [n] in the
+   answer become links into the same reader. Reference line per source
+   plugin (authors, title, id + link); PubMed's year/journal are not
+   persisted today (`documents` has no date column) — an additive `date`
+   column is the one schema change this would want, to be asked for.
+5i. **Storage tiers: main archive on HDD, working set on SSD (operator
+   request 2026-08-25; evaluated, to implement 2026-08-26).** Today
+   EVERYTHING sits on `ssd4` (NVMe, 1.81 TB, 569 GB free): corpora 923 GB
+   (wikivec 590, gutenberg 256, pubmed 51, wikipedia 26) plus `/data`
+   250 GB (Lance 23 + wikivec vectors 127, tantivy 34, pubmed 36). The
+   HDD pool `tank` (4 × 6 TB Toshiba in raidz1, 8.9 TB free; `ssd4` is a
+   2 TB Kingston NVMe) reads 304 MB/s sequential (direct), 121 MB/s in
+   64 KiB direct random reads (~1,900 reads/s — small-file corpora are
+   fine too), and 6.3 GB/s when the block is in ZFS's RAM cache (ARC:
+   25 GB of 61 GB RAM, 99.8 % hit ratio). Measured stage costs are CPU/GPU, not
+   disk: a 30 MB pubmed container takes 13–20 s to gunzip+parse and 0.1 s
+   to read from HDD; wikipedia rdf 33–68 s per 1000 documents; a 438 MB
+   wikivec shard ~10 s to decode vs 1.5 s to read from HDD (and the
+   revisited shard comes back from ARC). Verdict: **no app-level SSD cache
+   for reading** — ZFS ARC already is one, warm and free. Plan:
+   (1) new datasets `tank/louise-corpora/{wikivec,pubmed,wikipedia}`
+   (recordsize 1M, lz4), moved by rsync (~1 h at the measured rate), and
+   the app's host mounts repointed — the in-container paths
+   (`/corpora/<name>`) stay identical, so every locator stays valid and
+   no discovery repair runs; (2) **gutenberg stays on SSD for now**: 256 GB
+   of 2.8 M small files, and discovery stats every one of them each
+   rescan — measure a scan from HDD before moving it; (3) `/data` (SQLite
+   WAL, tantivy, Lance, the genesis cache's 3 GB mmap'd shards) stays on
+   SSD, invariant 6; (4) the one place SSD staging DOES pay is
+   ACQUISITION: torrent pieces land as random writes, which raidz1
+   handles badly — download into `/data/staging` and move each file to
+   its corpus directory on completion (the `.part` discipline already
+   isolates the incomplete file; the engine's preflight bounds the
+   staging area); (5) no L2ARC — it excludes streaming reads by default
+   and the ARC hit ratio leaves nothing for it.
+   **Built 2026-08-26 (operator: "datasets, not folders").** Datasets
+   `tank/louise-corpora/{wikivec,pubmed,wikipedia}` (recordsize 1M, lz4,
+   atime off, root:root 770 like the originals); bulk `rsync -aH` while
+   the app kept running (wikipedia 26 GB in 64 s, pubmed 51 GB in
+   2.6 min, wikivec 590 GB at 200–570 MB/s), then a stop → delta sync →
+   mount switch → start window (`/root/switch_window.sh` +
+   `/root/switch_mounts.py` on the NAS, which edits the custom app's
+   compose config through `midclt call app.update` — only the three host
+   paths change, the in-container paths and therefore every locator stay
+   identical). Two knobs went in with the switch: `PUBMED_PACK_DIR=
+   /data/pubmed-pack` (the packs on the NVMe; the ones already built were
+   copied over) and `ACQUIRE_STAGING_DIR=/data/staging` (ff84884: the
+   https/ftp/hf transports stream into staging on the NVMe, the verified
+   file is moved into its corpus as one sequential copy; an interrupted
+   `.part` resumes from staging; a file the area cannot hold lands in
+   place; torrents unchanged until 5h). **Switched 2026-08-25 10:22
+   CEST:** delta sync moved 0 bytes, the app came back on the datasets,
+   discovery on all three reported 0 changed documents, PubMed's
+   re-index went on from the 193 packs copied to `/data/pubmed-pack`
+   (0 rebuilds), wikivec's archive reads its shards from tank. Lesson
+   that cost a failed `up`: `midclt call app.stop/app.start/app.update`
+   return a JOB and go on in the background — the window script's
+   `start` raced its own `update` and left two *Created* containers with
+   name conflicts; `midclt call -j …` waits, and is what the deploy
+   recipe uses now. The ssd4 originals were datasets too
+   (`ssd4/data/<name>`, which is why a plain `mv` said "resource busy");
+   they were `zfs rename`d to `ssd4/data/<name>.moved-to-tank` (675 GB,
+   reversible) — `zfs destroy` is the operator's call after a few days on
+   tank; the `.pack/` copied into `tank/louise-corpora/pubmed` (5 GB) is
+   unused under `PUBMED_PACK_DIR` and can go with them. Gutenberg
+   (`ssd4/data/gutenberg`, 302 GB) stays on the NVMe.
+5h. **wikivec per-language torrents (operator approved 2026-08-25; BUILT
+   2026-08-26).** `torrent publish <collection> --per-language
+   [--languages en,tr]` hashes one torrent per `data/<lang>` directory
+   (en 192 GB, de 83, fr 75, ru 57, es 54, it 42, ja 33, pt 25, zh 14,
+   fa 11, tr 8.4), ALL rooted at `data` with an include filter
+   (`publish_corpus(include_patterns=…)` — libtorrent's add_files asks
+   about directories too and a False prunes the subtree, so directories
+   pass and files are judged), so a peer's files land in the plugin's
+   own layout and the torrents combine. The seeding record is a list
+   (`seeding.record_published` merges by info_hash; older single-dict
+   records still read), the worker seeds every entry. On the peer,
+   `peer_source` is one magnet or several — a TOML array, one per line,
+   or comma-separated (`engine.peer_sources`); `effective_spec` makes
+   one endpoint per torrent, the listing is their union, and
+   `run_acquisition` fetches the torrents ONE AFTER THE OTHER in the
+   listed order — the first language is complete, and the pipeline busy
+   on it, while the rest arrives (amendment 37). The create dialog
+   validates every entry. `tests/acquire/test_per_language_torrents.py`.
+   **Published on the NAS 2026-08-26:** eleven torrents, 589 GiB, all
+   seeding (the Network page's table shows them); hashing ran at
+   ~500 MB/s from `tank` with the ARC still warm from the copy (de 82 GB
+   in ~3 min, en 191 GB in ~5 min). Lesson: a `nohup docker exec … &`
+   started over ssh dies with the session (the first pass lost its log
+   and stopped after two languages); `docker exec -d` runs detached
+   inside the container — use it for anything that outlives the ssh
+   call. The worker's control manifest (seeding table, worker state) is
+   the DEFAULT collection's (`/data/genome-dm6/manifest.db` on the NAS),
+   not `/data/manifest.db` — read it through `db.connect()`.
+5g. **Pre-embedded archives: fetched like a corpus, applied as indexing
+   goes, one knob (amendment 38; operator policy, 2026-08-24).** Live
+   pubmed: 8.25M/40M indexed, 0/37 MedCPT shards, 44 embedded — the
+   post-settle gate withheld the archive for months. Built: the archive
+   is a second acquisition stream (`app/bundles/genesis_fetch.py`, budget
+   class `archive` below `backfill`, bounded on-disk cache with
+   preflight); fetched shards apply at once for the indexed documents,
+   are revisited with per-shard geometric backoff, and go FINAL (files
+   deleted) when their id range has no document left waiting for fts;
+   MedCPT declares its coverage (`shard_of_id`: exact PMID ranges); the
+   single Embed-mode knob governs the local encoder only, and `all`
+   selects the documents the archive cannot cover through a rowid
+   cursor (no per-round re-walk of the covered prefix, no ORDER BY).
+   Card: main `embedded (dense)` = total coverage; sub-box = `fetched
+   (vectors)` + `pre-embedded (dense)`, no knob. Local archives
+   (wikivec) unchanged.
+5f. **Index sharing for LIGHT peers — decide by measurement (2026-08-24).**
+   The lexical index stays recomputed by default (≈1 ms/doc, deterministic,
+   zero trust surface; a received tantivy segment can only be fully
+   verified by rebuilding it, and it is coupled to FTS_VERSION /
+   ENTITY_VERSION / chunker / tokenizer). But a light peer "does only the
+   work it cannot avoid", and pubmed's ~40 CPU-hours IS avoidable if the
+   index travels. Option to build if the numbers favor it: index segments
+   per lease (they merge like tantivy segments do) shipped beside the
+   bundle, guarded like vectors are — an INDEX-SPACE PIN (the four versions
+   above; refuse on mismatch) and SAMPLED verification (re-index a few
+   received documents locally, compare postings). Decide once pubmed's
+   index is complete: its size on disk vs the measured 40 h rebuild.
+5e. **Two peer classes, and benchmark-based eligibility (operator design,
+   2026-08-24).** *Light* peers do only the processing that cannot be
+   shared (discovery, FTS — local by design) and still share corpus bytes
+   and processed data (seed torrents, serve bundles). *Full* peers also
+   take shared-workload leases (embedding batches) from the coordinator.
+   For now a full peer gets a FIXED, generous lease TTL (the existing
+   24 h `LEASE_TTL_SECONDS`); an expired lease is reissued to whoever
+   asks next. TO BUILD: a benchmark a peer runs to become ELIGIBLE for
+   shared workload (encoder consistency vs the space's baseline + a
+   throughput measurement) that also sets a proper per-peer lease TTL
+   instead of the fixed one; until then eligibility is the operator's
+   choice (`contribute` mode on/off) and the TTL is the constant. See
+   also the corpus chunking proposal recorded with amendment 37.
+5d. **License gate on USE, not just acquisition (amendment 36; operator
+   report, 2026-08-24).** A yellow-class shard copied from a peer into a
+   hand-populated collection was indexed and imported with no ack — the
+   gate only fired on origin fetches. To build: worker round loop +
+   pipeline threads skip a yellow+ collection with no valid
+   `license_ack` (discovery, genesis, bundles, onward exchange all
+   excluded); Library card shows "license acknowledgement required" with
+   the existing acknowledge flow; boot warning names gated collections.
+   Until built, this is enforced by review only.
+5c. ~~**Acquisition source choice at collection create.**~~ **Built
+   2026-08-24:** the create panel's Acquisition drop-down offers *off* /
+   *from the source* / *from peers* (magnet or .torrent). `peer_source`
+   in the TOML redirects the whole acquisition to the torrent transport
+   (`engine.effective_spec`); the worker seeds every torrent recorded by
+   `torrent publish` and credits uploads to the UP bucket
+   (`app/acquire/seeding.py`). What remains unbuilt is DISCOVERY (item
+   1): today the magnet carries a direct-peer hint (`x.pe=host:port`)
+   pasted by the operator.
+5b. **The enumeration travels with the corpus.** A peer that downloads a
+   corpus snapshot still re-derives its document list by scanning (hours
+   on a large corpus, even resumable). The snapshot manifest already names
+   every uid with its raw hash (§5, parent-chained deltas); extended with
+   each document's locator-within-the-snapshot, mtime and size it becomes a
+   *signed discovery input*: import it, then verify by stat and hash
+   spot-check instead of enumerating. This is the part of "indexing" that
+   SHOULD be shared. The FTS index itself should not: it is cheap to
+   compute (≈1 ms/doc warm, against hours to download), expensive to verify
+   (a binary blob; poisoning is invisible), coupled to local config
+   (`FTS_VERSION`, analyzers, entity version, chunker) and to the tantivy
+   version — and invariant 6 says SQLite state never travels. The rdf
+   output (catalog metadata) is small and derivable and could ride along
+   for "browse before you index"; a possible later addition to the same
+   manifest.
+6. **DNA search axes** — [`dna-search-axes.md`](dna-search-axes.md).
+   **Parked pending the Fable model.** DNABERT-2's space is anisotropic —
+   unrelated sequences score 0.98 cosine — because MLM never asks them apart.
+   DNABERT-S is *not* the fix: it contrasts on species-of-origin, which
+   collapses within-genome distinctions and pushes apart exactly the
+   cross-species pairs §9 wants together. Homology and composition need no
+   model at all (k-mer sketches); only function does. The load-bearing point:
+   **invariant 4 has no category for two ranked lists that must NOT be
+   fused** — a homology ranking and a functional ranking answer different
+   questions, and RRF-ing them yields neither. Measure before amending
+   anything; there is currently no baseline to judge any model against.
+
+## Invariants review (2026-08-23 — amendments 30, 31)
+
+The ten CLAUDE.md invariants were re-read against what was built. They
+hold, with one violation and several stale sentences: **#10 was inverted
+for `embed_mode`** (TOML parsed and only displayed; the Library's override
+permanent) — fixed, the worker now applies the TOML on restart/add/edit and
+the reference node's TOMLs were written with their effective modes first so
+the deploy changed nothing. Each invariant now says how it is enforced
+(*boot* / *test* / *review*); #7, #8, #9 gained mechanical tests
+(`tests/test_invariant_guards.py`); #8 gained `ADMIN_TOKEN_FILE`; the stale
+`space_id` component list in #1 is a pointer to §3. A short list of
+**engineering rules** joined CLAUDE.md, each a recorded incident. Every
+stdout log line now names its collection. The golden test no longer fails
+on a fresh clone (fixture mtimes are pinned to the golden's values).
+
+## Known gaps and traps
+
+- **8% of gutenberg's stored vectors are corrupt, and the encoder that
+  wrote them was an UNAPPROVED build (2026-08-28).** `tools/vector_compliance
+  gutenberg` over 163 sampled chunks: 13 below TAU (8.0%), worst cosine
+  **0.338**, median 1.000000; every failure a 4,000-char chunk, clustered by
+  book (4643, 4639 at 21%; others at 0%). The STORED side is the corrupt one
+  — six fresh draws agree with each other at 1.000000 and disagree with the
+  stored vector at an identical cosine each time. The production Arc was
+  serving `server-intel-b10630` while the approval table pins b106**03**
+  (digits transposed; see docs/approved-encoders.md). `gutenberg.embed_mode`
+  is now `off` in its TOML so nothing further is written.
+  **The trap for whoever picks this up: the endpoint tests CLEAN.** Afterwards
+  it reproduced at 1.000000 at every concurrency (1/4/8), identical and
+  distinct long texts, serial and parallel. A short probe cannot clear this
+  backend — which is exactly why the 16-text approval trial and the backend
+  gate's probes both passed while the corpus took damage. Check the CORPUS
+  (`vector_compliance`), not just the endpoint.
+- **No vector index — every semantic query is a flat scan of the Lance
+  table** (`embeddings.search`: `tbl.search(qvec).limit(k)`, no
+  `create_index` anywhere). Measured 2026-08-26 with a random unit
+  vector: pubmed 2.2M rows 0.75 s, wikivec 15.8M rows **13 s** per
+  query, Louise2's 100k-row wikivec 0.05 s; cost is linear in rows ×
+  bytes (f16 already halves it). The fix is design work, not a knob:
+  Lance indexes do not cover rows added after the build (new rows stay
+  flat-scanned until an optimize step), our delete-then-insert write
+  pattern needs an index-maintenance stage in the worker, and HNSW at
+  15.8M rows is ~14 GB of RAM — the bucket (IVF) family on disk is the
+  realistic choice (pack-format.md §5, appendix A; build order step 3).
+- **Locators are absolute paths.** Moving a corpus invalidates every one.
+  Discovery now detects and repairs this automatically, but storing locators
+  relative to `corpus_dir` would remove the failure mode instead of healing
+  it. Touches every plugin.
+- **Discovery never prunes unseen documents** (`plugins/cursor.py`), so a
+  document deleted upstream lives forever. Snapshot deltas carry tombstones;
+  nothing else does.
+- **`chunk_abstract` is dead code** — `chunker_for` never returns it, so
+  pubmed uses `chunk_book`. Deliberate: wiring it would change pubmed's
+  chunking (invariant 3). **Measured 2026-08-25, and it now matters:**
+  MedCPT holds ONE vector per article (title + abstract, 512 tokens), the
+  genesis shape gate binds vectors to chunks 1:1, and `chunk_book` splits
+  every abstract-bearing article into two or more chunks — of shard 0's
+  647,490 held documents 274,514 (42 %) are multi-chunk, of shard 1's
+  938,691 609,182 (65 %), and the fraction rises with the year as
+  abstracts become universal. So the archive can cover only the
+  title-only records; every article with an abstract is skipped and
+  falls to the local encoder once its shard is final. **Built
+  2026-08-26 (operator approved 2026-08-25; amendment 39):**
+  `chunker_name("abstract")` now returns the abstract chunker — one
+  chunk per article, `title\n\nabstract`, no chapter label — under its
+  own `ABSTRACT_CHUNK_VERSION` (PubMed-only, invariant 3), and
+  "abstract" is no longer grandfathered in the space payload, so
+  PubMed's space id moves and the boot check refuses the old pin;
+  `python -m app.cli space repin <collection> --yes` (worker stopped) is
+  the operator step: drops the pin, resets `embed_done` AND `fts_done`
+  (the lexical index held chunk ids cut by the old chunker — same id,
+  different text otherwise), clears the verification ledger, keeps
+  fetched archive shards (`applied` → `fetched`, no re-download), drops
+  finished rows, removes the Lance table. Measured before choosing the
+  text format, 24 abstract-bearing articles against the archive: cosine
+  median 0.988 / min 0.960 for `title\n\nabstract` (NCBI's `[SEP]` join
+  0.991 / 0.974 — not worth a marker in displayed text; abstract alone
+  0.976 / 0.945 — the title matters). The encoder is TEI (MedCPT
+  tokenizer 3.8–6.2 chars/token, median 5.0; TEI refuses >512 tokens
+  with 413 unless started with --auto-truncate), so the client's char
+  budget of ctx·4 = 2,048 chars is 410–530 tokens and its over-length
+  fallback now shrinks in 20 % steps instead of halving. Tests:
+  `tests/test_pubmed_abstract_chunker.py` (one chunk per fixture
+  article through the worker, PubMed's id moves and book's does not,
+  the repin's every effect). **Re-pinned on the NAS 2026-08-26 07:39
+  (5dd6250):** the old pin `b009849c…` held 1,587,743 archive vectors
+  (title-only records) and 12,119,490 lexical entries — all reset; the
+  worker pinned `41844ebb…` at boot, re-indexes at 1,000 documents /
+  1,000 chunks per batch (one per article, ~8–10 h for the 12.1M from
+  the packs), and the first archive pass over the re-indexed documents
+  reported **0 chunk-shape mismatches** — every article the archive
+  holds is now covered as it becomes indexed; the 8 fetched shards were
+  kept (`applied` → `fetched`), nothing re-downloaded.
+- **Library/Stats counts are cached ~2 minutes** (stale-while-revalidate).
+  `invalidate_counts` is wired only to the reset endpoint, so any change made
+  outside the web process — including direct SQL — lingers until the TTL.
+- **`test_documents_embed_concurrently_and_queue_drains` is flaky**: it
+  asserts two threads genuinely overlap, which the scheduler need not do
+  under load. A barrier would make it deterministic.
+- **`_sync_pipeline_threads` reconciles by collection NAME only**, so a
+  pipeline thread keeps the `Collection` object it started with: a TOML edit
+  to `corpus_dir` or `[paths]` never reaches the rdf/fts path until restart.
+  Harmless for recipe edits (those stages don't use the recipe).
+- **No operator control retries a failed acquisition**: the rescan button
+  only rescans the filesystem; a transient fetch failure waits for the
+  6-hour discovery interval or a worker restart.
+- **`EMBED_BATCH=1` is load-bearing.** llama-server corrupts long sequences
+  when one `/v1/embeddings` request carries multiple texts, deterministically
+  per batch shape, and its prompt cache can replay the corrupted result for
+  later single-text requests. Use concurrency for throughput, never batching.
+  This does **not** apply to encoders we host ourselves.
+- **The main loop is blind for the length of an embed round.**
+  `_sync_collections` (hot-add of a new TOML, config changes) and the
+  worker's own telemetry run between rounds, and a round of
+  `_embed_parallel` returns only when its in-flight DOCUMENTS finish —
+  six 500-chunk books on a 3.5 chunks/s GPU held Louise2's loop for
+  15+ minutes while a freshly created collection sat unnoticed
+  (2026-08-26). The stream deadline stops refilling, not waiting. Fix
+  to design: keep the executor across rounds and collect finished
+  documents at the next round's start, so a round returns at the
+  deadline; until then a worker restart is the workaround.
+- **The create dialog's default `[embed]` is the node's encoder** — right
+  for a corpus this node embeds, wrong for a pre-embedded one, whose
+  recipe must be the ARCHIVE's function (BGE-M3 for wikivec) or the
+  genesis proof rejects every shard. Offer the archive's recipe when the
+  plugin declares an archive; until then set `[embed]` by hand (Louise2:
+  the NAS's BGE-M3 endpoint) and `space repin` if a wrong pin landed.
+
+## Lessons that cost real time
+
+Recorded because each was invisible until it wasn't, and each would be easy
+to reintroduce.
+
+- **A fallback that cannot be declined.** `load_all()` synthesized the
+  legacy default collection whenever no TOML existed — so on Louise2,
+  removing the last collection made "gutenberg" reappear, with no file to
+  retire (2026-08-26: "cannot delete all collections"). The mode switch
+  is now the `collections/` DIRECTORY existing: absent = legacy default;
+  present = exactly its TOMLs, possibly none. Removing the synthesized
+  default from the UI creates the empty directory; the create flow
+  captures the synthesized default BEFORE creating the directory (the
+  "79k books vanished" trap in a new coat); with zero collections the
+  control manifest falls back to the legacy path and the worker idles
+  until a TOML appears.
+- **A global knob that scopes per-thing.** `CHUNK_VERSION` entered every
+  collection's `space_id` while chunking is per-plugin, so changing text
+  chunking would have re-pinned collections whose chunker never changed —
+  including pre-embedded ones whose vectors *cannot* be recomputed by
+  re-chunking. Two chunkers at the same version number also produced
+  byte-identical space payloads, so the identity has to name the chunker,
+  not just its version.
+- **Caching keyed on a name.** `fts.get_index` documents it and the counts
+  cache repeated it: two Collection objects can share a name and point at
+  different files. Key on the physical path. The scan cursor repeated it a
+  third time (`path.name` as the key collided across language directories
+  and silently disabled all skipping for the embedded plugin).
+- **A linear cost per item is quadratic per corpus, and no test corpus is
+  big enough to see it.** `DELETE FROM catalog_fts WHERE uid=?` scanned the
+  shadow table (uid is UNINDEXED); at fixture scale that is nothing, at 36k
+  rows it was already 98% of the stage, at corpus scale it never finishes.
+  When a per-document cost depends on how much has been processed so far,
+  treat it as a blocking bug regardless of how fast it currently looks.
+- **Telemetry published by the thread doing the work** is invisible exactly
+  when it matters — the loop is blocked. Publish from elsewhere.
+- **Measure before optimising.** Page slowness was assumed to be connection
+  setup; it was 12s of full-table scan. `db.connect()` was 1 ms.
+- **An unreachable endpoint is not a broken document.** Recording it as an
+  error removes the document from backfill until a human intervenes.
+  Distinguish deferral from failure — the acquire path already did.
+- **Contact with the real library finds what reasoning does not.** Every
+  torrent bug (pad files, asynchronous renames, an always-truthy
+  `error_code`) came from running a real swarm, not from reading docs.
+- **"Did work" is not "made progress".** A stage that returns True for a
+  round in which it imported nothing still wins the round from every stage
+  behind it. Genesis's 0-document shard reads were each legitimate
+  bookkeeping and together were the whole behaviour of the collection. When
+  a stage can succeed at doing nothing, the selection that hands it the
+  round must know the difference — and a per-round cost that scales with
+  the size of a LIST (shards) rather than with the work available
+  (candidates) is the quadratic trap again, in a different coat.
+- **A log line per round is a benchmark.** "imported 0 vectors across 0
+  documents" every ~10 s, for hours, was the measurement; nobody had to
+  profile anything. Read the worker log as a time series before reading
+  the code.
+- **A rate from one window is not a rate.** The Library ETA divided one
+  sample window's progress by its length, so a window that caught a
+  commit burst said "~20min" and the next, idle one, said "~9h" — the
+  operator saw a number swinging between optimistic and pessimistic and
+  trusted neither. Now it is an EMA (alpha 0.3, ~3 windows to settle)
+  over the windows that saw progress, it needs two windows before it
+  shows anything, and while work remains but the rate is untrustworthy
+  or zero it prints **TBD** rather than nothing — an honest "not yet"
+  is a value; a blank is indistinguishable from "done". Same rule as
+  `stats.eta_seconds`: never a number the page cannot stand behind.
+- **A statistic the reader cannot act on is noise, not transparency.**
+  The Network page listed the transfer manager's four priority classes
+  per direction — "interactive 0 · delta 0 · backfill 0 · seeding 0" —
+  which answered a scheduler's question, not an operator's. Replaced by
+  two totals and the download split by collection; the classes stay in
+  the API payload for tests.
+
+## Conventions
+
+- Python 3.12, full type hints, pytest. **Every task ships tests.**
+- Tests run in Docker (`docker run --rm -v "$PWD:/srv" -w /srv louise-rag:dev
+  python -m pytest tests/ -q`); there is no local interpreter assumption.
+- New dependencies, schema changes beyond the doc, or wire-format changes:
+  **ask first.**
+- Config tiers: env = identity; TOML files = desired state; DB = runtime
+  overrides that do not survive restart. Never write desired state to the DB.
+- Secrets by filesystem path only — never in env values, config values, logs
+  or error messages.

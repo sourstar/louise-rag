@@ -167,6 +167,11 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         # whatever vectors exist. With no table, embeddings.search returns []
         # and an unreachable endpoint degrades via the except below.
         t0 = time.time()
+        # A5: claim the encoder before using it. The worker reads this
+        # between documents and stands its own embedding down, so a query
+        # waits for at most the document already in flight instead of
+        # queueing behind a whole backfill batch (db.claim_query_priority).
+        db.claim_query_priority(con, getattr(collection, "name", "") or "")
         try:
             lists.append(embeddings.search(query, k=max(k, 20), collection=collection))
         except Exception as e:
@@ -367,7 +372,10 @@ ANSWER_SYSTEM = (
     "facts, not ranked evidence — use them but do not cite them with [n]."
 )
 
-def build_answer_messages(query: str, result: dict) -> list[dict]:
+def build_answer_messages(query: str, result: dict, answer_lang: str | None = None) -> list[dict]:
+    """`answer_lang` (an ISO code, STATUS 5j "show results in"): the model
+    answers in that language directly — cheaper than translating the
+    answer afterwards, and the [n] citations stay aligned."""
     blocks = []
     for fact in result.get("facts", []):
         label = fact.get("label") or fact["entity_id"]
@@ -389,7 +397,12 @@ def build_answer_messages(query: str, result: dict) -> list[dict]:
                         for c in result["catalog"][:8])
         blocks.append("[catalog matches]\n" + cat)
     context = "\n\n---\n\n".join(blocks) if blocks else "(no sources found)"
+    system = ANSWER_SYSTEM
+    if answer_lang:
+        system += (f" Write your whole answer in the language with ISO code "
+                   f"'{answer_lang}', whatever language the question or the "
+                   f"sources are in.")
     return [
-        {"role": "system", "content": ANSWER_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {query}"},
     ]

@@ -1,6 +1,6 @@
 """Declarative acquisition specs — the shape a CorpusSource's origin(s)
 declare, consumed by the generic engine (app/acquire/engine.py). See
-docs/architecture-v2.md §5.1.
+docs/notes/architecture-v2.md §5.1.
 
 No I/O here — pure data, mirroring app/plugins/base.py's own rule.
 """
@@ -28,6 +28,9 @@ class RemoteFile:
     size: int | None = None
     mtime: int | None = None
     checksum: str | None = None   # rare: inline checksum from the listing itself
+    # classified by the engine after filtering: True = an opted-in EXTRA
+    # format (local-only; see AcquisitionSpec.extras), never Louise data
+    extra: bool = False
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,32 @@ class Filter:
 
 @dataclass(frozen=True)
 class AcquisitionSpec:
+    """Declarative acquisition for one plugin (a NEW PLUGIN ships one of
+    these, or none if its corpus is always hand-populated).
+
+    LISTING CONTRACT (amendment 33): the transport's list_files() must
+    enumerate the origin's COMPLETE listing for the profile — paginate to
+    the end, never truncate, never sample. The engine walks it once per
+    pass (the delta gate needs it) and records the totals as the
+    `acquire_listing` observation; every honest denominator downstream —
+    the Library's fetched counter, the Stats page's files/bytes-left and
+    fetch ETA — reads that record, because fetch_files itself streams (a
+    row per file as the pass processes it) and mid-pass shows done==total
+    at every instant. A transport that cannot enumerate cheaply must still
+    enumerate fully; a source that cannot be listed at all needs
+    endpoint.static_files or snapshot_files instead.
+
+    UNITS CONTRACT: "fetched" must be comparable with parsed/indexed —
+    documents, wherever the layout makes them countable. `layout` drives
+    it: "one-dir-per-doc" derives document totals from the listing (one
+    distinct top directory = one document) and the Library reports
+    documents with the file count in parentheses; container layouts
+    ("container-files", "single-file") CANNOT know document counts before
+    unpacking, so the card labels the count "compressed containers" and
+    the parsed/indexed rows carry the document truth as each archive is
+    unpacked. A new plugin whose origin publishes a total document count
+    somewhere machine-readable should surface it (a future
+    `docs_total_hint`); never present archive counts as documents."""
     source_id: str                        # ties to CorpusSource.source_id / Collection.plugin
     transport: Transport
     endpoints: tuple[Endpoint, ...]
@@ -91,6 +120,20 @@ class AcquisitionSpec:
     delta: DeltaSpec = field(default_factory=lambda: DeltaSpec(mode="full-resync"))
     etiquette: RateLimit = field(default_factory=RateLimit)
     profiles: dict[str, Filter] = field(default_factory=dict)
+    # MIRRORED sources (several endpoints): the relative path of a SMALL
+    # file every structurally-correct mirror must serve — the structure
+    # probe AND the benchmark unit (app/acquire/mirrors.py). A mirror that
+    # cannot serve it at this exact path carries a different layout and is
+    # excluded from ranking. None = single endpoint or no mirror logic.
+    probe_file: str | None = None
+    # EXTRA formats the origin offers beyond what Louise needs (gutenberg:
+    # epub files). POLICY — exchange only the data that fulfils Louise's
+    # purpose: extras are a LOCAL convenience download from the corpus
+    # source, opted into per collection (TOML `extras = [...]`), and are
+    # NEVER part of the peer-to-peer exchange — not published in corpus
+    # torrents, not in snapshot manifests, not possession material. The
+    # Library counts them separately ("+ e/E"); the Help page explains.
+    extras: dict[str, Filter] = field(default_factory=dict)
     # How a source's profiles relate to one another:
     #
     #   "incremental" — demo ⊂ starter ⊂ full. Growing means a strictly

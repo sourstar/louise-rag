@@ -12,7 +12,6 @@ Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
 import bz2
 import hashlib
 import re
-import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -37,6 +36,42 @@ def split_locator(locator: str) -> tuple[Path, int, int]:
     return Path(path2), int(start), int(tail)
 
 
+# One-slot stream cache. A multistream chunk holds ~100 pages, and every
+# stage walks pages in dump order (discovery order = index order = stream
+# order; `pack build` orders by page id, which follows it closely), so the
+# next fetch is almost always in the stream just decompressed. Without
+# this every page paid its stream's decompression + parse (~1 MB, tens of
+# ms) — 100x the work. Keyed on the exact byte range; locked because the
+# parallel embed stage fetches from threads.
+import threading
+
+_stream_lock = threading.Lock()
+_stream_cache: dict = {}        # (dump, start, end) -> {page_id: serialised page bytes}
+
+
+def _stream_pages(dump: Path, start: int, end: int) -> dict[str, bytes]:
+    key = (str(dump), start, end)
+    with _stream_lock:
+        hit = _stream_cache.get(key)
+        if hit is not None:
+            return hit
+    with open(dump, "rb") as f:
+        f.seek(start)
+        blob = f.read((end - start) if end else -1)
+    xml = bz2.decompress(blob).decode("utf-8", errors="replace")
+    # a stream is a sequence of <page> elements with no root
+    root = ET.fromstring(f"<pages>{xml}</pages>")
+    pages: dict[str, bytes] = {}
+    for page in root:
+        pid = page.findtext("id")
+        if pid:
+            pages[pid] = ET.tostring(page, encoding="unicode").encode("utf-8")
+    with _stream_lock:
+        _stream_cache.clear()           # one slot: streams are read sequentially
+        _stream_cache[key] = pages
+    return pages
+
+
 def _lang_of(dump_name: str) -> str:
     wiki = dump_name.split("-")[0]          # enwiki / simplewiki / itwiki
     prefix = wiki[:-4] if wiki.endswith("wiki") else wiki
@@ -56,8 +91,7 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
-        scan = cursor.load(state.state_dir, self.source_id)
-        started_ns = time.time_ns()   # see cursor.mark_if_settled
+        progress = cursor.Progress(state, self.source_id)
         for dump in sorted(root.rglob(f"*{_DUMP_SUFFIX}")):
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
@@ -65,7 +99,7 @@ class WikipediaSource:
                              locator=str(dump), scope="container",
                              error=f"multistream index missing for {dump.name}")
                 continue
-            if cursor.unchanged(scan, dump, root) and cursor.unchanged(scan, index, root):
+            if progress.unchanged(dump) and progress.unchanged(index):
                 continue     # already enumerated at this (mtime, size)
             st = dump.stat()
             lang = _lang_of(dump.name)
@@ -97,9 +131,11 @@ class WikipediaSource:
                 continue
             if pending:
                 yield from self._flush(pending, 0, dump, st, lang)
-            cursor.mark_if_settled(scan, dump, started_ns, root)
-            cursor.mark_if_settled(scan, index, started_ns, root)
-        cursor.save(state.state_dir, self.source_id, scan)
+            # both files staged together, recorded once the dump's refs are
+            # committed (cursor.Progress) — an interrupted scan resumes here
+            progress.stage(dump)
+            progress.stage(index)
+        progress.flush()
 
     def _flush(self, pending, end_offset, dump, st, lang):
         for offset, page_id, title in pending:
@@ -111,20 +147,13 @@ class WikipediaSource:
 
     def fetch(self, ref: DocRef) -> RawDoc:
         dump, start, end = split_locator(ref.locator)
-        with open(dump, "rb") as f:
-            f.seek(start)
-            blob = f.read((end - start) if end else -1)
-        xml = bz2.decompress(blob).decode("utf-8", errors="replace")
-        # a stream is a sequence of <page> elements with no root
-        root = ET.fromstring(f"<pages>{xml}</pages>")
-        for page in root:
-            pid = page.findtext("id")
-            if pid == ref.native_id:
-                data = ET.tostring(page, encoding="unicode").encode("utf-8")
-                digest = hashlib.blake2b(data, digest_size=16).hexdigest()
-                return RawDoc(ref=ref, raw_hash=digest, data=data)
-        raise RuntimeError(f"page {ref.native_id} not found in its stream "
-                            f"({ref.locator})")
+        pages = _stream_pages(dump, start, end)
+        data = pages.get(ref.native_id)
+        if data is None:
+            raise RuntimeError(f"page {ref.native_id} not found in its stream "
+                                f"({ref.locator})")
+        digest = hashlib.blake2b(data, digest_size=16).hexdigest()
+        return RawDoc(ref=ref, raw_hash=digest, data=data)
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         page = ET.fromstring(raw.data.decode("utf-8"))
@@ -143,7 +172,9 @@ class WikipediaSource:
             date=None,
             subjects=[],
             keys=[],
-            extra={},
+            # the revision's timestamp — informative in a dated snapshot (a
+            # dump IS the snapshot: pack build --until cuts on the dump date)
+            extra={"revised": (page.findtext("revision/timestamp") or "")[:10] or None},
             sections=sections,
             raw_hash=raw.raw_hash,
         )

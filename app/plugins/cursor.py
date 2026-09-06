@@ -14,6 +14,7 @@ nothing to un-know. The cursor lives beside the manifest, so wiping a
 collection's data directory wipes its cursor with it.
 """
 import json
+import time
 from pathlib import Path
 
 
@@ -124,6 +125,71 @@ def save(state_dir: Path | None, plugin: str, cursor: dict) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cursor), encoding="utf-8")
     tmp.replace(path)
+
+
+class Progress:
+    """Incremental, commit-safe cursor persistence for a streaming scan.
+
+    Every plugin used to save its cursor once, at the END of discover(). A
+    scan interrupted by a restart (worker restarts are frequent) therefore
+    lost all of its progress and re-enumerated every container next time —
+    observed live as wikivec spending 18 minutes per restart re-walking
+    parquet shards whose documents were already in the manifest.
+
+    Here a container is STAGED when the plugin finishes yielding it and
+    PROMOTED into the saved cursor only once the orchestrator reports
+    (DiscoverState.committed) that every ref up to and including that
+    container's last one is durably in the manifest. The cursor can never
+    get ahead of the manifest: after any interruption the next scan skips
+    exactly the containers whose rows are committed, and re-enumerates the
+    one that was in flight. Promotion happens on the orchestrator's commit
+    hook (DiscoverState.on_commit), which it calls after every commit — so
+    the cursor file is rewritten once per commit batch, not per ref.
+
+    The settled-time guard (mark_if_settled) is applied at staging, with
+    the signature captured THEN: a container that changes between staging
+    and promotion is recorded with the signature the scan actually read.
+    """
+
+    def __init__(self, state, plugin: str) -> None:
+        self.state = state
+        self.plugin = plugin
+        self.cursor = load(state.state_dir, plugin)
+        self.started_ns = time.time_ns()
+        self._staged: list[tuple[int, Path, list]] = []
+        if state.on_commit is not None:
+            state.on_commit.append(self.flush)
+
+    def unchanged(self, path: Path) -> bool:
+        return unchanged(self.cursor, path, self.state.corpus_root)
+
+    def stage(self, path: Path, complete_at: int | None = None) -> None:
+        """The plugin has yielded every ref of `path`. `complete_at` is the
+        orchestrator's count of refs received when that happened — by
+        default DiscoverState.received, which is exact when called right
+        after the container's last yield resumed (the orchestrator has
+        then taken exactly that many refs)."""
+        sig = signature(path)
+        if sig[0] >= self.started_ns:
+            return                      # modified during the scan: re-examine next time
+        at = self.state.received if complete_at is None else complete_at
+        self._staged.append((at, path, sig))
+
+    def flush(self) -> None:
+        """Promote every staged container whose last ref is committed, and
+        save if anything was promoted. Called on the orchestrator's commit
+        hook; safe to call any time."""
+        committed = self.state.committed
+        keep, promoted = [], False
+        for at, path, sig in self._staged:
+            if at <= committed:
+                _record(self.cursor, path, self.state.corpus_root, sig)
+                promoted = True
+            else:
+                keep.append((at, path, sig))
+        self._staged = keep
+        if promoted:
+            save(self.state.state_dir, self.plugin, self.cursor)
 
 
 def clear(state_dir: Path | None, plugin: str) -> bool:

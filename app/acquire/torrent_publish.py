@@ -16,9 +16,10 @@ publishes both formats in one torrent so v1-only clients still work.
 WHAT IS NOT HERE. No tracker is written into the torrent by default. A
 tracker is a coordination service someone has to run and trust, and the
 platform already has two ways for peers to find each other without one
-(docs/p2p-discovery.md): an explicit peer list, and the DHT once an
+(docs/notes/p2p-discovery.md): an explicit peer list, and the DHT once an
 infohash is known. `--tracker` exists for anyone who wants one anyway.
 """
+import fnmatch
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,9 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
                    trackers: tuple[str, ...] = (),
                    web_seeds: tuple[str, ...] = (),
                    comment: str | None = None,
-                   hybrid: bool = True) -> PublishedTorrent:
+                   hybrid: bool = True,
+                   exclude_patterns: tuple[str, ...] = (),
+                   include_patterns: tuple[str, ...] = ()) -> PublishedTorrent:
     """Hash `corpus_dir` into a .torrent at `out_path`.
 
     Hashing reads every byte, so this is minutes of disk on a large corpus
@@ -72,7 +75,38 @@ def publish_corpus(corpus_dir: Path, out_path: Path, *, name: str | None = None,
         raise TransportError(f"{corpus_dir}: not a directory")
 
     fs = lt.file_storage()
-    lt.add_files(fs, str(corpus_dir))
+    patterns = tuple(exclude_patterns or ())
+
+    # POLICY (spec.extras): peers exchange only the data that fulfils
+    # Louise's purpose. Opted-in extra formats live in the SAME corpus
+    # tree (gutenberg: the epub beside the txt), so publishing the
+    # directory wholesale would ship them — exclude by pattern here, at
+    # the one place corpus bytes become p2p material. HIDDEN entries are
+    # never published either: a plugin's derived caches live in a hidden
+    # directory beside the archive (pubmed's `.pack/`), are rebuilt from
+    # it, and must not become p2p material or change a snapshot's identity.
+    # `include_patterns` (STATUS 5h) publishes a SUBSET of the tree under
+    # the SAME root — e.g. one language of the pre-embedded corpus
+    # ("*/data/en/*" under root `data`), so a peer's files land in the
+    # layout the plugin expects and several such torrents combine.
+    includes = tuple(include_patterns or ())
+
+    def _include(path: str) -> bool:
+        rel = Path(path).as_posix()
+        if _hidden(rel):
+            return False
+        # libtorrent asks about DIRECTORIES too, and a False on one prunes
+        # its whole subtree — so a directory passes on the hidden check
+        # alone; include patterns judge files
+        if Path(path).is_dir():
+            return True
+        base = rel.rsplit("/", 1)[-1]
+        if includes and not any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat)
+                                for pat in includes):
+            return False
+        return not any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat)
+                       for pat in patterns)
+    lt.add_files(fs, str(corpus_dir), _include)
     if fs.num_files() == 0:
         raise TransportError(f"{corpus_dir}: nothing to publish (no files)")
 
@@ -161,8 +195,14 @@ def corpus_digest(corpus_dir: Path) -> str:
     are for."""
     h = hashlib.blake2b(digest_size=16)
     for p in sorted(Path(corpus_dir).rglob("*")):
-        if p.is_file():
+        rel = p.relative_to(corpus_dir).as_posix()
+        if p.is_file() and not _hidden(rel):
             st = p.stat()
-            h.update(f"{p.relative_to(corpus_dir)}|{st.st_size}|{st.st_mtime_ns}\n"
-                     .encode())
+            h.update(f"{rel}|{st.st_size}|{st.st_mtime_ns}\n".encode())
     return h.hexdigest()
+
+
+def _hidden(rel_posix: str) -> bool:
+    """Any path component starting with '.': derived caches (pubmed's
+    `.pack/`), editor droppings — never corpus material."""
+    return any(part.startswith(".") for part in rel_posix.split("/") if part)

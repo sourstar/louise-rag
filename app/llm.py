@@ -65,3 +65,38 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
         return {k: str(v) for k, v in obj.items() if isinstance(v, str)}
     except Exception:
         return {}
+
+
+def translate_texts(texts: list[str], lang: str) -> list[str]:
+    """Translate several passages into ISO language `lang` in ONE prompt
+    (STATUS 5j: the Ask page's "show results in"). Returns one string per
+    input, or [] when the model failed — the caller then shows the
+    originals. Numbered JSON in and out keeps passages from bleeding into
+    each other; a passage the model dropped comes back as its original."""
+    items = [t for t in texts]
+    if not items or not lang:
+        return []
+    numbered = "\n\n".join(f"[{i + 1}] {t}" for i, t in enumerate(items))
+    prompt = (
+        f"Translate each numbered passage below into the language with ISO code "
+        f"'{lang}'. Keep numbers, names, citations like [3] and formatting as they "
+        f"are; do not summarise, do not add commentary.\n\n{numbered}\n\n"
+        'Reply with ONLY a JSON object mapping each number to its translation, '
+        'e.g. {"1": "...", "2": "..."}.'
+    )
+    try:
+        raw = chat([{"role": "user", "content": prompt}], temperature=0.0,
+                   max_tokens=max(600, 2 * sum(len(t) for t in items) // 3 + 200),
+                   num_ctx=16384)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            raw = raw[raw.find("{"):]
+        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+    except Exception:
+        return []
+    out = []
+    for i, original in enumerate(items):
+        value = obj.get(str(i + 1))
+        out.append(value if isinstance(value, str) and value.strip() else original)
+    return out

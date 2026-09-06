@@ -24,7 +24,7 @@ manifest rows rebuild refs with nothing but the locator (plugin_io).
 import hashlib
 import json
 import threading
-import time
+from collections import OrderedDict
 from pathlib import Path
 
 from .. import cursor
@@ -33,28 +33,77 @@ from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability
 _SEG_SEP = "|"
 _LOCATOR_SEP = "::"
 
-# One-slot shard cache for fetch(): the worker walks documents in native_id
-# order, which is shard order, so consecutive fetches hit the same shard —
-# without this, EVERY per-article fetch re-parses a ~437 MB parquet file
-# (~95k articles per shard would make rdf/fts unusable; pubmed hit the same
-# wall and grew the same cache). Only the four text columns are held, never
-# `embedding`. Lock because the parallel embed stage fetches from threads.
-_shard_cache: dict = {}
+# ROW-GROUP reads for fetch(). The first cut cached one whole shard (the
+# four text columns of a ~437 MB parquet, ~10 s to read) because the worker
+# walks documents in shard order; with the PARSE POOL (amendment 47) a
+# batch's documents are fetched by several processes, and a whole-shard
+# cache per process would multiply that read and hold N x hundreds of MB.
+# A locator names the article's rows, so only the row groups holding them
+# are read — a few MB — and kept in a small LRU per process. Lock because
+# the parallel embed stage fetches from threads.
 _cache_lock = threading.Lock()
+_layouts: OrderedDict = OrderedDict()     # path -> (mtime, [row group start offsets], total)
+_groups: OrderedDict = OrderedDict()      # (path, group) -> (mtime, table)
+_MAX_LAYOUTS = 64
+_MAX_GROUPS = 8
 
 
-def _shard_rows(path: str) -> "object":
+def _layout(path: str) -> tuple[list[int], int]:
     import pyarrow.parquet as pq
     mtime = Path(path).stat().st_mtime_ns
     with _cache_lock:
-        hit = _shard_cache.get(path)
+        hit = _layouts.get(path)
         if hit is not None and hit[0] == mtime:
-            return hit[1]
-    table = pq.read_table(path, columns=["id", "url", "title", "text"])
+            _layouts.move_to_end(path)
+            return hit[1], hit[2]
+    meta = pq.ParquetFile(path).metadata
+    starts, off = [], 0
+    for g in range(meta.num_row_groups):
+        starts.append(off)
+        off += meta.row_group(g).num_rows
     with _cache_lock:
-        _shard_cache.clear()            # one slot: shards read sequentially
-        _shard_cache[path] = (mtime, table)
+        _layouts[path] = (mtime, starts, off)
+        _layouts.move_to_end(path)
+        while len(_layouts) > _MAX_LAYOUTS:
+            _layouts.popitem(last=False)
+    return starts, off
+
+
+def _group_table(path: str, g: int):
+    import pyarrow.parquet as pq
+    mtime = Path(path).stat().st_mtime_ns
+    key = (path, g)
+    with _cache_lock:
+        hit = _groups.get(key)
+        if hit is not None and hit[0] == mtime:
+            _groups.move_to_end(key)
+            return hit[1]
+    table = pq.ParquetFile(path).read_row_group(g, columns=["id", "url", "title", "text"])
+    with _cache_lock:
+        _groups[key] = (mtime, table)
+        _groups.move_to_end(key)
+        while len(_groups) > _MAX_GROUPS:
+            _groups.popitem(last=False)
     return table
+
+
+def _read_rows(path: str, start: int, end: int) -> list[dict]:
+    """Rows [start, end) of a shard as dicts, from their row groups only."""
+    starts, total = _layout(path)
+    end = min(end, total)
+    out: list[dict] = []
+    for g, g_start in enumerate(starts):
+        g_end = starts[g + 1] if g + 1 < len(starts) else total
+        if g_end <= start or g_start >= end:
+            continue
+        table = _group_table(path, g)
+        lo, hi = max(start, g_start) - g_start, min(end, g_end) - g_start
+        for i in range(lo, hi):
+            out.append({"id": table.column("id")[i].as_py(),
+                        "url": table.column("url")[i].as_py(),
+                        "title": table.column("title")[i].as_py(),
+                        "text": table.column("text")[i].as_py()})
+    return out
 
 # native_id must be int-castable and unique across languages, so it encodes
 # (language, article id) as ordinal * 10^10 + article_id. FROZEN: these
@@ -100,6 +149,67 @@ def _lang_of_shard(rel: Path) -> str | None:
     return None
 
 
+def _tail_carry(pq, prev: Path, pf) -> dict | None:
+    """The carry a scan of `prev` would have left behind IF its last article
+    continues into the shard open as `pf`: that article's rows at the tail
+    of `prev`, as one segment. None when the two shards share no article.
+    Reads only the first row group of `pf` and the tail row groups of
+    `prev` — never a whole shard."""
+    if pf.num_row_groups == 0:
+        return None
+    head = pf.read_row_group(0, columns=["id"])
+    if head.num_rows == 0:
+        return None
+    first_article, _ = split_row_id(head.column(0)[0].as_py())
+    ppf = pq.ParquetFile(prev)
+    n_groups = ppf.num_row_groups
+    if n_groups == 0:
+        return None
+    # walk the previous shard's row groups backwards while the article holds
+    group_offsets = []
+    off = 0
+    for g in range(n_groups):
+        group_offsets.append(off)
+        off += ppf.metadata.row_group(g).num_rows
+    start: int | None = None
+    title = ""
+    for g in range(n_groups - 1, -1, -1):
+        tbl = ppf.read_row_group(g, columns=["id", "title"])
+        ids = tbl.column(0).to_pylist()
+        k = len(ids)
+        while k > 0 and split_row_id(ids[k - 1])[0] == first_article:
+            k -= 1
+        if k < len(ids):
+            start = group_offsets[g] + k
+            title = tbl.column(1)[k].as_py() or ""
+        if k > 0:
+            break                       # a different article precedes: done
+    if start is None:
+        return None                     # prev ends with another article
+    st = prev.stat()
+    return {"article": first_article, "title": title,
+            "segments": [[str(prev), start, off]], "rows": off - start,
+            "mtime": int(st.st_mtime)}
+
+
+def _head_continuation(pq, nxt: Path, article: str) -> int:
+    """How many leading rows of `nxt` belong to `article` — the continuation
+    a scan of `nxt` would have appended to the carry. 0 when its first
+    article is another. Reads row groups from the front only as far as the
+    article runs."""
+    pf = pq.ParquetFile(nxt)
+    n = 0
+    for g in range(pf.num_row_groups):
+        ids = pf.read_row_group(g, columns=["id"]).column(0).to_pylist()
+        k = 0
+        while k < len(ids) and split_row_id(ids[k])[0] == article:
+            k += 1
+        n += k
+        if k < len(ids):
+            break
+    return n
+
+
 class EmbeddedSource:
     source_id = "embedded"
     # The dataset repo's metadata license does not relicense the CONTENT:
@@ -118,12 +228,28 @@ class EmbeddedSource:
         if not root.is_dir():
             return
         shards = sorted(p for p in root.rglob("*.parquet") if p.is_file())
-        scan = cursor.load(state.state_dir, self.source_id)
-        started_ns = time.time_ns()   # see cursor.mark_if_settled
+        progress = cursor.Progress(state, self.source_id)
         # carry the last article of a shard into the next shard's scan so a
         # boundary-straddling article becomes ONE ref with two segments
         pending: dict | None = None
         pending_lang: str | None = None
+        # The shards whose last article is `pending` (one, or more when
+        # empty shards sit between). They are staged into the cursor only
+        # once that article has been YIELDED (cursor.Progress): staging a
+        # shard at the end of its own loop would let an interrupted scan
+        # remember it as done while its last article — yielded only when the
+        # next shard starts — never reached the manifest.
+        deferred: list[Path] = []
+        prev: Path | None = None          # previous shard of the same language
+        prev_skipped = False
+
+        def release(ref_pending, ref_lang):
+            """Yield the carried article, then stage the shards it came from."""
+            yield self._ref(ref_pending, ref_lang)
+            for done in deferred:
+                progress.stage(done)
+            deferred.clear()
+
         for shard in shards:
             rel = shard.relative_to(root)
             lang = _lang_of_shard(rel)
@@ -132,17 +258,41 @@ class EmbeddedSource:
                              locator=str(shard), scope="container",
                              error=f"unrecognized shard path (want data/<lang>/*.parquet): {rel}")
                 continue
-            if cursor.unchanged(scan, shard, root):
-                if pending is not None:
-                    yield self._ref(pending, pending_lang)
-                    pending, pending_lang = None, None
-                continue
             if pending is not None and pending_lang != lang:
-                yield self._ref(pending, pending_lang)
+                yield from release(pending, pending_lang)
                 pending, pending_lang = None, None
+            if progress.unchanged(shard):
+                if pending is not None:
+                    # The mirror of the tail-carry case below: the carry may
+                    # continue INTO this skipped shard. Complete it from the
+                    # shard's head rows, or the straddler would be released
+                    # with only its first segment — and, its locator and
+                    # size now differing, re-processed as "changed" every
+                    # time the two shards are scanned in different passes.
+                    n = _head_continuation(pq, shard, pending["article"])
+                    if n:
+                        pending["segments"].append([str(shard), 0, n])
+                        pending["rows"] += n
+                        pending["mtime"] = int(shard.stat().st_mtime)
+                    yield from release(pending, pending_lang)
+                    pending, pending_lang = None, None
+                prev, prev_skipped = shard, True
+                continue
             st = shard.stat()
             try:
                 pf = pq.ParquetFile(shard)
+                if pending is None and prev is not None and prev_skipped \
+                        and _lang_of_shard(prev.relative_to(root)) == lang:
+                    # The previous shard was skipped as unchanged, so its last
+                    # article was never carried here. If this shard's first
+                    # rows continue it, rebuild the carry from the previous
+                    # shard's tail — otherwise the straddler would be minted
+                    # (or "relocated") with only its second segment, silently
+                    # losing its first. Reachable whenever two adjacent shards
+                    # are scanned in different passes: an acquisition landing
+                    # one shard mid-scan, or a scan resumed after a restart.
+                    pending = _tail_carry(pq, prev, pf)
+                    pending_lang = lang if pending is not None else None
                 row = 0
                 for batch in pf.iter_batches(columns=["id", "title"], batch_size=4096):
                     ids = batch.column(0).to_pylist()
@@ -155,27 +305,37 @@ class EmbeddedSource:
                                 seg[2] = row + 1
                             else:
                                 pending["segments"].append([str(shard), row, row + 1])
-                            pending["mtime"], pending["size"] = int(st.st_mtime), st.st_size
+                            pending["rows"] += 1
+                            pending["mtime"] = int(st.st_mtime)
                         else:
                             if pending is not None:
-                                yield self._ref(pending, pending_lang)
+                                yield from release(pending, pending_lang)
                             pending = {"article": article, "title": title or "",
                                        "segments": [[str(shard), row, row + 1]],
-                                       "mtime": int(st.st_mtime), "size": st.st_size}
+                                       "rows": 1, "mtime": int(st.st_mtime)}
                             pending_lang = lang
                         row += 1
             except Exception as e:  # noqa: BLE001 — a truncated/corrupt shard
                 # costs one error ref, never the scan (pubmed/wikipedia rule)
                 pending, pending_lang = None, None
+                deferred.clear()         # their carry is gone with it: re-examine
                 yield DocRef(source_id=self.source_id, native_id=shard.name,
                              locator=str(shard), scope="container",
                              error=f"unreadable shard {rel}: "
                                     f"{type(e).__name__}: {e}"[:200])
+                prev, prev_skipped = shard, False
                 continue
-            cursor.mark_if_settled(scan, shard, started_ns, root)
+            if pending is None:
+                progress.stage(shard)    # nothing carried out of it
+            else:
+                deferred.append(shard)
+            prev, prev_skipped = shard, False
         if pending is not None:
-            yield self._ref(pending, pending_lang)
-        cursor.save(state.state_dir, self.source_id, scan)
+            yield from release(pending, pending_lang)
+        for done in deferred:
+            progress.stage(done)
+        deferred.clear()
+        progress.flush()
 
     def _ref(self, pending: dict, lang: str) -> DocRef:
         try:
@@ -184,24 +344,24 @@ class EmbeddedSource:
             return DocRef(source_id=self.source_id, native_id=pending["article"],
                           locator=_join_segments(pending["segments"]),
                           error=f"malformed article id {pending['article']!r}")
+        # size = the article's ROW COUNT, not its shard's byte size: the
+        # change gate is (mtime, size), and a shard's size says nothing
+        # about one article in it. A straddler that gains a segment (its
+        # continuation shard arriving later) changes row count and is
+        # re-hashed and re-processed; with the shard size it could read as
+        # a mere relocation — same mtime, same size, new path — and keep
+        # stale stage flags over changed content.
         return DocRef(
             source_id=self.source_id, native_id=str(native),
             locator=_join_segments(pending["segments"]),
-            mtime=pending["mtime"], size=pending["size"],
+            mtime=pending["mtime"], size=pending["rows"],
             extra={"title": pending["title"], "lang": lang,
                    "article": pending["article"]})
 
     def fetch(self, ref: DocRef) -> RawDoc:
         rows: list[dict] = []
         for path, start, end in split_locator(ref.locator):
-            table = _shard_rows(path)
-            for i in range(start, min(end, table.num_rows)):
-                rows.append({
-                    "id": table.column("id")[i].as_py(),
-                    "url": table.column("url")[i].as_py(),
-                    "title": table.column("title")[i].as_py(),
-                    "text": table.column("text")[i].as_py(),
-                })
+            rows.extend(_read_rows(path, start, end))
         data = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")
         digest = hashlib.blake2b(data, digest_size=16).hexdigest()
         return RawDoc(ref=ref, raw_hash=digest, data=data)

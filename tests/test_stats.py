@@ -133,35 +133,29 @@ def test_eta_divides_remaining_by_rate():
     assert stats.eta_seconds(1000, 10) == pytest.approx(100.0)
 
 
-def test_durations_are_coarse_on_purpose():
-    """An ETA from a rolling sample is accurate to a factor, not a minute."""
-    assert web._human_duration(None) == "—"
-    assert web._human_duration(45) == "45s"
-    assert web._human_duration(600) == "10 min"
-    assert web._human_duration(3600 * 5) == "5.0 h"
-    assert web._human_duration(3600 * 24 * 10) == "10.0 days"
-    assert "years" in web._human_duration(3600 * 24 * 900)
+def test_etas_are_coarse_and_absent_when_unknown():
+    """An ETA from a rolling sample is accurate to a factor, not a minute —
+    and an unknowable one is NOTHING on the card, never a placeholder
+    (the Stats page is gone; the Library bars carry these)."""
+    assert web._human_eta(None) is None
+    assert web._human_eta(0) is None
+    assert web._human_eta(45) == "~45s"
+    assert web._human_eta(600) == "~10min"
+    assert web._human_eta(3600 * 5) == "~5h"
+    assert web._human_eta(3600 * 24 * 10) == "~10d"
+    assert web._human_eta(3600 * 24 * 900).endswith("y")
 
 
-# ---------------- the page ----------------
-
-def test_the_page_renders_with_no_measurements(client):
-    r = client.get("/admin/stats")
-    assert r.status_code == 200
-    assert "no measurements yet" in r.text
-    assert "gutenberg" in r.text
+def test_number_grouping_uses_dots():
+    """"+377,217/h" was read as 377.217/h (comma = decimal separator to
+    half the world) and computed into an 11-year ETA from a 4-day one."""
+    assert web.TEMPLATES.env.filters["num"](4020578) == "4.020.578"
+    assert web.TEMPLATES.env.filters["num"](None) == ""
 
 
-def test_the_page_shows_published_worker_measurements(client, isolated_config):
-    r = stats.recorder()
-    for _ in range(5):
-        r.record_embed("gutenberg", seconds=1.0, docs=1, chunks=2, chars=6000)
-    db.publish_worker_stats(db.connect(), r.snapshot())
-
-    page = client.get("/admin/stats").text
-    assert "measuring" in page
-    assert "6000" in page or "6,000" in page.replace(",", ""), \
-        "the measured chars/s must reach the page"
+def test_the_stats_page_is_gone(client):
+    assert client.get("/admin/stats").status_code == 404
+    assert 'href="/admin/stats"' not in client.get("/admin/library").text
 
 
 def test_stale_measurements_are_dropped(client, isolated_config):
@@ -174,16 +168,6 @@ def test_stale_measurements_are_dropped(client, isolated_config):
     payload, age = db.read_worker_stats(con)
     assert payload is None
     assert age > db.WORKER_STATS_MAX_AGE_S
-
-
-def test_the_nav_offers_the_tab(client):
-    assert 'href="/admin/stats"' in client.get("/admin/library").text
-
-
-def test_the_page_requires_admin(client):
-    del client.headers["X-Admin-Token"]
-    r = client.get("/admin/stats", headers={"Accept": "application/json"})
-    assert r.status_code == 401
 
 
 # ---------------- "0 chunks left" must not mean two different things ------
@@ -205,11 +189,9 @@ def test_unindexed_documents_are_reported_as_uncounted_not_as_zero(
                 "('g:2','g','2','/x',1,1,1,0,40)")         # counted: 40 chunks
     web.invalidate_counts()
 
-    row = web._stats_row(col, {})
-    assert row["embed"]["chunks_pending"] == 40
-    assert row["embed"]["docs_unindexed"] == 1
-    assert row["embed"]["eta_is_floor"] is True, \
-        "an ETA over partly-unmeasured work is a floor, not an estimate"
+    counts, _ = web._document_counts(col)
+    assert counts["chunks_pending"] == 40
+    assert counts["docs_unindexed"] == 1
 
 
 def test_blocked_documents_are_named_rather_than_silently_dropped(
@@ -224,23 +206,10 @@ def test_blocked_documents_are_named_rather_than_silently_dropped(
                 "('g:3','g','3','/x',1,1,1,0,99,'embed: FileNotFoundError')")
     web.invalidate_counts()
 
-    row = web._stats_row(col, {})
-    assert row["embed"]["chunks_pending"] == 0, "blocked work is not pending work"
-    assert row["embed"]["blocked"] == 1, "but it must still be visible"
+    counts, _ = web._document_counts(col)
+    assert counts["chunks_pending"] == 0, "blocked work is not pending work"
+    assert counts["blocked"] == 1, "but it must still be visible"
 
-
-def test_the_table_shows_chunks_per_second(client, isolated_config):
-    """Asked for directly: chunks/s is the intuitive figure. chars/s stays
-    because it is the only one comparable across collections."""
-    r = stats.recorder()
-    for _ in range(5):
-        r.record_embed("gutenberg", seconds=2.0, docs=1, chunks=4, chars=8000)
-    db.publish_worker_stats(db.connect(), r.snapshot())
-
-    page = client.get("/admin/stats").text
-    assert "<th>chunks/s</th>" in page
-    assert "ms per chunk" not in page
-    assert "<th>chars/s</th>" in page
 
 
 # ---------------- the counts cache ----------------

@@ -32,7 +32,12 @@ def _local_embedder(rows):
     """Stand-in for this node's embed endpoint: reproduces the bundle's own
     vectors, i.e. the same model."""
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
-    return lambda batch: [by_text[t] for t in batch]
+    dim = len(next(iter(by_text.values()))) if by_text else 4
+    # a real encoder answers ANY text (the importer's liveness probe among
+    # them); unknown texts get a fixed unit vector so only the bundle's own
+    # chunks reproduce exactly
+    probe = np.zeros(dim, dtype=np.float32); probe[0] = 1.0
+    return lambda batch: [by_text.get(t, probe) for t in batch]
 
 
 def _import(con, collection, path, rows, **kw):
@@ -265,17 +270,44 @@ def test_wrong_space_is_refused(bundle, con, collection, monkeypatch):
     assert not result["ok"] and result["error_class"] == "BundleSpaceMismatch"
 
 
-def test_weak_model_hash_is_refused_but_retryable(bundle, con, collection, monkeypatch):
-    """spaces._validate_one softens on a weak hash, which is right for boot and
-    catastrophic for import: two nodes with different weights behind one Ollama
-    tag produce the SAME weak hash."""
+def test_weak_model_hash_with_a_dead_encoder_is_refused_but_retryable(
+        bundle, con, collection, monkeypatch):
+    """A weak hash (the backend publishes no weight identity, or was
+    unreachable) means the LABEL proves nothing: two nodes with different
+    weights behind one tag hash identically. The proof that matters is the
+    local encoder reproducing the vectors — and with the encoder dead that
+    proof cannot be produced, so refuse, retryably."""
     from app import spaces
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("x" * 16, True))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a, **k: ("x" * 16, True))
     path, _, rows = bundle
-    result = _import(con, collection, path, rows)
+
+    def dead(texts):
+        raise ConnectionError("encoder down")
+    result = _import(con, collection, path, rows, embed_fn=dead)
     assert not result["ok"]
     assert result["error_class"] == "SpaceUnconfirmedError"
     assert result["retryable"] is True
+
+
+def test_weak_model_hash_with_a_live_encoder_is_admitted_on_reproduction(
+        con, collection, producer_key, tmp_path, monkeypatch):
+    """Found live on the first two-node exchange: llama-server has no
+    identity route, so BOTH nodes pin the same space through the same weak
+    hash by construction — and the old rule refused every bundle between
+    them forever. With the encoder live, the sampled re-embed IS the
+    verification (the same test that approved the Vulkan backend): admit
+    on reproduction, never on the label. The producer and the importer
+    share the weak hash here, exactly as the two nodes do."""
+    from app import spaces
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a, **k: ("x" * 16, True))
+    # the pin was taken before the patch; on a real node pin and live agree
+    con.execute("UPDATE space SET space_id=? WHERE id=1",
+                (importer._local_space(con, collection)[0],))
+    rows = seed_document(con, collection, UID, 1, n_chunks=12, seed=1)
+    con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (UID,))
+    exp.export_bundle(con, collection, [UID], tmp_path / "bundle", signing_key=producer_key)
+    result = _import(con, collection, tmp_path / "bundle", rows)   # reproduces -> admitted
+    assert result["ok"], result
 
 
 def test_dim_mismatch_is_refused(bundle, con, collection):

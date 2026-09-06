@@ -65,7 +65,7 @@ def test_pipeline_thread_still_discovers_but_does_no_stage_work(collection,
 
     discovered = []
     monkeypatch.setattr(worker, "_discover",
-                        lambda c, coll, reason: discovered.append(reason))
+                        lambda c, coll, reason, stop=None: discovered.append(reason))
 
     worker._acquire_only.set()
     worker._request_discovery("alpha", "interval")

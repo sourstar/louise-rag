@@ -1,6 +1,6 @@
 """One-time capture of golden retrieval.search() output from *today's
 unmodified* code (before the P0.3 entity/reference layer lands) — the
-degeneration test's regression baseline (docs/architecture-v2.md §4's
+degeneration test's regression baseline (docs/notes/architecture-v2.md §4's
 "no entities found -> plan degenerates to today's pipeline exactly").
 
 Run this ONCE, before any P0.3 code lands, then commit the resulting

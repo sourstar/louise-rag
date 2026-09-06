@@ -7,7 +7,7 @@ and tolerance tau. The tolerance window is also the adversary's perturbation
 budget." This harness measures that window instead of asserting it:
 
     python -m tools.calibrate_space --recorded tests/fixtures/calibration \\
-        --out-json calibration.json --out-report docs/calibration.md
+        --out-json calibration.json --out-report docs/notes/calibration.md
 
     # record synthetic stand-in backends (what the committed fixtures are):
     python -m tools.calibrate_space --synth tests/fixtures/calibration
@@ -68,7 +68,7 @@ def synthesize(out_dir: Path) -> dict:
     the different-model lane is an independent draw. The harness downstream
     treats these exactly as it would real recordings — which makes the
     MACHINERY testable and the committed numbers ILLUSTRATIVE. Real numbers
-    require --live against at least two real endpoints; docs/calibration.md
+    require --live against at least two real endpoints; docs/notes/calibration.md
     says the same thing in bold.
     """
     rng = np.random.default_rng(SEED)
@@ -399,7 +399,7 @@ def write_report(result: dict, backends: dict[str, np.ndarray], path: Path) -> N
         "",
         "```",
         "python -m tools.calibrate_space --recorded tests/fixtures/calibration \\",
-        "    --out-json calibration.json --out-report docs/calibration.md",
+        "    --out-json calibration.json --out-report docs/notes/calibration.md",
         "```",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")

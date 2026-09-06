@@ -1,36 +1,23 @@
-# louise-rag — a P2P RAG platform
+# Louise — knowledge, kept.
 
-A self-hosted, plugin-based RAG platform that grew out of a single-corpus
-Gutenberg app. One node ingests corpora (Project Gutenberg, PubMed,
-Wikipedia, your own plugin), indexes them lexically and densely, and answers
-questions with `[n]` citations — and nodes can **share the expensive part**:
-embedding vectors travel between peers as signed, verifiable bundles, so a
-network of N consumers pays for GPU work roughly once instead of N times.
+Louise is a RAG platform you run yourself, online or off. It comes with
+Wikipedia, Project Gutenberg, PubMed and the genome databases, and any
+other source can be added by implementing a plugin. Copies of a
+collection — the documents and the embeddings both — pass directly
+between the people who have them, so nobody re-does work that's already
+been done, and the original source isn't asked for the same download
+again and again.
 
-Three properties do the heavy lifting:
+Preservation and reliability are two different claims, and one mechanism
+delivers both: the hash that lets peers avoid duplicate downloads is the
+hash that proves a copy is identical to what the publisher released, so
+a collection received from a stranger can be checked against the
+original.
 
-- **Per-collection embedding spaces.** Each collection declares its own
-  encoder (`[embed]` block: endpoint, model, dtype, even a separate query
-  encoder for bi-encoder pairs like MedCPT) and is pinned to it — a node can
-  hold a Qwen3-space book corpus and a MedCPT-space PubMed side by side, and
-  mixing spaces is a refuse-to-boot error, never a silent corruption.
-- **Reuse of published embeddings (genesis import).** If someone already
-  paid the GPU-hours — NCBI's MedCPT vectors for all of PubMed, or any
-  parquet of `(id, vector)` rows — the platform admits it instead of
-  re-embedding: possession-scoped, converted on import, and *proven to be
-  the same function* as the collection's own encoder by sample re-encoding
-  before a single row lands. The flip side is publishing: any collection
-  exports as a signed bundle other nodes (and other projects) can verify.
-- **A behavioral backend gate.** Endpoints drift — a moving Docker tag once
-  silently corrupted 714 books on the reference deployment. Every collection
-  records probe vectors on first use, and the worker refuses to write
-  vectors whenever the live endpoint stops reproducing them.
-
-The design is documented in [`docs/architecture-v2.md`](docs/architecture-v2.md);
-the build order and per-task contracts in
-[`docs/implementation-prompts.md`](docs/implementation-prompts.md); defects and
-spec corrections found during integration in
-[`docs/phase1-integration-notes.md`](docs/phase1-integration-notes.md).
+**Start with [`docs/README.md`](docs/README.md)** — seven documents, read
+in order, from what Louise is to the commands. `docs/notes/` is the
+engineering record behind them: measurements, postmortems, the design
+history; needed to change the code, not to understand or use it.
 
 The app never touches a GPU. All model access is HTTP to your existing
 Ollama/llama.cpp/TEI containers, so VRAM arbitration stays where it already is.
@@ -134,8 +121,9 @@ away from it.
 
 - **Tier 1 — env** (identity/infrastructure, restart to change): paths, ports,
   `OLLAMA_URL`/`EMBED_URL`/`RERANK_URL`, `EMBED_MODEL`, version bumps
-  (`CHUNK_VERSION`…), `ADMIN_TOKEN`, `NODE_KEY_PATH` (path to the Ed25519
-  node key — the key *location*, never key material).
+  (`CHUNK_VERSION`…), `ADMIN_TOKEN_FILE` (preferred; a path — wins over
+  `ADMIN_TOKEN`), `NODE_KEY_PATH` (path to the Ed25519 node key — the key
+  *location*, never key material).
 - **Tier 2 — files** (desired state, versioned):
   `collections/*.toml` (plugin, profile, embed mode, licence ack) and
   [`platform.toml`](platform.toml.example) (`[bandwidth]` caps + schedule,
@@ -168,7 +156,7 @@ against your own embed endpoint (sample re-embed at import, verify-on-use at
 retrieval; `verify: true` on a query, or `POST /api/verify` afterwards).
 Trust is on-first-use per collection and quarantinable; calibrated tolerances
 come from per-space artifacts (`tools/build_space_artifact.py`,
-`tools/calibrate_space.py` — see [`docs/calibration.md`](docs/calibration.md)).
+`tools/calibrate_space.py` — see [`docs/notes/calibration.md`](docs/notes/calibration.md)).
 
 The coordinator is optional and standalone:
 `python -m app.coordinator.service` (its own SQLite, holds no bulk data).

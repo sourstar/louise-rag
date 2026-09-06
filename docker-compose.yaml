@@ -29,6 +29,8 @@ services:
       EMBED_VERSION: "1"
       DISCOVER_INTERVAL_MIN: "360"  # rescan corpus every 6h while running (0 = startup only)
       ADMIN_TOKEN: ""                # set to enable the Library/Network/System admin pages (unset = locked out)
+      # Preferred: ADMIN_TOKEN_FILE: /config/admin.token  — a PATH (invariant 8); it wins over ADMIN_TOKEN,
+      # and keeps the secret out of `docker inspect`, compose dumps and transcripts.
     volumes:
       - /mnt/tank/gutenberg/cache/epub:/corpus:ro   # <- point at your existing gutenberg-epub folder (synced elsewhere)
       - /mnt/ssdpool/ssd5/gutenberg-rag:/data       # manifest, tantivy, lancedb (SSD!)

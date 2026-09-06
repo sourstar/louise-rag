@@ -1,0 +1,53 @@
+{% if not fragment %}{% extends "base.html" %}{% endif %}
+{% block title %}{{ doc.header.title }} — louise-rag{% endblock %}
+{% block content %}
+{# The document behind a hit (STATUS 5j). Rendered twice from one file:
+   standalone (a tab of its own) and as the inner HTML of the Ask page's
+   reader panel (?fragment=1). The text comes from the index stores, never
+   from the corpus file. #}
+<div class="reader-doc" data-collection="{{ collection }}" data-book="{{ book_id }}">
+  <div class="reader-head">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <h2 style="margin:0">{{ doc.header.title }}</h2>
+      <span class="badge lapis">{{ plugin_label }}</span>
+    </div>
+    <div class="note reader-ref">{{ doc.header.reference }}</div>
+    <div class="note">
+      {% if doc.header.origin_url %}<a href="{{ doc.header.origin_url }}" target="_blank" rel="noopener">open at the source ↗</a> · {% endif %}
+      <a href="/read/{{ collection }}/{{ book_id }}{% if highlights %}?hl={{ highlights|join(',') }}{% endif %}" target="_blank" rel="noopener">open in its own tab ↗</a>
+      {% if doc.header.text_from %} · text from the {{ doc.header.text_from }}{% endif %}
+      {% if highlights %} · <span class="reader-nav"><a href="#" onclick="return readerJump(-1)">◀ previous hit</a> <span id="reader-pos"></span> <a href="#" onclick="return readerJump(1)">next hit ▶</a></span>{% endif %}
+    </div>
+  </div>
+  {% if not doc.chunks %}
+  <div class="note" style="margin-top:10px">This document is not indexed yet, so its text is not in the index stores — the reader shows what has been indexed, never the raw corpus file (a PubMed container takes 15 s to open).</div>
+  {% endif %}
+  <div class="reader-body">
+  {% set ns = namespace(chapter=None) %}
+  {% for ch in doc.chunks %}
+    {% if ch.chapter and ch.chapter != ns.chapter %}{% set ns.chapter = ch.chapter %}<h3>{{ ch.chapter }}</h3>{% endif %}
+    <p id="c{{ ch.seq }}" data-cid="{{ ch.chunk_id }}" class="reader-chunk{% if ch.chunk_id in highlights %} hl{% endif %}">{{ ch.text }}</p>
+  {% endfor %}
+  </div>
+</div>
+{% if not fragment %}
+<style>
+  .reader-chunk{white-space:pre-wrap;line-height:1.55;margin:0 0 12px}
+  .reader-chunk.hl{background:rgba(246,196,83,.22);border-left:3px solid var(--brass);padding:6px 8px;border-radius:4px}
+  .reader-body h3{margin:16px 0 6px}
+</style>
+<script>
+const READER_HL={{ highlights|tojson }};
+let readerAt=0;
+function readerJump(d){
+  if(!READER_HL.length)return false;
+  readerAt=(readerAt+d+READER_HL.length)%READER_HL.length;
+  const el=document.querySelector('[data-cid="'+READER_HL[readerAt].replace(/"/g,'\\"')+'"]');
+  if(el){el.scrollIntoView({behavior:'smooth',block:'center'})}
+  const pos=document.getElementById('reader-pos'); if(pos)pos.textContent=(readerAt+1)+'/'+READER_HL.length;
+  return false;
+}
+if(READER_HL.length){readerAt=-1;readerJump(1)}
+</script>
+{% endif %}
+{% endblock %}

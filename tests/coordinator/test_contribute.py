@@ -51,11 +51,21 @@ def coordinator(tmp_path):
 
 @pytest.fixture
 def node(con, collection, monkeypatch):
-    """A node holding raw documents but no vectors yet."""
+    """A node holding raw documents but no vectors yet.
+
+    The vectors seed_document writes are REMOVED here, so the fixture is
+    what it says it is. Clearing embed_done alone is not enough any more:
+    upsert_book resumes from vectors already on disk when their text is
+    byte-identical to the current chunking (the crash-recovery case of
+    invariant 2), so leaving them in place meant contribute had nothing
+    left to compute and this fixture silently tested packaging only."""
     for native_id in range(1, 4):
         seed_document(con, collection, f"gutenberg:{native_id}", native_id,
                        n_chunks=3, seed=native_id)
     con.execute("UPDATE documents SET embed_done=0")
+    store_db = embeddings._conn(collection)
+    if embeddings.TABLE in store_db.table_names():
+        store_db.drop_table(embeddings.TABLE)
     # deterministic stand-in for the embed endpoint
     counter = {"calls": 0}
 

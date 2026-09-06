@@ -3,27 +3,57 @@
 {% block content %}
 <h1>Help</h1>
 
-<div class="panel">
-  <b>Contents</b>
-  <div class="note">
-    <a href="#overview">What this is</a> ·
-    <a href="#pages">The pages</a> ·
-    <a href="#pipeline">Ingestion pipeline</a> ·
-    <a href="#scope">Scope &amp; embed modes</a> ·
-    <a href="#safety">Embedding safety</a> ·
-    <a href="#bundles">Bundles &amp; the P2P plane</a> ·
-    <a href="#genesis">Reusing published embeddings</a> ·
-    <a href="#collections">Adding a collection</a> ·
-    <a href="#acquire">Acquisition, profiles &amp; licenses</a> ·
-    <a href="#config">Configuration tiers</a> ·
-    <a href="#cli">CLI reference</a> ·
-    <a href="#api">HTTP API</a> ·
-    <a href="#trouble">Troubleshooting</a>
-  </div>
-</div>
+{# One page had grown to 13 sections of scrolling; it is now TABS with a
+   sub-contents each. Panels keep their ids, so every #anchor link from the
+   rest of the app keeps working: a deep link activates the tab that owns
+   the target and scrolls to it. #}
+<style>
+  .help-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .help-tabs button{padding:6px 14px;cursor:pointer;border:1px solid var(--line,#8884);
+    background:transparent;color:inherit;border-radius:6px 6px 0 0;font:inherit}
+  .help-tabs button.active{border-bottom:2px solid var(--brass,#b08d57);font-weight:bold}
+  .help-toc{margin-bottom:8px}
+  /* the one-line "In short" opener each section starts with: the general
+     picture first, the detail after — never extra information, only a
+     handle on what follows */
+  .lead{border-left:3px solid var(--brass,#b08d57);padding-left:10px}
+  .arch{line-height:1.25;font-size:.85em}
+</style>
+<div class="help-tabs" id="help-tabs"></div>
+<div class="panel help-toc"><b>In this tab</b> <span class="note" id="help-toc"></span></div>
 
 <div class="panel" id="overview">
   <h2>What this is</h2>
+  <p class="note lead"><b>In short:</b> your node turns document collections
+    into something you can search and ask questions about — and exchanges
+    the expensive part (embeddings) with other nodes, checking everything
+    it receives.</p>
+  <div style="overflow-x:auto"><pre class="cli arch">
+     corpus sources                              other peers
+ (Gutenberg, NCBI, dumps…)                  ┌────────┐ ┌────────┐
+          │                                 │ peer B │ │ peer C │
+          │ fetch (profiles,                └───┬────┘ └───┬────┘
+          │  licenses, mirrors)                 │          │
+          ▼                             signed vector bundles ·
+┌── THIS NODE ─────────────────────┐    corpus torrents · genesis
+│                                  │        archives
+│  worker: discover → rdf → fts    │◄───────────┴──────────►
+│              → embed             │
+│     │                  │         │   travels: corpus bytes,
+│     ▼                  ▼         │   vectors, (planned) signed
+│  SQLite manifest    LanceDB      │   corpus enumeration —
+│  (state, FTS)       (vectors)    │   verified, never trusted.
+│     ▲                  ▲         │   stays local: state, FTS
+│     │                  │         │   index — recomputed here
+│     └──── web UI ──────┘         │
+│  Ask · Library · Network · System │
+│                                  │
+│  models over HTTP only:          │
+│  encoders (embed-gpu-*/cpu-*),   │
+│  LLM for answers                 │
+└──────────────▲───────────────────┘
+               │
+          you (browser)</pre></div>
   <p class="note">
     louise-rag is a peer-to-peer RAG platform: each node ingests document
     collections (Project Gutenberg, PubMed, …), indexes them lexically
@@ -47,7 +77,16 @@
       Hybrid retrieval (FTS + dense + RRF fusion), with per-passage
       provenance badges: <b>local ✓</b> (computed here), <b>imported ◌</b>
       (from a bundle, unverified), <b>verified ✓</b> (spot-checked against
-      the local model), <b>⚠ failed</b> (verification failed).</td></tr>
+      the local model), <b>⚠ failed</b> (verification failed).
+      <b>Show results in …</b> translates the CONTENT — snippets and the
+      answer — into the chosen language (titles, authors, ids and this
+      interface stay as they are; the original text stays in the
+      provenance drawer; a small "translated from" badge says what
+      happened). Clicking a hit's title, its snippet, or a <b>[n]</b>
+      citation in the answer opens the <b>reader</b>: the whole document
+      from the index stores with the matched passage highlighted, a
+      reference line, a link to the source, and "open in its own tab"
+      for a separate window.</td></tr>
     <tr><td><b>Library</b></td><td>admin</td>
       <td>Per-collection ingestion progress (fetched / parsed / indexed /
       embedded), worker pause-resume, corpus rescans, stage resets, profile
@@ -61,8 +100,9 @@
       space pin), model-endpoint health, and the live event log.</td></tr>
   </table>
   <p class="note">
-    Admin pages need the node's <b>ADMIN_TOKEN</b> (an environment variable
-    set at install). Enter it once at <a href="/admin/login">/admin/login</a>
+    Admin pages need the node's admin token (set at install — preferably
+    as a file named by <b>ADMIN_TOKEN_FILE</b>, a path; the <b>ADMIN_TOKEN</b>
+    env value still works). Enter it once at <a href="/admin/login">/admin/login</a>
     — a 30-day cookie keeps the browser session authenticated. If the token
     is unset, admin areas are locked entirely (fail-closed); Ask keeps
     working regardless. Navigating to an admin page without a session simply
@@ -72,6 +112,7 @@
 
 <div class="panel" id="pipeline">
   <h2>Ingestion pipeline</h2>
+  <p class="note lead"><b>In short:</b> every document climbs four steps — found, described, searchable, embedded — and any step can be safely interrupted and re-run.</p>
   <p class="note">
     Per document, in order: <b>discover</b> (corpus scan; also at startup and
     every DISCOVER_INTERVAL_MIN) → <b>rdf</b> (metadata) → <b>fts</b>
@@ -87,14 +128,72 @@
 
 <div class="panel" id="scope">
   <h2>Scope &amp; embed modes</h2>
+  <p class="note lead"><b>In short:</b> scope decides <i>which</i> documents are in play; embed mode decides how much encoder time they get.</p>
   <p class="note">
     The scope (languages, explicit ids, caps) decides which documents are
     in play. The <b>embed mode</b> decides encoder spending:
-    <b>off</b> — never embed; <b>lazy</b> — embed only what queries actually
-    touch (a priority queue fed by search misses); <b>all</b> — background-
-    backfill everything in scope. The priority queue always outranks the
-    backfill, so a user-requested document embeds first. Set the mode via
-    <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
+    <b>off</b> — never embed; <b>on-demand</b> — embed only what queries
+    actually touch (a priority queue fed by search misses; stored as
+    <code>"lazy"</code> in the TOML and API, kept for compatibility);
+    <b>all</b> — background-backfill everything in scope. The priority
+    queue always outranks the backfill, so a user-requested document
+    embeds first. Set the mode via <code>POST /api/scope</code> (see
+    <a href="#api">HTTP API</a>).
+  </p>
+  <h2 style="margin-top:14px">What the mode actually controls</h2>
+  <p class="note">
+    The knob touches <b>one thing only: local encoder spending on dense
+    vectors</b>. Fetching, parsing and indexing never depend on it — they
+    follow the node-wide worker state. Archive import (pre-embedded data)
+    never depends on it either — it runs whenever the worker runs.
+  </p>
+  <div style="overflow-x:auto"><table>
+    <tr><th>operation</th><th>off</th><th>on-demand / fix on demand</th><th>all / fix</th></tr>
+    <tr><td><b>fetched</b> (acquisition)</td>
+      <td colspan="3">runs regardless — governed only by the node-wide
+      worker state (<i>run everything</i> and <i>download only</i> fetch;
+      <i>pause</i> stops it)</td></tr>
+    <tr><td><b>parsed (rdf)</b></td>
+      <td colspan="3">runs regardless under <i>run everything</i>; stands
+      down under <i>download only</i> and <i>pause</i></td></tr>
+    <tr><td><b>indexed (lexical)</b></td>
+      <td colspan="3">same as parsed — never gated by the embed mode</td></tr>
+    <tr><td><b>embedded (dense)</b> — no archive</td>
+      <td>never embeds; documents stay without vectors</td>
+      <td>embeds only documents queries actually touch (the priority
+      queue); no background work</td>
+      <td>background-backfills everything in scope, queue first</td></tr>
+    <tr><td><b>embedded (dense)</b> — pre-embedded archive declared</td>
+      <td>the archive imports anyway (it is free); what it cannot cover
+      stays without vectors (and post-quarantine re-embeds never run)</td>
+      <td>the archive imports anyway; the encoder embeds only what a
+      query touches</td>
+      <td>the archive imports anyway and goes first; the encoder
+      background-embeds only the documents the archive <i>cannot</i>
+      cover — outside its declared id ranges, or left uncovered once an
+      archive file is complete</td></tr>
+  </table></div>
+  <p class="note">
+    The Library's embed-mode control is <b>persistent</b>: it writes
+    <code>embed_mode = "off" | "lazy" | "all"</code> into
+    <code>collections/&lt;name&gt;.toml</code> (Tier-2 desired state, the
+    same way collection-create and the license ack write it) and applies
+    immediately — it survives restarts. A runtime-only override is still
+    possible via <code>POST /api/scope</code>; that one lasts until the
+    worker next applies the TOML. A collection whose TOML is silent
+    defaults to <b>on-demand</b> (stored value <code>lazy</code>). A
+    collection with a pre-embedded archive has the <b>same knob with the
+    same three values</b> — one knob, not two. The archive imports in every
+    mode (it costs no encoder time and always goes first); the mode says
+    what the <i>local encoder</i> does with the rest. Under <b>all</b> it
+    embeds only what the archive cannot cover: documents outside the
+    archive's declared id ranges (PubMed articles newer than the MedCPT
+    snapshot, ~3M of 40M) and, once an archive file is complete, the few
+    inside its range the archive did not hold (no abstract, a chunk-shape
+    mismatch). Until that file is complete those wait for it — never a
+    duplicate, never a wrong import. <b>off</b> leaves the uncovered
+    documents without dense vectors — and note that after a quarantine,
+    <b>off</b> also means the affected documents are never re-embedded.
   </p>
   <p class="note">
     Node-wide, the Library page offers three modes. <b>run everything</b> is
@@ -107,9 +206,9 @@
   </p>
   <p class="note">
     Each Library card names <b>which processor</b> that spending lands on —
-    <span class="badge lapis">GPU spending</span> for a collection served by
+    <span class="badge lapis">GPU</span> for a collection served by
     the shared GPU encoder (one collection at a time, serial by design) and
-    <span class="badge brass">CPU spending</span> for one served by a CPU
+    <span class="badge brass">CPU</span> for one served by a CPU
     encoder container, which runs beside the GPU without competing for it.
     Declare it explicitly with <code>device = "gpu"|"cpu"</code> in the
     collection's <code>[embed]</code> block; otherwise it is inferred from
@@ -119,7 +218,7 @@
   </p>
   <p class="note">
     Under <b>all</b>, the card reports the <i>dense backfill</i> still
-    awaiting the encoder rather than the lazy queue, which is empty by
+    awaiting the encoder rather than the on-demand queue, which is empty by
     definition in that mode: backfill selects straight from the manifest and
     never touches the queue.
   </p>
@@ -127,6 +226,7 @@
 
 <div class="panel" id="safety">
   <h2>Embedding safety</h2>
+  <p class="note lead"><b>In short:</b> two vectors are only comparable when the exact same machinery produced them — everything in this section defends that one rule.</p>
   <p class="note">
     Vectors are only comparable inside one <b>embedding space</b>: same
     model weights, dtype, normalization, pooling, chunking and cleaning
@@ -159,6 +259,7 @@
 
 <div class="panel" id="bundles">
   <h2>Bundles &amp; the P2P plane</h2>
+  <p class="note lead"><b>In short:</b> nodes share finished embeddings so one GPU serves many — and every import is checked, never trusted.</p>
   <p class="note">
     A <b>bundle</b> is a signed, portable set of vectors: header +
     Parquet vectors + per-document possession hashes, Ed25519-signed by the
@@ -173,10 +274,43 @@
     <code>bundle resweep</code> re-checks earlier imports after a trust or
     calibration change.
   </p>
+  <h2 style="margin-top:14px">What travels, what stays local</h2>
+  <p class="note">
+    The dividing rule: a peer shares what is <b>expensive to make and cheap
+    to verify</b>, and recomputes what is the reverse.
+  </p>
+  <table>
+    <tr><th>artifact</th><th>travels?</th><th>why</th></tr>
+    <tr><td><b>corpus bytes</b></td><td>yes (torrents, mirrors)</td>
+      <td>expensive to move from origin, trivially verified by hash.</td></tr>
+    <tr><td><b>vectors</b></td><td>yes (signed bundles, genesis archives)</td>
+      <td>the GPU-hours are the whole cost; verifiable by sampled
+      re-embedding against the local encoder.</td></tr>
+    <tr><td><b>corpus enumeration</b> (which documents exist in a
+      snapshot)</td><td>designed, not built</td>
+      <td>discovery over millions of files is slow and every peer repeats
+      it identically — a signed listing in the snapshot manifest would let
+      a peer skip it and still verify what lands. The plan is recorded;
+      no wire format exists yet.</td></tr>
+    <tr><td><b>FTS index</b></td><td>no — deliberately</td>
+      <td>cheap to recompute locally (~1&nbsp;ms/doc), <i>expensive</i> to
+      verify received (the only check is rebuilding it, which costs the
+      recompute anyway), and coupled to local versions and config — a
+      shared index would import another node's chunking decisions
+      unverifiably.</td></tr>
+    <tr><td><b>SQLite state</b> (manifest, progress, settings)</td>
+      <td>never</td>
+      <td>it describes <i>this node's</i> pipeline position and choices;
+      on any other node it is meaningless or wrong.</td></tr>
+    <tr><td><b>extra formats</b> (e.g. epubs)</td><td>never</td>
+      <td>local convenience only — peers exchange the data that fulfils
+      Louise's purpose (see Acquisition → Extra formats).</td></tr>
+  </table>
 </div>
 
 <div class="panel" id="genesis">
   <h2>Reusing published embeddings (genesis import)</h2>
+  <p class="note lead"><b>In short:</b> when someone already paid the GPU-hours for a corpus, this node reuses their vectors — after checking they came from the same encoder.</p>
   <p class="note">
     If someone already paid the GPU-hours for a corpus, this node reuses
     that work instead of re-embedding: NCBI publishes MedCPT vectors for
@@ -197,8 +331,39 @@
     the create dialog when the plugin has a known archive; delete the line
     to opt out) is drained by the worker on its own — one shard per round,
     before any local GPU embedding — and the Library card shows the
-    coverage: shards applied and documents served by pre-embedded data. The
-    CLI does the same thing on demand:
+    coverage. An archive is split by its producer into numbered
+    <b>archive files</b> ("shards": NCBI publishes MedCPT's vectors as 37
+    files of ~3 GB; the pre-embedded Wikipedia corpus IS its 1,447 parquet
+    files). A <i>remote</i> archive is a <b>second download stream of the
+    collection</b>, beside the corpus fetch and behind it on the link
+    (the corpus wins: without it the vectors are useless — that is the
+    <i>archive</i> class of the bandwidth budget). Files land a few at a
+    time (a bounded cache on disk, <code>GENESIS_CACHE_BYTES</code>, and a
+    disk preflight), and each one <b>applies as soon as it lands</b> for
+    the documents already indexed, is revisited as more of them clear
+    indexing (a revisit that finds nothing backs off, per file), and is
+    deleted once nothing in its id range still waits. MedCPT's files are
+    exact PMID ranges (file <i>i</i> = PMIDs <i>i</i>·10⁶ …), so the
+    worker knows from the id alone which documents the archive can cover
+    — the local encoder never spends a GPU-hour on one. A <i>local</i>
+    archive is read file by file as its documents pass indexing. The CLI
+    does the same thing on demand:
+  </p>
+  <p class="note">
+    <b>Why some pre-embedded data is combined with a collection and some
+    stands alone.</b> The rule follows what the data <i>is</i>. Pre-embedded
+    data that is a <b>corpus in its own right</b> — text and vectors
+    together, like the wikivec parquet files — stands alone as its own
+    collection, with its own documents, ids and embedding space. Pre-embedded
+    data that is <b>vectors <i>for</i> another collection's documents</b> —
+    MedCPT for pubmed: same document ids, no text of its own, computed in
+    the very space the collection is pinned to — must live <i>inside</i>
+    that collection, shown as the light-green sub-box on its Library card.
+    Split out, it would be a "collection" owning vectors but no documents:
+    it could not search lexically, could not verify possession (hashes bind
+    to document bytes it would not have), and retrieval would double-count
+    the same documents across two fused legs. So: corpus-with-vectors →
+    own card; vectors-for-your-documents → sub-box.
   </p>
   <pre class="cli"># NCBI MedCPT vectors into the pubmed collection (resumable):
 python -m app.cli genesis import pubmed --archive medcpt-pubmed
@@ -218,8 +383,178 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
   </p>
 </div>
 
+<div class="panel" id="packs">
+  <h2>Packs — the distribution format</h2>
+  <p class="note lead"><b>In short:</b> a pack is a corpus repackaged into exactly what the
+    platform searches — parsed text, sliced by language or year, shard by shard — with a
+    signed manifest, so any node can take the part it wants, check it against the
+    origin, and run it with no origin files and no parser. The design is
+    <code>docs/pack-format.md</code>.</p>
+  <p class="note">
+    <b>What is in one.</b> A directory: <code>manifest.json</code> (what the collection is:
+    id, snapshot, slicing scheme, chunker layers, license, every shard with its hash —
+    signed with the node key), <code>validation.json</code> (which checks to run),
+    <code>TERMS.txt</code> (the license terms, byte-exact), and
+    <code>records/&lt;slice&gt;/NNNNN.jsonl.zst</code> — the corpus as JSON Lines, one record
+    per line, in independent zstd frames of 1,000 records with an index at the end.
+    <code>zstd -d shard.jsonl.zst | less</code> prints the records: nothing in a pack needs
+    our tools to be read. A <b>slice</b> is the human-facing part (Gutenberg
+    <code>lang=it</code>, PubMed <code>year=1975-1979</code>, Wikipedia
+    <code>lang=de/pages=2M</code>); a <b>shard</b> is the transfer unit inside it (~50 books,
+    30,000 abstracts, 2,000 articles), closed once written. Vectors and the text index are
+    planned as separate members; today a node builds both itself from the records.
+  </p>
+  <p class="note">
+    <b>A pack is a closed snapshot.</b> The procedure: the origin collection finishes
+    fetching, parsing and indexing up to a cutoff date; the pack is built from it with
+    <code>pack build &lt;collection&gt; --out DIR --until YYYY-MM-DD</code> — records that
+    existed at the origin on that date and nothing later (Gutenberg by release date, PubMed
+    by <i>DateRevised</i>, Wikipedia by the dump's date; the rule is recorded in the
+    manifest, and a resume under another cutoff is refused); then the origin hands over:
+    <code>pack adopt &lt;origin&gt; &lt;packed&gt; --fts --yes</code> moves its vector table,
+    embed marks and provenance (and the text index) into the packed twin with no
+    re-embedding — the twin yields the same document ids and chunk ids in the same space.
+    Run adopt with the worker stopped. Later content is an <i>update</i>: derived from the
+    previous manifest and the origin by fixed rules, so two honest updaters produce the same
+    bytes and there is nothing to reconcile (not built yet; see the design, §6.1).
+  </p>
+  <p class="note">
+    <b>Building one.</b> From an existing collection: <code>pack build</code> above (two
+    passes over the collection's manifest — plan the slices, then write shards — resumable,
+    state in <code>DIR/.build/</code>, logs one line per 30 s). From a raw corpus folder
+    without a collection: <code>python -m tools.pack_convert --plugin pubmed --corpus DIR
+    --out DIR [--until DATE]</code>. Only useful data enters a pack: parsed text and
+    metadata, never epubs, XML markup or dump indexes. On the reference node packs live on
+    their own datasets under <code>/packs</code> (<code>PACK_MOUNTS_DIR</code>).
+  </p>
+  <p class="note">
+    <b>Using one.</b> Create a collection with the <b>packed</b> plugin over a pack folder —
+    the create dialog lists the packs it finds under <code>/packs</code> marked
+    "(pack)". The collection needs no origin files and no parser; it keeps the origin's
+    document ids, chunker and license, so bundles, the genesis archive and derived
+    collections all apply to it unchanged. Acquisition from the origin is off for a packed
+    collection; a pack arrives whole (a copy, or the per-slice torrents below).
+    <b>The license is the origin's:</b> a yellow-class pack carries the origin's terms text
+    byte-exact, and the same acknowledgement (same sha256) is required before the node
+    scans it, applies an archive to it, or lets you create the collection at all — a
+    folder is not a bypass. The create dialog shows the pack's terms and records the ack.
+  </p>
+  <p class="note">
+    <b>Checking one.</b> <code>pack verify DIR [--checks roots,records,chunks,license,signature]
+    [--sample 0.05]</code> runs the pack's validation plan with platform code — every shard's
+    bytes against the manifest's hashes, every record's content hash against its own text,
+    re-chunking against the declared counts, the terms text byte-for-byte, the signature.
+    Nothing shipped in a pack is ever executed. <code>pack status DIR</code>,
+    <code>pack cat DIR &lt;uid&gt;</code> (one record and its chunks as JSON) and
+    <code>pack dump &lt;shard&gt;</code> (plain JSONL) are the inspection tools.
+  </p>
+  <p class="note">
+    <b>Sharing one.</b> <code>torrent publish &lt;packed-collection&gt; --per-slice</code>
+    hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
+    publishes the torrent collection over them — a peer takes "PubMed before 1980" as the
+    members of those slices (see <a href="#acquire">Fetching from peers</a>).
+  </p>
+  <p class="note">
+    <b>Chunker layers.</b> A collection normally has one chunker. Where a pre-embedded archive
+    fixed the chunking of the documents it covers and a better one is wanted for the rest
+    (the "MedCPT case"), a collection may declare <b>layers</b> in its TOML —
+    <code>[[layers]] chunker = "verbatim" rule = "archive:&lt;id&gt;"</code> … then
+    <code>[[layers]] chunker = "cdc"</code> (the last is the default) — every document
+    belongs to exactly one layer by that rule, all under one encoder. Declaring more than
+    one layer changes the collection's space id (a <code>space repin</code>); one layer
+    changes nothing.
+  </p>
+  <p class="note">
+    <b>The vector index.</b> Without one, every semantic query scans the whole vector table
+    (13 s on 16 million rows, measured). The worker builds a local IVF index on its own once a
+    collection's table holds <code>VECTOR_INDEX_MIN_ROWS</code> (100,000) rows — off the GPU
+    loop, minutes to an hour on a large table, queries keep working meanwhile — and folds new
+    rows in as they arrive. Search then probes a few buckets and re-ranks against the stored
+    vectors (<code>VECTOR_INDEX_NPROBES</code> / <code>VECTOR_INDEX_REFINE</code>); the
+    default type is <code>ivf_pq</code> (compact codes), <code>ivf_flat</code> keeps a full
+    copy of the vectors for the best recall. <code>index vector status|build
+    &lt;collection&gt;</code> shows or forces it. The index is local, built over the vectors a
+    node holds; the pack design's shared bucket index is a later step.
+  </p>
+  <p class="note">
+    <b>Using every core.</b> Parsing and chunking documents is pure Python, and all
+    collections' pipelines share one interpreter — so the worker used one core however many
+    it had. The <b>parse pool</b> (<code>PARSE_PROCESSES</code>, default cores−1) computes
+    each batch's fetch/parse/chunk, metadata and pack records in low-priority child
+    processes while the worker keeps every writer (index, vectors, manifest). Encoders,
+    queries and the UI keep priority; set <code>PARSE_PROCESSES=1</code> for the serial
+    in-process path on a small node.
+  </p>
+</div>
+
+<div class="panel" id="plugins">
+  <h2>The plugins</h2>
+  <p class="note lead"><b>In short:</b> a plugin knows one source — where its documents live, how to fetch them, and how to cut them into chunks.</p>
+  <div style="overflow-x:auto"><table>
+    <tr><th>plugin</th><th>what it ingests</th><th>layout &amp; unit</th><th>license</th><th>notes</th></tr>
+    <tr><td><b>gutenberg</b></td>
+      <td>Project Gutenberg books — the official <code>cache/epub</code>
+        generated collection, fetched over rsync from structure-verified
+        mirrors (benchmarked, with failover).</td>
+      <td>one directory per book (text + RDF metadata); one book = one
+        document, chunked by chapters.</td>
+      <td>green (public domain)</td>
+      <td>immutable; the catalogue grows, existing texts do not change.
+        Offers <code>epub</code> as an extra format (local only — see
+        <i>Extra formats</i> under Acquisition).</td></tr>
+    <tr><td><b>pubmed</b></td>
+      <td>PubMed baseline + update files from NCBI's FTP.</td>
+      <td>compressed container archives (<code>.xml.gz</code>, ~30k records
+        each) — one abstract = one document, one chunk.</td>
+      <td>yellow (publisher copyright on text; ack required)</td>
+      <td>revisions and DeleteCitation tombstones honored; md5 sidecars
+        verified; a genesis archive (NCBI's MedCPT vectors) applies once the
+        corpus settles.</td></tr>
+    <tr><td><b>wikipedia</b></td>
+      <td>Wikimedia's official multistream dumps, per wiki, optionally
+        pinned to a dated snapshot.</td>
+      <td>compressed containers (bz2 dump + index) — one article = one
+        document, content-defined chunking (stable under edits).</td>
+      <td>yellow (CC BY-SA; ack required)</td>
+      <td>offers the <b>wikivec sub-plugin</b> at install (see below) — the
+        offer is made once, at creation.</td></tr>
+    <tr><td><b>wikivec</b> <span class="badge">plugin id: embedded</span></td>
+      <td>a published PRE-EMBEDDED corpus — today the Upstash Wikipedia
+        2024-06 / bge-m3 dataset: text and vectors travel together.</td>
+      <td>parquet shards; one article = one document; the producer's chunk
+        boundaries are preserved verbatim (that is what makes their vectors
+        attach).</td>
+      <td>yellow (content stays CC BY-SA; ack required)</td>
+      <td>vectors are imported (genesis), not computed — dense search at
+        zero GPU cost; the embed-mode knob only gap-fills what the archive
+        cannot cover. The internal plugin id stays <code>embedded</code>:
+        it is minted into every document uid and can never be renamed.</td></tr>
+    <tr><td><b>genome</b></td>
+      <td>reference genome assemblies (UCSC FASTA), one assembly per
+        collection.</td>
+      <td>one FASTA per assembly; one chromosome/contig = one document;
+        fixed sequence windows whose chunk ids ARE coordinates.</td>
+      <td>green (consortium reference assemblies)</td>
+      <td>reference genomes only — never personal genomes; all assemblies
+        share one DNA space so cross-species retrieval works.</td></tr>
+    <tr><td><b>packed</b></td>
+      <td>a PACK (see <a href="#packs">Packs</a>): a corpus already parsed and
+        sliced by another node, or by this one from its origin collection.</td>
+      <td><code>records/&lt;slice&gt;/*.jsonl.zst</code> + manifest; one record
+        = one document; the chunker is the origin plugin's (or the pack's
+        declared layers), so chunk ids match the origin's exactly.</td>
+      <td>the pack's (recorded in its manifest; the terms text travels
+        with it)</td>
+      <td>no origin files, no parser, no acquisition from the origin;
+        document ids and possession hashes are the origin's, so bundles
+        and genesis archives apply unchanged. Create it over a "(pack)"
+        folder from the Library.</td></tr>
+  </table></div>
+</div>
+
 <div class="panel" id="collections">
   <h2>Adding a collection</h2>
+  <p class="note lead"><b>In short:</b> a collection is one corpus in one embedding space, defined by one TOML file — the create dialog writes it for you.</p>
   <p class="note">
     A collection is defined by one versioned TOML file — that file existing
     is what makes the collection exist (config tier 2, never a database
@@ -299,14 +634,16 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     imports it next round (the full admission ladder applies — an upload is
     delivery, never trust); <i>remove…</i> — retire the collection's TOML
     (renamed aside, restorable) while its manifest, index and vectors stay
-    on disk untouched. Removing the synthesized default collection isn't
-    possible from the UI. Create and remove both take effect live — the
-    worker hot-reloads collections every round.
+    on disk untouched. Removing the synthesized default collection (a node
+    that never declared a TOML) switches the node to TOML mode with zero
+    collections; a node can have none. Create and remove both take effect
+    live — the worker hot-reloads collections every round.
   </p>
 </div>
 
 <div class="panel" id="acquire">
   <h2>Acquisition, profiles &amp; licenses</h2>
+  <p class="note lead"><b>In short:</b> a profile says how much of a source to fetch; a license gate stands before the first byte; everything downloads through one shared bandwidth budget.</p>
   <p class="note">
     Collections can fetch their own corpus (opt-in per collection). Sources
     have license classes; a <i>yellow</i>-class source requires a recorded
@@ -360,10 +697,90 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     (<code>acquire_enabled = false</code>) ignore profiles entirely; the
     Library card shows theirs as <i>(hand-populated)</i>.
   </p>
+  <h2 style="margin-top:14px">Fetching from peers, and seeding</h2>
+  <p class="note">
+    The create panel's <b>Acquisition</b> drop-down offers three sources:
+    <b>off</b> (hand-populated — you fill the corpus folder), <b>from the
+    source</b> (the origin: rsync/https/hf-hub as the plugin declares), or
+    <b>from peers</b>: paste a magnet URI or a <code>.torrent</code> path
+    and the SAME acquisition engine fetches the corpus over BitTorrent —
+    same profiles and filters, same license gate, same disk preflight; the
+    torrent's own piece hashes replace the origin's checksum sidecars.
+    Stored as <code>peer_source</code> in the collection's TOML. Without
+    peer discovery (not built) the magnet carries a direct-peer hint,
+    <code>&amp;x.pe=host:port</code>, which <code>torrent publish
+    --peer-hint</code> prints for you.
+  </p>
+  <p class="note">
+    <b>Seeding</b> is the other direction: <code>torrent publish
+    &lt;collection&gt; [--subdir data]</code> hashes the corpus (minutes on
+    a large one) and records it; from then on the worker seeds it whenever
+    the node runs, is in <i>download/seeding only</i>, or <i>seeding only</i>
+    — <i>pause</i> stands it down. Every uploaded byte is credited to the
+    Network page's <i>seeding</i> class, and its Seeding table lists what
+    is served, to how many peers, and how much has gone out. Deleting the
+    <code>.torrent</code> file stops seeding. <code>--subdir</code> matters
+    for layout: the hashed directory's name becomes the torrent root, so a
+    peer's <code>corpus_dir/&lt;subdir&gt;/…</code> lands exactly where the
+    plugin expects it (the pre-embedded corpus lives under
+    <code>data/</code>).
+  </p>
+  <h2 style="margin-top:14px">Extra formats (local only)</h2>
+  <p class="note">
+    Some sources publish the same documents in <b>more than one format</b>.
+    Louise needs exactly one of them — for Gutenberg that is the plain
+    <code>.txt</code>, which is what gets cleaned, chunked, indexed and
+    embedded. The others (for Gutenberg: <code>.epub</code>, nice for an
+    e-reader) are offered as <b>extra formats</b>: tick them when creating
+    the collection or in <i>grow profile…</i>, and Louise downloads them
+    from the corpus source into the same per-book folders, purely as a
+    local convenience. Unticking one stops future fetching but never
+    deletes files already on disk.
+  </p>
+  <p class="note">
+    <b>Policy — peers exchange only the data that fulfils Louise's
+    purpose.</b> Extra formats are a local download from the corpus source
+    and are <b>never</b> part of the peer-to-peer exchange: not published
+    in corpus torrents, not in snapshot manifests, not counted as
+    possession material. They also never inflate the pipeline numbers —
+    parsed/indexed/embedded see only Louise's own format.
+  </p>
+  <p class="note">
+    <b>Reading the stage labels.</b> Every stage label on a Library card —
+    <i>fetched (data)</i>, <i>parsed (rdf)</i>, <i>indexed (lexical)</i>,
+    <i>embedded / pre-embedded (dense)</i>, <i>fetched (vectors)</i> —
+    keeps a constant name and speaks its state through one color scheme:
+    <b>green</b> completed; <b>turquoise</b> (the collection-name accent)
+    running or in the scheduling pool — the worker is on it or will reach
+    it on its own; <b>orange</b> runs only on-demand (a query triggers
+    it); <b>grey</b> off or paused. For the fetch row,
+    <i>compressed data</i> replaces <i>data</i> for container sources and
+    <i>+extras</i> is appended when extra formats are opted in; the
+    denominator is what the origin's listing held at pass start. A
+    collection that also carries a pre-embedded vector archive shows it as
+    a light-green <b>sub-box</b> with its own <i>fetched (vectors)</i> and
+    <i>pre-embedded (dense)</i> rows and the local gap-fill knob — same
+    embedding space as the main box (its space badge repeats it), because
+    that is precisely what import admission verifies.
+  </p>
+  <p class="note">
+    <b>Reading the fetched counter.</b> The card keeps it bare:
+    <code>fetched D_done/D_total (f_done/f_total) (+ e_done/e_total)</code>.
+    The first pair is <b>documents</b> — the unit parsed/indexed use — for
+    sources whose layout makes documents countable (one directory = one
+    book); the plain parenthesized pair is the underlying <b>files</b>
+    (gutenberg: text + RDF metadata, so roughly two per book). Container
+    sources cannot know document counts before unpacking, so their single
+    pair counts archives and the card says <i>compressed containers</i>.
+    The <code>(+ …)</code> pair appears only with extras opted in and
+    counts the extra-format files, kept apart precisely because they are
+    not Louise data.
+  </p>
 </div>
 
 <div class="panel" id="config">
   <h2>Configuration tiers</h2>
+  <p class="note lead"><b>In short:</b> three layers that never mix — who the node <i>is</i> (env), what you <i>want</i> (files), what is <i>temporarily</i> overridden (DB, gone at restart).</p>
   <table>
     <tr><th>tier</th><th>where</th><th>meaning</th></tr>
     <tr><td>1 — identity</td><td>environment variables</td>
@@ -383,6 +800,7 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
 
 <div class="panel" id="cli">
   <h2>CLI reference</h2>
+  <p class="note lead"><b>In short:</b> everything the UI does has a command-line twin — same code path, scriptable.</p>
   <pre class="cli">python -m app.cli corpus add &lt;collection&gt; [--profile P] [--dry-run] [--ack-terms FILE]
 python -m app.cli corpus grow &lt;collection&gt; --profile P
 python -m app.cli corpus status [collection]
@@ -398,12 +816,31 @@ python -m app.cli backend check &lt;collection&gt;      # gate: endpoint vs base
 python -m app.cli backend rebaseline &lt;collection&gt; --yes
 
 python -m app.cli contribute &lt;collection&gt; &lt;coordinator-url&gt; [--count N]
+
+python -m app.cli genesis status &lt;collection&gt;      # the archive ledger, per shard
+python -m app.cli genesis retry &lt;collection&gt; [--shard N]   # put a rejected shard back in line
+
+python -m app.cli pack build &lt;collection&gt; --out DIR [--until YYYY-MM-DD] [--records-per-shard N] [--unsigned]
+python -m app.cli pack verify DIR [--checks roots,records,chunks,license,signature] [--sample F] [--seed N]
+python -m app.cli pack status DIR
+python -m app.cli pack cat DIR &lt;uid&gt;               # one record and its chunks, as JSON
+python -m app.cli pack dump &lt;shard.jsonl.zst&gt;      # plain JSONL (what zstd -d prints)
+python -m app.cli pack adopt &lt;origin&gt; &lt;packed&gt; [--fts] --yes   # the hand-over (worker stopped)
+python -m tools.pack_convert --plugin P --corpus DIR --out DIR [--until DATE]
+
+python -m app.cli index vector status &lt;collection&gt;
+python -m app.cli index vector build &lt;collection&gt; [--type ivf_pq|ivf_flat] [--partitions K]
+
+python -m app.cli torrent publish &lt;collection&gt; [--per-language | --per-slice | --collection-only] [--peer-hint host:port]
+python -m app.cli space repin &lt;collection&gt; --yes
+
 python -m tools.migrate_manifest --db /data/manifest.db [--dry-run]
 python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</pre>
 </div>
 
 <div class="panel" id="api">
   <h2>HTTP API</h2>
+  <p class="note lead"><b>In short:</b> the same operations over HTTP — open for searching and asking, token-gated for anything that changes state.</p>
   <table>
     <tr><th>endpoint</th><th>auth</th><th>purpose</th></tr>
     <tr><td>GET /api/status</td><td>open</td><td>worker state, scope, pipeline counts, config summary</td></tr>
@@ -420,6 +857,7 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
 
 <div class="panel" id="trouble">
   <h2>Troubleshooting</h2>
+  <p class="note lead"><b>In short:</b> most "stuck" states are deliberate safety stops — find the symptom, the fix is next to it.</p>
   <table>
     <tr><th>symptom</th><th>likely cause / fix</th></tr>
     <tr><td>worker shows <b>paused</b>, nothing processes</td>
@@ -463,4 +901,64 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
       re-queues honest re-embedding.</td></tr>
   </table>
 </div>
+
+<script>
+(function(){
+  // tab -> panel ids; a panel not listed lands in Reference so a future
+  // section never silently disappears
+  const TABS = [
+    ["Basics", ["overview", "pages", "pipeline"]],
+    ["Embedding", ["scope", "safety", "genesis"]],
+    ["Collections & data", ["collections", "acquire", "config"]],
+    ["Sharing (P2P)", ["bundles", "packs"]],
+    ["Reference", ["cli", "api", "trouble"]],
+  ];
+  const known = new Set(TABS.flatMap(t => t[1]));
+  document.querySelectorAll(".panel[id]").forEach(p => {
+    if (!known.has(p.id)) TABS[TABS.length - 1][1].push(p.id);
+  });
+  const bar = document.getElementById("help-tabs");
+  const toc = document.getElementById("help-toc");
+  function titleOf(id){
+    const h = document.querySelector("#" + id + " h2");
+    return h ? h.textContent : id;
+  }
+  function activate(name, scrollTo){
+    TABS.forEach(([tab, ids]) => {
+      const on = tab === name;
+      ids.forEach(id => {
+        const p = document.getElementById(id);
+        if (p) p.style.display = on ? "" : "none";
+      });
+    });
+    bar.querySelectorAll("button").forEach(b =>
+      b.classList.toggle("active", b.textContent === name));
+    const ids = (TABS.find(t => t[0] === name) || [null, []])[1];
+    toc.innerHTML = ids.map(id =>
+      `<a href="#${id}">${titleOf(id)}</a>`).join(" · ");
+    if (scrollTo) {
+      const p = document.getElementById(scrollTo);
+      if (p) p.scrollIntoView();
+    } else { window.scrollTo(0, 0); }
+  }
+  function tabOf(id){
+    const t = TABS.find(t => t[1].includes(id));
+    return t ? t[0] : TABS[0][0];
+  }
+  TABS.forEach(([name]) => {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.onclick = () => { history.replaceState(null, "", "#" + TABS.find(t=>t[0]===name)[1][0]); activate(name); };
+    bar.appendChild(b);
+  });
+  // deep links (#scope etc., linked from all over the app) keep working:
+  // activate the owning tab and scroll to the target
+  function fromHash(){
+    const id = (location.hash || "#overview").slice(1);
+    activate(tabOf(id), document.getElementById(id) ? id : null);
+  }
+  window.addEventListener("hashchange", fromHash);
+  fromHash();
+})();
+</script>
 {% endblock %}

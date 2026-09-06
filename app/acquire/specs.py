@@ -15,15 +15,36 @@ from .spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter,
 GUTENBERG_SPEC = AcquisitionSpec(
     source_id="gutenberg",
     transport=Transport.RSYNC,
+    # ADMISSION RULE: a mirror joins this list only if it serves EXACTLY the
+    # official cache/epub layout (probe_file enforces it per benchmark, and
+    # every candidate below was probed live from the reference node,
+    # 2026-08-24):
+    #   ftp.ibiblio.org        — structure OK, distinct host (152.19.134.42),
+    #                            fastest measured (1.74 s vs 2.2 s on the probe);
+    #                            mirrors-first etiquette spares the master
+    #   aleph.gutenberg.org    — the PG master (69.55.231.8);
+    #                            gutenberg.pglaf.org / aleph.pglaf.org are the
+    #                            SAME host under other names — fake diversity,
+    #                            not listed
+    #   rsync.mirrorservice.org — REMOVED: its gutenberg.org module no longer
+    #                            carries cache/epub (legacy tree only, rc 23) —
+    #                            it was this spec's first endpoint, dead weight
+    #   mirrors.xmission.com / csclub.uwaterloo / dotsrc — no gutenberg-epub
+    #                            module (legacy tree layouts): excluded
     endpoints=(
-        Endpoint(transport=Transport.RSYNC,
-                 url="rsync.mirrorservice.org::gutenberg.org/cache/epub"),
+        Endpoint(transport=Transport.RSYNC, url="ftp.ibiblio.org::gutenberg-epub"),
         Endpoint(transport=Transport.RSYNC, url="aleph.gutenberg.org::gutenberg-epub"),
     ),
     layout="one-dir-per-doc",
     filters=("*.txt*", "*.rdf", "!*mbt-*", "!*.mobi", "!*.kf8*"),
     checksums=ChecksumSource(kind="none"),   # PG publishes no sidecar; blake2 always applies
     delta=DeltaSpec(mode="full-resync"),
+    # small, stable, and part of the official layout — the structure probe
+    # and benchmark unit (app/acquire/mirrors.py)
+    probe_file="1/pg1.rdf",
+    # optional extra formats, LOCAL-ONLY (spec.extras policy): someone may
+    # want the epubs beside the text — they never enter the p2p exchange
+    extras={"epub": Filter(include=("*.epub",), exclude=("*images*",))},
     profiles={
         "demo": Filter(include=("1/**", "2/**", "3/**"), max_files=3, max_bytes=5_000_000),
         "starter": Filter(max_files=500, max_bytes=2_000_000_000),

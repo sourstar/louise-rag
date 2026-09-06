@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, genome, gutenberg, pubmed, wikipedia
+from .plugins import embedded, genome, gutenberg, packed, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "embedded": embedded.SOURCE,
     "genome": genome.SOURCE,
     "gutenberg": gutenberg.SOURCE,
+    "packed": packed.SOURCE,        # placeholder; a collection gets its per-pack instance
     "pubmed": pubmed.SOURCE,
     "wikipedia": wikipedia.SOURCE,
 }
@@ -132,12 +133,20 @@ def recipe_for(collection) -> EmbedRecipe:
     return env_recipe()
 
 
+# What the worker may SPEND on a collection's local encoder (never what
+# retrieval uses — amendment 6). `embed_mode` in the collection TOML is the
+# Tier-2 desired state; the Library's override is Tier 3 and lasts until the
+# worker next applies the TOML (restart, or a TOML edit) — invariant 10.
+EMBED_MODES = ("off", "lazy", "all")
+DEFAULT_EMBED_MODE = "lazy"
+
+
 @dataclass(frozen=True)
 class Collection:
     name: str
     plugin: str
     profile: str | None
-    embed_mode_default: str | None
+    embed_mode_default: str | None      # TOML `embed_mode`; None = DEFAULT_EMBED_MODE
     corpus_dir: Path
     manifest_path: Path
     fts_dir: Path
@@ -151,6 +160,16 @@ class Collection:
     # Declarative reuse of published embeddings (§8 genesis): the worker
     # drains this archive automatically before spending GPU on backfill.
     genesis_archive: str | None = None
+    # Opted-in EXTRA formats from the acquisition source (spec.extras) —
+    # a LOCAL convenience (gutenberg: epubs beside the text), never part
+    # of the p2p exchange. TOML: extras = ["epub"].
+    extras: tuple[str, ...] = ()
+    # PEER PLANE: a magnet URI or .torrent path. Set, acquisition fetches
+    # this collection's corpus from a peer's torrent instead of the origin
+    # — same plugin, profiles, license gate; the torrent's piece hashes
+    # stand in for origin checksums (engine.effective_spec). TOML:
+    # peer_source = "magnet:?xt=...&x.pe=host:port".
+    peer_source: str | None = None
     # WHICH dated snapshot of the origin this collection holds, for sources
     # that publish them (Wikipedia dumps, a PubMed baseline year).
     #
@@ -163,8 +182,16 @@ class Collection:
     # old am I?". Pinning a date fixes all of that at the cost of an
     # explicit decision to move.
     snapshot: str | None = None
+    # Chunker LAYERS (amendment 41): None = the one implicit layer, the
+    # plugin's chunker — every collection that predates layers. TOML:
+    # [[layers]] chunker = "verbatim" rule = "archive:<id>" ... last "default".
+    layers: tuple | None = None
 
     def plugin_instance(self) -> CorpusSource:
+        if self.plugin == "packed":
+            # a pack's identity (origin plugin, license, chunker) is in its
+            # manifest, so the instance is per collection, not the registry's
+            return packed.for_pack(self.corpus_dir)
         return PLUGIN_REGISTRY[self.plugin]
 
 
@@ -201,12 +228,18 @@ def _load_one(path: Path) -> Collection:
     corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
 
     embed = parse_recipe(raw.get("embed"), where=str(path))
+    from . import layers as layers_mod
+    layers = layers_mod.parse_layers(raw.get("layers"), where=str(path))
+    embed_mode = raw.get("embed_mode")
+    if embed_mode is not None and embed_mode not in EMBED_MODES:
+        raise ValueError(f"{path}: embed_mode must be one of "
+                         f"{' | '.join(EMBED_MODES)}, got {embed_mode!r}")
 
     return Collection(
         name=name,
         plugin=plugin,
         profile=raw.get("profile"),
-        embed_mode_default=raw.get("embed_mode"),
+        embed_mode_default=embed_mode,
         corpus_dir=corpus_dir,
         manifest_path=_resolve("manifest", config.DATA_DIR / "manifest.db"),
         fts_dir=_resolve("fts", config.DATA_DIR / "fts"),
@@ -215,7 +248,14 @@ def _load_one(path: Path) -> Collection:
         license_ack=raw.get("license_ack"),
         embed=embed,
         genesis_archive=raw.get("genesis_archive"),
+        extras=tuple(raw.get("extras") or ()),
+        # one magnet/.torrent, or several (a TOML array, or one per line):
+        # the per-language torrents of a pre-embedded corpus (STATUS 5h)
+        peer_source=(("\n".join(str(x) for x in raw["peer_source"])
+                      if isinstance(raw.get("peer_source"), list)
+                      else str(raw["peer_source"])) if raw.get("peer_source") else None),
         snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
+        layers=layers,
     )
 
 
@@ -226,19 +266,43 @@ def config_toml_path(name: str) -> Path:
     return _config_dir() / "collections" / f"{name}.toml"
 
 
+def collections_dir() -> Path:
+    return _config_dir() / "collections"
+
+
 def load_all() -> list[Collection]:
-    cfg_dir = _config_dir() / "collections"
-    tomls = sorted(cfg_dir.glob("*.toml")) if cfg_dir.is_dir() else []
-    if not tomls:
+    """The collections this node has. TWO modes, decided by whether the
+    `collections/` directory EXISTS:
+
+      absent   — the legacy single-collection deployment: one synthesized
+                 default (gutenberg over CORPUS_DIR/DATA_DIR), no TOML.
+      present  — TOML mode: exactly the TOMLs in it, possibly NONE. An
+                 empty directory is a node with zero collections, not a
+                 legacy node: the synthesized default used to reappear the
+                 moment the last TOML was removed (Louise2, 2026-08-26 —
+                 "cannot delete all collections") and could not be removed
+                 again from the UI, because it has no file to retire.
+    """
+    cfg_dir = collections_dir()
+    if not cfg_dir.is_dir():
         return [_default_gutenberg_collection()]
-    return [_load_one(p) for p in tomls]
+    return [_load_one(p) for p in sorted(cfg_dir.glob("*.toml"))]
+
+
+def is_synthesized(collection) -> bool:
+    """True for the legacy default: no TOML, no collections/ directory."""
+    return not collections_dir().is_dir() and not config_toml_path(collection.name).exists()
 
 
 def default_collection() -> Collection:
     """The first collection load_all() returns — used wherever no explicit
     collection is given (single-collection call sites predating P0.5's
-    federation)."""
-    return load_all()[0]
+    federation), and as the CONTROL manifest (worker state, seeding table).
+    With zero collections the control manifest falls back to the legacy
+    default's path (DATA_DIR/manifest.db) so the node keeps running; that
+    collection is NOT listed anywhere and no pipeline runs on it."""
+    collections = load_all()
+    return collections[0] if collections else _default_gutenberg_collection()
 
 
 def by_name(name: str) -> Collection | None:

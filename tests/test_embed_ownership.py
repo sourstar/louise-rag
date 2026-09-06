@@ -64,13 +64,22 @@ def test_the_main_loop_skips_self_owned_collections(tmp_path, isolated_config,
                                                      monkeypatch):
     """The starvation half of the bug: even with the work moved onto its own
     thread, the main loop must stop visiting it — otherwise it blocks there
-    exactly as before, and two threads embed the same collection."""
+    exactly as before, and two threads embed the same collection.
+
+    Asserted on BEHAVIOUR: the exclusion is a function, so this cannot be
+    satisfied by a comment and does not break when the loop is refactored
+    (the previous version checked for a literal expression in the source and
+    broke on exactly that)."""
     import inspect
-    src = inspect.getsource(worker.run_forever)
-    assert "owns_own_embed(collection)" in src, \
-        "the main loop must consult the ownership rule"
-    # and the skip has to come BEFORE the round budget, or the loop still
-    # blocks inside _run_one_step for the length of a batch
-    skip = src.index("owns_own_embed(collection)")
-    budget = src.index("round_deadline = time.time()")
-    assert skip < budget, "the skip must precede the work, not follow it"
+    from app import config
+    monkeypatch.setattr(config, "EMBED_CONCURRENCY", 1)
+    owned = _collection(tmp_path, "owned", CPU)
+    shared = _collection(tmp_path, "shared", GPU)
+    assert worker.owns_own_embed(owned) is True
+    assert [c.name for c in worker.servable_collections([owned, shared], True)] \
+        == ["shared"]
+    # ...and with the per-collection threads off there is nowhere else for it
+    # to run, so the main loop keeps it
+    assert len(worker.servable_collections([owned, shared], False)) == 2
+    # the loop must apply the rule BEFORE selecting work, not inside it
+    assert "servable_collections(" in inspect.getsource(worker.run_forever)

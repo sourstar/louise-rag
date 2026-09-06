@@ -1,6 +1,6 @@
 """Generic acquisition engine — consumes an AcquisitionSpec + profile and
 drives resumable, checksum-verified downloads through a pluggable transport.
-See docs/architecture-v2.md §5.1.
+See docs/notes/architecture-v2.md §5.1.
 
 fetch() populates collection.corpus_dir; app/discovery.py and every
 CorpusSource stay completely untouched — once files land on disk, the
@@ -10,6 +10,7 @@ CorpusSource Protocol, already stabilized across P0.1/P0.2/P0.3.
 """
 import fnmatch
 import hashlib
+import json
 import shutil
 import threading
 import time
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config
+from .. import db
 from .. import stats
 from ..plugins.base import LicenseClass
 from ..transfer import pool as transfer_pool
@@ -24,15 +26,20 @@ from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 from . import checksum
 from . import claim as claim_mod
+from . import mirrors
 from . import transport_https
 from .transport_https import RangeUnsupported
-from .spec import (AcquisitionPlan, AcquisitionSpec, DiskPreflightError, Filter,
-                    LicenseAckRequiredError, RemoteFile, TransferAborted, TransportError,
-                    estimated_bytes_for, resolve_profile)
+from .spec import (AcquisitionPlan, AcquisitionSpec, ChecksumSource, DiskPreflightError,
+                    Endpoint, Filter, LicenseAckRequiredError, RemoteFile, TransferAborted,
+                    Transport, TransportError, estimated_bytes_for, resolve_profile)
 from .transports import REGISTRY
 
 _DRY_RUN_ASSUMED_RATE_BPS = 5_000_000   # ~5 MB/s — a named placeholder; P0.7 has real measurement
 _DISK_HEADROOM = 1.1                     # refuse unless free space clears the estimate by 10%
+# control-table key: what the origin's listing held at the start of the
+# last acquisition pass (files/bytes for the fetched profile) — the honest
+# denominator for the Library's fetched counter while a pass streams
+LISTING_KEY = "acquire_listing"
 
 
 def _apply_filters(files: list[RemoteFile], spec_filters: tuple[str, ...],
@@ -102,8 +109,34 @@ def make_ack(terms_text_path: Path) -> str:
     return f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}/{digest}"
 
 
+def _select_extras(all_files: list[RemoteFile], spec: AcquisitionSpec,
+                    extras_selected: tuple[str, ...],
+                    louise: list[RemoteFile]) -> list[RemoteFile]:
+    """The opted-in EXTRA files (spec.extras policy: local-only, never p2p).
+    A file the base filters already claim is Louise data, never an extra —
+    classification is exclusive so the counters never double-count."""
+    import dataclasses
+    if not extras_selected:
+        return []
+    louise_paths = {f.rel_path for f in louise}
+    chosen: dict[str, RemoteFile] = {}
+    for name in extras_selected:
+        flt = spec.extras.get(name)
+        if flt is None:
+            continue
+        for f in all_files:
+            if f.rel_path in louise_paths or f.rel_path in chosen:
+                continue
+            if any(fnmatch.fnmatch(f.rel_path, p) for p in flt.include) \
+                    and not any(fnmatch.fnmatch(f.rel_path, p) for p in flt.exclude):
+                chosen[f.rel_path] = dataclasses.replace(f, extra=True)
+    return sorted(chosen.values(), key=lambda f: f.rel_path)
+
+
 def _list_and_filter(spec: AcquisitionSpec, profile: str,
-                      snapshot: str | None = None) -> list[RemoteFile]:
+                      snapshot: str | None = None,
+                      endpoints: list | None = None,
+                      extras_selected: tuple[str, ...] = ()) -> list[RemoteFile]:
     # resolve_profile also understands a COMBINED profile ("tr,it") on an
     # additive source, where it is the union of those slices
     profile_filter = resolve_profile(spec, profile)
@@ -115,6 +148,24 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         # for whatever it currently calls latest. Those URLs are immutable,
         # which is what makes the corpus reproducible and shareable.
         candidates = list(spec.snapshot_files(snapshot))
+    elif spec.probe_file and len(spec.endpoints) > 1:
+        # MIRRORED source: the admission rule makes every listed mirror
+        # structurally identical, so listing all of them is the same listing
+        # N times — measured at 12 minutes EACH on gutenberg-epub (2.8M
+        # entries). List from the best-ranked mirror only, falling to the
+        # next on failure; the union semantic below stays for specs whose
+        # endpoints genuinely carry different subsets.
+        candidates = []
+        last_error: Exception | None = None
+        for endpoint in (endpoints if endpoints is not None else spec.endpoints):
+            try:
+                candidates = list(transport.list_files(endpoint, spec))
+                break
+            except TransportError as e:
+                last_error = e
+                mirrors.mark_down(endpoint.url)
+        else:
+            raise last_error or TransportError(f"{spec.source_id}: no endpoint could list")
     else:
         candidates = []
         for endpoint in spec.endpoints:
@@ -123,7 +174,8 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         if f.rel_path not in seen:
             seen.add(f.rel_path)
             all_files.append(f)
-    return _apply_filters(all_files, spec.filters, profile_filter)
+    louise = _apply_filters(all_files, spec.filters, profile_filter)
+    return louise + _select_extras(all_files, spec, extras_selected, louise)
 
 
 def is_adoptable(collection, f: RemoteFile) -> bool:
@@ -186,10 +238,83 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
     )
 
 
+def effective_spec(collection, spec: AcquisitionSpec,
+                   profile: str | None = None) -> AcquisitionSpec:
+    """The spec a collection ACTUALLY fetches by.
+
+    `peer_source` (TOML; a magnet or .torrent path) redirects the whole
+    acquisition to the PEER PLANE: same plugin, same profiles and filters,
+    same license gate and disk preflight — but the bytes come from a peer's
+    torrent instead of the origin. The torrent's own piece hashes replace
+    origin checksum sidecars; dated snapshots do not apply (a torrent IS a
+    frozen snapshot). Mirrors/probing are origin concepts and are dropped.
+
+    A source that is a TORRENT COLLECTION (STATUS 5l: an index torrent
+    listing per-slice members) expands to the members the PROFILE selects,
+    in fetch order — one magnet on the peer, its profile choosing the
+    languages; growing the profile adds members without a TOML edit.
+    """
+    from dataclasses import replace
+    peers = peer_sources(collection)
+    if not peers:
+        return spec
+    profile = profile or collection.profile or ""
+    urls: list[str] = []
+    for source in peers:
+        index = _index_for(collection, source)
+        if index is None:
+            urls.append(source)
+            continue
+        from . import torrent_collection
+        hint = index.get("peer_hint") or ""
+        for member in torrent_collection.members_for_profile(index, spec, profile):
+            urls.append(torrent_collection.with_hint(member["magnet"], hint))
+    # SEVERAL torrents (STATUS 5h: one per language of a pre-embedded
+    # corpus) are several endpoints that each carry a DIFFERENT subset of
+    # the tree: the listing is their union, and run_acquisition fetches
+    # them one after the other in the order the TOML lists them — the
+    # first language is complete, and the pipeline busy on it, while the
+    # rest still arrives.
+    return replace(spec,
+                   transport=Transport.TORRENT,
+                   endpoints=tuple(Endpoint(transport=Transport.TORRENT, url=u) for u in urls),
+                   checksums=ChecksumSource(kind="none"),
+                   probe_file=None, snapshot_files=None, snapshot_index=None)
+
+
+def _index_for(collection, source: str) -> dict | None:
+    """The torrent-collection index behind `source`, resolving it on first
+    sight (a few hundred KB from the swarm); None for a plain torrent or
+    when it cannot be reached yet (the source then stands as itself and
+    the transport reports the outage per file, never a crash here)."""
+    from . import torrent_collection
+    cached = torrent_collection.cached_index(collection, source)
+    if cached is not None:
+        return cached
+    try:
+        return torrent_collection.resolve(collection, source)
+    except Exception:   # noqa: BLE001 — unresolved is "plain torrent for now"
+        return None
+
+
+def peer_sources(collection) -> tuple[str, ...]:
+    """The collection's peer-plane sources: `peer_source` in the TOML is
+    one magnet/.torrent or several, one per line (or comma-separated)."""
+    raw = getattr(collection, "peer_source", None)
+    if not raw:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        items = [str(x) for x in raw]
+    else:
+        items = str(raw).replace(",", "\n").split("\n")
+    return tuple(s.strip() for s in items if s.strip())
+
+
 def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> AcquisitionPlan:
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
+    spec = effective_spec(collection, spec, profile)
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     return _plan_from_files(con, collection, spec, files)
 
@@ -199,28 +324,28 @@ def _upsert_fetched(con, source_id: str, f: RemoteFile, endpoint_url: str, local
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
         "local_path,bytes_fetched,blake2,fetch_done,fetch_version,profile,error,retries,"
-        "updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?,NULL,0,?) "
+        "extra,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?,NULL,0,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
         "endpoint_url=excluded.endpoint_url,remote_size=excluded.remote_size,"
         "remote_mtime=excluded.remote_mtime,local_path=excluded.local_path,"
         "bytes_fetched=excluded.bytes_fetched,blake2=excluded.blake2,fetch_done=1,"
         "fetch_version=excluded.fetch_version,profile=excluded.profile,error=NULL,"
-        "updated_at=excluded.updated_at",
+        "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, local_path, bytes_fetched,
-         blake2, config.FETCH_VERSION, profile, int(time.time())))
+         blake2, config.FETCH_VERSION, profile, int(f.extra), int(time.time())))
 
 
 def _upsert_failed(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,
                     profile: str, error: str) -> None:
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
-        "bytes_fetched,fetch_done,profile,error,retries,updated_at) "
-        "VALUES(?,?,?,?,?,?,0,?,?,1,?) "
+        "bytes_fetched,fetch_done,profile,error,retries,extra,updated_at) "
+        "VALUES(?,?,?,?,?,?,0,?,?,1,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
         "bytes_fetched=excluded.bytes_fetched,error=excluded.error,retries=retries+1,"
-        "updated_at=excluded.updated_at",
+        "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, bytes_fetched, profile,
-         error[:500], int(time.time())))
+         error[:500], int(f.extra), int(time.time())))
 
 
 def _upsert_aborted(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,
@@ -233,13 +358,13 @@ def _upsert_aborted(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes
     "SIGTERM = ... exit 0")."""
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
-        "bytes_fetched,fetch_done,profile,error,retries,updated_at) "
-        "VALUES(?,?,?,?,?,?,0,?,NULL,0,?) "
+        "bytes_fetched,fetch_done,profile,error,retries,extra,updated_at) "
+        "VALUES(?,?,?,?,?,?,0,?,NULL,0,?,?) "
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
-        "bytes_fetched=excluded.bytes_fetched,error=NULL,"
+        "bytes_fetched=excluded.bytes_fetched,error=NULL,extra=excluded.extra,"
         "updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, bytes_fetched, profile,
-         int(time.time())))
+         int(f.extra), int(time.time())))
 
 
 @dataclass
@@ -369,6 +494,37 @@ def _adopt_one_file(f: RemoteFile, collection, spec: AcquisitionSpec) -> _FileRe
                         digest=digest, adopted=True)
 
 
+def _staging_target(collection, f: RemoteFile, dest: Path) -> Path:
+    """Where the streaming transports WRITE (STATUS 5i): the staging area
+    on fast storage when config.ACQUIRE_STAGING_DIR names one and it has
+    room for this file, else the destination itself. A download arrives as
+    a sequential stream either way; what staging buys is that the corpus
+    volume (an HDD pool) sees one sequential copy per file instead of the
+    transport's chunk-by-chunk fsync'd writes, and the `.part` of an
+    interrupted file resumes from the staging area."""
+    base = config.ACQUIRE_STAGING_DIR
+    if base is None:
+        return dest
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(base).free
+    except OSError:
+        return dest
+    need = int((f.size or 0) * 1.2) + (64 << 20)
+    if free < need:
+        return dest                     # too big for the staging area: in place
+    target = base / collection.name / f.rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _promote(land: Path, dest: Path) -> None:
+    """Move a verified file from the staging area into the corpus — one
+    sequential copy across volumes, then the staging copy is gone."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(land), str(dest))
+
+
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
@@ -377,7 +533,8 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
         adopted = _adopt_one_file(f, collection, spec)
         if adopted is not None:
             return adopted
-    part = dest.with_name(dest.name + ".part")
+    land = _staging_target(collection, f, dest)
+    part = land.with_name(land.name + ".part")
     # Read at fetch time, never hoisted with the pending list: a file retried
     # within the same run would otherwise resume from a stale offset.
     resume_from = part.stat().st_size if part.is_file() else 0
@@ -386,24 +543,28 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
     try:
         if segments > 1:
             try:
-                size = transport.fetch_segments(endpoint, f, dest, segments)
+                size = transport.fetch_segments(endpoint, f, land, segments)
                 elapsed = time.monotonic() - started
                 manager.record_throughput(endpoint_key, size, elapsed)
+                digest = checksum.digest_and_verify(land, spec.checksums)
+                if land != dest:
+                    _promote(land, dest)
                 return _FileResult(remote=f, endpoint_url=endpoint.url,
-                                    status="fetched", size=size,
-                                    digest=checksum.digest_and_verify(dest, spec.checksums),
+                                    status="fetched", size=size, digest=digest,
                                     moved=size, seconds=elapsed)
             except RangeUnsupported:
                 # The origin will not serve ranges. Clear the segmented
                 # scratch state — its offsets describe a layout we are
                 # abandoning — and fall through to one stream.
                 part.unlink(missing_ok=True)
-                transport_https._sidecar_path(dest).unlink(missing_ok=True)
+                transport_https._sidecar_path(land).unlink(missing_ok=True)
                 resume_from = 0
-        size = transport.fetch_one(endpoint, f, dest, resume_from)
+        size = transport.fetch_one(endpoint, f, land, resume_from)
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
-        digest = checksum.digest_and_verify(dest, spec.checksums)
+        digest = checksum.digest_and_verify(land, spec.checksums)
+        if land != dest:
+            _promote(land, dest)
         elapsed = time.monotonic() - started
         manager.record_throughput(endpoint_key, size - resume_from, elapsed)
         return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
@@ -430,6 +591,7 @@ def _make_worker(transport, collection, spec, manager, ranked, stop, priority):
             return []
         endpoint_key, endpoint, sem = slot
         results: list[_FileResult] = []
+        data_result: _FileResult | None = None
         try:
             with manager.bind(priority, Direction.DOWN, stop=stop, endpoint_key=endpoint_key):
                 if item.sidecar is not None:
@@ -449,14 +611,49 @@ def _make_worker(transport, collection, spec, manager, ranked, stop, priority):
                                   f"an unverified fetch"))
                         return results
                 if item.data is not None:
-                    results.append(_fetch_one_file(
+                    data_result = _fetch_one_file(
                         transport, endpoint, item.data, collection, spec,
-                        manager, endpoint_key))
+                        manager, endpoint_key)
         finally:
             sem.release()
+        if data_result is not None:
+            if data_result.status == "failed" and len(ranked) > 1:
+                # MIRROR FAILOVER: on a mirrored source, a transport failure
+                # is more likely the mirror than the file. Mark this mirror
+                # down (mirrors.DOWN_S; the next benchmark re-admits it) and
+                # retry ONCE on the next-ranked mirror before recording
+                # anything — so a mirror dying mid-pass costs seconds per
+                # file, not a failed batch waiting for the next 6-hour pass.
+                # A clean stop ('aborted') never triggers this.
+                mirrors.mark_down(endpoint.url)
+                retried = _retry_on_next_mirror(
+                    transport, collection, spec, manager, ranked, stop,
+                    priority, item.data, endpoint.url)
+                if retried is not None:
+                    data_result = retried
+            results.append(data_result)
         return results
 
     return _work
+
+
+def _retry_on_next_mirror(transport, collection, spec, manager, ranked, stop,
+                           priority, remote: RemoteFile, failed_url: str):
+    alt = next(((k, e) for k, e in ranked
+                if e.url != failed_url and not mirrors.is_down(e.url)), None)
+    if alt is None:
+        return None
+    alt_key, alt_endpoint = alt
+    sem = manager.endpoint_semaphore(alt_key,
+                                     manager.endpoint_slots(alt_endpoint, spec))
+    if not sem.acquire(timeout=30):
+        return None
+    try:
+        with manager.bind(priority, Direction.DOWN, stop=stop, endpoint_key=alt_key):
+            return _fetch_one_file(transport, alt_endpoint, remote, collection,
+                                   spec, manager, alt_key)
+    finally:
+        sem.release()
 
 
 def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
@@ -484,8 +681,116 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     """
     _require_license_ack(spec, collection)
 
-    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
+    # The CLAIM covers the WHOLE pass, enumeration included, with a
+    # keepalive so it cannot go stale under a long listing. It used to be
+    # taken only around the transfer loop — so during gutenberg's first
+    # real enumeration (~12 minutes, 2.8M entries) the Library card showed
+    # a bare "fetched 0/0" with no fetching… badge (the badge reads the
+    # claim) and a concurrent `corpus add` could have started a second
+    # listing against the same origin.
+    spec = effective_spec(collection, spec, profile)   # peer plane, when the TOML says so
+    with claim_mod.acquisition_claim(con, spec.source_id):
+        keepalive = _ClaimKeepalive(collection, spec.source_id)
+        keepalive.start()
+        try:
+            if spec.transport is Transport.TORRENT and len(spec.endpoints) > 1:
+                # several torrents carrying different subsets (STATUS 5h):
+                # ONE AT A TIME, in the listed order, so the first is
+                # complete — and being processed — before the next starts
+                from dataclasses import replace
+                total: dict = {}
+                for endpoint in spec.endpoints:
+                    if stop is not None and stop.is_set():
+                        break
+                    part = _run_acquisition_claimed(
+                        con, collection, replace(spec, endpoints=(endpoint,)),
+                        profile, stop, priority)
+                    for k, v in part.items():
+                        total[k] = total.get(k, 0) + v if isinstance(v, (int, float)) else v
+                return total
+            return _run_acquisition_claimed(con, collection, spec, profile,
+                                            stop, priority)
+        finally:
+            keepalive.stop()
+
+
+class _ClaimKeepalive:
+    """Refreshes the acquisition claim every minute from its own thread and
+    connection (SQLite connections are thread-affine), so a pass whose
+    current phase produces no _apply callbacks for >5 minutes — a first
+    recursive listing runs ~12 — does not lose its claim mid-flight."""
+
+    def __init__(self, collection, source_id: str) -> None:
+        self._collection = collection
+        self._source_id = source_id
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"acquire-claim-{source_id}")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._done.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        from .. import db as _db
+        con = _db.connect(self._collection)
+        try:
+            last = time.time()
+            while not self._done.wait(30):
+                last = claim_mod.refresh_claim(con, self._source_id, last)
+        finally:
+            con.close()
+
+
+def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: str,
+                              stop, priority) -> dict:
+    # Mirrored sources: benchmark FIRST — it is the structure gate and it
+    # decides which single mirror the (expensive) listing runs against.
+    endpoints = list(spec.endpoints)
+    if spec.probe_file and len(endpoints) > 1:
+        try:
+            mirrors.benchmark(con, spec)
+        except Exception as e:   # noqa: BLE001 — a broken benchmark must not stop a fetch
+            db.log_event(con, "warn", "acquire",
+                         f"mirror benchmark failed ({e}); using last known order")
+        endpoints = mirrors.seed_order(con, spec)
+
+    files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None),
+                             endpoints=endpoints,
+                             extras_selected=getattr(collection, "extras", ()))
     plan = _plan_from_files(con, collection, spec, files)
+    # The SOURCE's own file count, recorded the moment it is known. The
+    # fetch loop below streams — fetch_files rows appear per file as each
+    # is processed — so during a long pass done==total at every instant and
+    # the Library card had no honest denominator ("1414/1414" while the
+    # origin held 1,447). This is a cached observation, not desired state
+    # (invariant 10): each pass overwrites it with what the origin said,
+    # scoped to the profile actually being fetched.
+    # DOCUMENT total, where the layout makes it knowable from the listing
+    # alone: for one-dir-per-doc every distinct top directory is one
+    # document, so "fetched" can be reported in the same unit parsed/
+    # indexed use. Container layouts (pubmed's gz, wikipedia's dumps,
+    # wikivec's parquet) cannot know document counts before unpacking —
+    # the card says "compressed containers" instead of implying files are
+    # documents.
+    louise_files = [f for f in files if not f.extra]
+    extra_files = [f for f in files if f.extra]
+    docs_total = None
+    if spec.layout == "one-dir-per-doc":
+        docs_total = len({f.rel_path.split("/", 1)[0]
+                          for f in louise_files if "/" in f.rel_path})
+    db.set_control(con, LISTING_KEY, json.dumps({
+        "files_total": len(louise_files),
+        "bytes_total": sum(f.size or 0 for f in louise_files),
+        "docs_total": docs_total, "layout": spec.layout,
+        # extras counted apart, always: local-only data must never inflate
+        # the Louise totals the counters and the p2p plane reason about
+        "extra_files_total": len(extra_files),
+        "extra_bytes_total": sum(f.size or 0 for f in extra_files),
+        "profile": profile, "ts": int(time.time())}))
     # Preflight against the spec's declared estimate (deliverable's literal
     # "disk preflight vs estimated_bytes") when the profile has one; falls
     # back to the precise listing-derived pending-bytes sum otherwise.
@@ -507,7 +812,10 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
 
     manager = get_manager()
     transport = REGISTRY[spec.transport]
-    ranked = manager.rank_endpoints([(e.url, e) for e in spec.endpoints])
+    # seeded from the benchmark's persisted ranking (a restart starts with
+    # the last winner); the manager's EWMA re-ranks live within the pass:
+    # measured beats benchmarked beats declared
+    ranked = manager.rank_endpoints([(e.url, e) for e in endpoints])
     counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0}
     claim_ts = [time.time()]
 
@@ -559,11 +867,11 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                 counters["adopted"] += 1
 
     workers = min(manager.platform.transfer.workers, max(1, len(items)))
-    with claim_mod.acquisition_claim(con, spec.source_id):
-        transfer_pool.run_pool(
-            items,
-            _make_worker(transport, collection, spec, manager, ranked, stop, priority),
-            _apply, max_workers=workers, stop=stop)
+    # the claim is already held by run_acquisition, covering the whole pass
+    transfer_pool.run_pool(
+        items,
+        _make_worker(transport, collection, spec, manager, ranked, stop, priority),
+        _apply, max_workers=workers, stop=stop)
 
     return {"fetched": counters["fetched"], "skipped": skipped,
             "failed": counters["failed"], "aborted": counters["aborted"],

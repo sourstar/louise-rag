@@ -1,6 +1,6 @@
 """Idempotent manifest migration: books -> documents, book_id -> uid.
 
-See docs/architecture-v2.md §3 and CLAUDE.md invariant 3 ("never silently") —
+See docs/notes/architecture-v2.md §3 and CLAUDE.md invariant 3 ("never silently") —
 this never runs automatically; an operator invokes it explicitly.
 
 Usage:

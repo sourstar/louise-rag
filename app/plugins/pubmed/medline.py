@@ -2,7 +2,7 @@
 
 Container files are <PubmedArticleSet> documents whose children are either
 <PubmedArticle> (a citation) or <DeleteCitation> (a batch of PMIDs to
-retract). See docs/architecture-v2.md §2, §8.
+retract). See docs/notes/architecture-v2.md §2, §8.
 """
 import xml.etree.ElementTree as ET
 
@@ -50,8 +50,23 @@ def parse_article(elem: ET.Element) -> dict:
                 month = m.text.strip() if m is not None and m.text else None
     date = f"{year}-{month}" if year and month else year
 
+    # DateRevised (fallback DateCompleted): WHEN the record last entered or
+    # changed in PubMed — the key a dated snapshot cuts on (pack build
+    # --until). The publication date above is what the reader shows.
+    revised = None
+    if citation is not None:
+        for tag in ("DateRevised", "DateCompleted"):
+            d = citation.find(tag)
+            if d is not None:
+                y = (d.findtext("Year") or "").strip()
+                m = (d.findtext("Month") or "").strip()
+                dd = (d.findtext("Day") or "").strip()
+                if y:
+                    revised = f"{y}-{m.zfill(2) if m else '01'}-{dd.zfill(2) if dd else '01'}"
+                    break
+
     return {"pmid": pmid, "title": title, "abstract": abstract, "mesh": mesh,
-            "journal": journal, "date": date}
+            "journal": journal, "date": date, "revised": revised}
 
 
 def parse_delete_pmids(elem: ET.Element) -> list[str]:

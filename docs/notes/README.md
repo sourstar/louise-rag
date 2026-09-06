@@ -1,0 +1,22 @@
+# Engineering notes
+
+Everything in this folder is a **record**, not the specification. The
+specification is the seven numbered documents one level up; where a
+note and a document disagree, the document wins.
+
+What is here, and why it is kept:
+
+| note | what it records |
+|---|---|
+| `architecture-v2.md`, `pack-format.md` | the design as it was written and corrected in flight, with its amendment history; the source the numbered documents were condensed from |
+| `no-central-node.md`, `certified-collections.md`, `lineage.md` | the three proposals that became §2.7–2.8, §3.7–3.8 and §4 — with the reasoning and the alternatives that were rejected |
+| `embedding-redundancy.md`, `pack-live-edge.md`, `p2p-discovery.md`, `storage-tiering.md`, `dna-search-axes.md` | proposals with their measurements; partly absorbed, partly parked |
+| `scheduling.md` | the worker's scheduling model, the measured costs, and every pitfall that has cost a rework — read before touching what runs when |
+| `calibration.md`, `calibration.live.md`, `approved-encoders.md` | how the tolerance was measured, and which encoder builds were found compliant on which hardware |
+| `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
+| `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
+| `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
+| `migration-plan.md` | the ordered steps from the current code to the documented architecture, for the `louise` branch; deleted when the last step lands |
+
+Nothing here is needed to understand or use Louise. All of it explains
+why some detail is the way it is, and most of it was paid for.

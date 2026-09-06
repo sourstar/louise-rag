@@ -142,3 +142,35 @@ def test_worker_rates_are_not_adopted_as_node_control(isolated_config):
     to the next would publish a lie for a round, and it is overwritten
     within seconds anyway."""
     assert db.WORKER_RATES_KEY not in db.NODE_CONTROL_KEYS
+
+
+def test_the_page_gets_totals_and_a_download_split_by_collection(isolated_config,
+                                                                 monkeypatch):
+    """The Network page shows two figures a person can act on — download
+    and upload totals — and the download split BY COLLECTION, derived from
+    the worker's per-collection fetch recorder. The scheduler's priority
+    classes ("interactive 0, delta 0, backfill 0, seeding 0") stay in the
+    payload but off the page: they told nobody which corpus was
+    downloading how fast. All of it rides the one cheap reader."""
+    con = db.connect()
+    db.publish_worker_rates(con, {"down": {"backfill": 40.0, "delta": 2.0},
+                                  "up": {"seeding": 5.0}})
+    db.publish_worker_stats(con, {
+        "gutenberg": {"fetch": {"totals": {"bytes": 6000}, "span_seconds": 60.0,
+                                "busy_seconds": 30.0, "samples": 3, "age_seconds": 1}},
+        "wikipedia": {"fetch": {"totals": {"bytes": 600}, "span_seconds": 60.0,
+                                "busy_seconds": 60.0, "samples": 1, "age_seconds": 1}},
+        "idle": {"embed": None},
+    })
+    calls = {"ro": 0}
+    real_ro = db.read_only_connect
+    monkeypatch.setattr(db, "read_only_connect",
+                        lambda *a, **k: (calls.__setitem__("ro", calls["ro"] + 1),
+                                          real_ro(*a, **k))[1])
+
+    payload = web._bandwidth_payload()
+    assert calls["ro"] == 1, "totals and the split must not open a second connection"
+    assert payload["totals"]["down"] >= 42.0 and payload["totals"]["up"] >= 5.0
+    split = [(d["collection"], d["bytes_per_s"]) for d in payload["downloads"]]
+    assert split == [("gutenberg", 100.0), ("wikipedia", 10.0)], \
+        "wall-clock bytes/s per collection, fastest first, idle ones absent"

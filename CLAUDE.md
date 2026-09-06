@@ -1,38 +1,149 @@
-# Project: P2P RAG Platform — implementation rules
+# Project: Louise — implementation rules
 
 ## Before any work
-- Read docs/architecture-v2.md for the sections named in the task prompt. If the task
-  conflicts with the doc, stop and ask — the doc wins until amended.
+- Read docs/README.md and the seven numbered documents it lists, in
+  order. They are the specification; the vocabulary they fix (docs/01,
+  docs/07) is the vocabulary of the code. If a task conflicts with them,
+  stop and ask — the documents win until changed.
+- docs/notes/ is the engineering record: measurements, postmortems,
+  the design history. Read docs/notes/STATUS.md for where things stand
+  and what cost time, and the note a task names, before changing the
+  code that note is about.
+- **On the `louise` branch, read docs/notes/migration-plan.md before any
+  step.** It fixes the order, the scope of each step, what existing code
+  it wraps, and the tests that prove it done. Wrap, do not rewrite; add
+  the new command beside the old one with a deprecation alias; keep every
+  pre-existing test green.
+- **Touching WHAT RUNS WHEN — the round loop, a stage's selection or
+  batching, archive passes, the pools, the maintainers — read
+  docs/notes/scheduling.md FIRST and follow its checklist (§6).** It is
+  the single reference: the model, the measured costs, and a catalogue
+  of the pitfalls that have already cost six reworks. Measure with
+  `louise dev schedule-report` before proposing anything; a scheduling
+  change whose commit message has no numbers in it is a guess.
 - Read the existing code in app/ for conventions before writing new modules.
 
 ## Invariants (violating any of these is a blocking bug)
-1. SPACES. Never mix embedding spaces. `space_id` pins model-file hash, dim, dtype,
-   normalization, pooling, CHUNK_VERSION, cleaning version, truncation policy, and
-   query-encoder hash. A vector table whose dim/space mismatches config is a
-   REFUSE-TO-BOOT error, never a warning or auto-migration.
-2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id. Every stage
-   is resumable and safe to re-run. SIGTERM = finish current document, commit, exit 0.
-   (Amended, Phase 1: for stages whose unit cannot be finished on request the
-   resumable unit may be smaller — acquisition checkpoints mid-file at byte
-   granularity with Range resume; bundle import stops between documents
-   mid-bundle. Lossless and truthful checkpoints, exit 0, always.)
-3. DETERMINISM. Chunking is a pure function of cleaned text. Any change to chunking or
-   cleaning bumps CHUNK_VERSION / cleaning version explicitly. Never silently.
-4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the LLM context
-   as pinned blocks and NEVER enter RRF. Ranked lists from corpus legs ALWAYS go
-   through RRF. Do not blend the two.
-5. BANDWIDTH. No code path moves bytes without drawing from the central token-bucket
-   budget (transfer manager). No per-tool rate limits as a substitute.
-6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS assumptions.
-   SQLite holds state (never travels); Lance holds vectors (travels as Parquet).
-7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is HTTP
-   (CHAT_URL / EMBED_URL / RERANK_URL). Embedding calls go through the existing client.
-8. SECRETS. Key material by filesystem path only; never in env values, config values,
-   logs, or error messages.
-9. LICENSE GATES. Acquisition of yellow-class sources requires a recorded
-   acknowledgement (timestamp + sha256 of terms text) before the first byte moves.
-10. CONFIG TIERS. Env = identity; TOML files = desired state; DB settings = runtime
-    overrides that do NOT survive restart. Never write desired state into the DB.
+Each names how it is enforced — *boot* (refuse to start), *test* (a test
+fails), or *review* (a human must notice). The ones enforced by review alone
+are the ones that have drifted; prefer to add a test when you touch them.
+
+1. SPACES. Never mix embedding spaces. One collection = one space; a node
+   runs several spaces side by side. `space_id` is computed by §3 as amended
+   (it names the encoder function AND the collection's chunker LAYERS —
+   amendment 41: one chunker per layer, every document in exactly one
+   layer by a declared rule, the layer list fixed at creation; a collection
+   with one layer is the common case and its layer IS its chunker. Not
+   `dim`, not chunk geometry, not the device; compensating checks cover
+   those at import). A vector table whose dim/space mismatches config is a
+   REFUSE-TO-BOOT error, never a warning or auto-migration. *Enforced:
+   boot; layers by test (app/layers.py, tests/test_layers.py: one layer =
+   the pre-layers space id byte for byte; every stage cuts a document
+   through `layers.chunks_for_document`, never a plugin's chunker directly).*
+2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id.
+   Every stage is resumable and safe to re-run. A stage marks done only
+   AFTER its durable commit, inside the same transaction — marking first is
+   the one ordering that loses data. SIGTERM = finish the current unit,
+   commit, exit 0; the unit is a document where that is possible, smaller
+   where it is not (acquisition checkpoints mid-file at byte granularity,
+   bundle import stops between documents) — lossless and truthful, always,
+   and bounded in time. *Enforced: test + review.*
+3. DETERMINISM. Chunking is a pure function of (cleaned text, chunker id,
+   chunker version). Any change to chunking or cleaning bumps the version
+   of the thing that changed, explicitly — never silently, and never via a
+   global knob that re-pins collections whose chunker never changed.
+   *Enforced: test (golden) + boot (space pin).*
+4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the
+   LLM context as pinned blocks and NEVER enter RRF. Ranked lists from corpus
+   legs ALWAYS go through RRF — when they answer the same question. Two
+   ranked lists that answer different questions (pending amendment from the
+   DNA search-axes work: homology vs function) are presented separately,
+   never fused. Do not blend the types. *Enforced: test + review.*
+5. BANDWIDTH. No code path moves bytes without drawing from the central
+   token-bucket budget (transfer manager). No per-tool rate limits as a
+   substitute. *Enforced: review.*
+6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
+   assumptions. SQLite holds state (never travels); Lance holds vectors
+   (travels as Parquet). Implicit rowids are load-bearing (`catalog_fts` is
+   keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
+   that renumbers rowids must realign. *Enforced: review.*
+7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
+   HTTP (CHAT_URL / EMBED_URL / RERANK_URL). Embedding calls go through the
+   existing client. *Enforced: test (tests/test_invariant_guards.py).*
+8. SECRETS. Secrets — key material AND tokens — are referenced by filesystem
+   path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
+   or error messages, and never in an env VALUE where a path is possible.
+   *Enforced: test + review.*
+9. LICENSE GATES. A yellow-class source requires a recorded
+   acknowledgement (timestamp + sha256 of terms text) before its data is
+   USED — however the data arrived. Acquisition: before the first byte
+   moves from the origin. Ingestion/exchange (amendment 36): a
+   yellow-class collection without an ack is not discovered, not
+   imported, not exchanged — hand-populated folders and peer copies are
+   not a bypass (observed live: a peer-copied shard was indexed and
+   imported ack-free). Terms text is byte-exact and never converted (a
+   CRLF checkout would silently invalidate every recorded ack).
+   Packs carry the origin's terms byte-exact, so one ack covers corpus,
+   pre-embeddings and pack (amendment 46; `app/licensing.py` is THE
+   resolution — never re-implement the check). *Enforced: acquisition by
+   test; ingestion by test (the worker withholds scan and archive, `pack
+   build` and the create dialog refuse — tests/test_license_gate.py).*
+10. CONFIG TIERS. Env = identity; TOML files = desired state; DB settings =
+    runtime overrides that do NOT survive restart. Never write desired state
+    into the DB. Concretely: every Tier-3 override either expires or is
+    reset when the worker applies the files (boot, add, TOML edit), and the
+    effective value shown anywhere comes from the same resolution function
+    the worker uses (`collections.recipe_for`, `db.apply_desired_embed_mode`).
+    *Enforced: test.*
+11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
+    a way that prevents verification against the original form. Dropping
+    what we do not use (epubs, XML markup, dump indexes) is fine; losing
+    the ability to re-fetch the origin and reproduce what we kept is not.
+    Concretely: every record carries `origin_hash` — the hash of the origin
+    bytes it was parsed from — and `origin` names the AcquisitionSpec and
+    parser version that produced it, so `records-vs-origin` can re-fetch a
+    sample and reproduce it. A record with no `origin_hash` is REFUSED at
+    pack build, never warned about: a pack whose records all verify
+    internally while being permanently unverifiable against the source is
+    the worst artefact we could ship, and it is published once and adopted
+    by peers who cannot repair it.
+    WHERE SEVERAL ORIGIN FORMS EXIST (epub vs plain text, XML baseline vs
+    API, dump vs live), choose the one that best fits our goals and RECORD
+    the choice with its reason beside the plugin — the form is part of what
+    a verifier needs in order to reproduce our records. *Enforced: build +
+    test (tests/pack/test_origin_fidelity.py); the form choice by review.*
+
+## Engineering rules (blocking in review; each one was paid for)
+- A per-round cost scales with the work available, never with the size of
+  a list or the corpus. If a per-item cost depends on how much has been
+  processed so far, it is a bug however fast it looks at fixture scale.
+- "Did work" is not "made progress": a stage that can succeed at doing
+  nothing must not win the round from the stages behind it.
+- Selection queries are plan-checked in tests — no `TEMP B-TREE`, no
+  `LIST SUBQUERY`. A merely slow query passes every behavioural test.
+  And a plan check is not enough: `SEARCH ... USING INDEX
+  idx_documents_scope (in_scope=?)` reads as indexed while SQLite filters
+  the rest of the corpus. TIME every new hot-path query against a real
+  manifest (amendment 49 found three costing 16–128 s PER ROUND that way);
+  if no index can answer it, walk it in windows from a cursor and stop.
+- Deferral is not failure: an unreachable endpoint or a locked manifest
+  never writes an error to a document. An error removes the document from
+  every selection until a human intervenes.
+- A pipeline thread NEVER waits without a bound on an optional subsystem.
+  The parse pool hung with its children gone and pubmed stopped dead for
+  hours (amendment 51): every such wait takes a timeout and falls back to
+  doing the work in-process, because a worker that cannot finish also
+  cannot honour SIGTERM.
+- Caches, cursors and bookkeeping key on physical identity (a path), never
+  on a name. Two objects can share a name and point at different files.
+- Telemetry is published by someone other than the thread doing the work.
+- A writer that reads first takes `BEGIN IMMEDIATE`. Under WAL a deferred
+  transaction that has read fails its upgrade to write INSTANTLY if anyone
+  committed meanwhile — the busy handler never runs. Long non-DB work
+  (an encoder call, a fetch) stays outside the transaction entirely.
+- Every log line names its collection (db.ManifestConnection does it).
+- Measure before optimising; the worker log read as a time series is the
+  first benchmark. Read it before reading the code.
 
 ## Style
 - Python 3.12, full type hints, dataclasses/Protocols as in the doc, pytest.

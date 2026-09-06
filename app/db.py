@@ -209,13 +209,24 @@ CREATE TABLE IF NOT EXISTS fetch_files (
 CREATE INDEX IF NOT EXISTS idx_fetch_files_pending ON fetch_files(source_id, fetch_done);
 """
 
+class ManifestConnection(sqlite3.Connection):
+    """A manifest connection that knows WHICH collection it belongs to, so
+    every log line written through it can say so. Seven collections share
+    one worker stdout; `[info:fts] indexed 200 documents` could be any of
+    them, which is useless exactly when one of them is the problem. A
+    plain sqlite3.Connection accepts no attributes, hence the subclass."""
+    collection_name: str = ""
+
+
 def connect(collection=None) -> sqlite3.Connection:
     if collection is None:
         collection = collections_mod.default_collection()
     collection.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     collection.fts_dir.mkdir(parents=True, exist_ok=True)
     collection.lance_dir.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None)
+    con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None,
+                          factory=ManifestConnection)
+    con.collection_name = collection.name
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
@@ -235,6 +246,25 @@ def connect(collection=None) -> sqlite3.Connection:
         con.execute("ALTER TABLE bundles ADD COLUMN tier_reached INTEGER")
     except sqlite3.OperationalError:
         pass  # same defensive pattern: pre-hardening manifests lack the column
+    try:
+        # opted-in EXTRA formats (spec.extras): local-only files counted
+        # apart from Louise data everywhere they appear
+        con.execute("ALTER TABLE fetch_files ADD COLUMN extra INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    # amendment 38: remote archive shards are fetched ahead, revisited and
+    # finalised — the ledger row carries the shard's id range (coverage),
+    # its size on disk, how many held documents still wait for fts, and
+    # the per-shard backoff for revisit passes that imported nothing
+    # `proven_at`: when the shard's same-function proof passed — the proof
+    # is per archive and persists across passes (genesis.RE_ENCODE_REJECT_MIN)
+    for column, decl in (("id_min", "INTEGER"), ("id_max", "INTEGER"),
+                         ("bytes", "INTEGER"), ("pending", "INTEGER"),
+                         ("next_pass_at", "INTEGER"), ("proven_at", "INTEGER")):
+        try:
+            con.execute(f"ALTER TABLE genesis_imports ADD COLUMN {column} {decl}")
+        except sqlite3.OperationalError:
+            pass
     return con
 
 def ensure_browse_index(con: sqlite3.Connection) -> bool:
@@ -312,7 +342,7 @@ DEFAULT_SCOPE = {
     "book_ids": [],         # explicit allow-list, [] = no restriction
     "limit": 0,             # 0 = unlimited; else cap total in-scope books
     "sample_per_lang": 0,   # 0 = off; else pick N lowest ids per language
-    "embed_mode": "lazy",   # off | lazy | all
+    "embed_mode": collections_mod.DEFAULT_EMBED_MODE,   # off | lazy | all
 }
 
 def get_control(con, key, default=None):
@@ -339,6 +369,28 @@ def set_scope(con, scope: dict):
     merged.update({k: v for k, v in scope.items() if k in DEFAULT_SCOPE})
     set_control(con, "scope", json.dumps(merged))
     return merged
+
+
+def apply_desired_embed_mode(con, collection) -> str | None:
+    """Make the collection's Tier-2 `embed_mode` (its TOML, else the default)
+    the effective one. Returns the Tier-3 value it replaced, or None when
+    nothing changed.
+
+    Invariant 10: TOML = desired state, DB = runtime override that does NOT
+    survive restart. The Library's embed-mode control writes the scope in the
+    control table; without this, that override was permanent and the TOML
+    value was parsed and only ever displayed — Tier 3 acting as desired
+    state and Tier 2 decorative. The worker calls this at boot and whenever
+    the TOML value changes; the override remains useful between those.
+    """
+    desired = collection.embed_mode_default or collections_mod.DEFAULT_EMBED_MODE
+    scope = get_scope(con)
+    current = scope.get("embed_mode")
+    if current == desired:
+        return None
+    scope["embed_mode"] = desired
+    set_scope(con, scope)
+    return current
 
 def node_id(con) -> str:
     """A stable, unique identity for this node, generated once and persisted.
@@ -407,6 +459,38 @@ def _read_sample(con, key: str, max_age_s: float):
     except (ValueError, TypeError, KeyError):
         return None, None
     return (payload, age) if age <= max_age_s else (None, age)
+
+
+# QUERY PRIORITY (docs/notes/scheduling.md §10, A5). A query is answered by the
+# WEB process and the backfill runs in the WORKER, so "queries outrank
+# regular processing" cannot be arranged inside either one — an in-process
+# scheduler cannot see the other's demand. This control key is the
+# reservation crossing that boundary: the web process stamps it when it is
+# about to embed a query, the worker reads it between documents and stands
+# its own embedding down until it expires.
+#
+# Short TTL, and deliberately so: a stale claim would idle the encoder for
+# nothing, and the worst case of losing one is a query that waits for one
+# document — the honest failure direction.
+QUERY_PRIORITY_KEY = "query_priority"
+QUERY_PRIORITY_TTL_S = 10.0
+
+
+def claim_query_priority(con, collection_name: str = "") -> None:
+    """"A human is waiting on the encoder." Never raises: a query must be
+    answered even when the control table cannot be written."""
+    try:
+        _publish_sample(con, QUERY_PRIORITY_KEY, collection_name)
+    except Exception:   # noqa: BLE001 — a reservation is an optimisation
+        pass
+
+
+def query_priority_claimed(con, max_age_s: float = QUERY_PRIORITY_TTL_S) -> bool:
+    try:
+        payload, _ = _read_sample(con, QUERY_PRIORITY_KEY, max_age_s)
+    except Exception:   # noqa: BLE001
+        return False
+    return payload is not None
 
 
 WORKER_STATS_KEY = "worker_stats"
@@ -510,7 +594,21 @@ def apply_reset(con, stage: str, book_ids: list[int]) -> None:
         where += " AND CAST(native_id AS INTEGER) IN (%s)" % ",".join("?" * len(book_ids))
         params = list(book_ids)
     if stage == "errors":
-        con.execute(f"UPDATE documents SET error=NULL, retries=0 WHERE {where}", params)
+        # STAGE errors only ('rdf: …' / 'fts: …' / 'embed: …' — the
+        # retryable class). An UNPREFIXED error is a corpus fact written by
+        # discovery ('no txt file': the mirror ships no text for this
+        # entry), and clearing it sent the document through the pipeline to
+        # fail again — except the retry re-recorded the same fact as
+        # 'fts: no txt file', which the Library counts as BLOCKED. Observed
+        # live: every press of "clear errors & retry" converted ~1,100
+        # unindexable gutenberg entries into scary blocked ones, and
+        # discovery could not relabel them back because their directories
+        # had not changed (cursor skip). Retrying cannot change a corpus
+        # fact; the card for unindexable documents says exactly that.
+        prefixed = " OR ".join(f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed"))
+        con.execute(
+            f"UPDATE documents SET error=NULL, retries=0 "
+            f"WHERE {where} AND (error IS NULL OR {prefixed})", params)
     elif stage in ("rdf", "fts", "embed"):
         con.execute(f"UPDATE documents SET {stage}_done=0 WHERE {where}", params)
         if stage == "rdf":
@@ -525,7 +623,7 @@ WORKER_STATE_KEY = "worker_state"
 # Turning embedding off per collection meant five edits AND losing each
 # collection's own embed_mode; this keeps the corpus growing while the
 # CPU-heavy stages stand down, and restores the previous state exactly.
-WORKER_STATES = ("running", "acquire-only", "paused")
+WORKER_STATES = ("running", "acquire-only", "seed-only", "paused")
 
 def worker_state(con) -> str:
     state = get_control(con, WORKER_STATE_KEY, "paused")
@@ -567,9 +665,15 @@ def adopt_node_control(target_con, other_cons) -> dict[str, str]:
 # ---------------- events ----------------
 
 def log_event(con, level, stage, message, doc_uid=None):
+    """stdout line: `HH:MM:SS [<collection> level:stage #uid] message`. The
+    collection comes from the connection (ManifestConnection), so no caller
+    has to pass it and no line can omit it; connections opened some other
+    way (tests, tools) simply print without it."""
     stamp = time.strftime("%H:%M:%S")
     tag = f" #{doc_uid}" if doc_uid else ""
-    print(f"{stamp} [{level}:{stage}{tag}] {message}", flush=True)
+    who = getattr(con, "collection_name", "")
+    prefix = f"{who} " if who else ""
+    print(f"{stamp} [{prefix}{level}:{stage}{tag}] {message}", flush=True)
     try:
         con.execute(
             "INSERT INTO events(ts,level,stage,doc_uid,message) VALUES(?,?,?,?,?)",
@@ -584,7 +688,7 @@ def log_event(con, level, stage, message, doc_uid=None):
         # acquire thread's ERROR HANDLER then died in this very function,
         # and a survivable lock contention became a dead thread with a
         # stack trace. The stdout line above already carried the message.
-        print(f"{stamp} [warn:db] event not persisted ({e}): "
+        print(f"{stamp} [{prefix}warn:db] event not persisted ({e}): "
               f"[{level}:{stage}] {message[:200]}", flush=True)
 
 def log_query(con, endpoint, query, mode, k, timings, n_results, books):

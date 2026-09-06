@@ -1,7 +1,7 @@
 """Regression tests for the cross-module defects F1 found.
 
 Written FAILING-FIRST against the pre-fix behavior; each names its finding in
-docs/phase1-integration-notes.md. These are the seams no module-level suite
+docs/notes/phase1-integration-notes.md. These are the seams no module-level suite
 could see: each half of the behavior was correct in isolation.
 """
 import numpy as np

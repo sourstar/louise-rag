@@ -11,7 +11,8 @@
        looked inactive. Selected is disabled too: you cannot switch to
        where you already are. #}
     {% for mode, label in (('running', 'run everything'),
-                            ('acquire-only', 'download only'),
+                            ('acquire-only', 'download/seeding only'),
+                            ('seed-only', 'seeding only'),
                             ('paused', 'pause')) %}
     <button class="mode{{ ' selected' if worker_state==mode }}"
             {% if worker_state==mode %}disabled aria-current="true"
@@ -22,19 +23,22 @@
        loop returns at the pause gate before servicing discovery requests,
        so the rescan would sit queued until the node runs again. #}
     <button onclick="rescanAll()"
-            {% if worker_state=='paused' %}disabled
-            title="the node is paused — discovery does not run, so a rescan
-                   would sit queued. Switch to download only or run
+            {% if worker_state in ('paused', 'seed-only') %}disabled
+            title="discovery does not run in this mode, so a rescan would
+                   sit queued. Switch to download/seeding only or run
                    everything first."{% endif %}>rescan all collections</button>
   </div>
   <div class="note">
-    <b>download only</b> keeps the corpus growing — acquisition and discovery
-    carry on — while the CPU-heavy stages (parse, index, embed) stand down.
-    The two halves cost very differently: moving bytes is nearly free, while
-    rdf/fts/embed run every core hot. Per-collection embed modes are left
-    untouched, so switching back to <b>run everything</b> restores exactly
-    what each collection was doing. <b>pause</b> stops all of it, including
-    starting new fetches. One node-wide setting, not per-collection.
+    <b>download/seeding only</b> keeps the corpus growing — acquisition and
+    discovery carry on, and the node keeps serving peers — while the
+    CPU-heavy stages (parse, index, embed) stand down. The two halves cost
+    very differently: moving bytes is nearly free, while rdf/fts/embed run
+    every core hot. <b>seeding only</b> additionally stops downloads and
+    discovery: the node only serves what it already holds (web UI, torrent
+    seeding). <b>pause</b> stops everything. Per-collection embed modes are
+    left untouched by all of these, so switching back to <b>run
+    everything</b> restores exactly what each collection was doing. One
+    node-wide setting, not per-collection.
   </div>
 </div>
 
@@ -42,7 +46,7 @@
 <div class="grid">
 {% for c in shelves %}
 <div class="panel" data-collection="{{ c.name }}">
-  <h2>{{ c.name }} <span class="badge">{{ c.plugin }}</span></h2>
+  <h2>{{ c.name }} <span class="badge">{{ c.plugin_label }}</span></h2>
   <div>
     <span class="badge brass">profile: {{ c.profile }}</span>
     <span class="badge lapis">space: {{ c.space_id }}</span>
@@ -51,16 +55,56 @@
     {% endif %}
   </div>
   {% if c.fetched %}
-  <div class="stage"><div class="lbl"><span>fetched</span><span>{{ c.fetched.done }} / {{ c.fetched.total }}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.fetched.done/c.fetched.total)|round(1) if c.fetched.total else 0 }}%;background:var(--brass)"></span></div></div>
+  {# denominator = the ORIGIN's file count for this profile, recorded at
+     pass start (engine LISTING_KEY) — fetch_files alone grows as the pass
+     streams, so done==its total at every instant mid-pass #}
+  {% set fetch_total = c.fetched.remote_total or c.fetched.total %}
+  {# the label is CONSTANT — "fetched ({what})", matching parsed/indexed/
+     embedded — and the COLOR is the state (one scheme for every stage
+     label): green done, orange in progress, grey idle/off. {what} says
+     what moves: data, compressed data, +extras. Details in Help. #}
+  {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
+  {% set fetch_title = ('this source ships COMPRESSED CONTAINER archives, each holding many documents — the file count here is archives, never documents. Parsed/indexed below count documents, updated as each archive is unpacked by discovery. ' if c.fetched.containers else 'corpus files fetched from the source — see Help. ') + 'Label color: green = complete, turquoise = running or in the scheduling pool, orange = on-demand only, grey = off/paused.' %}
+  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif worker_state != 'paused' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
+      <span{% if c.fetched.docs_total %} title="documents (files) — see Help"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="opted-in extra formats — local downloads only, never exchanged between peers (see Help)">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.fetch|num }}/h)">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
   {% endif %}
-  <div class="stage"><div class="lbl"><span>parsed (rdf)</span><span>{{ c.rdf_done }} / {{ c.in_scope }}</span></div>
+  {% if c.counts_pending %}
+  <div class="note">counting — the first scan of this collection's counters
+    after a restart is running now (~25 s on the largest manifests); the
+    bars below read 0 until it lands. Refresh in a moment.</div>
+  {% endif %}
+  {# ONE color scheme for every stage label (operator's): green = complete,
+     turquoise (--brass, the collection-name accent) = running or in the
+     scheduling pool, orange (--amber) = runs only on-demand, grey
+     (--muted) = off/paused #}
+  {% set stage_title = 'label color: green = complete, turquoise = running or in the scheduling pool, orange = on-demand only, grey = off/paused' %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.rdf and c.in_scope and c.rdf_done < c.in_scope %} <span style="color:var(--brass)" title="{% if c.stage_rates.rdf %}ETA at the rate measured over the last minutes (+{{ c.stage_rates.rdf|num }}/h) — proof the stage is moving even when the bar barely shows it{% else %}parsing is ahead of the lexical index: the worker gives the thread to indexing while a full batch is ready, and parsing resumes when indexing catches up — waiting by design, not stalled{% endif %}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span>indexed (lexical)</span><span>{{ c.fts_done }} / {{ c.in_scope }}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.fts and c.in_scope and c.fts_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate measured over the last minutes (+{{ c.stage_rates.fts|num }}/h) — proof the stage is moving even when the bar barely shows it">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span>embedded (dense)</span><span>{{ c.embed_done }} / {{ c.in_scope }}</span></div>
+  {# the dense row is part of the STANDARD ladder on EVERY card (operator:
+     pubmed's main box read as truncated without it) — named for what it
+     is: pre-embedded when the vectors arrive via an archive. The sub-box
+     below keeps only what is specific to the archive itself. #}
+  {# amendment 38: a REMOTE archive's main-box row is TOTAL coverage
+     (archive + local encoder) — 'embedded (dense)'; only a stand-alone
+     pre-embedded corpus (local archive: the corpus IS the vectors) keeps
+     the 'pre-embedded' name on its one and only dense row #}
+  {% set dense_label = 'pre-embedded (dense)' if c.genesis and c.genesis.local else 'embedded (dense)' %}
+  {# dense state: done -> green; an ARCHIVE collection's vectors are in
+     the scheduling pool whenever the worker runs (import ignores the
+     mode) -> turquoise; otherwise the mode speaks: off -> grey,
+     on-demand -> orange, all -> turquoise while the worker runs #}
+  {% if c.counts_pending %}{% set dense_color = 'inherit' %}
+  {% elif c.in_scope and c.embed_done >= c.in_scope %}{% set dense_color = 'var(--ok)' %}
+  {% elif c.genesis %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}
+  {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
+  {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
+  {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.embed and c.in_scope and c.embed_done < c.in_scope %} <span style="color:var(--brass)" title="ETA at the rate embeddings became available over the last minutes (+{{ c.stage_rates.embed|num }}/h)">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
@@ -68,12 +112,13 @@
       {# backfill selects from the manifest directly and never touches the
          lazy queue, so the queue count is always 0 here and says nothing #}
       {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
+      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.local %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors — the archive delivers the ones it covers, the encoder takes only the rest
       {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
       {% endif %}
     {% elif c.embed_mode == 'lazy' %}
-      lazy-embed queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
+      on-demand queue: {{ c.queue }} pending ({{ c.embed_ready }} more would embed under “all”)
     {% else %}
-      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “lazy”/“all”
+      embedding is off — {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} would embed under “on-demand”/“all”
     {% endif %}
   </div>
   {% if c.blocked %}
@@ -98,17 +143,59 @@
     collection's encoder writes: {{ c.gate.reason }}
   </div>
   {% endif %}
-  {% if c.genesis %}
+  {% if c.genesis and not c.genesis.local %}
+  {# a COMBINED ("double") plugin: a remote vector archive beside the
+     corpus — a second dataset with its own fetching and pacing, so it
+     gets its own SUB-BOX (lighter green). It lives in the SAME embedding
+     space as the main box (what import admission verifies), so no space
+     badge is repeated here. A stand-alone pre-embedded collection
+     (wikivec) never gets one: its whole card IS the pre-embedded box. #}
+  <div style="background:rgba(111,191,115,.06);border:1px solid rgba(111,191,115,.30);border-radius:6px;padding:8px 10px;margin-top:8px">
+    <div>
+      pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
+    </div>
+    {% if c.genesis.rejected %}
+    <div class="note">REJECTED — the archive was not produced by this collection's encoder; see the System log. Once the [embed] recipe is right, <code>genesis retry {{ c.name }}</code> puts it back in line.</div>
+    {% elif not c.genesis.known %}
+    <div class="note">unknown archive id — nothing will import.</div>
+    {% else %}
+    {# amendment 38 — two rows, no knob. fetched (vectors): the archive's
+       OWN download meter — shards landed over declared (it is a second
+       acquisition stream, behind the corpus on the link, bounded on
+       disk). pre-embedded (dense): documents the archive has covered so
+       far — its share of the main box's embedded (dense) row. Colors:
+       green complete, turquoise moving or scheduled, grey paused. #}
+    <div class="stage"><div class="lbl"><span title="the vector archive is its own download of {{ c.genesis.shard_total }} files, separate from the corpus fetched above — it downloads in the background behind the corpus (the corpus wins the link: without it the vectors are useless), a few files at a time; each file applies as soon as it lands for the documents already indexed, is revisited as more of them clear indexing, and is deleted once nothing in its range still waits. Label color: green = all landed, turquoise = downloading or scheduled, grey = paused."{% if c.genesis.fetch_state == 'done' %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or (worker_state == 'running' and c.license.acquire_enabled) %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
+        <span>{{ c.genesis.fetched|num }} / {{ c.genesis.shard_total|num }} archive files{% if c.genesis.resident_bytes %} <span class="note" title="archive files kept on disk until every document in their range has been indexed and covered (GENESIS_CACHE_BYTES bounds this)">({{ (c.genesis.resident_bytes / 1073741824)|round(1) }} GB on disk)</span>{% endif %}</span></div>
+      <div class="spine"><span style="width:{{ (100*c.genesis.fetched/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
+    <div class="stage"><div class="lbl"><span title="documents whose vectors came from the archive — no GPU spent. The main box's embedded (dense) row is this plus whatever the local encoder embedded. A document the archive turns out not to hold (no abstract, a chunk-shape mismatch) is released to the local encoder once its archive file is complete."{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>pre-embedded (dense)</span>
+        <span>{{ c.genesis.docs|num }} / {{ 'counting…' if c.counts_pending else c.in_scope|num }}{% if c.genesis.pending %} <span class="note" title="documents in the landed files' ranges still waiting for indexing — they import for free when they get there">({{ c.genesis.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
+      <div class="spine"><span style="width:{{ (100*c.genesis.docs/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+    {% if c.genesis.rejected_shards %}
+    <div class="note">{{ c.genesis.rejected_shards|num }} archive file(s) rejected by the same-function check while the rest imported — their ranges go to the local encoder; see the System log. <code>genesis retry {{ c.name }}</code> puts them back in line.</div>
+    {% endif %}
+    {% if not c.license.acquire_enabled %}
+    <div class="note">acquisition is off for this collection, so the archive is not fetched either — it follows the same switch and the same license gate as the corpus.</div>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% elif c.genesis %}
+  {# stand-alone pre-embedded collection (local archive): one box, one
+     note — the pre-embedded (dense) row above already carries progress #}
   <div class="note">
-    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.docs else '') }}">{{ c.genesis.archive }}</span>
-    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log)
+    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
+    {% if c.genesis.rejected %} — REJECTED (not the same encoder; see System log; <code>genesis retry {{ c.name }}</code> once the recipe is right)
     {% elif not c.genesis.known %} — unknown archive id
-    {% else %} — {{ c.genesis.applied }}/{{ c.genesis.shard_total }} shards,
-      {{ c.genesis.docs }} documents covered without GPU work; the worker
-      drains the rest automatically and gap-fills locally
+    {% else %} — the corpus files above carry the vectors; import follows
+    indexing, no GPU spent ({{ c.genesis.applied|num }}/{{ c.genesis.shard_total|num }} archive files read)
     {% endif %}
   </div>
   {% endif %}
+  {# ONE knob on EVERY card's main box (operator: "single knob"). It
+     governs the LOCAL encoder only; an archive imports whenever the
+     worker runs. Under "all" the encoder takes what the archive cannot
+     cover (amendment 38) — so the same three values mean the same thing
+     on every card. #}
   <div class="row" style="align-items:center;margin-top:6px">
     <div style="flex:0 1 auto">
       <label style="margin:0 0 2px">Embed mode —
@@ -118,11 +205,17 @@
               title="{{ 'the shared GPU encoder — one collection at a time, serial by design'
                         if c.embed_device == 'gpu'
                         else 'a CPU encoder container — runs alongside the GPU without competing' }}">
-          {{ c.embed_device|upper }} spending</span>
+          {{ c.embed_device|upper }}</span>
       </label>
-      <select onchange="setEmbedMode('{{ c.name }}', this.value)">
-        {% for m in ['off','lazy','all'] %}
-        <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ m }}</option>
+      {# persistent: writes embed_mode into the collection's TOML (Tier-2
+         desired state, like create/ack) AND the runtime scope for
+         immediate effect — it survives restarts #}
+      <select onchange="setEmbedMode('{{ c.name }}', this.value)"
+              title="What the LOCAL encoder does. off: nothing. on-demand: only documents a query touches. all: every indexed document without vectors{{ ' that the pre-embedded archive cannot cover — the archive imports regardless, in every mode, and goes first' if c.genesis else '' }}. Saved to collections/{{ c.name }}.toml — permanent, survives restarts. Applies within a worker round.">
+        {# display name "on-demand"; the STORED value stays "lazy" (TOML /
+           API compatibility — same pattern as plugin display labels) #}
+        {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all')] %}
+        <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
       </select></div>
   </div>
@@ -150,13 +243,28 @@
   <div class="row">
     <div><label>Name</label><input id="nc_name" placeholder="e.g. pubmed"></div>
     <div><label>Plugin</label>
-      <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
+      {# display names only — the internal id is minted into every document
+         uid and can never change; 'embedded' currently means the wikivec
+         pre-embedded Wikipedia dataset on every known deployment #}
+      <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}</select>
     </div>
     <div><label>Profile</label><select id="nc_profile"></select></div>
+    {# spec.extras: local-only extra formats — counter shows "(+ e/E)", details in Help #}
+    <div id="nc_extras_wrap" style="display:none"><label>Extra formats (local only — see Help)</label>
+      <div id="nc_extras"></div></div>
     <div><label>Acquisition</label>
-      <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
-        <input type="checkbox" id="nc_acquire" style="width:auto"> fetch corpus from the source
-      </label></div>
+      {# WHERE the corpus comes from (STATUS 5c, now built): the origin, a
+         peer's torrent, or nothing. The peer path is the same acquisition
+         engine on the torrent transport — same profiles, license gate,
+         disk preflight (engine.effective_spec). #}
+      <select id="nc_acquire_source">
+        <option value="off">off — I fill the corpus folder myself</option>
+        <option value="source" selected>fetch corpus from the source</option>
+        <option value="peers">fetch corpus from peers (torrent)</option>
+      </select>
+      <div id="nc_peer_wrap" style="display:none;margin-top:6px">
+        <textarea id="nc_peer_source" rows="2" placeholder="a TORRENT-COLLECTION magnet (copy it from the publisher's Network page — the profile chooses the languages, growing adds more)  or  a single torrent's magnet / /config/x.torrent, several one per line in fetch order" style="width:100%"></textarea>
+      </div></div>
     <div><label>Corpus folder</label>
       {# No default option: a collection points at a real mounted dataset or
          it is not created. The old "(default)" entry invented a path that
@@ -164,9 +272,26 @@
       <select id="nc_corpus" required>
         <option value="" disabled selected>— choose a mounted folder —</option>
         {% for m in corpus_mounts %}
-        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
+        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' (pack — choose the packed plugin)' if m.kind == 'pack' }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
         {% endfor %}
       </select></div>
+  </div>
+  <div id="nc_companion_block" style="display:none">
+    <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" id="nc_companion" style="width:auto"
+             onchange="document.getElementById('nc_companion_corpus').style.display=this.checked?'':'none'">
+      also add the <b>pre-embedded companion</b> (a second collection
+      <i>&lt;name&gt;-vec</i>, embedded plugin): it downloads a published frozen
+      snapshot whose vectors travel with it, so dense search answers from day
+      one at zero GPU cost, while this collection embeds lazily where queries
+      lead. Needs its own corpus folder and its own license acknowledgement.
+    </label>
+    <select id="nc_companion_corpus" style="display:none">
+      <option value="" disabled selected>— companion corpus folder —</option>
+      {% for m in corpus_mounts %}
+      <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
+      {% endfor %}
+    </select>
   </div>
   <div class="note">Dedicated corpus folders are the datasets mapped under
     <code>{{ corpus_mounts_dir }}</code>{% if not corpus_mounts %} (none mapped yet){% endif %}.
@@ -187,19 +312,49 @@
 let WORKER_STATE="{{ worker_state }}";
 const GROW_OPTIONS={};
 const PLUGIN_PROFILES={{ plugin_profiles|tojson }};
+const PLUGIN_EXTRAS={{ plugin_extras|tojson }};
 const PROFILE_MODE={};
 const PROFILE_HELD={};
+const EXTRAS_OFFERED={};
+const EXTRAS_HELD={};
 {% for c in shelves %}GROW_OPTIONS["{{ c.name }}"]={{ c.grow_options|tojson }};
 PROFILE_MODE["{{ c.name }}"]={{ c.profile_mode|tojson }};
 PROFILE_HELD["{{ c.name }}"]={{ c.profile_parts|tojson }};
+EXTRAS_OFFERED["{{ c.name }}"]={{ c.extras_offered|tojson }};
+EXTRAS_HELD["{{ c.name }}"]={{ c.extras_held|tojson }};
 {% endfor %}
 function fillProfileSelect(){
   const plugin=document.getElementById('nc_plugin').value;
   const sel=document.getElementById('nc_profile');
   const opts=PLUGIN_PROFILES[plugin]||[];
-  sel.innerHTML=opts.length
+  sel.innerHTML=(opts.length
     ? opts.map(o=>`<option value="${esc(o.name)}">${esc(o.label)}</option>`).join('')
-    : '<option value="demo">demo</option>';
+    : '<option value="demo">demo</option>')
+    // every plugin can be hand-populated: no profile, no acquisition —
+    // the operator fills the corpus folder and discovery indexes it
+    + '<option value="hand-populated">(hand-populated — I fill the corpus folder myself)</option>';
+  const xw=document.getElementById('nc_extras_wrap');
+  const xb=document.getElementById('nc_extras');
+  const extras=PLUGIN_EXTRAS[plugin]||[];
+  xb.innerHTML=extras.map(x=>
+    `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
+       <input type="checkbox" class="nc_extra" value="${esc(x)}" style="width:auto"> ${esc(x)}
+     </label>`).join('');
+  const src=document.getElementById('nc_acquire_source');
+  const peerWrap=document.getElementById('nc_peer_wrap');
+  src.onchange=()=>{peerWrap.style.display=src.value==='peers'?'':'none'};
+  sel.onchange=()=>{
+    const hp=sel.value==='hand-populated';
+    if(hp)src.value='off';
+    src.disabled=hp;
+    src.onchange();
+    // extras need acquisition: nothing to opt into on a hand-filled corpus
+    xw.style.display=(extras.length&&!hp)?'':'none';
+  };
+  sel.onchange();
+  // the pre-embedded companion pairs with the live wikipedia plugin only
+  document.getElementById('nc_companion_block').style.display =
+    plugin==='wikipedia' ? '' : 'none';
 }
 document.getElementById('nc_plugin').addEventListener('change',fillProfileSelect);
 fillProfileSelect();
@@ -218,7 +373,7 @@ async function libDiscover(name,quiet){
 }
 async function setEmbedMode(name,mode){
   try{await postJSON('/admin/library/'+name+'/embed-mode',{mode});
-    toast(name+': embed mode → '+mode+' (worker applies within a round)')}
+    toast(name+': embed mode → '+mode+' — saved to collections/'+name+'.toml (permanent; worker applies within a round)')}
   catch(e){toast('embed mode failed: '+e);location.reload()}
 }
 async function libReset(name,stage){
@@ -240,11 +395,28 @@ function openGrow(name){
   const options=opts.map((o,i)=>`<option value="${esc(o.name)}" ${i===Math.min(1,opts.length-1)?'selected':''}>${esc(o.label)}</option>`).join('');
   showModal(`<h2>Grow ${esc(name)}</h2>
     <label>Target profile</label><select id="grow_profile">${options}</select>
+    ${growExtrasBlock(name)}
     <div class="actions">
       <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
       <button onclick="hideModal()">Cancel</button>
     </div>
     <div id="grow_result"></div>`);
+}
+function growExtrasBlock(name){
+  // spec.extras: local-only extra formats — never exchanged between peers.
+  // Details live in Help, the modal stays clean.
+  const offered=EXTRAS_OFFERED[name]||[];
+  if(!offered.length) return '';
+  const held=new Set(EXTRAS_HELD[name]||[]);
+  return `<label style="margin-top:8px">Extra formats (local only — see Help)</label>`
+    + offered.map(x=>
+      `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
+         <input type="checkbox" class="grow_extra" value="${esc(x)}" style="width:auto"
+                ${held.has(x)?'checked':''}> ${esc(x)}${held.has(x)?' <span class="badge ok">held</span>':''}
+       </label>`).join('');
+}
+function growExtrasValue(){
+  return [...document.querySelectorAll('.grow_extra:checked')].map(e=>e.value);
 }
 function openGrowAdditive(name,opts){
   // profiles COMBINE here (each is a language slice): what is already held
@@ -265,6 +437,7 @@ function openGrowAdditive(name,opts){
     <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="grow_all" style="width:auto"> everything (all slices)
     </label>
+    ${growExtrasBlock(name)}
     <div class="actions">
       <button onclick="previewGrow('${esc(name)}')">Preview (dry-run)</button>
       <button onclick="hideModal()">Cancel</button>
@@ -302,7 +475,8 @@ async function previewGrow(name){
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 async function runGrow(name,profile){
-  try{const d=await postJSON('/admin/library/'+name+'/grow/run',{profile});
+  try{const d=await postJSON('/admin/library/'+name+'/grow/run',
+      {profile,extras:growExtrasValue()});
     toast(d.note||('profile set to '+profile));hideModal();location.reload()}
   catch(e){toast('grow failed: '+e)}
 }
@@ -330,36 +504,88 @@ async function getJSON(url){
   const r=await fetch(url);const d=await r.json().catch(()=>({}));
   if(!r.ok)throw (d.detail||r.statusText);return d;
 }
-async function createCollection(retryWithAck){
+// plugins that offer SUB-PLUGINS at install time. The offer is made ONCE,
+// here: proceeding without one is confirmed explicitly, because this form
+// will not offer it again for this collection.
+const SUB_PLUGINS={wikipedia:{name:'wikivec',what:'the pre-embedded companion '
+  +'(a second collection on the wikivec/embedded plugin): dense search from '
+  +'day one at zero GPU cost, vectors imported from the published snapshot'}};
+async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
   const name=document.getElementById('nc_name').value.trim();
   const plugin=document.getElementById('nc_plugin').value;
   const profile=document.getElementById('nc_profile').value.trim()||'demo';
   const corpus_dir=document.getElementById('nc_corpus').value.trim();
-  const acquire_enabled=document.getElementById('nc_acquire').checked;
+  const acquire_source=document.getElementById('nc_acquire_source').value;
+  const acquire_enabled=acquire_source!=='off';
+  const peer_source=acquire_source==='peers'
+    ? document.getElementById('nc_peer_source').value.trim() : '';
+  if(acquire_source==='peers'&&!peer_source){toast('paste the peer magnet (or a .torrent path) to fetch from peers');return}
+  const wantCompanion=plugin==='wikipedia'
+    && document.getElementById('nc_companion').checked;
+  const companion_corpus_dir=wantCompanion
+    ? document.getElementById('nc_companion_corpus').value.trim() : '';
   if(!name){toast('name required');return}
   if(!corpus_dir){toast('choose a corpus folder — a collection must point at a real mounted dataset');return}
+  if(wantCompanion&&!companion_corpus_dir){toast('choose a corpus folder for the companion (it needs its own)');return}
+  const sub=SUB_PLUGINS[plugin];
+  if(sub&&!wantCompanion&&!skipSubConfirmed){
+    showModal(`<h2>${esc(plugin)} offers a sub-plugin: ${esc(sub.name)}</h2>
+      <div class="note">${esc(sub.what)}.<br><br>This offer is made <b>at
+      install only</b> — the create form will not propose it again for this
+      collection (it can still be added later by hand, as its own
+      collection). Proceed without ${esc(sub.name)}?</div>
+      <div class="actions">
+        <button class="primary" onclick="hideModal();document.getElementById('nc_companion').checked=true;document.getElementById('nc_companion').onchange();toast('tick done — now choose the companion\\'s corpus folder')">add ${esc(sub.name)} too</button>
+        <button onclick="hideModal();createCollection(${!!ackMain},${!!ackCompanion},true)">proceed without it</button>
+        <button onclick="hideModal()">Cancel</button>
+      </div>`);
+    return;
+  }
   try{
+    const extras=(profile==='hand-populated')?[]
+      :[...document.querySelectorAll('.nc_extra:checked')].map(e=>e.value);
     const d=await postJSON('/admin/library/new/create',
-      {name,plugin,profile,corpus_dir,acquire_enabled,acknowledge_terms:!!retryWithAck});
+      {name,plugin,profile,corpus_dir,acquire_enabled,
+       acquire_source,peer_source,
+       acknowledge_terms:!!ackMain,
+       companion_corpus_dir,
+       acknowledge_companion_terms:!!ackCompanion,
+       extras});
     const mountWarn=d.corpus_mounted?''
       :`<div class="note" style="color:var(--err)">corpus folder not mounted yet</div>`;
     showModal(`<h2>Collection created</h2>
-      <div class="note">Written to <b>${esc(d.toml_path)}</b> — corpus: <b>${esc(d.corpus_dir)}</b></div>
+      <div class="note">Written to <b>${esc(d.toml_path)}</b> — corpus: <b>${esc(d.corpus_dir)}</b>${d.companion?` · companion: <b>${esc(d.companion)}</b>`:''}</div>
       ${mountWarn}
       <pre class="cli" style="white-space:pre-wrap">${esc(d.note)}</pre>
       <div class="actions"><button class="primary" onclick="hideModal();location.reload()">OK</button></div>`);
   }catch(e){
+    // each terms gate retries the create carrying every consent already
+    // given, so acknowledging the main source and then the companion's
+    // (two different terms texts) takes two modals, never re-asks
     if(String(e).startsWith('terms-acknowledgement-required')){
-      // show the source's terms; confirming retries the create with consent
       let terms;
-      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile})}
+      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile,corpus_dir})}
       catch(_){terms={}}
       showModal(`<h2>License terms — ${esc(plugin)}</h2>
         <div class="note">This source requires acknowledging its terms before
-          the platform fetches a single byte.</div>
+          the platform fetches — or, for a pack, uses — a single byte.</div>
         <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
         <div class="actions">
-          <button class="primary" onclick="hideModal();createCollection(true)">I acknowledge — create</button>
+          <button class="primary" onclick="hideModal();createCollection(true,${!!ackCompanion},true)">I acknowledge — create</button>
+          <button onclick="hideModal()">Cancel</button>
+        </div>`);
+      return;
+    }
+    if(String(e).startsWith('companion-terms-acknowledgement-required')){
+      let terms;
+      try{terms=await postJSON('/admin/library/new/preview',{name,plugin:'embedded',profile:'all'})}
+      catch(_){terms={}}
+      showModal(`<h2>License terms — pre-embedded companion (embedded)</h2>
+        <div class="note">The companion's published dataset carries its own
+          terms, separate from ${esc(plugin)}'s.</div>
+        <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
+        <div class="actions">
+          <button class="primary" onclick="hideModal();createCollection(${!!ackMain},true,true)">I acknowledge — create both</button>
           <button onclick="hideModal()">Cancel</button>
         </div>`);
       return;

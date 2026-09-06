@@ -1,6 +1,6 @@
 """doc_keys population — the generic hook that tags a document with the
 entities its own text mentions, so retrieval.search() can later boost/filter
-on them. See docs/architecture-v2.md §4.
+on them. See docs/notes/architecture-v2.md §4.
 
 Not inside any CorpusSource's parse(): parse() isn't in the live ingestion
 path today (worker.py calls plugin-specific read_metadata/read_chapters

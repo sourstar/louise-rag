@@ -181,3 +181,312 @@ def test_queue_cleanup_does_not_materialise_every_uid(tmp_path):
     plan = _plan(con, worker._QUEUE_CLEANUP, (config.MAX_RETRIES,)).upper()
     assert "LIST SUBQUERY" not in plan, \
         f"cleanup materialises the whole uid set: {plan}"
+
+
+# --- 4. the queue selection must scan the QUEUE, never the documents -------
+
+def test_queue_eligible_scans_the_queue_not_the_documents(tmp_path):
+    """Found live on pubmed at 3.6M rdf-done rows: the planner inverted the
+    join — SEARCH documents (in_scope, rdf_done) probing the queue per row
+    plus a TEMP B-TREE — costing 4.9 s at the top of EVERY _next_book, and
+    growing with rdf progress, to serve a queue that is usually empty. The
+    CROSS JOIN pins queue-first: one tiny scan plus one uid probe per row.
+    Behaviour alone cannot catch this — the query returns the same rows
+    either way."""
+    c, con = _discovered(tmp_path)
+    uid, _ = _uids(con, 2)
+    con.execute("UPDATE documents SET rdf_done=1 WHERE uid=?", (uid,))
+    con.commit()
+    _enqueue(con, uid)
+
+    plan = _plan(con, worker._QUEUE_ELIGIBLE,
+                 (config.MAX_RETRIES, config.EMBED_VERSION, 1))
+    d_at = max(plan.find("SEARCH documents"), plan.find("SCAN documents"),
+               plan.find("SEARCH d"), plan.find("SCAN d"))
+    q_at = max(plan.find("SCAN embed_queue"), plan.find("SEARCH embed_queue"),
+               plan.find("SCAN q"), plan.find("SEARCH q"))
+    assert q_at != -1 and d_at != -1, plan
+    assert q_at < d_at, f"documents must be probed FROM the queue, not scanned: {plan}"
+    # and the documents side must be a uid probe, never an index-range scan
+    assert "SEARCH d USING INDEX sqlite_autoindex_documents_1 (uid=?)" in plan \
+        or "uid=?" in plan, plan
+
+    # correctness unchanged: the queued document is still served first
+    scope = db.get_scope(con)
+    scope["embed_mode"] = "lazy"
+    stage, row = worker._next_book(con, scope)
+    assert stage == "embed" and row["uid"] == uid
+
+
+# --- 5. amendment 38: coverage-aware dense backfill --------------------------
+
+def _archive_collection(tmp_path, monkeypatch):
+    """A gutenberg-mini collection that DECLARES a remote archive covering
+    native id 10001 (shard 0 = ids 0..10001); the fixture's 10002 and 10003 lie beyond."""
+    from dataclasses import replace
+    from app.bundles import genesis
+    c, con = _discovered(tmp_path)
+    archive = genesis.GenesisArchive(
+        archive_id="test-arc", base_url="http://arc", adapter="medcpt-npy",
+        shards=("0",), uid_prefix="gutenberg:", ids_per_shard=10002)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    worker.reset_backfill_cursors()
+    return replace(c, genesis_archive="test-arc"), con, archive
+
+
+def test_backfill_under_all_skips_what_the_archive_can_still_cover(tmp_path, monkeypatch):
+    """Policy 2 of the operator's scheduling: under "all" the local encoder
+    embeds only the corpus the pre-embedded data does NOT cover. Coverage
+    is the declared id range of every shard that is not final; a
+    finalised shard releases the documents it could not cover."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
+    covered = [i for i in ids if i <= 10001]
+    beyond = [i for i in ids if i > 10001]
+    assert covered and beyond, f"fixture must straddle the archive: {ids}"
+
+    scope = dict(db.get_scope(con), embed_mode="all")
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(beyond), "covered documents are the archive's, not the encoder's"
+    stage, row = worker._next_book(con, scope, collection=c)
+    assert stage == "embed" and int(row["native_id"]) in beyond
+    stage, row = worker._next_embed(con, scope, c)
+    assert stage == "embed" and int(row["native_id"]) in beyond
+    assert {int(r["native_id"]) for r in worker._embed_candidates(con, scope, 100, c)} == set(beyond)
+
+    # shard 0 goes FINAL: the documents it left unembedded are released
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) "
+                "VALUES('test-arc','0','final',0)")
+    con.commit()
+    from app.bundles import genesis
+    genesis._bump_coverage_epoch()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(beyond) | set(covered)
+
+    # a REJECTED archive covers nothing: everything is the encoder's
+    con.execute("UPDATE genesis_imports SET state='rejected'")
+    con.commit()
+    genesis._bump_coverage_epoch()
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(ids)
+
+
+
+def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch):
+    """pubmed: 8M covered documents sit BEFORE the first uncovered one in
+    rowid order. The cursor resumes from the first row returned, so the
+    next round starts past the covered prefix; a shard going final (epoch)
+    or the TTL resets it; a deferred (still pending) row is re-selected."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    key = (str(c.manifest_path), "new")
+    rows = worker._backfill_rows(con, c, 1)
+    assert rows, "an uncovered candidate exists"
+    first = rows[0]
+    epoch, since, rid = worker._backfill_cursor[key]
+    assert rid == int(first["rid"]) - 1, "resume FROM the first returned row"
+    # the covered prefix lies below the cursor
+    below = con.execute("SELECT COUNT(*) FROM documents WHERE rowid<=? AND CAST(native_id AS INTEGER)<=10001",
+                        (rid,)).fetchone()[0]
+    assert below == con.execute("SELECT COUNT(*) FROM documents WHERE rowid<? AND CAST(native_id AS INTEGER)<=10001",
+                                (int(first["rid"]),)).fetchone()[0]
+    # deferred (not embedded): selected again
+    assert worker._backfill_rows(con, c, 1)[0]["uid"] == first["uid"]
+    # embedded: the cursor moves on without revisiting anything before it
+    con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (first["uid"],))
+    con.commit()
+    nxt = worker._backfill_rows(con, c, 1)
+    assert not nxt or nxt[0]["uid"] != first["uid"]
+    # a shard going final resets the cursor (its released documents sit below)
+    from app.bundles import genesis
+    genesis._bump_coverage_epoch()
+    worker._backfill_rows(con, c, 1)
+    assert worker._backfill_cursor[key][0] == genesis.coverage_epoch()
+
+
+def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkeypatch):
+    """The former backfill ended `ORDER BY (lang='en')`: a TEMP B-TREE over
+    every candidate, per round, growing with the corpus. rowid order IS
+    the scope index's order — with and without the coverage predicate."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    covered = "AND NOT (CAST(native_id AS INTEGER) BETWEEN ? AND ?)"
+    for sql, params in (
+            (worker._BACKFILL_SQL.format(covered=""), (config.MAX_RETRIES, -1, 1)),
+            (worker._BACKFILL_SQL.format(covered=covered), (config.MAX_RETRIES, -1, 0, 19, 1)),
+            (worker._REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES, -1, 1))):
+        plan = _plan(con, sql, params)
+        assert "TEMP B-TREE" not in plan.upper(), f"backfill sorts the candidate set: {plan}"
+        assert "idx_documents_scope" in plan, plan
+
+
+def test_the_prefetch_probe_walks_forward_from_the_current_document(tmp_path):
+    """Regression (2026-08-28, measured live): the prefetch lookahead used
+    `ORDER BY rowid LIMIT 1 OFFSET k` over the whole pending set, so SQLite
+    started at rowid 1 and re-filtered the 28.6M documents already done to
+    reach the frontier — three scans per call, seen as 10.5s rdf batches
+    (the engineering rule broken is the first: a per-round cost that scales
+    with the corpus). Anchored on the current rowid it is k steps from
+    where the stage is."""
+    c, con = _discovered(tmp_path)
+    for i in range(5000):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
+                    "fts_done,embed_done) VALUES(?,'g',?,?,1,?,0,0)",
+                    (f"p:{i}", str(i), f"/x{i}", 1 if i < 4000 else 0))
+    plan = " ".join(r[3] for r in con.execute(
+        "EXPLAIN QUERY PLAN " + worker._RDF_AHEAD, (0, 3, 10)))
+    assert "SCAN documents" not in plan, f"a full scan of the corpus per probe: {plan}"
+    assert "USE TEMP B-TREE" not in plan, f"a sort of the whole pending set per probe: {plan}"
+    anchor = con.execute("SELECT rowid FROM documents WHERE uid='p:4000'").fetchone()[0]
+    got = con.execute(worker._RDF_AHEAD, (anchor, config.MAX_RETRIES, 100)).fetchone()
+    assert got is not None and got["uid"] == "p:4101", dict(got)
+    # nothing behind the anchor is ever examined, and a probe past the end
+    # of the pending set simply finds nothing
+    assert con.execute(worker._RDF_AHEAD,
+                       (anchor, config.MAX_RETRIES, 100_000)).fetchone() is None
+
+
+def test_prefetch_ahead_costs_nothing_when_there_is_nothing_to_prepare(tmp_path, monkeypatch):
+    """It probes ONLY when there is a background to prepare in AND a plugin
+    with something to prepare: four of the five plugins have no derived
+    cache and a serial node has no pool, so paying three lookahead queries
+    per stage for them would be pure cost on the hot path."""
+    from app import parallel
+    c, con = _discovered(tmp_path)          # gutenberg: no `prepare` hook
+    row = con.execute("SELECT * FROM documents LIMIT 1").fetchone()
+    queries = []
+    con.set_trace_callback(queries.append)
+    worker._prefetch_last.clear()
+    worker._prefetch_ahead(con, c, "rdf", row)
+    assert queries == [], "serial node: not one query"
+    monkeypatch.setattr(parallel, "pool", lambda: object())      # a pool exists...
+    worker._prefetch_last.clear()
+    worker._prefetch_ahead(con, c, "rdf", row)
+    con.set_trace_callback(None)
+    assert queries == [], "...but this plugin has nothing to prepare"
+
+
+def test_prefetch_ahead_is_anchored_throttled_and_never_fatal(isolated_config, tmp_path, monkeypatch):
+    """With a pool and a plugin that HAS a derived cache (pubmed), it
+    submits the documents ahead of the CURRENT one, at most once per
+    interval, and a failure inside it never reaches the round."""
+    from dataclasses import replace
+    from app import licensing, parallel
+    d = tmp_path / "pm"
+    c = collections_mod.Collection(
+        name="pm", plugin="pubmed", profile=None, embed_mode_default=None,
+        corpus_dir=Path(__file__).parent / "fixtures" / "pubmed-mini",
+        manifest_path=d / "manifest.db", fts_dir=d / "fts", lance_dir=d / "lancedb")
+    c = replace(c, license_ack=licensing.make_ack(c))
+    con = db.connect(c)
+    for i in range(300):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
+                    "fts_done,embed_done) VALUES(?,'pubmed',?,?,1,0,0,0)",
+                    (f"pubmed:{i}", str(i), f"/x/c.xml::{i}"))
+    row = con.execute("SELECT * FROM documents WHERE uid='pubmed:0'").fetchone()
+    seen = []
+    monkeypatch.setattr(parallel, "pool", lambda: object())
+    monkeypatch.setattr(parallel, "prefetch", lambda coll, rows: seen.append([r["uid"] for r in rows]))
+    monkeypatch.setattr(worker, "_PREFETCH_OFFSETS", (10, 50))
+    worker._prefetch_last.clear()
+    worker._prefetch_ahead(con, c, "rdf", row)
+    assert seen == [["pubmed:11", "pubmed:51"]], seen   # the anchor itself is excluded
+    worker._prefetch_ahead(con, c, "rdf", row)
+    assert len(seen) == 1, "throttled per collection+stage"
+    # a broken probe is silent: the stage goes on
+    worker._prefetch_last.clear()
+    monkeypatch.setattr(parallel, "prefetch",
+                        lambda coll, rows: (_ for _ in ()).throw(RuntimeError("pool gone")))
+    worker._prefetch_ahead(con, c, "rdf", row)
+    con.close()
+
+
+def test_the_reindex_walk_is_windowed_and_then_free(tmp_path, monkeypatch):
+    """Regression (2026-08-28, measured on the live node): the version-driven
+    re-index selection is the one query no index can answer, and it ran on
+    EVERY round of a caught-up collection — 16.7s on wikivec, 18.3s on
+    wikipedia, 127.9s on pubmed, each round, to conclude there was nothing
+    to do. It now walks rowid WINDOWS from a per-collection cursor and,
+    once the walk ends, costs nothing until a version bump."""
+    c, con = _discovered(tmp_path)
+    con.execute("UPDATE documents SET in_scope=1, rdf_done=1, fts_done=1, "
+                "fts_version=?, entity_version=?", (config.FTS_VERSION, config.ENTITY_VERSION))
+    for i in range(1000):
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
+                    "fts_done,embed_done,fts_version,entity_version) "
+                    "VALUES(?,'g',?,?,1,1,1,0,?,?)",
+                    (f"p:{i}", str(i), f"/x{i}", config.FTS_VERSION, config.ENTITY_VERSION))
+    # pin the width: this test is about the WALK (one window per round,
+    # terminating, then free). That the width itself adapts to what a probe
+    # costs is app/sizing.py's job and is tested separately.
+    monkeypatch.setattr(worker, "_REINDEX_WINDOW", 100)
+    monkeypatch.setattr(worker, "_REINDEX_WINDOW_MIN", 100)
+    monkeypatch.setattr(worker, "_REINDEX_WINDOW_MAX", 100)
+    worker.reset_reindex_cursors()
+    top = con.execute("SELECT MAX(rowid) FROM documents").fetchone()[0]
+
+    # nothing to re-index: the walk advances a window per call and stops
+    calls = 0
+    while worker._next_reindex(con, c) is None and not worker._reindex_cursor[
+            str(c.manifest_path)][4]:
+        calls += 1
+        assert calls < 100, "the walk must terminate"
+    state = worker._reindex_cursor[str(c.manifest_path)]
+    assert state[4] is True and state[2] >= top
+    assert calls >= top // 100, "one window per round, not the whole corpus"
+    # done: no query at all now
+    queries = []
+    con.set_trace_callback(queries.append)
+    assert worker._next_reindex(con, c) is None
+    con.set_trace_callback(None)
+    assert queries == [], "a caught-up collection pays nothing per round"
+
+    # a version bump makes work again, and it is found
+    monkeypatch.setattr(config, "FTS_VERSION", config.FTS_VERSION + 1)
+    found = None
+    for _ in range(100):
+        found = worker._next_reindex(con, c)
+        if found is not None:
+            break
+    assert found is not None, "the bump reopens the walk"
+    # the batch's peers come from the same window, not the whole corpus
+    plan = " ".join(r[3] for r in con.execute(
+        "EXPLAIN QUERY PLAN " + worker._FTS_REINDEX_PEERS,
+        (3, 0, 100, config.FTS_VERSION, config.ENTITY_VERSION, "x", 10)))
+    assert "TEMP B-TREE" not in plan and "SCAN documents" not in plan, plan
+    peers = worker._fts_peers(con, c, found, 50)
+    assert peers and all(p["uid"] != found["uid"] for p in peers)
+
+
+def test_fresh_fts_peers_use_the_index_prefix(tmp_path):
+    """The common case must not pay for the re-index OR: 0.4 ms instead of
+    19.3 s on a 22M-row collection (measured)."""
+    c, con = _discovered(tmp_path)
+    plan = " ".join(r[3] for r in con.execute(
+        "EXPLAIN QUERY PLAN " + worker._FTS_FRESH_PEERS, (3, "x", 10)))
+    assert "idx_documents_scope (in_scope=? AND rdf_done=? AND fts_done=?)" in plan, plan
+    assert "TEMP B-TREE" not in plan and "SCAN documents" not in plan, plan
+    row = con.execute("SELECT * FROM documents WHERE fts_done=0 LIMIT 1").fetchone()
+    if row is not None:
+        peers = worker._fts_peers(con, c, row, 10)
+        assert all(p["uid"] != row["uid"] and not p["fts_done"] for p in peers)
+
+
+def test_the_reindex_window_is_a_rowid_range_not_an_index_walk(tmp_path):
+    """Regression within the regression (2026-08-28): windowing the walk was
+    not enough — with the scope columns indexable SQLite could not use
+    `rowid>?` as a range (embed_done sits between the constrained prefix
+    and the index's rowid tail), so every window still re-walked the whole
+    (in_scope, rdf_done, fts_done) range: 5.4s per window on pubmed,
+    measured. The `+` prefixes force the integer primary key."""
+    c, con = _discovered(tmp_path)
+    for sql, params in (
+            (worker._FTS_REINDEX_WINDOWED, (0, 100, config.MAX_RETRIES,
+                                            config.FTS_VERSION, config.ENTITY_VERSION)),
+            (worker._FTS_REINDEX_PEERS, (0, 100, config.MAX_RETRIES, config.FTS_VERSION,
+                                         config.ENTITY_VERSION, "x", 10))):
+        plan = _plan(con, sql, params)
+        assert "USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in plan, plan
+        assert "idx_documents_scope" not in plan, plan
+        assert "TEMP B-TREE" not in plan.upper(), plan

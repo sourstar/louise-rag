@@ -61,8 +61,10 @@ class Priority(IntEnum):
     """Lower value = higher priority (architecture-v2.md §5.2's ordering)."""
     INTERACTIVE = 0    # interactive queries & lazy-p2p fetches
     DELTA = 1          # delta sync
-    BACKFILL = 2       # backfill acquisition
-    SEEDING = 3        # leftover only, never reserved
+    BACKFILL = 2       # backfill acquisition (the corpus)
+    ARCHIVE = 3        # pre-embedded vector archives (amendment 38): useless
+                       # without the corpus, so always behind it
+    SEEDING = 4        # leftover only, never reserved
 
 
 class TransferAborted(Exception):
@@ -233,6 +235,19 @@ class TokenBucket:
     def granted_snapshot(self) -> tuple[float, list[float]]:
         with self._cv:
             return self._clock.monotonic(), list(self._core.granted)
+
+    def note_granted(self, n: int, priority: Priority) -> None:
+        """Count bytes that MOVED OUTSIDE the token flow — rsync's subprocess,
+        which is paced by a rate lease (--bwlimit) rather than per-chunk
+        draws. Tokens are untouched (the lease already withdrew budget; with
+        an unlimited budget there is nothing to withdraw): this is
+        accounting, not arbitration. Without it the Network page's per-class
+        graph read zero whenever rsync was the thing moving bytes — which on
+        the reference node is gutenberg, the biggest mover."""
+        if n <= 0:
+            return
+        with self._cv:
+            self._core.granted[priority] += float(n)
 
     # ---------------- rate control ----------------
 

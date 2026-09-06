@@ -200,7 +200,7 @@ def test_bandwidth_payload_reports_real_per_class_rates():
     # endpoint yields every 2s.
     payload = web._bandwidth_payload()
     for direction in ("down", "up"):
-        assert set(payload[direction]) == {"interactive", "delta", "backfill", "seeding"}
+        assert set(payload[direction]) == {"interactive", "delta", "backfill", "archive", "seeding"}
     assert "schedule" in payload["limits"]
 
 
@@ -251,3 +251,116 @@ def test_system_page_renders_effective_config_and_boot_report(client):
 def test_system_log_fragment_renders(client):
     r = client.get("/admin/system/log", headers={"X-Admin-Token": "sekrit"})
     assert r.status_code == 200
+
+
+# ---------------- STATUS 5j: translated results and the reader ----------------
+
+def test_show_results_in_translates_content_only(client, monkeypatch):
+    """The drop-down translates snippets and the answer — never titles,
+    authors, ids or the page. One model call per page of results, cached
+    per (chunk, language); a model failure degrades to the originals and
+    says so."""
+    _seed_one_book()
+    calls = []
+
+    def fake_translate(texts, lang):
+        calls.append((tuple(texts), lang))
+        return [f"<{lang}> {t}" for t in texts]
+    monkeypatch.setattr(web.llm, "translate_texts", fake_translate)
+    body = {"lang": "de", "items": [{"id": "gutenberg:1:0:1", "text": "the lighthouse"}]}
+    d = client.post("/ask/translate", json=body).json()
+    assert d["items"]["gutenberg:1:0:1"] == "<de> the lighthouse" and d["failed"] is False
+    client.post("/ask/translate", json=body)
+    assert len(calls) == 1, "cached: toggling back and forth never pays the model twice"
+    assert client.post("/ask/translate", json={**body, "lang": "original"}).json()["items"] == {}
+    monkeypatch.setattr(web.llm, "translate_texts", lambda texts, lang: [])
+    d = client.post("/ask/translate", json={"lang": "fr", "items": [{"id": "x", "text": "y"}]}).json()
+    assert d["failed"] is True and d["items"] == {}
+
+    r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
+    assert 'class="snip" data-cid="gutenberg:1:0:1"' in r.text, "snippets carry the translation key"
+    assert 'data-collection="gutenberg"' in r.text and 'data-book="1"' in r.text, "hits name their collection"
+    page = client.get("/ask").text
+    assert 'id="lang"' in page and "show results in Deutsch" in page
+    assert "results in their own language" in page
+
+
+def test_the_answer_is_asked_in_the_chosen_language_not_translated_after():
+    from app import retrieval
+    result = {"hits": [], "facts": [], "catalog": []}
+    system = retrieval.build_answer_messages("q", result, answer_lang="it")[0]["content"]
+    assert "ISO code 'it'" in system
+    assert "ISO code" not in retrieval.build_answer_messages("q", result)[0]["content"]
+
+
+def test_reader_opens_the_document_from_the_index_stores(client):
+    """A click on a hit shows the WHOLE document — from the lexical index,
+    never the corpus file — with the matched chunk highlighted, a
+    reference line, the origin link, and a standalone-tab route."""
+    _seed_one_book()
+    name = collections_mod.default_collection().name
+    r = client.get(f"/read/{name}/1?hl=gutenberg:1:0:1")
+    assert r.status_code == 200
+    assert "The Lighthouse Keeper" in r.text and "lighthouse keeper lit the lamp" in r.text
+    assert 'class="reader-chunk hl"' in r.text
+    assert "https://www.gutenberg.org/ebooks/1" in r.text
+    assert "A. Author — The Lighthouse Keeper — (en) — gutenberg:1" in r.text
+    assert "text from the lexical index" in r.text
+    frag = client.get(f"/read/{name}/1?fragment=1&hl=gutenberg:1:0:1").text
+    assert 'class="reader-doc"' in frag and "<title>" not in frag, "a fragment for the panel, no page chrome"
+    assert client.get(f"/read/{name}/999").status_code == 404
+    assert client.get("/read/nope/1").status_code == 404
+
+
+def test_reader_falls_back_to_the_vector_store_and_says_when_nothing_is_indexed(client):
+    import numpy as np
+    import pyarrow as pa
+    from app import embeddings, reader
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    con.execute(
+        "INSERT INTO documents(uid,source,native_id,path,lang,title,authors,rdf_done,fts_done,"
+        "embed_done,updated_at) VALUES('gutenberg:2','gutenberg','2','/fake/2','en','Second Book',"
+        "'B. Author',1,0,0,0)")
+    con.execute(
+        "INSERT INTO documents(uid,source,native_id,path,lang,title,authors,rdf_done,fts_done,"
+        "embed_done,updated_at) VALUES('gutenberg:3','gutenberg','3','/fake/3','en','Third Book',"
+        "'C. Author',1,0,1,0)")
+    doc = reader.document(c, 2)
+    assert doc["chunks"] == [] and doc["header"]["text_from"] is None
+    assert "not indexed yet" in client.get(f"/read/{c.name}/2").text
+
+    # embedded (a bundle landed its vectors) but not indexed: Lance holds the text
+    schema = pa.schema([
+        pa.field("id", pa.string()), pa.field("book_id", pa.int64()), pa.field("lang", pa.string()),
+        pa.field("seq", pa.int64()), pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+        pa.field("vector", pa.list_(pa.float16(), 4))])
+    rows = [{"id": f"gutenberg:3:{i}:1", "book_id": 3, "lang": "en", "seq": i, "chapter": "Ch",
+             "text": f"passage {i}", "vector": np.ones(4, dtype=np.float16)} for i in (1, 0)]
+    embeddings._conn(c).create_table(embeddings.TABLE, data=rows, schema=schema)
+    doc = reader.document(c, 3)
+    assert [ch["text"] for ch in doc["chunks"]] == ["passage 0", "passage 1"], "seq order"
+    assert doc["header"]["text_from"] == "vector store"
+
+
+def test_origin_links_per_source():
+    from app import reader
+    assert reader.ORIGIN["pubmed"]({"native_id": "123"}) == "https://pubmed.ncbi.nlm.nih.gov/123/"
+    assert reader.ORIGIN["gutenberg"]({"native_id": "1342"}) == "https://www.gutenberg.org/ebooks/1342"
+    assert reader.ORIGIN["wikipedia"]({"native_id": "x", "lang": "de", "title": "Albert Einstein"}) == \
+        "https://de.wikipedia.org/wiki/Albert_Einstein"
+    assert reader.ORIGIN["wikipedia"]({"native_id": "x", "lang": "de", "title": None}) is None
+
+
+def test_reader_serves_a_document_mid_reindex_from_the_entries_still_in_the_index(client):
+    """Live after the PubMed re-pin: fts_done was reset for every document
+    while the old entries stayed searchable until rewritten — a hit that
+    came from them must open, so the reader asks the index regardless of
+    the mark."""
+    from app import reader
+    _seed_one_book()
+    c = collections_mod.default_collection()
+    db.connect(c).execute("UPDATE documents SET fts_done=0 WHERE uid='gutenberg:1'")
+    doc = reader.document(c, 1)
+    assert doc["chunks"] and doc["header"]["text_from"] == "lexical index"
+    assert "lighthouse keeper lit the lamp" in client.get(f"/read/{c.name}/1").text

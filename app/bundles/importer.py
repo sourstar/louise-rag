@@ -89,21 +89,38 @@ def _local_space(con, collection=None) -> tuple[str, int | None, bool]:
     return spaces.compute_space_id(components), None, components.weak
 
 
-def _check_space(con, collection, header) -> bool:
+def _check_space(con, collection, header, embed_fn=None) -> bool:
     """Compare the header's space_id against the LOCALLY computed one, and
     check dim separately.
 
     dim is checked on its own because compute_space_id's payload does NOT
     include it (§3 says it should; the implementation omits it), so a matching
     space_id is not evidence of a matching width.
+
+    A WEAK model hash (the backend publishes no weight identity — every
+    llama-server does not; or the endpoint was unreachable when resolved)
+    is not, by itself, grounds to refuse: the local encoder is the proof
+    that matters. So on a weak hash the encoder must be LIVE right now (a
+    probe embed through the collection's own recipe), and the caller then
+    REQUIRES the sampled re-embed to run and pass — foreign vectors are
+    admitted on reproduction under the local function, never on a matching
+    label. Unreachable endpoint -> SpaceUnconfirmedError, the one retryable
+    refusal. (Found live on the first two-node exchange: both nodes pin the
+    same space via the same weak hash by construction, and the old rule
+    refused every bundle between them forever.)
     """
     local_space_id, _, weak = _local_space(con, collection)
     if weak:
-        raise SpaceUnconfirmedError(
-            "the local embedding space could not be confirmed (the embed endpoint "
-            "is unreachable, so the model hash falls back to the model NAME). "
-            "Refusing to import foreign vectors on the strength of a matching "
-            "label; retry when the endpoint is up.")
+        probe = embed_fn if embed_fn is not None else _collection_embed_fn(collection)
+        try:
+            probe(["louise-rag: embedding-space liveness probe"])
+        except Exception as e:   # noqa: BLE001 — any failure means "not live"
+            raise SpaceUnconfirmedError(
+                "the local embedding space could not be confirmed: the backend "
+                "publishes no weight identity (model hash is the model NAME) and "
+                f"the embed endpoint did not answer a probe ({type(e).__name__}), "
+                "so the vectors cannot be sample-verified against the local "
+                "encoder. Refusing; retry when the endpoint is up.") from None
     if header.space_id != local_space_id:
         raise BundleSpaceMismatch(
             f"bundle is for space {header.space_id[:12]}… but this collection is "
@@ -146,12 +163,11 @@ def _local_chunks(collection, row) -> dict[str, str]:
     non-null text column. It is also what makes possession structural — you
     cannot import vectors for a document whose bytes you do not hold.
     """
+    from .. import layers as layers_mod
     plugin = collection.plugin_instance()
-    native_id = int(row["native_id"])
     chapters = plugin_io.sections(plugin, row)
-    chunk = chunking.chunker_for(getattr(plugin, "chunking_profile", None))
     return {c["id"]: c["text"]
-            for c in chunk(row["uid"], native_id, chapters)}
+            for c in layers_mod.chunks_for_document(collection, row, chapters)}
 
 
 def _document_rows(con, uids) -> dict[str, dict]:
@@ -343,7 +359,7 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_
                                       allow_first_use=allow_first_use)
 
     # ── 3. space ───────────────────────────────────────────────────────
-    weak = _check_space(con, collection, header)
+    weak = _check_space(con, collection, header, embed_fn=embed_fn)
 
     # ── 4. content ─────────────────────────────────────────────────────
     chunk_ids, vectors = _read_parquet(bundle_dir / VECTORS_NAME, header)
@@ -400,6 +416,16 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_
         uid_of=uid_of, seq_of=seq_of, texts=texts,
         embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection))
     verdict.raise_if_failed()
+    if weak and not any(r.name == "sample_reembed" and r.passed
+                        for r in verdict.results):
+        # a weak model hash was admitted past _check_space only on the
+        # promise that the local encoder would PROVE reproduction; if the
+        # sample check could not run (no local texts to re-embed), that
+        # proof is missing and the label alone is not enough
+        raise SpaceUnconfirmedError(
+            "the model hash is weak (backend publishes no weight identity) and "
+            "the sampled re-embed could not run for this bundle — no locally held "
+            "text to verify against; retry once the documents are indexed here.")
     if ladder_verdict is not None:
         verdict = _merge_summaries(verdict, ladder_verdict)
 

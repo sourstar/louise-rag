@@ -2,7 +2,7 @@
 
 CLAUDE.md invariant 1: a vector table whose dim/space mismatches config is a
 REFUSE-TO-BOOT error, never a warning or auto-migration. See
-docs/architecture-v2.md §3.
+docs/notes/architecture-v2.md §3.
 
 The pinned space_id covers the embedding *recipe* (model hash, dtype,
 normalization, pooling, chunk/cleaning versions, truncation policy, query-
@@ -52,6 +52,11 @@ class SpaceComponents:
     # from the payload, leaving every space id pinned before this change
     # byte-identical.
     chunker: str = "book"
+    # Chunker LAYERS (amendment 41): the ordered (chunker, version) pairs
+    # when a collection declares MORE than one layer; None for the one
+    # implicit layer, so every pre-layers pin keeps its exact id. Stored
+    # as a list in the pinned components JSON.
+    layers: list | None = None
 
 
 def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
@@ -136,7 +141,18 @@ def gather_components(collection=None) -> SpaceComponents:
         cleaning_version=config.CLEANING_VERSION,
         truncation_policy=f"ctx={recipe.ctx}",
         query_encoder_hash=query_hash,
+        layers=_layers_for(collection),
     )
+
+
+def _layers_for(collection) -> list | None:
+    """The ordered layer chunkers when more than one is declared."""
+    from . import layers as layers_mod
+    try:
+        payload = layers_mod.space_payload(collection)
+    except Exception:   # noqa: BLE001 — a space id must always be computable
+        return None
+    return payload.get("layers")
 
 
 
@@ -167,10 +183,20 @@ def _chunk_version_for(collection) -> int:
 # every space pinned before the chunker became part of the identity keeps
 # exactly the id it already has (same reasoning as amendment 2, where
 # space_id deliberately does not hash dim).
-GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim", "abstract"})
+#
+# "abstract" is NOT grandfathered: no space was ever pinned under it (the
+# profile fell through to `book` until 2026-08-26), and wiring it is a
+# real change of segmentation for PubMed — the payload must carry it so
+# PubMed's space id changes and the boot check refuses until the operator
+# re-pins (`space repin`), exactly as invariant 3 demands.
+GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim"})
 
 
 def _chunker_payload(c: SpaceComponents) -> dict:
+    if c.layers:
+        # several layers: the ordered chunkers ARE the segmentation identity
+        # (amendment 41); a one-layer collection keeps the pre-layers payload
+        return {"layers": [list(l) for l in c.layers]}
     return {} if c.chunker in GRANDFATHERED_CHUNKERS else {"chunker": c.chunker}
 
 

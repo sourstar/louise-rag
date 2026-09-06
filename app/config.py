@@ -9,6 +9,16 @@ CORPUS_DIR = Path(os.getenv("CORPUS_DIR", "/corpus"))  # gutenberg-epub root (on
 # collection-create UI offers exactly the folders present here — operators
 # choose from real mounts instead of typing arbitrary container paths.
 CORPUS_MOUNTS_DIR = Path(os.getenv("CORPUS_MOUNTS_DIR", "/corpora"))
+# Derived per-container packs for PubMed (plugins/pubmed/pack.py): a cache
+# rebuilt from the gz XML, never exchanged. Default: a hidden `.pack/`
+# directory beside the containers (same volume as the archive); set this to
+# keep the working set on faster storage (STATUS 5i).
+PUBMED_PACK_DIR = Path(os.getenv("PUBMED_PACK_DIR")) if os.getenv("PUBMED_PACK_DIR") else None
+# Acquisition STAGING (STATUS 5i): streaming transports write here (fast
+# storage) and a verified file is moved into its corpus in one sequential
+# copy — an HDD pool then never sees the transport's chunk-by-chunk fsync'd
+# writes. None = write in place. A file the area cannot hold lands in place.
+ACQUIRE_STAGING_DIR = Path(os.getenv("ACQUIRE_STAGING_DIR")) if os.getenv("ACQUIRE_STAGING_DIR") else None
 
 DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"
@@ -31,6 +41,14 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
 # EMBED_CONCURRENCY for throughput instead.
 EMBED_BATCH = int(os.getenv("EMBED_BATCH", "1"))
 EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "1"))  # parallel embed requests in flight
+# How many chunks of ONE document are embedded before its vectors are
+# written. A document is the unit of work but NOT a bounded amount of it:
+# gutenberg 4656 chunks into 5,335 pieces, which is 5.3 h at this endpoint's
+# measured 3.6 s/chunk. Writing only at the end meant every restart in that
+# window discarded the lot (observed live). Smaller = less work at risk per
+# restart and a tighter SIGTERM; larger = fewer Lance fragments to compact.
+# Documents below this size are written in one go exactly as before.
+EMBED_SLICE_CHUNKS = int(os.getenv("EMBED_SLICE_CHUNKS", "64"))
 # Behavioral backend gate (app/verify/backend_gate.py): before writing any
 # vectors the worker verifies the endpoint still reproduces its recorded
 # probe baseline — the check the weak (name-derived) model hash cannot do.
@@ -82,10 +100,29 @@ NODE_KEY_PATH = Path(_node_key_path) if _node_key_path else None
 
 # Single admin token gating librarian (/admin) routes (architecture-v2.md
 # §14: "authenticated /admin API, strictly separate from the OpenAI-
-# compatible query endpoint"). Tier 1 identity, env only (CLAUDE.md
-# invariant 8: secrets by filesystem/env, never DB/logs). Unset = admin
-# routes refuse everything — fail closed, never a default-open backdoor.
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+# compatible query endpoint"). Tier 1 identity. Unset = admin routes refuse
+# everything — fail closed, never a default-open backdoor.
+#
+# Two ways to supply it, and ADMIN_TOKEN_FILE (a PATH) wins: invariant 8
+# wants secrets referenced by filesystem path, never carried as a value that
+# `docker inspect`, a compose dump or a transcript can expose — the token
+# leaked that way once on the reference deployment. ADMIN_TOKEN (the value
+# itself) stays supported for existing deployments. The material is read
+# once here and never logged; a set-but-unreadable file is a startup error
+# naming the path, not a silently disabled admin.
+def _resolve_admin_token(env) -> str:
+    path = env.get("ADMIN_TOKEN_FILE")
+    if path:
+        try:
+            return Path(path).read_text(encoding="utf-8").strip()
+        except OSError as e:
+            raise RuntimeError(
+                f"ADMIN_TOKEN_FILE is set but unreadable: {path} "
+                f"({type(e).__name__})") from None
+    return env.get("ADMIN_TOKEN", "")
+
+
+ADMIN_TOKEN = _resolve_admin_token(os.environ)
 
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
@@ -94,6 +131,11 @@ WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
 # stage (a 60s embed) still runs exactly once — fairness bounded by time,
 # not by document count.
 WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
+# How long one parallel-embed call keeps REFILLING its worker window before
+# draining and returning to the round loop. Long enough that the window is
+# full almost all the time (a document is minutes), short enough that stop
+# / state changes are honored within a reasonable delay.
+EMBED_STREAM_S = float(os.getenv("EMBED_STREAM_S", "120"))
 # Rescan the corpus for new/changed books: always at worker startup, then every
 # N minutes while running (0 = only at startup / manual rescan).
 DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))
@@ -102,6 +144,35 @@ DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))
 # index), while the main loop keeps embed (GPU-serial across collections by
 # doctrine), genesis, bundles and control. 0 = legacy single-thread rounds.
 WORKER_PIPELINE_THREADS = int(os.getenv("WORKER_PIPELINE_THREADS", "1"))
+# Fair share across collections (app/sched.py, docs/notes/scheduling.md §10): the
+# encoder rotation is deficit round-robin over the collections that actually
+# have work, instead of a fixed budget per collection in list order. 0 =
+# the previous behaviour, kept as an escape hatch while this is young.
+SCHED_FAIR_SHARE = int(os.getenv("SCHED_FAIR_SHARE", "1"))
+# The base quantum — the fair share itself. A flow's slot is never smaller
+# than its own minimum efficient unit, which is MEASURED, not set here.
+SCHED_QUANTUM_S = float(os.getenv("SCHED_QUANTUM_S", str(WORKER_ROUND_BUDGET_S)))
+# ...and never larger than this, however expensive that collection's units
+# turn out to be. An oversized unit is a unit to fix (it shows up as an
+# overrun), not a reason to hand one collection the resource for minutes.
+SCHED_FLOOR_CAP_S = float(os.getenv("SCHED_FLOOR_CAP_S", "60"))
+# How long a batch should LAST (app/sizing.py). The counts below are the
+# starting point; once a collection's real cost per document is measured,
+# the batch is sized to hit this instead — the same setting then buys the
+# same thing on a 400-word abstract and a 300-page book. A unit's duration
+# is also the granularity at which a resource can be handed back, so this
+# is what bounds B2/B3 in docs/notes/scheduling.md §10.
+BATCH_TARGET_S = float(os.getenv("BATCH_TARGET_S", "3"))
+# The re-index probe is a WINDOW over rowids, not a batch: its cost depends
+# on how many rows the window happens to hold. Measured live at 498 ms
+# (pubmed) for a fixed 200k window; the width is now adjusted to hit this.
+REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
+# The phase controller's low watermark (worker._archive_yields): when fewer
+# than this many documents are waiting for a vector AND fts has work ready,
+# fts takes the collection's thread ahead of an archive pass. Feeding the
+# encoder is never wasted — genesis imports vectors only for fts_done
+# documents, so fts is the archive's upstream too. 0 disables the rule.
+PHASE_EMBED_LOW = int(os.getenv("PHASE_EMBED_LOW", "500"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # How many documents one fts round commits through a single tantivy writer.
@@ -122,7 +193,91 @@ FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
 # writes each dirty page to the WAL once per batch instead of once per
 # document, and FTS5 buffers its index writes within a transaction.
 RDF_BATCH_DOCS = int(os.getenv("RDF_BATCH_DOCS", "200"))
+
+# Local (corpus-resident) genesis archives read a whole parquet shard —
+# ~437 MB, ~10 s — to import the documents in it that became embed-eligible
+# since the last read. While rdf/fts still have work on the same thread, a
+# shard is read only once it holds at least GENESIS_MIN_CANDIDATES such
+# documents, or once its oldest one has waited GENESIS_MAX_WAIT_SEC — so the
+# read is amortised over a batch instead of paid per fts commit, and no
+# document waits longer than the cap for its free vectors. Once rdf/fts are
+# exhausted every candidate is taken immediately.
+GENESIS_MIN_CANDIDATES = int(os.getenv("GENESIS_MIN_CANDIDATES", "1000"))
+GENESIS_MAX_WAIT_SEC = int(os.getenv("GENESIS_MAX_WAIT_SEC", "600"))
+# Amendment 38 — remote archives are fetched like a corpus. Shards on disk
+# that are not yet FINAL (fetched, or applied but still revisited as their
+# documents clear fts) are bounded by this many bytes; one MedCPT shard is
+# ~3.0 GB, so the default keeps a handful — the active shard and the next.
+GENESIS_CACHE_BYTES = int(os.getenv("GENESIS_CACHE_BYTES", str(24 * 1024 ** 3)))
+# a revisit pass that imports nothing doubles that shard's wait, up to this
+GENESIS_PASS_BACKOFF_MAX_SEC = int(os.getenv("GENESIS_PASS_BACKOFF_MAX_SEC", "21600"))
+# a remote shard's apply pass runs on the collection's own thread, beside its
+# rdf/fts: it is cut after this many seconds (committing what it has) and
+# resumes after an equal share for indexing — 1M documents per shard would
+# otherwise hold indexing for hours (observed: ~150 docs/s on pubmed)
+GENESIS_PASS_BUDGET_S = int(os.getenv("GENESIS_PASS_BUDGET_S", "300"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
+
+# The PARSE POOL (app/parallel.py): fetch/parse/chunk per document is pure
+# Python and every collection's pipeline thread shares ONE interpreter
+# lock — measured on the reference node as one thread at 87 % and eleven
+# idle cores. Batches are cut into sub-batches for this many low-priority
+# child processes; 1 = in-process, serial (tests, small nodes).
+PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or 2) - 1))))
+# a child is replaced after this many sub-batches: its plugin caches (row
+# groups, streams) grow with what it has parsed — measured +4 GB across
+# eleven children in fifteen minutes — and a fresh child starts small
+PARSE_TASKS_PER_CHILD = int(os.getenv("PARSE_TASKS_PER_CHILD", "500"))
+# How long a batch may wait for the pool before the caller computes it
+# in-process instead. The pool is an OPTIMISATION: a pipeline thread that
+# blocks on it forever stops a collection dead and cannot honour SIGTERM —
+# observed live 2026-08-28, pubmed's thread parked in the executor with no
+# children left alive. Generous (a child may be building a container pack),
+# but finite.
+PARSE_TIMEOUT_S = float(os.getenv("PARSE_TIMEOUT_S", "120"))
+# Consecutive pool failures after which this process stops using children
+# altogether and computes in-process until the next restart.
+PARSE_MAX_FAILURES = int(os.getenv("PARSE_MAX_FAILURES", "3"))
+
+# The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
+# A). Without one every semantic query is a flat scan of the Lance table —
+# measured 13 s on 15.8M rows. An IVF index is built once a collection's
+# table holds at least this many rows, and refreshed (new rows folded in)
+# by the worker off the GPU loop when enough unindexed rows accumulate.
+VECTOR_INDEX_MIN_ROWS = int(os.getenv("VECTOR_INDEX_MIN_ROWS", "100000"))
+# ivf_flat (a second copy of the vectors, best recall) | ivf_pq (compact
+# codes + re-ranking; the right choice on the biggest tables)
+VECTOR_INDEX_TYPE = os.getenv("VECTOR_INDEX_TYPE", "ivf_pq")
+VECTOR_INDEX_NPROBES = int(os.getenv("VECTOR_INDEX_NPROBES", "30"))
+VECTOR_INDEX_REFINE = int(os.getenv("VECTOR_INDEX_REFINE", "30"))
+VECTOR_INDEX_REFRESH_ROWS = int(os.getenv("VECTOR_INDEX_REFRESH_ROWS", "50000"))
+# ...and at least this fraction of the table: a refresh compacts and
+# re-indexes, which cost 41 minutes on the 16.8M-row wikivec table (HDD)
+# for 115k new rows — it must not run every 50k rows there
+VECTOR_INDEX_REFRESH_FRACTION = float(os.getenv("VECTOR_INDEX_REFRESH_FRACTION", "0.02"))
+VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
+# How long Lance keeps SUPERSEDED versions of a vector table. This is not a
+# tuning knob, it is a disk-usage decision, and the default was costing more
+# than everything else on the pool: `optimize()` with no argument prunes
+# versions older than SEVEN DAYS, and every archive flush (delete+add on 500
+# book ids) makes a version. Measured 2026-08-28 on this node: wikivec held
+# 522,650 versions = 177 GB of _versions beside 291 GB of live data, with
+# 116 GB free on the pool.
+#
+# A derived vector store is rebuildable and nothing time-travels it, so the
+# window only has to outlive a reader that is mid-query. Hours, not days.
+VECTOR_INDEX_KEEP_VERSIONS_H = float(os.getenv("VECTOR_INDEX_KEEP_VERSIONS_H", "2"))
+# Below this much free space, a vector-index refresh is SKIPPED rather than
+# attempted. `optimize()` compacts before it prunes — it writes the new
+# fragments first and deletes the old ones after — so on a nearly-full pool
+# it makes things worse before (if ever) making them better. Measured on the
+# reference node at 92% full: a wikivec compaction took free space from
+# 116 GB down to 93 GB without releasing anything. Maintenance must never be
+# the thing that fills the disk.
+VECTOR_INDEX_MIN_FREE_GB = float(os.getenv("VECTOR_INDEX_MIN_FREE_GB", "150"))
+# The well-known root where PACKS are mounted (pack-format.md): the
+# create dialog offers the packs present here as `packed` corpora.
+PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
 # generic lowercase analyzer (still perfectly searchable, just unstemmed).

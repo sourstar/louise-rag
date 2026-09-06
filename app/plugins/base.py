@@ -1,5 +1,5 @@
 """Plugin capability protocols — the extension points every corpus/reference
-source implements. See docs/architecture-v2.md §2.
+source implements. See docs/notes/architecture-v2.md §2.
 
 No I/O and no manifest/SQLite imports live here: this module must stay generic
 across every current and future CorpusSource / ReferenceSource / EntityResolver.
@@ -114,20 +114,48 @@ class CanonicalDoc:
     raw_hash: str
 
 
-@dataclass(frozen=True)
-class DiscoverState:
+@dataclass
+class DiscoverState:        # not frozen: received/committed advance during the scan
     """Whatever a CorpusSource needs to enumerate its documents. The
     orchestrator constructs and supplies this; Gutenberg only reads
     `corpus_root`. `state_dir` (the collection's data directory, beside its
     manifest) is where an incremental source keeps its scan cursor — the
     "PubMed baseline+updatefiles cursor" this field was reserved for; None
-    means stateless full scans (tests, ad-hoc calls)."""
+    means stateless full scans (tests, ad-hoc calls).
+
+    The last three fields are the orchestrator's durability signal back to
+    the plugin, so a scan cursor can be saved INCREMENTALLY without ever
+    getting ahead of the manifest (app/plugins/cursor.py `Progress`):
+    `received` is the count of refs the orchestrator has taken from
+    discover() so far, `committed` the count it has durably written, and
+    `on_commit` is called after every commit (including the last). A
+    container is safe to remember as done only once `committed` covers its
+    last ref — otherwise an interrupted scan would skip a container whose
+    rows died with the transaction."""
     corpus_root: Path
     state_dir: Path | None = None
+    received: int = 0
+    committed: int = 0
+    on_commit: list = field(default_factory=list)
+
+
+class UnindexableDocument(RuntimeError):
+    """The CORPUS cannot supply this document's content — no text file in
+    the mirror, a retracted entry — as opposed to a stage failing at its
+    own work. A plugin raises this from fetch()/read paths so the worker
+    records the corpus fact UNPREFIXED (the Library's 'not indexable'
+    bucket: retrying cannot change it, the next scan re-applies it) instead
+    of a stage-prefixed error that reads as a blocked pipeline. Subclasses
+    RuntimeError so pre-existing broad handlers keep working."""
 
 
 class CorpusSource(Protocol):
-    """documents → chunks → vectors. architecture-v2.md §2."""
+    """documents → chunks → vectors. architecture-v2.md §2.
+
+    A new plugin that also fetches its corpus ships an AcquisitionSpec
+    (app/acquire/spec.py) — read its docstring's LISTING CONTRACT
+    (amendment 33): the origin's complete listing is enumerated per pass
+    and recorded, and every UI denominator and ETA depends on it."""
     source_id: str
     license_class: LicenseClass
     privacy_class: PrivacyClass

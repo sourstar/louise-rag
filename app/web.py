@@ -30,6 +30,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import asdict
 from pathlib import Path
 
@@ -40,10 +41,11 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import (auth, collections as collections_mod, config, db, discovery,
+from . import (auth, collections as collections_mod, config, db, discovery, llm,
                 platform_config, query_service, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
+from .acquire import claim
 from .acquire import engine as acquire_engine
 from .acquire import spec as acquire_spec
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -52,9 +54,69 @@ from .verify import backend_gate
 from . import stats as stats_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
+# half the world — an operator read "+377,217/h" as 377.217 docs/h and
+# computed an 11-year ETA from a 4-day one. Dots as thousands separators,
+# everywhere a count is shown.
+TEMPLATES.env.filters["num"] = (
+    lambda n: "" if n is None else f"{int(n):,}".replace(",", "."))
+
+
+def _human_eta(seconds: float | None) -> str | None:
+    """Compact ETA for the Library bars — None when it cannot be known
+    (no rate, nothing left), so the card shows NOTHING rather than a
+    placeholder. Deliberately coarse: a rolling-sample ETA is accurate to
+    a factor, not a minute."""
+    if not seconds or seconds <= 0:
+        return None
+    if seconds < 90:
+        return f"~{int(seconds)}s"
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"~{int(minutes)}min"
+    hours = minutes / 60
+    if hours < 48:
+        return f"~{hours:.0f}h"
+    days = hours / 24
+    if days < 400:
+        return f"~{days:.0f}d"
+    return f"~{days / 365:.0f}y"
 
 ask_router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(auth.require_admin)])
+
+
+# UI display names for plugins whose internal id is not the name operators
+# know: "embedded" IS the wikivec pre-embedded corpus on every known
+# deployment. The internal id stays stable (TOMLs, registries, tests);
+# every human-facing surface shows the label.
+PLUGIN_LABELS = {"embedded": "wikivec"}
+
+
+def _plugin_label(plugin: str) -> str:
+    return PLUGIN_LABELS.get(plugin, plugin)
+
+
+def _sample_write(con, key: str, payload: str) -> None:
+    """Telemetry-sample writes from PAGE-RENDER code (stage_rate,
+    embed_avail_rate, last_embed_rate): never worth waiting for. The
+    manifest's writers are the worker's — db.connect sets a 60 s busy
+    timeout sized for THEM — and a page that sits in that timeout, or
+    500s when it expires, turns a read-only view into a hostage of the
+    pipeline (observed live: Library and Stats "look busy" during a
+    gutenberg fetch pass beside pubmed fts). Try briefly, skip on
+    contention: the next page load samples again, and a skipped sample
+    only delays a rate display, never corrupts one."""
+    try:
+        con.execute("PRAGMA busy_timeout=200")
+        db.set_control(con, key, payload)
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        try:
+            con.execute("PRAGMA busy_timeout=60000")
+        except sqlite3.OperationalError:
+            pass
 
 
 def _collection_or_404(name: str) -> collections_mod.Collection:
@@ -79,10 +141,89 @@ class AskQueryBody(BaseModel):
     mode: str = "hybrid"
 
 
+# "show results in" — the CONTENT languages the Ask page offers (the page
+# chrome never changes language). The pre-embedded corpus's eleven plus the
+# common European ones; the model translates into any ISO code, so an
+# operator can type another into the TOML later without a code change.
+RESULT_LANGUAGES = (
+    ("en", "English"), ("de", "Deutsch"), ("fr", "Français"), ("it", "Italiano"),
+    ("es", "Español"), ("pt", "Português"), ("nl", "Nederlands"), ("pl", "Polski"),
+    ("ru", "Русский"), ("ja", "日本語"), ("zh", "中文"), ("tr", "Türkçe"), ("fa", "فارسی"),
+)
+
+
 @ask_router.get("/ask", response_class=HTMLResponse)
 def ask_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "ask.html", {
-        "active": "ask", "collections": collections_mod.load_all(), "result": None})
+        "active": "ask", "collections": collections_mod.load_all(), "result": None,
+        "result_languages": RESULT_LANGUAGES})
+
+
+class TranslateBody(BaseModel):
+    lang: str
+    items: list[dict]          # [{"id": ..., "text": ...}]
+
+
+# (chunk_id, lang) -> translation. Toggling the drop-down back and forth
+# must not pay the model twice; bounded so a long session cannot grow it.
+_translation_cache: dict = {}
+_TRANSLATION_CACHE_MAX = 4000
+
+
+@ask_router.post("/ask/translate")
+def ask_translate(body: TranslateBody):
+    """Translate result CONTENT (snippets, drawer text) into `lang` — never
+    titles, authors or ids, never the interface. One model call per page
+    of results; failure degrades to the originals with `failed` set so the
+    page can say so instead of pretending."""
+    lang = body.lang.strip().lower()
+    if not lang or lang == "original":
+        return {"lang": lang, "items": {}, "failed": False}
+    out: dict[str, str] = {}
+    pending: list[tuple[str, str]] = []
+    for item in body.items:
+        key = (str(item.get("id", "")), lang)
+        text = str(item.get("text", ""))
+        if not text.strip():
+            continue
+        hit = _translation_cache.get(key)
+        if hit is not None:
+            out[key[0]] = hit
+        else:
+            pending.append((key[0], text))
+    failed = False
+    if pending:
+        translated = llm.translate_texts([t for _, t in pending], lang)
+        if len(translated) != len(pending):
+            failed = True
+        else:
+            for (cid, _), value in zip(pending, translated):
+                out[cid] = value
+                if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
+                    _translation_cache.clear()
+                _translation_cache[(cid, lang)] = value
+    return {"lang": lang, "items": out, "failed": failed}
+
+
+@ask_router.get("/read/{collection}/{book_id}", response_class=HTMLResponse)
+def read_document(request: Request, collection: str, book_id: int,
+                  hl: str = "", fragment: int = 0):
+    """The document behind a hit — whole text from the index stores, the
+    highlighted chunk(s) `hl` (comma-separated chunk ids) marked. Open
+    like Ask (reader-facing). `fragment=1` returns the inner HTML for the
+    in-page reader panel; without it, a standalone page."""
+    from . import reader
+    c = reader.collection_by_name(collection)
+    if c is None:
+        raise HTTPException(404, f"no such collection: {collection}")
+    doc = reader.document(c, book_id)
+    if doc is None:
+        raise HTTPException(404, f"{collection} does not hold #{book_id}")
+    highlights = [h for h in hl.split(",") if h]
+    return TEMPLATES.TemplateResponse(request, "reader.html", {
+        "active": "ask", "collection": c.name, "book_id": book_id,
+        "doc": doc, "highlights": highlights, "fragment": bool(fragment),
+        "plugin_label": _plugin_label(c.plugin)})
 
 
 @ask_router.get("/help", response_class=HTMLResponse)
@@ -95,6 +236,15 @@ def help_page(request: Request):
 @ask_router.post("/ask/query", response_class=HTMLResponse)
 def ask_query(request: Request, body: AskQueryBody):
     result = query_service.run_search(body.collections, body.query, 12, body.mode, True)
+    # every hit names its COLLECTION for the reader panel: federated hits
+    # carry it; a single-collection hit is resolved from its source prefix
+    # (the plugin id) to the first collection of that plugin
+    by_plugin = {}
+    for c in collections_mod.load_all():
+        by_plugin.setdefault(c.plugin, c.name)
+    for h in result.get("hits", []):
+        if not h.get("source_collection"):
+            h["source_collection"] = by_plugin.get(str(h.get("chunk_id", "")).split(":", 1)[0])
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     db.log_query(con, "ask", body.query, body.mode, 12, result["timings"],
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))
@@ -157,6 +307,35 @@ def _profile_order(plugin: str) -> list[dict]:
     return out
 
 
+def _offered_by_torrent_collection(collection: collections_mod.Collection) -> list[dict] | None:
+    """The slices a peer-sourced collection's TORRENT COLLECTION offers
+    (STATUS 5l), as grow options — or None when the collection fetches
+    from the origin or from plain torrents. Reads the resolved index from
+    the control table only; never the network on a page render."""
+    from .acquire import torrent_collection
+    sources = acquire_engine.peer_sources(collection)
+    if not sources:
+        return None
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    offered: list[dict] = []
+    seen: set[str] = set()
+    found = False
+    for source in sources:
+        index = torrent_collection.cached_index(collection, source)
+        if index is None:
+            continue
+        found = True
+        for s in torrent_collection.offered_slices(index):
+            if s["name"] in seen:
+                continue
+            seen.add(s["name"])
+            gloss = spec.profile_labels.get(s["name"]) if spec else None
+            label = f"{s['name']} — {gloss}" if gloss else s["name"]
+            offered.append({"name": s["name"],
+                            "label": f"{label} (~{_human_bytes(s['bytes'])}, {s['files']} files)"})
+    return offered if found else None
+
+
 def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     """What "grow" may offer, which depends on how the source's profiles
     relate (spec.profile_mode):
@@ -176,6 +355,12 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
         return []
+    offered = _offered_by_torrent_collection(collection)
+    if offered is not None:
+        # a collection fetched from a TORRENT COLLECTION (STATUS 5l) can
+        # only grow into what its publisher offers — those slices, with the
+        # publisher's sizes, are the options; nothing the origin might have
+        return offered
     if spec.profile_mode == "exclusive":
         return []
     if spec.profile_mode == "additive":
@@ -215,7 +400,21 @@ _COUNTS_TTL_S = 120.0
 
 _counts_cache: dict[str, tuple[float, dict]] = {}
 _counts_lock = threading.Lock()
-_counts_refreshing: set[str] = set()
+# Stage-rate samples (see _collection_shelf): memory-first, keyed on the
+# manifest path. GIL-atomic dict ops; a rare lost update costs one sample.
+_stage_rate_memo: dict[str, dict] = {}
+# in-flight refresh per collection, WITH its start time: a refresh thread
+# that hangs (or dies un-noticed) must not hold the guard forever, or the
+# counters freeze at an ever-growing age with no refresh ever starting
+_counts_refreshing: dict[str, float] = {}
+_COUNTS_REFRESH_ABANDON_S = 600.0
+# a cache entry that cannot be refreshed (every attempt failing) is dropped
+# once it is this stale, so the next viewer pays the cold scan and sees the
+# truth instead of a frozen number of unbounded age
+_COUNTS_MAX_AGE_S = 1800.0
+# how long a COLD page view waits for the first scan before rendering
+# "counting…" instead — small manifests answer well inside this
+_COUNTS_COLD_WAIT_S = 2.0
 
 
 def _document_counts_query(collection) -> dict:
@@ -262,9 +461,15 @@ def _counts_key(collection) -> str:
     return str(collection.manifest_path)
 
 
-def _document_counts(collection) -> tuple[dict, float]:
+def _document_counts(collection) -> tuple[dict | None, float]:
     """(counts, age_seconds). Serves a cached value immediately and refreshes
-    behind it; only a cold cache blocks the caller."""
+    behind it. A COLD cache no longer blocks for long: seven collections at
+    ~25 s of full scan each made the first Library view after a restart a
+    minute-plus hang — indistinguishable from a stuck page, on the page
+    whose job is to show that things move. Cold starts the refresh and
+    waits at most _COUNTS_COLD_WAIT_S for it — a small manifest answers
+    within that and behaves as always; a 40M-row one returns (None, 0) and
+    the card renders an honest "counting…" until the scan lands."""
     name = _counts_key(collection)
     now = time.time()
     with _counts_lock:
@@ -274,22 +479,30 @@ def _document_counts(collection) -> tuple[dict, float]:
         if now - at > _COUNTS_TTL_S:
             _refresh_counts_async(collection)
         return counts, now - at
-
-    counts = _document_counts_query(collection)      # cold: the one slow path
-    with _counts_lock:
-        _counts_cache[name] = (time.time(), counts)
-    return counts, 0.0
+    _refresh_counts_async(collection)
+    deadline = time.time() + _COUNTS_COLD_WAIT_S
+    while time.time() < deadline:
+        with _counts_lock:
+            entry = _counts_cache.get(name)
+        if entry is not None:
+            return entry[1], 0.0
+        time.sleep(0.05)
+    return None, 0.0
 
 
 def _refresh_counts_async(collection) -> None:
     """At most one refresh in flight per collection — without the guard, a
     page that is slow to load invites a reload, and every reload would start
-    another 12-second scan of the same table."""
+    another 12-second scan of the same table. The guard expires
+    (_COUNTS_REFRESH_ABANDON_S): a refresh thread that hangs must not stop
+    every future refresh, which would freeze the counters for good."""
     name = _counts_key(collection)
+    now = time.time()
     with _counts_lock:
-        if name in _counts_refreshing:
+        started = _counts_refreshing.get(name)
+        if started is not None and now - started < _COUNTS_REFRESH_ABANDON_S:
             return
-        _counts_refreshing.add(name)
+        _counts_refreshing[name] = now
 
     def _run():
         try:
@@ -297,10 +510,20 @@ def _refresh_counts_async(collection) -> None:
             with _counts_lock:
                 _counts_cache[name] = (time.time(), counts)
         except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
-            pass
+            # ...but never silently: a refresh that fails EVERY time froze
+            # the Library's counters at an ever-growing age with nothing in
+            # any log to say why. stdout reaches `docker logs`; and once the
+            # entry is too stale to be worth anything, drop it so the next
+            # viewer pays the cold scan and sees the truth.
+            print(f"counts refresh failed for {name}:\n"
+                  f"{traceback.format_exc()[:1200]}", flush=True)
+            with _counts_lock:
+                entry = _counts_cache.get(name)
+                if entry is not None and time.time() - entry[0] > _COUNTS_MAX_AGE_S:
+                    del _counts_cache[name]
         finally:
             with _counts_lock:
-                _counts_refreshing.discard(name)
+                _counts_refreshing.pop(name, None)
 
     threading.Thread(target=_run, name=f"counts:{name}", daemon=True).start()
 
@@ -339,6 +562,11 @@ def _collection_shelf(collection: collections_mod.Collection,
     # collection, reused by the Stats page, refreshed behind the request
     # rather than in front of it.
     counts, counts_age = _document_counts(collection)
+    counts_pending = counts is None
+    if counts_pending:
+        counts = {k: 0 for k in ("total", "in_scope", "rdf_done", "fts_done",
+                                 "embed_done", "blocked", "unindexable",
+                                 "embed_ready", "chunks_pending", "docs_unindexed")}
     # How many of the "awaiting" documents are in fact inside the encoder
     # right now. A document commits only when all of its chunks are done, so
     # on a slow CPU encoder several sit in flight for many minutes — and
@@ -356,21 +584,229 @@ def _collection_shelf(collection: collections_mod.Collection,
     fetched = None
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if collection.acquire_enabled and spec is not None:
+        # extra=0: opted-in EXTRA formats (spec.extras — local-only, never
+        # p2p) are counted apart, never inflating the Louise numbers.
         fc = con.execute(
-            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files WHERE source_id=?",
+            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files "
+            "WHERE source_id=? AND extra=0",
             (spec.source_id,)).fetchone()
-        fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0}
+        xc = con.execute(
+            "SELECT COUNT(*) total, SUM(fetch_done) done FROM fetch_files "
+            "WHERE source_id=? AND extra=1",
+            (spec.source_id,)).fetchone()
+        # A fetch pass streams the remote listing lazily — claim a file,
+        # download it, move on — so fetch_files GROWS while the pass runs
+        # and done==total mid-pass, which read as "complete" while a third
+        # of a dataset was still to come (observed live on wikivec:
+        # "1414/1414" with 33 files unlisted). The acquisition claim
+        # (refreshed every 60 s by the running pass) says whether one is
+        # active, so the card can say "in progress" instead.
+        acquire_claim = claim.read_claim(con)
+        active = bool(acquire_claim
+                      and time.time() - float(acquire_claim.get("ts", 0))
+                      <= claim.STALE_AFTER_SECONDS)
+        # the SOURCE's own file count, recorded by the engine at pass start
+        # (acquire_engine.LISTING_KEY): the honest denominator while the
+        # pass streams — without it, done==total at every instant mid-pass
+        remote_total = 0
+        docs_total = None
+        extra_remote_total = 0
+        raw_listing = db.get_control(con, acquire_engine.LISTING_KEY)
+        if raw_listing:
+            try:
+                listing = json.loads(raw_listing)
+                if listing.get("profile") == (collection.profile or listing.get("profile")):
+                    remote_total = int(listing.get("files_total") or 0)
+                    docs_total = listing.get("docs_total")
+                    extra_remote_total = int(listing.get("extra_files_total") or 0)
+            except (ValueError, TypeError):
+                pass
+        # fetched in the same UNIT parsed/indexed use, where the layout
+        # allows it: one dir = one document, so distinct fetched top dirs =
+        # documents on disk. Container sources instead say so on the card.
+        docs_done = None
+        if spec.layout == "one-dir-per-doc":
+            docs_done = con.execute(
+                "SELECT COUNT(DISTINCT substr(rel_path, 1, instr(rel_path, '/') - 1)) "
+                "FROM fetch_files WHERE source_id=? AND fetch_done=1 AND extra=0 "
+                "AND instr(rel_path, '/') > 0", (spec.source_id,)).fetchone()[0]
+            # SEEDED from discovery: what is already on disk IS fetched in
+            # the operator's sense, and discovery counted it at startup —
+            # the fetch ledger only catches up as the first full pass
+            # ADOPTS (hash-verifies) those files. Without the seed the
+            # counter started at 0 beside a 45k-book corpus. Documents the
+            # corpus holds without usable text are excluded: an empty or
+            # text-less dir is not a fetched document.
+            if not counts_pending:
+                on_disk = max(0, (counts["total"] or 0) - (counts["unindexable"] or 0))
+                docs_done = max(docs_done, on_disk)
+        # extras (spec.extras): "+ e/E" beside the Louise counter, shown
+        # only when the collection opted in or extra rows exist. Format
+        # explained in Help, never inline — the GUI stays clean.
+        has_extras = bool(getattr(collection, "extras", ())) or (xc["total"] or 0) > 0
+        louise_total = max(remote_total, fc["total"] or 0)
+        extra_total = max(extra_remote_total, xc["total"] or 0)
+        # The label's third state: no pass running AND every listed file
+        # (Louise and, when opted in, extras) has landed. `complete` is
+        # judged against the honest denominators — the origin's recorded
+        # listing — never against the streaming ledger alone, and never
+        # while a pass is running (mid-pass done==total at every instant).
+        complete = (not active and louise_total > 0
+                    and (fc["done"] or 0) >= louise_total
+                    and (xc["done"] or 0) >= extra_total)
+        fetched = {"done": fc["done"] or 0, "total": fc["total"] or 0,
+                   "remote_total": louise_total,
+                   "docs_done": docs_done, "docs_total": docs_total,
+                   "containers": spec.layout != "one-dir-per-doc",
+                   "active": active, "complete": complete,
+                   "has_extras": has_extras,
+                   "extra_done": xc["done"] or 0,
+                   "extra_total": extra_total}
 
     if last_discover:
         freshness = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last_discover["ts"]))
     else:
         freshness = "never scanned"
 
+    # PROOF OF MOTION and synthetic ETAs, one mechanism for EVERY bar:
+    # each stage's advance is measured across page loads (persisted per
+    # collection) and turned into a compact ETA shown after the counter. A
+    # 40M-document collection advancing at a healthy rate moves its bar
+    # fractions of a percent per hour, which reads as STUCK (operator
+    # report, verified live against the events table). A rate that
+    # measures zero over the window yields NOTHING — no placeholder, and
+    # never a stale number beside a genuinely stalled stage.
+    # Samples live in PROCESS MEMORY first (all page loads share the web
+    # process); the control-table write is best-effort persistence for the
+    # next restart only. Memory is not optional: on a manifest under
+    # continuous pipeline writes the 200 ms _sample_write loses the lock
+    # race nearly every time (observed live on pubmed after the throughput
+    # fix — the baseline could not land for an hour), and a sampler that
+    # needs a WRITE to function turns a reader into a lock contender.
+    _RATE_FIELDS = ("fetch", "rdf", "fts", "embed")
+    stage_rates = {k: None for k in _RATE_FIELDS}
+    stage_etas = {k: None for k in _RATE_FIELDS}
+    if not counts_pending:
+        now_i = int(time.time())
+        cur = {
+            "rdf": counts["rdf_done"] or 0,
+            "fts": counts["fts_done"] or 0,
+            "embed": counts["embed_done"] or 0,
+            # documents where the layout counts them, files otherwise —
+            # the same unit the fetched bar displays
+            "fetch": ((fetched.get("docs_done") if fetched
+                       and fetched.get("docs_done") is not None
+                       else (fetched or {}).get("done")) or 0),
+        }
+        remaining = {
+            "rdf": max(0, (counts["in_scope"] or 0) - cur["rdf"]),
+            "fts": max(0, (counts["in_scope"] or 0) - cur["fts"]),
+            "embed": max(0, (counts["in_scope"] or 0) - cur["embed"]),
+            "fetch": (max(0, ((fetched.get("docs_total")
+                               if fetched.get("docs_total") is not None
+                               else fetched.get("remote_total")) or 0)
+                          - cur["fetch"]) if fetched else 0),
+        }
+        memo_key = str(collection.manifest_path)
+        rec_sr = _stage_rate_memo.get(memo_key)
+        if rec_sr is None:
+            # warm start after a web restart: the last persisted sample
+            raw_sr = db.get_control(con, "stage_rate")
+            if raw_sr:
+                try:
+                    rec_sr = json.loads(raw_sr)
+                except (ValueError, TypeError):
+                    rec_sr = None
+        if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS) \
+                or any(cur[k] < int(rec_sr.get(k) or 0) for k in _RATE_FIELDS):
+            # first sight, a pre-upgrade record, or a reset shrank a
+            # count: fresh baseline
+            baseline = {**cur, "ts": now_i}
+            _stage_rate_memo[memo_key] = baseline
+            _sample_write(con, "stage_rate", json.dumps(baseline))
+            for k in _RATE_FIELDS:
+                if remaining[k] > 0:
+                    stage_etas[k] = "TBD"        # work remains, no history yet
+        else:
+            # LOW-PASS FILTERED rate: an exponential moving average over the
+            # per-window rates (alpha 0.3 -> a new window carries 30 %), and
+            # an ETA is shown only once TWO windows have contributed.
+            # Operator report: raw window-to-window rates swung the ETA from
+            # wildly optimistic (a 1000-document batch landing just inside
+            # the window) to wildly pessimistic (the window catching the
+            # quiet tail of a batch). A zero-progress window drops the rate
+            # entirely — TBD until motion resumes — rather than decaying a
+            # stale number into an ever-growing ETA.
+            _EMA_ALPHA = 0.3
+            _MIN_WINDOWS = 2
+            # A stage that commits in BURSTS (a 1,000-chunk book every six
+            # minutes) shows no progress in many 5-minute windows. Such a
+            # window is not evidence of a zero rate: the measurement
+            # window STRETCHES until the stage moves again — the rate is
+            # progress over the time since the LAST progress — and only a
+            # stall longer than _STALL_S drops the rate to TBD.
+            _STALL_S = 1800
+            samples = {k: int(rec_sr.get(k + "_n") or 0) for k in _RATE_FIELDS}
+            for k in _RATE_FIELDS:
+                stage_rates[k] = rec_sr.get(k + "_ph")
+            elapsed = now_i - int(rec_sr.get("ts") or now_i)
+            if elapsed >= 300:
+                progress_ts, progress_count = {}, {}
+                for k in _RATE_FIELDS:
+                    # since the last PROGRESS-bearing sample (older records:
+                    # the last sample)
+                    p_ts = int(rec_sr.get(k + "_pts") or rec_sr.get("ts") or now_i)
+                    p_count = int(rec_sr.get(k + "_pc") if rec_sr.get(k + "_pc") is not None
+                                  else (rec_sr.get(k) or 0))
+                    delta = cur[k] - p_count
+                    span = max(1, now_i - p_ts)
+                    prev = rec_sr.get(k + "_ph")
+                    if delta > 0:
+                        raw = delta * 3600.0 / span
+                        ema = raw if not prev else _EMA_ALPHA * raw + (1 - _EMA_ALPHA) * prev
+                        stage_rates[k] = round(ema)
+                        samples[k] += 1
+                        p_ts, p_count = now_i, cur[k]
+                    elif span >= _STALL_S:
+                        stage_rates[k] = None       # stalled: no number to stand behind
+                        samples[k] = 0
+                    progress_ts[k], progress_count[k] = p_ts, p_count
+                updated = {**cur, "ts": now_i,
+                           **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS},
+                           **{k + "_n": samples[k] for k in _RATE_FIELDS},
+                           **{k + "_pts": progress_ts[k] for k in _RATE_FIELDS},
+                           **{k + "_pc": progress_count[k] for k in _RATE_FIELDS}}
+                _stage_rate_memo[memo_key] = updated
+                _sample_write(con, "stage_rate", json.dumps(updated))
+            for k in _RATE_FIELDS:
+                if remaining[k] <= 0:
+                    continue
+                if stage_rates[k] and samples[k] >= _MIN_WINDOWS:
+                    stage_etas[k] = _human_eta(remaining[k] * 3600.0 / stage_rates[k])
+                else:
+                    # work remains and the rate is not yet trustworthy:
+                    # say so, never a number that will be revised 10x
+                    stage_etas[k] = "TBD"
+        # rdf is not stalled when it is simply AHEAD: the worker gives the
+        # thread to fts whenever a full batch is ready (_next_book), so a
+        # stage whose output already outruns its consumer by a batch or
+        # more waits by design — pubmed sat at rdf 12.1M / fts 7.9M and the
+        # card said "TBD", which reads as "unknown". Say what it is.
+        ahead = cur["rdf"] - cur["fts"]
+        if remaining["rdf"] > 0 and ahead >= config.FTS_BATCH_DOCS:
+            stage_etas["rdf"] = f"after fts ({ahead:,} ahead)"
+
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
         "name": collection.name, "plugin": collection.plugin,
+        "plugin_label": _plugin_label(collection.plugin),
+        "stage_rates": stage_rates,
+        "stage_etas": stage_etas,
         "profile": collection.profile or "(hand-populated)",
-        "space_id": ((space_row["space_id"][:10] + "…") if space_row and space_row["space_id"]
+        # the FULL id, never truncated: it names an embedding space uniquely,
+        # and a prefix invites comparing prefixes — two spaces can share ten
+        # hex chars and a truncated display would call them equal
+        "space_id": (space_row["space_id"] if space_row and space_row["space_id"]
                       else "unpinned"),
         "fetched": fetched,
         "total": counts["total"] or 0, "in_scope": counts["in_scope"] or 0,
@@ -378,9 +814,13 @@ def _collection_shelf(collection: collections_mod.Collection,
         "embed_done": counts["embed_done"] or 0,
         "queue": queue, "last_discover_text": freshness,
         # how old the cached counts are, so a stale progress bar is
-        # visibly stale rather than quietly wrong
+        # visibly stale rather than quietly wrong; counts_pending = the
+        # first scan after a restart is still running (cold cache)
         "counts_age": counts_age,
-        "profile_mode": (spec.profile_mode if spec else "incremental"),
+        "counts_pending": counts_pending,
+        # a torrent-collection peer combines slices like an additive source
+        "profile_mode": ("additive" if _offered_by_torrent_collection(collection) is not None
+                         else (spec.profile_mode if spec else "incremental")),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
         "embed_ready": embed_ready,
@@ -391,47 +831,132 @@ def _collection_shelf(collection: collections_mod.Collection,
         # scarce one, so "turn embedding on" means something different here
         "embed_device": collections_mod.recipe_for(collection).spends,
         "grow_options": _grow_options(collection),
+        # EXTRA formats: what the source offers, what this collection holds
+        "extras_offered": sorted(spec.extras) if spec is not None else [],
+        "extras_held": list(getattr(collection, "extras", ())),
         "license": _license_state(collection),
-        "genesis": _genesis_state(con, collection),
+        "genesis": _genesis_state(con, collection,
+                                  None if counts_pending else counts,
+                                  fetched=fetched),
     }
 
 
-def _genesis_state(con, collection) -> dict | None:
+def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     """Provenance visibility for pre-embedded data: is a genesis archive
-    declared, and how much of the collection did it cover?"""
+    declared, how much of the collection did it cover — and, for a REMOTE
+    archive, whether it is still WAITING. Remote shards apply once,
+    post-settle (drain_next_shard's backlog gate), so pubmed's card read
+    "0/37 shards ... the worker drains the rest automatically" for the
+    ~8 weeks its 33M documents take to parse and index, promising activity
+    the gate deliberately withholds. Say so instead: `waiting_docs` (from
+    the cached counts — never a fresh scan here) is how many in-scope
+    documents still have to pass fts before the first shard can apply."""
     if not collection.genesis_archive:
         return None
     from .bundles.genesis import ARCHIVES, _local_shards
     archive = ARCHIVES.get(collection.genesis_archive)
     totals = con.execute(
-        "SELECT COUNT(*) shards, SUM(state='applied') applied, SUM(docs) docs, "
-        "SUM(state='rejected') rejected FROM genesis_imports WHERE archive=?",
+        "SELECT COUNT(*) shards, SUM(state IN ('applied','final')) applied, "
+        "SUM(state='final') final, SUM(docs) docs, "
+        "SUM(state='rejected') rejected, "
+        # amendment 42: the archive is REJECTED only while nothing has proven
+        # it; a rejected shard beside a proven one is that shard's problem
+        "SUM(proven_at IS NOT NULL OR (state IN ('applied','final') AND COALESCE(docs,0)>0)) proven, "
+        # amendment 38: what the fetcher has landed (on disk or already
+        # consumed), what still sits on disk, and how many held documents
+        # the resident shards are waiting on
+        "SUM(state IN ('fetched','applying','applied','final')) fetched, "
+        "SUM(state='fetching') fetching, "
+        "SUM(CASE WHEN state IN ('fetched','applying','applied') THEN COALESCE(bytes,0) ELSE 0 END) resident_bytes, "
+        "SUM(CASE WHEN state='applied' THEN COALESCE(pending,0) ELSE 0 END) pending "
+        "FROM genesis_imports WHERE archive=?",
         (collection.genesis_archive,)).fetchone()
     if archive is not None and archive.local:
         shard_total = len(_local_shards(collection))
     else:
         shard_total = len(archive.shards) if archive else 0
+    # Computed for BOTH kinds: a remote archive WAITS on it (shards apply
+    # once, post-settle); a local one is PACED by it (a shard is read when
+    # an indexed document's locator names it, and revisited as more of its
+    # documents clear fts) — either way it is the number that explains a
+    # shard counter standing still.
+    if counts is None:          # cold cache: unknown, but almost surely waiting
+        waiting_docs = None
+        index_done = index_total = index_pct = None
+    else:
+        waiting_docs = max(0, (counts["in_scope"] or 0) - (counts["fts_done"] or 0))
+        # progress TOWARD the import, for the card to show as a number —
+        # "0/37, waits by design" is a fact but not a meter; what actually
+        # moves toward the import starting is indexing
+        index_done = counts["fts_done"] or 0
+        index_total = counts["in_scope"] or 0
+        index_pct = (100.0 * index_done / index_total) if index_total else 0.0
+    # The badge's color speaks the ARCHIVE DATA's fetch state (operator
+    # scheme: green done, orange fetching in progress, grey fetching off).
+    # For a local archive the data IS the corpus, so its state is the
+    # card's own fetched state; for a remote one it is the shard download:
+    # all applied = done, a shard mid-apply = active, otherwise idle.
+    applied = totals["applied"] or 0
+    if archive is not None and archive.local:
+        if fetched and fetched.get("complete"):
+            fetch_state = "done"
+        elif fetched and fetched.get("active"):
+            fetch_state = "active"
+        else:
+            fetch_state = "idle"
+    else:
+        # amendment 38: the archive is a second acquisition stream — its
+        # fetch meter is shards LANDED (fetched, applying, applied, final)
+        # over declared; active while a shard is downloading or applying
+        applying = con.execute(
+            "SELECT 1 FROM genesis_imports WHERE archive=? AND state='applying' "
+            "LIMIT 1", (collection.genesis_archive,)).fetchone()
+        if shard_total and (totals["fetched"] or 0) >= shard_total:
+            fetch_state = "done"
+        elif applying or totals["fetching"]:
+            fetch_state = "active"
+        else:
+            fetch_state = "idle"
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,
+        "local": bool(archive and archive.local),
         "shard_total": shard_total,
-        "applied": totals["applied"] or 0,
+        "applied": applied,
+        "final": totals["final"] or 0,
+        "fetched": totals["fetched"] or 0,
+        "resident_bytes": totals["resident_bytes"] or 0,
+        "pending": totals["pending"] or 0,
         "docs": totals["docs"] or 0,
-        "rejected": bool(totals["rejected"]),
+        "rejected": bool(totals["rejected"]) and not bool(totals["proven"]),
+        "rejected_shards": int(totals["rejected"] or 0),
+        "waiting_docs": waiting_docs,
+        "fetch_state": fetch_state,
+        "index_done": index_done,
+        "index_total": index_total,
+        "index_pct": index_pct,
+        # declared coverage: how many in-scope documents the archive CAN
+        # cover is unknown without the ids; what it has covered is `docs`
+        "declares_coverage": bool(archive and archive.ids_per_shard),
     }
 
 
 def _license_state(collection: collections_mod.Collection) -> dict:
-    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    """One resolution for every plugin, packs included (app/licensing.py):
+    the class comes from the spec or the pack's manifest, the terms from
+    the spec's file or the pack's TERMS.txt, and the ack must match them."""
+    from . import licensing
+    cls = licensing.license_class_for(collection)
+    state = licensing.state_for(collection)
     return {
-        "class": spec.license_class.value if spec else None,
+        "class": None if cls == "unknown" else cls,
+        "state": state,
         "ack_recorded": bool(collection.license_ack),
         "acquire_enabled": collection.acquire_enabled,
-        # the ack button applies when acquisition is gated: yellow class,
-        # no recorded ack, and a TOML to write it into
+        # the ack button applies when use is gated: a yellow/red class, no
+        # VALID ack (missing, or for other terms), and a TOML to write it into
         "needs_ack": bool(
-            spec and spec.license_class.value == "yellow"
-            and not collection.license_ack
+            cls in ("yellow", "red") and state == licensing.MISSING
             and collections_mod.config_toml_path(collection.name).exists()),
     }
 
@@ -450,6 +975,11 @@ def library_page(request: Request):
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
         "plugin_profiles": {p: _profile_order(p)
                              for p in collections_mod.PLUGIN_REGISTRY},
+        # EXTRA formats each source offers (spec.extras) — local-only
+        # downloads, never p2p; the create/grow modals render checkboxes
+        "plugin_extras": {p: (sorted(ACQUIRE_REGISTRY[p].extras)
+                              if p in ACQUIRE_REGISTRY else [])
+                          for p in collections_mod.PLUGIN_REGISTRY},
         "corpus_mounts": _corpus_mounts(),
         "corpus_mounts_dir": str(config.CORPUS_MOUNTS_DIR),
         "worker_state": db.worker_state(con),
@@ -458,6 +988,10 @@ def library_page(request: Request):
 
 class GrowBody(BaseModel):
     profile: str
+    # opted-in EXTRA formats (spec.extras): None = keep the collection's
+    # current opt-ins; a list = the new selection (may be empty to drop
+    # them). Local-only downloads — never part of the p2p exchange.
+    extras: list[str] | None = None
 
 
 @admin_router.post("/library/{name}/grow/plan")
@@ -487,6 +1021,15 @@ def grow_run(name: str, body: GrowBody):
         acquire_spec.resolve_profile(spec, body.profile)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
+    if body.extras is None:
+        extras = collection.extras
+    else:
+        unknown = [e for e in body.extras if e not in spec.extras]
+        if unknown:
+            raise HTTPException(400, f"unknown extra format(s) "
+                                      f"{', '.join(unknown)} — this source "
+                                      f"offers: {', '.join(sorted(spec.extras)) or 'none'}")
+        extras = tuple(body.extras)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
@@ -500,8 +1043,13 @@ def grow_run(name: str, body: GrowBody):
         # Tier-2 TOML is DESIRED STATE (invariant 10): every rewrite
         # materializes the EFFECTIVE recipe, so an env-fallback collection
         # becomes explicit on its first touch. Byte-equal recipe → same
-        # space id → the pin never notices.
-        embed=collections_mod.recipe_for(collection))
+        # space id → the pin never notices. embed_mode carried for the same
+        # reason the [embed] block is: a rewrite that drops it would reset
+        # the collection to 'lazy' at the next restart.
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=collection.embed_mode_default, layers=collection.layers,
+        snapshot=collection.snapshot, extras=extras,
+        peer_source=collection.peer_source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -554,6 +1102,7 @@ class NewCollectionBody(BaseModel):
     name: str
     plugin: str
     profile: str = "demo"
+    corpus_dir: str = ""      # a pack folder: its own terms text (packed plugin)
 
 
 @admin_router.post("/library/new/preview")
@@ -567,6 +1116,16 @@ def new_collection_preview(body: NewCollectionBody):
     if spec and spec.terms_text_path and spec.terms_text_path.is_file():
         terms_text = spec.terms_text_path.read_text()[:2000]
         ack = acquire_engine.make_ack(spec.terms_text_path)
+    if body.plugin == "packed" and body.corpus_dir:
+        # a pack's terms are its own file — the origin's, byte-exact
+        from .pack import manifest as pack_manifest
+        from .plugins.packed import for_pack
+        if pack_manifest.is_pack_dir(body.corpus_dir):
+            src = for_pack(body.corpus_dir)
+            license_class = src.license_class.value
+            if src.terms_path is not None:
+                terms_text = src.terms_path.read_text(encoding="utf-8")[:2000]
+                ack = acquire_engine.make_ack(src.terms_path)
     toml_lines = [f'plugin = "{body.plugin}"', f'profile = "{body.profile}"', "acquire_enabled = true"]
     if ack:
         toml_lines.append(f'license_ack = "{ack}"')
@@ -590,8 +1149,32 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             manifest: Path, fts: Path, lancedb: Path,
                             license_ack: str | None = None,
                             genesis_archive: str | None = None,
-                            embed=None) -> None:
+                            embed=None, embed_mode: str | None = None,
+                            snapshot: str | None = None,
+                            extras: tuple[str, ...] = (),
+                            peer_source: str | None = None,
+                            layers=None) -> None:
     lines = [f'plugin = "{plugin}"']
+    if peer_source:
+        # peer plane: fetch from this magnet/.torrent instead of the origin
+        # (engine.effective_spec). Carried on every rewrite like the rest.
+        # Several (one per language of a pre-embedded corpus, STATUS 5h)
+        # are written as a TOML array, in fetch order.
+        from .acquire.engine import peer_sources as _peer_sources
+        sources = _peer_sources(type("_P", (), {"peer_source": peer_source})())
+        if len(sources) > 1:
+            lines.append("peer_source = [")
+            lines.extend(f'  "{s}",' for s in sources)
+            lines.append("]")
+        else:
+            lines.append(f'peer_source = "{sources[0] if sources else peer_source}"')
+    if embed_mode:
+        lines.append(f'embed_mode = "{embed_mode}"')
+    if snapshot:
+        # carried like the [embed] block and embed_mode: dropping a pinned
+        # snapshot on a rewrite would silently move the collection back to
+        # "whatever the origin calls latest"
+        lines.append(f'snapshot = "{snapshot}"')
     if profile:
         lines.append(f'profile = "{profile}"')
     if acquire_enabled:
@@ -600,6 +1183,12 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
         lines.append(f'license_ack = "{license_ack}"')
     if genesis_archive:
         lines.append(f'genesis_archive = "{genesis_archive}"')
+    if extras:
+        # opted-in EXTRA formats (spec.extras) — local-only downloads,
+        # never p2p. Carried on every rewrite like embed_mode: dropping it
+        # would silently stop the extras at the next profile touch.
+        quoted = ", ".join(f'"{e}"' for e in extras)
+        lines.append(f"extras = [{quoted}]")
     lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
     if embed is not None:
         # any rewrite must carry the [embed] block forward — dropping it
@@ -618,6 +1207,18 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
             lines.append(f"concurrency = {embed.concurrency}")
         if getattr(embed, "device", None):
             lines.append(f'device = "{embed.device}"')
+    if layers:
+        # CHUNKER LAYERS (amendment 41). These are part of space_id
+        # (invariant 1 as amended), so dropping them on a rewrite does not
+        # merely lose a setting — it silently redefines the collection's
+        # SPACE, and the next boot either refuses or, worse, accepts a
+        # collection whose stored vectors belong to a different function.
+        # `version` is deliberately not written: parse_layers derives it
+        # from the chunker, so writing it back would let a stale number
+        # outlive a chunker bump.
+        for layer in layers:
+            lines += ["", "[[layers]]", f'chunker = "{layer.chunker}"',
+                      f'rule = "{layer.rule}"']
     lines += [
         "",
         "[paths]",
@@ -643,7 +1244,16 @@ def _corpus_mounts() -> list[dict]:
         for entry in sorted(root.iterdir()):
             if entry.is_dir():
                 mounts.append({"path": entry.as_posix(),
-                                "used_by": used.get(entry.as_posix())})
+                                "used_by": used.get(entry.as_posix()), "kind": "corpus"})
+    # PACKS (docs/notes/pack-format.md): a directory holding a manifest is a
+    # corpus for the `packed` plugin — offered beside the origin corpora
+    from .pack import manifest as pack_manifest
+    packs = config.PACK_MOUNTS_DIR
+    if packs.is_dir() and packs != root:
+        for entry in sorted(packs.iterdir()):
+            if entry.is_dir() and pack_manifest.is_pack_dir(entry):
+                mounts.append({"path": entry.as_posix(),
+                                "used_by": used.get(entry.as_posix()), "kind": "pack"})
     return mounts
 
 
@@ -654,6 +1264,51 @@ class CreateCollectionBody(BaseModel):
     acquire_enabled: bool = False
     corpus_dir: str = ""     # a CORPUS_MOUNTS_DIR entry; empty = CORPUS_DIR/<name>
     acknowledge_terms: bool = False   # yellow-class sources: explicit consent
+    # Optional pre-embedded COMPANION at install time (wikipedia only): a
+    # second collection <name>-vec on the `embedded` plugin, acquiring the
+    # published frozen snapshot whose vectors travel with it — dense search
+    # works from day one while the live collection's own embeddings grow
+    # lazily. Needs its own corpus mount and its own terms acknowledgement.
+    companion_corpus_dir: str = ""
+    acknowledge_companion_terms: bool = False
+    # opted-in EXTRA formats (spec.extras) — local-only downloads beside
+    # the Louise data, never part of the p2p exchange
+    extras: list[str] = []
+    # WHERE the corpus comes from: "source" (the origin, today's default),
+    # "peers" (a peer's torrent — peer_source holds the magnet/.torrent),
+    # or "off" (hand-populated: no acquisition). acquire_enabled stays for
+    # older clients; the dropdown value wins when given.
+    acquire_source: str = ""
+    peer_source: str = ""
+
+
+def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
+    """The chosen corpus folder must be a real, unused mounted dataset —
+    shared by the main collection and the companion (each needs its own)."""
+    if not raw.strip():
+        free = [m["path"] for m in mounts if not m["used_by"]]
+        raise HTTPException(
+            400, f"choose a corpus folder for the {what}: it must point at a "
+                 f"real mounted dataset. Free folders under "
+                 f"{config.CORPUS_MOUNTS_DIR}: {', '.join(free) or '(none — map one first)'}. "
+                 f"Map a dataset by adding '- /mnt/<pool>/<dataset>:"
+                 f"{config.CORPUS_MOUNTS_DIR}/<name>' to BOTH services in the "
+                 f"app YAML, then re-open this page")
+    chosen = next((m for m in mounts if m["path"] == raw.strip()), None)
+    if chosen is None:
+        available = ", ".join(m["path"] for m in mounts) or "(none)"
+        raise HTTPException(
+            400, f"the {what}'s corpus folder must be one of the mounted "
+                 f"entries under {config.CORPUS_MOUNTS_DIR} — available: "
+                 f"{available}. Map your dataset there first (TrueNAS: add "
+                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
+                 f"<name>' to both services in the app YAML)")
+    if chosen["used_by"]:
+        raise HTTPException(
+            409, f"{chosen['path']} already belongs to collection "
+                 f"{chosen['used_by']!r} — a corpus folder can serve only "
+                 f"one collection")
+    return Path(chosen["path"])
 
 
 def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
@@ -679,6 +1334,31 @@ def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
     return acquire_engine.make_ack(spec.terms_text_path)
 
 
+def _ack_for_pack(corpus_dir, acknowledged: bool) -> str | None:
+    """The same gate for a PACKED collection: the pack's manifest names the
+    class, its TERMS.txt is the byte-exact terms text (the origin's), and
+    a yellow/red pack needs the acknowledgement before the collection
+    exists at all — a folder is not a bypass (invariant 9)."""
+    from .pack import manifest as pack_manifest
+    from .plugins.packed import for_pack
+    if not pack_manifest.is_pack_dir(corpus_dir):
+        raise HTTPException(400, f"{corpus_dir}: not a pack (no manifest.json) — choose a "
+                                  f"folder listed as (pack)")
+    src = for_pack(corpus_dir)
+    if src.license_class.value not in ("yellow", "red"):
+        return None
+    terms = src.terms_path
+    if terms is None:
+        raise HTTPException(400, f"{corpus_dir}: the pack declares license class "
+                                  f"{src.license_class.value} but ships no TERMS.txt")
+    if not acknowledged:
+        raise HTTPException(
+            409, "terms-acknowledgement-required: this pack's license requires "
+                 "explicit acknowledgement before its records are used "
+                 "(license gate, never bypassed)")
+    return acquire_engine.make_ack(terms)
+
+
 @admin_router.post("/library/new/create")
 def new_collection_create(body: CreateCollectionBody):
     """Writes the collection's Tier-2 TOML — the same file an operator would
@@ -692,20 +1372,62 @@ def new_collection_create(body: CreateCollectionBody):
         raise HTTPException(400, f"unknown plugin: {body.plugin!r}")
     if collections_mod.by_name(body.name) is not None:
         raise HTTPException(409, f"collection {body.name!r} already exists")
+    # "(hand-populated)": no profile, no acquisition — the operator fills
+    # the corpus folder themselves (rsync, zfs send, files staged by hand)
+    # and discovery simply indexes what appears. Selecting it forces
+    # acquisition off: a profile is what acquisition fetches BY.
+    hand_populated = body.profile in ("", "hand-populated")
+    if hand_populated:
+        body.profile = ""
+        body.acquire_enabled = False
+    create_spec = ACQUIRE_REGISTRY.get(body.plugin)
+    if body.extras:
+        offered = create_spec.extras if create_spec is not None else {}
+        unknown = [e for e in body.extras if e not in offered]
+        if unknown:
+            raise HTTPException(400, f"unknown extra format(s) "
+                                      f"{', '.join(unknown)} — this source "
+                                      f"offers: {', '.join(sorted(offered)) or 'none'}")
+        if hand_populated:
+            raise HTTPException(400, "extras need acquisition — a "
+                                      "hand-populated collection fetches nothing")
+    # acquisition SOURCE (the create form's drop-down): the origin, a
+    # peer's torrent, or nothing (hand-populated)
+    if body.acquire_source:
+        if body.acquire_source not in ("source", "peers", "off"):
+            raise HTTPException(400, "acquire_source must be source | peers | off")
+        if hand_populated and body.acquire_source != "off":
+            raise HTTPException(400, "a hand-populated collection acquires nothing")
+        body.acquire_enabled = body.acquire_source != "off"
+        if body.acquire_source != "peers":
+            body.peer_source = ""
+    peer = body.peer_source.strip()
+    if body.acquire_source == "peers" and not peer:
+        raise HTTPException(400, "fetching from peers needs a magnet URI or a "
+                                  ".torrent path (peer_source)")
+    # one source, or several one per line / comma-separated (the per-
+    # language torrents of a pre-embedded corpus, fetched in this order)
+    from .acquire.engine import peer_sources as _peer_sources
+    for src in _peer_sources(type("_P", (), {"peer_source": peer})()):
+        if not (src.startswith("magnet:") or src.endswith(".torrent")):
+            raise HTTPException(400, f"peer_source entry is neither a magnet: URI nor a "
+                                      f".torrent path: {src[:60]}")
     toml_path = collections_mod.config_toml_path(body.name)
     if toml_path.exists():
         raise HTTPException(409, f"{toml_path} already exists")
 
+    # The collections/ directory EXISTING is what flips load_all() from
+    # synthesized-default mode to TOML mode — without this, creating an
+    # empty new collection would silently disown the default collection
+    # and everything in it (observed live: 79k books vanished behind a
+    # test 'pubmed' TOML). Capture the synthesized default BEFORE the
+    # directory is created and materialize it, so what exists keeps
+    # existing. (An operator who removed the default on purpose has an
+    # existing, empty directory: nothing is synthesized, nothing comes back.)
+    legacy = [c for c in collections_mod.load_all() if collections_mod.is_synthesized(c)]
     toml_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Writing the FIRST TOML flips load_all() from synthesized-default mode
-    # to TOML-only mode — without this, creating an empty new collection
-    # would silently disown the default collection and everything in it
-    # (observed live: 79k books vanished behind a test 'pubmed' TOML).
-    # Materialize the currently-synthesized collections so what exists
-    # keeps existing.
-    if not any(toml_path.parent.glob("*.toml")):
-        for existing in collections_mod.load_all():
+    if legacy:
+        for existing in legacy:
             _write_collection_toml(
                 collections_mod.config_toml_path(existing.name),
                 plugin=existing.plugin, profile=existing.profile,
@@ -714,42 +1436,57 @@ def new_collection_create(body: CreateCollectionBody):
                 manifest=existing.manifest_path, fts=existing.fts_dir,
                 lancedb=existing.lance_dir, license_ack=existing.license_ack,
                 genesis_archive=existing.genesis_archive,
-                embed=collections_mod.recipe_for(existing))
+                embed=collections_mod.recipe_for(existing),
+                embed_mode=existing.embed_mode_default,
+                layers=existing.layers,
+                snapshot=existing.snapshot, extras=existing.extras,
+                peer_source=existing.peer_source)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
     # container, so the collection was born pointing at nothing and only
     # said so as "corpus dir not found" on the next discovery round. An
     # unmounted corpus is not a state worth being able to create.
+    #
+    # EVERYTHING is validated before ANYTHING is written: a companion that
+    # fails validation must not leave the main collection half-created.
     mounts = _corpus_mounts()
-    if not body.corpus_dir.strip():
-        free = [m["path"] for m in mounts if not m["used_by"]]
-        raise HTTPException(
-            400, f"choose a corpus folder: a collection must point at a real "
-                 f"mounted dataset. Free folders under {config.CORPUS_MOUNTS_DIR}: "
-                 f"{', '.join(free) or '(none — map one first)'}. Map a dataset "
-                 f"by adding '- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                 f"<name>' to BOTH services in the app YAML, then re-open this "
-                 f"page")
-    chosen = next((m for m in mounts if m["path"] == body.corpus_dir.strip()),
-                  None)
-    if chosen is None:
-        available = ", ".join(m["path"] for m in mounts) or "(none)"
-        raise HTTPException(
-            400, f"corpus folder must be one of the mounted entries under "
-                 f"{config.CORPUS_MOUNTS_DIR} — available: {available}. "
-                 f"Map your dataset there first (TrueNAS: add "
-                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                 f"<name>' to both services in the app YAML)")
-    if chosen["used_by"]:
-        raise HTTPException(
-            409, f"{chosen['path']} already belongs to collection "
-                 f"{chosen['used_by']!r} — a corpus folder can serve only "
-                 f"one collection")
-    corpus_dir = Path(chosen["path"])
+    corpus_dir = _resolve_corpus_mount(body.corpus_dir, mounts)
 
     ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
                                 body.acknowledge_terms)
+    if body.plugin == "packed":
+        ack = _ack_for_pack(corpus_dir, body.acknowledge_terms)
+
+    companion = None
+    if body.companion_corpus_dir.strip():
+        if body.plugin != "wikipedia":
+            raise HTTPException(400, "the pre-embedded companion is offered "
+                                     "for the wikipedia plugin only")
+        companion_name = f"{body.name}-vec"
+        if collections_mod.by_name(companion_name) is not None or \
+                collections_mod.config_toml_path(companion_name).exists():
+            raise HTTPException(409, f"companion collection {companion_name!r} "
+                                     f"already exists")
+        companion_dir = _resolve_corpus_mount(body.companion_corpus_dir, mounts,
+                                              what="companion")
+        if companion_dir == corpus_dir:
+            raise HTTPException(409, "the companion needs its OWN corpus "
+                                     "folder — the frozen parquet snapshot and "
+                                     "the live dumps cannot share one")
+        # the embedded plugin is yellow-class with its own terms text: its
+        # acknowledgement is separate from the main plugin's, never implied
+        try:
+            companion_ack = _ack_for_acquisition("embedded", True,
+                                                 body.acknowledge_companion_terms)
+        except HTTPException as e:
+            if "terms-acknowledgement-required" in str(e.detail):
+                raise HTTPException(
+                    409, "companion-terms-acknowledgement-required: the "
+                         "pre-embedded companion carries its own license "
+                         "terms (embedded plugin)") from None
+            raise
+        companion = (companion_name, companion_dir, companion_ack)
 
     # default ON: a plugin with a known published-embeddings archive gets it
     # declared, so the worker reuses pre-embedded data before spending GPU.
@@ -777,15 +1514,43 @@ def new_collection_create(body: CreateCollectionBody):
         # collection embedded with a language model is not a worse choice,
         # it is a wrong one.
         embed=(collections_mod.default_recipe_for_plugin(body.plugin)
-               or collections_mod.env_recipe()))
+               or collections_mod.env_recipe()),
+        extras=tuple(body.extras),
+        peer_source=(body.peer_source.strip() or None))
+
+    companion_note = ""
+    if companion is not None:
+        companion_name, companion_dir, companion_ack = companion
+        companion_base = config.DATA_DIR / companion_name
+        _write_collection_toml(
+            collections_mod.config_toml_path(companion_name),
+            plugin="embedded", profile="all", acquire_enabled=True,
+            corpus_dir=companion_dir,
+            manifest=companion_base / "manifest.db",
+            fts=companion_base / "fts", lancedb=companion_base / "lancedb",
+            license_ack=companion_ack,
+            genesis_archive=DEFAULT_ARCHIVE_BY_PLUGIN.get("embedded"),
+            embed=(collections_mod.default_recipe_for_plugin("embedded")
+                   or collections_mod.env_recipe()),
+            # 'fix' from birth: everything arrives pre-embedded via genesis;
+            # the local encoder only mops up what the archive cannot cover
+            # (shard-boundary straddlers), which is minutes of CPU, once
+            embed_mode="all")
+        companion_note = (
+            f" Companion {companion_name!r} created beside it: it acquires "
+            f"the published pre-embedded snapshot and imports its vectors "
+            f"(no GPU work), so dense search answers from day one while "
+            f"{body.name!r} embeds lazily where queries lead.")
 
     con = db.connect()
     db.log_event(con, "info", "control",
-                 f"collection {body.name!r} created via admin UI ({toml_path})")
+                 f"collection {body.name!r} created via admin UI ({toml_path})"
+                 + (f"; companion {companion[0]!r} created" if companion else ""))
     note = ("Live now: the web process sees it immediately and the worker "
             "picks it up within one round (no restart). If your config dir "
             "is versioned, commit the new file. A yellow-class source still "
-            "needs its license ack before acquisition (corpus add --ack-terms).")
+            "needs its license ack before acquisition (corpus add --ack-terms)."
+            + companion_note)
     # Always true now: the corpus is picked from _corpus_mounts(), which
     # lists directories that exist. Kept in the response because callers
     # (and the tests) read it as the "this collection can actually see its
@@ -799,6 +1564,7 @@ def new_collection_create(body: CreateCollectionBody):
                  f"found'. ") + note
     return {"ok": True, "toml_path": str(toml_path),
             "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
+            "companion": (companion[0] if companion else None),
             "note": note}
 
 
@@ -811,10 +1577,25 @@ def collection_remove(name: str):
     collection = _collection_or_404(name)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
-        raise HTTPException(
-            400, f"{name!r} is the synthesized default collection (no TOML file) — "
-                 f"it exists as long as no collections/ directory defines others, "
-                 f"and cannot be removed from the UI")
+        if not collections_mod.is_synthesized(collection):
+            raise HTTPException(400, f"{name!r} has no TOML file to retire")
+        # The synthesized default (legacy mode: no collections/ directory).
+        # Creating the EMPTY directory switches the node to TOML mode with
+        # zero collections — the default is gone, its data stays on disk,
+        # and the create flow declares the next collection explicitly.
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        con = db.connect()
+        db.log_event(con, "info", "control",
+                     f"synthesized default collection {name!r} removed via admin UI "
+                     f"({toml_path.parent} created empty: TOML mode, zero collections; "
+                     f"data kept on disk)")
+        return {"ok": True, "retired_toml": None,
+                "data_kept": {"manifest": str(collection.manifest_path),
+                               "fts": str(collection.fts_dir),
+                               "lancedb": str(collection.lance_dir)},
+                "note": "This was the synthesized default (no TOML). The node now has "
+                         "zero collections; create one from the Library. Its data "
+                         "stays on disk."}
     retired = toml_path.with_name(f"{name}.toml.removed-{int(time.time())}")
     toml_path.rename(retired)
     con = db.connect()
@@ -839,28 +1620,89 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     """Per-collection GPU-spending control (off | lazy | all) — each
     collection's manifest carries its own scope, so pausing gutenberg's
     backfill never touches pubmed's, and vice versa. The worker re-reads
-    scope every round."""
+    scope every round.
+
+    PERSISTENT: this writes BOTH the runtime scope (immediate effect) and
+    `embed_mode` in the collection's TOML — a Tier-2 edit through the UI,
+    exactly like collection-create and the license ack. The first cut made
+    this a runtime-only override that a restart reverted to the TOML, which
+    was invariant-10-correct and operationally wrong: the operator set a
+    mode seven restarts in a day set back seven times. Invariant 10 holds
+    because the UI now edits desired state rather than the DB pretending to
+    be it; POST /api/scope remains the runtime-only override for anyone who
+    wants one."""
     if body.mode not in ("off", "lazy", "all"):
         raise HTTPException(400, "mode must be off | lazy | all")
     collection = _collection_or_404(name)
-    con = db.connect(collection)
-    scope = db.get_scope(con)
-    scope["embed_mode"] = body.mode
-    db.set_scope(con, scope)
-    db.log_event(con, "info", "control",
-                 f"embed mode -> {body.mode!r} for {name!r} via admin UI")
-    return {"ok": True, "embed_mode": body.mode}
+    # TOML FIRST — a file write never loses a lock race. The old order
+    # wrote the runtime scope first, and on a manifest under continuous
+    # pipeline writes that raised "database is locked" BEFORE the TOML was
+    # ever written: the 500 reloaded the page and the mode reverted
+    # (operator report: wikipedia off -> refresh -> on-demand again).
+    toml_path = collections_mod.config_toml_path(name)
+    toml_path.parent.mkdir(parents=True, exist_ok=True)
+    if not toml_path.exists():
+        # a synthesized collection (no TOMLs at all yet): materialize what
+        # exists first, or writing this one file would disown the rest —
+        # the same guard collection-create applies
+        for existing in collections_mod.load_all():
+            _write_collection_toml(
+                collections_mod.config_toml_path(existing.name),
+                plugin=existing.plugin, profile=existing.profile,
+                acquire_enabled=existing.acquire_enabled,
+                corpus_dir=existing.corpus_dir,
+                manifest=existing.manifest_path, fts=existing.fts_dir,
+                lancedb=existing.lance_dir, license_ack=existing.license_ack,
+                genesis_archive=existing.genesis_archive,
+                embed=collections_mod.recipe_for(existing),
+                embed_mode=existing.embed_mode_default,
+                layers=existing.layers,
+                snapshot=existing.snapshot, extras=existing.extras,
+                peer_source=existing.peer_source)
+    _write_collection_toml(
+        toml_path, plugin=collection.plugin, profile=collection.profile,
+        acquire_enabled=collection.acquire_enabled,
+        corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=collection.license_ack,
+        genesis_archive=collection.genesis_archive,
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=body.mode, layers=collection.layers,
+        snapshot=collection.snapshot,
+        extras=collection.extras, peer_source=collection.peer_source)
+    # Runtime scope + event log are BEST-EFFORT immediacy on top of the
+    # persisted desired state: if the manifest is busy right now, the
+    # worker still applies the TOML within a round — the setting is never
+    # hostage to the write lock, and the page never 500s over it.
+    applied_now = True
+    try:
+        con = db.connect(collection)
+        con.execute("PRAGMA busy_timeout=2000")
+        scope = db.get_scope(con)
+        scope["embed_mode"] = body.mode
+        db.set_scope(con, scope)
+        db.log_event(con, "info", "control",
+                     f"embed mode -> {body.mode!r} for {name!r} via admin UI "
+                     f"(written to {toml_path.name}: permanent)")
+    except sqlite3.OperationalError:
+        applied_now = False
+    return {"ok": True, "embed_mode": body.mode, "persisted": True,
+            "applied_now": applied_now,
+            "note": None if applied_now else
+            "saved to the TOML; the manifest is busy, so the worker applies "
+            "it within a round"}
 
 
 @admin_router.get("/library/{name}/terms")
 def collection_terms(name: str):
     """The source's terms text, for the acknowledgement modal."""
+    from . import licensing
     collection = _collection_or_404(name)
-    spec = _spec_or_400(collection)
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
-        return {"license_class": spec.license_class.value, "terms_text": None}
-    return {"license_class": spec.license_class.value,
-            "terms_text": spec.terms_text_path.read_text()[:8000]}
+    path = licensing.terms_path_for(collection)
+    cls = licensing.license_class_for(collection)
+    if path is None:
+        return {"license_class": cls, "terms_text": None}
+    return {"license_class": cls, "terms_text": path.read_text(encoding="utf-8")[:8000]}
 
 
 @admin_router.post("/library/{name}/ack")
@@ -869,22 +1711,30 @@ def collection_ack(name: str):
     enable acquisition — the UI path to what `corpus add --ack-terms` +
     hand-editing the TOML does. Rewrites the collection's TOML with
     license_ack and acquire_enabled=true; the worker hot-reloads it."""
+    from . import licensing
     collection = _collection_or_404(name)
-    spec = _spec_or_400(collection)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file to record the ack in")
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
+    if licensing.terms_path_for(collection) is None:
         raise HTTPException(400, f"{collection.plugin}: no terms text shipped — "
                                   f"nothing to acknowledge")
-    ack = acquire_engine.make_ack(spec.terms_text_path)
+    ack = licensing.make_ack(collection)
+    # acquisition follows the ack only where there is an origin to acquire
+    # from; a packed collection is fed by a folder or a torrent, not a spec
+    acquire = True if ACQUIRE_REGISTRY.get(collection.plugin) else collection.acquire_enabled
     _write_collection_toml(
         toml_path, plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=True, corpus_dir=collection.corpus_dir,
+        acquire_enabled=acquire, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=ack,
         genesis_archive=collection.genesis_archive,
-        embed=collections_mod.recipe_for(collection))
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=collection.embed_mode_default, layers=collection.layers,
+        snapshot=collection.snapshot, extras=collection.extras,
+        # peer_source was missing here: acknowledging a licence would
+        # silently un-declare a collection fed from a peer torrent
+        peer_source=collection.peer_source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "
@@ -995,149 +1845,6 @@ async def collection_bundle_import(name: str, request: Request,
                      "watch the System log for the verdict."}
 
 
-# ---------------- Stats ----------------
-
-def _human_rate(bps: float | None) -> str:
-    if not bps:
-        return "—"
-    return _human_bytes(int(bps)) + "/s"
-
-
-def _human_duration(seconds: float | None) -> str:
-    """Deliberately coarse. An ETA derived from a rolling sample is accurate
-    to a factor, not to a minute, and printing "3 h 42 m 09 s" would claim a
-    precision the measurement does not have."""
-    if seconds is None:
-        return "—"
-    if seconds < 90:
-        return f"{int(seconds)}s"
-    minutes = seconds / 60
-    if minutes < 90:
-        return f"{int(minutes)} min"
-    hours = minutes / 60
-    if hours < 48:
-        return f"{hours:.1f} h"
-    days = hours / 24
-    if days < 400:
-        return f"{days:.1f} days"
-    return f"{days / 365:.1f} years"
-
-
-def _stats_row(collection, measured: dict) -> dict:
-    """One collection's line: what is left, how fast it is going, and — only
-    where both are known — when it ends."""
-    con = db.connect(collection)
-    recipe = collections_mod.recipe_for(collection)
-    rate = stats_mod.rates(measured.get(collection.name))
-
-    # Remaining EMBED work in chunks, not documents: documents differ in size
-    # by orders of magnitude (a genome contig against a PubMed abstract), so
-    # a per-document ETA is meaningless across collections. `chunks` is
-    # written by the fts stage, so it is known before embedding starts.
-    counts, counts_age = _document_counts(collection)
-    docs_pending = counts["embed_ready"]
-    chunks_pending = counts["chunks_pending"]
-    docs_unindexed = counts["docs_unindexed"]
-    blocked = counts["blocked"]
-    in_flight = int(rate.get("in_flight") or 0)
-
-    # Remaining FETCH work in bytes. fetch_files is small (one row per
-    # container, ~1,450 at the largest), so this is a cheap scan.
-    fetch_pending_bytes = 0
-    fetch_files_pending = 0
-    spec = ACQUIRE_REGISTRY.get(collection.plugin)
-    if spec is not None:
-        fr = con.execute(
-            "SELECT COUNT(*) n, "
-            "  SUM(CASE WHEN fetch_done=0 THEN COALESCE(remote_size,0)"
-            "      - COALESCE(bytes_fetched,0) ELSE 0 END) left_bytes, "
-            "  SUM(CASE WHEN fetch_done=0 THEN 1 ELSE 0 END) left_files "
-            "FROM fetch_files WHERE source_id=?", (spec.source_id,)).fetchone()
-        fetch_pending_bytes = max(0, fr["left_bytes"] or 0)
-        fetch_files_pending = fr["left_files"] or 0
-
-    embed = rate.get("embed") or {}
-    fetch = rate.get("fetch") or {}
-    # ETA uses the WALL-CLOCK rate, never the encoder rate: the encoder is
-    # shared serially across collections, so its raw speed would promise a
-    # finish time no collection can actually reach.
-    chunks_per_hour_wall = None
-    if embed.get("chunks") and embed.get("docs") and embed.get("docs_per_hour"):
-        chunks_per_doc = embed["chunks"] / embed["docs"]
-        chunks_per_hour_wall = embed["docs_per_hour"] * chunks_per_doc
-
-    return {
-        "name": collection.name,
-        "plugin": collection.plugin,
-        "counts_age": counts_age,
-        "model": recipe.model,
-        "device": (recipe.device or ("cpu" if recipe.concurrency > 1 else "gpu")),
-        "ctx": recipe.ctx,
-        "concurrency": recipe.concurrency,
-        "url": recipe.url,
-        "fetch": {
-            "files_pending": fetch_files_pending,
-            "bytes_pending": fetch_pending_bytes,
-            "bytes_pending_h": _human_bytes(fetch_pending_bytes),
-            "rate": _human_rate(fetch.get("bytes_per_s")),
-            "rate_wall": _human_rate(fetch.get("bytes_per_s_wall")),
-            "samples": fetch.get("samples"),
-            "eta": _human_duration(stats_mod.eta_seconds(
-                fetch_pending_bytes, fetch.get("bytes_per_s_wall"))),
-        },
-        "embed": {
-            "docs_pending": docs_pending,
-            "docs_done": counts["embed_done"],
-            "chunks_pending": chunks_pending,
-            # why a chunk count may be 0 while work remains
-            "docs_unindexed": docs_unindexed,
-            "blocked": blocked,
-            "in_flight": in_flight,
-            "chars_per_s": embed.get("chars_per_s"),
-            "chunks_per_s": embed.get("chunks_per_s"),
-            "ms_per_chunk": embed.get("ms_per_chunk"),
-            "duty": embed.get("duty"),
-            "samples": embed.get("samples"),
-            "eta": _human_duration(stats_mod.eta_seconds(
-                chunks_pending,
-                chunks_per_hour_wall / 3600 if chunks_per_hour_wall else None)),
-            # a lower bound, not an estimate, while some of the work has not
-            # been measured yet
-            "eta_is_floor": bool(docs_unindexed),
-        },
-    }
-
-
-@admin_router.get("/stats", response_class=HTMLResponse)
-def stats_page(request: Request):
-    """Measured throughput and honest ETAs. Every number here is derived
-    from completed work; a stage that has not run recently enough to be
-    measured says so instead of showing a zero."""
-    collections = collections_mod.load_all()
-    measured, age = (None, None)
-    try:
-        con = db.read_only_connect()
-        if con is not None:
-            try:
-                measured, age = db.read_worker_stats(con)
-            finally:
-                con.close()
-    except sqlite3.Error:
-        pass
-    rows = [_stats_row(c, measured or {}) for c in collections]
-    counts_age = max((r["counts_age"] for r in rows), default=0)
-    # Busiest first: the collection with work left is the one being watched.
-    rows.sort(key=lambda r: (-(r["embed"]["chunks_pending"] or 0),
-                              -(r["fetch"]["bytes_pending"] or 0), r["name"]))
-    return TEMPLATES.TemplateResponse(request, "stats.html", {
-        "active": "stats",
-        "rows": rows,
-        "counts_age": counts_age,
-        "measured": bool(measured),
-        "age_seconds": round(age) if age is not None else None,
-        "worker_state": db.worker_state(db.connect()),
-    })
-
 
 # ---------------- Network ----------------
 
@@ -1166,6 +1873,8 @@ def _bandwidth_payload() -> dict:
     """
     payload = transfer_manager.get_manager().rates()
     worker_rates = age = None
+    seed_rows, seed_age = [], None
+    worker_stats: dict = {}
     con = None
     try:
         # read_only_connect, not connect: this runs every couple of seconds
@@ -1175,6 +1884,14 @@ def _bandwidth_payload() -> dict:
         con = db.read_only_connect()
         if con is not None:
             worker_rates, age = db.read_worker_rates(con)
+            # the seeding table rides the SAME cheap reader (one read-only
+            # connection per poll — the test pins that): what this node
+            # serves to peers, published by the worker's seeder each beat
+            from .acquire import seeding
+            seed_rows, seed_age = seeding.read_table(con)
+            # ...and so does the per-collection stats snapshot the
+            # download split below is derived from (one more row)
+            worker_stats = (db.read_worker_stats(con)[0] or {})
     except sqlite3.Error:
         # the manifest being briefly unavailable must not break the graph
         worker_rates, age = None, None
@@ -1196,6 +1913,29 @@ def _bandwidth_payload() -> dict:
         "age_seconds": round(age, 1) if age is not None else None,
         "max_age_seconds": db.WORKER_RATES_MAX_AGE_S,
     }
+    payload["seeding"] = {"rows": seed_rows,
+                          "age_seconds": round(seed_age, 1) if seed_age is not None else None}
+    # WHAT A PERSON CAN ACT ON: one download total, one upload total, and
+    # the download split BY COLLECTION (measured by the worker's fetch
+    # recorder: bytes over wall time). The priority classes above stay in
+    # the payload for tests and the API, but they answer a scheduler's
+    # question, not an operator's — "interactive 0, delta 0, backfill 0,
+    # seeding 0" told nobody which corpus was downloading how fast.
+    payload["totals"] = {
+        "down": round(sum(float(v or 0) for v in payload.get("down", {}).values()), 1),
+        "up": round(sum(float(v or 0) for v in payload.get("up", {}).values()), 1),
+    }
+    downloads = []
+    for name, entry in worker_stats.items():
+        try:
+            fetch = stats_mod.rates(entry).get("fetch") or {}
+        except Exception:   # noqa: BLE001 — a malformed sample must not break the page
+            continue
+        bps = fetch.get("bytes_per_s_wall")
+        if bps:
+            downloads.append({"collection": name, "bytes_per_s": round(float(bps), 1)})
+    downloads.sort(key=lambda d: -d["bytes_per_s"])
+    payload["downloads"] = downloads
     return payload
 
 
@@ -1247,7 +1987,7 @@ def _effective_config() -> dict:
         "ADMIN_TOKEN": "(set)" if config.ADMIN_TOKEN else "(unset — admin routes locked)",
     }
     tier2 = [{
-        "collection": c.name, "plugin": c.plugin, "profile": c.profile,
+        "collection": c.name, "plugin": _plugin_label(c.plugin), "profile": c.profile,
         "embed_mode": c.embed_mode_default, "acquire_enabled": c.acquire_enabled,
         "license_ack": "(recorded)" if c.license_ack else "(none)",
         "embed_recipe": (f"{c.embed.model} @ {c.embed.url}"
