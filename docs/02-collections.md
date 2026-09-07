@@ -733,18 +733,36 @@ sister starts from zero by definition and inherits neither.
 (§2.3), so changing `cleaning_version` re-derives every record from the
 origin: different `content_hash`, different shards, different chunk
 ids, nothing carried over but the origin itself. Calling that a sister
-would empty the word of the one thing it means. It is a corrective
-sister when the old cleaning is being called wrong — and then the
-defect must be reproducible, like any other — and otherwise a
-collection of its own, standing beside the first over the same origin
-with no relation claimed and neither superseded.
+would empty the word of the one thing it means. It is a collection of
+its own, standing beside the first over the same origin, with no
+relation claimed and neither superseded.
 
-That is the general rule for the two, and the only one: **a corrective
-sister differs from a sister not in what changed but in what it claims
-about the mother.** A sister claims nothing and both stand. A
-corrective sister claims the mother is defective, must prove it, and is
-the remedy once a peer has reproduced the proof — which is what stops
-anyone superseding a healthy collection by preferring their own taste.
+**Nor is it a corrective sister**, however much better the new cleaning
+is. A corrective sister needs a defect, and a defect is a named check
+that fails on named witnesses (03 §3.6) — not a disappointment. Cleaning
+that drops what a reader wanted fails nothing: the records reproduce
+from the origin under the Codex's own toolchain, the chunks recompute,
+the vectors match, every check passes. It is a collection built to a
+judgement someone now disagrees with, and 03 §3.4 already says what
+that is worth — *a wrong parser, frozen, is a wrong parser faithfully
+reproduced by everyone*, and correctness is the business of code review
+in the platform, not of the protocol.
+
+The exception proves the rule rather than bending it: a cleaner that is
+non-deterministic, or whose output cannot be reproduced from the
+origin, makes `records-vs-origin` or `chunks` fail, and that is a
+defect like any other. The difference is not how bad the cleaning is.
+It is whether a check fails.
+
+So the line between the two is not what changed — both re-derive
+everything and share only the origin — but **what is claimed about the
+mother, and whether the claim is checkable.** A sister claims nothing
+and both stand. A corrective sister claims the mother is defective,
+names the check and the witnesses, and is the remedy once a peer has
+reproduced the failure. A collection nobody can fault by a check is a
+collection nobody may supersede, which is 08 §8.4's rule as well: the
+protocol does not judge merit, and a better collection earns its place
+by being chosen, never by declaring the other broken.
 
 A **corrective sister** replaces a collection with a defect. It starts
 from zero — records and vectors both — even when the defect touched a

@@ -392,7 +392,10 @@ witnesses. `defect.toolchain` names that image. If the check fails, the
 old collection is flagged and the sister is the remedy. If it does not,
 the sister is an ordinary sister with no claim on anything: a
 different parser or a different encoder produces different bytes and
-different vectors by construction, and that is not a defect. The
+different vectors by construction, and that is not a defect; neither is
+cleaning that drops what a reader wanted, which reproduces faithfully
+and fails nothing (§3.4). A defect is a check that fails, never a
+judgement that disappoints. The
 protocol thereby guarantees that nobody can replace a healthy
 collection by pretending a bug. It does not guarantee the fix is good —
 that is decided where the parser is reviewed.

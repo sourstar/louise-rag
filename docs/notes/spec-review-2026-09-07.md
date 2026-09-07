@@ -537,6 +537,26 @@ preferring their own taste. A cleaning change is therefore a corrective
 sister when the old cleaning is being called wrong, and otherwise a
 collection of its own over the same origin, with no relation claimed.
 
+**A correction to the correction.** §14 as first written said a cleaning
+change is a corrective sister "when the old cleaning is being called
+wrong". That was wrong, and the operator caught it: a corrective sister
+corrects an error BY OUR RULES — a named check that fails — and cleaning
+that butchers useful information is bad collection design, not an error.
+It fails nothing: the records reproduce under the Codex's own toolchain,
+the chunks recompute, every check passes. 03 §3.4 had already said as
+much — a wrong parser, frozen, is faithfully reproduced by everyone and
+`records-vs-origin` passes it — and 03 §3.6 that different bytes by
+construction are not a defect. I had contradicted two passages of the
+document I was amending.
+
+So a cleaning change is a new collection over the same origin and
+nothing else. The exception proves the rule: a cleaner that is
+non-deterministic makes a check fail, and that IS a defect. The
+difference is never how bad the cleaning is, only whether a check
+fails — which is 08 §8.4 again, the protocol not judging merit. A
+better collection earns its place by being chosen, never by declaring
+the other broken.
+
 **One consequence to decide.** A record carries `layer`, the index of
 the layer whose rule matched. It is derivable from the record and the
 Codex, so it need not be stored — but while it is stored, a sister that

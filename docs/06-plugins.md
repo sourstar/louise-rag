@@ -332,9 +332,12 @@ else — a node has no global chunk or cleaning version.
 
 A cleaning change re-derives every record, so it is not a sister: a
 sister inherits the corpus, and there is no corpus to inherit when the
-cleaned text has moved (02 §2.7). It is a corrective sister where the
-old cleaning is being called wrong, with a defect to reproduce, and
-otherwise a new collection over the same origin. The re-derivation is
+cleaned text has moved (02 §2.7). It is a new collection over the same
+origin — and not a corrective sister either, however much better the
+new cleaning is, because cleaning that merely drops what a reader
+wanted fails no check: the records still reproduce, the chunks still
+recompute (03 §3.4, §3.6). A cleaner that is non-deterministic is a
+different matter, and a defect like any other. The re-derivation is
 the price of a record that means one thing, and `cleaning_version` is
 in `space_id` so that no vector outlives the text it was computed
 from.
