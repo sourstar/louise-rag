@@ -64,13 +64,22 @@ holding exactly what everyone else holds.
    checked before they are used.
 4. **Updates are deltas.** A monthly snapshot names exactly which
    records changed; re-embedding is the changed chunks and nothing else.
+   The unit of change is the record — a record has changed when the
+   hash of its cleaned text has — and the unit of re-embedding is the
+   chunk: a changed record's chunks are recut, a chunk whose id and text
+   are unchanged keeps its vector, and only the chunks whose text is new
+   are embedded (02 §2.2, 06 §6.3).
 5. **Trust is reproduction, not votes.** Every artefact can be
    recomputed from the origin with the platform's open code; one honest
    reproduction outweighs any number of assurances.
 6. **No node is in charge.** Once one honest peer holds a collection, it
    can keep it available and up to date if everyone else disappears.
 7. **Nothing published is deleted.** A superseded collection stays
-   available and verifiable; catalogues mark it, nothing removes it.
+   available and verifiable; catalogues mark it, nothing removes it. A
+   tombstoned record is no exception: its text stays in the closed shard
+   of the snapshot that carried it, which remains shareable and
+   verifiable as that snapshot, and from the snapshot that tombstones it
+   the record is excluded from search and from embedding (02 §2.2).
 
 ## Vocabulary
 
@@ -82,10 +91,19 @@ they are needed.
 |---|---|
 | collection | a plugin's body of material turned into records and vectors — the Gutenberg collection, the PubMed collection |
 | Codex | the immutable recipe of a collection; its hash is the collection's identity |
+| lineage | the chain of Codexes linked by `continues`, `derived_from` and `replaces` (02 §2.7); the `lineage_id` is the root Codex's id along `continues`, and it is what a catalogue shows as *the collection* — one entry with a history. Nothing but the hash chain makes two collections kin, in particular not their titles |
+| daughter / sister / corrective sister | the three relations between a new Codex and the one it comes from (02 §2.7): a daughter continues the collection under a new toolchain in the same space; a sister keeps the corpus and starts a new space; a corrective sister replaces a collection whose defect has been reproduced. *Sister* is also the general word, as 08 uses it, for any new collection standing beside an existing one, related or not |
 | snapshot | the state of a collection's records at one monthly cutoff; content-addressed |
+| shard | a run of one slice's records, sorted by native id and cut at the Codex's `shard_records`; closed once published, re-issued under the same number when a record in it changes. The unit of transfer, of embedding and of verification (02 §2.2–2.3) |
+| member | what a peer fetches or shares as one unit (02 §2.6): one slice of one kind — records, vectors, buckets, index, relations — or a whole-collection file such as the calibration member or the licence terms; the snapshot names each member's size and root before the first byte moves |
 | holdings | what your copy actually has — which slices, which kinds |
+| space | a function from cleaned text to vectors: the encoder build and its settings, the layers and the cleaning version, named by `space_id` (02 §2.4). One collection, one space; collections in one space are searched as one ranked list (05 §5.1), and vectors from different spaces are never compared |
+| bundle (signed block) | a batch of vectors on a collection's own records, signed by the key that produced them; the unit in which embedding work travels — 03 §3.5, 09 §9.7; 08 §8.6 says *signed block* |
+| attestation | the signed result of one completed check — collection, snapshot, check, seed and sampled shards, result, the verifier's key (03 §3.6, 09 §9.8); it travels as an event, and trust levels are counted from attestations, never from assurances |
+| pointer record | the record a red-class collection ships in place of text: the same line with `sections` empty and `extra.origin_url` set (02 §2.3, 04 §4.4); the text is fetched from the origin by every peer that holds the collection, and vectors, pointers and index travel while the text never does |
 | provenance | which origin, which snapshot, which encoder, which producer |
 | work parameter | the embedding work per unit time a collection declares as its holding level; declared by the creator, verified from below by reproduction |
+| actively-held / dormant | the two observed states of a collection on a peer's catalogue, defined in 08 §8.6: actively-held while some key's signed bundles for it keep arriving at the rate the work parameter states, dormant when they have stopped — still findable and fetchable, no longer listed as active. Each peer computes the state for itself by the rule of 04 §4.7; nobody declares it |
 | check | verification of any kind — of bytes against hashes, of records against the origin, of vectors against the encoder |
 | share / hold | instead of seed / replicate |
 | certified collection | a collection whose records only a named, anchored key may publish |

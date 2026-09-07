@@ -25,11 +25,16 @@ coordinator does — so it is partitioned by a function every peer can
 compute (§4.5). A coordinator may still exist, for statistics and credit;
 a peer that cannot reach one behaves exactly as if it did not.
 
+"One peer is enough" holds given one of two things: a reachable
+distributed hash table, or one peer address given by hand (`share peers
+add <address>`, 07 §7.3). Nothing else is ever needed.
+
 ## 4.2 Finding things
 
 Snapshot ids are computable from the Codex — the cadence and the cutoff
-say that this month's snapshot is "2026-09". So a peer looking for the
-current records of a collection announces under, and queries,
+say that the snapshot closing at the September cutoff is "2026-08"
+(02 §2.2). So a peer looking for the current records of a collection
+announces under, and queries,
 
 ```
 H(collection_id ‖ snapshot_id)
@@ -38,9 +43,43 @@ H(collection_id ‖ snapshot_id)
 in a distributed hash table, the way BitTorrent finds the peers of an
 infohash: many announcers under one deterministic key, no owner. A
 newcomer months later finds the last survivor by computing the key, not
-by asking anyone. For a certified collection the certifier also
-publishes a signed pointer to the current snapshot under its own key —
-there the single writer is the point — with the anchor URL as fallback.
+by asking anyone.
+
+**The key, exactly.** `H` is SHA-256, and `H(a ‖ b)` is SHA-256 over the
+canonical JSON of the list of strings `[a, b]` — the one concatenation
+Louise has (09 §9.1). Every identity is written in its textual form
+(`sha256:` and 64 hex digits for a collection or lineage id, 09 §9.1;
+`ed25519:` and 64 hex digits for a key, 09 §9.2). The hash table is the
+BitTorrent mainline DHT (BEP 5), whose keys are 20 bytes: the
+**collection key** for a snapshot is the first 20 bytes of
+`H(collection_id ‖ snapshot_id)`, and the **lineage key** is the first
+20 bytes of `H(lineage_id ‖ snapshot_id)`, where `lineage_id` is the
+root of the `continues` chain (02 §2.7). A sharer announces under both,
+for every snapshot it serves. A newcomer that holds a lineage but not
+its leading daughter therefore finds the daughter under the lineage key,
+and one that holds nothing finds the collection under the collection
+key. A searcher probes the current snapshot id first, then each earlier
+id back to twelve cadences, and stops at the first key with announcers;
+a collection nobody has announced for twelve cadences is found by a peer
+address given by hand.
+
+What is found under a key is a peer address. The port announced there
+speaks the peer messages of 09 §9.9 — signed, and the only protocol
+between two Louise nodes other than the member swarms. A newcomer sends
+`pull codex` and `pull snapshot` to what it found; the Codex chain back
+to the root comes with the Codex, the snapshot names every record member
+with its root and size, and from those three the member's torrent and
+infohash follow (§4.3). From one address, everything.
+
+For a certified collection the certifier also publishes a signed pointer
+to the current snapshot under its own key — there the single writer is
+the point — with the anchor URL as fallback. The pointer names the
+collection, the snapshot id and hash, a sequence number, and a time
+(09 §9.11); it is a BEP 44 mutable item under the certifier's key,
+salted with the collection id, and the same signed object is served
+beside the anchor document. A peer keeps the highest `seq` it has
+verified for a collection and discards any pointer with a lower one — a
+captured old pointer, however valid its signature, moves nobody back.
 
 Between peers that already know each other, two mechanisms carry the
 rest, both signed by the sender:
@@ -50,8 +89,63 @@ rest, both signed by the sender:
   coverage map; a peer that sees a hash it lacks pulls what it needs.
   Bounded by the interval, converges in a few rounds, no fan-out;
 - **events**, forwarded once: a new snapshot, a new daughter, an
-  attestation, a flag. Each carries an id and a hop count; a peer never
-  re-forwards what it has seen.
+  attestation, a flag, a bundle. Each carries an id and a hop count; a
+  peer never re-forwards what it has seen.
+
+**Digests.** The interval is one hour. A digest carries the sender's
+key, its address, its benchmark per space (03 §3.3), and per collection
+held: the collection id, the lineage id, the latest snapshot id and
+hash, the licence and privacy class, the members offered, and the
+coverage the peer has accepted — the bundle ids per shard that passed
+its own ladder (§4.5); 09 §9.9 fixes the fields. A **neighbour** is any
+peer from which a digest arrived in the last three intervals; a peer
+sends its digest to its neighbours and to the addresses in its peer
+list. A digest also carries up to sixteen live neighbours' addresses, so
+one address given by hand becomes a neighbourhood within a few
+intervals.
+
+**Events.** An event's id is `H` of the canonical JSON of its body
+(09 §9.9), computed by the receiver; an event whose carried id differs is
+dropped, so nobody can suppress a real event by forging its id. The hop
+count sits outside the signed body, starts at 8, is decremented on each
+forward, and an event at 0 is not forwarded. A peer keeps the ids it has
+seen for seven days and drops an event whose time is older than that or
+more than one interval in the future.
+
+**Identity is the key.** A peer is one ed25519 key (`hold key create`,
+09 §9.2); every digest and event names the key that signed it, and a
+receiver learns which key is at which address from the digest itself. A
+digest from a key never seen before is accepted on the strength of its
+signature alone — identity is the key, not the address, and the aggregate
+limit of 08 §8.2 bounds what a flood of fresh keys can cost. An address
+added by hand may pin a key; a digest from that address under another
+key is discarded and logged. Ordinary keys do not rotate; a lost key is a
+new key.
+
+**Pulls.** The messages are `digest`, `event`, `pull codex`, `pull
+snapshot` and `pull attestations(collection_id, since)` (09 §9.9); every
+one is signed, and every object pulled is content-addressed. A pull that
+does not connect is deferred and retried at the next interval. A pull
+that returns bytes whose hash differs from what the digest advertised is
+a lie: the bytes are dropped, the sender is not a neighbour for
+twenty-four hours — its digests are ignored and it is not scored in
+§4.5 — and the event is logged with its key.
+
+**Bootstrap.** Neighbours come from two sources: the `[peers]` list in
+`platform.toml` (07 §7.8), which `share peers add <address>` writes, and
+the peers found under a collection's or lineage's DHT key. The DHT is
+optional (`platform.toml`); a node with it off is reachable only by the
+peers that know its address, and is complete in every other respect.
+
+**Names live here, not in the Codex.** A collection's display name is a
+field of the catalogue entry a peer publishes in its digest (09 §9.9),
+set locally in `collections/<name>.toml` (07 §7.8) and defaulting to the
+plugin's. It is not part of the recipe, so two creators who write one
+Codex under two names still write one collection, and one peer may
+rename what it holds without changing what it holds. A name is
+displayed and nothing more: never sorted on, never merged on, never
+resolved by (08 §8.2). Where two collections show the same name, the
+catalogue separates them by their ids and their verification facts.
 
 Announcing what you do not serve would be a lie, and serving without
 announcing has no audience; Louise has one verb for both, `share`.
@@ -66,63 +160,234 @@ transport and dropped before anything reaches the copy. Fetched shards
 land in staging and are promoted into the copy in one step — the step
 where a certified collection's manifest-only gate applies (§3.8).
 
+**Members are torrents.** Each member is one BitTorrent v2 torrent
+(BEP 52), and a member's `root` is its v2 piece-layer root — the same
+root the snapshot lists for a record shard (02 §2.2). The torrent's
+parameters — its name, piece length, v2 only, nothing else in the info
+dictionary — are fixed by 09 §9.16, so the torrent, and therefore the
+infohash, is a function of the member's name, root and size alone: two
+honest publishers of the same member land in one swarm, and a peer
+computes a member's infohash from the snapshot without contacting
+anyone. The torrent collection of one (collection, snapshot) is the set
+of its members; the snapshot is its index for record shards, and a
+digest or a `bundle` event names every other member the same way, by
+name, root and size. Record shards, text-index members and bundles are
+members; vectors reach a peer only as bundles (03 §3.5, 09 §9.7). A
+request for a `vectors-<space>-<slice>` member or a bucket group
+resolves to the accepted bundles the sharer holds for those chunks,
+delivered as bundles with their signatures, and the fetcher merges them
+itself (02 §2.4).
+
+**Staging and promotion.** A member is fetched into staging — local
+state beside the copy (07 §7.8), never the copy itself — and resumption
+is per piece from what staging already holds; nothing in staging is
+read by any stage. A member is promoted when its root equals the root of that
+member in a signed snapshot of the collection's chain that the peer
+holds (02 §2.2, 09 §9.4) — for an open collection any snapshot in the
+chain carrying at least one verified signature, its own included; for a
+certified collection the current snapshot signed by the anchored
+certifier (§3.8). Promotion is one rename into the pack path and, in the
+same transaction of the state database, the holdings mark: the durable
+marker is the snapshot's row in the manifest naming that member as held.
+At start, a member present in the copy without its mark goes back to
+staging. A member whose root is in no snapshot the peer holds stays in
+staging until a snapshot naming it arrives, and is discarded after
+`grace_days`.
+
+**Two snapshots under one id.** When two different snapshots carry the
+same id (02 §2.2), the shard where they differ is named and
+`records-vs-origin` on that shard decides: it is exact, and one of the
+two fails. A peer that computed one of them itself serves its own
+meanwhile; a peer that computed neither promotes nothing from either
+until the check has run, and if the origin cannot answer
+(*inconclusive*, 03 §3.1) both stay in staging, shown as disputed.
+
+**Sizes are known before the first byte.** A fetch that would not fit
+in the free space of its target — members declared, staging included —
+is not started; the collection is shown as waiting for space with the
+shortfall. Running out of space inside a stage is a deferral (07 §7.7):
+the unit is left untouched, no error is written to any document, and
+the stage retries when space returns. Index maintenance never takes the
+disk below the floor a fetch needs.
+
 The origin is a fallback, not the default: a collection's records are
 fetched from the origin once per snapshot by whichever peer §4.5 assigns
 the fetch to, and from that peer by everyone else. Every completed fetch
 makes the fetcher a sharer. That is the whole of how Louise takes load
 off the sources it depends on.
 
+**Sharing is automatic.** For a `privacy: public` collection (§4.4),
+every member a peer has promoted is served and announced by the running
+node from the moment the fetch completes, unless the collection's TOML
+says `share = false` (07 §7.8). `share <collection> --slices … --kinds
+…` narrows what is served; `share <collection>` names `hold collection
+show` as the state it publishes (07 §7.3). A `hold` command never opens a
+port (07 §7.4). Serving is a statement about bytes and roots — this
+member, this root, in this snapshot — and nothing more; what a peer has
+checked about the collection is in its attestations, not in the fact
+that it serves it.
+
 Every byte a peer moves — fetching, sharing, contributing — draws from
 one budget on that peer. There are no per-tool rate limits standing in
-for it.
+for it. The budget covers every byte, in both directions: origin and
+peer fetches, serving, bundle exchange, digests and events, anchor
+checks (§3.7), freshness checks (05 §5.3), the live mode of
+`origin-seal`, and the DHT. It is a pair of token buckets, up and down,
+each with an interactive reserve, and five classes served in strict
+priority when the link is contended: *interactive* (a search, its
+freshness check, T4), *delta* (the current snapshot's members),
+*backfill* (older shards, the corpus), *archive* (pre-embedded vector
+archives, useless without the corpus and so always behind it), and
+*seeding*, which takes what is left and never reserves. A transport that
+cannot be metered per byte takes a rate lease from the bucket. An
+origin's etiquette — connections, hours, a rate it asks for (06 §6.2) —
+is a further cap applied under the budget, never a limit in place of
+it. The numbers live in `platform.toml` (07 §7.8).
 
 ## 4.4 Licence classes
 
 Not every source may be redistributed as text. Each plugin declares a
-class, and the class decides what travels:
+class, the Codex's `license.class` records it and is authoritative
+(02 §2.1), and the class decides what travels:
 
 | class | examples | what may be shared |
 |---|---|---|
-| **green** | public domain, CC0: Gutenberg, reference genomes, public vector archives | records, vectors, index |
+| **green** | public domain, CC0: Gutenberg, reference genomes, public vector archives | records, vectors, index; no acknowledgement |
 | **yellow** | open with conditions: Wikipedia (CC BY-SA), most reference databases (attribution) | records, vectors, index — after the peer has recorded its acknowledgement of the terms |
-| **red** | text under publisher copyright with free bulk access: PubMed abstracts | vectors and pointers; the text is never exchanged, and a reader shows the origin's page |
+| **red** | text under publisher copyright with free bulk access: PubMed abstracts | vectors, pointer records and index — after the same acknowledgement; the text is never exchanged, and a reader shows the origin's page |
 
 The acknowledgement is a timestamp and the hash of the terms text, and it
-is required before a yellow collection's data is *used*, however it
-arrived: a hand-populated folder and a peer copy are not a bypass. The
+is required before a yellow or red collection's data is *used*, however
+it arrived: a hand-populated folder and a peer copy are not a bypass. The
 terms text travels byte-exact inside the collection, so one
-acknowledgement covers records, vectors and pack alike. A red
-collection is searchable in full; only the reader changes.
+acknowledgement covers records, vectors and pack alike.
+
+**The terms member.** The terms text is the member `LICENSE-TERMS` at
+the pack root (02 §2.6, 09 §9.13), bytes exact, and its SHA-256 is the
+Codex's `license.terms_sha256`; a green collection has `terms_sha256:
+null` and no terms member. The members a peer may fetch before it has
+acknowledged anything are exactly `codex.json`, `snapshots/*` and
+`LICENSE-TERMS`: enough to read what one would be agreeing to. The
+`license` check (03 §3.2) hashes that member, and a member whose hash
+differs from the Codex is refused at promotion.
+
+**The record.** `hold collection ack <collection>` prints the terms and
+records the acknowledgement — the time and the terms hash — in the
+collection's state directory (07 §7.8, 09 §9.13). Every gate resolves it
+through one function and compares it against the terms member the
+collection carries, never against a remembered hash: an acknowledgement
+is of a text, identified by its hash, and stays valid for as long as the
+collection's terms hash to it. A collection whose Codex names a
+`terms_sha256` this peer has already acknowledged — a sister or daughter
+under the same terms — is acknowledged by that record. The
+acknowledging peer is each peer for itself: a sharer without one does
+not announce or serve the gated members, a fetcher without one does not
+request them, and neither embeds, indexes or searches them.
+
+**Red.** A red collection's records member is the same record lines
+with `sections` empty and `extra.origin_url` set — **pointer records**
+(02 §2.3, 09 §9.5). The snapshot's roots are over the pointer shards,
+which is what travels; `content_hash` remains the hash of the cleaned
+text, so a peer that has the text can verify it. Every peer that holds a
+red collection fetches the text from the origin itself (`hold records
+fetch`), under the origin's etiquette and the budget, into local state
+that never travels and is never a member (07 §7.8). The fetch of §4.5 assigns the snapshot
+and the pointer shards, never the text. The checks and tiers that need
+text — `chunks`, `records-vs-origin`, `vectors-sample`, T1, T3 and T4
+(03 §3.2, §3.5) — run where the text is, and a peer holding vectors
+without text runs only T0 and T2, may serve what it holds, and does not
+attest. A red collection is searchable in full on a peer that has the
+text; only the reader changes. PubMed is red.
+
+**Privacy.** Beside its licence class a collection has a `privacy`
+(02 §2.1): *public* — announced and shared as above; *restricted* —
+never announced in the DHT and shared, in digests and members, only with
+peers on the local trust list; *never-share* — no `share` at all: not
+announced, not served, not named in any digest. The plugin declares the
+default and a collection may tighten it, never loosen it.
+
+**Erasure.** A collection also declares how content may leave it
+(`erasure`, 02 §2.1): *append-only* — nothing leaves without a trace,
+and a removal is a tombstone with a reason; *retractable* — the
+publisher may retract a record, and the tombstone stays; *erasable* —
+removal may be mandatory and must leave no trace. Sharing cannot
+un-publish: once a shard is served, no later snapshot reaches the peers
+who hold it. So `erasure: erasable` requires `privacy: never-share`, and
+a pack build refuses the pair otherwise; every collection that travels
+is append-only or retractable, and a tombstoned record stays in its
+closed shard, excluded from search and embedding (01, promise 7).
 
 ## 4.5 Sharing the work
 
 Every peer holding a collection's records may embed a part of them. The
 question is how peers avoid choosing the same part without anyone
 assigning parts, and how a peer that starts and stops does not waste the
-others' time.
+others' time. The unit in which the work travels is the **bundle**
+(08's signed block): a batch of vectors on the collection's own records,
+signed by the key that produced them, naming its collection, space,
+snapshot and chunk range (03 §3.5, 09 §9.7).
+
+**Before contributing.** A peer contributes vectors to a collection
+only when its own `roots` and `chunks` pass on the shards it holds, at
+least one `records-vs-origin` attestation exists for the snapshot — its
+own or another key's — and its encoder has passed the calibration gate
+for the space (03 §3.3). Records are checked before GPU is spent; there
+is no vector precondition, which would be circular. During the window
+of §4.6 no daughter of the lineage is embedded at all.
 
 **Rendezvous.** For every shard without vectors, each peer computes a
 score for every peer it believes alive:
 
 ```
-score(peer, shard) = H(peer_key ‖ shard_id) ^ (1 / weight_peer)
+shard_id = "<collection_id>/<space>/<slice>/<n>"
+h        = (first 64 bits of H(peer_key ‖ shard_id), as an unsigned integer, + 0.5) / 2^64
+score    = ln(h) / w
 ```
 
-and works on the shards where its own score is the highest. No messages
-are needed to partition — only an approximate set of live peers, which
-the digests already carry. When a peer disappears, only its shards are
-reassigned, and to a deterministic successor rather than to everyone at
-once. When a peer is alone, it scores highest on everything and takes it
-all, which is §4.1 satisfied trivially.
+and works on the shards where its own score is the highest. `H(a ‖ b)`
+is §4.2's hash; `<space>` is the path segment of 02 §2.4, `<n>` the
+shard's number as written in its path (`00001`); `w` is the peer's
+benchmark in tokens per second as published in its digest; the score is
+computed in IEEE-754 double; the highest wins, and a tie goes to the
+lower peer key. The same `shard_id` is the string an attestation uses to
+name a shard (09 §9.8). No messages are needed to partition — only an
+approximate set of live peers, which the digests already carry: a peer
+is **live** when a digest from it arrived within the last three
+intervals, and a key known only from another peer's digest is not scored
+until its own digest is seen. When a peer disappears, only its shards
+are reassigned, and to a deterministic successor rather than to everyone
+at once. When a peer is alone, it scores highest on everything and takes
+it all, which is §4.1 satisfied trivially. Scores are recomputed only
+when the live set or the set of open shards changes — a digest arrived,
+a bundle was accepted — and a peer keeps, per shard, only the head of
+the ordering, extending it when the cascade needs the next candidate.
 
 **Weight and eligibility.** The weight is the peer's benchmark (§3.3),
 so a peer with half the throughput is half as likely to be top on any
 given shard. Before scoring, a peer is *eligible* for a shard only if
 its expected time on it — chunks over benchmark, times a margin of about
 three for other load — stays under the collection's limit for that
-shard size. Small shards admit weak peers; large shards admit few; every
-peer with any capacity is eligible for something. A backlog at launch
-needs no separate mechanism: the peer does not choose, the hash does.
+shard size. The limit is the collection's work period: with `tokens` the
+shard's token count as the snapshot lists it (chunks × `space.ctx`, an
+upper bound, 02 §2.2) and `work.per` the Codex's work period (02 §2.4),
+
+```
+eligible  ⇔  3 × tokens / w  ≤  seconds(work.per)
+```
+
+where a calendar month counts as thirty days and a year as 365. A
+contributor must be able to finish a shard within one work period, with
+a factor of three for other load. Small shards admit weak peers; large
+shards admit few; every peer with any capacity is eligible for
+something. A backlog at launch needs no separate mechanism: the peer
+does not choose, the hash does. A peer embeds only shards whose records
+it holds and has checked; for a red collection that means the text.
+
+The benchmark is self-reported. What bounds a peer that overstates it is
+the cascade below, and one local rule: a key that led a shard on this
+peer's view and published no bundle for it within `grace_days` is not
+scored on that collection until a bundle from it is accepted, so an
+inflated number costs the collection one window, not one per shard.
 
 **Partial publication.** A contributor emits a signed bundle every few
 hundred chunks, not at the end of the shard. An abandoned shard loses
@@ -130,21 +395,61 @@ minutes, not an hour, and the coverage map shows progress rather than
 promises. Rendezvous yields a full ordering of eligible peers per shard,
 not just a winner; if the top peer has published nothing within the
 Codex's `grace_days`, the second proceeds. No claim, no confirmation, no
-arbiter — the first bundle is the claim.
+arbiter — the first bundle is the claim. Exactly: a shard is *open*
+while any chunk in it has no accepted bundle; its leader is the top
+eligible peer; the leader's claim is renewed by each bundle it publishes
+for the shard; the window runs from the later of the moment the shard
+became open and the leader's last accepted bundle; when it expires the
+next peer in the ordering leads and embeds only the chunks that still
+lack an accepted bundle. Every bundle names its chunk range, and the
+coverage map is the set of accepted bundles per shard (02 §2.5, 09 §9.10).
+
+**How a bundle travels.** A bundle is a member (§4.3): its producer
+announces it with a `bundle` event naming the collection, space,
+snapshot, shard, chunk range, bundle id, root and size, and lists it in
+its digest's coverage once it has accepted it itself. A peer that sees
+the event and lacks the range fetches the member, runs the ladder of
+03 §3.5, and, if it passes, merges the vectors into its own file for
+that shard (02 §2.4) and reports the bundle id in its next digest. A
+coverage claim counts — for the cascade, for adoption, for §4.7 — only
+when the bundle it names has been fetched and passed T0–T3. A bundle's
+id is the hash of its signed bytes (09 §9.7); a producer that restarts
+and re-emits the same bundle produces the same id, and an importer that
+holds that id ignores it. Admission is 03 §3.5's ladder and the
+producer's calibration, nothing else; a key is refused only after a
+proof of forgery (03 §3.5).
 
 **Duplicates are checks.** With inconsistent views of who is alive,
 two peers will sometimes embed the same shard. A peer that receives a
 second compliant bundle for chunks it already has compares them and
 publishes a `vectors-sample` attestation naming both producers. The
-trust levels of §3.6 need a tenth of shards re-embedded independently
-anyway; as long as duplication stays under that, it is not waste but the
-verification budget, paid by accident.
+first accepted vector for a chunk is what is stored and searched; the
+second is compared, attested and not stored, unless the first is later
+flagged, in which case the next accepted producer's bundle is imported
+in its place. The trust levels of §3.6 need a tenth of shards
+re-embedded independently anyway; as long as duplication stays under
+that, it is not waste but the verification budget, paid by accident.
 
 **The fetch is assigned the same way.** For the key
-`(collection_id ‖ snapshot_id ‖ fetch)`, the top eligible peer fetches
-the origin's delta at the cutoff and shares the resulting shards; the
-others fetch from it and check a sample against the origin. `grace_days`
-is the cascade window here too.
+`"<collection_id>/<snapshot_id>/fetch"`, used in place of `shard_id`
+and with no size limit, the top eligible peer fetches the origin's delta
+at the cutoff and shares the resulting shards; the others fetch from it
+and check a sample against the origin. `grace_days` is the cascade
+window here too. Eligible here is every live peer that holds the
+previous snapshot and, for a gated class, the acknowledgement. When a
+peer's sample against the origin fails, it publishes the failing
+`records-vs-origin` attestation naming the shard and the snapshot hash,
+stops fetching from that snapshot's sharers, and the next peer in
+rendezvous order fetches; the two snapshots then stand under one id
+until §4.3 settles them. A late fetcher — the second in line, or the
+survivor of §4.1 a month on — reproduces the state at the cutoff by the
+plugin's `cutoff_rule` (02 §2.2): which dumps or update files the origin
+had published at that instant, not what it publishes now. When the
+origin no longer offers those artefacts, the snapshot is reproducible
+only from peers, and the next daughter says so with
+`origin_reachable_until` (02 §2.7). For a red collection the fetcher
+produces the snapshot and the pointer shards; the text never leaves the
+peer that fetched it.
 
 The numbers, for a hundred peers embedding a corpus that would take one
 of them two hundred GPU-days: two days each, plus a few percent of
@@ -168,25 +473,76 @@ If they differ, the choice is made at the records stage, where it is
 cheap:
 
 - **adoption** of a daughter is the number of distinct peer keys
-  announcing its records for the new snapshot, weighted by the local
-  trust list;
+  announcing its records for the new snapshot in their digests, counting
+  a key only once its first such announcement is at least one digest
+  interval old; never weighted by any trust list — the trust list is a
+  local allow or deny filter over whose word is counted at all (03 §3.6),
+  not a weight;
 - from the first daughter seen for a lineage, fetching records of any
   daughter is allowed and embedding for all of them is not — for
   `grace_days`, which the cadence already has;
 - when the window closes, only the daughter with the most adoption is
   eligible for embedding; ties go to the lower Codex hash; the leader
-  changes only if a rival exceeds it by a margin for several digest
-  intervals in a row;
+  changes only if a rival exceeds it by twenty percent for three
+  consecutive digest intervals, as this peer observes them;
 - the others are never deleted: marked *not leading*, excluded from
   work, still shared and searchable by whoever holds them.
 
-Adoption counts can be inflated by minting keys; the trust-list weight
-dampens this and does not remove it. The worst case is bounded: the
-network embeds the attacker's daughter, which is still a valid
-derivation from the real origin — a parsing preference imposed by a
-Sybil, and the community can fork again. Where the choice really settles
-is the platform: parsers live there, reviewed as code, and the next
-release's image is the toolchain new peers get by default. Adoption
-avoids waste in the meantime.
+Adoption counts can be inflated by minting keys: keys are free and the
+count is advisory, as every threshold in §3.6 is; the one-interval age
+and the aggregate limit of 08 §8.2 slow this and do not remove it. The
+worst case is bounded: the network embeds the attacker's daughter, which
+is still a valid derivation from the real origin — a parsing preference
+imposed by a Sybil, and the community can fork again. Where the choice
+really settles is the platform: parsers live there, reviewed as code,
+and the next release's image is the toolchain new peers get by default.
+Adoption avoids waste in the meantime.
 
 Certified collections have none of this. One daughter, signed.
+
+## 4.7 Vitality: active and dormant
+
+Holding a collection is a sustained activity, not a single payment
+(08 §8.6). The Codex declares the level as a rate — `work: {tokens,
+per}`, the work parameter of 02 §2.4 — and this section is the rule by
+which a peer computes, from what it has seen, whether that rate is being
+met.
+
+A collection is **actively-held** on a peer's catalogue while some key's
+signed bundles for it, seen by that peer, total at least `work.tokens`
+per `work.per`; otherwise it is **dormant**. Exactly: over the trailing
+period of length `work.per` (§4.5's seconds), for each producer key, the
+peer sums the tokens of that key's bundles — a bundle's tokens being its
+chunk count × `space.ctx`, the same upper bound the snapshot uses per
+shard — counting the bundles it holds and the bundles a live neighbour's
+digest reports accepted; if any single key reaches `work.tokens`, the
+collection is actively-held; if none does, it is dormant — unless
+there is nothing left to embed: when every chunk of the newest held
+snapshot has an accepted bundle on this peer's coverage map, the
+collection is actively-held while that snapshot is no older than two
+cadences, because the work that keeps it alive is then the snapshot,
+and the key that produces the next one continues it. The default
+`per` is the update cadence, so a collection embedded at the pace its
+snapshots arrive is active by construction, and one whose next snapshot
+nobody embeds becomes dormant one period later.
+
+Dormant is a state, not a verdict. A dormant collection is still
+findable under its keys (§4.2), still fetchable, still searchable and
+still checkable; it is shown as dormant and left out of the default
+listing of `hold collection list`. The state is computed locally by
+each peer from the bundles it has seen — no one declares it, no one
+decides it — and it flips back the moment some key's bundles reach the
+rate again; anyone may be that key. The signal is "someone continues",
+never "the creator continues": the key that first published the Codex
+is recorded in catalogues as a fact and used for nothing, and no
+history of who held the collection is used — only the changing set of
+who currently does.
+
+The declared rate cannot be inflated (08 §8.5): the tokens it claims
+live in bundles whose vectors `vectors-sample` reproduces on the
+collection's own records, and a rate nobody meets makes the collection
+dormant, which is true information. A creator who wants a heavier
+encoder writes a higher rate and excludes weaker hardware from §4.5's
+eligibility by that alone; a creator who writes a low one declares a
+collection that works at a low level, and it stays there until strangers
+choose to reproduce it.

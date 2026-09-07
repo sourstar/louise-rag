@@ -1,7 +1,7 @@
 # Engineering notes
 
 Everything in this folder is a **record**, not the specification. The
-specification is the seven numbered documents one level up; where a
+specification is the numbered documents one level up; where a
 note and a document disagree, the document wins.
 
 What is here, and why it is kept:
@@ -9,6 +9,7 @@ What is here, and why it is kept:
 | note | what it records |
 |---|---|
 | `architecture-v2.md`, `pack-format.md` | the design as it was written and corrected in flight, with its amendment history; the source the numbered documents were condensed from |
+| `p2p-rag-architecture-v2.md` | the same architecture as first consolidated, before any amendment — superseded by `architecture-v2.md`, kept for the record |
 | `no-central-node.md`, `certified-collections.md`, `lineage.md` | the three proposals that became §2.7–2.8, §3.7–3.8 and §4 — with the reasoning and the alternatives that were rejected |
 | `embedding-redundancy.md`, `pack-live-edge.md`, `p2p-discovery.md`, `storage-tiering.md`, `dna-search-axes.md` | proposals with their measurements; partly absorbed, partly parked |
 | `scheduling.md` | the worker's scheduling model, the measured costs, and every pitfall that has cost a rework — read before touching what runs when |

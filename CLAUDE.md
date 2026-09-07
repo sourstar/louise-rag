@@ -1,10 +1,11 @@
 # Project: Louise — implementation rules
 
 ## Before any work
-- Read docs/README.md and the seven numbered documents it lists, in
+- Read docs/README.md and the numbered documents it lists (01–09), in
   order. They are the specification; the vocabulary they fix (docs/01,
-  docs/07) is the vocabulary of the code. If a task conflicts with them,
-  stop and ask — the documents win until changed.
+  docs/07) is the vocabulary of the code, and docs/09 fixes every byte
+  that is hashed, signed or moved. If a task conflicts with them, stop
+  and ask — the documents win until changed.
 - docs/notes/ is the engineering record: measurements, postmortems,
   the design history. Read docs/notes/STATUS.md for where things stand
   and what cost time, and the note a task names, before changing the
@@ -29,13 +30,16 @@ fails), or *review* (a human must notice). The ones enforced by review alone
 are the ones that have drifted; prefer to add a test when you touch them.
 
 1. SPACES. Never mix embedding spaces. One collection = one space; a node
-   runs several spaces side by side. `space_id` is computed by §3 as amended
-   (it names the encoder function AND the collection's chunker LAYERS —
-   amendment 41: one chunker per layer, every document in exactly one
-   layer by a declared rule, the layer list fixed at creation; a collection
-   with one layer is the common case and its layer IS its chunker. Not
-   `dim`, not chunk geometry, not the device; compensating checks cover
-   those at import). A vector table whose dim/space mismatches config is a
+   runs several spaces side by side. `space_id` is computed as docs/02 §2.4
+   states and docs/09 §9.3 fixes byte for byte: the encoder (image AND
+   weights digests), the collection's chunker LAYERS with their ids,
+   versions and parameters (one chunker per layer, every document in
+   exactly one layer by a declared rule, the layer list fixed at creation;
+   a collection with one layer is the common case and its layer IS its
+   chunker), `cleaning_version`, the space block's dim, dtype, ctx,
+   pooling, normalisation and query encoder, and the epoch. Not the
+   tolerance, not the calibration, not the device. A vector table whose
+   dim/space mismatches the Codex is a
    REFUSE-TO-BOOT error, never a warning or auto-migration. *Enforced:
    boot; layers by test (app/layers.py, tests/test_layers.py: one layer =
    the pre-layers space id byte for byte; every stage cuts a document
@@ -56,15 +60,17 @@ are the ones that have drifted; prefer to add a test when you touch them.
 4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the
    LLM context as pinned blocks and NEVER enter RRF. Ranked lists from corpus
    legs ALWAYS go through RRF — when they answer the same question. Two
-   ranked lists that answer different questions (pending amendment from the
-   DNA search-axes work: homology vs function) are presented separately,
+   ranked lists that answer different questions (docs/05 §5.1; homology vs
+   function in the genome collection is the case) are presented separately,
    never fused. Do not blend the types. *Enforced: test + review.*
 5. BANDWIDTH. No code path moves bytes without drawing from the central
    token-bucket budget (transfer manager). No per-tool rate limits as a
    substitute. *Enforced: review.*
 6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
    assumptions. SQLite holds state (never travels); Lance holds vectors
-   (travels as Parquet). Implicit rowids are load-bearing (`catalog_fts` is
+   locally — a bundle travels as Parquet (docs/09 §9.7) and a pack's
+   vectors member rests as safetensors (docs/09 §9.6). Implicit rowids
+   are load-bearing (`catalog_fts` is
    keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
    that renumbers rowids must realign. *Enforced: review.*
 7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
@@ -74,18 +80,19 @@ are the ones that have drifted; prefer to add a test when you touch them.
    path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
    or error messages, and never in an env VALUE where a path is possible.
    *Enforced: test + review.*
-9. LICENSE GATES. A yellow-class source requires a recorded
+9. LICENSE GATES. A yellow- or red-class source requires a recorded
    acknowledgement (timestamp + sha256 of terms text) before its data is
-   USED — however the data arrived. Acquisition: before the first byte
-   moves from the origin. Ingestion/exchange (amendment 36): a
-   yellow-class collection without an ack is not discovered, not
+   USED — however the data arrived (docs/04 §4.4). Acquisition: before
+   the first byte moves from the origin. Ingestion/exchange: a yellow- or
+   red-class collection without an ack is not discovered, not
    imported, not exchanged — hand-populated folders and peer copies are
    not a bypass (observed live: a peer-copied shard was indexed and
    imported ack-free). Terms text is byte-exact and never converted (a
    CRLF checkout would silently invalidate every recorded ack).
-   Packs carry the origin's terms byte-exact, so one ack covers corpus,
-   pre-embeddings and pack (amendment 46; `app/licensing.py` is THE
-   resolution — never re-implement the check). *Enforced: acquisition by
+   Packs carry the origin's terms byte-exact (`LICENSE-TERMS`, docs/09
+   §9.13), so one ack covers corpus, pre-embeddings and pack
+   (`app/licensing.py` is THE resolution — never re-implement the check).
+   *Enforced: acquisition by
    test; ingestion by test (the worker withholds scan and archive, `pack
    build` and the create dialog refuse — tests/test_license_gate.py).*
 10. CONFIG TIERS. Env = identity; TOML files = desired state; DB settings =
@@ -100,10 +107,12 @@ are the ones that have drifted; prefer to add a test when you touch them.
     what we do not use (epubs, XML markup, dump indexes) is fine; losing
     the ability to re-fetch the origin and reproduce what we kept is not.
     Concretely: every record carries `origin_hash` — the hash of the origin
-    bytes it was parsed from — and `origin` names the AcquisitionSpec and
-    parser version that produced it, so `records-vs-origin` can re-fetch a
+    unit it was parsed from — and `origin` locates that unit, while the
+    Codex names the acquisition spec and parser version that produced it
+    (docs/02 §2.3, docs/06 §6.4), so `records-vs-origin` can re-fetch a
     sample and reproduce it. A record with no `origin_hash` is REFUSED at
-    pack build, never warned about: a pack whose records all verify
+    build (`hold records build`; `pack build` until the migration lands),
+    never warned about: a pack whose records all verify
     internally while being permanently unverifiable against the source is
     the worst artefact we could ship, and it is published once and adopted
     by peers who cannot repair it.
@@ -124,14 +133,16 @@ are the ones that have drifted; prefer to add a test when you touch them.
   And a plan check is not enough: `SEARCH ... USING INDEX
   idx_documents_scope (in_scope=?)` reads as indexed while SQLite filters
   the rest of the corpus. TIME every new hot-path query against a real
-  manifest (amendment 49 found three costing 16–128 s PER ROUND that way);
+  manifest (docs/notes/architecture-v2.md amendment 49 found three costing
+  16–128 s PER ROUND that way);
   if no index can answer it, walk it in windows from a cursor and stop.
 - Deferral is not failure: an unreachable endpoint or a locked manifest
   never writes an error to a document. An error removes the document from
   every selection until a human intervenes.
 - A pipeline thread NEVER waits without a bound on an optional subsystem.
   The parse pool hung with its children gone and pubmed stopped dead for
-  hours (amendment 51): every such wait takes a timeout and falls back to
+  hours (docs/notes/architecture-v2.md amendment 51): every such wait takes
+  a timeout and falls back to
   doing the work in-process, because a worker that cannot finish also
   cannot honour SIGTERM.
 - Caches, cursors and bookkeeping key on physical identity (a path), never
