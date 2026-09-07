@@ -115,7 +115,18 @@ writes only registered ids into a record's `keys` (§6.1), and a
 namespace is registered before any record uses it, because `keys` are
 bytes of the record and therefore of its `content_hash`.
 
-**A resolved id is a filter, never a boost.** In a collection whose
+**A filter restricts; nothing boosts.** Two things restrict the legs: a
+resolved identifier, and a value given for one of the collection's
+declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
+is `Austen, Jane`, `date` is within a range. Both narrow which records
+the legs may return, and the free-text query then ranks within that
+narrowing; neither adds a list of its own, and neither moves a score.
+A filter that matches nothing returns nothing, which is an answer: the
+value is not in what this peer holds, and §5.7 says what is. A boost
+would hide that, and would make two peers rank one query differently
+unless its weight were pinned in the Codex, so there is none.
+
+In a collection whose
 records carry `keys`, a resolved identifier restricts every leg to the
 records whose `keys` contain it; the free-text query then ranks within
 that restriction. In a collection whose records carry no `keys`, the
@@ -303,3 +314,67 @@ true`. A peer that holds no text for a candidate — vectors without
 records — cannot rerank it and returns the fused order the same way.
 The fallback is always visible in the result, never silent, so two
 answers to one query that differ in order also say why.
+
+## 5.7 Facets: the categories, and what is in them
+
+A filter nobody can enumerate is close to useless — nobody guesses
+`Neoplasms/genetics`, and for the Gazzetta Ufficiale the categories are
+the map: *diritto dei trasporti*, *navigazione*, and the rest. So a
+collection declares in its Codex which of its record fields are
+**facets** (02 §2.1), and a peer can list the values it holds for each.
+
+```
+ask facets <collection>                          the fields, and how many values each has
+ask facets <collection> subjects                 the values, with counts
+ask facets <collection> subjects --under "Neoplasms"      one subtree
+```
+
+This is a listing, not a search: nothing is ranked, nothing is fused,
+relevance never enters it, and so §5.1's two kinds of result are
+untouched. What it returns is what this peer can actually filter on.
+
+**A facet is a record field, and the tree is read out of the records.**
+`kind: "flat"` is a set of values — creators, languages. `kind: "tree"`
+splits each value on the declared `separator` and merges the paths:
+PubMed's `"Neoplasms/genetics"` is the descriptor `Neoplasms` and its
+qualifier `genetics`, so the tree has two levels, and a taxonomy with
+five separators has five. `kind: "range"` is ordered rather than
+enumerated — dates — and is listed as bounds, not as every value.
+Building it is one pass over the metadata of the records held:
+
+```
+Neoplasms          26,443
+├── genetics       12,431
+├── therapy         8,902
+└── diagnosis       5,110
+```
+
+**Counts are this peer's, and say so.** A peer holding one slice reports
+that slice's counts, because that is what it can search. Two peers with
+different holdings report different numbers for one collection, and
+neither is wrong.
+
+**A new category needs no new Codex.** When an origin adds a subject —
+PubMed coining one next year — it arrives in the records of the next
+snapshot like any other content, and the tree gains a node when the
+index is rebuilt. Nothing is coordinated, no Codex changes, no
+collection is superseded. That is why the Codex declares structure and
+never values: had it listed the categories, one new subject would make
+a new `collection_id` every month. A renamed term behaves the same way
+— records the origin re-issues carry the new name, records it has not
+re-issued keep the old, and the tree shows both until the origin
+catches up, which is what the records actually say.
+
+`authority` names the controlled vocabulary a field draws on, where
+there is one — MeSH, ISO 639-1, Eurovoc — so a reader knows what the
+strings are and an interface can link a term to its definition. It
+carries no version: the vocabulary is the recipe and stays for the life
+of the collection, while its edition is data and rides in the records,
+so pinning an edition would make every annual release a new collection
+for no gain.
+
+**The index is local and derived.** Facet values are rebuilt from the
+records at each snapshot, in `state/` beside the working text index
+(07 §7.8), and they are not a member: they travel in no drag, carry no
+root and need no check, because anyone holding the records can rebuild
+them and anyone who cannot hold the records cannot search them either.

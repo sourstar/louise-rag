@@ -172,7 +172,8 @@ Ordered by how much depends on the answer.
    and 1,000 attestations per hour from keys with no reproduced work.
    The attestation count is new here; is it wanted, and is the queue
    bounded?
-7. **The catalogue finding aid.** `app/retrieval.py:catalog_search`
+7. **The catalogue finding aid** — SETTLED 2026-09-08 (§11 below).
+   **The catalogue finding aid.** `app/retrieval.py:catalog_search`
    searches titles, creators and subjects and is a third result type
    that invariant 4 does not classify. 05 does not specify it. Does it
    become a specified list type, or does it go?
@@ -367,3 +368,57 @@ scoped to Louise's own entities: a merkle tree keeps its parent nodes
 and children, a process pool keeps its children, a directory keeps its
 parent. Naming what is ours should cost a reader none of the words they
 already know.
+
+## 11. Addendum — filters and facets (operator, 2026-09-08)
+
+Question 7 closed. `catalog_search` tangled three different things in
+one code path, and separating them is the whole answer:
+
+| | what it is | how it behaves |
+|---|---|---|
+| legs | text index, vector index | ranked, fused — invariant 4's two types |
+| filters | metadata narrowing which records the legs may return | not ranked; they narrow, they do not compete |
+| facets | the listing of which values exist | not a search: no ranking, no relevance |
+
+The operator's objection was that a filter alone loses two things. The
+first — searching within a category, or outside it — turned out to be
+what a filter *is*, and my framing had obscured it. The second was
+real and my answer had been a hand-wave: a filter nobody can enumerate
+is close to useless, and for the Gazzetta the categories are the map.
+That is `ask facets`, a third *surface* rather than a third result type,
+so invariant 4 is untouched.
+
+**Values are data; structure is recipe.** The Codex declares which
+fields are facets and how each is shaped — `flat`, `tree` with a
+separator, `range` — and never which values exist. The values are
+already in the records, covered by `content_hash`, and change with
+every snapshot.
+
+The test that settled the shape was the operator's: *what happens when
+PubMed coins a new subject?* It arrives in the next snapshot's records
+like any other content, and the tree gains a node when the local index
+is rebuilt. No Codex changes, nothing is coordinated, no collection is
+superseded. Had the Codex listed the categories, one new MeSH term
+would have minted a new `collection_id` every month.
+
+The same question corrected the proposal as first written. I had put
+`authority: {name: "MeSH", version: "2026"}` in the Codex. The version
+is wrong: MeSH has annual editions, so pinning one would make every
+release either a new collection or a quiet lie, and it buys nothing —
+two peers holding the same records build the same tree whatever the
+Codex says the vocabulary is. The vocabulary is the recipe and stays;
+the edition is data and rides in the records. `authority: {name}` only.
+
+**No boost.** A metadata match that moved scores instead of narrowing
+was considered and refused: a filter matching nothing is informative
+(the value is not here, and facets say what is), where a boost hides
+the mismatch, and an unpinned weight makes two peers rank one query
+differently. The honest form of a boost is a weight in the Codex, and
+no collection has yet needed one. For noisy uncontrolled metadata the
+fix is normalising at parse — in the recipe, deterministic, checkable —
+not weighting at query time.
+
+The facet index is local and derived: rebuilt from the records at each
+snapshot, in `state/` beside the working text index, no member, no root,
+no check. Counts are per-peer and say so, because what a peer lists is
+what it can actually filter.

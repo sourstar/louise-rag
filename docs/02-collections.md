@@ -43,6 +43,12 @@ codex = {
   layers: [{chunker: {id: "abstract", version: 1, params: {}}, rule: "default"}],
   slicing: {keys: ["year"], year: {field: "date", bins: ["<1950", "5y<2000", "1y"]},
             unknown: "year=unknown", shard_records: 30000, order: "numeric"},
+  facets: [                          -- which record fields can be filtered and listed (05 §5.7)
+    {field: "subjects", kind: "tree", separator: "/", authority: {name: "MeSH"}},
+    {field: "creators", kind: "flat", separator: null, authority: null},
+    {field: "lang",     kind: "flat", separator: null, authority: {name: "ISO 639-1"}},
+    {field: "date",     kind: "range", separator: null, authority: null}
+  ],
   space: {
     encoder: {image: "sha256:…", weights: "sha256:…", label: "medcpt-article"},
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
@@ -122,8 +128,14 @@ the peer is in it, no credential and no local path (06 §6.2).
 `toolchain` pins the code by image digest; `parser`, `cleaning_version`
 and `protocol_version` are what those images contain, written out.
 `layers` and `slicing` say how documents are cut and how records are
-divided into members (§2.3, §2.4, 06 §6.3). `space` is the function that
-turns text into vectors, and the contract around it (§2.4). `credits`
+divided into members (§2.3, §2.4, 06 §6.3). `facets` says which record
+fields a search may filter on and a reader may list, and how each is
+shaped — a flat set of values, a tree split on a separator, or a range
+(05 §5.7). It declares structure and never content: the values
+themselves live in the records and change with every snapshot, so
+naming them here would make a new subject a new collection. `space` is
+the function that turns text into vectors, and the contract around it
+(§2.4). `credits`
 names the pre-embedded archives whose vectors this collection carries,
 and is derived rather than chosen (§2.7). `work` is the work parameter
 (§2.4). `modality` says what the bytes are, so that

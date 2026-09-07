@@ -104,8 +104,10 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE]
-                                                                       the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot current at that date (§5.1)
+  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE] [--<facet> VALUE | --not-<facet> VALUE …]
+                                                                       the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
+                                                                       current at that date (§5.1); a facet flag restricts the legs and never ranks (§5.2, §5.7)
+  facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
   lookup <id> [--as-of DATE]                                           a fact by key, from a reference source
   traverse <id> [--relation T] [--depth N]                             the records reached along declared relations (§5.5)
   chat                                                                 the model with the three tools of §5.4
@@ -424,7 +426,13 @@ Codex, and a lineage is not one. `<snapshot>` and `ID` after
 `<plugin>:<native_id>` (02 §2.3). `<key>` is `ed25519:` and 64 hex
 characters (09 §9.2). `--shard` takes `<slice>/<n>` —
 `year=1975-1979/00003` — because shard numbers restart per slice.
-`--slice` takes slice values as they appear in the drag's paths.
+`--slice` takes slice values as they appear in the drag's paths. A
+facet flag is named for its field — `--subjects`, `--creators`,
+`--not-subjects` — and is accepted only for a field the collection's
+Codex declares (02 §2.1); any other is exit 2, listing the fields that
+are. A `tree` facet matches a value and everything under it, so
+`--subjects Neoplasms` takes `Neoplasms/genetics` with it; a `range`
+facet takes `FROM..TO`, either end omitted for open.
 `--kinds` takes the kind names of 02 §2.6; the default is records and
 vectors. `--checks` takes the check names of 03 §3.2. `--seed` takes 32
 bytes as hex (03 §3.2).
@@ -564,7 +572,7 @@ collection is another name.
 │   └── pubmed/
 │       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
-│       ├── index/           the text index of the shards held
+│       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
 │       └── lance/           the vector table search reads
 ├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json
 └── keys/                    the peer key, at NODE_KEY_PATH

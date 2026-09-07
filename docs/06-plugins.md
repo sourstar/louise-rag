@@ -22,6 +22,7 @@ class CorpusSource(Protocol):
     native_id_order: str           # "bytes" | "numeric" — how this source's ids sort (§2.2)
     default_layers: list[Layer]    # what `hold collection create` writes unless the recipe says otherwise (§6.3)
     default_slicing: dict          # likewise (§2.2)
+    default_facets: list[Facet]    # likewise: which fields are filterable and listable (05 §5.7)
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...
