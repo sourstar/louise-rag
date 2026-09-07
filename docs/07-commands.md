@@ -55,8 +55,8 @@ one.
 ```
 louise hold
   collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
-              derive <codex> (--space-from CODEX | --encoder-image D --encoder-weights D) [--layers FILE] [--cleaning-version N]
-                                                                       a sister: same corpus, new space
+              derive <codex> [--space-from CODEX | --encoder-image D --encoder-weights D] [--layers FILE] [--cleaning-version N] [--update FILE]
+                                                                       a sister: same corpus, new space or new schedule; refuses one that differs in nothing
               continue <codex> --platform-image D --from-snapshot ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
               replace <codex> --defect FILE [--platform-image D] [--encoder-image D --encoder-weights D]
@@ -514,6 +514,9 @@ line or a message.
 [budget]     down_max = "400Mbit"   up_max = "40Mbit"   schedule = "01:00-07:00 full; else 30%"
 [peers]      addresses = ["peer.example.org:6881"]      # the bootstrap of 04 §4.2, beside `share peers add`
 [dht]        enabled = true
+[admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
+             # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
+             # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 400                    # the reranker's bound (05 §5.6)
 [encoder_defaults.pubmed]   url = "http://nas:30440"    # per plugin; a collection's own [encoder] wins
 ```

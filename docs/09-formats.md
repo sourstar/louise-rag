@@ -463,7 +463,9 @@ A relations shard entry has `slice`, `n`, `root`, `edges` (integer) and
 `slicing.order`; they are cut every `shard_records` records; shards are
 numbered from `00001` in that order. A later snapshot re-issues a
 changed record's shard under the same number with a new `root`; new
-records go into new numbers after the last; a tombstoned record stays in
+records fill the slice's open shard — the last, the only one holding
+fewer than `shard_records` records — re-issuing it under its number,
+and open a new number only once it is full; a tombstoned record stays in
 its closed shard until that shard is next re-issued and is excluded from
 search and embedding by the tombstone alone. The set of shards re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
@@ -741,9 +743,9 @@ uids); no floats anywhere.
 | key | type | required | meaning |
 |---|---|---|---|
 | `version` | `1` | yes | |
-| `collection` | id | yes | the `collection_id` the vectors belong to |
-| `space_id` | id | yes | the space; a bundle whose `space_id` is not the collection's is refused at T0 |
-| `snapshot_id` | `YYYY-MM` | yes | the snapshot whose records were embedded |
+| `collection` | id | yes | the collection the producer embedded for. Provenance, never a gate: a bundle is admissible in any collection whose `space_id` it matches (03 §3.5) |
+| `space_id` | id | yes | the space, and the gate: a bundle whose `space_id` is not the importing collection's is refused at T0, before any tier runs |
+| `snapshot_id` | `YYYY-MM` | yes | the snapshot whose records were embedded. Provenance, never a gate: an unchanged record keeps its vectors across snapshots (02 §2.2), and `possession.json` — not this field — decides whether a row still matches the text |
 | `shard` | string | yes | `"<slice>/<n>"` — the record shard the chunks come from; one shard per bundle |
 | `uids` | list of strings | yes | the uids whose chunks the bundle covers, every chunk of each, sorted by bytes, no duplicates: the bundle's chunk range |
 | `chunk_count` | integer | yes | rows in `vectors.parquet` after the challenge rows |

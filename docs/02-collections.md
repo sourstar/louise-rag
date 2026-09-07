@@ -218,9 +218,17 @@ compressor.
 are sorted by `native_id` — `slicing.order: bytes` is UTF-8 byte order,
 `numeric` is integer order — and cut every `slicing.shard_records`
 records; shards are numbered 00001… per slice in the order they are
-created. **A shard is closed once published.** New records go into new
-shards appended after the highest number, sorted among themselves; a
-shard closed short is never topped up. A record whose text changed
+created. **A shard is closed when it is full**, and a closed shard
+never changes again except to be re-issued. The last shard of a slice
+is open: it holds fewer than `shard_records` records, and each snapshot
+re-issues it with the records that arrived since, under its own number,
+until it fills and closes. New records go into the open shard first and
+open a new number only when it is full, so a slice has at most one open
+shard at a time and every closed shard holds exactly `shard_records`
+records. The cut therefore falls on the same records whatever the
+cadence: a collection updated weekly and one updated monthly close
+their shards at the same boundaries, which is what lets two sisters
+share members (§2.7). A record whose text changed
 re-issues its shard under the same number in the next snapshot; a
 deleted or retracted record becomes a tombstone: it is listed in that
 snapshot's `delta.tombstoned`, it is excluded from search and from
@@ -508,10 +516,10 @@ makes a new Codex. Three kinds of change, three relations:
 
 | | **daughter** | **sister** | **corrective sister** |
 |---|---|---|---|
-| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space: another encoder or chunker over the same corpus | a defect in the parent's records or vectors |
+| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space, the schedule, or both, over the same corpus | a defect in the parent's records or vectors |
 | records up to the transition | inherited by hash | inherited by hash | recomputed from the origin |
 | records after it | the new toolchain's | identical to the parent's — same Codex fields, same bytes | the corrected toolchain's |
-| space | the same; vectors inherited | new; vectors from zero | new by construction; from zero |
+| space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the parent's when only `update` changes, and then vectors shared | new by construction; from zero |
 | Codex field | `continues`, `from_snapshot` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
 
 A **daughter** continues the collection. The transition is a snapshot
@@ -537,21 +545,39 @@ they are the same thing under two names; a peer that holds both says so
 and catalogues merge them. If they differ, §4.6 decides which one the
 network embeds — at the records stage, before anyone spends GPU.
 
-A **sister** shares the corpus and starts a new space: a domain-trained
-encoder over PubMed, for instance. A sister keeps identical to its
-parent `plugin`, `origin`, `toolchain.platform_image`, `parser`,
-`slicing`, `update`, `license`, `privacy`, `erasure` and `modality` —
-everything except `layers`, `cleaning_version`, `space` (which
-carries the encoder) and the lineage fields — and `hold
-collection derive` refuses anything else. Because its origin and
-platform image are the parent's, its future snapshots are the parent's
-future snapshots — same bytes, same hash, no coordination — for as long
-as neither changes; a sister that changes `cleaning_version` is the one
-exception, since the cleaned text is the record (§2.3): it shares the
-origin and produces its own shards. A sister starts from zero vectors
-in every case, including a sister that only removes a layer: no vector
-crosses a space boundary. `space_from: <codex>` copies the whole
-`space` block, `layers` and `cleaning_version` byte for byte, and the
+A **sister** shares the corpus and starts a line of its own: a
+domain-trained encoder over PubMed, or the same PubMed on a weekly
+cadence for a laboratory that needs currency. A sister keeps identical
+to its parent `plugin`, `origin`, `toolchain.platform_image`, `parser`,
+`slicing`, `license`, `privacy`, `erasure` and `modality` — everything
+except `layers`, `cleaning_version`, `space` (which carries the
+encoder), `update` and the lineage fields — and `hold collection
+derive` refuses anything else, and refuses a sister that differs in
+nothing.
+
+Whether the vectors are shared follows from one comparison and nothing
+else: **a sister whose `space_id` equals its parent's shares the
+parent's vectors; one whose `space_id` differs starts from zero.** A
+sister that changes the encoder, the layers or `cleaning_version`
+changes `space_id` (§2.4) and so starts empty — no vector crosses a
+space boundary, and that includes a sister that only removes a layer. A
+sister that changes only `update` leaves `space_id` untouched, so every
+bundle either of them produces is admissible to the other (03 §3.5) and
+the two are searched as one list (05 §5.1).
+
+Because its origin and platform image are the parent's, a sister that
+keeps the parent's `update` produces the parent's future snapshots —
+same bytes, same hash, no coordination — for as long as neither
+changes; a sister that changes `cleaning_version` is the exception,
+since the cleaned text is the record (§2.3), and it produces its own
+shards. A sister that changes only `update` produces its own chain,
+which meets the parent's at every cutoff the two share: at those
+instants the origin's state is one state, so the records are the same
+records, the shards are byte-identical, their roots are equal and the
+members are interchangeable. A weekly sister of a monthly collection
+holds every shard the monthly holds, and more snapshots naming them.
+`space_from: <codex>` copies the whole `space` block, `layers` and
+`cleaning_version` byte for byte, and the
 encoder image must match too or `derive` refuses — so two collections
 meant to be searched together land in one space by construction rather
 than by hoping their settings match.

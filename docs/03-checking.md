@@ -215,17 +215,25 @@ upstream of any parser (§3.7).
 
 Vectors arrive from other peers as signed **bundles** (08's signed
 block): chunk ids, vectors, the producer's key, a signature over the
-bytes — 09 §9.7 has the bytes. A bundle binds, inside what is signed,
-the `collection_id`, the `space_id`, the `snapshot_id` it was computed
-against and, per record, the `content_hash` of the text it embedded.
-A bundle for another collection or another space is refused before any
-tier runs; a bundle naming a snapshot this peer does not hold in the
-chain is refused the same way; and a record whose `content_hash` in
-the bundle differs from the one in this peer's copy has its rows
-refused — the record was re-issued since — with the refusal recorded,
-never counted as a failure. That binding is what keeps a parent's
-vectors out of a corrective sister with identical chunk ids, and
-revision-A vectors off revision-B text. Admission is the ladder below
+bytes — 09 §9.7 has the bytes. What makes a bundle admissible is what
+it was computed *from*, never what it was computed *for*: inside what
+is signed it binds the `space_id` — the function that produced the
+vectors — and, per record, the `content_hash` of the text it embedded.
+A bundle whose `space_id` is not this collection's is refused before
+any tier runs, and a record whose `content_hash` in the bundle differs
+from the one in this peer's copy has its rows refused — the record was
+re-issued since — with the refusal recorded, never counted as a
+failure. The `collection_id` and `snapshot_id` in the header are
+provenance: they say where the work was done, and gate nothing.
+
+Those two bindings are exactly enough. A parent's vectors stay out of a
+corrective sister because a corrective sister's `space.epoch`, and so
+its `space_id`, is fresh by construction (§2.4) — the collection id was
+never what kept them out. Revision-A vectors stay off revision-B text
+because the `content_hash` says so. And what the narrower binding used
+to forbid is now allowed, correctly: a daughter inherits her mother's
+vectors (§2.7), and two sisters over one corpus at different cadences
+share every bundle either of them produces. Admission is the ladder below
 and nothing else: no producer key needs to be known, trusted or seen
 before; the trust list (07 §7.3 `hold key trust`) filters attestations
 (§3.6) and lifts burns, and decides nothing about a bundle.
@@ -498,9 +506,9 @@ returned. The rule is enforced where it can be absolute — at the moment
 a fetched shard is promoted from staging into the copy: *a shard enters
 only if its root is in a signed snapshot of the chain* — any snapshot
 this peer holds that is signed by a certifier key valid at its
-signature time (§3.7), not only the newest, since a shard is closed
-once published and stays listed by every snapshot that still carries
-it. This is a refuse-to-start class rule, not a warning. A shard
+signature time (§3.7), not only the newest, since a shard stays listed
+by every snapshot that still carries it. This is a refuse-to-start
+class rule, not a warning. A shard
 superseded by a re-issue stays on disk under its old snapshot's name
 (02 §2.2) and is excluded from search and embedding, never deleted. A
 revoked or mismatched anchor does not lift the gate: snapshots signed

@@ -78,13 +78,36 @@ to a slow, low-priority queue. Unverified material is Codexes, snapshots
 and bundles arriving from other peers and signed by keys none of whose
 work this peer has seen reproduced — no bundle of theirs accepted through
 the ladder (§3.5), no attestation of theirs this peer re-ran and
-confirmed. The allowance is 64 MB and one thousand attestations per
-hour, admitted into the catalogue and forwarded; the rest waits in
-arrival order and is neither forwarded nor announced by this peer until
-admitted. Material from a key whose work
-this peer has seen reproduced is never queued. A thousand fresh keys fill
-that queue no faster than one, because the scarce resource being
-protected is unverified novelty, not identity.
+confirmed. Two allowances, because a flood can be large in bytes or
+merely numerous: **64 MB and one thousand objects per hour**, whichever
+binds first — an attestation is a few hundred bytes, so a million of
+them fit inside any byte budget and would swamp a catalogue by count
+alone. What is admitted enters the catalogue and is forwarded; the rest
+waits in arrival order and is neither forwarded nor announced by this
+peer until admitted. Material from a key whose work this peer has seen
+reproduced is never queued. A thousand fresh keys fill that queue no
+faster than one, because the scarce resource being protected is
+unverified novelty, not identity.
+
+**The numbers are the peer's, not the protocol's.** Both allowances and
+the queue's depth are set in `platform.toml` (07 §7.8); the figures
+above are the defaults, chosen so that a household connection admits a
+new collection and its first snapshots within the hour while a flood
+takes days. A peer on a fast line raises them; a peer on a metered one
+lowers them; a peer that lowers them to zero accepts nothing from
+strangers and is complete in every other respect. Nothing in the
+protocol reads another peer's setting, and no peer can tell what
+another's is: the limit governs what *this* peer accepts, so unlike a
+threshold that had to be agreed it cannot drift, cannot be negotiated,
+and cannot be gamed by anyone but its owner.
+
+**The queue is bounded, and drops the newest.** When it is full the
+arriving object is refused rather than an older one evicted; otherwise
+a flooder empties the queue of legitimate material simply by arriving
+later, which is the cheapest attack there is. A refusal is not a
+judgement about the sender and is not remembered: the object is
+announced again by whoever holds it, and is admitted when there is
+room.
 
 ## 8.3 Two thresholds, because calibration proves the encoder, not the work
 
