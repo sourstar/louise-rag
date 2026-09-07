@@ -374,7 +374,8 @@ so pinning an edition would make every annual release a new collection
 for no gain.
 
 **The index is local and derived.** Facet values are rebuilt from the
-records at each snapshot, in `state/` beside the working text index
-(07 §7.8), and they are not a member: they travel in no drag, carry no
-root and need no check, because anyone holding the records can rebuild
-them and anyone who cannot hold the records cannot search them either.
+records at each snapshot and live in `index/` beside the text index of
+the shards held (07 §7.8); they are not a member: they travel in no
+drag, carry no root and need no check, because anyone holding the
+records can rebuild them, and anyone who cannot hold the records cannot
+search them either.
