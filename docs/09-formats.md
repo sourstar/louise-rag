@@ -207,10 +207,30 @@ A list is a filter over whose word is counted at all, never a weight
 
 **Path.** `codex.json` at the root of the drag (02 §2.6). Its bytes are
 the canonical JSON of the object below and nothing else — no pretty
-form exists; `collection_id = H(bytes of codex.json)`, and the
-collection's directory under `<LOUISE_ROOT>/collections/` is named by
-the 64 hexadecimal digits of that id (07 §7.8). A file whose bytes do not
-hash to the id its directory claims is refused.
+form exists.
+
+**Two hashes.** `codex_hash = H(bytes of codex.json)` is the file: what
+a peer fetched, what a signature over the file covers, and what a
+mismatch on receipt refuses. `collection_id` is the identity, and it is
+`H` of the canonical JSON of the same object with exactly one key
+removed — `descriptive` — so that a title and a summary travel inside
+the Codex, signed and tamper-evident, without deciding what the
+collection is (02 §2.1):
+
+```
+inner = the codex object, the key "descriptive" removed entirely
+        (removed, not set to null: a null value is a different object)
+collection_id = H(canonical-json(inner))
+codex_hash    = H(bytes of codex.json)
+```
+
+Removing one named key is the whole rule; no field list is maintained
+anywhere, and a later version that adds a descriptive field adds it
+inside `descriptive` and moves no identity. The collection's directory
+under `<LOUISE_ROOT>/collections/` is named by the 64 hexadecimal
+digits of `collection_id` (07 §7.8). A file whose inner hash does not
+equal the id its directory claims is refused; so is one whose bytes do
+not equal a `codex_hash` a snapshot or a digest named.
 
 **Fields.** Every field is present; a field not in use is `null`. Nested
 blocks are objects; the types are canonical-JSON types (§9.1), and a
@@ -220,6 +240,7 @@ number written as a decimal string is marked *decimal*.
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
 | `version` | `1` | yes | the Codex format version (§9.18) |
+| `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
 | `toolchain` | object | yes | `{platform_image, parent_platform_image}` — image digests, `sha256:…`; `parent_platform_image` is `null` except on a daughter, where it is the parent's `platform_image` |
@@ -355,7 +376,9 @@ applies to it (07 §7.8).
 fields that carry its choices (every other field is present in the file):
 
 ```
-{"kind":"louise-codex","version":1,"plugin":"pubmed",
+{"kind":"louise-codex","version":1,
+ "descriptive":{"title":"PubMed","summary":"Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
+ "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
            "form":"the XML baseline and update files, because the API paginates and the FTP files are checksummed",
            "unit":"container-member","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
@@ -380,8 +403,9 @@ fields that carry its choices (every other field is present in the file):
  "derived_from":null,"space_from":null,"replaces":null,"profile":null}
 ```
 
-`collection_id` is `H` of these bytes with the keys sorted and the
-whitespace removed; the space segment under `vectors/` is the first 16
+`collection_id` is `H` of these bytes with the keys sorted, the
+whitespace removed and the `descriptive` block dropped; `codex_hash` is
+`H` of the file exactly as written, `descriptive` included; the space segment under `vectors/` is the first 16
 digits of `H` over `{"cleaning_version":1,"encoder":{"image":"sha256:8c…",
 "weights":"sha256:e2…"},"layers":[…],"space":{"ctx":512,
 "dim":768,"dtype":"f16","epoch":"0","normalise":true,"pooling":"cls",
@@ -904,7 +928,7 @@ A collection entry:
 | field | type | required | meaning |
 |---|---|---|---|
 | `collection_id`, `lineage_id` | id | yes | |
-| `title` | string | yes | the display name this peer shows for the collection; untrusted, never used to sort, merge or resolve (08 §8.2) |
+| `title` | string | yes | the `descriptive.title` of the Codex this peer holds, so a receiver can name a collection it has not fetched; untrusted, never used to sort, merge or resolve (08 §8.2) |
 | `snapshot_id`, `snapshot_hash` | | yes | the latest snapshot held, and its hash |
 | `license`, `privacy` | string | yes | the Codex's classes, so a receiver can skip what it may not take |
 | `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record shard's root is the snapshot's, a bundle's root is its member root |

@@ -91,7 +91,7 @@ choice the operator may overturn — the alternative is named.
 | `content_hash` and `origin_hash` stay BLAKE2b-128, unprefixed — per-record fingerprints, already in every built pack, 36 M records | one function everywhere, at the cost of rebuilding every pack |
 | canonical JSON = RFC 8785 minus floats: a ratio is a decimal string (`"0.95"`) | allow floats with a fixed formatting rule |
 | every Codex field present, `null` when unused; an unknown key or version is refused | omit unused fields; ignore unknown keys |
-| the display name is a catalogue field, never in the Codex | keep `title` hashed, and accept that two names over one recipe are two collections |
+| the Codex carries `descriptive` (title, summary) and the identity is the hash of everything BUT that block | keep `title` hashed, and accept that two names over one recipe are two collections; or move the name out of the Codex, and lose the creator's own words |
 | shards: sort by `native_id` under `slicing.order`, cut every `shard_records`, never top up a short shard | cut on chunk count, as the prose said |
 | shard `root` = BEP 52 merkle root over the stored `.jsonl.zst`; `records_root` = SHA-256 over `content_hash` values in order | one hash; but then equivalence across compressors is impossible |
 | the snapshot is records-only and carries no signature; signatures live in `snapshots/<id>.sig.json` | sign in band, and lose "same bytes, same hash" |
@@ -230,3 +230,46 @@ plus `app/pack/` → `app/drag/`, `app/plugins/packed/` → `.../drag/`,
 and `KIND = "louise-pack"` → `"drag/1"`. The magic bytes do not move.
 The old CLI names stay as the deprecation aliases 07 §7.6 already
 promises.
+
+## 8. Addendum — the descriptive block (operator, 2026-09-07)
+
+The first pass moved the display name out of the Codex entirely, to the
+catalogue entry each peer publishes. That solved the identity problem —
+two names over one recipe stayed one collection — by throwing away
+something worth keeping: the creator's own words. A collection needs a
+title *and* a sentence saying what it holds, written by whoever wrote
+the recipe, travelling with it, signed.
+
+The operator's fix, adopted: two hashes.
+
+```
+descriptive = {title, summary}                    -- for people
+collection_id = H(canonical-json(codex without "descriptive"))
+codex_hash    = H(bytes of codex.json)
+```
+
+The identity is the recipe. `codex_hash` covers the file as written, so
+a title altered in transit is caught like any other tampering — it is
+the file's integrity, never the collection's identity.
+
+One refinement on the proposal as put: the identity excludes **one
+named key**, not a list of fields. "Everything but title and summary"
+is a list someone must maintain, and the day a third descriptive field
+is added — a homepage, a contact, a language note — whoever adds it
+decides, by accident, whether every existing collection keeps its id.
+With a single block the question cannot arise: whatever is inside
+`descriptive` is outside the identity, for every version, and the rule
+is one sentence a reader cannot get wrong.
+
+The block is removed, not nulled, before hashing: a key present with a
+null value is a different canonical object from a key absent, and
+saying which is meant costs one clause now and an interoperability bug
+later.
+
+Two Codexes differing only in `descriptive` are one collection. A peer
+holding one and meeting the other adopts nothing, merges nothing and
+corrects nothing: it keeps what its own Codex says, and 08 §8.2 is
+unchanged in force — displayed, never sorted on, merged on or resolved
+by. The digest carries the title so a peer can name a collection it has
+not fetched (09 §9.9); `collections/<name>.toml` keeps an optional
+local override for the operator's own shelf, never published.

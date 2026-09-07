@@ -45,9 +45,10 @@ defender.
 **The name is never a criterion.** Identity is the Codex hash (§2.1);
 lineage is the hash chain (§2.7). A collection with a confusingly similar
 title inherits neither the lineage nor the attestations of the one it
-imitates. `title` is a catalogue field (§4.2; 09 §9.9) — never a Codex
-field, so two names for one recipe are one collection — and an
-untrusted one:
+imitates. `title` sits in the Codex's `descriptive` block, the one
+block the identity does not cover (§2.1) — so two names over one recipe
+are one collection, and a name buys an impostor nothing at all. It is
+an untrusted field:
 displayed, never used to sort, merge or resolve. Kinship is the chain of
 `continues`, `derived_from` and `replaces` (§2.7); nothing else makes two
 collections kin, a shared title least of all. Two collections both called

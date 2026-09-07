@@ -20,6 +20,10 @@ therefore a new collection (§2.7 says how the two are related).
 ```
 codex = {
   kind: "louise-codex", version: 1,
+  descriptive: {                     -- the ONE block outside the identity, below
+    title:   "PubMed",
+    summary: "<one short paragraph: what this collection holds, and for whom>"
+  },
   plugin: "pubmed",
   origin: {                          -- the acquisition spec, serialised (09 §9.17)
     spec: {...},                     -- what the origin is and how its files are listed and fetched
@@ -67,8 +71,30 @@ codex = {
   replaces: null | {codex: "<collection_id>", defect: {...}},   -- the defect block is 03 §3.6
   profile: null | {...}                                -- plugin-defined and hashed like every other field: an ELI profile
 }
-collection_id = H(canonical-json(codex))
+collection_id = H(canonical-json(codex without "descriptive"))   -- the identity
+codex_hash    = H(bytes of codex.json)                          -- these bytes
 ```
+
+**Two hashes, because a name is not a recipe.** A collection needs a
+title and a sentence saying what it is, and neither decides a single
+byte of what the collection contains. So the Codex carries them in one
+block, `descriptive`, and that block is the one key the identity does
+not cover: `collection_id` is `H` of the canonical JSON of the Codex
+with exactly the key `descriptive` removed. Two creators who write the
+same recipe under different titles write the *same collection* — same
+id, same snapshots, same members, mutually verifiable — and a peer that
+holds one and meets the other adopts nothing and merges nothing: it
+keeps the descriptive block of the Codex it holds. `codex_hash` covers
+the whole file, `descriptive` included, so a title altered in transit
+is caught like any other tampering; it is the file's integrity, never
+the collection's identity. What `descriptive` may never do is decide
+anything: it is displayed, and never sorted on, merged on or resolved
+by (08 §8.2).
+
+The exclusion is one named key and not a list of fields, so that a
+later version adding a descriptive field cannot silently move the
+identity: whatever `descriptive` holds is outside, and everything else
+is inside, for every version.
 
 Every field is present, `null` when it does not apply; no field is ever
 omitted, and a Codex carrying a key outside this list, or a `version`
@@ -113,11 +139,11 @@ Three rules make it work.
 same collection. The key of whoever wrote it first is recorded in
 catalogues as a fact — *first published by* — not as part of the
 identity, and it is used for nothing. No key is needed to continue a
-collection; §4 depends on this. Nothing but the hash chain of §2.7
-makes two collections kin — in particular not a name: a display name
-is a field of a peer's catalogue entry (04 §4.2, 09 §9.9), never of the
-Codex, so two creators who write one recipe under two names write one
-collection (08 §8.2).
+collection; §4 depends on this. Two Codexes that differ only in
+`descriptive` are one collection, because the identity is the recipe
+and a title is not part of a recipe. Nothing but the hash chain of §2.7
+makes two collections kin — in particular not a shared title, which
+proves nothing and is compared by nobody (08 §8.2).
 
 **The toolchain is pinned by digest, not by label.** The bytes a parser
 produces depend on its extraction library and interpreter as much as on

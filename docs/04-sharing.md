@@ -137,15 +137,18 @@ the peers found under a collection's or lineage's DHT key. The DHT is
 optional (`platform.toml`); a node with it off is reachable only by the
 peers that know its address, and is complete in every other respect.
 
-**Names live here, not in the Codex.** A collection's display name is a
-field of the catalogue entry a peer publishes in its digest (09 §9.9),
-set locally in `collections/<name>.toml` (07 §7.8) and defaulting to the
-plugin's. It is not part of the recipe, so two creators who write one
-Codex under two names still write one collection, and one peer may
-rename what it holds without changing what it holds. A name is
-displayed and nothing more: never sorted on, never merged on, never
-resolved by (08 §8.2). Where two collections show the same name, the
-catalogue separates them by their ids and their verification facts.
+**Names travel with the recipe, and decide nothing.** A digest carries
+each collection's title from the `descriptive` block of the Codex the
+sender holds (02 §2.1; 09 §9.9), so a peer can name and describe a
+collection it has not fetched. Because `descriptive` is outside the
+identity, two peers holding one collection under two titles are holding
+one collection: neither is corrected, nothing is merged, and each shows
+what its own Codex says. An operator who dislikes a title overrides it
+for its own listing in `collections/<name>.toml` (07 §7.8); that
+override is local and is never published. A name is displayed and
+nothing more — never sorted on, merged on or resolved by (08 §8.2) —
+and where two collections show one name the catalogue separates them by
+their ids and their verification facts.
 
 Announcing what you do not serve would be a lie, and serving without
 announcing has no audience; Louise has one verb for both, `share`.

@@ -522,8 +522,8 @@ line or a message.
 is the collection being held:
 
 ```toml
-codex  = "sha256:…"                            # the collection this name holds; drag/codex.json must hash to it
-title  = "PubMed"                              # the display name this peer shows; a catalogue field, never part of the Codex (08 §8.2)
+codex  = "sha256:…"                            # the collection_id this name holds; drag/codex.json's inner hash must equal it (09 §9.3)
+title  = "PubMed"                              # optional: overrides descriptive.title for this peer's own listing; never published
 slices = ["year=1975-1979", "year=1980-1984"]  # or "all"
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
@@ -582,8 +582,9 @@ before the next embed. `hold config apply` is the same reload on demand
 and, with `--set`, the way a script or the web interface edits one value
 without opening the file; `--set` writes the file, then applies it.
 
-**Refuse-to-start is per collection.** A collection whose `drag/codex.json`
-does not hash to its file's `codex`, whose vector table's space or width
+**Refuse-to-start is per collection.** A collection whose
+`drag/codex.json` has an inner hash other than its file's `codex`
+(09 §9.3), whose vector table's space or width
 is not its Codex's (02 §2.4), or whose state database carries a schema
 other than this platform's, is not served, not shared and not searched;
 the node keeps running its other collections, `node show` lists it, and
