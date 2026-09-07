@@ -263,7 +263,7 @@ number written as a decimal string is marked *decimal*.
 | `succession` | `"frozen"` or `{"open-after": duration}` | yes | 02 §2.8; `"frozen"` on an open collection |
 | `content` | `"manifest-only"` or null | yes | `"manifest-only"` exactly when certified |
 | `continues` | id or null | yes | daughter: the parent's `collection_id` |
-| `from_snapshot` | snapshot id or null | yes | daughter: the first snapshot that is hers |
+| `continues_through` | snapshot id or null | yes | daughter: the last snapshot that is the mother's — the boundary, named from the side that already exists (02 §2.7). Everything after it is the daughter's |
 | `origin_reachable_until` | snapshot id or null | yes | daughter: the last snapshot whose shards the origin still reproduces |
 | `derived_from` | id or null | yes | sister and corrective sister: the parent's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space`, `layers` and `cleaning_version` were copied byte for byte |
@@ -271,7 +271,7 @@ number written as a decimal string is marked *decimal*.
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
 
 The relations are exclusive in this way: a daughter has `continues` and
-`from_snapshot`; a sister has `derived_from` and, when it was made with
+`continues_through`; a sister has `derived_from` and, when it was made with
 `--space-from`, `space_from`; a corrective sister has `derived_from` and
 `replaces`; a root has none of them. Any other combination is refused.
 
@@ -399,7 +399,7 @@ fields that carry its choices (every other field is present in the file):
  "license":{"class":"red","terms_sha256":"sha256:b9…"},"privacy":"public",
  "update":{"cadence":"monthly","day":1,"grace_days":7},
  "publication":"open","certifier":null,"embedding":"open","succession":"frozen","content":null,
- "continues":null,"from_snapshot":null,"origin_reachable_until":null,
+ "continues":null,"continues_through":null,"origin_reachable_until":null,
  "derived_from":null,"space_from":null,"replaces":null,"profile":null}
 ```
 
@@ -435,7 +435,7 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | `version` | `1` | yes | |
 | `collection_id` | id | yes | the Codex this snapshot applies |
 | `snapshot_id` | `YYYY-MM` | yes | |
-| `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the parent's `from_snapshot` |
+| `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the snapshot named by the Codex's `continues_through` |
 | `shards` | list of shard | yes | every record shard the snapshot consists of, sorted by (`slice` bytes, `n`) |
 | `relations` | list of relation shard | yes | the relations shards (§9.14), same order; `[]` when the collection has none |
 | `files` | object | yes | the whole-collection members with their transport roots: `{"LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}` |

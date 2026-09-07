@@ -149,9 +149,16 @@ Ordered by how much depends on the answer.
    check one record. The alternative is a per-record extracted unit,
    which is not what the origin checksums. The code today hashes
    per-record.
-3. **`from_snapshot`.** The parent's last snapshot (as the documents now
-   say) or the daughter's first (as `app/hold/codex.py` comments)? The
-   two readings differ by one month in every daughter's Codex.
+3. **`continues_through`** (was `from_snapshot`) — **settled 2026-09-07.**
+   02 and 09 had contradicted each other outright: one named the mother's
+   last snapshot, the other the daughter's first. Two people writing the
+   same daughter would have written different Codexes, and 04 §4.6's
+   adoption contest would have fired over one collection described from
+   two sides. Settled from the mother's side, on the operator's argument
+   that a Codex must not name an artefact that does not exist yet and may
+   never — the daughter's first snapshot is produced at the next cutoff,
+   or not at all if she is never run — and renamed so that neither
+   reading survives the name.
 4. **Cleaning changes.** With cleaning sitting before the record, a
    sister that bumps `cleaning_version` produces its own shards and no
    longer shares the parent's future snapshots. Acceptable, or should a

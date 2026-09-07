@@ -65,7 +65,7 @@ codex = {
   embedding: null | "open" | "endorsed" | "certifier-only",   -- certified only
   succession: null | "frozen" | {"open-after": "P6M"},        -- certified only
   content: null | "manifest-only",                            -- certified only, fixed
-  continues: null | "<collection_id>", from_snapshot: null | "2026-08",
+  continues: null | "<collection_id>", continues_through: null | "2026-08",
   origin_reachable_until: null | "2026-08",
   derived_from: null | "<collection_id>", space_from: null | "<collection_id>",
   replaces: null | {codex: "<collection_id>", defect: {...}},   -- the defect block is 03 §3.6
@@ -245,7 +245,7 @@ edit (Wikipedia) re-issue shards, and their history is the chain of
 snapshots.
 
 A daughter's first snapshot (§2.7) has `previous` = the hash of the
-parent's snapshot `from_snapshot`; the shards it inherits are listed
+parent's snapshot `continues_through`; the shards it inherits are listed
 with the parent's roots and `toolchain: "parent"`, its own with
 `toolchain: "own"`; the chain check accepts a `previous` that belongs to
 the Codex named by `continues`, and nowhere else.
@@ -542,13 +542,25 @@ makes a new Codex. Three kinds of change, three relations:
 | records up to the transition | inherited by hash | inherited by hash | recomputed from the origin |
 | records after it | the new toolchain's | identical to the parent's — same Codex fields, same bytes | the corrected toolchain's |
 | space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the parent's when only `update` changes, and then vectors shared | new by construction; from zero |
-| Codex field | `continues`, `from_snapshot` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
+| Codex field | `continues`, `continues_through` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
 
 A **daughter** continues the collection. The transition is a snapshot
-boundary: `from_snapshot` names the parent's snapshot `N`; records up to
-`N` are the parent's, from `N+1` the daughter's, whose first snapshot
-names the hash of the parent's `N` as `previous` (§2.2); none is ever
-produced by both. Vectors survive because the space is unchanged — the
+boundary, and the two fields that fix it read as one sentence:
+`continues` names the mother's Codex, `continues_through` the last
+snapshot that is hers. Records up to that snapshot are the mother's,
+everything after it the daughter's, and her first snapshot names the
+hash of `continues_through` as its `previous` (§2.2); none is ever
+produced by both.
+
+The boundary is named from the mother's side deliberately. The
+daughter's first snapshot does not exist when her Codex is written —
+it is produced at the next cutoff, and if she is never run it is never
+produced at all — so a Codex naming it would hash a claim about the
+future that nothing can check and that may stay false forever. The
+mother's last snapshot exists, is content-addressed, and can be
+verified by anyone reading the Codex the moment it is published.
+
+Vectors survive because the space is unchanged — the
 daughter keeps the parent's `space` block, `layers` and
 `cleaning_version` byte for byte, and `hold collection continue`
 refuses a daughter in which any of them differs. A toolchain change that
