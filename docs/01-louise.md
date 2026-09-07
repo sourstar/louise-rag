@@ -55,7 +55,12 @@ holding exactly what everyone else holds.
 ## What Louise promises
 
 1. **Only useful data travels.** Parsed text, vectors, derived indexes;
-   never origin files, markup or anything executable.
+   never markup, never anything executable, and never an origin file —
+   with one exception a certified collection may offer, because for a
+   sealed law the origin file IS the evidence: `origin-<slice>` carries
+   the signed originals for whoever needs legal standing, is optional to
+   fetch and to serve, and is never what a record is built from (03 §3.7,
+   09 §9.16).
 2. **A peer takes the part it wants** — one language, one period, with
    or without vectors — and knows from the Codex and the snapshot what
    it is getting before the first byte.
