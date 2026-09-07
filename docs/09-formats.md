@@ -1296,11 +1296,15 @@ swarm is found through the DHT and the peer messages. The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
 DHT needs 20; the piece layers are exchanged in the swarm. A member of
 several files is that many torrents. Nothing is served from a torrent
-that is not in the drag, and the same key that signs digests seeds them.
+that is not in the drag or in the platform's encoder store (04 §4.3),
+and the same key that signs digests seeds them.
 
 **DHT keys.** The mainline DHT (BEP 5). A collection's key for a
 snapshot is the first 20 bytes of `H(collection_id ‖ snapshot_id)`; the
-lineage key is the first 20 bytes of `H(lineage_id ‖ snapshot_id)`; a
+lineage key is the first 20 bytes of `H(lineage_id ‖ snapshot_id)`; an
+encoder's key is the first 20 bytes of `H` of its weights digest, under
+which any peer holding those weights announces, whatever collections it
+holds (04 §4.3); a
 sharer announces its peer-message port under both for every snapshot it
 serves (04 §4.2). What a searcher finds there is an address that speaks
 §9.9.

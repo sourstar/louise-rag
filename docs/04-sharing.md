@@ -230,6 +230,29 @@ member, this root, in this snapshot — and nothing more; what a peer has
 checked about the collection is in its attestations, not in the fact
 that it serves it.
 
+**The encoder travels too.** A collection's encoder is named by the
+digests of its weights and its image (02 §2.4), so it is an artefact
+like any other and moves like one: a peer that holds an encoder
+announces it under the first 20 bytes of `H` of its weights digest
+(09 §9.16), and a peer that needs it fetches from whoever answers and
+checks the bytes against the digest — the digest is the whole check, so
+no signature and no trust are involved. It is not part of any drag,
+because one encoder serves every collection in its space and would
+otherwise be copied into each.
+
+Weights carry licences of their own, and some forbid redistribution.
+The platform's list of encoders records for each whether it may be
+passed on; a peer announces only those it may, and for the rest names
+the origin so a newcomer fetches from there. The bytes draw from the
+same budget as everything else.
+
+What this buys: the day a model's host goes down, the collections in
+that space keep being verified and keep accepting contributions,
+because the weights are already in the network. A collection whose
+encoder exists in one place is a collection with a single point of
+failure outside the network — §4.1 forbids that inside the network and
+should not tolerate it at the edge.
+
 Every byte a peer moves — fetching, sharing, contributing — draws from
 one budget on that peer. There are no per-tool rate limits standing in
 for it. The budget covers every byte, in both directions: origin and

@@ -66,9 +66,9 @@ holding exactly what everyone else holds.
    records changed; re-embedding is the changed chunks and nothing else.
    The unit of change is the record — a record has changed when the
    hash of its cleaned text has — and the unit of re-embedding is the
-   chunk: a changed record's chunks are recut, a chunk whose id and text
-   are unchanged keeps its vector, and only the chunks whose text is new
-   are embedded (02 §2.2, 06 §6.3).
+   chunk: a changed record's chunks are recut, every recut chunk whose
+   text the record already held keeps that text's vector wherever it now
+   sits, and only genuinely new text is embedded (02 §2.2, 06 §6.3).
 5. **Trust is reproduction, not votes.** Every artefact can be
    recomputed from the origin with the platform's open code; one honest
    reproduction outweighs any number of assurances.

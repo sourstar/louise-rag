@@ -102,8 +102,9 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N]             the fused list of §5.1, with what §5.3 says about each result
-  lookup <id>                                                          a fact by key, from a reference source
+  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE]
+                                                                       the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot current at that date (§5.1)
+  lookup <id> [--as-of DATE]                                           a fact by key, from a reference source
   traverse <id> [--relation T] [--depth N]                             the records reached along declared relations (§5.5)
   chat                                                                 the model with the three tools of §5.4
   serve                                                                expose search, lookup and traversal as MCP tools

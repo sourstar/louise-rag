@@ -294,6 +294,26 @@ into the Codex's list). A chunk's hash is BLAKE2b-128 of its text. The
 overlap that T1 measures (§3.5) holds by construction for `fixed`
 layers only; the band applies to those and is skipped for the others.
 
+**What a changed record costs.** When a record's `content_hash` changes
+it is recut, and its vectors are carried over **by chunk hash, never by
+chunk id**: the peer maps the hashes of the chunks it already holds for
+that record to their vectors, and every recut chunk whose hash is in
+that map keeps its vector under whatever id it now has. Only a chunk
+whose text is new is embedded, and a vector whose hash no longer appears
+is dropped. The map is local — a peer rebuilds it from the records and
+vectors it already holds — so nothing new travels and no format carries
+it.
+
+Matching on the hash and not the id is what makes the rule worth having.
+`seq` is a position, so inserting one paragraph at the top of an article
+shifts the id of every chunk after it while changing the text of none of
+them; matched by id, correcting one word would re-embed the whole
+document — the very cost `cdc` exists to avoid, returning through the
+index instead of the character offset. Matched by hash, an inserted
+paragraph costs one chunk in every family: `cdc` and `verbatim` because
+their boundaries follow the text, `fixed` because the unchanged prefix
+before the edit still hashes the same and only the tail is re-embedded.
+
 Chunking is a pure function of the cleaned text and the layer's chunker
 version. Two peers with the same platform image cut the same document
 into the same chunks with the same ids, or a check fails and names the

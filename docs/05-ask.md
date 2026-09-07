@@ -21,7 +21,20 @@ A shard re-issued under that snapshot is read in its newest version
 only — the superseded file stays on disk (02 §2.2) and is out of both
 indexes — and a record listed in the snapshot's `tombstoned` is
 excluded, as promise 7 says. An older held snapshot is served and
-checked, not searched. Of the collections a peer holds in one lineage
+checked, and searched only when the caller asks for it by date.
+
+**As of a date.** A collection whose records change is a record of what
+was true when — for law it is the point, and *multivigenza* is the
+whole question: what did article 5 say on 12 March 2019, not what does
+it say now. That answer is already on disk, because a snapshot is a
+frozen state and a superseded shard is kept under its old snapshot's
+name (02 §2.2). `--as-of <date>` names it: the search reads, per
+collection, the newest snapshot of the chain whose cutoff is at or
+before that date, instead of the newest held, and every result says
+which snapshot answered. A peer that does not hold that snapshot's
+members for a slice says so and names them rather than answering from a
+later one — a wrong date is worse than no answer here. Without
+`--as-of` a search reads the newest held snapshot, as above. Of the collections a peer holds in one lineage
 (§2.7), the shards a daughter inherits by hash are the same bytes as
 the parent's: a shard held under both is read once, keyed by its
 `records_root`, so a record never appears twice in one list. Such a
@@ -200,11 +213,11 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, limit?)
+louise_search(query, collections?, space?, limit?, as_of?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}
-louise_lookup(id)
+louise_lookup(id, as_of?)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?)
     → {edges: [{from, to, type, snapshot, collection_id,

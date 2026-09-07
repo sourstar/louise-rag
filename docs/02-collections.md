@@ -372,6 +372,28 @@ article encoders — and prefixed with `space.query.instruction` when
 that is not null; a document is embedded by `space.encoder` and never
 prefixed (05 §5.1).
 
+**The encoder must be obtainable, and stay so.** A space is a function,
+and a function nobody can run is a function nobody can check: every gate
+that keeps the collection honest — calibration (§3.3), T3, `vectors-sample`,
+`hold vectors check` — is a peer running the encoder itself. So a Codex
+whose encoder is a paid API, or any build a stranger cannot obtain and
+run, is refused at creation: such a collection could be held, but never
+extended and never verified by anyone but the API's owner, which is the
+one-shot dump §1 exists to replace. `space.encoder` therefore names
+open weights, by the digest of the weights and the digest of the image
+that serves them.
+
+Naming them by digest also makes them content-addressed, and what is
+content-addressed can travel: a peer holding an encoder's weights
+shares them like anything else it holds (04 §4.3), and a peer that
+needs them fetches from a peer and checks the bytes against the digest,
+which is the whole verification — no signature, no trust. This is not a
+convenience. Without it, the day the model's host goes down every
+collection in that space stops being verifiable and stops accepting
+contributions, everywhere at once, until the host returns: a single
+point of failure outside the network, which is exactly what §4.1
+forbids inside it.
+
 **The work parameter.** Alongside the space, the Codex states the *work
 parameter*: the amount of embedding work, in tokens of the declared
 encoder's tokenizer, that a key must produce per unit time to count as
