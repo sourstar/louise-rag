@@ -71,8 +71,9 @@ only the local corpus directory that acquisition populated
 connection — every byte that arrives on a peer arrives through the
 acquisition spec (§6.2) and the budget (§4.3). A `DocRef` names one
 document: `native_id`, a `locator` — the origin locator of §6.4, the
-path of the origin unit relative to the origin base plus, for a
-container, the member offset — and `extra`, discovery-time hints the
+path of the document's origin bytes relative to the origin base plus,
+where it is a member of a container, the member offset — and `extra`,
+discovery-time hints the
 platform consumes and discards. Discovery keeps a **cursor** in the
 collection's state directory so that a scan that is interrupted
 continues, never restarts. The cursor is the platform's, written
@@ -113,7 +114,7 @@ are the origin's.
 ### Fetch, and the error contract
 
 *Fetch* returns the raw bytes of one document as a `RawDoc`, with
-`origin_hash` = BLAKE2b-128 of the bytes of its origin unit (§6.4).
+`origin_hash` = BLAKE2b-128 of that document's own origin bytes (§6.4).
 Three things can go wrong, and the plugin says which:
 
 | the plugin | means | the platform |
@@ -159,7 +160,7 @@ class CanonicalDoc:
     keys: list[str]                 # canonical entity ids this document is about: "<namespace>:<id>" (§5.2)
     extra: dict[str, Any]           # plugin-defined, fixed keys; origin_url for a red source
     sections: list[tuple[str, str]] # (heading, text), in order
-    origin_hash: str                # BLAKE2b-128 of the origin unit's bytes (§6.4)
+    origin_hash: str                # BLAKE2b-128 of this document's own origin bytes (§6.4)
 ```
 
 Everything downstream — chunking, records, indexes, vectors — works on
@@ -225,7 +226,7 @@ plugin declares and a snapshot cannot be computed without (§2.2):
   date, the records whose date is at or before it (Gutenberg, by the
   release date). A record without the date the rule needs is excluded
   and counted, never kept;
-- `unit` — the origin unit (§6.4);
+- `unit` — how a record's origin bytes are reached (§6.4);
 - `form` — which origin form was taken, and why (§6.4).
 
 A **profile** — `demo`, `starter`, `full`, a language — is a named
@@ -356,30 +357,40 @@ names the acquisition spec and parser version that produced it, so a
 verifier can re-fetch a sample and re-parse it (§3.2). A record with no
 `origin_hash` is refused at build.
 
-"The bytes it was parsed from" are the bytes of the record's **origin
-unit**: the smallest artefact the plugin can re-fetch from the origin on
-its own — a Gutenberg book's `.txt`; one PubMed baseline or update
-container; one Wikipedia page's XML as the multistream index extracts
-it. The plugin declares the unit (`origin.unit` in the Codex), and
-`origin_hash` is BLAKE2b-128 of the unit's bytes, 32 lowercase hex, no
-prefix (09 §9.1). Every record carries `origin`: the locator of its unit
-— a URL or a path relative to the origin base and, for a container, the
-member offset — so `records-vs-origin` knows what to re-fetch without
-the producer's manifest. The locator is the `DocRef.locator` discovery
-produced (§6.1); an absolute path never enters a record. How the unit
-is extracted from a container is part of the parser, and a change to it
-bumps `PARSER_VERSION`.
+"The bytes it was parsed from" are this document's own origin bytes —
+a Gutenberg book's `.txt`; one PubMed article's XML; one Wikipedia
+page's as the multistream index extracts it — and `origin_hash` is
+BLAKE2b-128 of them, 32 lowercase hex, no prefix (09 §9.1).
 
-The unit is the artefact the ORIGIN publishes and checksums, not the
-smaller piece we cut out of it. PubMed ships containers of about thirty
-thousand abstracts with an `.md5` beside each, and never a checksum for
-one abstract's XML: taking the container as the unit means every record
-in it shares one `origin_hash`, which is the origin's own guarantee,
-where taking the fragment would mean hashing a boundary we invented and
-that two implementations could draw differently. Nor is it dear.
-`records-vs-origin` samples SHARDS, and a shard is sized in the same
-order as a container, so re-fetching one container verifies a whole
-sampled shard rather than one record of it.
+**The unit of verification is the unit a query returns.** A book for
+Gutenberg, an article for PubMed, a page for Wikipedia: one record, one
+`origin_hash`, one thing anyone can check. What the origin happens to
+ship them in does not change what a reader asked for, and so must not
+change what can be verified. A container-wide hash would answer a
+question nobody asks — "do these thirty thousand abstracts verify?" —
+and would leave the one that is asked unanswerable without fetching all
+of them. It would also break the red class outright (04 §4.4): every
+peer holding PubMed fetches article text from the origin one article at
+a time, and could not check a single one of them against a hash that
+covers a container.
+
+Two guarantees are separate and stay separate. The ORIGIN's own
+checksums — PubMed's `.md5` beside each container — verify that a FETCH
+arrived intact; the acquisition spec declares them and the platform
+applies them (§6.2). `origin_hash` verifies that a RECORD is faithful
+to the document it was parsed from. Conflating the two buys the first's
+provenance at the cost of the second's granularity, which is the wrong
+trade: the fetch is checked once, the record is checked forever.
+
+Where the document is a member of a container, how it is extracted is
+part of the parser, pinned by the platform image, and a change to it
+bumps `PARSER_VERSION` — so two peers on one image cut the same bytes
+and hash the same value. Every record carries `origin`: the locator of
+its own bytes — a URL, or a path relative to the origin base followed
+by the member the plugin extracted — so `records-vs-origin` knows what
+to re-fetch without the producer's manifest. The locator is the
+`DocRef.locator` discovery produced (§6.1); an absolute path never
+enters a record.
 
 Where several origin forms exist for the same document, the plugin
 chooses one and **records the choice with its reason** in the Codex, as

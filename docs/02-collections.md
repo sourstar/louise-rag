@@ -28,7 +28,7 @@ codex = {
   origin: {                          -- the acquisition spec, serialised (09 §9.17)
     spec: {...},                     -- what the origin is and how its files are listed and fetched
     form: "<which origin form was chosen, and why>",
-    unit: "<the origin unit: the smallest artefact the plugin can re-fetch alone (§2.3)>",
+    unit: "file" | "container-member" | "index-page",   -- how a record's origin bytes are reached (§2.3)
     clock: "America/New_York",       -- IANA zone of the origin's clock
     cutoff_rule: "<how the origin's state at an instant is enumerated (§2.2)>",
     jurisdiction: null | "IT"
@@ -122,7 +122,8 @@ computed from the chain (§2.7).
 
 The fields, in the order a reader meets them: `origin` is the plugin's
 acquisition spec as the platform serialises it, plus the choices a
-verifier needs — the form taken, the origin unit, the origin's clock and
+verifier needs — the form taken, how a record's origin bytes are
+reached, the origin's clock and
 the rule by which its state at an instant is enumerated; nothing about
 the peer is in it, no credential and no local path (06 §6.2).
 `toolchain` pins the code by image digest; `parser`, `cleaning_version`
@@ -317,15 +318,27 @@ falls in (§2.4).
 Every record carries two hashes. `content_hash` is BLAKE2b-128 of
 `canonical-json([title, [[heading, text], …]])` — the cleaned text and
 nothing else; it decides what "changed" means. `origin_hash` is
-BLAKE2b-128 of the bytes of the record's **origin unit**: the smallest
-artefact the plugin can re-fetch independently — a Gutenberg `.txt`, one
-PubMed baseline container, one Wikipedia page's XML as the multistream
-index extracts it. The plugin declares the unit (`origin.unit`, 06
-§6.4) and every record carries `origin`, the locator of that unit — a
-URL or a path relative to the origin base and, for a container, the
-member offset — so `records-vs-origin` knows what to re-fetch and
-reproduce the record from. A corpus may be **pruned** — what is not used
-is dropped — but never altered in a way that breaks that reproduction.
+BLAKE2b-128 of the record's **origin bytes**: the bytes the parser
+consumed for this document and no others — a Gutenberg book's `.txt`,
+one PubMed article's XML, one Wikipedia page's.
+
+**The unit of verification is the unit a query returns.** A search
+returns an article, so "is this article faithful to its origin?" must
+have an answer about that article — not about the sixteen megabytes it
+happened to be shipped in. One record, one `origin_hash`, one thing to
+check, whatever shape the origin ships.
+
+Every record carries `origin`, the locator of its own bytes — a URL, or
+a path relative to the origin base followed by the member the plugin
+extracted — so `records-vs-origin` knows what to re-fetch and reproduce
+the record from. The Codex's `origin.unit` says how those bytes are
+reached, which is what tells a verifier the cost of one: `file` where
+the origin publishes the document alone, `container-member` where a
+container must be fetched to reach it, `index-page` where an index
+makes the container seekable (06 §6.4).
+
+A corpus may be **pruned** — what is not used is dropped — but never
+altered in a way that breaks that reproduction.
 A record without an `origin_hash` is refused at build, because a drag
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.

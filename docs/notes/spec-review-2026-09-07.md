@@ -441,3 +441,61 @@ whole sampled shard.
 Records in one container share an `origin_hash` and are told apart by
 `origin`, the locator that finds each inside its unit. The hash covers
 the unit; the locator finds the record.
+
+## 13. Addendum — the origin unit is the document (operator, 2026-09-08)
+
+I got this one wrong twice, and the operator's principle settles it in
+one line: **the unit is the unit a query returns** — a book for
+Gutenberg, an article for PubMed, a page for Wikipedia.
+
+What I had argued instead was that the unit should be the artefact the
+origin publishes and checksums: PubMed's container of thirty thousand
+abstracts with an `.md5` beside it, never a checksum for one abstract.
+The reasoning was that hashing the fragment means hashing a boundary we
+invented rather than one the origin guarantees.
+
+Three things are wrong with it.
+
+**It answers a question nobody asks.** A search returns an article, so
+"is this article faithful to its origin?" must have an answer about that
+article. A container-wide hash answers "do these thirty thousand
+abstracts verify?" and leaves the asked question unanswerable without
+fetching all of them.
+
+**It breaks the red class outright.** Every peer holding PubMed fetches
+article text from the origin one article at a time (04 §4.4) and must
+check what it fetched. Against a container-level hash it cannot check a
+single article without downloading sixteen megabytes — which makes the
+red class, the licence class of the flagship corpus, close to
+unworkable. I had not connected the two when I recommended the
+container.
+
+**It conflates two guarantees that should stay apart.** The origin's own
+checksums verify that a FETCH arrived intact; that belongs to the
+acquisition spec, which already declares them (06 §6.2), and it is
+checked once. `origin_hash` verifies that a RECORD is faithful to the
+document it was parsed from, and it is checked forever. Taking the
+container bought the first's provenance at the cost of the second's
+granularity, which is the wrong trade. Both survive when they are kept
+separate.
+
+The objection that remains — that the fragment's boundary is ours — is
+answered by machinery already in place: how a document is extracted from
+a container is parser behaviour, pinned by the platform image, and a
+change to it bumps `PARSER_VERSION`. Two peers on one image cut the same
+bytes.
+
+`origin.unit` survives with a different job. It no longer says what the
+hash covers — that is always the one document — but how a record's bytes
+are REACHED, which is what tells a verifier the cost of checking one:
+`file`, `container-member`, `index-page`.
+
+**And it broke the seals, which nobody had noticed.** 09 §9.15 keyed a
+record to its seal evidence by shared `origin_hash`: "the records parsed
+from it carry the same `origin_hash`, which is how a record finds its
+entry — no other reference is needed." That worked only while records
+sharing a sealed file shared a hash. Under the correct rule they do not,
+so the link is now explicit: the seal entry keys on `file_hash`, and a
+record carries that hash in `extra.seal`. This also closes a finding
+from the review itself, which had flagged that `seal_ref` existed in the
+notes and had no field in the record schema.

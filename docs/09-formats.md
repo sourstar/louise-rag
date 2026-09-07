@@ -287,7 +287,7 @@ inheritance and are `[]` when she declined; a corrective sister's are
 |---|---|---|---|
 | `spec` | object | yes | the identifying half of the acquisition spec, serialised as §9.17 fixes |
 | `form` | string | yes | which origin form was taken and why, one sentence (06 §6.4) |
-| `unit` | string | yes | the origin unit, named: `"file"`, `"container"`, `"page"` — what one `origin_hash` covers, and the smallest artefact the plugin can re-fetch on its own (06 §6.4). Records sharing a container share one `origin_hash` and are told apart by `origin` |
+| `unit` | string | yes | how a record's origin bytes are reached, which is the cost of verifying one: `"file"` the origin publishes the document alone, `"container-member"` a container must be fetched to reach it, `"index-page"` an index makes the container seekable (06 §6.4). It never changes what `origin_hash` covers — that is always the one document (02 §2.3) |
 | `clock` | string | yes | IANA zone of the origin's clock: `"America/New_York"`, `"UTC"`, `"Europe/Rome"` |
 | `cutoff_rule` | `"dated-dumps"` · `"update-files"` · `"record-date"` | yes | how the origin's state at the cutoff instant is enumerated (06 §6.2) |
 | `jurisdiction` | string or null | yes | ISO 3166-1 alpha-2, for a legal corpus; `null` otherwise |
@@ -387,7 +387,7 @@ fields that carry its choices (every other field is present in the file):
  "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
            "form":"the XML baseline and update files, because the API paginates and the FTP files are checksummed",
-           "unit":"container","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
+           "unit":"container-member","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
  "toolchain":{"platform_image":"sha256:1f…","mother_platform_image":null},
  "parser":{"id":"pubmed","version":4},"cleaning_version":1,"protocol_version":1,
  "layers":[{"chunker":{"id":"abstract","version":1,"params":{}},"rule":"default"}],
@@ -558,11 +558,11 @@ point.
 | `subjects` | list of strings | yes | in the origin's order |
 | `keys` | list of strings | yes | canonical ids `<namespace>:<id>` the document is about (06 §6.5); sorted by bytes |
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
-| `extra` | object | yes | plugin-defined, fixed keys; `origin_url` on a red-class source; `in_force` on a legal source; `reason` never (a reason belongs to the tombstone) |
+| `extra` | object | yes | plugin-defined, fixed keys; `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
 | `layer` | integer | yes | index into the Codex's `layers` of the layer whose rule matched |
-| `origin` | string | yes | the locator of this record within its origin unit: the unit's path relative to the origin base or its URL, and where the unit is a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path. The hash covers the unit, the locator finds the record inside it |
+| `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL, and where the document is a member of a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
 | `content_hash` | BLAKE2b-128 | yes | below |
-| `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of the bytes of the origin unit named by `origin`; a record without one is refused at build |
+| `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of this document's own origin bytes, the ones `origin` locates — one record, one hash, whatever the origin ships them in (02 §2.3); a record without one is refused at build |
 
 **content_hash** = BLAKE2b-128 of the canonical JSON of the array
 `[title, [[heading, text], …]]` — the title and the sections exactly as
@@ -1235,13 +1235,13 @@ evidence is bound to the snapshot it was captured for.
 | `kind` | `"louise-seals"` | yes | |
 | `version` | `1` | yes | |
 | `collection_id`, `snapshot_id` | | yes | |
-| `entries` | list | yes | one per sealed origin unit, sorted by `origin_hash` |
+| `entries` | list | yes | one per sealed origin file, sorted by `file_hash` |
 
 An entry:
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `origin_hash` | BLAKE2b-128 | yes | the sealed file's hash; the records parsed from it carry the same `origin_hash`, which is how a record finds its entry — no other reference is needed |
+| `file_hash` | BLAKE2b-128 | yes | the sealed file's hash. A record parsed from it carries that hash in `extra.seal` (§9.5), which is how it finds its entry: a record's own `origin_hash` covers the document alone (02 §2.3), so the two are different values and the reference is explicit |
 | `format` | `"cades"` · `"pades"` · `"xades"` | yes | the seal's envelope |
 | `signer` | object | yes | `{subject, issuer, serial}` of the signing certificate, as strings |
 | `chain` | list of strings | yes | the certificate chain, DER as base64, leaf first |
@@ -1361,10 +1361,11 @@ half never leaves the plugin and the peer.
 | `deleted` | boolean | yes | the origin retracted the document |
 | `mtime`, `size` | integer or null | yes | listing facts, when known |
 
-`RawDoc`: `{ref: DocRef, bytes: bytes, origin_hash: BLAKE2b-128}` — the
-origin unit's bytes and their hash; a plugin that streams a container
-returns the member's bytes and the container's hash, since the container
-is the unit.
+`RawDoc`: `{ref: DocRef, bytes: bytes, origin_hash: BLAKE2b-128}` — one
+document's origin bytes and their hash. A plugin that streams a
+container returns the member's bytes and the member's hash: the unit of
+verification is the document, never the artefact it was shipped in
+(02 §2.3, 06 §6.4).
 
 `DiscoverState`: `{corpus_root: path, cursor: object, committed(uid) →
 boolean}` — `cursor` is the plugin's own resumable state as the platform
