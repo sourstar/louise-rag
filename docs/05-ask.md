@@ -21,7 +21,12 @@ A shard re-issued under that snapshot is read in its newest version
 only — the superseded file stays on disk (02 §2.2) and is out of both
 indexes — and a record listed in the snapshot's `tombstoned` is
 excluded, as promise 7 says. An older held snapshot is served and
-checked, and searched only when the caller asks for it by date.
+checked, and searched only when the caller asks for it by date. Of the
+collections a peer holds in one lineage (§2.7), the shards a daughter
+inherits by hash are the same bytes as the mother's: a shard held under
+both is read once, keyed by its `records_root`, so a record never
+appears twice in one list. Such a result names the lineage and the
+collection whose snapshot first listed the shard.
 
 **As of a date.** A collection whose records change is a record of what
 was true when — for law it is the point, and *multivigenza* is the
@@ -34,12 +39,7 @@ before that date, instead of the newest held, and every result says
 which snapshot answered. A peer that does not hold that snapshot's
 members for a slice says so and names them rather than answering from a
 later one — a wrong date is worse than no answer here. Without
-`--as-of` a search reads the newest held snapshot, as above. Of the collections a peer holds in one lineage
-(§2.7), the shards a daughter inherits by hash are the same bytes as
-the mother's: a shard held under both is read once, keyed by its
-`records_root`, so a record never appears twice in one list. Such a
-result names the lineage and the collection whose snapshot first
-listed the shard.
+`--as-of` a search reads the newest held snapshot, as above.
 
 **The fusion unit is the record.** Each leg — the text index, the
 vector index — ranks chunks; chunks of every layer compete as chunks,
