@@ -134,58 +134,31 @@ start|stop|show` (the daemon is not `hold`), `hold collection ack`,
 `hold collection forget`, `hold config show|apply`, `dev migrate
 schema`, `dev adopt`, `dev migrate pack`.
 
-## 4. Open questions — for the operator
+## 4. The ten questions, and how they were answered
 
-Ordered by how much depends on the answer.
+All ten were put to the operator on 2026-09-07 and 2026-09-08. The
+addenda (§7–§11) carry the reasoning; this is the index.
 
-1. **Vitality of a finished collection.** The rule now says a fully
-   covered current snapshot counts as actively-held, so Gutenberg does
-   not go dormant for lack of new books. The alternative is that
-   `work.tokens` is set against the expected delta rather than measured
-   throughput. Which did you mean?
-2. **The PubMed origin unit** — the credits half is SETTLED (§10 below); the unit question stands.
-   **The PubMed origin unit.** `origin_hash` is the hash of the origin
-   unit, and for PubMed that is one baseline container — so ~30,000
-   records share one hash and `records-vs-origin` re-fetches 16 MB to
-   check one record. The alternative is a per-record extracted unit,
-   which is not what the origin checksums. The code today hashes
-   per-record.
-3. **`continues_through`** (was `from_snapshot`) — **settled 2026-09-07.**
-   02 and 09 had contradicted each other outright: one named the mother's
-   last snapshot, the other the daughter's first. Two people writing the
-   same daughter would have written different Codexes, and 04 §4.6's
-   adoption contest would have fired over one collection described from
-   two sides. Settled from the mother's side, on the operator's argument
-   that a Codex must not name an artefact that does not exist yet and may
-   never — the daughter's first snapshot is produced at the next cutoff,
-   or not at all if she is never run — and renamed so that neither
-   reading survives the name.
-4. **Cleaning changes.** With cleaning sitting before the record, a
-   sister that bumps `cleaning_version` produces its own shards and no
-   longer shares the mother's future snapshots. Acceptable, or should a
-   cleaning change be a corrective sister only?
-5. **The layer rule `archive:<id>`.** The archive's covered id ranges
-   live in a platform registry, so the rule is computable from record +
-   platform image but not from record + Codex alone. Prefer explicit
-   `ids:` ranges in the Codex?
-6. **Attestations and the aggregate limit.** 08 §8.2 now budgets 64 MB
-   and 1,000 attestations per hour from keys with no reproduced work.
-   The attestation count is new here; is it wanted, and is the queue
-   bounded?
-7. **The catalogue finding aid** — SETTLED 2026-09-08 (§11 below).
-   **The catalogue finding aid.** `app/retrieval.py:catalog_search`
-   searches titles, creators and subjects and is a third result type
-   that invariant 4 does not classify. 05 does not specify it. Does it
-   become a specified list type, or does it go?
-8. **Point-in-time lookup.** The Gazzetta's *multivigenza* wants "the
-   text as it stood on a date". Freshness only looks forward. Add
-   `--as-of`, and on which surface?
-9. **Chunker retention.** A chunker id and version named by a published
-   Codex must stay callable in every later platform image — a permanent
-   promise, or a bounded window?
-10. **Promise 4 and the embed stage.** The promise now says re-embedding
-    is per changed chunk; `app/worker.py` re-embeds whole documents.
-    List as an implementation gap in STATUS.md, or soften the promise?
+| | question | answer | where |
+|---|---|---|---|
+| 1 | how a finished collection stays visible | signed work of ANY kind — a bundle where there is embedding left to do, an attestation where there is not. A published popularity count was proposed and refused: free to forge, it would publish what a peer asks rather than what it holds, and it would rank a popular abandoned dump above a maintained one | 04 §4.7, 08 §8.6 |
+| 2 | the PubMed origin unit | the CONTAINER — the artefact the origin itself checksums — with `origin` locating the record inside it. `records-vs-origin` samples shards, and a shard is the size of a container, so one re-fetch verifies a sampled shard rather than one record of it | 02 §2.3, 06 §6.4, 09 §9.3 |
+| 3 | the daughter's boundary | named from the mother's side, `continues_through`, because a Codex must not name an artefact that does not exist yet and may never | 02 §2.7, 09 §9.3 |
+| 4 | the cadence sister | a sister may differ in the space, the schedule, or both; vectors are shared exactly when `space_id` matches. The question also found the bundle over-bound to `collection_id`, and the tail shard closing short | 02 §2.7, 03 §3.5 |
+| 5 | the archive rule | the archive's entry moves into the Codex whole — coverage because it changes bytes, licence and attribution because a registry is code and a doctored build could relabel them | 02 §2.7, 06 §6.3, 09 §9.3 |
+| 6 | the aggregate limit | the peer's to set: 64 MB and 1,000 objects an hour are defaults in `platform.toml`, and the queue drops the newest | 08 §8.2, 07 §7.8 |
+| 7 | the catalogue finding aid | neither a third list nor gone: a filter narrows the legs, `ask facets` enumerates the values, and nothing boosts | 05 §5.2, §5.7 |
+| 8 | point-in-time lookup | `--as-of DATE` reads the snapshot current at that date; the data was already on disk | 05 §5.1, 07 §7.3 |
+| 9 | chunker retention | never removed. And the encoder itself travels, because an open encoder held on one host is still a single point of failure | 06 §6.3, 02 §2.4, 04 §4.3 |
+| 10 | re-embedding per changed chunk | carried over by chunk HASH, never by chunk id: `seq` is a position, so an inserted paragraph would otherwise re-embed a whole document | 01 promise 4, 06 §6.3 |
+
+One is decided but unconfirmed. Question 4 as first put asked whether a
+cleaning change should be a corrective sister rather than a sister; the
+operator answered the cadence half and not that one. The documents say
+sister, and say why — a `cleaning_version` change produces its own
+shards because the cleaned text is the record — which is the reading
+`lineage.md` §6 already took when it considered the alternative and
+withdrew it.
 
 ## 5. What the review found and the documents did not take
 
@@ -422,3 +395,49 @@ The facet index is local and derived: rebuilt from the records at each
 snapshot, in `state/` beside the working text index, no member, no root,
 no check. Counts are per-peer and say so, because what a peer lists is
 what it can actually filter.
+
+## 12. Addendum — vitality, and the origin unit made consistent (2026-09-08)
+
+**Vitality (question 1).** The rule counted bundles, so Gutenberg went
+dormant: seventy thousand books, fully embedded, a few hundred more a
+month, and nobody could meet the rate. My first patch added a second
+clause for fully-covered collections — two rules doing one job, the
+second bolted onto the first.
+
+One rule now: a key's signed work counts whether it is a **bundle** or
+an **attestation**. They are the same thing at different points in a
+collection's life. While there is embedding to do, keeping a collection
+alive means embedding it; when there is none, it means continuing to
+check it, and a collection nobody checks any more is decaying whatever
+its coverage says. The rule that counted only bundles called a finished
+collection dormant and a rotting one healthy.
+
+The operator proposed a popularity signal — a peer's queries pinging a
+counter, silenceable per collection. It was refused on three grounds,
+any one sufficient. It is free to forge, where every other signal in
+Louise is backed by reproduction: mint a thousand keys and top the list.
+It publishes what a peer asks, where today Louise publishes only what a
+peer holds, and for medical and legal corpora that is sensitive. And it
+measures the wrong thing: a collection can be popular and completely
+unmaintained, which is the decaying one-shot dump 01 exists to replace.
+Usage ordering survives as a local library-view convenience, computed on
+the peer and never sent.
+
+**The origin unit (question 2), made consistent.** The documents had
+answered it both ways: 02 §2.3 and 06 §6.4 said the unit is one PubMed
+container, while 09 §9.3's enum and worked example said
+`"container-member"` — per record. 09 was the outlier and is corrected.
+
+The container is right for the reason the question was asked: it is the
+artefact NLM itself checksums, one `.md5` per file and never one per
+abstract, so taking the fragment would mean hashing a boundary we
+invented and that two implementations could draw differently. My
+original framing of the cost — "16 MB to verify one record" — was
+misleading, and that is what made the question look harder than it is:
+`records-vs-origin` samples SHARDS, and a PubMed shard is about thirty
+thousand records, which is about one container. One re-fetch verifies a
+whole sampled shard.
+
+Records in one container share an `origin_hash` and are told apart by
+`origin`, the locator that finds each inside its unit. The hash covers
+the unit; the locator finds the record.

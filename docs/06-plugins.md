@@ -370,6 +370,17 @@ produced (§6.1); an absolute path never enters a record. How the unit
 is extracted from a container is part of the parser, and a change to it
 bumps `PARSER_VERSION`.
 
+The unit is the artefact the ORIGIN publishes and checksums, not the
+smaller piece we cut out of it. PubMed ships containers of about thirty
+thousand abstracts with an `.md5` beside each, and never a checksum for
+one abstract's XML: taking the container as the unit means every record
+in it shares one `origin_hash`, which is the origin's own guarantee,
+where taking the fragment would mean hashing a boundary we invented and
+that two implementations could draw differently. Nor is it dear.
+`records-vs-origin` samples SHARDS, and a shard is sized in the same
+order as a container, so re-fetching one container verifies a whole
+sampled shard rather than one record of it.
+
 Where several origin forms exist for the same document, the plugin
 chooses one and **records the choice with its reason** in the Codex, as
 `origin.form`, at creation; the note beside the plugin explains the

@@ -287,7 +287,7 @@ inheritance and are `[]` when she declined; a corrective sister's are
 |---|---|---|---|
 | `spec` | object | yes | the identifying half of the acquisition spec, serialised as §9.17 fixes |
 | `form` | string | yes | which origin form was taken and why, one sentence (06 §6.4) |
-| `unit` | string | yes | the origin unit, named: `"file"`, `"container-member"`, `"page"` — what one `origin_hash` covers (06 §6.4) |
+| `unit` | string | yes | the origin unit, named: `"file"`, `"container"`, `"page"` — what one `origin_hash` covers, and the smallest artefact the plugin can re-fetch on its own (06 §6.4). Records sharing a container share one `origin_hash` and are told apart by `origin` |
 | `clock` | string | yes | IANA zone of the origin's clock: `"America/New_York"`, `"UTC"`, `"Europe/Rome"` |
 | `cutoff_rule` | `"dated-dumps"` · `"update-files"` · `"record-date"` | yes | how the origin's state at the cutoff instant is enumerated (06 §6.2) |
 | `jurisdiction` | string or null | yes | ISO 3166-1 alpha-2, for a legal corpus; `null` otherwise |
@@ -387,7 +387,7 @@ fields that carry its choices (every other field is present in the file):
  "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
            "form":"the XML baseline and update files, because the API paginates and the FTP files are checksummed",
-           "unit":"container-member","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
+           "unit":"container","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
  "toolchain":{"platform_image":"sha256:1f…","mother_platform_image":null},
  "parser":{"id":"pubmed","version":4},"cleaning_version":1,"protocol_version":1,
  "layers":[{"chunker":{"id":"abstract","version":1,"params":{}},"rule":"default"}],
@@ -560,7 +560,7 @@ point.
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
 | `extra` | object | yes | plugin-defined, fixed keys; `origin_url` on a red-class source; `in_force` on a legal source; `reason` never (a reason belongs to the tombstone) |
 | `layer` | integer | yes | index into the Codex's `layers` of the layer whose rule matched |
-| `origin` | string | yes | the locator of the origin unit: the unit's path relative to the origin base or its URL, and for a container member the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
+| `origin` | string | yes | the locator of this record within its origin unit: the unit's path relative to the origin base or its URL, and where the unit is a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path. The hash covers the unit, the locator finds the record inside it |
 | `content_hash` | BLAKE2b-128 | yes | below |
 | `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of the bytes of the origin unit named by `origin`; a record without one is refused at build |
 
