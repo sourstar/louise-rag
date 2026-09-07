@@ -469,8 +469,10 @@ content; a resolver never returns a bare symbol.
 2. `hold collection create <plugin> --recipe FILE` writes the Codex and
    prints its id. The recipe is a TOML file carrying every Codex field
    the plugin does not default — the encoder and the rest of the `space`
-   block, the title, the work parameter, the validation plan, the
-   publication kind — and any default it tightens; the plugin supplies
+   block, the descriptive block, the work parameter, the validation
+   plan, the publication kind, and the archives this collection will
+   draw vectors from, by id, which `create` expands into `credits` from
+   the platform's registry (02 §2.7) — and any default it tightens; the plugin supplies
    `plugin`, `origin`, `parser`, `layers`, `slicing`, the classes and
    the cadence, and the platform supplies the toolchain digests. The
    calibration comes first and needs no record: the calibration set is
@@ -490,13 +492,17 @@ content; a resolver never returns a bare symbol.
    the coverage map says how much. Vectors computed on demand by a
    compliant encoder are bundled and shared like any other. A
    pre-embedded public archive is imported through the same ladder as a
-   peer's bundle, with the archive named as producer and its entry
-   written into the Codex's `credits` (02 §2.7). The platform's registry
-   is where an archive is declared — its id, coverage, producer, the
+   peer's bundle, with the archive named as producer. An archive whose
+   entry is not already in the Codex's `credits` is REFUSED, not
+   credited late: the Codex is written once and never edited (02 §2.1),
+   so an archive a collection means to draw on is named in the recipe at
+   step 2 and hashed into the identity there. The platform's registry is
+   where an archive is declared — its id, coverage, producer, the
    licence its vectors carry and the attribution that licence requires —
-   and `hold collection create` copies that entry into the Codex, where
-   it is hashed. So an importer neither composes the acknowledgement nor
-   is free to omit it, and no later build can alter it.
+   and `create` copies that entry into the Codex whole. So an importer
+   neither composes the acknowledgement nor is free to omit it, no later
+   build can alter it, and a collection cannot acquire a debt it never
+   declared.
 6. `hold check` runs the validation plan.
 7. `share` makes the result available and announces it; for a
    `privacy: public` collection it follows a completed fetch on its own

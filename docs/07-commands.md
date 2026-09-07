@@ -32,7 +32,7 @@ continuously has its own name.
 
 | verb | produces |
 |---|---|
-| `create` | a description — a Codex, a snapshot. Light; no heavy computation |
+| `create` | a description — a Codex, a snapshot. No corpus is read and nothing is embedded from it; `hold collection create` does embed the calibration set, 512 short texts, which needs a reachable encoder and takes seconds (06 §6.6) |
 | `build` | an artefact derived from its inputs — records from origin files, vectors from records, an index from either |
 | `fetch` | bytes arriving here, from the origin or from peers |
 | `share` | bytes leaving here, and the announcement that they exist |
@@ -278,7 +278,7 @@ reader needs at the command line:
 The Python API is the same tree with dots:
 
 ```
-app/hold/     collection.py  config.py  records.py  snapshot.py  embedder.py  vectors.py  index.py  check.py  key.py
+app/hold/     codex.py  collection.py  config.py  records.py  snapshot.py  embedder.py  vectors.py  index.py  check.py  key.py
 app/share/    serve.py  fetch.py  contribute.py  attest.py  peers.py
 app/ask/      search.py  plan.py  tools.py
 app/node/     worker.py  web.py  control.py

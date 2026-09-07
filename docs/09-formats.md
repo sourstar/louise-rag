@@ -989,7 +989,7 @@ The response is one JSON object `{"items": [{"path": string, "sha256":
 id, "b64": string}…]}` — each item the exact stored bytes, base64 —
 never a re-serialisation: `codex.json` for the collection and for every
 Codex in its chain (`path` is `codex/<collection_id hex>.json`);
-`snapshots/<id>.json` and `snapshots/<id>.sig.json`; attestation
+`snapshots/<snapshot_id>.json` and `snapshots/<snapshot_id>.sig.json`; attestation
 envelopes as `attestations/<id hex>.json`. The receiver hashes each
 item's bytes, compares with `sha256` and with what a digest advertised,
 and treats a mismatch as 04 §4.2 says.

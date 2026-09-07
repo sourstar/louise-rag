@@ -341,7 +341,7 @@ What protects a peer is its own checks, and the aggregate limit of
 | **unverified** | only the publisher's word — a signed snapshot, at most a calibration statement; usable, and marked as such everywhere it appears |
 | **checked** | at least three independent keys passed `roots`, `chunks` and `calibration`; at least one of them passed `records-vs-origin` on a sample; and, for every producer whose bundles the collection has, at least one key other than that producer passed `vectors-sample` on that producer's vectors |
 | **verified** | at least eight independent keys, and the union of their samples covers a quarter of shards for `records-vs-origin` and a tenth for `vectors-sample`; the covered fraction keeps rising and is shown |
-| **flagged** | a deterministic check failed — one reproduction is enough, and it names the shard; or a statistical check failed twice, from independent verifiers, on the same sample |
+| **flagged** | a deterministic check failed — one reproduction is enough, and it names the shard; or a statistical check failed twice, from independent verifiers, the second on the chunk ids the first named (below) |
 
 *The same sample* for a statistical flag is exact: a failing
 `vectors-sample` or T3 attestation lists the chunk ids that missed; a

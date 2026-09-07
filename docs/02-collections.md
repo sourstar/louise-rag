@@ -694,6 +694,14 @@ carries the acknowledgement. Refusing the credit means refusing the
 vectors, which is allowed and costs the GPU-days the archive would have
 saved.
 
+`credits` is written once, at creation, like every other field: the
+recipe names the archives the collection will draw on, by id, and
+`hold collection create` expands each into its entry from the
+platform's registry. An archive absent from `credits` cannot be
+imported later (06 §6.6) — the Codex is immutable, so a debt this
+collection never declared is one it may not incur, and a creator who
+wants an archive's vectors says so before the identity is fixed.
+
 Because `credits` is derived and not composed, it does not fork a
 collection the way a hand-written acknowledgement would: two creators
 who inherit the same vectors derive the same entries in the same order —
