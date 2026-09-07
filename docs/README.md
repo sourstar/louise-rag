@@ -24,7 +24,7 @@ every byte, and assumes all of them.
 | 6 | [Plugins](06-plugins.md) | how a new source becomes a collection |
 | 7 | [Commands](07-commands.md) | the command line and the API, one vocabulary |
 | 8 | [Standing up to bad actors](08-adversarial.md) | why no defence may need to know whom to trust, and what keeps a collection alive |
-| 9 | [Formats](09-formats.md) | every byte that is hashed, signed or moved — the field tables the other documents point at |
+| 9 | [The DRAG format](09-formats.md) | every byte that is hashed, signed or moved — the field tables the other documents point at |
 
 `notes/` holds the engineering record — measurements, postmortems,
 scheduling — for people changing the code. Nothing there is needed to

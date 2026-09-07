@@ -77,9 +77,10 @@ to a slow, low-priority queue. Unverified material is Codexes, snapshots
 and bundles arriving from other peers and signed by keys none of whose
 work this peer has seen reproduced — no bundle of theirs accepted through
 the ladder (§3.5), no attestation of theirs this peer re-ran and
-confirmed. The allowance is 64 MB and one thousand attestations per hour, admitted
-into the catalogue and forwarded; the rest waits in arrival order and is neither forwarded
-nor announced by this peer until admitted. Material from a key whose work
+confirmed. The allowance is 64 MB and one thousand attestations per
+hour, admitted into the catalogue and forwarded; the rest waits in
+arrival order and is neither forwarded nor announced by this peer until
+admitted. Material from a key whose work
 this peer has seen reproduced is never queued. A thousand fresh keys fill
 that queue no faster than one, because the scarce resource being
 protected is unverified novelty, not identity.

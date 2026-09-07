@@ -81,31 +81,31 @@ decimal string, never a JSON number. The two per-record fingerprints,
 hex digits with no prefix (§2.3). `lineage_id` is not a field: it is
 computed from the chain (§2.7).
 
-The fields, in the order a reader meets them: `origin` is the plugin's acquisition spec as the
-platform serialises it, plus the choices a verifier needs — the form
-taken, the origin unit, the origin's clock and the rule by which its
-state at an instant is enumerated; nothing about the peer is in it, no
-credential and no local path (06 §6.2). `toolchain` pins the code by
-image digest; `parser`, `cleaning_version` and `protocol_version` are
-what those images contain, written out. `layers` and `slicing` say how
-documents are cut and how records are divided into members (§2.3,
-§2.4, 06 §6.3). `space` is the function that turns text into vectors,
-and the contract around it (§2.4). `work` is the work parameter (§2.4).
-`modality` says what the bytes are, so that an encoder or a reranker of
-the wrong kind — a language model over the reference genomes — is
-refused rather than merely worse. `erasure` says how content may leave:
-`append-only` (the Gazzetta Ufficiale: nothing leaves without a
-recorded tombstone), `retractable` (PubMed: the publisher may withdraw a
-record, and the tombstone says so), `erasable` (removal may be
-mandatory and must leave no trace, which no shared copy can honour —
-so `erasable` requires `privacy: never-share`, and a pack build refuses
-the pair otherwise). `validation` is the plan of 03 §3.2, inside the
-hash so nothing outside the Codex decides how much is sampled.
-`license` and `privacy` are 04 §4.4's; the Codex's `license.class` is
-authoritative, and the plugin's declared class is only the default
-`hold collection create` writes. `update` fixes the cadence, the day of
-the cutoff and the grace window. `publication` and the four fields
-after it are §2.8's. The lineage fields are §2.7's.
+The fields, in the order a reader meets them: `origin` is the plugin's
+acquisition spec as the platform serialises it, plus the choices a
+verifier needs — the form taken, the origin unit, the origin's clock and
+the rule by which its state at an instant is enumerated; nothing about
+the peer is in it, no credential and no local path (06 §6.2).
+`toolchain` pins the code by image digest; `parser`, `cleaning_version`
+and `protocol_version` are what those images contain, written out.
+`layers` and `slicing` say how documents are cut and how records are
+divided into members (§2.3, §2.4, 06 §6.3). `space` is the function that
+turns text into vectors, and the contract around it (§2.4). `work` is
+the work parameter (§2.4). `modality` says what the bytes are, so that
+an encoder or a reranker of the wrong kind — a language model over the
+reference genomes — is refused rather than merely worse. `erasure` says
+how content may leave: `append-only` (the Gazzetta Ufficiale: nothing
+leaves without a recorded tombstone), `retractable` (PubMed: the
+publisher may withdraw a record, and the tombstone says so), `erasable`
+(removal may be mandatory and must leave no trace, which no shared copy
+can honour — so `erasable` requires `privacy: never-share`, and a drag
+build refuses the pair otherwise). `validation` is the plan of 03 §3.2,
+inside the hash so nothing outside the Codex decides how much is
+sampled. `license` and `privacy` are 04 §4.4's; the Codex's
+`license.class` is authoritative, and the plugin's declared class is
+only the default `hold collection create` writes. `update` fixes the
+cadence, the day of the cutoff and the grace window. `publication` and
+the four fields after it are §2.8's. The lineage fields are §2.7's.
 
 Three rules make it work.
 
@@ -271,7 +271,7 @@ URL or a path relative to the origin base and, for a container, the
 member offset — so `records-vs-origin` knows what to re-fetch and
 reproduce the record from. A corpus may be **pruned** — what is not used
 is dropped — but never altered in a way that breaks that reproduction.
-A record without an `origin_hash` is refused at build, because a pack
+A record without an `origin_hash` is refused at build, because a drag
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.
 
@@ -393,7 +393,7 @@ peer that fails may still search with what it holds. The same
 reference vectors are the probe set of 03 §3.5's T1, their first
 sixteen texts are T2's golden pairs, and their per-dimension mean and
 standard deviation are T0's envelope, whose bytes `space.envelope`
-hashes. All of it is one pack member, `calibration/<set>.safetensors`
+hashes. All of it is one drag member, `calibration/<set>.safetensors`
 (§2.6; 09 §9.12).
 
 The **index** is a set of centre points trained once on a corpus-wide
@@ -434,7 +434,7 @@ claim heard in a digest is a hint about where work is happening, and
 never by itself removes a shard from the work of §4.5. The map is
 local, and its form is 09 §9.10.
 
-## 2.6 The pack on disk
+## 2.6 The drag on disk
 
 ```
 <collection>/
@@ -451,15 +451,17 @@ local, and its form is 09 §9.10.
 └── vectors/<space>/…                    -- as above
 ```
 
-The pack is the copy: `<LOUISE_ROOT>/collections/<name>/pack/`, exactly
-what a peer shares. What never travels — the manifest, cursors, the
-acknowledgement, the trust list, the working text index and the vector
-table a search reads — sits beside it (07 §7.8). A text-index member is
+A collection on disk is a **drag** — *distributed RAG*, the format 09
+fixes byte for byte. The drag is the copy:
+`<LOUISE_ROOT>/collections/<name>/drag/`, exactly what a peer shares.
+What never travels — the manifest, cursors, the acknowledgement, the
+trust list, the working text index and the vector table a search reads
+— sits beside it (07 §7.8). A text-index member is
 a cache: a peer imports it only when a signed snapshot of the chain
 lists its root and the pin in the member's own header — `fts_version`
 and tokenizer, written by the peer that built it (09 §9.6) — matches
-the platform that would read it; otherwise it rebuilds, which is always possible and
-is not a check. Green collections have no `LICENSE-TERMS`
+the platform that would read it; otherwise it rebuilds, which is always
+possible and is not a check. Green collections have no `LICENSE-TERMS`
 (`license.terms_sha256: null`); for every other class the members
 fetchable before the acknowledgement of §4.4 is recorded are exactly
 `codex.json`, `validation.json`, `snapshots/*` and `LICENSE-TERMS`.

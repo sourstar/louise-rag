@@ -50,7 +50,7 @@ saw. What each licence and privacy class permits is the table in §4.4.
 whose encoder declares another modality than the plugin is refused at
 `create` and at boot, the same class of error as a space mismatch
 (§2.4). `erasure: erasable` requires `privacy: never-share`, and `hold
-records build` refuses to build a pack for it (§4.4): a shard, once
+records build` refuses to build a drag for it (§4.4): a shard, once
 shared, cannot be un-published (§1, promise 7).
 
 ### The types
@@ -106,7 +106,7 @@ an id, the plugin derives one by a pure function of that key, records
 the rule beside itself, refuses a collision at discovery rather than
 trusting it, and keeps the origin's own identifiers in `keys`. A plugin
 has one `source_id`, equal to the Codex's `plugin`; a collection built
-over a pack keeps the origin's `source_id`, so its uids and chunk ids
+over a drag keeps the origin's `source_id`, so its uids and chunk ids
 are the origin's.
 
 ### Fetch, and the error contract
@@ -185,7 +185,7 @@ A yellow or red source ships its terms as published, byte-exact, at a
 path the acquisition spec names (`terms_text_path`; the repository marks
 the file binary so no checkout converts its line endings). `hold
 collection create` hashes it into `license.terms_sha256`; `hold records
-build` copies it into the pack as `LICENSE-TERMS`; the acknowledgement
+build` copies it into the drag as `LICENSE-TERMS`; the acknowledgement
 of §4.4 is a timestamp and that hash (09 §9.13). A green source ships
 none and its Codex carries `terms_sha256: null`.
 
@@ -374,7 +374,7 @@ facts, never as ranked results.
 A reference source is **not a collection** in this version. It has no
 Codex, no snapshots and no members; it is a set of node-local tables
 that every peer syncs from the origin, and a query answers from what
-this peer has synced. Sharing a reference source as a pack is a later
+this peer has synced. Sharing a reference source as a drag is a later
 amendment.
 
 ```python
@@ -423,7 +423,7 @@ content; a resolver never returns a bare symbol.
    a corpus-independent file shipped with the platform, `create` embeds
    it with the named encoder, writes the reference vectors' hash into
    `space.calibration` and their envelope into `space.envelope`, and
-   stores the vectors as the pack member `calibration/<set>.safetensors`
+   stores the vectors as the drag member `calibration/<set>.safetensors`
    (§2.4, 09 §9.12). The Codex's hash is the collection's identity.
 3. `hold collection ack` prints the terms and records the
    acknowledgement (§4.4). For a yellow or red collection nothing below

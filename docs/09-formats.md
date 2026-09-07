@@ -1,9 +1,15 @@
-# 9. Formats — every byte that is hashed, signed or moved
+# 9. The DRAG format — every byte that is hashed, signed or moved
+
+A collection on disk is a **drag**: *distributed RAG*, the format this
+document fixes. One directory holds one collection — its Codex, its
+snapshots, its records, its vectors and everything else a peer shares
+(02 §2.6) — and a peer that receives a drag can check every byte of it
+against the identity it claims, which is what the name is for.
 
 This document is the byte-level reference the other eight point at. It
 fixes, for every artefact whose identity is a hash, whose authorship is
 a signature, or whose bytes cross a wire, exactly what those bytes are:
-the path in the pack or the message on the wire, the fields and their
+the path in the drag or the message on the wire, the fields and their
 types, the rule by which the bytes are hashed or signed, and one worked
 example on the project's own collections. Documents 02–08 say what an
 artefact is *for* and point here for what it *is*; nothing in 02–08
@@ -199,7 +205,7 @@ A list is a filter over whose word is counted at all, never a weight
 
 ## 9.3 The Codex file
 
-**Path.** `codex.json` at the root of the pack (02 §2.6). Its bytes are
+**Path.** `codex.json` at the root of the drag (02 §2.6). Its bytes are
 the canonical JSON of the object below and nothing else — no pretty
 form exists; `collection_id = H(bytes of codex.json)`, and the
 collection's directory under `<LOUISE_ROOT>/collections/` is named by
@@ -322,7 +328,7 @@ hexadecimal digits of the digest.
 | `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal, "chunks": integer}}` — a decimal is a fraction of the snapshot's shards, `"1"` is exhaustive; `chunks` is the number of chunks drawn per sampled shard |
 | `required` | list of check names | yes | certified collections: what must have passed before the collection is shown as certified (03 §3.7); `[]` on an open collection |
 
-`validation.json` at the pack root is this block written out in
+`validation.json` at the drag root is this block written out in
 canonical JSON for tools; `hold check` reads it and refuses to run when
 its bytes differ from the block in the Codex (03 §3.2).
 
@@ -557,6 +563,11 @@ shard.jsonl.zst` prints the lines. All integers little-endian:
 skippable frame = magic u32 (0x184D2A5E) ‖ size u32 ‖ payload
 payload         = "LOUISE-PACK-IDX1" (16 bytes) ‖ raw_len u32 ‖ zstd(index JSON) ‖ frame_len u32 ‖ "LPK1"
 ```
+
+The magic is `LOUISE-PACK-IDX1` and not the format's name: it was
+written into every shard built before the format was named, changing it
+would make those shards unreadable for nothing, and no reader chooses
+its behaviour from it.
 
 `frame_len` is the length of the whole skippable frame (its 8-byte
 header included), so a reader takes the last 8 bytes, seeks back
@@ -1075,7 +1086,7 @@ compact, `\n`-terminated. Its id is `H(bytes of the file)`; `<set>` in
 a path is the id's 16-digit segment. The platform ships one set per
 modality; the Codex names the one it uses in `space.calibration.set`.
 
-**The member.** `calibration/<set>.safetensors` at the pack root,
+**The member.** `calibration/<set>.safetensors` at the drag root,
 written by `hold collection create` (06 §6.6) and a member of every
 snapshot (`files`, §9.4):
 
@@ -1115,7 +1126,7 @@ domain-trained encoder names the same set and a different member.
 
 ## 9.13 Licence terms and the acknowledgement
 
-**The terms member.** `LICENSE-TERMS` at the pack root: the origin's
+**The terms member.** `LICENSE-TERMS` at the drag root: the origin's
 terms text as published, byte-exact, never converted — the repository
 marks the source file binary so no checkout changes a line ending
 (06 §6.1). `license.terms_sha256` = `H(bytes of LICENSE-TERMS)`; a
@@ -1182,7 +1193,7 @@ resolve it against.
 
 ## 9.15 Seals
 
-**Path.** `seals/<snapshot_id>.json` at the pack root, certified
+**Path.** `seals/<snapshot_id>.json` at the drag root, certified
 collections only (03 §3.7); canonical JSON; its transport root and size
 are in the snapshot's `files`, which the certifier signs, so the
 evidence is bound to the snapshot it was captured for.
@@ -1253,13 +1264,13 @@ path byte order; the digest lists the files.
 root alone, so two honest publishers produce one infohash. The info
 dictionary contains exactly: `meta version: 2`, `name` = the member
 name, `piece length: 16777216`, and `file tree` with the one file at its
-pack-relative path carrying `length` and `pieces root`; no `private`
+drag-relative path carrying `length` and `pieces root`; no `private`
 flag, no comment, no creation date, no creator, no announce list — the
 swarm is found through the DHT and the peer messages. The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
 DHT needs 20; the piece layers are exchanged in the swarm. A member of
 several files is that many torrents. Nothing is served from a torrent
-that is not in the pack, and the same key that signs digests seeds them.
+that is not in the drag, and the same key that signs digests seeds them.
 
 **DHT keys.** The mainline DHT (BEP 5). A collection's key for a
 snapshot is the first 20 bytes of `H(collection_id ‖ snapshot_id)`; the

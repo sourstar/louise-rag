@@ -57,7 +57,7 @@ digest — and a collection carries a **plan** saying which checks apply
 and how much to sample. The plan is the Codex's `validation` block
 (02 §2.1): `checks` names the checks that apply, from the table below
 and nothing else, and `sample` says, per sampled check, how much is
-sampled. `validation.json` in the pack (02 §2.6) is that block written
+sampled. `validation.json` in the drag (02 §2.6) is that block written
 out for tools, and `hold check` refuses a copy where the two differ.
 Nothing outside the Codex decides how much is sampled: a publisher who
 wants weaker checks has to publish a different collection. A `checks`
@@ -114,7 +114,7 @@ identified by its SHA-256. The Codex names the set and pins the
 reference vectors the creator produced for it with the space's encoder
 (`space.calibration`), together with their per-dimension mean and
 standard deviation, the space's **envelope** (`space.envelope`). All
-of it is one pack member, `calibration/<set>.safetensors` (09 §9.12),
+of it is one drag member, `calibration/<set>.safetensors` (09 §9.12),
 and a Codex can be written before a single record exists, which is why
 creation comes first in 06 §6.6. Two collections on one encoder share
 one calibration; 08 §8.3 follows from that.

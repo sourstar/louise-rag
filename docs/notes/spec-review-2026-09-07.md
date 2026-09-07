@@ -50,7 +50,7 @@ have produced the same collection, which is the one thing the design
 exists to guarantee.
 
 That is what `09-formats.md` is for: eighteen sections, one per
-artefact, each with its path in the pack or on the wire, a field table,
+artefact, each with its path in the drag or on the wire, a field table,
 the canonical bytes that are hashed or signed, and a worked example from
 PubMed, Gutenberg, Wikipedia or the Gazzetta. Documents 02–08 point into
 it and restate no field lists.
@@ -199,3 +199,34 @@ The 512 candidate findings, the per-document merges and the drafting
 agents' change logs are in this session's workflow transcripts, not in
 the repository: they are working material, and what survived is in the
 documents. What could not be settled from the text is §4 above.
+
+## 7. Addendum, same day — the format is named DRAG
+
+The pack format has a name: **DRAG**, *distributed RAG*. The operator's
+decision, taken after the review: DRAG is the **noun**, not only the
+format's name. A collection on disk is a drag; `pack/` is `drag/`; a
+peer holds, fetches and shares drags. 01's vocabulary gains the word,
+09 is retitled *The DRAG format*, and 02 §2.6 is *The drag on disk*.
+
+The name lands in the specification first, before the code branch,
+because CLAUDE.md makes the documents' vocabulary the code's vocabulary
+— naming it after the implementation started would invert that.
+
+Two places keep the old word on purpose:
+
+- **07 §7.6's migration table and `dev migrate pack`.** Those name the
+  *superseded* artefact — the pre-Codex directory with `manifest.json`
+  and several spaces. `pack build`, `pack verify`, `pack cat` and `pack
+  adopt` were the old commands' real names, and a migration table that
+  renamed its own left column would be a lie.
+- **The shard index magic, `LOUISE-PACK-IDX1` / `LPK1`** (09 §9.5). It
+  is already written into every shard built on the node
+  (`app/pack/records.py:43`); changing it would make those shards
+  unreadable and buys nothing, since no reader chooses its behaviour
+  from it. 09 says so in place, so the next reader does not "fix" it.
+
+**For the code branch**, the rename is 192 occurrences across 30 files
+plus `app/pack/` → `app/drag/`, `app/plugins/packed/` → `.../drag/`,
+and `KIND = "louise-pack"` → `"drag/1"`. The magic bytes do not move.
+The old CLI names stay as the deprecation aliases 07 §7.6 already
+promises.

@@ -120,7 +120,7 @@ louise dev                                                             operator 
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   migrate pack <name> --platform-image D --encoder-image D             give a pre-Codex pack its Codexes and first snapshot (§7.6); writes
-  adopt <origin> <packed>                                              the one-time move of vectors and index into a packed twin; writes
+  adopt <origin> <drag>                                                the one-time move of vectors and index into a drag twin; writes
   refs-sync            reference tables from their origins; writes
 ```
 
@@ -359,7 +359,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `pack build`, `tools/pack_convert` | `hold records build` |
 | `pack verify` | `hold check` |
 | `pack cat` / `dump` | `hold records show` / `hold records show --shard` |
-| `pack adopt` | `dev adopt` (the one-time move of vectors into a packed twin) |
+| `pack adopt` | `dev adopt` (the one-time move of vectors into a drag twin) |
 | a pack with `manifest.json` and several spaces | `dev migrate pack <name>`: one Codex per space, sisters of one another, and the first snapshot; the old id stays a catalogue alias for one cadence |
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
@@ -408,7 +408,8 @@ this order:
 
 1. a full collection id, with or without its `sha256:` prefix;
 2. a unique prefix of the id of at least 12 hex characters;
-3. a local name — the collection's directory under `<LOUISE_ROOT>/collections/` (§7.8);
+3. a local name — the collection's directory under
+   `<LOUISE_ROOT>/collections/` (§7.8);
 4. a lineage id, which resolves to the leading daughter (04 §4.6) held
    here, with a notice naming the collection id it chose.
 
@@ -420,7 +421,7 @@ Codex, and a lineage is not one. `<snapshot>` and `ID` after
 `<plugin>:<native_id>` (02 §2.3). `<key>` is `ed25519:` and 64 hex
 characters (09 §9.2). `--shard` takes `<slice>/<n>` —
 `year=1975-1979/00003` — because shard numbers restart per slice.
-`--slice` takes slice values as they appear in the pack's paths.
+`--slice` takes slice values as they appear in the drag's paths.
 `--kinds` takes the kind names of 02 §2.6; the default is records and
 vectors. `--checks` takes the check names of 03 §3.2. `--seed` takes 32
 bytes as hex (03 §3.2).
@@ -521,7 +522,7 @@ line or a message.
 is the collection being held:
 
 ```toml
-codex  = "sha256:…"                            # the collection this name holds; pack/codex.json must hash to it
+codex  = "sha256:…"                            # the collection this name holds; drag/codex.json must hash to it
 title  = "PubMed"                              # the display name this peer shows; a catalogue field, never part of the Codex (08 §8.2)
 slices = ["year=1975-1979", "year=1980-1984"]  # or "all"
 kinds  = ["records", "vectors"]
@@ -555,7 +556,7 @@ collection is another name.
 ├── collections/
 │   ├── pubmed.toml
 │   └── pubmed/
-│       ├── pack/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
+│       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the shards held
 │       └── lance/           the vector table search reads
@@ -563,8 +564,8 @@ collection is another name.
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
 
-`pack/` holds only what the Codex or a snapshot names, so a member is
-hashed as it lies and `share` refuses a pack directory containing a
+`drag/` holds only what the Codex or a snapshot names, so a member is
+hashed as it lies and `share` refuses a drag directory containing a
 file no snapshot lists. `state/`, `index/`, `lance/`, the files and the
 keys never travel: the state database holds state (the cursor of 06 §6.1
 beside it, the acknowledgement of 09 §9.13, the attestations of 09
@@ -581,7 +582,7 @@ before the next embed. `hold config apply` is the same reload on demand
 and, with `--set`, the way a script or the web interface edits one value
 without opening the file; `--set` writes the file, then applies it.
 
-**Refuse-to-start is per collection.** A collection whose `pack/codex.json`
+**Refuse-to-start is per collection.** A collection whose `drag/codex.json`
 does not hash to its file's `codex`, whose vector table's space or width
 is not its Codex's (02 §2.4), or whose state database carries a schema
 other than this platform's, is not served, not shared and not searched;

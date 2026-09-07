@@ -186,7 +186,7 @@ member in a signed snapshot of the collection's chain that the peer
 holds (02 §2.2, 09 §9.4) — for an open collection any snapshot in the
 chain carrying at least one verified signature, its own included; for a
 certified collection the current snapshot signed by the anchored
-certifier (§3.8). Promotion is one rename into the pack path and, in the
+certifier (§3.8). Promotion is one rename into the drag path and, in the
 same transaction of the state database, the holdings mark: the durable
 marker is the snapshot's row in the manifest naming that member as held.
 At start, a member present in the copy without its mark goes back to
@@ -260,10 +260,10 @@ The acknowledgement is a timestamp and the hash of the terms text, and it
 is required before a yellow or red collection's data is *used*, however
 it arrived: a hand-populated folder and a peer copy are not a bypass. The
 terms text travels byte-exact inside the collection, so one
-acknowledgement covers records, vectors and pack alike.
+acknowledgement covers records, vectors and drag alike.
 
 **The terms member.** The terms text is the member `LICENSE-TERMS` at
-the pack root (02 §2.6, 09 §9.13), bytes exact, and its SHA-256 is the
+the drag root (02 §2.6, 09 §9.13), bytes exact, and its SHA-256 is the
 Codex's `license.terms_sha256`; a green collection has `terms_sha256:
 null` and no terms member. The members a peer may fetch before it has
 acknowledged anything are exactly `codex.json`, `snapshots/*` and
@@ -284,20 +284,21 @@ acknowledging peer is each peer for itself: a sharer without one does
 not announce or serve the gated members, a fetcher without one does not
 request them, and neither embeds, indexes or searches them.
 
-**Red.** A red collection's records member is the same record lines
-with `sections` empty and `extra.origin_url` set — **pointer records**
-(02 §2.3, 09 §9.5). The snapshot's roots are over the pointer shards,
-which is what travels; `content_hash` remains the hash of the cleaned
-text, so a peer that has the text can verify it. Every peer that holds a
-red collection fetches the text from the origin itself (`hold records
+**Red.** A red collection's records member is the same record lines with
+`sections` empty and `extra.origin_url` set — **pointer records** (02
+§2.3, 09 §9.5). The snapshot's roots are over the pointer shards, which
+is what travels; `content_hash` remains the hash of the cleaned text, so
+a peer that has the text can verify it. Every peer that holds a red
+collection fetches the text from the origin itself (`hold records
 fetch`), under the origin's etiquette and the budget, into local state
-that never travels and is never a member (07 §7.8). The fetch of §4.5 assigns the snapshot
-and the pointer shards, never the text. The checks and tiers that need
-text — `chunks`, `records-vs-origin`, `vectors-sample`, T1, T3 and T4
-(03 §3.2, §3.5) — run where the text is, and a peer holding vectors
-without text runs only T0 and T2, may serve what it holds, and does not
-attest. A red collection is searchable in full on a peer that has the
-text; only the reader changes. PubMed is red.
+that never travels and is never a member (07 §7.8). The fetch of §4.5
+assigns the snapshot and the pointer shards, never the text. The checks
+and tiers that need text — `chunks`, `records-vs-origin`,
+`vectors-sample`, T1, T3 and T4 (03 §3.2, §3.5) — run where the text is,
+and a peer holding vectors without text runs only T0 and T2, may serve
+what it holds, and does not attest. A red collection is searchable in
+full on a peer that has the text; only the reader changes. PubMed is
+red.
 
 **Privacy.** Beside its licence class a collection has a `privacy`
 (02 §2.1): *public* — announced and shared as above; *restricted* —
@@ -313,7 +314,7 @@ publisher may retract a record, and the tombstone stays; *erasable* —
 removal may be mandatory and must leave no trace. Sharing cannot
 un-publish: once a shard is served, no later snapshot reaches the peers
 who hold it. So `erasure: erasable` requires `privacy: never-share`, and
-a pack build refuses the pair otherwise; every collection that travels
+a drag build refuses the pair otherwise; every collection that travels
 is append-only or retractable, and a tombstoned record stays in its
 closed shard, excluded from search and embedding (01, promise 7).
 
