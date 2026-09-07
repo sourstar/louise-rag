@@ -247,10 +247,10 @@ work for it, seen by that peer, totals at least `work.tokens` per
 is embedding to do and an **attestation** where there is not, because a
 finished collection is kept alive by being checked, and one nobody
 checks any more is decaying however complete it looks. Each peer
-computes the state from its own coverage map (§2.5) and shows it beside the trust level; a
-dormant collection leaves the default listing and nothing else changes —
-it is still served, fetched and searched, and the next bundles that meet
-the rate make it active again. A collection with nothing left to embed
+computes the state from its own coverage map (§2.5) and shows it beside
+the trust level; a dormant collection leaves the default listing and
+nothing else changes — it is still served, fetched and searched, and the
+next signed work that meets the rate makes it active again. A collection with nothing left to embed
 is not dormant for lack of work: while its snapshots keep coming it is
 active (§4.7).
 
