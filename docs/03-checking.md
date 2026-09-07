@@ -226,7 +226,7 @@ re-issued since — with the refusal recorded, never counted as a
 failure. The `collection_id` and `snapshot_id` in the header are
 provenance: they say where the work was done, and gate nothing.
 
-Those two bindings are exactly enough. A parent's vectors stay out of a
+Those two bindings are exactly enough. A mother's vectors stay out of a
 corrective sister because a corrective sister's `space.epoch`, and so
 its `space_id`, is fresh by construction (§2.4) — the collection id was
 never what kept them out. Revision-A vectors stay off revision-B text

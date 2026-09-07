@@ -161,7 +161,7 @@ Ordered by how much depends on the answer.
    reading survives the name.
 4. **Cleaning changes.** With cleaning sitting before the record, a
    sister that bumps `cleaning_version` produces its own shards and no
-   longer shares the parent's future snapshots. Acceptable, or should a
+   longer shares the mother's future snapshots. Acceptable, or should a
    cleaning change be a corrective sister only?
 5. **The layer rule `archive:<id>`.** The archive's covered id ranges
    live in a platform registry, so the rule is computable from record +
@@ -280,3 +280,35 @@ unchanged in force — displayed, never sorted on, merged on or resolved
 by. The digest carries the title so a peer can name a collection it has
 not fetched (09 §9.9); `collections/<name>.toml` keeps an optional
 local override for the operator's own shelf, never published.
+
+## 9. Addendum — one kinship vocabulary (operator, 2026-09-07)
+
+*Mother*, *daughter*, *sister* — and no other word for how two
+collections are related. `parent` is gone from the specification, in
+prose and in field names: `toolchain.parent_platform_image` is
+`mother_platform_image`, and a snapshot shard's `toolchain` is `"own"`
+or `"mother"`. 01's vocabulary says it outright, so the rule is
+enforceable in review: the collection a new Codex comes from is its
+mother, whichever of the three relations links them.
+
+Two uses of the word survive on purpose, and both are about trees, not
+kin:
+
+- **09 §9.5's merkle tree** — "each parent node is SHA-256 of its two
+  children". That is the BEP 52 hash tree, where parent and child are
+  the standard names for a node and the nodes below it. Written as
+  *parent node* so a reader sees at once that it is not a collection.
+- **CLAUDE.md's engineering rules** — "the parse pool hung with its
+  children gone" is about operating-system processes.
+
+The engineering notes in this folder are not rewritten. They are dated
+records of what was decided when, and `lineage.md` in particular says
+`parent` throughout because that was the word at the time. Where a note
+and a document disagree the document wins, which is the rule already
+stated at the top of this one.
+
+Fixing the vocabulary also caught a drift the reconciliation pass would
+have found: 02 §2.2 wrote a shard's producer as `toolchain: "own" |
+"parent"` while 09 §9.4 wrote it `"self" · "parent"`. Two spellings of
+one enum, in the two documents that must agree byte for byte. Now
+`"own"` and `"mother"` in both.

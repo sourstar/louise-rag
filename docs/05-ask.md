@@ -36,7 +36,7 @@ members for a slice says so and names them rather than answering from a
 later one — a wrong date is worse than no answer here. Without
 `--as-of` a search reads the newest held snapshot, as above. Of the collections a peer holds in one lineage
 (§2.7), the shards a daughter inherits by hash are the same bytes as
-the parent's: a shard held under both is read once, keyed by its
+the mother's: a shard held under both is read once, keyed by its
 `records_root`, so a record never appears twice in one list. Such a
 result names the lineage and the collection whose snapshot first
 listed the shard.
@@ -61,7 +61,7 @@ one pass: every leg of every collection in the space enters the same
 sum, and a collection's text index contributes to its space's list.
 Collections in different spaces are searched separately and presented
 separately — the sister of §2.7 is a different list, never merged with
-its parent's. A mixed list would have no single question behind it and
+its mother's. A mixed list would have no single question behind it and
 no single tolerance behind its vectors, and the fact that rank fusion
 would tolerate one does not make it one. A search over N collections in
 M spaces therefore returns M lists, each holding up to the requested

@@ -35,7 +35,7 @@ codex = {
   },
   toolchain: {
     platform_image:  "sha256:…",     -- the platform build: parser, chunker, cleaner, checks, and their libraries
-    parent_platform_image: null | "sha256:…"   -- daughters: the image that produced the inherited shards (§2.7)
+    mother_platform_image: null | "sha256:…"   -- daughters: the image that produced the inherited shards (§2.7)
   },
   parser: {id: "pubmed", version: 3},           -- readable aliases of what the platform image contains
   cleaning_version: 1,                          -- the cleaner is platform code; its version is a property of the image
@@ -184,7 +184,7 @@ is reproducible only from peers, and the next daughter says so
 snapshot = {kind: "louise-snapshot", version: 1,
             collection_id, snapshot_id: "2026-08", previous: <hash> | null,
             shards: [{slice, n, root, records_root, ids: [first, last],
-                      records, chunks, tokens, toolchain: "own" | "parent"}],
+                      records, chunks, tokens, toolchain: "own" | "mother"}],
             delta: {added: [...], changed: [...], tombstoned: [...]}}
 snapshot hash = H(canonical-json(snapshot))
 ```
@@ -245,8 +245,8 @@ edit (Wikipedia) re-issue shards, and their history is the chain of
 snapshots.
 
 A daughter's first snapshot (§2.7) has `previous` = the hash of the
-parent's snapshot `continues_through`; the shards it inherits are listed
-with the parent's roots and `toolchain: "parent"`, its own with
+mother's snapshot `continues_through`; the shards it inherits are listed
+with the mother's roots and `toolchain: "mother"`, its own with
 `toolchain: "own"`; the chain check accepts a `previous` that belongs to
 the Codex named by `continues`, and nowhere else.
 
@@ -362,7 +362,7 @@ space_id = H(canonical-json({encoder: {image, weights}, layers, cleaning_version
 
 Not `tolerance`, not `calibration`, not `envelope`, not `work`: those
 are the contract around the function, not the function. `space.epoch`
-is `"0"` for a root or a sister, the parent's for a daughter, and
+is `"0"` for a root or a sister, the mother's for a daughter, and
 `H(canonical-json({"replaces": <replaced collection_id>}))` for a
 corrective sister (§2.7). The `<space>` segment of a path or a
 member name is the first 16 hex characters of the digest. The query side
@@ -538,10 +538,10 @@ makes a new Codex. Three kinds of change, three relations:
 
 | | **daughter** | **sister** | **corrective sister** |
 |---|---|---|---|
-| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space, the schedule, or both, over the same corpus | a defect in the parent's records or vectors |
+| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space, the schedule, or both, over the same corpus | a defect in the mother's records or vectors |
 | records up to the transition | inherited by hash | inherited by hash | recomputed from the origin |
-| records after it | the new toolchain's | identical to the parent's — same Codex fields, same bytes | the corrected toolchain's |
-| space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the parent's when only `update` changes, and then vectors shared | new by construction; from zero |
+| records after it | the new toolchain's | identical to the mother's — same Codex fields, same bytes | the corrected toolchain's |
+| space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the mother's when only `update` changes, and then vectors shared | new by construction; from zero |
 | Codex field | `continues`, `continues_through` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
 
 A **daughter** continues the collection. The transition is a snapshot
@@ -561,7 +561,7 @@ mother's last snapshot exists, is content-addressed, and can be
 verified by anyone reading the Codex the moment it is published.
 
 Vectors survive because the space is unchanged — the
-daughter keeps the parent's `space` block, `layers` and
+daughter keeps the mother's `space` block, `layers` and
 `cleaning_version` byte for byte, and `hold collection continue`
 refuses a daughter in which any of them differs. A toolchain change that
 is not equivalent (§3.4) and touches only the records from the
@@ -569,8 +569,8 @@ transition on is a daughter, whatever the origin did; one that changes
 records already published is a corrective sister. If the origin moved,
 old shards may no longer verify against it; they keep verifying
 internally, their trust level freezes at what it reached, and the
-daughter says so (`origin_reachable_until`) and carries the parent's
-platform image beside its own (`toolchain.parent_platform_image`) so a
+daughter says so (`origin_reachable_until`) and carries the mother's
+platform image beside its own (`toolchain.mother_platform_image`) so a
 verifier knows which parser applies to which range.
 
 Two peers may publish two daughters when an origin changes. If they
@@ -582,7 +582,7 @@ network embeds — at the records stage, before anyone spends GPU.
 A **sister** shares the corpus and starts a line of its own: a
 domain-trained encoder over PubMed, or the same PubMed on a weekly
 cadence for a laboratory that needs currency. A sister keeps identical
-to its parent `plugin`, `origin`, `toolchain.platform_image`, `parser`,
+to its mother `plugin`, `origin`, `toolchain.platform_image`, `parser`,
 `slicing`, `license`, `privacy`, `erasure` and `modality` — everything
 except `layers`, `cleaning_version`, `space` (which carries the
 encoder), `update` and the lineage fields — and `hold collection
@@ -590,8 +590,8 @@ derive` refuses anything else, and refuses a sister that differs in
 nothing.
 
 Whether the vectors are shared follows from one comparison and nothing
-else: **a sister whose `space_id` equals its parent's shares the
-parent's vectors; one whose `space_id` differs starts from zero.** A
+else: **a sister whose `space_id` equals its mother's shares the
+mother's vectors; one whose `space_id` differs starts from zero.** A
 sister that changes the encoder, the layers or `cleaning_version`
 changes `space_id` (§2.4) and so starts empty — no vector crosses a
 space boundary, and that includes a sister that only removes a layer. A
@@ -599,13 +599,13 @@ sister that changes only `update` leaves `space_id` untouched, so every
 bundle either of them produces is admissible to the other (03 §3.5) and
 the two are searched as one list (05 §5.1).
 
-Because its origin and platform image are the parent's, a sister that
-keeps the parent's `update` produces the parent's future snapshots —
+Because its origin and platform image are the mother's, a sister that
+keeps the mother's `update` produces the mother's future snapshots —
 same bytes, same hash, no coordination — for as long as neither
 changes; a sister that changes `cleaning_version` is the exception,
 since the cleaned text is the record (§2.3), and it produces its own
 shards. A sister that changes only `update` produces its own chain,
-which meets the parent's at every cutoff the two share: at those
+which meets the mother's at every cutoff the two share: at those
 instants the origin's state is one state, so the records are the same
 records, the shards are byte-identical, their roots are equal and the
 members are interchangeable. A weekly sister of a monthly collection
@@ -634,7 +634,7 @@ following `continues` only — never `derived_from` or `replaces` — and it
 is what a catalogue shows as *the collection*: one entry with a history,
 not a list of ids. A peer computes it from the chain of Codexes, which
 every announcement carries back to the root (§4.2), so two peers never
-disagree about it. Adopting a daughter, for a peer holding the parent,
+disagree about it. Adopting a daughter, for a peer holding the mother,
 costs reading one Codex. Kinship is the hash chain of `continues`,
 `derived_from` and `replaces`, and nothing else makes two collections
 kin.

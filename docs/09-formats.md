@@ -243,7 +243,7 @@ number written as a decimal string is marked *decimal*.
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
-| `toolchain` | object | yes | `{platform_image, parent_platform_image}` — image digests, `sha256:…`; `parent_platform_image` is `null` except on a daughter, where it is the parent's `platform_image` |
+| `toolchain` | object | yes | `{platform_image, mother_platform_image}` — image digests, `sha256:…`; `mother_platform_image` is `null` except on a daughter, where it is the mother's `platform_image` |
 | `parser` | object | yes | `{id: string, version: integer}` — the readable alias of what the platform image contains |
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
@@ -262,10 +262,10 @@ number written as a decimal string is marked *decimal*.
 | `embedding` | `"open"` · `"endorsed"` · `"certifier-only"` | yes | 03 §3.8; `"open"` on an open collection |
 | `succession` | `"frozen"` or `{"open-after": duration}` | yes | 02 §2.8; `"frozen"` on an open collection |
 | `content` | `"manifest-only"` or null | yes | `"manifest-only"` exactly when certified |
-| `continues` | id or null | yes | daughter: the parent's `collection_id` |
+| `continues` | id or null | yes | daughter: the mother's `collection_id` |
 | `continues_through` | snapshot id or null | yes | daughter: the last snapshot that is the mother's — the boundary, named from the side that already exists (02 §2.7). Everything after it is the daughter's |
 | `origin_reachable_until` | snapshot id or null | yes | daughter: the last snapshot whose shards the origin still reproduces |
-| `derived_from` | id or null | yes | sister and corrective sister: the parent's `collection_id` |
+| `derived_from` | id or null | yes | sister and corrective sister: the mother's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space`, `layers` and `cleaning_version` were copied byte for byte |
 | `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
@@ -321,7 +321,7 @@ it becomes a directory under `records/`.
 | `tolerance` | decimal | yes | the cosine a vector must reach against the reference (03 §3.1) |
 | `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash (§9.12), and the quorum |
 | `envelope` | id | yes | the hash of the envelope tensor in the calibration member (§9.12) |
-| `epoch` | string | yes | `"0"` for a root or a sister; a daughter keeps the parent's; a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…` |
+| `epoch` | string | yes | `"0"` for a root or a sister; a daughter keeps the mother's; a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…` |
 | `evaluation` | object or null | yes | `{suite: {name, version, sha256, public}, metric, value: decimal, conditions: {…}, coverage_check: {targets, resolved}, run_by: key, run_at: time, tier: "reproducible" · "asserted"}`; `null` when no score is claimed |
 
 **space_id.**
@@ -382,7 +382,7 @@ fields that carry its choices (every other field is present in the file):
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
            "form":"the XML baseline and update files, because the API paginates and the FTP files are checksummed",
            "unit":"container-member","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
- "toolchain":{"platform_image":"sha256:1f…","parent_platform_image":null},
+ "toolchain":{"platform_image":"sha256:1f…","mother_platform_image":null},
  "parser":{"id":"pubmed","version":4},"cleaning_version":1,"protocol_version":1,
  "layers":[{"chunker":{"id":"abstract","version":1,"params":{}},"rule":"default"}],
  "slicing":{"keys":["year"],"year":{"field":"date","bins":["<1950","5y<2000","1y"]},
@@ -454,7 +454,7 @@ A shard entry:
 | `chunks` | integer | yes | chunks over all its records under the Codex's layers |
 | `tokens` | integer | yes | `chunks × space.ctx` — the upper bound §4.5 and §4.7 use |
 | `bytes` | integer | yes | size of the stored file |
-| `toolchain` | `"self"` · `"parent"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the parent's for inherited shards |
+| `toolchain` | `"own"` · `"mother"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the mother's for inherited shards |
 
 A relations shard entry has `slice`, `n`, `root`, `edges` (integer) and
 `bytes`; it sits beside the record shard of the same slice and number.
@@ -474,8 +474,8 @@ in `previous`; nothing lists it separately.
 **Chain rules.** Consecutive snapshots have consecutive ids; each names
 the hash of the one before; all name one `collection_id`, except a
 daughter's first, whose `previous` belongs to the Codex named by
-`continues` and whose inherited shards carry the parent's roots and
-`toolchain: "parent"`. A peer applies a snapshot only when it holds the
+`continues` and whose inherited shards carry the mother's roots and
+`toolchain: "mother"`. A peer applies a snapshot only when it holds the
 one `previous` names.
 
 **Re-running `hold snapshot create`.** For an id that exists: identical
@@ -608,7 +608,7 @@ header included), so a reader takes the last 8 bytes, seeks back
 **Roots.** `root` is the BitTorrent v2 pieces root of the stored file
 (BEP 52): leaves are SHA-256 of consecutive 16 KiB blocks of the file,
 the last block as long as it is; the leaf count is padded to the next
-power of two with leaves of 32 zero bytes; each parent is SHA-256 of its
+power of two with leaves of 32 zero bytes; each parent node is SHA-256 of its
 two children concatenated; a file of at most one block has its single
 leaf as root. `records_root` is SHA-256 over the raw 16-byte
 `content_hash` digests concatenated in record order. Transport, `roots`
@@ -958,7 +958,7 @@ body:
 | type | payload |
 |---|---|
 | `snapshot` | `{collection_id, snapshot_id, snapshot_hash, sig: {key, time, sig}}` — the announcer's own sidecar entry |
-| `codex` | `{collection_id, chain: [<Codex object>…]}` — the new Codex first, then its parents along `continues`, `derived_from` and `replaces` back to the root: a daughter, a sister or a corrective sister announced |
+| `codex` | `{collection_id, chain: [<Codex object>…]}` — the new Codex first, then the Codexes it comes from along `continues`, `derived_from` and `replaces` back to the root: a daughter, a sister or a corrective sister announced |
 | `attestation` | the attestation envelope (§9.8) |
 | `flag` | `{collection_id, snapshot_hash, check, attestations: [id…]}` — the failing attestations that together flag it (03 §3.6) |
 | `bundle` | `{collection, space_id, snapshot_id, shard, uids: [first, last], bundle_id, root, bytes}` |

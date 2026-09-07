@@ -364,7 +364,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | a pack with `manifest.json` and several spaces | `dev migrate pack <name>`: one Codex per space, sisters of one another, and the first snapshot; the old id stays a catalogue alias for one cadence |
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
-| `space repin` | `hold collection derive`, then `hold collection forget <parent> --kinds vectors` when the parent's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
+| `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
 | `backend check` / `rebaseline` | `hold embedder check` / `--accept` |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
