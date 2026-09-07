@@ -250,9 +250,9 @@ checks any more is decaying however complete it looks. Each peer
 computes the state from its own coverage map (§2.5) and shows it beside
 the trust level; a dormant collection leaves the default listing and
 nothing else changes — it is still served, fetched and searched, and the
-next signed work that meets the rate makes it active again. A collection with nothing left to embed
-is not dormant for lack of work: while its snapshots keep coming it is
-active (§4.7).
+next signed work that meets the rate makes it active again. A collection
+with nothing left to embed is not dormant for lack of it: the checks
+its holders keep running are the work that keeps it alive (§4.7).
 
 The signal is "someone continues", never "the creator continues". Tying
 vitality to the creator would contradict the single-survivor requirement
