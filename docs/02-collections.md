@@ -128,6 +128,14 @@ to vectors, and vectors from different functions cannot be compared:
 space_id = H(encoder_image, layers, cleaning_version, epoch)
 ```
 
+**The work parameter.** Alongside the space, the Codex states the *work
+parameter*: the amount of embedding work, in tokens of the declared
+encoder's tokenizer, that a key must produce per unit time to count as
+holding the collection. It is measured by the creator on their own
+hardware with the collection's encoder and recorded with no reference to
+that hardware; every participant adopts the number as stated. What it is
+for, and why a declared number cannot be inflated, is §8.5.
+
 Chunking is declared per **layer** — one chunker per layer, every
 document in exactly one layer by a declared rule, the layer list fixed
 at creation. The common case is one layer, and then the layer simply is

@@ -85,6 +85,7 @@ they are needed.
 | snapshot | the state of a collection's records at one monthly cutoff; content-addressed |
 | holdings | what your copy actually has — which slices, which kinds |
 | provenance | which origin, which snapshot, which encoder, which producer |
+| work parameter | the embedding work per unit time a collection declares as its holding level; declared by the creator, verified from below by reproduction |
 | check | verification of any kind — of bytes against hashes, of records against the origin, of vectors against the encoder |
 | share / hold | instead of seed / replicate |
 | certified collection | a collection whose records only a named, anchored key may publish |

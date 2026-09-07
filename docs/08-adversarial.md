@@ -38,7 +38,7 @@ defender.
 ## 8.2 Three defences that need no reputation
 
 **The name is never a criterion.** Identity is the Codex hash (§2.1);
-kinship is the hash chain (§2.9). A collection with a confusingly similar
+lineage is the hash chain (§2.7). A collection with a confusingly similar
 title inherits neither the lineage nor the attestations of the one it
 imitates. `title` is an untrusted field: displayed, never used to sort,
 merge or resolve. Two collections both called "PubMed" appear side by
@@ -50,7 +50,7 @@ starts at coverage zero and *unverified*. It attracts no embedding work
 and no ranking until independent parties reproduce a sample of its
 vectors on its own records (§3.7). Ignoring it costs one Codex read.
 Visibility is a function of independent reproduction, not of how many
-collections a key has published — so an avalanche of empty siblings
+collections a key has published — so an avalanche of empty sisters
 collapses into a single low-priority row.
 
 **Against the avalanche, limit the aggregate, not the sender.** A peer
@@ -63,7 +63,7 @@ unverified novelty, not identity.
 ## 8.3 Two thresholds, because calibration proves the encoder, not the work
 
 Calibration blocks (§3.4) are tied to an encoder and are *meant* to be
-shared across collections: two siblings on the same encoder share one
+shared across collections: two sisters on the same encoder share one
 calibration. So passing the calibration gate proves only that a peer can
 run the declared encoder — not that any work was done on this collection.
 This forces two distinct levels:
@@ -82,11 +82,11 @@ spending their own GPUs on their own initiative, move it to checked. This
 is where a bad actor is actually stopped: not at entry, but at the point
 where visibility must be earned from strangers who owe them nothing.
 
-## 8.4 The maliciously-valid sibling is out of scope, on purpose
+## 8.4 The maliciously-valid sister is out of scope, on purpose
 
-A sibling (§2.9) that pays real embedding work, passes the ladder (§3.6)
+A sister (§2.7) that pays real embedding work, passes the ladder (§3.6)
 and is reproduced by independent verifiers *is a good collection*,
-whatever the intent behind it. The difference between a welcome sibling
+whatever the intent behind it. The difference between a welcome sister
 and a spiteful one is semantic and lives in the eye of the chooser.
 Defending against it would require the protocol to judge merit — the one
 central authority everything else here refuses. It is left to human
@@ -111,10 +111,10 @@ the creator, on the creator's own hardware, with the collection's own
 encoder, and written into the Codex (§2.4) with no reference to the
 hardware used. Every participant adopts that number as stated. Nothing is
 converted between encoders; no one needs to possess a particular machine;
-there is no extrapolation. A sibling (§2.9) that wants a heavier, more
+there is no extrapolation. A sister (§2.7) that wants a heavier, more
 capable encoder measures its own parameter and writes a higher one,
 which by design excludes weaker hardware from contributing — and that is
-the point of such a sibling. A datacentre may build siblings tuned to its
+the point of such a sister. A datacentre may build sisters tuned to its
 own scale, and that is welcome. An encoder that can only run on CPU
 carries the parameter the creator measured on that CPU, which is exactly
 the class of hardware that collection can use — so the CPU case needs no
@@ -156,10 +156,14 @@ Whatever level a collection declares, holding it is a sustained activity,
 not a single payment. A one-off toll stops the lazy but not the
 well-resourced, who would pay once, enter, and abandon the collection to
 the peers — the very cost-dumping to prevent. So a live collection is one
-where signed blocks keep being produced at its declared cadence; a decoy
-or an abandoned collection decays by itself from *actively-held* to
-*dormant* — still findable, no longer listed as active — with no
-judgement by anyone.
+where **signed blocks** — batches of vectors on the collection's own
+records, each signed by the key that produced them, delivered whole at
+the collection's declared granularity — keep being produced at the
+cadence the work parameter states. A collection whose blocks keep
+arriving is **actively-held**; one whose blocks have stopped is
+**dormant**: still findable and fetchable, no longer listed as active. A
+decoy or an abandoned collection thus decays by itself. The two states
+are observed, not declared, and carry no judgement by anyone.
 
 The signal is "someone continues", never "the creator continues". Tying
 vitality to the creator would contradict the single-survivor requirement
