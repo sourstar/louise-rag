@@ -1037,8 +1037,10 @@ nothing until the bundle is fetched and accepted here.
 snapshot_id, chunks, covered, shards: [{shard, chunks, covered, open,
 leader: key or null, window_ends: time or null, bundles: [<rows as
 above>]}], producers: [{key, chunks, bundles, tokens_per: {per: duration,
-tokens: integer}}], vitality: "actively-held" · "dormant"}` — the last
-two are the computation of 04 §4.7 from this map.
+tokens: integer}}], vitality: "actively-held" · "dormant"}` — the last two are the
+computation of 04 §4.7, which reads this map for bundles and the
+attestations this peer holds (§9.8) for checks, since signed work of
+either kind counts and only one of the two is recorded here.
 
 **Worked example.** PubMed, `year=2023`, shard 11, on a peer that
 embedded half of it before its successor took over:
