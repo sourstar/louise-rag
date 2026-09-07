@@ -328,10 +328,16 @@ release that removes one names the collections it orphans.
 `parse()` and the record, the same code for every source, and the
 record's `sections` are its output (§6.1). `cleaning_version` is a
 property of the platform image, read from the Codex and from nowhere
-else — a node has no global chunk or cleaning version. Since
-`cleaning_version` is in `space_id`, a cleaning change is a sister
-(§2.7), not a repair: the re-pin is the price of a space that means one
-thing.
+else — a node has no global chunk or cleaning version.
+
+A cleaning change re-derives every record, so it is not a sister: a
+sister inherits the corpus, and there is no corpus to inherit when the
+cleaned text has moved (02 §2.7). It is a corrective sister where the
+old cleaning is being called wrong, with a defect to reproduce, and
+otherwise a new collection over the same origin. The re-derivation is
+the price of a record that means one thing, and `cleaning_version` is
+in `space_id` so that no vector outlives the text it was computed
+from.
 
 The source's declared **mutability** decides the chunker a plugin puts
 in its `default_layers`: an immutable source —

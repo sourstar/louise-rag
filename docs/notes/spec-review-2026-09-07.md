@@ -152,13 +152,8 @@ addenda (§7–§11) carry the reasoning; this is the index.
 | 9 | chunker retention | never removed. And the encoder itself travels, because an open encoder held on one host is still a single point of failure | 06 §6.3, 02 §2.4, 04 §4.3 |
 | 10 | re-embedding per changed chunk | carried over by chunk HASH, never by chunk id: `seq` is a position, so an inserted paragraph would otherwise re-embed a whole document | 01 promise 4, 06 §6.3 |
 
-One is decided but unconfirmed. Question 4 as first put asked whether a
-cleaning change should be a corrective sister rather than a sister; the
-operator answered the cadence half and not that one. The documents say
-sister, and say why — a `cleaning_version` change produces its own
-shards because the cleaned text is the record — which is the reading
-`lineage.md` §6 already took when it considered the alternative and
-withdrew it.
+The cleaning half of question 4 was settled on 2026-09-08 and the answer
+was neither option offered: see §14.
 
 ## 5. What the review found and the documents did not take
 
@@ -499,3 +494,54 @@ so the link is now explicit: the seal entry keys on `file_hash`, and a
 record carries that hash in `extra.seal`. This also closes a finding
 from the review itself, which had flagged that `seal_ref` existed in the
 notes and had no field in the record schema.
+
+## 14. Addendum — what makes a sister a sister (operator, 2026-09-08)
+
+The last open item, and the operator answered it by defining the word
+rather than choosing between the options I had offered.
+
+**A sister shares the corpus. That is what makes it one.** A peer
+holding a sister holds her mother's records already and re-fetches
+nothing to take her. Everything else about the relation follows from
+that, and the changeable set is simply what no record depends on:
+`space`, `layers`, `update`.
+
+So a cleaning change was never a sister. Cleaning output *is* the
+record, so changing `cleaning_version` re-derives every record from the
+origin — different `content_hash`, different shards, different chunk
+ids — and there is no corpus left to inherit. The documents had been
+carrying this as an "exception" in prose, sixteen lines under a table
+that said a sister's records are "inherited by hash" and "identical to
+the mother's — same bytes". An exception to a definition is the
+definition failing, and it is the same failure as the origin unit: a
+rule stated by example, so each reader resolved it differently.
+
+The question that exposed it was "what makes a sister a sister?" — and
+the answer makes the relation CHECKABLE rather than declared. A
+sister's `records_root` equals her mother's at every snapshot they
+share. Anyone holding both Codexes can verify that; nobody can verify a
+declaration.
+
+`cleaning_version` therefore joins the fields a sister keeps, and
+`--cleaning-version` leaves `hold collection derive`, which is no
+longer the command for that change.
+
+**And it settles the sister / corrective-sister line generally.** I had
+framed it as a question about what changed. It is not: both start from
+zero and share only the origin. What separates them is **what is
+claimed about the mother**. A sister claims nothing and both stand. A
+corrective sister claims the mother is defective, must carry a
+reproducible defect, and becomes the remedy once a peer reproduces it —
+which is what stops anyone superseding a healthy collection by
+preferring their own taste. A cleaning change is therefore a corrective
+sister when the old cleaning is being called wrong, and otherwise a
+collection of its own over the same origin, with no relation claimed.
+
+**One consequence to decide.** A record carries `layer`, the index of
+the layer whose rule matched. It is derivable from the record and the
+Codex, so it need not be stored — but while it is stored, a sister that
+changes `layers` writes different record bytes, and a peer must
+re-fetch shards whose text it already holds. Dropping `layer` from the
+record line would make a layers-sister share shard bytes exactly, which
+is what the definition promises. That is a wire-format change, and
+CLAUDE.md says to ask first.

@@ -572,10 +572,9 @@ makes a new Codex. Three kinds of change, three relations:
 
 | | **daughter** | **sister** | **corrective sister** |
 |---|---|---|---|
-| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space, the schedule, or both, over the same corpus | a defect in the mother's records or vectors |
-| records up to the transition | inherited by hash | inherited by hash | recomputed from the origin |
-| records after it | the new toolchain's | identical to the mother's — same Codex fields, same bytes | the corrected toolchain's |
-| space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the mother's when only `update` changes, and then vectors shared | new by construction; from zero |
+| what changed | the outside world: origin format or address, licence of new items; the toolchain adapts | the space, the schedule, or both — never anything that decides a record | a defect in the mother's records or vectors |
+| the corpus | inherited by hash up to the transition; the new toolchain's after it | inherited whole: the same records, always | recomputed from the origin |
+| the vectors | inherited: the space is unchanged | inherited when `space_id` matches, from zero when it does not | from zero |
 | Codex field | `continues`, `continues_through` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
 
 These three words, and no others, say how two collections are related.
@@ -625,42 +624,48 @@ they are the same thing under two names; a peer that holds both says so
 and catalogues merge them. If they differ, §4.6 decides which one the
 network embeds — at the records stage, before anyone spends GPU.
 
-A **sister** shares the corpus and starts a line of its own: a
-domain-trained encoder over PubMed, or the same PubMed on a weekly
-cadence for a laboratory that needs currency. A sister keeps identical
-to its mother `plugin`, `origin`, `toolchain.platform_image`, `parser`,
-`slicing`, `license`, `privacy`, `erasure` and `modality` — everything
-except `layers`, `cleaning_version`, `space` (which carries the
-encoder), `update` and the lineage fields — and `hold collection
-derive` refuses anything else, and refuses a sister that differs in
-nothing.
+A **sister** shares the corpus, and that is what makes it one: a peer
+holding a sister holds its mother's records already and re-fetches
+nothing to take her. A domain-trained encoder over PubMed, or the same
+PubMed on a weekly cadence for a laboratory that needs currency — in
+both the corpus is one corpus, and only what is built on top of it
+differs.
+
+So a sister may change only what no record depends on: `space`,
+`layers` and `update`. Everything that decides a record byte it keeps —
+`plugin`, `origin`, `toolchain.platform_image`, `parser`,
+`cleaning_version`, `slicing`, `license`, `privacy`, `erasure`,
+`modality` — and `hold collection derive` refuses anything else, and
+refuses a sister that differs in nothing.
+
+The test is the records, not the declaration: a sister's `records_root`
+equals her mother's at every snapshot they share (§2.2). That is
+checkable by anyone holding both Codexes, which a declaration is not.
 
 Whether the vectors are shared follows from one comparison and nothing
 else: **a sister whose `space_id` equals its mother's shares the
 mother's vectors; one whose `space_id` differs starts from zero.** A
-sister that changes the encoder, the layers or `cleaning_version`
-changes `space_id` (§2.4) and so starts empty — no vector crosses a
-space boundary, and that includes a sister that only removes a layer. A
+sister that changes the encoder or the layers changes `space_id` (§2.4)
+and so starts empty — no vector crosses a space boundary, and that
+includes a sister that only removes a layer. A
 sister that changes only `update` leaves `space_id` untouched, so every
 bundle either of them produces is admissible to the other (03 §3.5) and
 the two are searched as one list (05 §5.1).
 
-Because its origin and platform image are the mother's, a sister that
-keeps the mother's `update` produces the mother's future snapshots —
-same bytes, same hash, no coordination — for as long as neither
-changes; a sister that changes `cleaning_version` is the exception,
-since the cleaned text is the record (§2.3), and it produces its own
-shards. A sister that changes only `update` produces its own chain,
+Because its origin, platform image and cleaning are the mother's, a
+sister that keeps the mother's `update` produces the mother's future
+snapshots — same bytes, same hash, no coordination — for as long as
+neither changes. A sister that changes only `update` produces its own
+chain,
 which meets the mother's at every cutoff the two share: at those
 instants the origin's state is one state, so the records are the same
 records, the shards are byte-identical, their roots are equal and the
 members are interchangeable. A weekly sister of a monthly collection
 holds every shard the monthly holds, and more snapshots naming them.
-`space_from: <codex>` copies the whole `space` block, `layers` and
-`cleaning_version` byte for byte, and the
-encoder image must match too or `derive` refuses — so two collections
-meant to be searched together land in one space by construction rather
-than by hoping their settings match.
+`space_from: <codex>` copies the whole `space` block and `layers` byte
+for byte, and the encoder image must match too or `derive` refuses — so
+two collections meant to be searched together land in one space by
+construction rather than by hoping their settings match.
 
 **Credits travel with the vectors, and cannot be separated from them.**
 Where a collection's vectors come from a pre-embedded archive — NCBI's
@@ -723,6 +728,23 @@ deliberate and accidental is whether anyone was told. A daughter is not
 asked, because she has no choice: her space is her mother's by
 construction, so the vectors and the credits copy with her. A corrective
 sister starts from zero by definition and inherits neither.
+
+**A cleaning change is not a sister.** Cleaning output *is* the record
+(§2.3), so changing `cleaning_version` re-derives every record from the
+origin: different `content_hash`, different shards, different chunk
+ids, nothing carried over but the origin itself. Calling that a sister
+would empty the word of the one thing it means. It is a corrective
+sister when the old cleaning is being called wrong — and then the
+defect must be reproducible, like any other — and otherwise a
+collection of its own, standing beside the first over the same origin
+with no relation claimed and neither superseded.
+
+That is the general rule for the two, and the only one: **a corrective
+sister differs from a sister not in what changed but in what it claims
+about the mother.** A sister claims nothing and both stand. A
+corrective sister claims the mother is defective, must prove it, and is
+the remedy once a peer has reproduced the proof — which is what stops
+anyone superseding a healthy collection by preferring their own taste.
 
 A **corrective sister** replaces a collection with a defect. It starts
 from zero — records and vectors both — even when the defect touched a
