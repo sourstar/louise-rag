@@ -51,8 +51,11 @@ saw. What each licence and privacy class permits is the table in §4.4.
 whose encoder declares another modality than the plugin is refused at
 `create` and at boot, the same class of error as a space mismatch
 (§2.4). `erasure: erasable` requires `privacy: never-share`, and `hold
-records build` refuses to build a drag for it (§4.4): a shard, once
-shared, cannot be un-published (§1, promise 7).
+records build` refuses the pair — erasable with any privacy that lets a
+shard travel — because sharing cannot un-publish: once a shard is
+served, no later snapshot reaches the peers holding it (§4.4; §1,
+promise 7). An erasable collection is built and searched like any
+other; what it may not do is leave the peer.
 
 ### The types
 
