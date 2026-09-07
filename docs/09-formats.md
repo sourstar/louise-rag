@@ -268,7 +268,7 @@ number written as a decimal string is marked *decimal*.
 | `derived_from` | id or null | yes | sister and corrective sister: the mother's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space`, `layers` and `cleaning_version` were copied byte for byte |
 | `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
-| `credits` | list of strings | yes | the ids of the pre-embedded archives whose vectors this collection carries, sorted by bytes, `[]` when none. Derived at creation from what is inherited, never composed by hand (02 §2.7); the platform's registry, pinned by `toolchain.platform_image`, holds each archive's producer, licence and attribution text |
+| `credits` | list of objects | yes | the pre-embedded archives whose vectors this collection carries, sorted by `archive`, `[]` when none. Each is `{archive: string, producer: string, license: string, attribution: string, coverage: "all" or {ids_per_shard: integer, shards: integer}}`. Derived at creation from the platform's registry and from what is inherited, never composed by hand (02 §2.7); hashed, so neither the licence, the attribution nor the coverage can be altered by a later build |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
 
 The relations are exclusive in this way: a daughter has `continues` and

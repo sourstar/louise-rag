@@ -538,20 +538,43 @@ met.
 A collection is **actively-held** on a peer's catalogue while some key's
 signed bundles for it, seen by that peer, total at least `work.tokens`
 per `work.per`; otherwise it is **dormant**. Exactly: over the trailing
-period of length `work.per` (§4.5's seconds), for each producer key, the
-peer sums the tokens of that key's bundles — a bundle's tokens being its
-chunk count × `space.ctx`, the same upper bound the snapshot uses per
-shard — counting the bundles it holds and the bundles a live neighbour's
-digest reports accepted; if any single key reaches `work.tokens`, the
-collection is actively-held; if none does, it is dormant — unless
-there is nothing left to embed: when every chunk of the newest held
-snapshot has an accepted bundle on this peer's coverage map, the
-collection is actively-held while that snapshot is no older than two
-cadences, because the work that keeps it alive is then the snapshot,
-and the key that produces the next one continues it. The default
-`per` is the update cadence, so a collection embedded at the pace its
-snapshots arrive is active by construction, and one whose next snapshot
-nobody embeds becomes dormant one period later.
+period of length `work.per` (§4.5's seconds), the peer takes each key it
+has seen produce **signed work** for the collection and asks whether
+that key reached the rate. Signed work is of two kinds and they count
+alike:
+
+- a **bundle** — vectors on the collection's own records — counting its
+  chunk count × `space.ctx` tokens, the same upper bound the snapshot
+  uses per shard;
+- an **attestation** — a completed check, signed, naming its seed and
+  the shards it sampled (03 §3.6) — counting the tokens of the chunks it
+  re-embedded, and `work.tokens` for a deterministic check, which
+  reproduces a whole shard rather than a sample of it.
+
+Both are counted from what the peer holds and from what a live
+neighbour's digest reports accepted. If any single key reaches
+`work.tokens`, the collection is actively-held; if none does, it is
+dormant.
+
+Two kinds, one rule, because they are the same thing at different points
+in a collection's life. While there is embedding left to do, keeping a
+collection alive means embedding it. When there is none — Gutenberg is
+finished, seventy thousand books, a few hundred more a month — keeping
+it alive means continuing to check it, and a collection nobody checks
+any more is decaying whatever its coverage says. A rule that counted
+only bundles would call a finished collection dormant and a rotting one
+healthy; counting signed work of either kind calls both correctly, and
+adds no mechanism, since attestations already exist, already travel and
+already carry a key and a seed.
+
+Nothing counts that is not signed work: a peer's own use of a collection
+is not a signal, and is never published (§4.2). What a peer queries is
+its own business, and a count of queries would be free to forge, which
+is the one thing a vitality signal must not be.
+
+The default `per` is the update cadence, so a collection embedded or
+checked at the pace its snapshots arrive is active by construction, and
+one that nobody embeds or checks becomes dormant one period later.
 
 Dormant is a state, not a verdict. A dormant collection is still
 findable under its keys (§4.2), still fetchable, still searchable and

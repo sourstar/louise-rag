@@ -53,7 +53,13 @@ codex = {
     epoch: "0",
     evaluation: null | {...}         -- the creator's published score, if any (notes/embedder-choice-and-supersession.md)
   },
-  credits: ["upstash-wikipedia-2024-06"],             -- the embedding work this collection stands on (§2.7); derived, never written by hand
+  credits: [{                        -- the embedding work this collection stands on (§2.7); derived, never written by hand
+    archive: "upstash-wikipedia-2024-06",
+    producer: "Upstash",
+    license: "apache-2.0",
+    attribution: "<the line that licence requires, byte-exact>",
+    coverage: "all" | {ids_per_shard: 1000000, shards: 37}   -- which documents; decides their layer (06 §6.3)
+  }],
   work: {tokens: <int>, per: "P1M"},                  -- the work parameter (§2.4, 08 §8.5)
   modality: "text",                                   -- what the bytes are: encoder and reranker eligibility
   erasure: "append-only" | "retractable" | "erasable",
@@ -643,14 +649,36 @@ saved.
 
 Because `credits` is derived and not composed, it does not fork a
 collection the way a hand-written acknowledgement would: two creators
-who inherit the same vectors derive the same list in the same order —
-archive ids, sorted by bytes — and therefore the same `collection_id`.
-The archive's name, licence and required attribution text are not
-repeated here; the platform's registry holds them, and
-`toolchain.platform_image` pins which registry (06 §6.3). Peers who
-embedded shards themselves are not in `credits`: they are named in the
-coverage map, bundle by bundle (§2.5), which is where an unbounded and
-changing list belongs.
+who inherit the same vectors derive the same entries in the same order —
+sorted by archive id — and therefore the same `collection_id`.
+
+Each entry carries everything the collection depends on from that
+archive: who produced it, under which licence, the attribution that
+licence requires byte-exact, and the coverage — which documents the
+archive holds vectors for, either `"all"` when the corpus is itself the
+archive or the stride and count of its shards. All of it is hashed.
+
+That the licence and the attribution are hashed is the point of putting
+them here rather than leaving them to the platform's registry. A
+registry is code: a peer running a doctored build could show
+`apache-2.0` where the archive says CC BY-SA, or drop an attribution
+line the licence requires, and nothing in the collection would
+contradict it — the same failure the corpus licence already forecloses
+by hashing its terms into `license.terms_sha256` (04 §4.4). Inside the
+Codex the lie is not silent: different credits are a different
+`collection_id`, so a doctored build publishes a visibly different
+collection instead of the same one under false terms. The registry
+still holds these values, and `hold collection create` copies them from
+it; what the Codex adds is that nobody can change them afterwards.
+
+Coverage is here for the other reason, and both reasons point the same
+way: it decides which layer a document falls in, and therefore how it is
+chunked and what its vectors are (06 §6.3). Anything that changes a byte
+belongs in the recipe, not in a build the recipe merely names.
+
+Peers who embedded shards themselves are not in `credits`: they are
+named in the coverage map, bundle by bundle (§2.5), which is where an
+unbounded and changing list belongs.
 
 **Creating a sister is an acceptance.** `hold collection derive` never
 writes a Codex without first showing what the new collection would

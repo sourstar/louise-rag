@@ -279,11 +279,11 @@ layers: [{chunker: {id: "verbatim", version: 1, params: {}},     rule: "archive:
 ```
 
 A layer's **rule** is one of three forms: `default`, every document;
-`archive:<archive id>`, the documents a pre-embedded archive declares it
-covers — an archive is registered in the platform by id with the id
-ranges it covers, so the rule is computable from the record and the
-platform image alone; `field:<name>=<value>`, the documents whose record
-field (a top-level field, or `extra.<key>`) has that value. Rules are
+`archive:<archive id>`, the documents a pre-embedded archive covers —
+read from that archive's `coverage` in the Codex's `credits` (02 §2.7),
+so the rule is computable from the record and the Codex alone, and a
+platform build cannot move a document between layers;
+`field:<name>=<value>`, the documents whose record field (a top-level field, or `extra.<key>`) has that value. Rules are
 evaluated in list order and the first match wins; the last layer's rule
 is `default` and no other layer's is.
 
@@ -456,12 +456,13 @@ content; a resolver never returns a bare symbol.
    the coverage map says how much. Vectors computed on demand by a
    compliant encoder are bundled and shared like any other. A
    pre-embedded public archive is imported through the same ladder as a
-   peer's bundle, with the archive named as producer, and its id
-   recorded in the Codex's `credits` (02 §2.7). The platform's registry
-   is what an archive is registered in — its id, the id ranges it
-   covers (§6.3), its producer, the licence its vectors carry and the
-   attribution that licence requires — so an importer neither composes
-   the acknowledgement nor is free to omit it.
+   peer's bundle, with the archive named as producer and its entry
+   written into the Codex's `credits` (02 §2.7). The platform's registry
+   is where an archive is declared — its id, coverage, producer, the
+   licence its vectors carry and the attribution that licence requires —
+   and `hold collection create` copies that entry into the Codex, where
+   it is hashed. So an importer neither composes the acknowledgement nor
+   is free to omit it, and no later build can alter it.
 6. `hold check` runs the validation plan.
 7. `share` makes the result available and announces it; for a
    `privacy: public` collection it follows a completed fetch on its own

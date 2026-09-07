@@ -242,9 +242,12 @@ are observed, not declared, and carry no judgement by anyone.
 A signed block is what §3.5 and §4.5 call a **bundle** — one thing, two
 names, and §1's table lists both. The computable rule is §4.7: on a
 peer's catalogue a collection is actively-held while some key's signed
-bundles for it, seen by that peer, total at least `work.tokens` per
-`work.per`; otherwise it is dormant. Each peer computes the state from
-its own coverage map (§2.5) and shows it beside the trust level; a
+work for it, seen by that peer, totals at least `work.tokens` per
+`work.per`; otherwise it is dormant. Signed work is a bundle where there
+is embedding to do and an **attestation** where there is not, because a
+finished collection is kept alive by being checked, and one nobody
+checks any more is decaying however complete it looks. Each peer
+computes the state from its own coverage map (§2.5) and shows it beside the trust level; a
 dormant collection leaves the default listing and nothing else changes —
 it is still served, fetched and searched, and the next bundles that meet
 the rate make it active again. A collection with nothing left to embed
