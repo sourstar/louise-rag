@@ -62,6 +62,7 @@ codex = {
   credits: [{                        -- the embedding work this collection stands on (§2.7); derived, never written by hand
     archive: "upstash-wikipedia-2024-06",
     producer: "Upstash",
+    key: "ed25519:…",                -- the key its bundles are signed with; how an uncredited archive is refused (03 §3.5)
     license: "apache-2.0",
     attribution: "<the line that licence requires, byte-exact>",
     coverage: "all" | {ids_per_shard: 1000000, shards: 37}   -- which documents; decides their layer (06 §6.3)
@@ -711,10 +712,19 @@ who inherit the same vectors derive the same entries in the same order —
 sorted by archive id — and therefore the same `collection_id`.
 
 Each entry carries everything the collection depends on from that
-archive: who produced it, under which licence, the attribution that
-licence requires byte-exact, and the coverage — which documents the
-archive holds vectors for, either `"all"` when the corpus is itself the
-archive or the stride and count of its shards. All of it is hashed.
+archive: who produced it, the key its bundles are signed with, under
+which licence, the attribution that licence requires byte-exact, and the
+coverage — which documents the archive holds vectors for, either
+`"all"` when the corpus is itself the archive or the stride and count
+of its shards. All of it is hashed.
+
+The key is what makes the declaration enforceable rather than merely
+stated. An archive signs its bundles like any producer, so a peer
+importing one compares its `producer_pubkey` against the keys this
+collection credits, and refuses a registered archive's bundle that no
+entry names (03 §3.5). Without the key the entry would name a producer
+in prose and nothing could match a bundle to it — the rule would hold
+only for a creator who chose to obey it.
 
 That the licence and the attribution are hashed is the point of putting
 them here rather than leaving them to the platform's registry. A

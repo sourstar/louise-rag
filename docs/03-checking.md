@@ -226,6 +226,24 @@ re-issued since — with the refusal recorded, never counted as a
 failure. The `collection_id` and `snapshot_id` in the header are
 provenance: they say where the work was done, and gate nothing.
 
+One further refusal, and it is about attribution rather than
+correctness. A pre-embedded archive — NCBI's MedCPT release, Upstash's
+Wikipedia — signs its bundles like any producer, and a collection
+declares at creation which archives it draws on, in `credits` (02 §2.7).
+A bundle whose `producer_pubkey` is a registered archive's key is
+refused unless an entry in this collection's `credits` names that key:
+the Codex is immutable, so a collection cannot come to stand on work it
+never declared, and the acknowledgement cannot be dropped after the
+fact by whoever holds the copy.
+
+What that stops is a collection quietly built on an archive it does not
+credit. What it does not stop is a peer re-exporting someone else's
+vectors under its own key, which no check can distinguish from work it
+did — the vectors are correct either way, and 08 §8.4 is why the
+protocol does not try: judging whose work a correct vector was is
+judging merit. The refusal covers the honest path, which is the one a
+licence's attribution clause actually turns on.
+
 Those two bindings are exactly enough. A mother's vectors stay out of a
 corrective sister because a corrective sister's `space.epoch`, and so
 its `space_id`, is fresh by construction (§2.4) — the collection id was
