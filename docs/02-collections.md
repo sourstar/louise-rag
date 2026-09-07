@@ -573,8 +573,11 @@ fetchable before the acknowledgement of §4.4 is recorded are exactly
 
 A **member** is what a peer fetches or shares: one slice of one kind —
 `records-year=1975-1979`, `vectors-<space>-year=1975-1979`,
-`buckets-<space>-v2-g07` — plus the small ones, `calibration` and
-`centres`. Each member is a BitTorrent v2 torrent, grouped by one
+`buckets-<space>-v2-g07` — plus the whole-collection ones. The kinds
+are closed, and `--kinds` (07 §7.3) takes their names: `records`,
+`vectors`, `buckets`, `index`, `relations`, `bundle`, `centres`,
+`calibration`, `terms`, `seals` and `origin`; 09 §9.16 gives each its
+name and its files. Each member is a BitTorrent v2 torrent, grouped by one
 torrent collection per (collection, snapshot); a member's root is its v2
 piece-layer root (04 §4.3; 09 §9.16). "PubMed before 1980, records and
 vectors" is a list of members, and the snapshot says their sizes and
