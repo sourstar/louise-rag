@@ -536,7 +536,7 @@ which a peer computes, from what it has seen, whether that rate is being
 met.
 
 A collection is **actively-held** on a peer's catalogue while some key's
-signed bundles for it, seen by that peer, total at least `work.tokens`
+signed work for it, seen by that peer, totals at least `work.tokens`
 per `work.per`; otherwise it is **dormant**. Exactly: over the trailing
 period of length `work.per` (§4.5's seconds), the peer takes each key it
 has seen produce **signed work** for the collection and asks whether
@@ -551,8 +551,10 @@ alike:
   re-embedded, and `work.tokens` for a deterministic check, which
   reproduces a whole shard rather than a sample of it.
 
-Both are counted from what the peer holds and from what a live
-neighbour's digest reports accepted. If any single key reaches
+Both are counted from what the peer holds, and from what reaches it:
+bundles from a live neighbour's digest, which reports the coverage it
+has accepted, and attestations from the events that carry them and from
+`pull attestations` (§4.2; 09 §9.9). If any single key reaches
 `work.tokens`, the collection is actively-held; if none does, it is
 dormant.
 
