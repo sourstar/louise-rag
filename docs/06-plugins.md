@@ -291,8 +291,10 @@ is `default` and no other layer's is.
 
 A **chunk id** is `<uid>:<seq>:<chunker version>`, `seq` counting from 0
 over the document's chunks in section order; the chunker id is implied
-by the document's layer, which the record carries (`layer`, an index
-into the Codex's list). A chunk's hash is BLAKE2b-128 of its text. The
+by the document's layer, which is derived from the Codex's rules and
+the record's own fields — never stored in the record (02 §2.3), so
+there is one answer to which chunker cut a document and it is always
+the current one. A chunk's hash is BLAKE2b-128 of its text. The
 overlap that T1 measures (§3.5) holds by construction for `fixed`
 layers only; the band applies to those and is skipped for the others.
 

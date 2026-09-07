@@ -557,11 +557,15 @@ fails — which is 08 §8.4 again, the protocol not judging merit. A
 better collection earns its place by being chosen, never by declaring
 the other broken.
 
-**One consequence to decide.** A record carries `layer`, the index of
-the layer whose rule matched. It is derivable from the record and the
-Codex, so it need not be stored — but while it is stored, a sister that
-changes `layers` writes different record bytes, and a peer must
-re-fetch shards whose text it already holds. Dropping `layer` from the
-record line would make a layers-sister share shard bytes exactly, which
-is what the definition promises. That is a wire-format change, and
-CLAUDE.md says to ask first.
+**And the record lost a field.** `layer` was stored because, before the
+archive coverage moved into the Codex, the rule was not computable from
+record and Codex alone. It is now, so the field was a fossil — and a
+costly one: it made a layers-sister write different record bytes, so a
+peer re-fetched shards whose text it already held, which is the sister
+definition failing over one integer per record. It also fed the `chunks`
+check, which read the stored value to choose a chunker and then verified
+that chunker's output: a wrong layer was self-consistent and invisible
+locally, surfacing later as vectors that disagree and blamed on a
+producer. Dropped on the operator's decision, 2026-09-08; the layer is
+derived wherever it is needed, and `hold records show` prints it, which
+is where derived data belongs.

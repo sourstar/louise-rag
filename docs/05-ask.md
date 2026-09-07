@@ -166,7 +166,7 @@ The fields, with their values:
 | `snapshot_id` | the snapshot the record was read from |
 | `uid` | the record — `<plugin>:<native_id>`; the record's identity everywhere a result travels; a native id is display only |
 | `chunk_id` | the record's best chunk (§5.1) |
-| `layer` | the layer that cut the chunk |
+| `layer` | the layer that cut the chunk, derived from the Codex (02 §2.3) |
 | `rank` | the record's position in the list as presented |
 | `legs` | `{text, vector}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
 | `trust_level` | `unverified` · `checked` · `verified` · `flagged` (§3.6) |

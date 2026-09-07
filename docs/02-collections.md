@@ -303,7 +303,7 @@ with the id of the last snapshot that listed it and kept, so an old
 snapshot can still be served and checked (01, promise 7).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
-`creators`, `date`, `subjects`, `keys`, `sections`, `extra`, `layer`,
+`creators`, `date`, `subjects`, `keys`, `sections`, `extra`,
 `origin`, `content_hash`, `origin_hash`, in that order, compact, UTF-8,
 `\n`-terminated; 09 §9.5 fixes the bytes and the shard's frame layout.
 `uid` is `<plugin>:<native_id>`; `native_id` is a string, unique within
@@ -312,8 +312,23 @@ never parses except under `slicing.order: numeric`. `sections` — pairs
 of heading and text, in order — are the cleaned text: cleaning sits
 between the parser and the record, so what the record holds is exactly
 what the chunker sees, and `cleaning_version` names the cleaner that
-produced it (06 §6.3). `layer` is the index of the layer the document
-falls in (§2.4).
+produced it (06 §6.3).
+
+**A record carries nothing that can be computed from it.** The layer a
+document falls in is not stored: the Codex's rules decide it from the
+record's own fields (06 §6.3), so storing it would put a second answer
+beside the first with nothing to say which is right. Two consequences
+follow, and both are why the rule is worth keeping. A sister that
+changes only `layers` writes shards byte-identical to her mother's, so
+the corpus she inherits needs no re-fetch — which is what §2.7 promises
+and would otherwise quietly fail over one integer per record. And the
+`chunks` check must derive the layer to know which chunker to run,
+instead of trusting a stored value and confirming whatever that value
+selected; a wrong layer is caught rather than reproduced.
+
+`hold records show` prints the layer it computes (07 §7.3), so a reader
+inspecting one record still sees it — from the tool, which knows the
+Codex, rather than from bytes that cannot.
 
 Every record carries two hashes. `content_hash` is BLAKE2b-128 of
 `canonical-json([title, [[heading, text], …]])` — the cleaned text and
@@ -639,8 +654,10 @@ So a sister may change only what no record depends on: `space`,
 refuses a sister that differs in nothing.
 
 The test is the records, not the declaration: a sister's `records_root`
-equals her mother's at every snapshot they share (§2.2). That is
-checkable by anyone holding both Codexes, which a declaration is not.
+equals her mother's at every snapshot they share (§2.2), and her shards
+are byte-identical, because nothing a sister may change is written into
+a record — the layer is derived, not stored (§2.3). That is checkable
+by anyone holding both Codexes, which a declaration is not.
 
 Whether the vectors are shared follows from one comparison and nothing
 else: **a sister whose `space_id` equals its mother's shares the

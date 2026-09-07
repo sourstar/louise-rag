@@ -73,7 +73,7 @@ louise hold
   records     fetch <collection> [--slice …] [--snapshot ID]           run the acquisition spec to the cutoff, for these slices
               build <collection> [--snapshot ID]                       parse, slice, shard, hash
               check <collection> [--origin] [--seal] [--sample F]      records against roots, origin, seal
-              show <collection> (<record-id> | --shard <slice>/<n>) [--raw]
+              show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole shard as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
               delta <collection> <from> <to>                           what changed between two snapshots

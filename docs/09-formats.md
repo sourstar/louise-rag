@@ -559,7 +559,6 @@ point.
 | `keys` | list of strings | yes | canonical ids `<namespace>:<id>` the document is about (06 §6.5); sorted by bytes |
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
 | `extra` | object | yes | plugin-defined, fixed keys; `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
-| `layer` | integer | yes | index into the Codex's `layers` of the layer whose rule matched |
 | `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL, and where the document is a member of a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
 | `content_hash` | BLAKE2b-128 | yes | below |
 | `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of this document's own origin bytes, the ones `origin` locates — one record, one hash, whatever the origin ships them in (02 §2.3); a record without one is refused at build |
@@ -626,13 +625,13 @@ the compressor and its level, honest peers agree on `root` as well.
 **Worked example.** Two lines. A Gutenberg record (green, text travels):
 
 ```
-{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"downloads":61432},"layer":0,"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
+{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"downloads":61432},"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
 ```
 
 A PubMed pointer record (red, text stays where it was fetched):
 
 ```
-{"uid":"pubmed:38112034","native_id":"38112034","lang":"en","title":"","creators":["Rossi M","Bianchi L"],"date":"2023-12-19","subjects":["Humans","Neoplasms/genetics"],"keys":["pmid:38112034"],"sections":[],"extra":{"origin_url":"https://pubmed.ncbi.nlm.nih.gov/38112034/","revised":"2024-01-08"},"layer":0,"origin":"updatefiles/pubmed24n1220.xml.gz#5117","content_hash":"a3f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4","origin_hash":"5e21f0a9b8c7d6e5f4a3b2c1d0e9f8a7"}
+{"uid":"pubmed:38112034","native_id":"38112034","lang":"en","title":"","creators":["Rossi M","Bianchi L"],"date":"2023-12-19","subjects":["Humans","Neoplasms/genetics"],"keys":["pmid:38112034"],"sections":[],"extra":{"origin_url":"https://pubmed.ncbi.nlm.nih.gov/38112034/","revised":"2024-01-08"},"origin":"updatefiles/pubmed24n1220.xml.gz#5117","content_hash":"a3f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4","origin_hash":"5e21f0a9b8c7d6e5f4a3b2c1d0e9f8a7"}
 ```
 
 The pointer record's `title` is empty because a title is text; the full
@@ -1375,8 +1374,10 @@ saves it only after the manifest commits.
 `CanonicalDoc`: the fields of 06 §6.1, in the record's order — `uid`,
 `title`, `creators`, `language`, `date`, `subjects`, `keys`, `extra`,
 `sections`, `origin_hash`; the platform adds `lang` (from `language`),
-`layer`, `origin` (from the `DocRef`) and `content_hash` when it writes
-the record (§9.5).
+`origin` (from the `DocRef`) and `content_hash` when it writes the
+record (§9.5). It adds no layer: which layer a document falls in is
+derived from the Codex's rules whenever it is needed, never stored
+(02 §2.3).
 
 The error contract's exceptions are `Deferred` and `Unavailable`
 (06 §6.1); `protocol_version` is `1`.
