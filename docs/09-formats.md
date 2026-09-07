@@ -277,9 +277,10 @@ The relations are exclusive in this way: a daughter has `continues` and
 `--space-from`, `space_from`; a corrective sister has `derived_from` and
 `replaces`; a root has none of them. Any other combination is refused.
 A daughter's `credits` equal her mother's, since she inherits the
-vectors; a sister's equal her mother's when she accepted the
-inheritance and are `[]` when she declined; a corrective sister's are
-`[]`, since it starts from zero (02 §2.7).
+vectors; a sister's equal her mother's when her `space_id` matches her
+mother's and are her own recipe's when it does not, there being no
+third case; a corrective sister's are `[]`, since it starts from zero
+(02 §2.7).
 
 **The origin block.**
 

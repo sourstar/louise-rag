@@ -735,14 +735,25 @@ Peers who embedded shards themselves are not in `credits`: they are
 named in the coverage map, bundle by bundle (§2.5), which is where an
 unbounded and changing list belongs.
 
-**Creating a sister is an acceptance.** `hold collection derive` never
-writes a Codex without first showing what the new collection would
-inherit and what it would give up: whether `space_id` matches, so
-whether the mother's vectors carry over; how many chunks are already
-covered and how many would have to be embedded from zero; and the
-`credits` that come with them, listed in full. The creator accepts, or
-declines the inheritance and proceeds with an empty space and no
-credits. Both are ordinary outcomes.
+**Credits follow the space, and are not a choice.** A sister's
+`credits` are her mother's when `space_id` matches, and are whatever her
+own recipe declares when it does not. There is nothing to decline in
+between, because the space decides it: in a matching space the archive's
+bundles are admissible to her whether she wanted them or not (03 §3.5),
+so any peer will merge them and the work is hers to acknowledge; in a
+different space they are inadmissible, so she starts from zero and owes
+nothing. A creator who does not want an archive's vectors changes the
+space; declining the credit while keeping the space would be a claim no
+peer could honour. `credits` is therefore not among the fields a sister
+may set independently — it is determined by the ones she may.
+
+**Creating a sister is still an acceptance**, of the space and of what
+follows from it. `hold collection derive` never writes a Codex without
+first showing what the new collection would inherit and what it would
+give up: whether `space_id` matches, so whether the mother's vectors
+carry over; how many chunks are already covered and how many would have
+to be embedded from zero; and the `credits` that come with them, listed
+in full. The creator accepts, or goes back and changes the space.
 
 The form is shown even when there is nothing to inherit, and then it
 decides nothing — it says that this Codex breaks with every vector that
