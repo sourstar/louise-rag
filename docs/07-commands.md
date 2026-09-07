@@ -55,8 +55,10 @@ one.
 ```
 louise hold
   collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
-              derive <codex> [--space-from CODEX | --encoder-image D --encoder-weights D] [--layers FILE] [--cleaning-version N] [--update FILE]
-                                                                       a sister: same corpus, new space or new schedule; refuses one that differs in nothing
+              derive <codex> [--space-from CODEX | --encoder-image D --encoder-weights D] [--layers FILE] [--cleaning-version N] [--update FILE] (--accept | --no-inherit)
+                                                                       a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
+                                                                       Prints what would be inherited — vectors, coverage, credits — and waits: --accept takes it,
+                                                                       --no-inherit starts from zero (02 §2.7); neither, with no terminal, is exit 2
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
               replace <codex> --defect FILE [--platform-image D] [--encoder-image D --encoder-weights D]

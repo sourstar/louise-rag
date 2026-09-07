@@ -456,7 +456,12 @@ content; a resolver never returns a bare symbol.
    the coverage map says how much. Vectors computed on demand by a
    compliant encoder are bundled and shared like any other. A
    pre-embedded public archive is imported through the same ladder as a
-   peer's bundle, with the archive named as producer.
+   peer's bundle, with the archive named as producer, and its id
+   recorded in the Codex's `credits` (02 §2.7). The platform's registry
+   is what an archive is registered in — its id, the id ranges it
+   covers (§6.3), its producer, the licence its vectors carry and the
+   attribution that licence requires — so an importer neither composes
+   the acknowledgement nor is free to omit it.
 6. `hold check` runs the validation plan.
 7. `share` makes the result available and announces it; for a
    `privacy: public` collection it follows a completed fetch on its own

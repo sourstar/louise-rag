@@ -53,6 +53,7 @@ codex = {
     epoch: "0",
     evaluation: null | {...}         -- the creator's published score, if any (notes/embedder-choice-and-supersession.md)
   },
+  credits: ["upstash-wikipedia-2024-06"],             -- the embedding work this collection stands on (§2.7); derived, never written by hand
   work: {tokens: <int>, per: "P1M"},                  -- the work parameter (§2.4, 08 §8.5)
   modality: "text",                                   -- what the bytes are: encoder and reranker eligibility
   erasure: "append-only" | "retractable" | "erasable",
@@ -116,8 +117,10 @@ the peer is in it, no credential and no local path (06 §6.2).
 and `protocol_version` are what those images contain, written out.
 `layers` and `slicing` say how documents are cut and how records are
 divided into members (§2.3, §2.4, 06 §6.3). `space` is the function that
-turns text into vectors, and the contract around it (§2.4). `work` is
-the work parameter (§2.4). `modality` says what the bytes are, so that
+turns text into vectors, and the contract around it (§2.4). `credits`
+names the pre-embedded archives whose vectors this collection carries,
+and is derived rather than chosen (§2.7). `work` is the work parameter
+(§2.4). `modality` says what the bytes are, so that
 an encoder or a reranker of the wrong kind — a language model over the
 reference genomes — is refused rather than merely worse. `erasure` says
 how content may leave: `append-only` (the Gazzetta Ufficiale: nothing
@@ -544,6 +547,18 @@ makes a new Codex. Three kinds of change, three relations:
 | space | the same; vectors inherited | new when the `space` block, `layers` or `cleaning_version` change, and then vectors from zero; the mother's when only `update` changes, and then vectors shared | new by construction; from zero |
 | Codex field | `continues`, `continues_through` | `derived_from` | `derived_from` + `replaces: {codex, defect}` |
 
+These three words, and no others, say how two collections are related.
+The collection a related Codex comes from is its **mother**; a
+collection created from a source has none, because a source is a corpus
+provider and not a relative — it stands at the root of its own lineage,
+which is where most collections stand.
+
+The vocabulary is Louise's own and stops at its edge. A merkle tree has
+parent nodes and children (09 §9.5), a process pool has children, a
+directory has a parent: those are the canonical words for those things
+and they keep them. Naming what is ours should cost a reader none of
+the words they already know.
+
 A **daughter** continues the collection. The transition is a snapshot
 boundary, and the two fields that fix it read as one sentence:
 `continues` names the mother's Codex, `continues_through` the last
@@ -615,6 +630,46 @@ holds every shard the monthly holds, and more snapshots naming them.
 encoder image must match too or `derive` refuses — so two collections
 meant to be searched together land in one space by construction rather
 than by hoping their settings match.
+
+**Credits travel with the vectors, and cannot be separated from them.**
+Where a collection's vectors come from a pre-embedded archive — NCBI's
+MedCPT release, Upstash's Wikipedia — the Codex names that archive in
+`credits`, and a collection that inherits those vectors inherits the
+entry with them. It is not the creator's to write, edit or drop: the
+vectors are the archive's work, and a recipe that carries the work
+carries the acknowledgement. Refusing the credit means refusing the
+vectors, which is allowed and costs the GPU-days the archive would have
+saved.
+
+Because `credits` is derived and not composed, it does not fork a
+collection the way a hand-written acknowledgement would: two creators
+who inherit the same vectors derive the same list in the same order —
+archive ids, sorted by bytes — and therefore the same `collection_id`.
+The archive's name, licence and required attribution text are not
+repeated here; the platform's registry holds them, and
+`toolchain.platform_image` pins which registry (06 §6.3). Peers who
+embedded shards themselves are not in `credits`: they are named in the
+coverage map, bundle by bundle (§2.5), which is where an unbounded and
+changing list belongs.
+
+**Creating a sister is an acceptance.** `hold collection derive` never
+writes a Codex without first showing what the new collection would
+inherit and what it would give up: whether `space_id` matches, so
+whether the mother's vectors carry over; how many chunks are already
+covered and how many would have to be embedded from zero; and the
+`credits` that come with them, listed in full. The creator accepts, or
+declines the inheritance and proceeds with an empty space and no
+credits. Both are ordinary outcomes.
+
+The form is shown even when there is nothing to inherit, and then it
+decides nothing — it says that this Codex breaks with every vector that
+exists, and how much work that discards. That is the case worth
+stopping for: a sister is one changed field away from a collection whose
+two hundred GPU-days do not carry, and the difference between
+deliberate and accidental is whether anyone was told. A daughter is not
+asked, because she has no choice: her space is her mother's by
+construction, so the vectors and the credits copy with her. A corrective
+sister starts from zero by definition and inherits neither.
 
 A **corrective sister** replaces a collection with a defect. It starts
 from zero — records and vectors both — even when the defect touched a

@@ -268,12 +268,17 @@ number written as a decimal string is marked *decimal*.
 | `derived_from` | id or null | yes | sister and corrective sister: the mother's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space`, `layers` and `cleaning_version` were copied byte for byte |
 | `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
+| `credits` | list of strings | yes | the ids of the pre-embedded archives whose vectors this collection carries, sorted by bytes, `[]` when none. Derived at creation from what is inherited, never composed by hand (02 §2.7); the platform's registry, pinned by `toolchain.platform_image`, holds each archive's producer, licence and attribution text |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
 
 The relations are exclusive in this way: a daughter has `continues` and
 `continues_through`; a sister has `derived_from` and, when it was made with
 `--space-from`, `space_from`; a corrective sister has `derived_from` and
 `replaces`; a root has none of them. Any other combination is refused.
+A daughter's `credits` equal her mother's, since she inherits the
+vectors; a sister's equal her mother's when she accepted the
+inheritance and are `[]` when she declined; a corrective sister's are
+`[]`, since it starts from zero (02 §2.7).
 
 **The origin block.**
 

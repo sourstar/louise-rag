@@ -143,7 +143,8 @@ Ordered by how much depends on the answer.
    not go dormant for lack of new books. The alternative is that
    `work.tokens` is set against the expected delta rather than measured
    throughput. Which did you mean?
-2. **The PubMed origin unit.** `origin_hash` is the hash of the origin
+2. **The PubMed origin unit** — the credits half is SETTLED (§10 below); the unit question stands.
+   **The PubMed origin unit.** `origin_hash` is the hash of the origin
    unit, and for PubMed that is one baseline container — so ~30,000
    records share one hash and `records-vs-origin` re-fetches 16 MB to
    check one record. The alternative is a per-record extracted unit,
@@ -284,7 +285,9 @@ local override for the operator's own shelf, never published.
 ## 9. Addendum — one kinship vocabulary (operator, 2026-09-07)
 
 *Mother*, *daughter*, *sister* — and no other word for how two
-collections are related. `parent` is gone from the specification, in
+collections are related. The rule is scoped to Louise's own entities:
+everything else keeps its canonical vocabulary, so that naming the
+standard's parts never costs a reader the words they already know. `parent` is gone from the specification, in
 prose and in field names: `toolchain.parent_platform_image` is
 `mother_platform_image`, and a snapshot shard's `toolchain` is `"own"`
 or `"mother"`. 01's vocabulary says it outright, so the rule is
@@ -312,3 +315,55 @@ have found: 02 §2.2 wrote a shard's producer as `toolchain: "own" |
 "parent"` while 09 §9.4 wrote it `"self" · "parent"`. Two spellings of
 one enum, in the two documents that must agree byte for byte. Now
 `"own"` and `"mother"` in both.
+
+## 10. Addendum — credits are inherited, not extended (operator, 2026-09-07)
+
+The open half of question 2. My proposal was `descriptive.credits`: free
+prose, outside the identity, so that differing wording could not fork a
+collection. The operator's rule is better and inverts the framing.
+
+**Credits are not a courtesy the creator extends. They are a consequence
+of taking the work.** Where a collection's vectors come from a
+pre-embedded archive, the Codex names it in `credits`, and a collection
+inheriting those vectors inherits the entry with them — not the
+creator's to write, edit or drop. Refusing the credit means refusing the
+vectors, which is allowed and costs the GPU-days the archive would have
+saved.
+
+That removes the fork risk my version was avoiding, and removes it
+better: `credits` is **derived, not composed**. Two creators inheriting
+the same vectors derive the same list — archive ids, sorted by bytes —
+so it can sit inside the identity where it belongs, hashed like every
+other field. Prose never enters it; the platform's registry holds each
+archive's producer, licence and required attribution, and
+`toolchain.platform_image` pins which registry.
+
+Peer contributors stay out of `credits` deliberately. They are unbounded
+and change with every accepted bundle, and the coverage map already
+names them bundle by bundle (02 §2.5) — a per-peer, non-content-addressed
+structure is exactly where a changing list belongs, and the Codex is
+exactly where it does not.
+
+**Creating a sister is an acceptance.** `hold collection derive` shows
+what the new collection would inherit and what it would discard —
+whether `space_id` matches, how many chunks are already covered, and the
+credits that come with them — before writing anything. The creator
+accepts, or declines and proceeds from zero with no credits.
+
+The form is shown even when there is nothing to inherit, and that case
+is the one worth stopping for: a sister is one changed field away from a
+collection whose two hundred GPU-days do not carry, and the difference
+between deliberate and accidental is whether anyone was told. A daughter
+is not asked — her space is her mother's by construction, so vectors and
+credits copy with her. A corrective sister starts from zero and inherits
+neither.
+
+**Vocabulary, corrected twice.** The first draft of §9's rule read "the
+collection a new Codex comes from is its mother", which asserts a
+relative for every collection — but a collection created from a source
+has none: a source is a corpus provider, not a relative, and most
+collections stand at the root of their own lineage. And the rule is
+scoped to Louise's own entities: a merkle tree keeps its parent nodes
+and children, a process pool keeps its children, a directory keeps its
+parent. Naming what is ours should cost a reader none of the words they
+already know.
