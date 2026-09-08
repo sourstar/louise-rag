@@ -1,5 +1,34 @@
 """Bundle wire format: header schema, strict parsing, signed byte layout.
 
+*** SUPERSEDED BY app/hold/bundle.py, WHICH IS docs/09-formats.md §9.7. ***
+
+This module predates the specification and describes itself from
+`architecture-v2.md` §5 — the engineering record, not the contract. It is
+kept only until `hold vectors` replaces its callers (migration step 4);
+nothing new should be built on it, and its bytes are NOT §9.7's:
+
+  * the header is missing `snapshot_id`, `shard`, `encoder_image`,
+    `encoder_weights` and a non-null `challenge`, and carries
+    `backend_fingerprint`, which appears in no specification. §9.7's schema
+    is closed in both directions, so each of those is an error either way.
+  * `space_id`, `content_digest` and `producer_pubkey` are bare hex where
+    §9.1/§9.2 fix prefixed textual forms, and `collection` carries the local
+    NAME where §9.7 says the collection id.
+  * `challenge` is forced to null in both directions, so this parser refuses
+    every conformant bundle by construction.
+  * `possession.json` maps uid to `raw_hash` — the ORIGIN bytes' hash, which
+    §9.5 calls `origin_hash` — where §9.7 requires the record's
+    `content_hash`. Both are 32 hex characters, so the two are
+    indistinguishable on the wire and every cross-import refuses every
+    record silently.
+  * the parquet carries a third `seq` column; §9.7 has two columns and parses
+    `seq` out of the chunk id.
+
+The version does NOT move to 2: §9.7's table types `version` as the literal
+1, so §9.7's shape IS version 1. There is no installed base to protect —
+Phase 1's bundles are "built, never exercised" — so bundles this module
+wrote are refused rather than migrated. (Operator decision, 2026-09-08.)
+
 *** THE PRIMARY FILE FLAGGED FOR PERSONAL SECURITY REVIEW. ***
 *** A subtle bug here is a security hole, not a crash. ***
 
