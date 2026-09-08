@@ -456,8 +456,9 @@ when the bundle it names has been fetched and passed T0–T3. A bundle's
 id is the hash of its signed bytes (09 §9.7); a producer that restarts
 and re-emits the same bundle produces the same id, and an importer that
 holds that id ignores it. Admission is 03 §3.5's ladder and the
-producer's calibration, nothing else; a key is refused only after a
-proof of forgery (03 §3.5).
+producer's calibration, nothing else; a key is refused only after this
+peer has denied it outright or a proof of forgery has burned it
+(03 §3.5, 09 §9.2), never for being absent from an allow list.
 
 **Duplicates are checks.** With inconsistent views of who is alive,
 two peers will sometimes embed the same shard. A peer that receives a

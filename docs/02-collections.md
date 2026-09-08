@@ -581,7 +581,11 @@ the platform that would read it; otherwise it rebuilds, which is always
 possible and is not a check. Green collections have no `LICENSE-TERMS`
 (`license.terms_sha256: null`); for every other class the members
 fetchable before the acknowledgement of §4.4 is recorded are exactly
-`codex.json`, `validation.json`, `snapshots/*` and `LICENSE-TERMS`.
+`codex.json`, `snapshots/*` and `LICENSE-TERMS` (04 §4.4, 07 §7.3,
+09 §9.13). `validation.json` is a member like any other and waits for
+the ack with them: it is the Codex's `validation` block written out, so
+a peer that has `codex.json` already holds every byte of it and fetching
+it early would buy nothing but a fourth thing to keep consistent.
 
 A **member** is what a peer fetches or shares: one slice of one kind —
 `records-year=1975-1979`, `vectors-<space>-year=1975-1979`,
@@ -765,16 +769,29 @@ named in the coverage map, bundle by bundle (§2.5), which is where an
 unbounded and changing list belongs.
 
 **Credits follow the space, and are not a choice.** A sister's
-`credits` are her mother's when `space_id` matches, and are whatever her
-own recipe declares when it does not. There is nothing to decline in
-between, because the space decides it: in a matching space the archive's
-bundles are admissible to her whether she wanted them or not (03 §3.5),
-so any peer will merge them and the work is hers to acknowledge; in a
-different space they are inadmissible, so she starts from zero and owes
-nothing. A creator who does not want an archive's vectors changes the
-space; declining the credit while keeping the space would be a claim no
-peer could honour. `credits` is therefore not among the fields a sister
-may set independently — it is determined by the ones she may.
+`credits` are her mother's when `space_id` matches. There is nothing to
+decline in between, because the space decides it: in a matching space
+the archive's bundles are admissible to her whether she wanted them or
+not (03 §3.5), so any peer will merge them and the work is hers to
+acknowledge; in a different space they are inadmissible, and not one of
+her mother's credits carries. A creator who does not want an archive's
+vectors changes the space; declining the credit while keeping the space
+would be a claim no peer could honour.
+
+When the space differs, the same rule decides it one step further out:
+her credits are the credits of the space she lands in. `derive
+--space-from CODEX` gives her that Codex's `space_id`, so that Codex's
+archives are admissible to her and its `credits` are hers, copied
+entire. A sister who names an encoder instead lands in a space no
+archive of her mother's covers, so hers are the archives she declares —
+`derive --archives ID …`, expanded from the platform's registry exactly
+as `create` does (07 §7.3) — and `[]` when she declares none, which is
+the ordinary case and leaves her embedding from zero. She must declare
+them at creation or not at all: `credits` is hashed into her
+`collection_id`, and 06 §6.6 refuses an archive import that is not
+already credited. So `credits` is never a field a sister sets beside the
+others — it is determined by the space, and `--archives` reaches it only
+where the space is new.
 
 **Creating a sister is still an acceptance**, of the space and of what
 follows from it. `hold collection derive` never writes a Codex without

@@ -188,7 +188,7 @@ local, never signed, never sent:
 |---|---|---|---|
 | `kind` | `"louise-trust"` | yes | |
 | `version` | `1` | yes | |
-| `allow` | list of keys | yes | keys whose attestations are counted when the list is used as an allow filter; empty means every key is counted |
+| `allow` | list of keys | yes | keys whose attestations are counted when the list is used as an allow filter; empty means every key is counted. It is also what `hold vectors import --strict` consults locally (07 §7.3), the one place the allow side touches a bundle; a bundle's admission is otherwise 03 §3.5's ladder |
 | `deny` | list of keys | yes | keys whose attestations, digests and bundles are ignored |
 | `quarantined` | list of `{key, attestation, time}` | yes | keys burned on this peer by a proof of forgery (03 §3.5): `attestation` is the id of the `forgery` attestation; the entry is removed only by `hold key trust <key> --restore` |
 
@@ -344,9 +344,11 @@ space_id = H( canonical JSON of
 
 Not `tolerance`, not `calibration`, not `envelope`, not `evaluation`,
 not `work`: those are the contract around the function, not the
-function. `space_from` copies `space`, `layers` and `cleaning_version`
-byte for byte, and `derive` refuses when the resulting `space_id`
-differs from the source's. The `<space>` path segment is the first 16
+function. `space_from` copies `space` and `layers` byte for byte and
+never `cleaning_version`, which stays the mother's (07 §7.3); `derive`
+refuses when the named Codex's `cleaning_version` differs from hers, and
+refuses in any case when the resulting `space_id` differs from the
+source's. The `<space>` path segment is the first 16
 hexadecimal digits of the digest.
 
 **The validation block.**

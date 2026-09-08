@@ -45,7 +45,11 @@ collection (§2.7); `certify` signs a snapshot as a certifier; `ack`
 records the acknowledgement of a licence (§4.4); `forget` stops holding;
 `apply` makes the configuration files the running state (§7.8); `trust`
 and `anchor` manage keys; `benchmark` and `calibrate` measure an
-encoder; `lookup` and `traverse` are the two non-search tools of §5.4;
+encoder; `search`, `facets`, `lookup` and `traverse` are the four things `ask`
+does — the three tools of §5.4 plus the listing of 05 §5.7 — and
+`chat` and `serve` expose them to a model and over MCP; `contribute`
+and `attest` are `share`'s two wrappers of `hold vectors build` and
+`hold check`; `peers` is the one noun `share` has that `hold` has not;
 `start`, `stop`, `pause` and `resume` belong to `node` alone. A new verb
 that does not fit one of these rows is probably a flag on an existing
 one.
@@ -55,7 +59,7 @@ one.
 ```
 louise hold
   collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
-              derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] --accept
+              derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
@@ -73,7 +77,7 @@ louise hold
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
                                                                        run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
               build <collection> [--snapshot ID]                       parse, slice, shard, hash
-              check <collection> [--origin] [--seal] [--sample F]      records against roots, origin, seal
+              check <collection> [--origin] [--seal] [--sample F]      records against their own hashes and roots, against the origin, against the seal
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole shard as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
@@ -107,11 +111,11 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE] [--<facet> VALUE | --not-<facet> VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE] [--freshness] [--translate] [--<facet> VALUE | --not-<facet> VALUE …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); a facet flag restricts the legs and never ranks (§5.2, §5.7)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
-  lookup <id> [--as-of DATE]                                           a fact by key, from a reference source
+  lookup <id>                                                          a fact by key, from a reference source
   traverse <id> [--relation T] [--depth N]                             the records reached along declared relations (§5.5)
   chat                                                                 the model with the three tools of §5.4
   serve                                                                expose search, lookup and traversal as MCP tools
@@ -131,7 +135,7 @@ louise dev                                                             operator 
                                                                        The recipe carries, per space in the pack, what the pack cannot supply — the encoder image and
                                                                        weights, tolerance, work, validation, descriptive — and the calibration set is embedded per space
                                                                        as `create` does; the first space named is the root, the others `derived_from` it
-  adopt <origin> <drag>                                                the one-time move of vectors and index into a drag twin; writes
+  adopt <pack-dir> <collection>                                        the one-time move of a pre-Codex pack's vectors and index into the collection's drag; writes
   refs-sync            reference tables from their origins; writes
 ```
 
@@ -156,8 +160,22 @@ reader needs at the command line:
 - **`derive`, `continue`, `replace`.** The flags are the fields the
   relation may change and nothing else (02 §2.7); `derive` refuses a
   change outside the sister's set. `--space-from` copies the named
-  Codex's `space`, `layers` and `cleaning_version` byte for byte. The
-  defect file is the `replaces.defect` object of 03 §3.6.
+  Codex's `space` block and `layers` byte for byte, and `cleaning_version`
+  is never among them: a sister keeps her mother's, since changing it
+  would re-derive the corpus she is defined to inherit. `derive` instead
+  REFUSES, naming both values, when the named Codex's `cleaning_version`
+  differs from the mother's — the resulting `space_id` could not then
+  equal the source's, and landing in the source's space is the whole of
+  what the flag promises. `create --space-from` refuses the same
+  mismatch against the plugin's `cleaning_version` (06 §6.3), for the
+  same reason and with the same message: the flag exists so that two
+  collections land in one space by construction (02 §2.7), and it never
+  copies a cleaner version the plugin could not run. `--archives` names
+  the pre-embedded archives a sister in a NEW space draws on, expanded
+  into `credits` from the platform's registry as `create` does; it is
+  refused when `space_id` matches the mother's, and when `--space-from`
+  supplied the space, both of which bring their own credits (02 §2.7).
+  The defect file is the `replaces.defect` object of 03 §3.6.
 - **`ack`.** Prints `LICENSE-TERMS` from the copy (04 §4.4; 09 §9.13)
   and, on a terminal, waits for consent; `--yes` records without asking.
   The acknowledgement is written to the collection's state directory
@@ -212,8 +230,11 @@ reader needs at the command line:
   refused and the refusal recorded — the record was re-issued since —
   and the import exits 0, never a failure. An archive import records the archive id as
   producer; `--retry` puts the archive's rejected shards back in line.
-  `--strict` refuses a bundle whose producer is not on the trust list
-  and never admits below T3.
+  `--strict` refuses a bundle whose producer is not on this peer's
+  allow list and never admits below T3. It is a local choice and the
+  only place the allow side decides a bundle (03 §3.5); with an empty
+  allow list — the newcomer's (08 §8.1) — it admits nothing at all,
+  which is why it is off by default.
 - **`vectors check`.** Is `hold check --checks vectors-sample` over this
   peer's own vectors; `--drop` turns a failing row into an empty one
   (02 §2.4) so the coverage map stops claiming it.
@@ -226,8 +247,11 @@ reader needs at the command line:
   the first two yield an attestation (09 §9.8), signed when this peer
   has a key and stored in the collection's state directory; without a
   key the report counts on this peer alone. `records check` is `hold
-  check --checks roots[,records-vs-origin][,origin-seal]` and nothing
-  else. `--sample F` raises the plan's sample for this run and cannot
+  check --checks roots,records[,records-vs-origin][,origin-seal]` and
+  nothing else — `records` (03 §3.2) is the only local check that proves
+  what is inside a shard rather than that the file matches the snapshot,
+  and leaving it out made `--sample F` on this command affect nothing
+  unless `--origin` was given. `--sample F` raises the plan's sample for this run and cannot
   lower it; the attestation records the sample actually taken.
 - **`key`.** `create` writes a new seed at `NODE_KEY_PATH` in the form
   of 09 §9.2, refuses to overwrite one, and prints the public key; a key
@@ -431,11 +455,22 @@ Ambiguity is exit 2, naming the candidates. A title or a plugin name
 never resolves (08 §8.2). `<codex>` in `derive`, `continue` and
 `replace` resolves by the first three only: those commands name one
 Codex, and a lineage is not one. `<snapshot>` and `ID` after
-`--snapshot` are snapshot ids, `2026-08`. `<record-id>` is a uid,
+`--snapshot` are snapshot ids, `2026-08`. `DATE` after `--as-of` is
+`YYYY-MM-DD` and nothing shorter or longer (exit 2, since `2019` and
+`2019-03` would each name a different instant to two implementers); it
+is read as `00:00:00` of that day in the collection's `origin.clock`,
+and the search takes, per collection, the newest snapshot of the chain
+whose cutoff is at or before it (05 §5.1) — a date after every cutoff
+therefore names the chain's newest snapshot, and one before every cutoff
+names none, which the response reports for that collection rather than
+answering from a later one. `<record-id>` is a uid,
 `<plugin>:<native_id>` (02 §2.3). `<key>` is `ed25519:` and 64 hex
 characters (09 §9.2). `--shard` takes `<slice>/<n>` —
 `year=1975-1979/00003` — because shard numbers restart per slice.
-`--slice` takes slice values as they appear in the drag's paths. A
+`--slice` takes slice values as they appear in the drag's paths.
+`<pack-dir>` is a filesystem path to a pre-Codex pack (§7.6); it is the
+one argument in the tree that is a path and not a name, which is why it
+says so. A
 facet flag is named for its field — `--subjects`, `--creators`,
 `--not-subjects` — and is accepted only for a field the collection's
 Codex declares (02 §2.1); any other is exit 2, listing the fields that

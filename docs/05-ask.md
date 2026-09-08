@@ -140,7 +140,9 @@ using its chat model, and runs the text leg once per variant; the
 record's rank in the leg is its best rank across the variants. A
 variant is a query, not a leg: a collection indexed in five languages
 casts no more votes than one indexed in one. The response lists the
-translations used.
+translations used. It is turned on per request and by nothing else:
+`translate: true` on `louise_search` (§5.4), `--translate` on `ask
+search` (07 §7.3).
 
 ## 5.3 What a result carries
 
@@ -207,7 +209,12 @@ shown; for a red collection only the hash is compared and the origin's
 page is linked. The check covers at most the top five results of each
 list per request, is off by default, and draws from the peer's budget
 (§4.3) — additionally capped by the origin's etiquette (§6.2). The
-fetched text is never stored.
+fetched text is never stored. Like translation it is turned on per
+request: `freshness: true` on `louise_search` (§5.4), `--freshness` on
+`ask search`. Neither belongs in `platform.toml`. Both spend the
+caller's latency and the peer's budget, and a node-wide switch would
+make one question cost differently on two peers with no way for the
+caller to say no.
 
 ## 5.4 Tools, not a router
 
@@ -224,12 +231,13 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, filters?, limit?, as_of?)
+louise_search(query, collections?, space?, filters?, limit?, as_of?,
+              freshness?, translate?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}
     filters: {<facet field>: <value> | {not: <value>}}
-louise_lookup(id, as_of?)
+louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?)
     → {edges: [{from, to, type, snapshot, collection_id,
@@ -240,7 +248,10 @@ louise_traverse(id, relation?, depth?)
 and defaults to every collection the peer holds and may use; `space`
 restricts the search to the collections in one space; `limit` is the
 number of results per list, 10 by default and at most 100, the depth
-of a leg. `louise_lookup` takes one canonical id and answers from the
+of a leg. `louise_lookup` takes no `as_of`: `--as-of` selects among
+snapshots (§5.1) and a reference source has none — it is node-local
+tables synced from the origin (06 §6.5) — so every fact names its
+`ref_version` instead. It takes one canonical id and answers from the
 reference source that owns its namespace. `louise_traverse` follows
 the edges of §5.5 from a record's uid or a canonical id, in both
 directions, restricted to one relation type when `relation` is given,

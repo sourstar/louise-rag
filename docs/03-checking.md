@@ -256,7 +256,14 @@ vectors (§2.7), and two sisters over one corpus at different cadences
 share every bundle either of them produces. Admission is the ladder below
 and nothing else: no producer key needs to be known, trusted or seen
 before; the trust list (07 §7.3 `hold key trust`) filters attestations
-(§3.6) and lifts burns, and decides nothing about a bundle.
+(§3.6) and lifts burns, and its ALLOW side imposes nothing on a bundle —
+an empty allow list, which is what an honest newcomer has (08 §8.1),
+admits every producer in existence. The deny side is not an admission
+rule either but a mute: a key this peer has explicitly denied is one it
+accepts no traffic from at all, bundles included (09 §9.2), and a
+quarantined key is one a proof of forgery burned. Only `hold vectors
+import --strict` reads the allow side about a bundle, and it is a local
+opt-in that admits nothing while the list is empty.
 
 Before a bundle is used, the importing peer runs a ladder of checks,
 cheapest first, each gating the next. Costs are for a bundle of ten
