@@ -67,7 +67,7 @@ holding exactly what everyone else holds.
 3. **Embedding is shared work.** Whoever holds the records may embed a
    part of them; the results carry the producer's signature and are
    checked before they are used.
-4. **Updates are deltas.** A monthly snapshot names exactly which
+4. **Updates are deltas.** Each snapshot names exactly which
    records changed; re-embedding is the changed chunks and nothing else.
    The unit of change is the record — a record has changed when the
    hash of its cleaned text has — and the unit of re-embedding is the
@@ -98,7 +98,7 @@ they are needed.
 | Codex | the immutable recipe of a collection; its hash is the collection's identity |
 | lineage | the chain of Codexes linked by `continues`, `derived_from` and `replaces` (02 §2.7); the `lineage_id` is the root Codex's id along `continues`, and it is what a catalogue shows as *the collection* — one entry with a history. Nothing but the hash chain makes two collections kin, in particular not their titles |
 | daughter / sister / corrective sister | the three relations between a new Codex and the one it comes from (02 §2.7): a daughter continues the collection under a new toolchain in the same space; a sister inherits the corpus whole — the same records, so a peer holding one re-fetches nothing to take the other — and changes only what is built on it: a new space, a new schedule, or both, sharing the mother's vectors exactly when the space is unchanged; a corrective sister replaces a collection whose defect has been reproduced. The collection a related Codex comes from is its **mother**; one created from a source has none, and stands at the root of its own lineage. *Sister* is also the general word, as 08 uses it, for any new collection standing beside an existing one, related or not |
-| snapshot | the state of a collection's records at one monthly cutoff; content-addressed |
+| snapshot | the state of a collection's records at one cutoff of its update cadence; content-addressed |
 | drag | a collection on disk, and the name of the format it is written in — DRAG, *distributed RAG*: the Codex, the snapshots, the records, the vectors and everything else a peer shares, in one directory (02 §2.6, 09) |
 | shard | a run of one slice's records, sorted by native id and cut at the Codex's `shard_records`; closed once full, re-issued under the same number while it is still filling or when a record in it changes. The unit of transfer, of embedding and of verification (02 §2.2–2.3) |
 | member | what a peer fetches or shares as one unit (02 §2.6): one slice of one kind — records, vectors, buckets, index, relations — or a whole-collection file such as the calibration member or the licence terms; the snapshot names each member's size and root before the first byte moves |

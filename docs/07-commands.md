@@ -461,7 +461,8 @@ Ambiguity is exit 2, naming the candidates. A title or a plugin name
 never resolves (08 §8.2). `<codex>` in `derive`, `continue` and
 `replace` resolves by the first three only: those commands name one
 Codex, and a lineage is not one. `<snapshot>` and `ID` after
-`--snapshot` are snapshot ids, `2026-08`. `DATE` after `--as-of` is
+`--snapshot` are snapshot ids — `2026-08` on a monthly cadence,
+`2026-W36` on a weekly one (09 §9.4). `DATE` after `--as-of` is
 `YYYY-MM-DD` and nothing shorter or longer (exit 2, since `2019` and
 `2019-03` would each name a different instant to two implementers); it
 is read as `00:00:00` of that day in the collection's `origin.clock`,

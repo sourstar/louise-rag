@@ -185,10 +185,13 @@ listed.
 ## 2.2 Snapshots
 
 A snapshot is the collection's records at one instant: the origin's
-state at 00:00:00 on `update.day` of a month, in the origin's own clock
-(`origin.clock`). Its id is the month that closed at that instant — the
-cutoff 2026-09-01T00:00 America/New_York names the snapshot "2026-08" —
-which every peer can compute from the Codex without asking anyone.
+state at 00:00:00 on `update.day` of a period of the collection's
+`update.cadence`, in the origin's own clock (`origin.clock`). Its id is
+the period that CLOSED at that instant — the cutoff 2026-09-01T00:00
+America/New_York is `update.day` 1 of September on a monthly cadence and
+names "2026-08"; the same instant is ISO weekday 2 of week 36 on a
+weekly one and names "2026-W35" (09 §9.4 fixes both forms) — which
+every peer can compute from the Codex without asking anyone.
 Anything the origin publishes after that instant — new content, an
 embargo lifted — belongs to the next snapshot.
 
