@@ -130,8 +130,25 @@ decision can be taken with the bill in view.
 
 ### The one constraint that fixes everything else
 
-**A figure must not enter `content_hash`**, and the reason is stronger
-than "the delta model would lie". 09 §9.7:
+> **CORRECTION, 2026-09-08.** The argument below was priced against a
+> reading of 09 §9.7 that the operator has since overturned, and it was
+> wrong by about 2.5 orders of magnitude. §9.7 then said "one mismatch
+> refuses the bundle at T0"; 03 §3.5 and 07 §7.3 both said that RECORD'S
+> ROWS are refused and the import exits 0, and the two won. So moving a
+> record's `content_hash` costs that record's rows, not every bundle
+> containing it. §9.7 has been amended.
+>
+> **The conclusion still stands, on better ground: a figure is a member,
+> not text.** It is named in the record by hash and carried in
+> `figures/<slice>/`; the caption stays in `sections` and stays indexed.
+> That is a design argument and it does not depend on the price. Anyone
+> re-opening this must argue the design — the cost argument below is no
+> longer available, and the delta-model argument was always the weaker
+> half of it.
+
+**A figure must not enter `content_hash`**, and the reason was thought to
+be stronger than "the delta model would lie". 09 §9.7 said, before the
+2026-09-08 amendment:
 
 > **possession.json.** … mapping each uid in `uids` to the
 > `content_hash` of the record whose text the producer embedded. The
@@ -139,10 +156,12 @@ than "the delta model would lie". 09 §9.7:
 > refuses the bundle at T0 — vectors of another revision never attach to
 > this text.
 
-So moving `content_hash` does not merely re-chunk locally: it orphans
-that record's bundles NETWORK-WIDE. Every peer that has not already
-merged them must re-embed. Retrofitting plates onto Gutenberg with
-figures inside `content_hash` re-embeds the corpus.
+On that reading, moving `content_hash` did not merely re-chunk locally:
+it orphaned that record's bundles NETWORK-WIDE, and every peer that had
+not already merged them had to re-embed. That is the sentence the
+correction above retires. Under the per-record reading, retrofitting
+plates onto Gutenberg with figures inside `content_hash` re-embeds the
+records that gained a plate — not the corpus.
 
 (The alternative is to amend `possession.json` to bind a hash of the
 cleaned text rather than `content_hash`. That is a coherent design and a
