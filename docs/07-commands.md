@@ -83,7 +83,7 @@ louise hold
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
-  embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept records a passing run as this peer's baseline
+  embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept keeps the passing run's signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
               calibrate --encoder-image D --encoder-weights D [--against IMAGE:WEIGHTS …] [--set SHA256]
                                                                        the tolerance a space can bear, measured between the reference build and each --against build
@@ -222,8 +222,12 @@ reader needs at the command line:
 - **`embedder check`.** The calibration check of 03 §3.3 against the
   calibration member (09 §9.12): pass or fail at the Codex's
   `tolerance`; a pass writes the signed compliance statement. `--accept`
-  records a passing run's vectors as this peer's baseline for drift
-  detection; it has no effect on a failing run. `vectors build` and
+  KEEPS that statement — `state/calibration.json` (09 §9.12: "kept in
+  `state/` and published in this peer's digest") — and does nothing else;
+  it has no effect on a failing run. It stores no vectors: the statement
+  already carries the seed, so anyone can reproduce the sample and
+  recheck the verdict, and a 512-row baseline beside it would be a second
+  answer to a question the statement answers. `vectors build` and
   `share contribute` refuse (exit 2) without a passing check for this
   collection's space on the configured endpoint; the node runs the check
   before the first shard of a round.

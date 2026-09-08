@@ -132,8 +132,16 @@ embedding session for a collection and whenever the endpoint reports a
 different build or model identity than the last accepted run; a failure
 stops embedding for that collection as a deferral, never as an error on
 a document, and is shown by `hold collection show`. `hold embedder
-check --accept` is the only way a changed build becomes this peer's
-baseline.
+check --accept` is the only way a changed build becomes the one this
+peer stands behind: it keeps that run's signed statement, which is what
+the digest publishes and what 04 §4.5 weights.
+
+There is no separate drift detector, and deliberately so. "Is this
+encoder still the same function?" already has an answer — run the gate —
+and the worker runs it before every embedding session and whenever the
+endpoint reports a different build. A second mechanism beside that would
+need its own threshold, and 03 §3.1 has already said where a threshold
+may come from.
 
 The result is a signed **calibration statement** — "this encoder image
 and these weights, on this peer, are compliant with this space" — whose
