@@ -233,9 +233,21 @@ in 211 s — the one failure is §1's pre-existing `st_mtime_ns` proxy,
 unchanged. Baseline before step 0 was 1362 passed, 1 failed.
 
 ### Step 2 — `hold records build` and `hold snapshot create`
-*2a (the snapshot at 09 §9.4) and 2b (the roots and the refusals) are
-DONE, 2026-09-08. 2c — wiring them into `app/pack/build.py`, where the
-shards are actually cut — is what remains.*
+*2a (the snapshot at 09 §9.4), 2b (the roots and the refusals) and 2c
+(wiring them into `app/pack/build.py`) are DONE, 2026-09-08. What remains
+of step 2: the relations MEMBER is not yet written by a build — the edge
+line and `edges_of` exist and are tested, but no plugin implements
+`relations()` yet, so there is nothing to write; and `hold records build`
+/ `hold snapshot create` are not yet CLI verbs over this.*
+
+**One thing needs the node.** `chunks_root` is computed by folding each
+chunk into a blob inside the parse pool's children, because re-chunking
+in the parent would double the cost of a build (amendment 47). The blob
+costs about 46 bytes per chunk across the pipe. On fixtures that is
+invisible; on 36M PubMed records it wants timing against a real manifest
+before it ships, and the engineering rules say a change to a hot path
+whose commit message has no numbers in it is a guess. The numbers are
+missing on purpose, and they are the operator's to take.
 *02 §2.2, 02 §2.3, 06 §6.6, 09 §9.4, 09 §9.5, 09 §9.14. Wraps
 `app/pack/build.py`, `records.py`, `slicing.py`, `cutoff.py`,
 `tools/pack_convert.py`.*
