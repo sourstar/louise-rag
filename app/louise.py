@@ -202,6 +202,154 @@ def cmd_snapshot_create(a) -> int:
     return 0
 
 
+def cmd_embedder_check(a) -> int:
+    """`hold embedder check` — the calibration gate of 03 §3.3.
+
+    Exit 0 on a pass, 1 on a fail, 3 when the encoder was unreachable:
+    03 §3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
+    pass", and 07 §7.7 reserves 3 for exactly that. A gate that exited 1
+    on an unreachable endpoint would flag a collection for a network
+    problem.
+    """
+    from app.hold import embedder as emb
+    try:
+        run, codex = _gate(a)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    verdict = "PASS" if run.ok else "FAIL"
+    print(f"{verdict}  {run.why()}")
+    print(f"  space       {run.space_id[:23]}…")
+    print(f"  encoder     {codex.space.encoder.label or codex.space.encoder.image[:23]}")
+    print(f"  tolerance   {run.tolerance}")
+    print(f"  seed        {run.seed.hex()}")
+    print(f"  sampled     {len(run.sampled)} of 512, worst {run.worst:.4f}, "
+          f"median {run.median:.4f}")
+    print(f"  whole set   worst {min(run.all_cosines):.4f}, "
+          f"median {__import__('statistics').median(run.all_cosines):.4f}")
+    print(f"  benchmark   {run.tokens_per_s} tokens/s")
+    if not run.ok:
+        return 1
+    if a.accept:
+        _write_statement(a, run, codex)
+    return 0
+
+
+def cmd_embedder_benchmark(a) -> int:
+    """`hold embedder benchmark` — the same run, reporting the rate.
+
+    03 §3.3 measures it on the same pass as the gate, so this is not a
+    second measurement: it runs the gate and reports the number the
+    statement would carry.
+    """
+    from app.hold import embedder as emb
+    try:
+        run, _ = _gate(a)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    print(f"{run.tokens_per_s} tokens/s over {512} calibration texts "
+          f"({'compliant' if run.ok else 'NOT COMPLIANT — the rate of a '
+             'non-compliant encoder weights nothing (04 §4.5)'})")
+    return 0 if run.ok else 1
+
+
+def cmd_embedder_calibrate(a) -> int:
+    _not_yet("--against",
+             "two live encoder endpoints to compare, which is the one part "
+             "of step 3 that wants the node rather than a mock (migration "
+             "plan, step 3)")
+    return 2
+
+
+def _gate(a):
+    """Run the gate for a collection, resolving its encoder the way 07 §7.8
+    resolves one: the collection's own endpoint, then the platform default,
+    then EMBED_URL."""
+    from app import embeddings
+    from app.hold import collection as col, embedder as emb
+
+    name, codex = col.resolve(a.root, a.collection)
+    member = a.root / name / "drag" / "calibration" / \
+        f"{codex.space.calibration.set.split(':', 1)[1]}.safetensors"
+    if not member.is_file():
+        raise CodexError(
+            f"{name}: no calibration member at {member.name}. It is written "
+            f"by `hold collection create` (09 §9.12) and is a member of every "
+            f"snapshot; without it there is nothing to compare against")
+    reference = _read_reference(member, codex)
+
+    recipe = _recipe_for(codex, name)      # raises GateDeferred if unset
+
+    def embed(texts):
+        try:
+            return embeddings.embed_texts(texts, recipe=recipe)
+        except emb.GateDeferred:
+            raise
+        except Exception as e:                      # noqa: BLE001
+            # 03 §3.1: an unreachable encoder is INCONCLUSIVE, not a
+            # failure — "it produces no attestation and no flag, it is
+            # reported with its reason, and it is retried".
+            raise emb.GateDeferred(
+                f"the encoder for {name} was unreachable or failed: {e}") from e
+
+    return emb.run_gate(codex, reference=reference, embed=embed), codex
+
+
+def _read_reference(member, codex):
+    from safetensors.numpy import load_file
+    tensors = load_file(str(member))
+    if "vectors" not in tensors:
+        raise CodexError(f"{member.name}: no `vectors` tensor (09 §9.12)")
+    return tensors["vectors"].tolist()
+
+
+def _recipe_for(codex, name):
+    """The endpoint that serves this space's encoder.
+
+    07 §7.8 resolves it in three steps, "each a fallback for the one before
+    it, never an override": the collection's `[encoder]`, then
+    `platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`.
+    Only the third is available here, because the first two live in
+    `collections/<name>.toml` and `platform.toml`, which `hold config` will
+    write and this branch does not yet read. So this is the ENV fallback
+    alone, and the two file tiers arrive with `hold config`.
+
+    The rest of the recipe comes from the Codex and not from any file: the
+    dtype, ctx and dim are inside `space_id`, so a file that disagreed with
+    them would be describing another space (02 §2.4).
+    """
+    from app import collections as collections_mod
+    url = os.environ.get("EMBED_URL")
+    if not url:
+        from app.hold import embedder as emb
+        raise emb.GateDeferred(
+            "EMBED_URL is unset and no collection endpoint is configured; "
+            "07 §7.8: everything that needs an encoder defers (exit 3)")
+    return collections_mod.EmbedRecipe(
+        url=url, api="openai", model=codex.space.encoder.label or "",
+        dtype=codex.space.dtype, ctx=codex.space.ctx, dim=codex.space.dim)
+
+
+def _write_statement(a, run, codex):
+    """`--accept`. 09 §9.12: the statement is "kept in `state/`"."""
+    import datetime
+    from app.bundles import keys as node_keys
+    from app.hold import collection as col, embedder as emb
+
+    name, _ = col.resolve(a.root, a.collection)
+    key = node_keys.load_signing_key()
+    now = datetime.datetime.now(datetime.timezone.utc).replace(
+        microsecond=0).isoformat().replace("+00:00", "Z")
+    stmt = emb.statement(run, codex, key, now=now)
+    out = a.root / name / "state" / "calibration.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(cx.canonical_json(stmt))
+    from app.hold import envelope as env
+    print(f"  statement   {out}")
+    print(f"              {env.body_id(stmt['body'])}")
+
+
 def cmd_snapshot_list(a) -> int:
     from app.hold import collection as c, snapshot as sn
     name, _ = c.resolve(a.root, a.collection)
@@ -306,6 +454,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sverbs.add_parser("list", help="the chain this peer holds")
     root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_snapshot_list)
+
+    # ---- hold embedder --------------------------------------------------
+    embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
+    everbs = embd.add_subparsers(dest="verb", required=True)
+
+    p = everbs.add_parser("check", help="the calibration gate (03 §3.3)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--accept", action="store_true",
+                   help="record a passing run as this peer's statement (09 §9.12)")
+    p.set_defaults(fn=cmd_embedder_check)
+
+    p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
+    root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_embedder_benchmark)
+
+    p = everbs.add_parser("calibrate", help="the tolerance a space can bear")
+    root_arg(p)
+    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
+    p.add_argument("--against", nargs="*", default=[])
+    p.add_argument("--set", dest="set_id")
+    p.set_defaults(fn=cmd_embedder_calibrate)
     return top
 
 
