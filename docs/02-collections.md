@@ -76,8 +76,8 @@ codex = {
   update: {cadence: "monthly", day: 1, grace_days: 7},
   publication: "open" | "certified",
   certifier: null | {key, anchor, is_origin},          -- certified only (§2.8)
-  embedding: null | "open" | "endorsed" | "certifier-only",   -- certified only
-  succession: null | "frozen" | {"open-after": "P6M"},        -- certified only
+  embedding: "open" | "endorsed" | "certifier-only",          -- the three levels of 03 §3.8; "open" on an open collection
+  succession: "frozen" | {"open-after": "P6M"},               -- "frozen" on an open collection
   content: null | "manifest-only",                            -- certified only, fixed
   continues: null | "<collection_id>", continues_through: null | "2026-08",
   origin_reachable_until: null | "2026-08",
@@ -247,8 +247,10 @@ is open: it holds fewer than `shard_records` records, and each snapshot
 re-issues it with the records that arrived since, under its own number,
 until it fills and closes. New records go into the open shard first and
 open a new number only when it is full, so a slice has at most one open
-shard at a time and every closed shard holds exactly `shard_records`
-records. The cut therefore falls on the same records whatever the
+shard at a time and a shard holds `shard_records` records when it
+closes — fewer afterwards if a tombstoned record is dropped from it at a
+re-issue, never more, and never refilled, because closed is closed. The
+cut therefore falls on the same records whatever the
 cadence: a collection updated weekly and one updated monthly close
 their shards at the same boundaries, which is what lets two sisters
 share members (§2.7). A record whose text changed
@@ -578,9 +580,11 @@ A **member** is what a peer fetches or shares: one slice of one kind —
 are closed, and `--kinds` (07 §7.3) takes their names: `records`,
 `vectors`, `buckets`, `index`, `relations`, `bundle`, `centres`,
 `calibration`, `terms`, `seals` and `origin`; 09 §9.16 gives each its
-name and its files. Each member is a BitTorrent v2 torrent, grouped by one
-torrent collection per (collection, snapshot); a member's root is its v2
-piece-layer root (04 §4.3; 09 §9.16). "PubMed before 1980, records and
+name and its files. Every file of a member is a BitTorrent v2 torrent,
+grouped by one torrent collection per (collection, snapshot); a member
+of one file has that file's piece-layer root as its root, and a member of
+several has a root per file (04 §4.3; 09 §9.16). "PubMed before 1980,
+records and
 vectors" is a list of members, and the snapshot says their sizes and
 hashes before the first byte moves.
 

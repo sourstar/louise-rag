@@ -470,9 +470,13 @@ A relations shard entry has `slice`, `n`, `root`, `edges` (integer) and
 `slicing.order`; they are cut every `shard_records` records; shards are
 numbered from `00001` in that order. A later snapshot re-issues a
 changed record's shard under the same number with a new `root`; new
-records fill the slice's open shard — the last, the only one holding
-fewer than `shard_records` records — re-issuing it under its number,
-and open a new number only once it is full; a tombstoned record stays in
+records fill the slice's open shard — its highest-numbered, and the
+only one that has not yet held `shard_records` records — re-issuing it
+under its number, and open a new number only once it is full. Having
+held that many closes it for good: dropping a tombstoned record at a
+later re-issue leaves it short and it is never refilled, so "open" is
+a shard that has never been full, not one that is not full now; a
+tombstoned record stays in
 its closed shard until that shard is next re-issued and is excluded from
 search and embedding by the tombstone alone. The set of shards re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
@@ -871,7 +875,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `license` | exact | `{}` |
 | `signature` | exact | `{keys: [key…]}` — the sidecar signatures that verified |
 | `anchor` | exact | `{state: "anchored" · "stale" · "mismatch"}` |
-| `origin-seal` | exact | `{mode: "live" · "archival", entries: n, failed: [origin_hash…]}` |
+| `origin-seal` | exact | `{mode: "live" · "archival", entries: n, failed: [file_hash…]}` |
 | `merge` | exact | `{other: collection_id}` — two daughters' snapshots have one hash (04 §4.6); `snapshot_hash` is that hash |
 | `forgery` | proof | `{chunk_id, producer: key, bundle: id, claimed: id, recomputed: id, text: string or null, content_hash: BLAKE2b-128}` — `claimed` and `recomputed` are `H` over the vector as big-endian `space.dtype` bytes; `text` is the chunk's text, or `null` on a red-class collection, whose `content_hash` stands in for it |
 | `withdraw` | producer's own | `{bundles: [id…]}` — the signer retracts its own bundles; `result: "withdraw"` |
@@ -1255,14 +1259,14 @@ An entry:
 
 `origin-seal` in archival mode validates the seal against `chain`,
 `revocation` and `trusted_list` with no network; in live mode it
-re-fetches the sealed file, checks it hashes to `origin_hash`, and
+re-fetches the sealed file, checks it hashes to `file_hash`, and
 validates against the current lists. The sealed files themselves travel
 only in the optional member `origin-<slice>` (§9.16), never in the
 records.
 
 **Worked example.** One entry for the Gazzetta issue of 12 March 2024,
 whose `.p7m` hashes to `4e1a…` and whose acts are the records carrying
-that `origin_hash`: `{"origin_hash":"4e1a…","format":"cades","signer":
+that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 {"subject":"CN=…, O=Istituto Poligrafico e Zecca dello Stato",…},
 "chain":["MIIG…","MIIF…"],"revocation":[{"kind":"ocsp","b64":"MIIB…",
 "time":"2026-09-01T06:10:12Z"}],"timestamp":{"b64":"MIIC…","time":

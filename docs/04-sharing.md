@@ -163,15 +163,19 @@ transport and dropped before anything reaches the copy. Fetched shards
 land in staging and are promoted into the copy in one step — the step
 where a certified collection's manifest-only gate applies (§3.8).
 
-**Members are torrents.** Each member is one BitTorrent v2 torrent
-(BEP 52), and a member's `root` is its v2 piece-layer root — the same
-root the snapshot lists for a record shard (02 §2.2). The torrent's
-parameters — its name, piece length, v2 only, nothing else in the info
+**Files are torrents.** Every file of a member is one BitTorrent v2
+torrent (BEP 52), so a member of one file is one torrent and a member of
+several is that many. A file's torrent parameters — its drag-relative
+path, its length, its pieces root, v2 only, nothing else in the info
 dictionary — are fixed by 09 §9.16, so the torrent, and therefore the
-infohash, is a function of the member's name, root and size alone: two
-honest publishers of the same member land in one swarm, and a peer
-computes a member's infohash from the snapshot without contacting
-anyone. The torrent collection of one (collection, snapshot) is the set
+infohash, is a function of those three alone: two honest publishers of
+the same file land in one swarm, and a peer computes each infohash from
+the snapshot without contacting anyone. A member of one file has that
+file's pieces root as its root — the root the snapshot lists for a
+record shard (02 §2.2); a member of several has a root per file and a
+member root of `H` over the list of its `[path, root, bytes]` in path
+order (09 §9.16). The torrent collection of one (collection, snapshot)
+is the set
 of its members; the snapshot is its index for record shards, and a
 digest or a `bundle` event names every other member the same way, by
 name, root and size. Record shards, text-index members and bundles are

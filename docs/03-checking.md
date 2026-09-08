@@ -502,8 +502,10 @@ thing it was for. So the certifier captures **validation evidence** when
 it produces the snapshot — certificate chain, revocation responses of
 that moment, a timestamp, the trusted-list snapshot — into
 `seals/<snapshot>.json`, one entry per sealed issue, keyed by the
-`origin_hash` the records of that issue carry; the file's bytes and how
-the certifier's signature binds them are 09 §9.15. `origin-seal` then
+`file_hash` of the sealed file, which every record parsed from it names
+in `extra.seal` (09 §9.5) — a record's own `origin_hash` covers that one
+document, not the issue, so the reference is explicit. The file's bytes
+and how the certifier's signature binds them are 09 §9.15. `origin-seal` then
 runs in two modes: *live*, re-fetching the sealed file and validating
 against the current trusted list; *archival*, against the stored
 evidence, offline, and still working when the origin is gone. The
