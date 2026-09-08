@@ -328,6 +328,33 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
   node's baseline for drift detection, not as the collection's
   reference.
 
+**PARTLY DONE 2026-09-08 — and NOT as a wrap.** 3a the calibration set
+(`app/hold/calibration.py`, `calibration/text.jsonl`, 512 texts frozen at
+`sha256:6a1bac6e…`), 3b the envelope signer (`app/hold/envelope.py`,
+09 §9.2's six domains), 3c the gate itself (`app/hold/embedder.py`) and
+09 §9.1's seeded `sample()` in `codex.py`.
+
+**The plan was wrong about wrapping.** `app/verify/backend_gate.py`
+records its own first run as a baseline and PASSES, so it admits an
+encoder it has never compared to anything, and it thresholds on a
+constant `TAU = 0.995` — which 03 §3.1 forbids in as many words. It is
+replaced, not wrapped. It also keys its baseline on the collection NAME,
+which is the trap CLAUDE.md's "key on physical identity, never a name"
+rule exists for, and `BACKEND_GATE=off` could disable it wholesale.
+
+**What 3 still owes.** The three verbs are not CLI verbs yet, and
+`calibrate` — which measures a tolerance BETWEEN two encoder builds
+before a collection exists — is not written; it needs two endpoints to
+compare, so it is the one piece that wants the node rather than a mock.
+`--accept` and drift detection are unspecified beyond a phrase (see the
+study's findings) and are not implemented.
+
+**Two blockers that are the operator's**, neither of which stops the
+Gutenberg PoC, which runs on a TEI encoder: `dnabert2-embed:local` has no
+RepoDigest, so `encoder_image` cannot be filled for the genome
+collections; and llama.cpp serves no `/info` route, so `encoder_weights`
+for the Qwen3 XPU encoder falls through to a weak hash.
+
 **Tests**: with the fixture endpoint mock, `check` refuses a mismatched
 encoder and accepts the reference; the pass decision is over the drawn
 n and the embedding is over the whole set (assert the call count);
