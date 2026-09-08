@@ -457,8 +457,9 @@ for, and why a declared number cannot be inflated, is §8.5.
 The field is `work: {tokens, per}`: `tokens` is that amount and `per` an
 ISO 8601 duration, by default the update cadence (`P1M`). One block,
 two uses. Holding: a key holds the collection actively while the signed
-bundles it produced for the collection, as seen by the peer doing the
-counting, total at least `tokens` per `per`; a collection with no such
+work it produced for the collection — bundles, and the attestations of
+its completed checks (04 §4.7) — as seen by the peer doing the
+counting, totals at least `tokens` per `per`; a collection with no such
 key is dormant on that peer's catalogue — still findable, no longer
 listed as active (04 §4.7, 08 §8.6). Eligibility: a peer is eligible for
 a shard when `3 × shard_tokens / benchmark_tokens_per_s ≤ seconds(per)`

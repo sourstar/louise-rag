@@ -137,7 +137,9 @@ baseline.
 
 The result is a signed **calibration statement** — "this encoder image
 and these weights, on this peer, are compliant with this space" — whose
-bytes are 09 §9.12. It names the space, the encoder image and weights
+bytes are 09 §9.12's *peer's calibration statement*, a different
+object from the space author's calibration member defined in the same
+section. It names the space, the encoder image and weights
 digests, the seed and the sampled texts, the worst and median cosine
 over the whole set, the endpoint's maximum input length, and the
 benchmark below; it is published in the peer's digest (04 §4.2), and
@@ -343,7 +345,11 @@ ahead of the receiving peer's clock is dropped.
 A collection's level is computed **locally**, from the attestations a
 peer holds. A level counts **independent** attestations: two
 attestations are independent when they come from distinct keys and
-carry distinct seeds, and a key is counted once. The trust list
+carry distinct seeds where the check is a sampled one; a null seed —
+an exhaustive or deterministic check (09 §9.8) — is not compared, since
+two honest peers running `roots` over the same shards must agree, and
+requiring them to differ would put `checked` out of reach for ever. A
+key is counted once. The trust list
 (`hold key trust`) is a local allow/deny filter over whose attestations
 are counted at all — a denied or quarantined key's are ignored — and is
 never a weight: no key counts more than another, and an empty list

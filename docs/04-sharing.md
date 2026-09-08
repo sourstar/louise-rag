@@ -586,7 +586,7 @@ Dormant is a state, not a verdict. A dormant collection is still
 findable under its keys (§4.2), still fetchable, still searchable and
 still checkable; it is shown as dormant and left out of the default
 listing of `hold collection list`. The state is computed locally by
-each peer from the bundles it has seen — no one declares it, no one
+each peer from the signed work it has seen — no one declares it, no one
 decides it — and it flips back the moment some key's bundles reach the
 rate again; anyone may be that key. The signal is "someone continues",
 never "the creator continues": the key that first published the Codex

@@ -198,8 +198,9 @@ different bands because they should: each declares its own, rather than
 being held to one metre for all.
 
 The one block serves twice. For **holding** (§8.6; the computable rule is
-§4.7): a key holds the collection actively while its signed bundles on
-the collection's own records total at least `tokens` per `per`. For
+§4.7): a key holds the collection actively while its signed work on the
+collection's own records — bundles, and attestations of checks — totals
+at least `tokens` per `per`. For
 **eligibility** (§4.5): a peer is eligible for a shard when
 `3 × shard_tokens / benchmark_tokens_per_s ≤ seconds(per)` — a
 contributor must be able to finish one shard within one work period, with

@@ -109,7 +109,7 @@ they are needed.
 | pointer record | the record a red-class collection ships in place of text: the same line with `sections` empty and `extra.origin_url` set (02 §2.3, 04 §4.4); the text is fetched from the origin by every peer that holds the collection, and vectors, pointers and index travel while the text never does |
 | provenance | which origin, which snapshot, which encoder, which producer |
 | work parameter | the embedding work per unit time a collection declares as its holding level; declared by the creator, verified from below by reproduction |
-| actively-held / dormant | the two observed states of a collection on a peer's catalogue, defined in 08 §8.6: actively-held while some key's signed bundles for it keep arriving at the rate the work parameter states, dormant when they have stopped — still findable and fetchable, no longer listed as active. Each peer computes the state for itself by the rule of 04 §4.7; nobody declares it |
+| actively-held / dormant | the two observed states of a collection on a peer's catalogue, defined in 08 §8.6: actively-held while some key's signed work for it — a bundle where there is embedding to do, an attestation where there is not (04 §4.7) — keeps arriving at the rate the work parameter states, dormant when they have stopped — still findable and fetchable, no longer listed as active. Each peer computes the state for itself by the rule of 04 §4.7; nobody declares it |
 | check | verification of any kind — of bytes against hashes, of records against the origin, of vectors against the encoder |
 | share / hold | instead of seed / replicate |
 | certified collection | a collection whose records only a named, anchored key may publish |

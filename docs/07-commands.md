@@ -197,11 +197,14 @@ reader needs at the command line:
   delta.changed` of snapshot `ID` — a snapshot id, never a file. Every
   few hundred chunks a bundle (09 §9.7) is signed and merged into the
   shard's vector file (02 §2.4); the bundle is kept for `share`.
-- **`vectors import`.** A bundle names its collection, space, snapshot
-  and, per record, the content hash it embedded (03 §3.5; 09 §9.7);
-  `import` refuses at T0 (exit 1 — the bundle is the failing unit) one
-  that names another collection, space or record revision than
-  `<collection>` holds. An archive import records the archive id as
+- **`vectors import`.** A bundle binds its space and, per record, the
+  content hash it embedded; its `collection` and `snapshot_id` are
+  provenance and gate nothing (03 §3.5; 09 §9.7). `import` refuses at
+  T0 (exit 1 — the bundle is the failing unit) one whose `space_id` is
+  not `<collection>`'s. A record whose `content_hash` in
+  `possession.json` differs from this copy's has that record's rows
+  refused and the refusal recorded — the record was re-issued since —
+  and the import exits 0, never a failure. An archive import records the archive id as
   producer; `--retry` puts the archive's rejected shards back in line.
   `--strict` refuses a bundle whose producer is not on the trust list
   and never admits below T3.

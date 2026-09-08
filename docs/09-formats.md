@@ -352,7 +352,7 @@ hexadecimal digits of the digest.
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `checks` | list of check names | yes | the checks that apply, from §9.8's table, in the order they run |
+| `checks` | list of check names | yes | the checks that apply, from 03 §3.2's table of plan checks, in the order they run. §9.8's table is wider: it adds the results that are never planned — `merge`, `forgery`, `withdraw`, `supersedes` — which a peer produces from what it finds, not from a plan |
 | `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal, "chunks": integer}}` — a decimal is a fraction of the snapshot's shards, `"1"` is exhaustive; `chunks` is the number of chunks drawn per sampled shard |
 | `required` | list of check names | yes | certified collections: what must have passed before the collection is shown as certified (03 §3.7); `[]` on an open collection |
 
@@ -876,6 +876,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `signature` | exact | `{keys: [key…]}` — the sidecar signatures that verified |
 | `anchor` | exact | `{state: "anchored" · "stale" · "mismatch"}` |
 | `origin-seal` | exact | `{mode: "live" · "archival", entries: n, failed: [file_hash…]}` |
+| `evaluation` | statistical | `{suite: {name, version, sha256}, metric, expected: decimal, observed: decimal, targets: n, resolved: n}` — the score `space.evaluation` claims, re-run on this copy; `resolved` is how many of the suite's targets this copy holds, and a run below the suite's own coverage floor is `result: "fail"` with `observed: null` |
 | `merge` | exact | `{other: collection_id}` — two daughters' snapshots have one hash (04 §4.6); `snapshot_hash` is that hash |
 | `forgery` | proof | `{chunk_id, producer: key, bundle: id, claimed: id, recomputed: id, text: string or null, content_hash: BLAKE2b-128}` — `claimed` and `recomputed` are `H` over the vector as big-endian `space.dtype` bytes; `text` is the chunk's text, or `null` on a red-class collection, whose `content_hash` stands in for it |
 | `withdraw` | producer's own | `{bundles: [id…]}` — the signer retracts its own bundles; `result: "withdraw"` |
@@ -1156,6 +1157,32 @@ measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
+**The peer's calibration statement.** The member above is the space
+author's reference. What a contributing peer produces when it passes
+the gate (03 §3.3) is a different object, and the one every other
+document means by "a compliant encoder": an envelope (§9.2) under the
+domain `louise/calibration/v1`, kept in `state/` and published in this
+peer's digest (§9.9), with body
+
+```
+{kind: "louise-calibration-run", version: 1,
+ space_id, collection_id, set,
+ encoder_image, encoder_weights,
+ seed, sampled: [<integer 0…511>…], passed: <integer>,
+ worst: <decimal>, median: <decimal>,
+ max_input_tokens: <integer>, tokens_per_s: <integer>,
+ key, time}
+```
+
+`sampled` is the `quorum.n` texts the sampler of §9.1 drew with `seed`;
+`passed` is how many reached `tolerance`; `worst` and `median` are the
+cosines over them. `max_input_tokens` is what the endpoint accepted, so
+a verifier knows not to sample a chunk this peer could not have
+embedded whole, and `tokens_per_s` is the benchmark §4.5 weights
+rendezvous by. A statement is current while its `encoder_image`,
+`encoder_weights` and `set` are the ones in use; changing any of the
+three needs a new run (03 §3.3).
+
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`
 (`sha256:6b1a3f0e9c2d4b7f…`); the PubMed Codex names it, and its member
 `calibration/6b1a3f0e9c2d4b7f.safetensors` holds `vectors [512, 768]`
@@ -1430,6 +1457,7 @@ names one schema, the one its section fixes:
 | `louise-digest`, `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 1 | §9.12 |
+| `louise-calibration-run` | 1 | §9.12 |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
 
