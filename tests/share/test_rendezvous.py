@@ -7,7 +7,10 @@ import pytest
 from app.share import rendezvous as rv
 from app.share.rendezvous import Peer, ShardWork
 
-LIMIT = 6 * 3600          # a shard type may take at most six hours with margin (§4.5)
+# 04 §4.5: the limit is the collection's WORK PERIOD — `3 x tokens / w <=
+# seconds(work.per)` — not a fixed number of hours. P1M is the default.
+LIMIT = 30 * 24 * 3600
+SHARD = "sha256:c/03ae64488c899305/year=1980/00001"
 
 
 def peers(n, benchmark=100.0):
@@ -15,7 +18,7 @@ def peers(n, benchmark=100.0):
 
 
 def shards(n, tokens=100_000):
-    return [ShardWork(f"sha256:c/year=1980/{i:05d}", tokens) for i in range(n)]
+    return [ShardWork(f"sha256:c/03ae64488c899305/year=1980/{i:05d}", tokens) for i in range(n)]
 
 
 def test_deterministic_across_calls_and_peer_order():
@@ -75,20 +78,58 @@ def test_twice_the_weight_leads_about_twice_the_shards():
 
 
 def test_eligibility_admits_weak_peers_only_to_small_shards():
-    weak = Peer("weak", 5.0)           # 5 tokens/s
+    """04 §4.5: eligible ⇔ 3 × tokens / w ≤ seconds(work.per). With the
+    default P1M that is 864,000 × w tokens — 4.3M for a 5 tok/s peer, 86M
+    for a 100 tok/s one."""
+    weak = Peer("weak", 5.0)
     strong = Peer("strong", 100.0)
-    small = ShardWork("s", tokens=10_000)      # weak: 10k/5*3 = 6000 s = 1.7 h  → eligible
-    large = ShardWork("l", tokens=100_000)     # weak: 100k/5*3 = 60000 s = 16.7 h → not
+    small = ShardWork(SHARD, tokens=4_000_000)     # weak: 3×4M/5   = 2.4Ms  ≤ P1M
+    large = ShardWork(SHARD, tokens=10_000_000)    # weak: 3×10M/5  = 6.0Ms  > P1M
     assert rv.eligible(weak, small, LIMIT) and not rv.eligible(weak, large, LIMIT)
-    assert rv.eligible(strong, large, LIMIT)
+    assert rv.eligible(strong, large, LIMIT)       # 3×10M/100 = 300ks
     assert [p.key for p in rv.ranking(large, [weak, strong], LIMIT)] == ["strong"]
-    assert not rv.eligible(Peer("zero", 0.0), small, LIMIT)
+    assert not rv.eligible(Peer("zero", 0.0), small, LIMIT), \
+        "no benchmark for this space is UNSCORED, not slow (04 §4.5)"
+
+
+def test_an_unscored_peer_is_never_scored_as_slow():
+    """A peer with no `benchmarks` entry for the space is absent from the
+    ordering, not ranked last — scoring it would be a rate measured on
+    another encoder answering a question about this one."""
+    with pytest.raises(ValueError, match="UNSCORED"):
+        rv.score(Peer("no-benchmark", 0.0), ShardWork(SHARD, 1000))
+
+
+def test_the_score_is_the_documents_formula():
+    """04 §4.5, byte for byte: h = (first 64 bits of H(peer_key ‖ shard_id)
+    + 0.5) / 2^64, and score = ln(h) / w. `H(a ‖ b)` is 09 §9.1's ONE
+    concatenation — SHA-256 over the canonical JSON of [a, b] — not a
+    separator byte, which §9.1 rules out explicitly. Every peer must reach
+    the same number or the partition is not a partition."""
+    import hashlib, json, math
+    key, shard_id = "ed25519:" + "ab" * 32, SHARD
+    raw = hashlib.sha256(json.dumps([key, shard_id], sort_keys=True,
+                                    separators=(",", ":"),
+                                    ensure_ascii=False).encode("utf-8")).hexdigest()
+    h = (int(raw[:16], 16) + 0.5) / 2 ** 64
+    assert rv.score(Peer(key, 7.0), ShardWork(shard_id, 1000)) == math.log(h) / 7.0
+
+
+def test_a_separator_byte_would_have_given_a_different_partition():
+    """The bug this replaced: sha256(key + b"\x00" + shard_id). It is a
+    different number, so two peers disagreeing about which form to use
+    would each believe they lead a different set of shards."""
+    import hashlib, math
+    key, shard_id = "ed25519:" + "ab" * 32, SHARD
+    old = hashlib.sha256(f"{key}\x00{shard_id}".encode()).digest()
+    old_h = (int.from_bytes(old[:8], "big") + 0.5) / 2 ** 64
+    assert rv.score(Peer(key, 7.0), ShardWork(shard_id, 1000)) != math.log(old_h) / 7.0
 
 
 def test_no_eligible_peer_means_no_leader_not_a_crash():
     tiny = [Peer("t", 1.0)]
-    assert rv.leader(ShardWork("x", 10**9), tiny, LIMIT) is None
-    assert rv.assign([ShardWork("x", 10**9)], tiny, LIMIT) == {"x": None}
+    assert rv.leader(ShardWork(SHARD, 10**14), tiny, LIMIT) is None
+    assert rv.assign([ShardWork(SHARD, 10**14)], tiny, LIMIT) == {SHARD: None}
 
 
 def test_successor_cascade_walks_the_ranking_and_ends():

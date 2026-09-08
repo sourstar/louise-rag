@@ -17,10 +17,11 @@ Pure functions, no I/O.
 """
 from __future__ import annotations
 
-import hashlib
 import math
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
+
+from app.hold.codex import canonical_json, digest
 
 DEFAULT_MARGIN = 3.0          # a peer may have other work; give it 3x its own estimate
 
@@ -33,26 +34,50 @@ class Peer:
 
 @dataclass(frozen=True)
 class ShardWork:
-    shard_id: str             # "<collection_id>/<slice>/<n>"
-    tokens: int               # the shard's token count; known from the snapshot
+    #: 04 §4.5: `"<collection_id>/<space>/<slice>/<n>"` — FOUR segments.
+    #: `<space>` is 02 §2.4's path segment, and the same string is what an
+    #: attestation uses to name a shard (09 §9.8), so a three-segment id
+    #: here would not match one there.
+    shard_id: str
+    tokens: int               # chunks × space.ctx, as the snapshot lists it
 
 
 def _unit(peer_key: str, shard_id: str) -> float:
-    """H(peer_key ‖ shard_id) as a float in (0, 1). Exclusive at both ends so
-    the log below is finite."""
-    h = hashlib.sha256(f"{peer_key}\x00{shard_id}".encode("utf-8")).digest()
-    x = int.from_bytes(h[:8], "big")
-    return (x + 1) / (2 ** 64 + 2)
+    """04 §4.5: `h = (first 64 bits of H(peer_key ‖ shard_id), as an unsigned
+    integer, + 0.5) / 2^64`.
+
+    `H(a ‖ b)` is THE concatenation of 09 §9.1 — SHA-256 over the canonical
+    JSON of the array `[a, b]`. Not a separator byte, which §9.1 rules out
+    in as many words: "There is no other concatenation: no separator bytes,
+    no length prefixes, no raw digests joined end to end." Every peer must
+    compute the same score from the same digests or the partition is not a
+    partition, so this is interop, not taste.
+    """
+    raw = digest(canonical_json([peer_key, shard_id]))
+    x = int(raw.split(":", 1)[1][:16], 16)
+    return (x + 0.5) / 2 ** 64
 
 
 def score(peer: Peer, shard: ShardWork) -> float:
-    """Weighted rendezvous: -w / ln(u). Higher wins. Equivalent to u^(1/w)
-    in ordering, and numerically better behaved for large weights."""
-    u = _unit(peer.key, shard.shard_id)
-    return -peer.benchmark / math.log(u)
+    """04 §4.5: `score = ln(h) / w`, computed in IEEE-754 double; the highest
+    wins, and a tie goes to the lower peer key.
+
+    `ln(h)` is negative and `w` positive, so the score is negative and the
+    largest (nearest zero) wins — which is the same ordering as `h^(1/w)`,
+    written the way the document writes it so the two cannot drift.
+    """
+    if peer.benchmark <= 0:
+        raise ValueError(
+            f"{peer.key}: no benchmark for this space, so it is UNSCORED here "
+            f"(04 §4.5) — a rate measured on another encoder says nothing "
+            f"about this one. An unscored peer is absent from the ordering, "
+            f"which `eligible` decides; it is never scored as slow")
+    h = _unit(peer.key, shard.shard_id)
+    return math.log(h) / peer.benchmark
 
 
 def expected_seconds(peer: Peer, shard: ShardWork, margin: float = DEFAULT_MARGIN) -> float:
+    """04 §4.5: eligible ⇔ `3 × tokens / w ≤ seconds(work.per)`."""
     if peer.benchmark <= 0:
         return math.inf
     return shard.tokens / peer.benchmark * margin
@@ -62,7 +87,13 @@ def eligible(peer: Peer, shard: ShardWork, limit_seconds: float,
              margin: float = DEFAULT_MARGIN) -> bool:
     """A peer may take a shard only if it can finish it, with margin, within
     the collection's limit for that shard size. Small shards admit weak
-    peers; large shards admit few."""
+    peers; large shards admit few.
+
+    A peer with NO benchmark for this space is excluded here too, and for a
+    different reason: 04 §4.5 calls it unscored rather than slow, "since a
+    rate measured on another encoder says nothing about this one". Both end
+    up absent from the ordering, which is what the partition needs; only a
+    report would care which."""
     return expected_seconds(peer, shard, margin) <= limit_seconds
 
 
