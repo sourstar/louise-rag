@@ -133,8 +133,8 @@ not `"0"`.
 **Operator**: nothing.
 
 ### Step 1 — The drag on disk, and the collection template
-*02 §2.6, 09 §9.16, 09 §9.3, 07 §7.3, 07 §7.8. Wraps `app/pack/manifest.py`,
-`app/collections.py`, `app/plugins/base.py`.*
+*02 §2.6, 09 §9.16, 09 §9.3, 07 §7.3, 07 §7.8. Wraps
+`app/pack/manifest.py`, `app/collections.py`, `app/plugins/base.py`.*
 
 This is the step that makes "a collection" a thing on disk that a
 stranger could receive, and it is where the **generic collection
