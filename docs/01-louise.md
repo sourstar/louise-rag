@@ -66,7 +66,12 @@ holding exactly what everyone else holds.
    it is getting before the first byte.
 3. **Embedding is shared work.** Whoever holds the records may embed a
    part of them; the results carry the producer's signature and are
-   checked before they are used.
+   checked before they are used. The producer is whoever published the
+   bundle, which is who vouches for its bytes rather than necessarily
+   who computed them: vectors converted from a pre-embedded archive that
+   signs nothing carry the converting peer's signature, and the archive
+   is credited in the Codex, where a licence's attribution belongs
+   (02 §2.7, 03 §3.5).
 4. **Updates are deltas.** Each snapshot names exactly which
    records changed; re-embedding is the changed chunks and nothing else.
    The unit of change is the record — a record has changed when the
