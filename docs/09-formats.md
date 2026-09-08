@@ -771,7 +771,12 @@ travels (03 §3.5; 08's signed block):
 ```
 
 On a peer, accepted bundles live at
-`bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`; a bundle is a member
+`collections/<name>/state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`
+— under `state/`, never in the drag: a bundle is neither named by the
+Codex nor listed by a snapshot, so `share` would refuse a drag holding one
+(07 §7.8), and §9.16 serves it from `state/bundles/`. Its four files take
+their torrent paths relative to the bundle directory, which makes the
+member root a function of the bundle alone; a bundle is a member
 named `bundle-<space>-<bundle_id hex>` (§9.16); `hold vectors export`
 writes the same directory anywhere, `hold vectors import` reads it.
 
@@ -820,10 +825,16 @@ written `sha256:…`.
 
 **possession.json.** A JSON object, sorted keys, ASCII, mapping each uid
 in `uids` to the `content_hash` of the record whose text the producer
-embedded. The importer compares every entry with its own record; one
-mismatch refuses the bundle at T0 — vectors of another revision never
-attach to this text. Read only after the signature verifies; its digest
-is inside the signed payload.
+embedded. The importer compares every entry with its own record. A uid whose
+`content_hash` differs from this peer's copy has THAT RECORD'S ROWS
+refused and the refusal recorded; the rest of the bundle is imported and
+the import exits 0 (03 §3.5, 07 §7.3). A mismatch is the ordinary case of
+a record re-issued since the producer embedded it, not a bad bundle —
+vectors of another revision never attach to this text, and nothing else
+in the bundle is implicated. A uid in `uids` with NO entry here is a
+different thing: the bundle is malformed and is refused whole at T0.
+Read only after the signature verifies; its digest is inside the signed
+payload.
 
 **The signed payload and the id.**
 
@@ -855,13 +866,16 @@ partial publication:
 
 ```
 header.json:
-{"challenge":{"n":16,"set":"sha256:6b1a…"},"chunk_count":300,"collection":"sha256:e5c2…","content_digest":"sha256:0f7b…","created_at":1756713600,"digest_alg":"sha256","dim":1024,"dtype":"f16","encoder_image":"sha256:8c…","encoder_weights":"sha256:e2…","parquet_bytes":662148,"possession_bytes":1417,"producer_pubkey":"ed25519:19…","shard":"lang=it/00007","sig_alg":"ed25519","snapshot_id":"2026-08","space_id":"sha256:41844ebb…","uids":["gutenberg:10102","gutenberg:10125","gutenberg:1012","gutenberg:10131",…],"version":1}
+{"challenge":{"n":16,"set":"sha256:6b1a…"},"chunk_count":300,"collection":"sha256:e5c2…","content_digest":"sha256:0f7b…","created_at":1756713600,"digest_alg":"sha256","dim":1024,"dtype":"f16","encoder_image":"sha256:8c…","encoder_weights":"sha256:e2…","parquet_bytes":662148,"possession_bytes":1417,"producer_pubkey":"ed25519:19…","shard":"lang=it/00007","sig_alg":"ed25519","snapshot_id":"2026-08","space_id":"sha256:41844ebb…","uids":["gutenberg:10102","gutenberg:1012","gutenberg:10125","gutenberg:10131",…],"version":1}
 possession.json:
-{"gutenberg:1012":"7a1c…","gutenberg:10102":"bb02…",…}
+{"gutenberg:10102":"bb02…","gutenberg:1012":"7a1c…",…}
 ```
 
 `uids` is sorted by bytes, which is why `gutenberg:1012` follows
-`gutenberg:10125`; the parquet's first sixteen rows are
+`gutenberg:10102` — they agree through `gutenberg:101` and `0` precedes
+`2` — while a uid that is a PREFIX of another precedes it, so
+`gutenberg:1012` comes before `gutenberg:10125`. `possession.json`'s keys
+are sorted the same way; the parquet's first sixteen rows are
 `calibration:0` … `calibration:15`, then `gutenberg:1012:0:1`,
 `gutenberg:1012:1:1`, ….
 
@@ -1374,7 +1388,10 @@ path byte order; the digest lists the files.
 root alone, so two honest publishers produce one infohash. The info
 dictionary contains exactly: `meta version: 2`, `name` = the member
 name, `piece length: 16777216`, and `file tree` with the one file at its
-drag-relative path carrying `length` and `pieces root`; no `private`
+drag-relative path carrying `length` and `pieces root` — for a bundle,
+which deliberately rests outside the drag (§9.7), the path is relative to
+the bundle directory instead, so its member root is a function of the
+bundle alone; no `private`
 flag, no comment, no creation date, no creator, no announce list — the
 swarm is found through the DHT and the peer messages. The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
