@@ -234,3 +234,112 @@ def test_slicing_rules():
     with pytest.raises(ValueError):
         slicing.check_slice_name("../etc")
     assert slicing.scheme_for("genome").records_per_shard == slicing.DEFAULT_SCHEME.records_per_shard
+
+
+# ---- 09 §9.4's roots, computed where the shards are actually cut ----------
+
+def _shard_rows(pack_dir):
+    import sqlite3
+    con = sqlite3.connect(pack_dir / pack_build.BUILD_DIR / pack_build.BUILD_DB)
+    con.row_factory = sqlite3.Row
+    rows = [dict(r) for r in con.execute(
+        "SELECT * FROM shards ORDER BY slice, n")]
+    con.close()
+    return rows
+
+
+def test_a_build_records_the_three_roots_of_9_4(isolated_config, tmp_path, corpus_dir):
+    """`root`, `records_root` and `chunks_root` each answer a different
+    question, and a snapshot carries all three (09 §9.4)."""
+    from app.hold import drag, records as hold_records
+    from app.pack import records as pack_records
+
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    pack_dir = tmp_path / "packs" / "g-roots"
+    pack_build.build(origin, pack_dir, snapshot="2026-08-26", records_per_shard=2,
+                     sign=False, log=lambda *_: None)
+
+    rows = _shard_rows(pack_dir)
+    assert rows, "the build wrote no shards"
+    for row in rows:
+        path = pack_dir / row["path"]
+        # `root` is the BitTorrent v2 pieces root (09 §9.5), which the
+        # build did not previously compute at all — it stored a plain
+        # sha256 of the file beside it. The two COINCIDE for a file of at
+        # most one 16 KiB block, because BEP 52 makes such a file its own
+        # single leaf; these fixture shards are that small, and the next
+        # assertion is what separates them in general.
+        assert row["root"] == drag.pieces_root_of(path)
+        assert (path.stat().st_size <= drag.BLOCK) == \
+            (row["root"] == "sha256:" + row["sha256"])
+        # `records_root` is over the content hashes in record order, and is
+        # reproducible from the shard's own bytes.
+        hashes = [r["content_hash"] for r in pack_records.iter_records(path)]
+        assert row["records_root"] == hold_records.records_root(hashes)
+        assert row["chunks_root"].startswith("sha256:")
+        assert row["first_native_id"] and row["last_native_id"]
+
+
+def test_chunks_root_reproduces_from_the_records_and_the_layers(
+        isolated_config, tmp_path, corpus_dir):
+    """The `chunks` check recomputes chunks from the records and compares
+    (03 §3.2). If the build's incremental root and a fresh re-chunk
+    disagree, the check can never pass."""
+    from app import layers as layers_mod
+    from app.hold import records as hold_records
+    from app.pack import records as pack_records
+
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    pack_dir = tmp_path / "packs" / "g-chunks"
+    pack_build.build(origin, pack_dir, snapshot="2026-08-26", records_per_shard=2,
+                     sign=False, log=lambda *_: None)
+
+    for row in _shard_rows(pack_dir):
+        pairs = []
+        for r in pack_records.iter_records(pack_dir / row["path"]):
+            native_id = int(r["native_id"])
+            chunker = layers_mod.chunker_for_document(origin, native_id)
+            for c in chunker(r["uid"], native_id, r["sections"]):
+                pairs.append((c["id"], c["text"]))
+        assert len(pairs) == row["chunks"]
+        assert hold_records.chunks_root(pairs) == row["chunks_root"], row["path"]
+
+
+def test_a_shard_that_is_re_cut_gets_the_same_roots(isolated_config, tmp_path,
+                                                    corpus_dir):
+    """Two honest peers that build the same cutoff produce the same bytes,
+    so a second build over the same corpus reproduces every root."""
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    first = tmp_path / "packs" / "g-a"
+    second = tmp_path / "packs" / "g-b"
+    for d in (first, second):
+        pack_build.build(origin, d, snapshot="2026-08-26", records_per_shard=2,
+                         sign=False, log=lambda *_: None)
+    a, b = _shard_rows(first), _shard_rows(second)
+    assert [(r["root"], r["records_root"], r["chunks_root"]) for r in a] == \
+           [(r["root"], r["records_root"], r["chunks_root"]) for r in b]
+
+
+def test_an_out_of_order_native_id_aborts_the_build(isolated_config, tmp_path,
+                                                    corpus_dir, monkeypatch):
+    """02 §2.2: refused, naming the record and the shard — not skipped, and
+    not placed out of order. A shard cut two ways is not repairable by the
+    peer who receives it."""
+    from app.hold import records as hold_records
+
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    calls = {"n": 0}
+    real = hold_records.refuse_out_of_order
+
+    def descending(native_id, open_first_id, order, *, slice_, n):
+        # the second record of a shard arrives with an id below the first
+        calls["n"] += 1
+        if open_first_id is not None:
+            return real("1", "999999", order, slice_=slice_, n=n)
+        return real(native_id, open_first_id, order, slice_=slice_, n=n)
+
+    monkeypatch.setattr(pack_build.hold_records, "refuse_out_of_order", descending)
+    with pytest.raises(hold_records.RecordsError, match="sorts before"):
+        pack_build.build(origin, tmp_path / "packs" / "g-bad", snapshot="2026-08-26",
+                         records_per_shard=2, sign=False, log=lambda *_: None)
+    assert calls["n"] >= 2

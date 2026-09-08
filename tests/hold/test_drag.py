@@ -227,3 +227,14 @@ def test_a_file_in_neither_the_snapshot_nor_a_shard_is_not_a_member():
     assert drag.is_member_file("records/year=1980/00001.jsonl.zst", files, shards)
     assert not drag.is_member_file("notes.txt", files, shards)
     assert not drag.is_member_file("records/year=1980/00002.jsonl.zst", files, shards)
+
+
+def test_a_one_block_file_has_the_same_root_as_its_plain_sha256():
+    """Worth pinning because it is a real coincidence, not a bug: BEP 52
+    makes a file of at most one block its own single leaf, so for a small
+    shard the pieces root and a plain sha256 of the file agree. They part
+    company at the second block, and the transport compares the root."""
+    small = b"x" * (drag.BLOCK - 1)
+    assert drag.pieces_root(small) == "sha256:" + hashlib.sha256(small).hexdigest()
+    two = b"x" * (drag.BLOCK + 1)
+    assert drag.pieces_root(two) != "sha256:" + hashlib.sha256(two).hexdigest()

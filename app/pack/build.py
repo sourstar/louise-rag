@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config, db, layers as layers_mod, parallel, plugin_io
+from ..hold import drag, records as hold_records
 from ..plugins.base import UnindexableDocument
 from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
 
@@ -71,7 +72,15 @@ def _build_db(pack_dir: Path) -> sqlite3.Connection:
       slice TEXT NOT NULL, n INTEGER NOT NULL, path TEXT NOT NULL,
       records INTEGER, chunks INTEGER, bytes INTEGER, sha256 TEXT,
       first_uid TEXT, last_uid TEXT, last_ord INTEGER, id_min INTEGER, id_max INTEGER,
-      layers TEXT, written_at INTEGER, PRIMARY KEY(slice, n));
+      layers TEXT, written_at INTEGER,
+      -- 09 §9.4's shard entry. `root` is the BitTorrent v2 pieces root the
+      -- transport and the `roots` check compare; `sha256` above is a plain
+      -- digest of the file and is NOT it. `records_root` and `chunks_root`
+      -- are what equivalence, inheritance and the `chunks` check compare,
+      -- and neither depends on the compressor.
+      root TEXT, records_root TEXT, chunks_root TEXT,
+      first_native_id TEXT, last_native_id TEXT,
+      PRIMARY KEY(slice, n));
     CREATE TABLE IF NOT EXISTS skipped(uid TEXT PRIMARY KEY, reason TEXT);
     """)
     return con
@@ -147,13 +156,23 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     return planned
 
 
-def _record_of(collection, plugin, row) -> tuple[dict, int]:
+def _record_of(collection, plugin, row) -> tuple[dict, int, bytes]:
     doc = plugin_io.canonical_doc(plugin, row)
     native_id = int(row["native_id"])
     sections = [[name or "", body or ""] for name, body in doc.sections]
     layer = layers_mod.layer_index(collection, native_id)
-    chunks = sum(1 for _ in layers_mod.chunker_for_document(collection, native_id)(
-        doc.uid, native_id, doc.sections))
+    # The chunks are counted AND folded into this document's contribution to
+    # the shard's `chunks_root` (09 §9.4) in one pass. It is done here, in
+    # the parse pool's child, because parse + chunk + hash per document is
+    # the whole cost of a pack pass (amendment 47) and re-chunking in the
+    # parent to compute the root would double it. The parent concatenates
+    # these blobs in record order and hashes once.
+    chunks = 0
+    chunk_blob = bytearray()
+    for c in layers_mod.chunker_for_document(collection, native_id)(
+            doc.uid, native_id, doc.sections):
+        chunks += 1
+        chunk_blob += hold_records.chunk_contribution(c["id"], c["text"])
     record = {
         "uid": doc.uid, "native_id": str(row["native_id"]), "lang": doc.language or "und",
         "title": doc.title or "", "creators": list(doc.creators or []),
@@ -168,7 +187,7 @@ def _record_of(collection, plugin, row) -> tuple[dict, int]:
     # fidelity defect raised here would quietly DROP documents from the
     # pack, which is worse than what it was meant to prevent. The check
     # belongs in pack_slices, in the process that can abort.
-    return record, layer
+    return record, layer, bytes(chunk_blob)
 
 
 def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
@@ -179,6 +198,10 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     full and the result is a pure function of (manifest, cutoff)."""
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
+    # How this source's ids sort within a slice (09 §9.3's `slicing.order`).
+    # A plugin that has not declared it yet sorts by bytes, which is what
+    # `slicing.SCHEMES` has always done for a slice with no numeric key.
+    order = getattr(plugin, "native_id_order", "bytes")
     slices = [r["slice"] for r in con_build.execute("SELECT DISTINCT slice FROM plan ORDER BY slice")]
     written = n_records = n_chunks = n_skipped = 0
     for slice_name in slices:
@@ -197,27 +220,43 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             continue
         buf: list[dict] = []
         layer_counts: dict[int, int] = {}
+        chunk_blobs: list[bytes] = []
         t0 = time.monotonic()
 
         def close_shard(last_row) -> None:
-            nonlocal buf, layer_counts, written, n_records, n_chunks, next_n
+            nonlocal buf, layer_counts, chunk_blobs, written, n_records, n_chunks, next_n
             if not buf:
                 return
             rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{records.SUFFIX}"
             info = records.write_shard(pack_dir / rel, buf)
+            # 09 §9.4's shard entry. Three roots, and each answers a
+            # different question: `root` is what the transport and the
+            # `roots` check compare (it depends on the compressor, which the
+            # platform image pins); `records_root` is what equivalence
+            # (03 §3.4), inheritance (02 §2.7) and `records-vs-origin`
+            # compare, and does not; `chunks_root` is what the `chunks`
+            # check reproduces, and without it that check could compare only
+            # a count (09 §9.5).
+            root = drag.pieces_root_of(pack_dir / rel)
+            records_root = hold_records.records_root(r["content_hash"] for r in buf)
+            chunks_root = hold_records.chunks_root_of(b"".join(chunk_blobs))
             con_build.execute("BEGIN IMMEDIATE")
             con_build.execute(
                 "INSERT OR REPLACE INTO shards(slice,n,path,records,chunks,bytes,sha256,first_uid,"
-                "last_uid,last_ord,id_min,id_max,layers,written_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "last_uid,last_ord,id_min,id_max,layers,written_at,"
+                "root,records_root,chunks_root,first_native_id,last_native_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (slice_name, next_n, rel, info.records, info.chunks, info.bytes, info.sha256,
                  info.first_uid, info.last_uid, int(last_row["ord"]), info.id_min, info.id_max,
-                 json.dumps(layer_counts, sort_keys=True), int(time.time())))
+                 json.dumps(layer_counts, sort_keys=True), int(time.time()),
+                 root, records_root, chunks_root,
+                 buf[0]["native_id"], buf[-1]["native_id"]))
             con_build.execute("COMMIT")
             written += 1
             n_records += info.records
             n_chunks += info.chunks
             next_n += 1
-            buf, layer_counts = [], {}
+            buf, layer_counts, chunk_blobs = [], {}, []
 
         last_row = None
         done_rows = 0
@@ -249,7 +288,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
                     continue
-                record, layer = value
+                record, layer, chunk_blob = value
                 if not record.get("origin_hash"):
                     # CORPUS FIDELITY (invariant 11). `origin_hash` is the
                     # only link between a packed record and the origin bytes
@@ -279,7 +318,20 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (prow["uid"], f"cutoff: {outside}"[:200]))
                     continue
+                # 02 §2.2: a record whose `native_id` sorts before the OPEN
+                # shard's first id is REFUSED, naming the record and the
+                # shard, rather than placed out of order. That is what makes
+                # shard ranges a partition of the id space, which 05 §5.5
+                # needs to resolve a uid to a shard from a snapshot alone,
+                # and what stops two honest peers cutting one cutoff into
+                # different shards. Like the origin_hash refusal above it
+                # aborts the build rather than skipping the record: a shard
+                # cut two ways is not repairable by the peer who receives it.
+                hold_records.refuse_out_of_order(
+                    record["native_id"], buf[0]["native_id"] if buf else None,
+                    order, slice_=slice_name, n=next_n)
                 buf.append(record)
+                chunk_blobs.append(chunk_blob)
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
                 last_row = prow
                 if len(buf) >= records_per_shard:

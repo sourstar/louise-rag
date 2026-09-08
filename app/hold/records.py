@@ -193,3 +193,27 @@ def edges_of(source, doc, *, from_uid: str, snapshot_id: str) -> list[bytes]:
     if fn is None:
         return []
     return [edge_line(from_uid, e.to, e.type, snapshot_id) for e in fn(doc)]
+
+
+# --------------------------------------------------------------------------
+# computing chunks_root where the chunks actually are
+
+def chunk_contribution(chunk_id_: str, text: str) -> bytes:
+    """One chunk's contribution to `chunks_root`: its id as UTF-8 bytes
+    followed by the raw 16-byte BLAKE2b-128 of its text (09 §9.4).
+
+    It exists as its own function because the chunks are produced in the
+    parse pool's children, one document at a time, and re-chunking in the
+    parent to compute the root would double the cost of a build — parse,
+    chunk and hash per document IS the cost of a pack pass. A child folds
+    each chunk into a blob as it goes; the parent concatenates the blobs in
+    record order and hashes once.
+    """
+    return (chunk_id_.encode("utf-8")
+            + hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest())
+
+
+def chunks_root_of(blob: bytes) -> str:
+    """`chunks_root` over an already-concatenated sequence of
+    `chunk_contribution` values, in chunk order."""
+    return "sha256:" + hashlib.sha256(blob).hexdigest()

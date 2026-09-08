@@ -219,3 +219,24 @@ def test_an_edge_may_point_at_a_uid_this_collection_does_not_hold():
     """09 §9.14: a dangling edge is data, not an error (05 §5.5)."""
     line = rec.edge_line("pubmed:1", "doi:10.1000/xyz", "pubmed:cites", "2026-08")
     assert json.loads(line)["to"] == "doi:10.1000/xyz"
+
+
+# ---- the incremental form, which is what a build actually uses ------------
+
+def test_the_incremental_form_agrees_with_the_reference_one():
+    """The parent concatenates blobs the pool's children produced, rather
+    than re-chunking to hash. Two implementations of one root is how a
+    corpus stops verifying against itself, so the agreement is asserted."""
+    chunks = [("u:0:1", "first"), ("u:1:1", "second"), ("v:0:1", "third")]
+    blob = b"".join(rec.chunk_contribution(cid, text) for cid, text in chunks)
+    assert rec.chunks_root_of(blob) == rec.chunks_root(chunks)
+
+
+def test_the_blob_concatenates_in_record_order():
+    a = rec.chunk_contribution("u:0:1", "x")
+    b = rec.chunk_contribution("v:0:1", "y")
+    assert rec.chunks_root_of(a + b) != rec.chunks_root_of(b + a)
+
+
+def test_a_record_with_no_chunks_contributes_an_empty_blob():
+    assert rec.chunks_root_of(b"") == rec.chunks_root([])
