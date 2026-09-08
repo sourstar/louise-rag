@@ -1,9 +1,13 @@
 # Project status
 
-**Last updated: 2026-08-24.** What exists, what is designed but unbuilt, and
-what is deliberately not being built. Read this before planning work; read
-[`architecture-v2.md`](architecture-v2.md) for the design it implements, and
-its §17 amendments (1–37) for every place the design was corrected in flight.
+**Last updated: 2026-09-08.** What exists, what is designed but unbuilt,
+and what is deliberately not being built. Read this before planning work.
+
+**The specification moved.** `docs/README.md` and the nine numbered
+documents it lists are now the design; `architecture-v2.md` and its §17
+amendments are the history that produced them and are kept for that.
+[`migration-plan.md`](migration-plan.md) says in what order the code
+reaches the documents, and the `louise` branch is where it does.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -42,6 +46,17 @@ Everything except two items travels through this repository.
 | **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+
+### The migration to the documented architecture (branch `louise`)
+
+| step | state |
+|---|---|
+| **0** — the Codex at 09 §9.3 | **done, 2026-09-08.** `app/hold/codex.py` rewritten: two hashes (`collection_id` over the object with `descriptive` removed, `codex_hash` over the file), the twelve fields it lacked, `toolchain.encoder_image` struck, `epoch` `"0"`, `continues_through`, `space_from`, `update` as an object with a cadence, and §9.18's unknown-key refusal. 45 tests in `tests/hold/test_codex.py`, 18 in `test_collection.py`; the first of them writes 09 §9.3's worked example out by hand and asserts the module produces exactly it. **1396 passed, 1 failed** (the pre-existing `st_mtime_ns` proxy in `test_plugins_pubmed_pack.py`, which step 2 replaces); 81 of the branch's own tests run in 3.7 s. |
+| **1** — the drag on disk, the collection template | next |
+| **2**–**5** — records, embedder, vectors, check | not started |
+| **6** — proof-of-concept import, one collection | not started; the operator's stop |
+| **7** — what may be in a cleaned corpus besides text | OPEN, and it blocks step 8 alone. See [`figures-in-the-corpus.md`](figures-in-the-corpus.md) |
+| **8**–**12** — full migration, share, certified, ask, retire | not started |
 
 ## Built and running
 

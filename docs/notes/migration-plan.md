@@ -80,7 +80,7 @@ the read-through. Two of the three modules are sound; the third is not.
 Each step names the documents it implements, the existing code it wraps,
 the tests that prove it, and what the operator has to do by hand.
 
-### Step 0 — Bring the Codex to 09 §9.3
+### Step 0 — Bring the Codex to 09 §9.3 — **DONE 2026-09-08**
 *09 §9.3, 02 §2.1, 02 §2.4, 02 §2.7. Rewrites `app/hold/codex.py`.
 Nothing else can be right until this is.*
 
@@ -132,6 +132,23 @@ equals her mother's when only `update` changed; a corrective sister's
 not `"0"`.
 
 **Operator**: nothing.
+
+**What landed.** `app/hold/codex.py` rewritten to §9.3 — 33 top-level
+fields, twenty blocks, `_only()` enforcing §9.18's unknown-key refusal in
+one place rather than scattered. `app/hold/collection.py` follows:
+`derive` takes `--space`, `--space-from`, `--layers`, `--update`,
+`--work` and the credits rule; `continue_` names `continues_through` and
+fills `mother_platform_image`; `replace` carries a `Replaces` object.
+`app/louise.py` accepts `--archives` and `--encoder-image` and REFUSES
+them, naming the step that builds each, rather than doing something else
+quietly. `tests/hold/test_snapshot_and_collection.py` split into
+`test_snapshot.py` and `test_collection.py`; `tests/hold/conftest.py`
+holds the worked example whole.
+
+**Numbers.** 45 tests in `test_codex.py`, 18 in `test_collection.py`,
+81 on the branch in 3.7 s; **1396 passed, 1 failed** over the whole
+suite in 182 s — the one failure is §1's pre-existing `st_mtime_ns`
+proxy, unchanged.
 
 ### Step 1 — The drag on disk, and the collection template
 *02 §2.6, 09 §9.16, 09 §9.3, 07 §7.3, 07 §7.8. Wraps
