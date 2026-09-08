@@ -518,10 +518,17 @@ that moment, a timestamp, the trusted-list snapshot — into
 `file_hash` of the sealed file, which every record parsed from it names
 in `extra.seal` (09 §9.5) — a record's own `origin_hash` covers that one
 document, not the issue, so the reference is explicit. The file's bytes
-and how the certifier's signature binds them are 09 §9.15. `origin-seal` then
-runs in two modes: *live*, re-fetching the sealed file and validating
-against the current trusted list; *archival*, against the stored
-evidence, offline, and still working when the origin is gone. The
+and how the certifier's signature binds them are 09 §9.15. `origin-seal`
+then runs in two modes: *live*, re-fetching the sealed file, checking it
+hashes to `file_hash`, and validating against the current trusted list;
+*archival*, offline, and still working when the origin is gone. Archival
+mode needs the signature and not only the evidence around it, so the
+entry carries the envelope itself (`seal`, DER) and the digest that
+envelope commits to (`content_sha256`): the signature verifies against
+that digest without the sealed bytes, and its certificate path validates
+against the captured `chain`, `revocation` and `trusted_list`. A peer
+that holds neither the sealed file nor the entry reports *inconclusive*
+(§3.1) — it does not report a pass. The
 sealed files themselves may be shared as an optional member for whoever
 needs legal standing; the records do not contain them.
 

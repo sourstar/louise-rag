@@ -149,8 +149,12 @@ reader needs at the command line:
 - **`collection create`.** The recipe is a TOML with every Codex field
   the plugin does not default (02 §2.1; 09 §9.3). The plugin defaults
   what it declares — origin, parser, licence class, privacy, modality,
-  the chunker family (06 §6.1–6.3); it never defaults `space` or `work`, and `create` refuses (exit 2) a recipe
-  without them unless `--space-from` supplies the space.
+  erasure, the chunker family, `default_layers`, `default_slicing` and
+  `default_facets` (06 §6.1–6.3); it never defaults `space` or `work`,
+  and `create` refuses (exit 2) a recipe without them unless
+  `--space-from` supplies the space — which is refused in its turn when
+  the named Codex's `cleaning_version` differs from the plugin's, since
+  the two would not then land in one space (below).
   `toolchain.platform_image` is the digest of the platform the command
   runs in unless the recipe states it. A certified collection is a
   recipe whose `publication` is `certified` and whose `certifier` block
@@ -234,7 +238,8 @@ reader needs at the command line:
   not `<collection>`'s. A record whose `content_hash` in
   `possession.json` differs from this copy's has that record's rows
   refused and the refusal recorded — the record was re-issued since —
-  and the import exits 0, never a failure. An archive import records the archive id as
+  and the import exits 0, never a failure. An archive import records the
+  archive id as
   producer; `--retry` puts the archive's rejected shards back in line.
   `--strict` refuses a bundle whose producer is not on this peer's
   allow list and never admits below T3. It is a local choice and the
@@ -257,7 +262,8 @@ reader needs at the command line:
   nothing else — `records` (03 §3.2) is the only local check that proves
   what is inside a shard rather than that the file matches the snapshot,
   and leaving it out made `--sample F` on this command affect nothing
-  unless `--origin` was given. `--sample F` raises the plan's sample for this run and cannot
+  unless `--origin` was given. `--sample F` raises the plan's sample for
+  this run and cannot
   lower it; the attestation records the sample actually taken.
 - **`key`.** `create` writes a new seed at `NODE_KEY_PATH` in the form
   of 09 §9.2, refuses to overwrite one, and prints the public key; a key
@@ -403,7 +409,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `pack build`, `tools/pack_convert` | `hold records build` |
 | `pack verify` | `hold check` |
 | `pack cat` / `dump` | `hold records show` / `hold records show --shard` |
-| `pack adopt` | `dev adopt` (the one-time move of vectors into a drag twin) |
+| `pack adopt` | `dev adopt` (the one-time move of a pre-Codex pack's vectors and index into the collection's drag) |
 | a pack with `manifest.json` and several spaces | `dev migrate pack <name>`: one Codex per space, sisters of one another, and the first snapshot; the old id stays a catalogue alias for one cadence |
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |

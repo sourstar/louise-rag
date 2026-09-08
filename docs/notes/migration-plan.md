@@ -9,7 +9,8 @@ does.*
 *Rewritten 2026-09-08 against the specification as it stands after the
 read-through (`spec-review-2026-09-07.md`) and the seven decisions of
 commit `0df266b`. The previous version was written against seven
-documents and a Codex with six fields; both have moved.*
+documents and a Codex that has since gained twelve fields, lost one and
+changed how it is hashed.*
 
 ## 0. Ground rules for every step
 
@@ -140,7 +141,9 @@ This is the step that makes "a collection" a thing on disk that a
 stranger could receive, and it is where the **generic collection
 template** lands.
 
-- `app/hold/drag.py`: the member table of 09 §9.16 and the tree of 02
+- `app/hold/collection.py` gains the drag layout — 07 §7.4 fixes the
+  module list and there is no `drag.py` in it: the drag IS the
+  collection on disk. The member table of 09 §9.16 and the tree of 02
   §2.6 — `codex.json`, `snapshots/`, `records/<slice>/NNNNN.jsonl.zst`,
   `relations/`, `vectors/<space>/`, `buckets/`, `validation.json`,
   `LICENSE-TERMS`, `calibration/`, `seals/`. A file that is neither in
@@ -170,7 +173,8 @@ of the five plugins; the same recipe twice prints the same id and exits
 0; `--space-from` with a differing `cleaning_version` exits 2 naming
 both; a yellow collection with no ack refuses fetch, build, embed,
 index, share and search, each naming `hold collection ack`; the drag
-tree round-trips through `app/hold/drag.py` with no file unaccounted
+tree round-trips through `app/hold/collection.py` with no file
+unaccounted
 for.
 
 **Operator**: nothing.
@@ -213,7 +217,7 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
 
 **Operator**: nothing.
 
-### Step 3 — `hold embedder check|benchmark`, `hold calibrate`
+### Step 3 — `hold embedder check|benchmark|calibrate`
 *03 §3.3, 02 §2.4. Wraps `backend check/rebaseline`,
 `tools/profile_embed.py`, `app/bundles/keys.py`.*
 
@@ -225,9 +229,10 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
 - `benchmark(collection)` measures tokens/s on the same chunks. The
   digest's `benchmarks` entry is **keyed by `space_id`**, because that
   is how 04 §4.5 reads it.
-- `hold calibrate --encoder-image D --encoder-weights D [--against …]`
-  measures the tolerance a space can bear, **before** `collection
-  create`, and its output is the recipe's `space.tolerance`.
+- `hold embedder calibrate --encoder-image D --encoder-weights D
+  [--against …]` measures the tolerance a space can bear, **before**
+  `collection create`, and its output is the recipe's
+  `space.tolerance`.
 - `--accept` replaces `rebaseline`: it records a passing run as this
   node's baseline for drift detection, not as the collection's
   reference.
@@ -308,7 +313,8 @@ candidate: a corpus already on disk, green licence, no acknowledgement
 to record, and a `native_id` that sorts numerically, so step 2's
 ordering refusal will not fire spuriously.
 
-1. `hold calibrate` the encoder actually running; record the tolerance.
+1. `hold embedder calibrate` the encoder actually running; record the
+   tolerance it can bear, which becomes the recipe's `space.tolerance`.
 2. `hold collection create gutenberg --recipe …` with the platform and
    encoder digests of the images actually running
    (`docker inspect --format '{{index .RepoDigests 0}}' <image>`). If

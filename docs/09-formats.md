@@ -115,7 +115,8 @@ as thirty days and a year as 365.
 **Worked example.** The PubMed collection's identity is `H` of the
 canonical JSON of its Codex with the `descriptive` block removed
 (§9.3), written `sha256:9d3e…41ab` — `H` of the file's own bytes is its
-`codex_hash`, a different value; its September cutoff snapshot is announced under
+`codex_hash`, a different value; its September cutoff snapshot is
+announced under
 the DHT key made of the first 20 bytes of
 `SHA-256(["sha256:9d3e…41ab","2026-08"])` (§9.16); a record in it,
 PMID 38112034, carries `content_hash` `a3f0…7c19` (BLAKE2b-128 of its
@@ -420,7 +421,8 @@ fields that carry its choices (every other field is present in the file):
 
 `collection_id` is `H` of these bytes with the keys sorted, the
 whitespace removed and the `descriptive` block dropped; `codex_hash` is
-`H` of the file exactly as written, `descriptive` included; the space segment under `vectors/` is the first 16
+`H` of the file exactly as written, `descriptive` included; the space
+segment under `vectors/` is the first 16
 digits of `H` over `{"cleaning_version":1,"encoder":{"image":"sha256:8c…",
 "weights":"sha256:e2…"},"layers":[…],"space":{"ctx":512,
 "dim":768,"dtype":"f16","epoch":"0","normalise":true,"pooling":"cls",
@@ -1020,7 +1022,8 @@ The response is one JSON object `{"items": [{"path": string, "sha256":
 id, "b64": string}…]}` — each item the exact stored bytes, base64 —
 never a re-serialisation: `codex.json` for the collection and for every
 Codex in its chain (`path` is `codex/<collection_id hex>.json`);
-`snapshots/<snapshot_id>.json` and `snapshots/<snapshot_id>.sig.json`; attestation
+`snapshots/<snapshot_id>.json` and `snapshots/<snapshot_id>.sig.json`;
+attestation
 envelopes as `attestations/<id hex>.json`. The receiver hashes each
 item's bytes, compares with `sha256` and with what a digest advertised,
 and treats a mismatch as 04 §4.2 says.

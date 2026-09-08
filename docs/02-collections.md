@@ -225,9 +225,14 @@ merkle root of the stored `.jsonl.zst` file (SHA-256, 16 KiB leaves),
 which is what the transport checks; `records_root`, SHA-256 over the
 shard's `content_hash` values concatenated in order, which is what
 equivalence (03 §3.4), inheritance (§2.7) and `records-vs-origin`
-compare; and `tokens`, the shard's chunk count times `space.ctx`, an
-upper bound on the embedding work it represents, which §2.4's work
-parameter and 04 §4.5's eligibility use. The bytes are 09 §9.4.
+compare; `chunks` and `chunks_root`, the number of chunks the Codex's
+layers cut the shard into and a hash over their ids and texts, which is
+what the `chunks` check reproduces (03 §3.2) — both are functions of the
+records and the layers, which is why they are here and not in a member
+that depends on an encoder; and `tokens`, the chunk count times
+`space.ctx`, an upper bound on the embedding work it represents, which
+§2.4's work parameter and 04 §4.5's eligibility use. The bytes are
+09 §9.4.
 
 Because records are reproducible byte for byte (§3.1), every honest
 peer that computes a snapshot produces the same bytes and the same
@@ -264,7 +269,8 @@ therefore partition the id space, which is what 05 §5.5 needs to resolve
 a uid to a shard from a snapshot alone, and what keeps two honest peers
 from cutting the same cutoff into different shards — one re-cutting the
 slice, one appending. A source that cannot promise it needs a different
-`native_id` rule or a different slicing key, not a different shard, and a shard holds `shard_records` records when it
+`native_id` rule or a different slicing key, not a different shard,
+and a shard holds `shard_records` records when it
 closes — fewer afterwards if a tombstoned record is dropped from it at a
 re-issue, never more, and never refilled, because closed is closed. The
 cut therefore falls on the same records whatever the

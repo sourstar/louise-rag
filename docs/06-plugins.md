@@ -300,7 +300,8 @@ A layer's **rule** is one of three forms: `default`, every document;
 read from that archive's `coverage` in the Codex's `credits` (02 §2.7),
 so the rule is computable from the record and the Codex alone, and a
 platform build cannot move a document between layers;
-`field:<name>=<value>`, the documents whose record field (a top-level field, or `extra.<key>`) has that value. Rules are
+`field:<name>=<value>`, the documents whose record field (a top-level
+field, or `extra.<key>`) has that value. Rules are
 evaluated in list order and the first match wins; the last layer's rule
 is `default` and no other layer's is.
 
@@ -487,7 +488,8 @@ content; a resolver never returns a bare symbol.
    block, the descriptive block, the work parameter, the validation
    plan, the publication kind, and the archives this collection will
    draw vectors from, by id, which `create` expands into `credits` from
-   the platform's registry (02 §2.7) — and any default it tightens; the plugin supplies
+   the platform's registry (02 §2.7) — and any default it tightens; the
+   plugin supplies
    `plugin`, `origin`, `parser`, `layers`, `slicing`, the classes and
    the cadence, and the platform supplies the toolchain digests. The
    calibration comes first and needs no record: the calibration set is
