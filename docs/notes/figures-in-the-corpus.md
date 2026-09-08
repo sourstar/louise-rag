@@ -119,3 +119,92 @@ does not block the migration plan or the code that precedes importing.
 The order that follows: decide this before any corpus is imported for
 keeps, and prefer deciding it before the record format is implemented,
 since questions 2 and 3 land in `content_hash` and the record line.
+
+---
+
+## The design of shape (b), worked out 2026-09-08
+
+Read against all nine documents, with each finding adversarially
+verified. This does not take the decision; it prices it, so that the
+decision can be taken with the bill in view.
+
+### The one constraint that fixes everything else
+
+**A figure must not enter `content_hash`**, and the reason is stronger
+than "the delta model would lie". 09 §9.7:
+
+> **possession.json.** … mapping each uid in `uids` to the
+> `content_hash` of the record whose text the producer embedded. The
+> importer compares every entry with its own record; one mismatch
+> refuses the bundle at T0 — vectors of another revision never attach to
+> this text.
+
+So moving `content_hash` does not merely re-chunk locally: it orphans
+that record's bundles NETWORK-WIDE. Every peer that has not already
+merged them must re-embed. Retrofitting plates onto Gutenberg with
+figures inside `content_hash` re-embeds the corpus.
+
+(The alternative is to amend `possession.json` to bind a hash of the
+cleaned text rather than `content_hash`. That is a coherent design and a
+much larger change; it is not free either way, and it should be a
+deliberate choice rather than a side effect.)
+
+### What catches a swapped plate instead
+
+    signed snapshot → shard root (BitTorrent v2 pieces root, 09 §9.4)
+                    → the record line, byte for byte
+                    → the figure's hash, in that line
+                    → the figure bytes
+
+Change a plate and its hash in the record line changes; the line is in
+the shard file; the shard's `root` is in the signed snapshot, which a
+certifier signs. The existing `roots` check catches it. Nothing new is
+needed for integrity.
+
+Note the two notions of "changed" this creates, each with its own job:
+`delta.changed` (by `content_hash`) means RE-EMBED; a changed shard root
+means RE-FETCH. A new plate on unchanged text is the second only, and
+the documents must say so or an implementer will conflate them.
+
+### The container, with measured numbers
+
+One file per figure is not available: 04 §4.3 and 09 §9.16 — "Every file
+of a member is one BitTorrent v2 torrent". `storage-tiering.md` §3
+counts this node's Gutenberg mirror: **142,891 `.jpg` + 132,009 `.png`,
+about 275,000 image files**, against **1,591 shards for the whole
+Gutenberg pack**. One container per record shard —
+`figures/<slice>/NNNNN…` — is 1,591 torrents instead of 275,000, and
+matches the records member's granularity exactly.
+
+### The bill, in full
+
+| what | cost |
+|---|---|
+| `louise-codex` → version 2 | 09 §9.18: "A change to any schema here is a new `version`, never a silent extension" |
+| `louise-snapshot` → version 2 | the figures roots have to be listed somewhere signed |
+| three closed lists open | 02 §2.6's kinds, 09 §9.16's table, 01's vocabulary — a twelfth kind |
+| 01 promise 1 | a second named exception, beside the sealed-origin one |
+| 02 §2.3's opening sentence | "Records are the parsed text of documents and nothing else — no markup, no origin files, no local extras" becomes false |
+| 02 §2.7's two closed lists | `figures` must be placed on one; a sister may not change it |
+| the licence change is a DAUGHTER | 02 §2.7 keeps `license` on the "decides a record byte" side, so it is not a sister |
+| red-class pointer records | a caption is text: blank `caption` as `title` is blanked, and null the section index, or the member ships red text |
+| the pre-ack rule | becomes per-kind: a green-text/yellow-figures collection has no `LICENSE-TERMS` at all, so a flat allow-list is wrong |
+| `records-vs-origin` | reproducing a record line now means recomputing every figure hash — re-fetching every image of every sampled shard |
+| `origin.unit` | ambiguous when text and figures come from different kinds of unit (Gutenberg: `.txt` vs an HTML package) |
+| a plates-only record | zero chunks, so unreachable by either leg of a search (05 §5.3). Matters for patents |
+
+### The expensive part, and the consolation
+
+Gutenberg's plates live in the HTML and epub that 06 §6.4 records as
+deliberately left behind. Figures therefore mean a DIFFERENT ORIGIN
+FORM: a full re-fetch and re-parse. Whether that is a daughter (new
+books get plates, old ones do not) or a new collection (everything
+re-derived) is the operator's call. It is not a corrective sister:
+dropping useful content is bad collection design, not a defect.
+
+The consolation is real. `space_id` covers `{cleaning_version, encoder,
+layers, space}` and NOT the origin or the parser. If re-parsing the HTML
+yields byte-identical cleaned text, every `content_hash` is unchanged
+and every existing vector stays admissible under 03 §3.5. **Re-fetch and
+re-parse, but no re-embed** — provided figures stay out of
+`content_hash`, which is the same decision as the first section.
