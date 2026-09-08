@@ -4,6 +4,7 @@ docs/06-plugins.md §6.1 (what a source declares) and §6.6 (from a plugin to
 a collection); docs/09-formats.md §9.3. The template is the half a plugin
 supplies: a new collection is a plugin, a `space` block and a `work` block.
 """
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -284,13 +285,16 @@ def test_medcpts_coverage_is_its_declared_id_ranges():
     assert ARCHIVES["upstash-wikipedia-2024-06"].coverage() == "all"
 
 
-def test_an_archive_with_no_published_key_cannot_be_credited():
-    """09 §9.3's `credits[].key` is what refuses an uncredited archive's
-    bundle, so it must be the same on every peer. Neither archive in the
-    registry has published signed bundles, so neither can be credited yet —
-    and the refusal says so rather than inventing a key."""
-    with pytest.raises(TemplateError, match="no published signing key"):
-        template.expand_archives(["medcpt-pubmed"])
+def test_an_archive_that_signs_nothing_is_credited_like_any_other():
+    """The ordinary case: MedCPT is a directory of .npy files and signs
+    nothing, so its key set is empty. That is not a defect — 03 §3.5's
+    refusal simply never fires for it (02 §2.7, 06 §6.6)."""
+    from app.bundles.genesis import ARCHIVES
+    assert ARCHIVES["medcpt-pubmed"].keys == ()
+    credits = template.expand_archives(["medcpt-pubmed"])
+    assert [c.archive for c in credits] == ["medcpt-pubmed"]
+    assert credits[0].license == "public-domain"
+    assert "key" not in credits[0].to_dict()
 
 
 def test_an_unknown_archive_names_the_ones_there_are():
@@ -298,20 +302,59 @@ def test_an_unknown_archive_names_the_ones_there_are():
         template.expand_archives(["nope"])
 
 
-def test_expanded_credits_are_sorted_and_copied_whole(monkeypatch):
-    from app.bundles import genesis
-    from dataclasses import replace as dc_replace
-    key = "ed25519:" + "3e" * 32
-    signed = {k: dc_replace(v, key=key) for k, v in genesis.ARCHIVES.items()}
-    monkeypatch.setattr(genesis, "ARCHIVES", signed)
+def test_expanded_credits_are_sorted_and_copied_whole():
     credits = template.expand_archives(
         ["upstash-wikipedia-2024-06", "medcpt-pubmed"])
     assert [c.archive for c in credits] == \
         ["medcpt-pubmed", "upstash-wikipedia-2024-06"], "sorted by archive"
     assert credits[0].producer == "NCBI (National Library of Medicine)"
     assert credits[0].license == "public-domain"
-    assert credits[0].key == key
     assert credits[1].license == "CC-BY-SA-4.0"
+
+
+# ---- 03 §3.5's archive refusal, in two steps ------------------------------
+
+SIGNED_KEY = "ed25519:" + "3e" * 32
+
+
+def _registry_where_medcpt_signs(monkeypatch):
+    from app.bundles import genesis
+    from dataclasses import replace as dc_replace
+    signed = dict(genesis.ARCHIVES)
+    signed["medcpt-pubmed"] = dc_replace(signed["medcpt-pubmed"],
+                                         keys=(SIGNED_KEY,))
+    monkeypatch.setattr(genesis, "ARCHIVES", signed)
+
+
+def test_a_key_the_registry_does_not_know_belongs_to_no_archive(codex):
+    """A bundle carries a producer key and no archive id (09 §9.7), so the
+    refusal resolves the key through the registry first. An unknown key is
+    an ordinary producer's and the ladder decides it."""
+    assert template.archive_of_key("ed25519:" + "ff" * 32) is None
+    assert template.credits_admit(codex, "ed25519:" + "ff" * 32)
+
+
+def test_a_registered_archives_bundle_needs_that_archive_credited(
+        monkeypatch, codex):
+    _registry_where_medcpt_signs(monkeypatch)
+    assert template.archive_of_key(SIGNED_KEY) == "medcpt-pubmed"
+    assert not template.credits_admit(codex, SIGNED_KEY), \
+        "this collection credits no archive, so it may not stand on one"
+    crediting = replace(codex, credits=template.expand_archives(["medcpt-pubmed"]))
+    assert template.credits_admit(crediting, SIGNED_KEY)
+
+
+def test_an_archive_may_start_signing_without_forking_any_identity(
+        monkeypatch, codex):
+    """The point of moving the keys out: a collection created before the
+    archive signed can still adopt its bundles, because what is hashed is
+    the archive's NAME and not a key it did not have."""
+    before = replace(codex, credits=template.expand_archives(["medcpt-pubmed"]))
+    _registry_where_medcpt_signs(monkeypatch)
+    after = replace(codex, credits=template.expand_archives(["medcpt-pubmed"]))
+    assert before.collection_id == after.collection_id, \
+        "a key appearing in the registry moves no collection_id"
+    assert template.credits_admit(after, SIGNED_KEY)
 
 
 # ---- a recipe omits what a Codex nulls ------------------------------------

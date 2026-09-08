@@ -117,27 +117,31 @@ class GenesisArchive:
     producer: str = ""                # who produced the vectors, as people say it
     license: str = ""                 # the licence the VECTORS carry, SPDX where there is one
     attribution: str = ""             # the credit line that licence requires
-    # The `ed25519:…` this archive's bundles are signed with. It is what
-    # lets an uncredited archive's bundle be refused (09 §9.3, 03 §3.5), so
-    # it must be the same on every peer — a fact shipped with the platform,
-    # like the calibration set. None means nobody has published signed
-    # bundles for this archive yet: it can still be READ locally, but it
-    # cannot be credited in a Codex, and `create --archives` says so rather
-    # than inventing a key or hashing a per-peer one into an identity.
-    key: str | None = None
+    # The keys this archive's bundles are signed with, if any. They live
+    # HERE and not in the Codex (02 §2.7, 09 §9.3): a licence and an
+    # attribution are permanent facts about whom a collection stands on
+    # and are hashed into its identity, but a key is lost and reissued
+    # (09 §9.2), and an archive that published nothing signed may begin.
+    # Hashing one would fork the identity whenever it moved.
+    #
+    # 03 §3.5's refusal resolves an arriving `producer_pubkey` through this
+    # set to an archive id, then refuses the bundle if the importing
+    # collection's `credits` does not name that archive. An EMPTY set is
+    # the ordinary case today — MedCPT is a directory of .npy files and
+    # signs nothing — and it is not a defect: the refusal simply never
+    # fires for such an archive, because no bundle can carry a key nobody
+    # has, and what a peer converts from it that peer signs under its own
+    # name (01, promise 3).
+    keys: tuple[str, ...] = ()
 
     def credit(self) -> dict:
-        """The archive's entry as 09 §9.3's credit object, ready to hash."""
-        if not self.key:
-            raise ValueError(
-                f"archive {self.archive_id!r} has no published signing key, so "
-                f"it cannot be credited in a Codex (09 §9.3): `credits[].key` "
-                f"is what refuses an uncredited archive's bundle, and a "
-                f"per-peer key hashed into a collection_id would give every "
-                f"peer a different collection")
+        """The archive's entry as 09 §9.3's credit object, ready to hash.
+
+        The keys are NOT part of it; see the field above.
+        """
         return {"archive": self.archive_id, "producer": self.producer,
-                "key": self.key, "license": self.license,
-                "attribution": self.attribution, "coverage": self.coverage()}
+                "license": self.license, "attribution": self.attribution,
+                "coverage": self.coverage()}
 
     def coverage(self):
         """`"all"` when the archive covers the corpus, else the declared
@@ -179,9 +183,8 @@ MEDCPT_PUBMED = GenesisArchive(
     producer="NCBI (National Library of Medicine)",
     license="public-domain",
     attribution="MedCPT article embeddings, NCBI/NLM",
-    # No signed bundles have been published for it: it is a directory of
-    # .npy files. Readable, not creditable — see GenesisArchive.key.
-    key=None,
+    # It signs nothing: a directory of .npy files on an FTP server.
+    keys=(),
 )
 
 # The vectors travel WITH the corpus (format v1: data/{lang}/NNN.parquet
@@ -197,7 +200,7 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     producer="Upstash",
     license="CC-BY-SA-4.0",           # the CONTENT is Wikipedia's; the vectors follow it
     attribution="Wikipedia 2024-06 embeddings (BGE-M3), Upstash",
-    key=None,
+    keys=(),
 )
 
 ARCHIVES: dict[str, GenesisArchive] = {

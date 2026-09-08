@@ -329,18 +329,27 @@ class Facet:
 class Credit:
     """A pre-embedded archive whose vectors this collection carries. Derived
     at creation from the platform's registry, never composed by hand
-    (02 §2.7); hashed, so nothing here can be altered by a later build."""
+    (02 §2.7); hashed, so nothing here can be altered by a later build.
+
+    The archive's SIGNING KEYS are deliberately absent: they live in the
+    registry (06 §6.6). A licence and an attribution are permanent facts
+    about whom the collection stands on; a key is lost and reissued
+    (09 §9.2), and an archive that published nothing signed may begin.
+    Hashing one would fork the identity whenever it moved.
+
+    `coverage` is not merely compliance: 06 §6.3's `archive:<id>` layer
+    rule reads it to decide which layer a document falls in.
+    """
     archive: str
     producer: str
-    key: str                 # the "ed25519:…" its bundles are signed with
     license: str
     attribution: str
     coverage: Any            # "all" or {ids_per_shard, shards}
 
     def to_dict(self) -> dict[str, Any]:
         return {"archive": self.archive, "producer": self.producer,
-                "key": self.key, "license": self.license,
-                "attribution": self.attribution, "coverage": self.coverage}
+                "license": self.license, "attribution": self.attribution,
+                "coverage": self.coverage}
 
 
 # --------------------------------------------------------------------------
@@ -718,10 +727,14 @@ def _validate_credits(codex: Codex) -> None:
     if len(set(archives)) != len(archives):
         raise CodexError("credits: one entry per archive")
     for c in codex.credits:
-        if not _KEY_RE.match(c.key):
-            raise CodexError(f"credits[{c.archive}].key must be ed25519: and 64 hex; "
-                             f"it is what refuses an uncredited archive's bundle "
-                             f"(03 §3.5)")
+        if not c.archive:
+            raise CodexError("credits[].archive names the archive; it is what "
+                             "03 §3.5's refusal resolves a producer key to")
+        if not c.license or not c.attribution:
+            raise CodexError(f"credits[{c.archive}]: an archive is credited under "
+                             f"a licence and with the attribution that licence "
+                             f"requires; both are hashed so neither can be "
+                             f"altered by a later build (02 §2.7)")
         if c.coverage != "all" and set(c.coverage or {}) != {"ids_per_shard", "shards"}:
             raise CodexError(f"credits[{c.archive}].coverage is \"all\" or "
                              f"{{ids_per_shard, shards}}")
@@ -976,9 +989,9 @@ def _facet(f: dict[str, Any], i: int) -> Facet:
 
 
 def _credit(c: dict[str, Any], i: int) -> Credit:
-    c = _only(c, ("archive", "producer", "key", "license", "attribution",
+    c = _only(c, ("archive", "producer", "license", "attribution",
                   "coverage"), f"credits[{i}]")
-    return Credit(c["archive"], c["producer"], c["key"], c["license"],
+    return Credit(c["archive"], c["producer"], c["license"],
                   c["attribution"], c["coverage"])
 
 

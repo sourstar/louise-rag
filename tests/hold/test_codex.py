@@ -319,12 +319,16 @@ def test_facets_and_credits_are_sorted(codex):
         cx.validate(replace(codex, credits=(a_credit("zenodo"), a_credit("cohere"))))
 
 
-def test_a_credit_names_the_key_its_bundles_are_signed_with(codex):
-    """Without it an uncredited archive's bundle could not be refused
-    (02 §2.7, 03 §3.5)."""
-    bad = replace(a_credit(), key="not-a-key")
-    with pytest.raises(CodexError, match="must be ed25519"):
-        cx.validate(replace(codex, credits=(bad,)))
+def test_a_credit_carries_its_licence_and_attribution_and_no_key(codex):
+    """The permanent half of an archive's entry is hashed; the signing keys
+    live in the registry, because a key is lost and reissued and an archive
+    that published nothing signed may begin (02 §2.7, 09 §9.3)."""
+    assert set(a_credit().to_dict()) == {
+        "archive", "producer", "license", "attribution", "coverage"}
+    for missing in ("license", "attribution"):
+        bad = replace(a_credit(), **{missing: ""})
+        with pytest.raises(CodexError, match="credited under"):
+            cx.validate(replace(codex, credits=(bad,)))
 
 
 # ---- publication ----------------------------------------------------------

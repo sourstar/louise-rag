@@ -71,11 +71,34 @@ def expand_archives(ids) -> tuple[Credit, ...]:
             raise TemplateError(
                 f"no archive {aid!r} in the platform's registry; it has "
                 f"{', '.join(sorted(ARCHIVES)) or 'none'}")
-        try:
-            out.append(Credit(**entry.credit()))
-        except ValueError as e:
-            raise TemplateError(str(e)) from e
+        out.append(Credit(**entry.credit()))
     return tuple(sorted(out, key=lambda c: c.archive))
+
+
+def archive_of_key(producer_pubkey: str) -> str | None:
+    """Which archive, if any, signs with this key (03 §3.5).
+
+    A bundle carries a `producer_pubkey` and no archive id (09 §9.7), so
+    this is the first of the refusal's two steps: resolve the key to an
+    archive through the registry, then refuse the bundle if the importing
+    collection's `credits` does not name that archive. A key the registry
+    does not know belongs to no archive, and the bundle is an ordinary
+    producer's — admitted or not by 03 §3.5's ladder like any other.
+    """
+    from app.bundles.genesis import ARCHIVES
+    for aid, entry in sorted(ARCHIVES.items()):
+        if producer_pubkey in entry.keys:
+            return aid
+    return None
+
+
+def credits_admit(codex, producer_pubkey: str) -> bool:
+    """03 §3.5's archive refusal, whole: may a bundle signed with this key
+    be imported into this collection?"""
+    archive = archive_of_key(producer_pubkey)
+    if archive is None:
+        return True                       # not an archive's key
+    return any(c.archive == archive for c in codex.credits)
 
 
 # --------------------------------------------------------------------------

@@ -20,7 +20,6 @@ CAL_SET = "sha256:" + "6b" * 32
 CAL_VECS = "sha256:" + "d4" * 32
 ENVELOPE = "sha256:" + "77" * 32
 TERMS = "sha256:" + "b9" * 32
-ARCHIVE_KEY = "ed25519:" + "3e" * 32
 
 PUBMED_SPEC = {
     "source_id": "pubmed", "transport": "ftp",
@@ -93,7 +92,7 @@ def pubmed(**over) -> Codex:
 
 
 def a_credit(archive: str = "wikipedia-bge-m3") -> Credit:
-    return Credit(archive=archive, producer="Cohere", key=ARCHIVE_KEY,
+    return Credit(archive=archive, producer="Cohere",
                   license="CC-BY-SA-4.0",
                   attribution="Wikipedia embeddings, BGE-M3, 2025-11",
                   coverage="all")
