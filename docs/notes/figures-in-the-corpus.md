@@ -225,3 +225,46 @@ a format change and re-embedding the corpus at every peer.
 The bill above is the bill. Nothing is implemented yet: the amendment
 touches nine documents, two schema versions and three closed lists, and
 it lands before step 8 of the migration plan, not before step 2.
+
+---
+
+## DECIDED 2026-09-08: Gutenberg-with-plates is a NEW COLLECTION
+
+Not a daughter. A daughter's inherited shards keep the mother's roots
+(02 §2.2), so books ingested before the transition would never have
+plates and books after it would — "has figures" would depend on the
+ingest date, which is an inconsistency to explain forever.
+
+Not a corrective sister either: taking the plain-text form was a design
+choice, and a cleaning that drops useful content is bad collection
+design, not a defect (the operator's ruling, 2026-09-07).
+
+### What that costs, revised down
+
+The operator reports that the NAS already holds most of Gutenberg as
+**both epub and txt**. So the expensive half — re-fetching 79k books
+from the origin — largely disappears; it is a re-PARSE of files already
+on disk.
+
+`space_id` covers `{cleaning_version, encoder, layers, space}` and
+neither `origin` nor `parser`, so the new collection lands in the SAME
+space as the old one. Admission is `space_id` plus per-record
+`content_hash` (03 §3.5). Therefore:
+
+**The whole cost turns on one empirical question.** Does parsing the
+epub yield byte-identical CLEANED TEXT to parsing the `.txt`?
+
+- **Identical** — every `content_hash` is unchanged, every existing
+  vector is admissible to the new collection, and the work is a re-parse
+  and a re-shard. No re-embedding at all.
+- **Different** — every record is a new `content_hash`, no vector
+  carries, and the corpus re-embeds.
+
+This is testable on a few hundred books, locally, with no network. It
+should be done BEFORE any of the figures amendment is written, because
+it is the number the whole plan hangs on and it is cheap to get.
+
+Note what it is not: it is not a question about whether the epub is a
+better source. It is a question about whether the two parsers, after
+cleaning, agree — and if they nearly-but-not-quite agree, the near miss
+is worth understanding before it is designed around.
