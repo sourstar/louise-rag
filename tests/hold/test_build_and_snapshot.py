@@ -47,7 +47,7 @@ def test_a_corpus_on_disk_becomes_record_shards_in_the_drag(
     assert result.records == 3
     shards = sorted((root / "gutenberg" / "drag" / "records").rglob("*.jsonl.zst"))
     assert [p.relative_to(root / "gutenberg" / "drag").as_posix() for p in shards] == [
-        "records/lang=en/00000.jsonl.zst", "records/lang=fr/00000.jsonl.zst"]
+        "records/lang=en/00001.jsonl.zst", "records/lang=fr/00001.jsonl.zst"]
 
 
 def test_the_drag_holds_only_records_after_a_build(
@@ -67,8 +67,8 @@ def test_the_drag_holds_only_records_after_a_build(
     assert present == [f"calibration/{stem}.safetensors",
                        f"calibration/{stem}.sig.json",
                        "codex.json",
-                       "records/lang=en/00000.jsonl.zst",
-                       "records/lang=fr/00000.jsonl.zst",
+                       "records/lang=en/00001.jsonl.zst",
+                       "records/lang=fr/00001.jsonl.zst",
                        "validation.json"]
     assert not (d / "manifest.json").exists()
     assert (root / "gutenberg" / "state" / "build" / "manifest.json").is_file()
@@ -261,3 +261,26 @@ def test_every_drag_file_is_named_by_the_codex_or_a_snapshot(
     on_disk = {p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()}
     assert on_disk - named == set(), \
         "a drag file that no snapshot names makes `share` refuse the drag"
+
+
+def test_shards_are_numbered_from_one(isolated_config, tmp_path, corpus_dir):
+    """09 §9.4: "the shard number within the slice, FROM 1"; 02 §2.2:
+    "shards are numbered 00001… per slice in the order they are created".
+
+    The builder numbered from 0 until 2026-09-08. It is not a filename
+    detail: the shard path is in the snapshot's shard entry, in the member
+    name (09 §9.16) and in a bundle header's `shard` field (§9.7), so two
+    peers that number differently disagree about which shard a bundle
+    covers — and `space_id` would not catch it, because numbering is not in
+    it. Fixed before any Codex existed, which was the last moment it cost
+    nothing.
+    """
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+
+    assert {s.n for s in snap.shards} == {1}, "one shard per slice, numbered 1"
+    for s in snap.shards:
+        assert s.path.endswith("/00001.jsonl.zst")
+        assert (root / "gutenberg" / "drag" / s.path).is_file()
+    assert not list((root / "gutenberg" / "drag" / "records").rglob("00000.*"))

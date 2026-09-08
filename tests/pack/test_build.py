@@ -71,8 +71,8 @@ def test_gutenberg_pack_round_trips_uids_chunks_and_possession(isolated_config, 
     assert m["plugin"] == "gutenberg" and m["license"]["class"] == "green"
     assert m["layers"] == [{"chunker": {"id": "book", "version": 1}, "rule": "default"}]
     assert list(m["slices"]) == ["lang=en", "lang=fr"] and m["slices"]["lang=en"]["records"] == 2
-    assert [s["path"] for s in m["shards"]] == ["records/lang=en/00000.jsonl.zst",
-                                                "records/lang=fr/00000.jsonl.zst"]
+    assert [s["path"] for s in m["shards"]] == ["records/lang=en/00001.jsonl.zst",
+                                                "records/lang=fr/00001.jsonl.zst"]
     for s in m["shards"]:
         assert s["sha256"] == records.sha256_of(pack_dir / s["path"])
     assert (pack_dir / "validation.json").is_file()
@@ -140,7 +140,7 @@ def test_wikipedia_pack_slices_by_language_and_page_range(isolated_config, tmp_p
     assert m["layers"][0]["chunker"]["id"] == "cdc"
     packed = _discovered(tmp_path, "wikipedia-pack", "packed", pack_dir)
     assert _chunks_of(packed) == _chunks_of(origin)
-    assert (pack_dir / "records" / "lang=en" / "pages=1M" / "00000.jsonl.zst").is_file()
+    assert (pack_dir / "records" / "lang=en" / "pages=1M" / "00001.jsonl.zst").is_file()
 
 
 def test_build_is_resumable_and_idempotent(isolated_config, tmp_path, corpus_dir, monkeypatch):
@@ -157,15 +157,15 @@ def test_build_is_resumable_and_idempotent(isolated_config, tmp_path, corpus_dir
         return info
     monkeypatch.setattr(records, "write_shard", stop_after_first)
     r1 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, stop=stop, log=lambda *_: None)
-    assert r1.interrupted and written == ["00000.jsonl.zst"]
+    assert r1.interrupted and written == ["00001.jsonl.zst"]
     assert not (pack_dir / manifest_mod.FILENAME).exists()
     monkeypatch.setattr(records, "write_shard", real)
     r2 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
     assert not r2.interrupted and r2.shards == 3 and r2.records == 3
-    first = (pack_dir / "records/lang=en/00000.jsonl.zst").stat().st_mtime_ns
+    first = (pack_dir / "records/lang=en/00001.jsonl.zst").stat().st_mtime_ns
     r3 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
     assert r3.shards == 3
-    assert (pack_dir / "records/lang=en/00000.jsonl.zst").stat().st_mtime_ns == first, "closed shards are never rewritten"
+    assert (pack_dir / "records/lang=en/00001.jsonl.zst").stat().st_mtime_ns == first, "closed shards are never rewritten"
     m = manifest_mod.load(pack_dir)
     assert [s["ids"][0] for s in m["shards"]] == ["gutenberg:10001", "gutenberg:10002", "gutenberg:10003"]
 

@@ -208,7 +208,19 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         done = con_build.execute(
             "SELECT n, last_ord, last_uid FROM shards WHERE slice=? ORDER BY n DESC LIMIT 1",
             (slice_name,)).fetchone()
-        next_n = (done["n"] + 1) if done else 0
+        # 09 §9.4: "the shard number within the slice, FROM 1"; 02 §2.2:
+        # "shards are numbered 00001… per slice in the order they are
+        # created". This numbered from 0 until 2026-09-08. It matters more
+        # than a filename: the shard path is in the snapshot's shard entry,
+        # in the member name (09 §9.16) and in a bundle header's `shard`
+        # field (§9.7), so two peers that number differently disagree about
+        # which shard a bundle covers. Fixed before any Codex exists, which
+        # is the last moment it is free.
+        #
+        # A build RESUMED across this change keeps its own numbering — the
+        # `+ 1` continues from what is there — so a pack half-built under
+        # the old rule stays contiguous rather than growing a hole.
+        next_n = (done["n"] + 1) if done else 1
         params: list = [slice_name]
         after = ""
         if done:
