@@ -177,3 +177,24 @@ archive's shards across peers (04 §4.5's rendezvous covers record
 shards only), and whether 01's promise 3 needs a clause for vectors
 converted locally from an unsigned archive, which carry the converter's
 signature rather than the producer's.
+
+---
+
+## DECIDED 2026-09-08: extend the rendezvous to archive shards
+
+04 §4.5's rendezvous partitions RECORD shards among peers. Nothing in
+01–09 says who fetches which part of a pre-embedded archive, so today
+every peer that wants MedCPT would download all 110 GB from NCBI —
+the behaviour that gets a project blocked by an origin.
+
+The decision is to extend the same mechanism to archive shards. The
+complication to handle when it is written: an archive's shards are not
+the collection's shards. MedCPT's are 1,000,000-PMID ranges
+(`ids_per_shard=1_000_000`, 37 of them); PubMed's record shards are
+30,000 records. So the rendezvous gains a second unit rather than
+reusing the first, and `shard_id` — today
+`"<collection_id>/<space>/<slice>/<n>"` — needs a form for "archive X,
+shard k".
+
+Not urgent: it belongs with step 9 (`share`) of the migration plan, and
+nothing before then touches it. Recorded here so it is not rediscovered.
