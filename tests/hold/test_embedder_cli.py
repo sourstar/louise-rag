@@ -46,11 +46,7 @@ def test_check_defers_when_no_encoder_is_configured(tmp_path, monkeypatch, capsy
     monkeypatch.delenv("EMBED_URL", raising=False)
     root = _collection(tmp_path)
     # give it a calibration member so the deferral is about the ENCODER
-    save_file = pytest.importorskip(
-        "safetensors.numpy",
-        reason="09 §9.12 fixes the calibration member as .safetensors; the "
-               "dependency is not yet in requirements.txt (asked, not "
-               "added unilaterally -- CLAUDE.md)").save_file
+    from safetensors.numpy import save_file
     from app.hold import calibration as cal, collection as col
     import numpy as np
     codex = col.read(root, "gutenberg")

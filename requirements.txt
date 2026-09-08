@@ -45,3 +45,13 @@ hypothesis>=6.100
 # LAZILY, so a deployment with no torrent-backed collection never loads it
 # and the app starts normally if the wheel is ever unavailable.
 libtorrent==2.1.1
+# Tensor serialisation for the two members docs/09-formats.md fixes as
+# `.safetensors`: the calibration member (§9.12 — the reference vectors and
+# the envelope) and a space's centres (§9.6). Not a convenience and not
+# substitutable: both are WIRE formats, hashed into the Codex
+# (`space.calibration.vectors`, `space.envelope`) and carried between
+# peers, so two implementations must read identical bytes. Pure-Rust with
+# prebuilt manylinux cp312 wheels, no toolchain in the image, and it
+# deliberately carries no code — the format is a header and raw tensors,
+# which is why it exists where a pickle would not be safe to fetch.
+safetensors>=0.4
