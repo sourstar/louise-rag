@@ -13,7 +13,7 @@ import pytest
 from app.hold import collection as col, drag, records as rec, snapshot as sn
 from app.hold.codex import CodexError
 from app.hold.records import RecordsError
-from tests.hold.conftest import PLATFORM, fake_embed
+from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import ORIGIN, SPACE, VALIDATION, recipe
 
 
@@ -22,13 +22,19 @@ def _collection(tmp_path: Path, **over):
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(**over),
                            platform_image=PLATFORM, embed=fake_embed,
-                           name="gutenberg")
+                           name="gutenberg", key=KEY, now=NOW)
     return root
 
 
 def _build(root, corpus_dir, **kw):
-    return rec.build(root, "gutenberg", corpus_dir=corpus_dir,
-                     log=lambda *_: None, **kw)
+    out = rec.build(root, "gutenberg", corpus_dir=corpus_dir,
+                    log=lambda *_: None, **kw)
+    # What the operator's next command does (`hold records validation`, 07
+    # §7.3). A snapshot cannot be frozen without it: 09 §9.4 lists
+    # validation.json in `files` with no "or null", and a drag holding a
+    # file no snapshot names is refused by `share` (07 §7.8).
+    rec.write_validation(root, "gutenberg")
+    return out
 
 
 # ---- the build -----------------------------------------------------------
@@ -57,10 +63,13 @@ def test_the_drag_holds_only_records_after_a_build(
     # The calibration member is written by `create`, before any build, and
     # is a member of every snapshot (09 §9.4, §9.12) — so it belongs here.
     cal_member, = (d / "calibration").glob("*.safetensors")
-    assert present == [f"calibration/{cal_member.name}",
+    stem = cal_member.name.removesuffix(".safetensors")
+    assert present == [f"calibration/{stem}.safetensors",
+                       f"calibration/{stem}.sig.json",
                        "codex.json",
                        "records/lang=en/00000.jsonl.zst",
-                       "records/lang=fr/00000.jsonl.zst"]
+                       "records/lang=fr/00000.jsonl.zst",
+                       "validation.json"]
     assert not (d / "manifest.json").exists()
     assert (root / "gutenberg" / "state" / "build" / "manifest.json").is_file()
 
@@ -202,3 +211,53 @@ def test_the_snapshot_id_defaults_to_the_period_that_closed(
     _build(root, corpus_dir, records_per_shard=2)
     snap = sn.create(root, "gutenberg", log=lambda *_: None)
     assert len(snap.snapshot_id) == 7 and snap.snapshot_id[4] == "-"
+
+
+def test_a_snapshot_names_the_calibration_member_and_its_signature(
+        isolated_config, tmp_path, corpus_dir):
+    """09 §9.4's `files` lists five entries and gives "or null" only to
+    LICENSE-TERMS and to seals.
+
+    This is the test that was missing. `create` began writing
+    `calibration/<set>.safetensors` and `_files` still named only
+    validation.json and LICENSE-TERMS, so the member was in the drag and in
+    no snapshot — and 07 §7.8 does not merely skip such a file, it makes
+    `share` refuse the WHOLE DRAG: "share refuses a drag directory holding a
+    file that neither the Codex names, nor a snapshot of the chain lists".
+    Nothing failed, because nothing looked.
+    """
+    from app.hold import drag as drag_mod
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+
+    codex = col.read(root, "gutenberg")
+    member, sig = drag_mod.calibration_paths(codex.space.calibration.set)
+    for name in (member, sig):
+        assert snap.files.get(name), f"{name} is listed with a root and bytes"
+        assert set(snap.files[name]) == {"root", "bytes"}
+
+    d = root / "gutenberg" / "drag"
+    assert snap.files[member]["bytes"] == (d / member).stat().st_size
+    assert snap.files[member]["root"] == drag_mod.pieces_root((d / member).read_bytes())
+
+
+def test_every_drag_file_is_named_by_the_codex_or_a_snapshot(
+        isolated_config, tmp_path, corpus_dir):
+    """07 §7.8's rule, asserted over the whole tree rather than over a list
+    someone remembered to update: every file in the drag is `codex.json`, a
+    shard a snapshot names, or an entry in its `files`. A member that is in
+    neither makes the drag unshareable, so this is the check that catches
+    the next one added without a `files` entry."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+
+    d = root / "gutenberg" / "drag"
+    named = {"codex.json"} | set(snap.files) | {s.path for s in snap.shards} \
+        | {r.path for r in snap.relations} \
+        | {f"snapshots/{snap.snapshot_id}.json",
+           f"snapshots/{snap.snapshot_id}.sig.json"}
+    on_disk = {p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()}
+    assert on_disk - named == set(), \
+        "a drag file that no snapshot names makes `share` refuse the drag"

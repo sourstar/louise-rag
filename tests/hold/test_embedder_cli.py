@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app import louise
-from tests.hold.conftest import PLATFORM, fake_embed
+from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
 
@@ -17,7 +17,7 @@ def _collection(tmp_path: Path) -> Path:
     root = tmp_path / "collections"
     from app.hold import collection as col
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           embed=fake_embed, name="gutenberg")
+                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
     return root
 
 

@@ -244,27 +244,60 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                                  calibration=(vectors_hash, envelope_hash),
                                  credits=credits)
     created = create(root, codex, name=name)
-    member, sig_path = drag.calibration_paths(set_id)
     d = drag_of(root, name_of(root, created.collection_id))
-    cal.write_member(d / member, vectors, envelope, set_id_=set_id,
+    write_calibration(d, codex, vectors, envelope, key=key, now=now)
+    return created
+
+
+def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
+                      *, key, now: str | None) -> None:
+    """The member and the signature beside it (09 §9.12).
+
+    BOTH, ALWAYS — which is why `key` is required. §9.12 marks the member's
+    `key` header required ("the creator's key"), and 09 §9.4's `files` lists
+    `calibration/<set>.sig.json` without the "or null" it gives LICENSE-TERMS
+    and seals. So a collection whose creator signed nothing has a member
+    with an empty required header and a snapshot that cannot list what §9.4
+    says it lists — and 07 §7.8 then refuses the whole drag, since `share`
+    refuses a drag holding a file no snapshot names.
+    """
+    from . import calibration as cal, drag as drag_mod, envelope as env
+
+    if key is None:
+        raise CodexError(
+            "creating a collection needs the node's signing key: 09 §9.12 "
+            "makes the calibration member's `key` header required and §9.4 "
+            "lists its signature among a snapshot's files without allowing "
+            "null. The reference records WHO produced it (invariant 8: the "
+            "key is referenced by path, NODE_KEY_PATH)")
+    if not now:
+        raise CodexError(
+            "signing the calibration reference needs the time to sign it "
+            "at; nothing under `hold` reads the clock (the snapshots do the "
+            "same), so a caller supplies it")
+
+    set_id = codex.space.calibration.set
+    member, sig_path = drag_mod.calibration_paths(set_id)
+    key_text = env.key_text(key.verify_key)
+    cal.write_member(drag_path / member, vectors, envelope, set_id_=set_id,
                      encoder_image=codex.space.encoder.image,
                      encoder_weights=codex.space.encoder.weights,
-                     key=env.key_text(key.verify_key) if key else "")
-    if key is not None:
-        if not now:
-            raise CodexError("signing the calibration reference needs "
-                             "the time to sign it at; nothing here reads "
-                             "the clock (the snapshots do the same)")
-        # 09 §9.12: a signature rests beside the member. It says who
-        # produced the reference, not that it is the right one — "the
-        # Codex's hashes, not the signature, are what bind it".
-        (d / sig_path).write_text(json.dumps(env.sign(env.ATTESTATION, {
-            "kind": "louise-calibration-reference", "version": 1,
-            "space_id": codex.space_id, "collection_id": codex.collection_id,
-            "set": set_id, "vectors": vectors_hash, "envelope": envelope_hash,
-            "key": env.key_text(key.verify_key), "time": now},
-            key), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return created
+                     key=key_text)
+
+    # 09 §9.12's body, field for field, under ITS OWN domain. Not the
+    # attestation domain: §9.2's whole point is that a signature made under
+    # one domain verifies under no other, so signing this as an attestation
+    # would produce a file no conformant peer can check.
+    body = {"kind": "louise-calibration", "version": 1, "set": set_id,
+            "space_id": codex.space_id,
+            "vectors": codex.space.calibration.vectors,
+            "envelope": codex.space.envelope,
+            "encoder_image": codex.space.encoder.image,
+            "encoder_weights": codex.space.encoder.weights,
+            "key": key_text, "time": now}
+    (drag_path / sig_path).write_text(
+        json.dumps(env.sign(env.CALIBRATION, body, key),
+                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def derive(root: Path, mother_id: str, *,
@@ -275,7 +308,7 @@ def derive(root: Path, mother_id: str, *,
            work: Work | None = None,
            credits: tuple[Credit, ...] | None = None,
            descriptive: Descriptive | None = None,
-           embed=None) -> Codex:
+           embed=None, key=None, now: str | None = None) -> Codex:
     """A sister: her mother's corpus, and at most `space`, `layers`, `update`
     and `work` changed (02 §2.7).
 
@@ -363,18 +396,19 @@ def derive(root: Path, mother_id: str, *,
     if any(_same_reference(sister, s) for s in sources):
         carry_calibration(root, sister, drag_path, *sources)
     else:
-        _write_own_calibration(sister, drag_path, embed, mother.modality)
+        _write_own_calibration(sister, drag_path, embed, mother.modality,
+                               key, now)
     return sister
 
 
 def _write_own_calibration(codex: Codex, drag_path: Path, embed,
-                           modality: str) -> None:
-    """The member for a collection whose reference is its own, not a
-    source's. Re-embeds rather than keeping the vectors from `recalibrate`,
-    because the two hashes are already in the Codex and this must produce
-    the file they name — `read_member` inside would catch a disagreement,
-    which is the point of doing it this way round."""
-    from . import calibration as cal, drag as drag_mod
+                           modality: str, key, now: str | None) -> None:
+    """The member and signature for a collection whose reference is its own
+    and not a source's. Re-embeds rather than keeping the vectors from
+    `recalibrate`, because the two hashes are already in the Codex and this
+    must produce the file they name — the check below catches a
+    disagreement, which is the point of doing it this way round."""
+    from . import calibration as cal
 
     if embed is None:
         raise CodexError(
@@ -390,11 +424,7 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
             f"the encoder produced reference vectors {got_v} and the Codex "
             f"names {codex.space.calibration.vectors}; the same build over "
             f"the same set must produce the same bytes twice")
-    member, _ = drag_mod.calibration_paths(codex.space.calibration.set)
-    cal.write_member(drag_path / member, vectors, envelope,
-                     set_id_=codex.space.calibration.set,
-                     encoder_image=codex.space.encoder.image,
-                     encoder_weights=codex.space.encoder.weights, key="")
+    write_calibration(drag_path, codex, vectors, envelope, key=key, now=now)
 
 
 def _same_reference(a: Codex, b: Codex) -> bool:

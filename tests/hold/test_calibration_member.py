@@ -22,7 +22,7 @@ from app.hold import (calibration as cal, collection as col, drag,
 from app.hold.calibration import CalibrationError
 from app.hold.codex import CodexError
 from app.hold.template import TemplateError
-from tests.hold.conftest import CAL_SET, DIM, PLATFORM, fake_embed
+from tests.hold.conftest import (CAL_SET, DIM, KEY, NOW, PLATFORM, fake_embed)
 from tests.hold.test_template import recipe
 
 NOW = "2026-09-08T00:00:00Z"
@@ -33,7 +33,7 @@ def created(root: Path, **kw):
     """The Codex and its drag, with the member `create` wrote in it."""
     codex = col.create_from_recipe(root, "gutenberg", recipe(),
                                    platform_image=PLATFORM, embed=fake_embed,
-                                   **kw)
+                                   key=KEY, now=NOW, **kw)
     return codex, root / "gutenberg" / "drag"
 
 
@@ -74,7 +74,7 @@ def test_a_recipe_must_name_a_set(tmp_path: Path):
     space["calibration"] = {"quorum": {"n": 16, "min_pass": 12}}
     with pytest.raises(CodexError, match="calibration.set"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space),
-                               platform_image=PLATFORM, embed=fake_embed)
+                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
 
 
 def test_a_set_this_platform_does_not_ship_is_refused(tmp_path: Path):
@@ -85,7 +85,7 @@ def test_a_set_this_platform_does_not_ship_is_refused(tmp_path: Path):
     space["calibration"] = dict(space["calibration"], set="sha256:" + "ff" * 32)
     with pytest.raises(CalibrationError, match="calibration set is"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space),
-                               platform_image=PLATFORM, embed=fake_embed)
+                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
     assert not list(tmp_path.iterdir()), "nothing is created"
 
 
@@ -109,7 +109,7 @@ def test_the_whole_set_is_embedded(tmp_path: Path):
         return fake_embed(texts)
 
     col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                           platform_image=PLATFORM, embed=embed)
+                           platform_image=PLATFORM, embed=embed, key=KEY, now=NOW)
     assert seen["n"] == cal.SIZE == 512
 
 
@@ -162,7 +162,7 @@ def test_normalise_is_applied_here_and_not_left_to_the_endpoint(tmp_path: Path):
     plain, plain_drag = created(tmp_path / "a")
     other = tmp_path / "b"
     codex = col.create_from_recipe(other, "gutenberg", recipe(),
-                                   platform_image=PLATFORM, embed=scaled)
+                                   platform_image=PLATFORM, embed=scaled, key=KEY, now=NOW)
     a, _ = member_of(plain_drag, plain)
     b, _ = member_of(other / "gutenberg" / "drag", codex)
     assert np.allclose(np.linalg.norm(b, axis=1), 1.0, atol=1e-5), "unit"
@@ -175,7 +175,8 @@ def test_an_encoder_that_returns_the_wrong_count_creates_nothing(tmp_path: Path)
     with pytest.raises(CalibrationError, match="returned 3 vectors"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM,
-                               embed=lambda t: fake_embed(t[:3]))
+                               embed=lambda t: fake_embed(t[:3]),
+                               key=KEY, now=NOW)
     assert not list(tmp_path.iterdir())
 
 
@@ -183,7 +184,8 @@ def test_an_encoder_that_returns_the_wrong_dimension_creates_nothing(tmp_path: P
     with pytest.raises(CalibrationError, match=r"the space is \(512, 768\)"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM,
-                               embed=lambda t: fake_embed(t, dim=384))
+                               embed=lambda t: fake_embed(t, dim=384),
+                               key=KEY, now=NOW)
     assert not list(tmp_path.iterdir())
 
 
@@ -214,25 +216,51 @@ def test_a_member_missing_a_tensor_is_refused(tmp_path: Path):
 
 # ---- the signature beside it ----------------------------------------------
 
-def test_a_key_writes_a_signature_that_verifies(tmp_path: Path):
-    """09 §9.12: a signature rests beside the member. It says who produced
-    the reference — "the Codex's hashes, not the signature, are what bind
-    it" — so it is optional and the hashes never are."""
+def test_the_signature_is_09_9_12s_body_under_its_own_domain(tmp_path: Path):
+    """09 §9.12 fixes the body field for field and the domain by name:
+    `louise/calibration/v1`, kind `louise-calibration`. Signing it as an
+    attestation instead produces a file no conformant peer can check, and
+    §9.2's whole point is that a signature under one domain verifies under
+    no other — so getting this wrong is silent on the writing side."""
     import json
-    key = signing.SigningKey(b"\x05" * 32)
-    codex, d = created(tmp_path, key=key, now=NOW)
-    body = env.verify(env.ATTESTATION,
-                      json.loads((d / paths(codex)[1]).read_text(encoding="utf-8")))
+    codex, d = created(tmp_path)
+    raw = json.loads((d / paths(codex)[1]).read_text(encoding="utf-8"))
+    body = env.verify(env.CALIBRATION, raw)
+    assert set(body) == {"kind", "version", "set", "space_id", "vectors",
+                         "envelope", "encoder_image", "encoder_weights",
+                         "key", "time"}
+    assert body["kind"] == "louise-calibration" and body["version"] == 1
     assert body["vectors"] == codex.space.calibration.vectors
     assert body["envelope"] == codex.space.envelope
     assert body["space_id"] == codex.space_id
+    assert body["encoder_image"] == codex.space.encoder.image
     assert body["time"] == NOW
+    with pytest.raises(env.SignatureError, match="does not verify"):
+        env.verify(env.ATTESTATION, raw)
 
 
-def test_the_member_stands_without_a_signature(tmp_path: Path):
+def test_there_is_no_such_thing_as_an_unsigned_collection(tmp_path: Path):
+    """09 §9.12 marks the member's `key` header required, and §9.4 lists
+    `calibration/<set>.sig.json` among a snapshot's files WITHOUT the "or
+    null" it gives LICENSE-TERMS and seals. So `create` refuses rather than
+    writing a member with an empty required header — which would also make
+    the drag unshareable, since `share` refuses a drag holding a file no
+    snapshot names (07 §7.8)."""
     codex, d = created(tmp_path)
-    assert not (d / paths(codex)[1]).exists()
-    member_of(d, codex), "and it still reads and verifies"
+    assert (d / paths(codex)[1]).is_file(), "always written"
+    with pytest.raises(CodexError, match="signing key"):
+        col.create_from_recipe(tmp_path / "x", "gutenberg", recipe(),
+                               platform_image=PLATFORM, embed=fake_embed,
+                               now=NOW)
+
+
+def test_the_member_names_its_creator(tmp_path: Path):
+    """The `key` header is required (09 §9.12): a reference nobody is named
+    for is one no peer can weigh."""
+    from safetensors import safe_open
+    codex, d = created(tmp_path)
+    with safe_open(str(d / paths(codex)[0]), framework="numpy") as f:
+        assert f.metadata()["key"] == env.key_text(KEY.verify_key)
 
 
 def test_signing_needs_a_time_and_never_reads_the_clock(tmp_path: Path):
@@ -242,7 +270,7 @@ def test_signing_needs_a_time_and_never_reads_the_clock(tmp_path: Path):
     with pytest.raises(CodexError, match="needs the time"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM, embed=fake_embed,
-                               key=signing.SigningKey(b"\x05" * 32))
+                               key=KEY)
 
 
 # ---- creating twice -------------------------------------------------------
@@ -284,7 +312,7 @@ def test_the_member_bytes_are_deterministic(tmp_path: Path):
     for i in range(6):
         p = tmp_path / f"{i}.safetensors"
         c.write_member(p, v, e, set_id_="sha256:aa", encoder_image="i",
-                       encoder_weights="w", key="")
+                       encoder_weights="w", key="ed25519:" + "aa" * 32)
         out.add(p.read_bytes())
     assert len(out) == 1
 

@@ -6,6 +6,7 @@ Nothing here is convenience — a fixture that omitted a field would let a
 test pass against a Codex the specification refuses.
 """
 import pytest
+from nacl import signing
 
 from app.hold import calibration as _cal
 from app.hold.codex import (Calibration, Chunker, Codex, Credit, Descriptive,
@@ -148,13 +149,18 @@ def a_root(root, codex, **kw):
     collection that could not exist, and a test built on one would prove
     nothing about `derive`.
     """
-    from app.hold import calibration as _cal, collection as _col, drag as _drag
+    from app.hold import calibration as _cal, collection as _col
     out = _col.create(root, codex, **kw)
     v, e, _, _ = _cal.build_member(CAL_TEXTS, fake_embed, normalise=True,
                                    dim=codex.space.dim)
-    member, _sig = _drag.calibration_paths(codex.space.calibration.set)
     d = _col.drag_of(root, _col.name_of(root, out.collection_id))
-    _cal.write_member(d / member, v, e, set_id_=codex.space.calibration.set,
-                      encoder_image=codex.space.encoder.image,
-                      encoder_weights=codex.space.encoder.weights, key="")
+    _col.write_calibration(d, codex, v, e, key=KEY, now=NOW)
     return out
+
+
+#: The creator's key and clock. 09 §9.12 makes the member's `key` header
+#: required and §9.4 lists its signature without allowing null, so there is
+#: no such thing as an unsigned collection; and nothing under `hold` reads
+#: the clock, so a caller always supplies the time.
+KEY = signing.SigningKey(b"\x05" * 32)
+NOW = "2026-09-08T00:00:00Z"

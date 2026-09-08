@@ -279,7 +279,17 @@ def write_member(path, vectors, envelope_, *, set_id_: str, encoder_image: str,
                  encoder_weights: str, key: str) -> None:
     """`calibration/<set>.safetensors` at the drag root, with 09 §9.12's
     four headers. A member of every snapshot (`files`, §9.4), so its bytes
-    are made deterministic before they land."""
+    are made deterministic before they land.
+
+    `key` is the CREATOR'S key and §9.12 marks it required, so it may not be
+    empty: the member records who produced this reference, and a reference
+    nobody is named for is one no peer can weigh.
+    """
+    if not key:
+        raise CalibrationError(
+            "the calibration member's `key` header is the creator's key and "
+            "09 §9.12 marks it required; a reference with no producer named "
+            "is one no peer can weigh")
     import tempfile
     from pathlib import Path
 

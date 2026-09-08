@@ -96,7 +96,13 @@ def cmd_create(a) -> int:
         recipe["layers"] = [l.to_dict() for l in source.layers]
 
     credits = tpl.expand_archives(recipe.get("archives") or ())
+    # The creator's key: 09 §9.12 makes the calibration member's `key`
+    # header required and §9.4 lists its signature among a snapshot's files
+    # without allowing null, so there is no unsigned collection. Loaded by
+    # PATH (invariant 8) and never printed.
+    from app.bundles import keys as node_keys
     codex = col.create_from_recipe(a.root, a.plugin, recipe,
+                                   key=node_keys.load_signing_key(), now=_utc_now(),
                                    platform_image=a.platform_image,
                                    embed=_embed_for_recipe(recipe["space"]),
                                    credits=credits)
@@ -110,6 +116,19 @@ def cmd_create(a) -> int:
               file=sys.stderr)
     print(codex.collection_id)
     return 0
+
+
+def _utc_now() -> str:
+    """09 §9.1's time: RFC 3339 in UTC to the second.
+
+    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it —
+    every signed body takes its `time` from a caller — so that a test can
+    pin what was signed, and so that two objects signed in one command
+    cannot disagree about when it ran.
+    """
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).replace(
+        microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _embed_for_recipe(space: dict):
@@ -388,14 +407,12 @@ def _recipe_for(codex, name):
 
 def _write_statement(a, run, codex):
     """`--accept`. 09 §9.12: the statement is "kept in `state/`"."""
-    import datetime
     from app.bundles import keys as node_keys
     from app.hold import collection as col, embedder as emb
 
     name, _ = col.resolve(a.root, a.collection)
     key = node_keys.load_signing_key()
-    now = datetime.datetime.now(datetime.timezone.utc).replace(
-        microsecond=0).isoformat().replace("+00:00", "Z")
+    now = _utc_now()
     stmt = emb.statement(run, codex, key, now=now)
     out = a.root / name / "state" / "calibration.json"
     out.parent.mkdir(parents=True, exist_ok=True)

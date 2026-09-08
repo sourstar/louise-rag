@@ -12,7 +12,7 @@ import pytest
 from app.hold import collection as col, template
 from app.hold.codex import Codex, CodexError
 from app.hold.template import TemplateError
-from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
+from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE, KEY, NOW,
                                  PLATFORM, PUBMED_SAMPLE, Q_ENCODER,
                                  Q_WEIGHTS, TERMS, WEIGHTS, a_credit,
                                  fake_embed, pubmed)
@@ -252,9 +252,9 @@ def test_a_slicing_block_may_not_name_a_space_shaped_slice():
 
 def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
     a = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed)
+                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
     b = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed)
+                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
     assert a.collection_id == b.collection_id
     assert (tmp_path / "gutenberg" / "drag" / "codex.json").read_bytes() == a.canonical()
     assert [c.collection_id for c in col.list_all(tmp_path)] == [a.collection_id]
@@ -262,12 +262,12 @@ def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
 
 def test_two_plugins_make_two_collections(tmp_path: Path):
     g = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed)
+                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
     p = col.create_from_recipe(
         tmp_path, "pubmed",
         recipe(origin=dict(ORIGIN, spec=dict(ORIGIN["spec"], source_id="pubmed")),
                license={"class": "yellow", "terms_sha256": TERMS}),
-        platform_image=PLATFORM, embed=fake_embed)
+        platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
     assert g.collection_id != p.collection_id
     assert g.space_id != p.space_id, "different layers, different space"
 

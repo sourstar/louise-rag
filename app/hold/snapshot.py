@@ -349,7 +349,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         shards=shards,
         delta=compute_delta(prev_hashes, current),
         relations=_relation_shards(drag_dir, shards),
-        files=_files(drag_dir, codex),
+        files=_files(drag_dir, codex, snapshot_id),
     )
 
     out = drag_dir / drag_mod.snapshot_path(snapshot_id)
@@ -444,18 +444,42 @@ def _count_edges(path) -> int:
     return sum(1 for _ in pack_records.iter_records(path))
 
 
-def _files(drag_dir, codex) -> dict:
-    """Every whole-collection member with its transport root (09 §9.4). A
-    member that is not there is `null` where §9.4 allows one and absent
-    where it does not — nothing is invented."""
+def _files(drag_dir, codex, snapshot_id: str | None = None) -> dict:
+    """Every whole-collection member with its transport root (09 §9.4).
+
+    ALL FIVE of §9.4's entries, and the reason is 07 §7.8: "`share` refuses
+    a drag directory holding a file that neither the Codex names, nor a
+    snapshot of the chain lists — as a shard or in its `files` (09 §9.4)".
+    So a member left out here does not merely go unserved; it makes the
+    whole drag unshareable. That became live the day `create` started
+    writing `calibration/<set>.safetensors`, which is why the two
+    calibration entries are here and are not nullable — §9.4 gives "or
+    null" to LICENSE-TERMS and to seals, and to nothing else.
+    """
     from pathlib import Path
     from . import drag as drag_mod
+
+    member, sig = drag_mod.calibration_paths(codex.space.calibration.set)
+    required = [drag_mod.VALIDATION_PATH, member, sig]
+    nullable = [drag_mod.TERMS_PATH]
+    if snapshot_id is not None:
+        nullable.append(drag_mod.seals_path(snapshot_id))
+
+    hint = {drag_mod.VALIDATION_PATH: " — run `hold records validation`"}
+
     out: dict = {}
-    for member in (drag_mod.VALIDATION_PATH, drag_mod.TERMS_PATH):
-        p = Path(drag_dir) / member
+    for name in required + nullable:
+        p = Path(drag_dir) / name
         if p.is_file():
             raw = p.read_bytes()
-            out[member] = {"root": drag_mod.pieces_root(raw), "bytes": len(raw)}
-        elif member == drag_mod.TERMS_PATH:
-            out[member] = None          # green: no terms member (02 §2.6)
+            out[name] = {"root": drag_mod.pieces_root(raw), "bytes": len(raw)}
+        elif name in nullable:
+            out[name] = None            # green: no terms; unsealed: no seal
+        else:
+            raise CodexError(
+                f"{name} is missing from the drag and 09 §9.4 lists it in "
+                f"every snapshot's `files` without allowing null"
+                f"{hint.get(name, '')}. A snapshot that omits it makes the "
+                f"drag unshareable (07 §7.8), and one that named a file that "
+                f"is not there would be worse")
     return out
