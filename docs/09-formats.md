@@ -319,7 +319,10 @@ name is `<key>=<value>` for each key in order, joined by `/`:
 `year=1975-1979`, `year=2023`, `lang=de/pages=3M` (`pages` = `native_id
 // bin`, written with `M` for a bin of one million). A slice name
 matches `^[A-Za-z0-9=_\-][A-Za-z0-9=_.\-]*(/[A-Za-z0-9=_\-][A-Za-z0-9=_.\-]*)*$`;
-it becomes a directory under `records/`.
+it becomes a directory under `records/`. A segment of exactly 16
+lowercase hexadecimal characters is refused, because it is the shape of
+a `<space>` segment and `index-<slice>` would then be a member name
+`index-<space>` already has (§9.16).
 
 **The space block.**
 
@@ -1352,6 +1355,11 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `terms` | `LICENSE-TERMS` | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json` | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
+
+`index-<slice>` and `index-<space>` are the same shape, so a slice name
+of exactly 16 lowercase hexadecimal characters — the shape of a
+`<space>` segment (§9.3) — is REFUSED at collection creation, and the
+two names can never collide. No other pair of kinds shares a shape.
 
 A member of one file has that file's pieces root as its `root` (§9.5).
 A member of several files has a root per file, and its member root is
