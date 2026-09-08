@@ -27,7 +27,19 @@ class CorpusSource(Protocol):
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...
     def parse(self, raw: RawDoc) -> CanonicalDoc: ...
+
+    # optional; the default yields nothing and the collection has no
+    # relations member. Called once per parsed document, so an edge is
+    # discovered where its source document is.
+    def relations(self, doc: CanonicalDoc) -> Iterator[Edge]: ...
 ```
+
+`Edge` is `{to: str, type: str}` — the uid the edge points at and the
+plugin's own name for the kind of edge. The platform supplies the other
+two fields 09 §9.14 requires: `from`, which is the document's own uid,
+and `snapshot`, the snapshot in which the edge is first listed, which
+the plugin cannot know. An edge may point at a uid this collection does
+not hold; a dangling edge is data, not an error (05 §5.5).
 
 `protocol_version` is a class attribute the plugin declares; the
 platform refuses to load a plugin whose version it does not implement,

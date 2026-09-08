@@ -69,12 +69,20 @@ number of results, ordered as the collections were named; when none
 were named, by the bytes of `space_id`.
 
 **One list per question.** Every leg answers one question, and by
-default that question is relevance to the query text. A collection may
-contribute a leg that answers another question — the genome
+default that question is relevance to the query text: `question` is the
+literal `"relevance"`, every collection's legs carry it, and in this
+version every collection's legs carry nothing else — so there is one
+list, and the rule below costs nothing until there is not. A collection
+may contribute a leg that answers another question — the genome
 collections' by-sequence leg answers *homology*, their annotation text
 answers *function* — and legs answering different questions are never
 fused: each question is its own list, presented beside the others and
-named. Fusing a homology ranking with a functional ranking yields a
+named. Where a non-default leg is DECLARED, and how two collections
+establish that their legs answer the same question, is the search-axes
+amendment; nothing in this version declares one, and an implementation
+that writes `"relevance"` and fuses within it is complete.
+
+Fusing a homology ranking with a functional ranking yields a
 list that answers neither.
 
 Some questions are not searches. "The frequency of rs80359351", "the
@@ -233,7 +241,7 @@ platform image and change only with it:
 ```
 louise_search(query, collections?, space?, filters?, limit?, as_of?,
               freshness?, translate?)
-    → {lists: [{space_id, question, hits: [<result, §5.3>]}],
+    → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}
     filters: {<facet field>: <value> | {not: <value>}}

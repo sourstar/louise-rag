@@ -194,8 +194,14 @@ reader needs at the command line:
   A slice fetched once is recorded in the file so the monthly cycle
   continues it.
 - **`records build`.** Refuses (exit 2) a record without `origin_hash`
-  (02 §2.3) and writes a tombstone for a document the origin retracted
-  (06 §6.1). A re-run over the same origin files writes the same bytes.
+  (02 §2.3), refuses one whose `native_id` sorts before the open shard's
+  `first_id` (02 §2.2), and writes a tombstone for a document the origin
+  retracted (06 §6.1). It writes `relations/<slice>/NNNNN.jsonl.zst`
+  beside each record shard from the plugin's `relations()` (06 §6.1),
+  sorted and framed as 09 §9.14 fixes, and nothing at all when the
+  plugin does not implement it. `hold snapshot create` lists what is
+  there in the snapshot's `relations`, `[]` when there is none. A re-run
+  over the same origin files writes the same bytes.
 - **`records show`.** A record id is a uid, `pubmed:38112034`. `--shard`
   streams the shard as stored (09 §9.5); `--raw` prints records without
   their chunks.

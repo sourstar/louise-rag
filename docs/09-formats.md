@@ -230,8 +230,13 @@ anywhere, and a later version that adds a descriptive field adds it
 inside `descriptive` and moves no identity. The collection's directory
 under `<LOUISE_ROOT>/collections/` is named by the 64 hexadecimal
 digits of `collection_id` (07 §7.8). A file whose inner hash does not
-equal the id its directory claims is refused; so is one whose bytes do
-not equal a `codex_hash` a snapshot or a digest named.
+equal the id its directory claims is refused; so is one pulled from a
+peer whose bytes do not equal the `codex_hash` that peer's digest
+advertised (§9.9). No snapshot carries a `codex_hash`: a snapshot is
+byte-identical across peers and `codex_hash` is not, since `descriptive`
+is outside the identity and inside the file. On the signed paths — the
+`codex` event, which carries Codex objects (§9.9) — the signature covers
+them and no separate hash is needed.
 
 **Fields.** Every field is present; a field not in use is `null`. Nested
 blocks are objects; the types are canonical-JSON types (§9.1), and a
@@ -257,7 +262,7 @@ number written as a decimal string is marked *decimal*.
 | `validation` | object | yes | the plan (03 §3.2), below |
 | `license` | object | yes | `{class: "green" · "yellow" · "red", terms_sha256: "sha256:…" or null}`; `null` on green and only on green |
 | `privacy` | `"public"` · `"restricted"` · `"never-share"` | yes | 04 §4.4; `erasure: "erasable"` requires `"never-share"` |
-| `update` | object | yes | `{cadence: "monthly", day: integer 1–28, grace_days: integer ≥ 0}` |
+| `update` | object | yes | `{cadence: "monthly" · "weekly", day: integer, grace_days: integer ≥ 0}`. `day` is read by the cadence: 1–28 as a day of the month when monthly, 1–7 as an ISO weekday when weekly. Any other value is refused. The cadence fixes the snapshot-id form (§9.4) and so is fixed for a chain: a daughter continues her mother's chain and keeps it, and only a sister, who begins her own, may change it (02 §2.7) |
 | `publication` | `"open"` · `"certified"` | yes | 02 §2.8 |
 | `certifier` | object or null | yes | `{key: "ed25519:…", anchor: "https://…", is_origin: boolean}`; non-null exactly when certified |
 | `embedding` | `"open"` · `"endorsed"` · `"certifier-only"` | yes | 03 §3.8; `"open"` on an open collection |
@@ -319,7 +324,7 @@ it becomes a directory under `records/`.
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `encoder` | object | yes | `{image: "sha256:…", weights: "sha256:…", label: string}` — the encoder container's digest, the digest of the weights file it serves, and a readable label without guarantee. `image` equals `toolchain.encoder_image`; a Codex where they differ is refused |
+| `encoder` | object | yes | `{image: "sha256:…", weights: "sha256:…", label: string}` — the encoder container's digest, the digest of the weights file it serves, and a readable label without guarantee. The encoder image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
 | `dtype` | `"f16"` · `"f32"` | yes | storage type of vectors |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
@@ -329,7 +334,7 @@ it becomes a directory under `records/`.
 | `tolerance` | decimal | yes | the cosine a vector must reach against the reference (03 §3.1) |
 | `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash (§9.12), and the quorum |
 | `envelope` | id | yes | the hash of the envelope tensor in the calibration member (§9.12) |
-| `epoch` | string | yes | `"0"` for a root or a sister; a daughter keeps the mother's; a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…` |
+| `epoch` | string | yes | `"0"` for a root; a daughter AND a sister keep their mother's, so a sister of a corrective sister keeps the salted one and stays in her mother's space (02 §2.7); a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…`. Any other value is refused |
 | `evaluation` | object or null | yes | `{suite: {name, version, sha256, public}, metric, value: decimal, conditions: {…}, coverage_check: {targets, resolved}, run_by: key, run_at: time, tier: "reproducible" · "asserted"}`; `null` when no score is claimed |
 
 **space_id.**
@@ -356,7 +361,7 @@ hexadecimal digits of the digest.
 | field | type | required | meaning |
 |---|---|---|---|
 | `checks` | list of check names | yes | the checks that apply, from 03 §3.2's table of plan checks, in the order they run. §9.8's table is wider: it adds the results that are never planned — `merge`, `forgery`, `withdraw`, `supersedes` — which a peer produces from what it finds, not from a plan |
-| `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal, "chunks": integer}}` — a decimal is a fraction of the snapshot's shards, `"1"` is exhaustive; `chunks` is the number of chunks drawn per sampled shard |
+| `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal}}` — a decimal is a fraction of the snapshot's shards, `"1"` is exhaustive. The plan sets how many SHARDS a check samples and never how many chunks: `vectors-sample` draws sixteen per sampled shard and passes on the quorum `{n: 16, min_pass: 12}` of 03 §3.3, the same sixteen T3 draws by the importer's private randomness (03 §3.5). A plan-set count would need a scaling rule for the threshold that a creator could get backwards — raising the sample to strengthen the check and weakening it instead — and would drift from T3, whose randomness is deliberately unpublished |
 | `required` | list of check names | yes | certified collections: what must have passed before the collection is shown as certified (03 §3.7); `[]` on an open collection |
 
 `validation.json` at the drag root is this block written out in
@@ -404,7 +409,7 @@ fields that carry its choices (every other field is present in the file):
           "envelope":"sha256:77…","epoch":"0","evaluation":null},
  "work":{"tokens":40000000,"per":"P1M"},"modality":"text","erasure":"retractable",
  "validation":{"checks":["roots","records","chunks","records-vs-origin","vectors-sample","calibration","centres","labels","license","signature"],
-               "sample":{"records":{"shards":"0.05"},"chunks":{"shards":"0.05"},"records-vs-origin":{"shards":"0.05"},"vectors-sample":{"shards":"0.10","chunks":16}},
+               "sample":{"records":{"shards":"0.05"},"chunks":{"shards":"0.05"},"records-vs-origin":{"shards":"0.05"},"vectors-sample":{"shards":"0.10"}},
                "required":[]},
  "license":{"class":"red","terms_sha256":"sha256:b9…"},"privacy":"public",
  "update":{"cadence":"monthly","day":1,"grace_days":7},
@@ -430,10 +435,19 @@ that grows and is never hashed. Superseded record shards keep their old
 bytes beside the new ones (§9.5), so every snapshot in the chain stays
 servable and checkable.
 
-**The id.** The cutoff instant of month `M` is 00:00:00 on `update.day`
-of `M` in `origin.clock`; the snapshot it produces is named for the month
-that closed at that instant: the cutoff `2026-09-01T00:00:00
-America/New_York` names `"2026-08"`. Ids are `YYYY-MM`. A record belongs
+**The id.** A snapshot is named for the period of the collection's
+cadence that CLOSED at its cutoff instant, and the cutoff is 00:00:00 on
+`update.day` of the period that follows, in `origin.clock`.
+
+| cadence | cutoff | id | example |
+|---|---|---|---|
+| `monthly` | 00:00:00 on day `update.day` (1–28) of month `M+1` | `YYYY-MM` of `M` | `2026-09-01T00:00:00 America/New_York` names `"2026-08"` |
+| `weekly` | 00:00:00 on ISO weekday `update.day` (1–7) of ISO week `W+1` | `YYYY-Www` of `W` | `2026-09-07T00:00:00 America/New_York` names `"2026-W36"` |
+
+Both forms are fixed-width, zero-padded and sort lexicographically
+within a chain, which is all any DHT key (04 §4.2), path or member name
+needs of them. A chain never mixes them: the cadence is in the Codex and
+a daughter keeps her mother's. A record belongs
 to the snapshot when the origin artefact it was parsed from is one the
 Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 
@@ -444,7 +458,7 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | `kind` | `"louise-snapshot"` | yes | |
 | `version` | `1` | yes | |
 | `collection_id` | id | yes | the Codex this snapshot applies |
-| `snapshot_id` | `YYYY-MM` | yes | |
+| `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | by the cadence, below |
 | `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the snapshot named by the Codex's `continues_through` |
 | `shards` | list of shard | yes | every record shard the snapshot consists of, sorted by (`slice` bytes, `n`) |
 | `relations` | list of relation shard | yes | the relations shards (§9.14), same order; `[]` when the collection has none |
@@ -462,6 +476,7 @@ A shard entry:
 | `first_id`, `last_id` | string | yes | the `native_id` of the first and last record |
 | `records` | integer | yes | records in the shard |
 | `chunks` | integer | yes | chunks over all its records under the Codex's layers |
+| `chunks_root` | id | yes | SHA-256 over, in chunk order, each chunk's id as UTF-8 bytes followed by the raw 16-byte BLAKE2b-128 of its text. It depends on the records and the Codex's layers alone — exactly as the `chunks` count above already does — so "the snapshot is records only" (02 §2.2) still holds, and computing it costs the chunking pass the count costs anyway |
 | `tokens` | integer | yes | `chunks × space.ctx` — the upper bound §4.5 and §4.7 use |
 | `bytes` | integer | yes | size of the stored file |
 | `toolchain` | `"own"` · `"mother"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the mother's for inherited shards |
@@ -485,7 +500,9 @@ search and embedding by the tombstone alone. The set of shards re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
 in `previous`; nothing lists it separately.
 
-**Chain rules.** Consecutive snapshots have consecutive ids; each names
+**Chain rules.** Consecutive snapshots have consecutive ids — the next
+period of the collection's cadence, `2026-08` then `2026-09`,
+`2026-W36` then `2026-W37`; each names
 the hash of the one before; all name one `collection_id`, except a
 daughter's first, whose `previous` belongs to the Codex named by
 `continues` and whose inherited shards carry the mother's roots and
@@ -580,7 +597,11 @@ record (below) carries the `content_hash` of the text it points at.
 **Chunks** are not stored: a record's chunks are recomputed from its
 `sections` by its layer's chunker (06 §6.3), and a chunk id is
 `<uid>:<seq>:<chunker version>`; the `chunks` check reproduces them and
-the snapshot carries the count per shard.
+the snapshot carries, per shard, the count and the `chunks_root` (§9.4)
+it reproduces against. Without a published root the check could compare
+only a count, and a chunker that moved every boundary without changing
+the number would pass — which 03 §3.4 leans on as half its proof that a
+new platform image is equivalent.
 
 **Pointer records.** A red-class collection's records member is the same
 line with `sections: []` and `extra.origin_url` set; every other field,
@@ -758,7 +779,7 @@ uids); no floats anywhere.
 | `version` | `1` | yes | |
 | `collection` | id | yes | the collection the producer embedded for. Provenance, never a gate: a bundle is admissible in any collection whose `space_id` it matches (03 §3.5) |
 | `space_id` | id | yes | the space, and the gate: a bundle whose `space_id` is not the importing collection's is refused at T0, before any tier runs |
-| `snapshot_id` | `YYYY-MM` | yes | the snapshot whose records were embedded. Provenance, never a gate: an unchanged record keeps its vectors across snapshots (02 §2.2), and `possession.json` — not this field — decides whether a row still matches the text |
+| `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot whose records were embedded. Provenance, never a gate: an unchanged record keeps its vectors across snapshots (02 §2.2), and `possession.json` — not this field — decides whether a row still matches the text |
 | `shard` | string | yes | `"<slice>/<n>"` — the record shard the chunks come from; one shard per bundle |
 | `uids` | list of strings | yes | the uids whose chunks the bundle covers, every chunk of each, sorted by bytes, no duplicates: the bundle's chunk range |
 | `chunk_count` | integer | yes | rows in `vectors.parquet` after the challenge rows |
@@ -851,7 +872,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `kind` | `"louise-attestation"` | yes | |
 | `version` | `1` | yes | |
 | `collection_id` | id | yes | |
-| `snapshot_id` | `YYYY-MM` | yes | |
+| `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | |
 | `snapshot_hash` | id | yes | which of two snapshots under one id was checked |
 | `check` | string | yes | the check, below |
 | `seed` | 64 hex or null | yes | the 32-byte seed of §9.1's sampler; `null` for an exhaustive or deterministic check |
@@ -946,6 +967,7 @@ A collection entry:
 | `collection_id`, `lineage_id` | id | yes | |
 | `title` | string | yes | the `descriptive.title` of the Codex this peer holds, so a receiver can name a collection it has not fetched; untrusted, never used to sort, merge or resolve (08 §8.2) |
 | `snapshot_id`, `snapshot_hash` | | yes | the latest snapshot held, and its hash |
+| `codex_hash` | id | yes | `H` of the bytes of the `codex.json` THIS peer holds (§9.3). A `codex.json` pulled from this peer whose bytes hash otherwise is dropped: the pull path answers with stored bytes and no signature (below), so this is what makes it self-verifying. It is per-peer and not an identity — two honest peers may hold the same `collection_id` under different titles, hence different `codex_hash` (02 §2.1) — so it is compared only against the digest that advertised it |
 | `license`, `privacy` | string | yes | the Codex's classes, so a receiver can skip what it may not take |
 | `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record shard's root is the snapshot's, a bundle's root is its member root |
 | `coverage` | list of `{shard, bundles: [id…]}` | yes | per shard `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted |
@@ -991,7 +1013,7 @@ seen, decrements `hops` and forwards to its neighbours while `hops > 0`.
 | `key`, `time` | | yes | |
 | `what` | `"codex"` · `"snapshot"` · `"attestations"` | yes | |
 | `collection_id` | id | yes | |
-| `snapshot_id` | `YYYY-MM` or null | yes | for `snapshot`; `null` means the latest the responder holds |
+| `snapshot_id` | `YYYY-MM` or `YYYY-Www`, or null | yes | for `snapshot`; `null` means the latest the responder holds |
 | `since` | time or null | yes | for `attestations`: only those with `time` after it |
 
 The response is one JSON object `{"items": [{"path": string, "sha256":
@@ -1094,7 +1116,7 @@ it that no other valid key also made.
 | `kind` | `"louise-pointer"` | yes | |
 | `version` | `1` | yes | |
 | `collection_id` | id | yes | |
-| `snapshot_id` | `YYYY-MM` | yes | the current certified snapshot |
+| `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | the current certified snapshot |
 | `snapshot_hash` | id | yes | |
 | `seq` | integer | yes | strictly increasing per collection; a peer keeps the highest verified `seq` and discards lower ones |
 | `key` | key | yes | the certifier's key |
@@ -1243,7 +1265,7 @@ record).
 | `from` | uid | yes | a record of this collection, in this shard |
 | `to` | string | yes | a uid of this collection, or a canonical id `<namespace>:<id>` left unresolved |
 | `type` | string | yes | `<plugin>:<name>`, registered by the plugin: `eli:cites`, `eli:amends`, `eli:repeals`, `pubmed:cites` |
-| `snapshot` | `YYYY-MM` | yes | the snapshot in which the edge was first listed |
+| `snapshot` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot in which the edge was first listed |
 
 Edges are sorted by (`from` bytes, `type` bytes, `to` bytes); the
 direction is from → to as the source states it.
@@ -1280,6 +1302,8 @@ An entry:
 |---|---|---|---|
 | `file_hash` | BLAKE2b-128 | yes | the sealed file's hash. A record parsed from it carries that hash in `extra.seal` (§9.5), which is how it finds its entry: a record's own `origin_hash` covers the document alone (02 §2.3), so the two are different values and the reference is explicit |
 | `format` | `"cades"` · `"pades"` · `"xades"` | yes | the seal's envelope |
+| `seal` | `{b64: string}` | yes | the signature envelope itself, DER as base64 — the CMS `SignedData` for CAdES and PAdES, the `<ds:Signature>` element for XAdES |
+| `content_sha256` | id | yes | the message digest the signature commits to, taken from the envelope's signed attributes. Archival mode verifies the signature over `seal` and checks it commits to this value; it is NOT `file_hash`, which is BLAKE2b-128 of the sealed file (below) and is what live mode re-fetches against |
 | `signer` | object | yes | `{subject, issuer, serial}` of the signing certificate, as strings |
 | `chain` | list of strings | yes | the certificate chain, DER as base64, leaf first |
 | `revocation` | list of `{kind: "ocsp" · "crl", b64: string, time}` | yes | the responses captured at validation |
@@ -1287,8 +1311,10 @@ An entry:
 | `trusted_list` | `{lotl_sha256: id, tl_sha256: id, url: string}` | yes | the List of Trusted Lists and the national list the chain validated against, hashed |
 | `verified_at` | time | yes | when the certifier validated it |
 
-`origin-seal` in archival mode validates the seal against `chain`,
-`revocation` and `trusted_list` with no network; in live mode it
+`origin-seal` in archival mode verifies the signature in `seal` over
+the digest in `content_sha256` and validates its certificate path
+against `chain`, `revocation` and `trusted_list`, with no network and
+without the sealed bytes; in live mode it
 re-fetches the sealed file, checks it hashes to `file_hash`, and
 validates against the current lists. The sealed files themselves travel
 only in the optional member `origin-<slice>` (§9.16), never in the
@@ -1419,8 +1445,17 @@ record (§9.5). It adds no layer: which layer a document falls in is
 derived from the Codex's rules whenever it is needed, never stored
 (02 §2.3).
 
+`Edge`: `{to: str, type: str}` — what `relations()` yields, one call
+per parsed document (06 §6.1). `to` is the uid the edge points at, which
+this collection need not hold; `type` is the plugin's own name for the
+kind of edge. The platform adds `from`, the document's own uid, and
+`snapshot`, which the plugin cannot know, and writes the result as
+§9.14 fixes. A plugin that does not implement `relations()` yields
+nothing and the collection has no relations member.
+
 The error contract's exceptions are `Deferred` and `Unavailable`
-(06 §6.1); `protocol_version` is `1`.
+(06 §6.1); `protocol_version` is `1`, and `relations()` is part of it:
+the protocol is fixed with this version and not amended into it.
 
 **Reference source types** (06 §6.5).
 

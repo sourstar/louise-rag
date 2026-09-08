@@ -251,7 +251,17 @@ is open: it holds fewer than `shard_records` records, and each snapshot
 re-issues it with the records that arrived since, under its own number,
 until it fills and closes. New records go into the open shard first and
 open a new number only when it is full, so a slice has at most one open
-shard at a time and a shard holds `shard_records` records when it
+shard at a time. This assumes what `native_id_order` (06 §6.1) must
+give: within a slice, a document published later sorts after every id
+already published there — true of PMIDs and Gutenberg numbers, not true
+of every identifier. `hold records build` REFUSES (exit 2) a record
+whose `native_id` sorts before the open shard's `first_id`, naming the
+record and the shard, rather than placing it out of order. Shard ranges
+therefore partition the id space, which is what 05 §5.5 needs to resolve
+a uid to a shard from a snapshot alone, and what keeps two honest peers
+from cutting the same cutoff into different shards — one re-cutting the
+slice, one appending. A source that cannot promise it needs a different
+`native_id` rule or a different slicing key, not a different shard, and a shard holds `shard_records` records when it
 closes — fewer afterwards if a tombstoned record is dropped from it at a
 re-issue, never more, and never refilled, because closed is closed. The
 cut therefore falls on the same records whatever the
@@ -418,9 +428,15 @@ space_id = H(canonical-json({encoder: {image, weights}, layers, cleaning_version
 
 Not `tolerance`, not `calibration`, not `envelope`, not `work`: those
 are the contract around the function, not the function. `space.epoch`
-is `"0"` for a root or a sister, the mother's for a daughter, and
+is `"0"` for a root, the mother's for a daughter or a sister, and
 `H(canonical-json({"replaces": <replaced collection_id>}))` for a
-corrective sister (§2.7). The `<space>` segment of a path or a
+corrective sister (§2.7). A sister inherits it because the rule that
+mints a fresh epoch is the corrective sister's alone: forcing `"0"` on
+every sister would give the weekly sister of a corrected collection a
+different `space_id` from her mother although encoder, weights, layers
+and cleaning are identical, and §2.7's "a sister whose `space_id` equals
+its mother's shares the mother's vectors" would be false exactly where
+it is most needed. The `<space>` segment of a path or a
 member name is the first 16 hex characters of the digest. The query side
 is part of the function: a query is embedded by `space.query.encoder`
 when it is not null — bi-encoder pairs such as MedCPT's query and

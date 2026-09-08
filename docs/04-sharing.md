@@ -61,7 +61,10 @@ and one that holds nothing finds the collection under the collection
 key. A searcher probes the current snapshot id first, then each earlier
 id back to twelve cadences, and stops at the first key with announcers;
 a collection nobody has announced for twelve cadences is found by a peer
-address given by hand.
+address given by hand. Twelve CADENCES and not twelve months: the span
+is twelve announcement periods of that collection, generous by the same
+factor for a weekly sister as for her monthly mother, and twelve probes
+either way.
 
 What is found under a key is a peer address. The port announced there
 speaks the peer messages of 09 §9.9 — signed, and the only protocol
