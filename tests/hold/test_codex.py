@@ -508,3 +508,64 @@ def test_a_fraction_is_a_decimal_string_because_the_plan_forbids_floats():
     for bad in ("0", "1.5", "-0.1"):
         with pytest.raises(CodexError, match=r"in \(0, 1\]|decimal string"):
             cx.sample_size(bad, 100)
+
+
+def test_the_initial_sort_is_redundant():
+    """09 §9.1 opens with "sort the universe of ids by their UTF-8 bytes",
+    and `sample` does not perform that sort.
+
+    It is redundant because the draw's own order is `(score, id bytes)`, a
+    total order on distinct ids, so the input order cannot reach the output.
+    This pins the two formulations against each other over a universe big
+    enough for a difference to show — "obviously equivalent" is exactly how
+    a sampling function stops being reproducible without anyone noticing.
+    """
+    import hmac as _hmac
+    seed = b"\x05" * 32
+    u = [f"pubmed:{i}:0:1" for i in range(4000)]
+
+    def score(i):
+        tag = _hmac.new(seed, i.encode("utf-8"), hashlib.sha256).digest()
+        return int.from_bytes(tag[:8], "big"), i.encode("utf-8")
+
+    with_sort = sorted(sorted(u, key=lambda s: s.encode("utf-8")), key=score)
+    assert cx.sample(seed, 16, u) == with_sort[:16]
+    assert cx.sample(seed, 16, u) == cx.sample(seed, 16, list(reversed(u)))
+
+
+def test_the_universe_may_be_a_generator_and_is_never_materialised():
+    """The centres rule draws over every chunk id in the collection — 36M
+    for PubMed. Sorting peaks at 232 MB per 1M ids (measured), i.e. about
+    8 GB at that size; drawing with a heap of `n` peaks at 5 KB. So the
+    universe must be allowed to stream, and a caller that hands over a
+    generator must not have it silently turned into a list."""
+    seed = b"\x06" * 32
+    n_seen = 0
+
+    def universe():
+        nonlocal n_seen
+        for i in range(5000):
+            n_seen += 1
+            yield f"pubmed:{i}:0:1"
+
+    got = cx.sample(seed, 16, universe())
+    assert len(got) == 16
+    assert n_seen == 5000, "streamed once, in full"
+    assert got == cx.sample(seed, 16, [f"pubmed:{i}:0:1" for i in range(5000)])
+
+
+def test_a_bad_seed_is_refused_before_the_universe_is_touched():
+    """At 36M ids the checks used to run after the sort, so a mistyped seed
+    cost a full corpus sort before saying so."""
+    touched = False
+
+    def universe():
+        nonlocal touched
+        touched = True
+        yield "a"
+
+    with pytest.raises(CodexError, match="32 bytes"):
+        cx.sample(b"\x01" * 31, 4, universe())
+    with pytest.raises(CodexError, match="not negative"):
+        cx.sample(b"\x01" * 32, -1, universe())
+    assert not touched

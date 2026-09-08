@@ -1038,19 +1038,39 @@ def sample(seed: bytes, n: int, universe: Iterable[str]) -> list[str]:
     reproducible by anyone once published and predictable by no one before.
     That is the whole design: a verifier cannot be steered toward the shards
     a producer prepared, and cannot be accused of choosing them either.
+
+    `universe` MAY BE A GENERATOR and should be one when it is large. This
+    draws with a heap of `n` and never materialises the universe, because
+    the centres rule draws over every chunk id in the collection — 36M for
+    PubMed. Measured at N = 1,000,000 from a generator: sorting peaks at
+    232 MB and this peaks at 5 KB, so the sorted form needs about 8 GB at
+    PubMed's size and does not run on a normal node. It is also 2x faster
+    (3.32 s → 1.63 s at N = 1,000,000).
+
+    §9.1 opens with "sort the universe of ids by their UTF-8 bytes", and
+    that initial sort is NOT performed here. It is operationally redundant:
+    the draw's own order is `(score, id bytes)`, a total order on distinct
+    ids, so the input order cannot reach the output. Dropping it is a
+    change of cost and not of result — `test_the_initial_sort_is_redundant`
+    pins the two against each other, because "obviously equivalent" is how
+    a sampling function silently stops being reproducible.
     """
+    import heapq
     import hmac
-    ids = sorted(universe, key=lambda s: s.encode("utf-8"))
+
+    # Before touching the universe: at 36M ids the old order of these
+    # checks meant a bad seed sorted the whole corpus and then raised.
     if len(seed) != 32:
         raise CodexError(f"a sample seed is 32 bytes, got {len(seed)}")
     if n < 0:
         raise CodexError("a sample size is not negative")
 
     def score(i: str) -> tuple[int, bytes]:
-        tag = hmac.new(seed, i.encode("utf-8"), hashlib.sha256).digest()
-        return int.from_bytes(tag[:8], "big"), i.encode("utf-8")
+        raw = i.encode("utf-8")
+        tag = hmac.new(seed, raw, hashlib.sha256).digest()
+        return int.from_bytes(tag[:8], "big"), raw
 
-    return sorted(ids, key=score)[:n]
+    return heapq.nsmallest(n, universe, key=score)
 
 
 def sample_size(fraction: str, universe_size: int) -> int:
