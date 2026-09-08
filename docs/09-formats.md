@@ -88,9 +88,10 @@ lowercase hexadecimal digits.
 
 **Path segments from digests.** Where a digest names a directory — the
 `<space>` segment under `vectors/` (02 §2.4), the `<set>` segment of the
-calibration member (§9.12), a collection's directory (07 §7.8) — the
-segment is the first 16 hexadecimal digits of the digest after the
-prefix, except a collection's directory, which is all 64.
+calibration member (§9.12) — the segment is the first 16 hexadecimal
+digits of the digest after the prefix. A collection's own directory is
+NOT one of these: it is the local name (07 §7.7, §7.8), which is a
+peer's own word for the collection and not derived from its id.
 
 **The seeded sample.** Every sampled check draws its sample by one
 function, `sample(seed, n, universe)`: sort the universe of ids by their
@@ -229,9 +230,11 @@ codex_hash    = H(bytes of codex.json)
 Removing one named key is the whole rule; no field list is maintained
 anywhere, and a later version that adds a descriptive field adds it
 inside `descriptive` and moves no identity. The collection's directory
-under `<LOUISE_ROOT>/collections/` is named by the 64 hexadecimal
-digits of `collection_id` (07 §7.8). A file whose inner hash does not
-equal the id its directory claims is refused; so is one pulled from a
+under `<LOUISE_ROOT>/collections/` is the LOCAL NAME, not the id
+(07 §7.7's third form, and the tree of §7.8): a name holds one
+collection for its life, and the collection's file names the id it
+holds. A `codex.json` whose inner hash does not equal the id that file
+names is refused; so is one pulled from a
 peer whose bytes do not equal the `codex_hash` that peer's digest
 advertised (§9.9). No snapshot carries a `codex_hash`: a snapshot is
 byte-identical across peers and `codex_hash` is not, since `descriptive`
