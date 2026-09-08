@@ -330,6 +330,13 @@ app/node/     worker.py  web.py  control.py
 app/plugins/  base.py  <source>/
 ```
 
+These are the modules the command tree names, one per noun, and the
+listing is that surface rather than a directory listing: a module that
+backs no command sits beside them (`hold/drag.py`, the member names and
+roots of 09 §9.16, which `records`, `snapshot`, `check`, `serve` and
+`fetch` all read) and is free to exist, but it never becomes the place a
+command's behaviour lives.
+
 `hold.records.build(collection, snapshot)` is what `louise hold records
 build` calls and nothing else; `share.contribute(collection)` calls
 `hold.vectors.build` and then `share.serve`; `share <collection>` is
