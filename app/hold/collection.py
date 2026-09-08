@@ -14,6 +14,7 @@ directory claims is refused.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace as _replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -23,65 +24,175 @@ from .codex import (Codex, CodexError, Credit, Defect, Descriptive, Layer,
                     License, Origin, Parser, Replaces, Space, Update, Work)
 
 
-def _dir(root: Path, collection_id: str) -> Path:
-    return root / collection_id.replace("sha256:", "")
+#: A local name: the collection's directory under
+#: `<LOUISE_ROOT>/collections/` (07 §7.7's third form, §7.8's tree). It is
+#: this peer's own word for the collection and is NOT derived from the id
+#: — a name holds one collection for its life, and another collection is
+#: another name.
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+CODEX_FILE = "codex.json"
+DRAG = "drag"
 
 
-def write(root: Path, codex: Codex, mother: Codex | None = None) -> Path:
+def check_name(name: str) -> str:
+    if not _NAME_RE.match(name or ""):
+        raise CodexError(f"{name!r} is not a collection name: letters, digits, "
+                         f"then any of . _ - (07 §7.8)")
+    return name
+
+
+def dir_of(root: Path, name: str) -> Path:
+    return root / check_name(name)
+
+
+def drag_of(root: Path, name: str) -> Path:
+    return dir_of(root, name) / DRAG
+
+
+def default_name(root: Path, codex: Codex) -> str:
+    """07 §7.8: the plugin's name, or the plugin's name and the first 12 hex
+    characters of the id when that is taken."""
+    if not (root / codex.plugin).exists():
+        return codex.plugin
+    return f"{codex.plugin}-{codex.collection_id.split(':', 1)[1][:12]}"
+
+
+def write(root: Path, codex: Codex, mother: Codex | None = None, *,
+          name: str | None = None) -> Path:
     cx.validate(codex, mother)
-    d = _dir(root, codex.collection_id)
-    if (d / "codex.json").exists():
-        return d                      # idempotent: same bytes, same id, nothing to do
+    root.mkdir(parents=True, exist_ok=True)
+    # Idempotence is by IDENTITY, not by name: writing a Codex this root
+    # already holds is nothing to do, whatever it is called here. Only a
+    # genuinely new collection reaches the naming rule, so re-running
+    # `create` with the same recipe never makes a second directory.
+    for held_name, held in _held(root):
+        if held.collection_id == codex.collection_id:
+            if name and name != held_name:
+                raise CodexError(
+                    f"{codex.collection_id} is already held here as "
+                    f"{held_name!r}; a collection has one local name")
+            return dir_of(root, held_name)
+    name = check_name(name) if name else default_name(root, codex)
+    d = dir_of(root, name)
+    p = d / CODEX_FILE
+    if p.exists():
+        # Idempotent, but only for the SAME collection: a name holds one
+        # collection for its life (07 §7.8), so re-using it for another is
+        # refused rather than silently rebinding what every local reference
+        # already points at.
+        held = cx.loads(p.read_bytes())
+        if held.collection_id != codex.collection_id:
+            raise CodexError(
+                f"the name {name!r} already holds {held.collection_id}; a name "
+                f"holds one collection for its life, and another collection is "
+                f"another name (07 §7.8)")
+        return d
     d.mkdir(parents=True, exist_ok=False)
-    (d / "codex.json").write_bytes(codex.canonical())
+    p.write_bytes(codex.canonical())
     return d
-
-
-def read(root: Path, collection_id: str) -> Codex:
-    p = _dir(root, collection_id) / "codex.json"
-    if not p.exists():
-        raise CodexError(f"no collection {collection_id} under {root}")
-    codex = cx.loads(p.read_bytes())
-    if codex.collection_id != _normalise(collection_id):
-        raise CodexError(f"{p}: bytes hash to {codex.collection_id}, "
-                         f"directory says {collection_id}")
-    return codex
 
 
 def _normalise(cid: str) -> str:
     return cid if cid.startswith("sha256:") else "sha256:" + cid
 
 
+def _held(root: Path) -> list[tuple[str, Codex]]:
+    out = []
+    for d in sorted(root.iterdir()) if root.exists() else []:
+        p = d / CODEX_FILE
+        if p.is_file():
+            out.append((d.name, cx.loads(p.read_bytes())))
+    return out
+
+
+def resolve(root: Path, ref: str) -> tuple[str, Codex]:
+    """07 §7.7's four forms, in this order: a full collection id with or
+    without its prefix; a unique prefix of at least 12 hex characters; a
+    local name; a lineage id, which resolves to the leading daughter held
+    here. Ambiguity is exit 2, naming the candidates.
+
+    Returns `(name, codex)` — the caller almost always needs both, since
+    the name is where the drag and the state directory live.
+    """
+    held = _held(root)
+    if not held:
+        raise CodexError(f"no collections under {root}")
+
+    exact = [(n, c) for n, c in held if c.collection_id == _normalise(ref)]
+    if exact:
+        return exact[0]
+
+    bare = ref[7:] if ref.startswith("sha256:") else ref
+    if len(bare) >= 12 and all(ch in "0123456789abcdef" for ch in bare):
+        hits = [(n, c) for n, c in held
+                if c.collection_id.split(":", 1)[1].startswith(bare)]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            raise CodexError(f"{ref!r} is ambiguous: "
+                             f"{', '.join(c.collection_id for _, c in hits)}")
+
+    by_name = [(n, c) for n, c in held if n == ref]
+    if by_name:
+        return by_name[0]
+
+    res = resolver(root)
+    lineage = [(n, c) for n, c in held
+               if cx.lineage_id(c, res) == _normalise(ref)]
+    if len(lineage) == 1:
+        return lineage[0]
+    if len(lineage) > 1:
+        # 04 §4.6's leading daughter: the longest `continues` chain held.
+        def depth(c: Codex) -> int:
+            return sum(1 for _ in cx.walk_lineage(c, res))
+        best = max(lineage, key=lambda nc: depth(nc[1]))
+        return best
+
+    raise CodexError(f"no collection {ref!r} under {root}; it is not an id, a "
+                     f"12-character prefix, a name held here, or a lineage")
+
+
+def read(root: Path, ref: str) -> Codex:
+    return resolve(root, ref)[1]
+
+
+def name_of(root: Path, ref: str) -> str:
+    return resolve(root, ref)[0]
+
+
 def resolver(root: Path):
     def _resolve(cid: str) -> Codex | None:
-        try:
-            return read(root, cid)
-        except (CodexError, ValueError):
-            return None
+        want = _normalise(cid)
+        for _, c in _held(root):
+            if c.collection_id == want:
+                return c
+        return None
     return _resolve
 
 
 def list_all(root: Path) -> list[Codex]:
-    out = []
-    for d in sorted(root.iterdir()) if root.exists() else []:
-        if (d / "codex.json").exists():
-            out.append(read(root, d.name))
-    return out
+    return [c for _, c in _held(root)]
+
+
+def list_named(root: Path) -> list[tuple[str, Codex]]:
+    return _held(root)
 
 
 # ---- the four ways to make one -------------------------------------------
 
-def create(root: Path, codex: Codex) -> Codex:
+def create(root: Path, codex: Codex, *, name: str | None = None) -> Codex:
     """A root: no lineage fields, and `space.epoch` is "0"."""
     if codex.relation != "root":
         raise CodexError("create makes a root; use derive/continue/replace "
                          "for the others")
-    write(root, codex)
+    write(root, codex, name=name)
     return codex
 
 
 def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
-                       platform_image: str, credits: tuple = ()) -> Codex:
+                       platform_image: str, credits: tuple = (),
+                       name: str | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
 
     Re-running with the same recipe prints the same id and exits 0: the hash
@@ -90,7 +201,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     from . import template
     return create(root, template.from_recipe(plugin, recipe,
                                              platform_image=platform_image,
-                                             credits=credits))
+                                             credits=credits), name=name)
 
 
 def derive(root: Path, mother_id: str, *,
@@ -235,13 +346,14 @@ def replace(root: Path, mother_id: str, *, defect: Defect,
     return corrective
 
 
-def show(root: Path, collection_id: str) -> dict[str, Any]:
+def show(root: Path, ref: str) -> dict[str, Any]:
     """What `hold collection show --json` prints (09 §9.3). The parts that
     need the drag on disk — snapshots, holdings, trust_level — arrive with
     the members they read; `refused` is the reason the collection is not
     served when refuse-to-start applies to it (07 §7.8)."""
-    codex = read(root, collection_id)
+    name, codex = resolve(root, ref)
     return {
+        "name": name,
         "collection_id": codex.collection_id,
         "codex_hash": codex.codex_hash,
         "lineage_id": cx.lineage_id(codex, resolver(root)),

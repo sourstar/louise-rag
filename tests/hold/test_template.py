@@ -245,8 +245,7 @@ def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
     b = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM)
     assert a.collection_id == b.collection_id
-    d = tmp_path / a.collection_id.replace("sha256:", "")
-    assert (d / "codex.json").read_bytes() == a.canonical()
+    assert (tmp_path / "gutenberg" / "codex.json").read_bytes() == a.canonical()
     assert [c.collection_id for c in col.list_all(tmp_path)] == [a.collection_id]
 
 

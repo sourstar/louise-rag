@@ -27,31 +27,71 @@ def other_space(codex) -> Space:
 
 # ---- on disk --------------------------------------------------------------
 
-def test_create_writes_canonical_bytes_under_its_own_id(tmp_path: Path, codex):
+def test_create_writes_canonical_bytes_under_its_local_name(tmp_path: Path, codex):
+    """07 §7.8: the directory is the local name — the plugin's, by default."""
     c = col.create(tmp_path, codex)
-    d = tmp_path / c.collection_id.replace("sha256:", "")
+    d = tmp_path / "pubmed"
     assert (d / "codex.json").read_bytes() == c.canonical()
-    assert col.read(tmp_path, c.collection_id) == c
-    assert col.read(tmp_path, c.collection_id.replace("sha256:", "")) == c
+    assert col.name_of(tmp_path, c.collection_id) == "pubmed"
     col.create(tmp_path, pubmed())                       # idempotent
     assert [x.collection_id for x in col.list_all(tmp_path)] == [c.collection_id]
 
 
-def test_read_refuses_a_directory_whose_bytes_do_not_hash_to_its_name(tmp_path, codex):
+def test_a_collection_resolves_by_all_four_forms(tmp_path: Path, codex):
+    """07 §7.7: a full id with or without its prefix, a unique prefix of at
+    least 12 hex characters, a local name, or a lineage id."""
     c = col.create(tmp_path, codex)
-    d = tmp_path / c.collection_id.replace("sha256:", "")
-    (d / "codex.json").write_bytes(pubmed(cleaning_version=99).canonical())
-    with pytest.raises(CodexError, match="bytes hash to"):
+    bare = c.collection_id.replace("sha256:", "")
+    assert col.read(tmp_path, c.collection_id) == c
+    assert col.read(tmp_path, bare) == c
+    assert col.read(tmp_path, bare[:12]) == c
+    assert col.read(tmp_path, "pubmed") == c
+    with pytest.raises(CodexError, match="no collection"):
+        col.read(tmp_path, "nope")
+
+
+def test_a_prefix_shorter_than_twelve_is_not_a_reference(tmp_path: Path, codex):
+    c = col.create(tmp_path, codex)
+    with pytest.raises(CodexError, match="no collection"):
+        col.read(tmp_path, c.collection_id.replace("sha256:", "")[:11])
+
+
+def test_a_second_collection_takes_a_name_with_its_id_prefix(tmp_path, codex):
+    """07 §7.8: the plugin's name, or the plugin's name and the first 12 hex
+    characters of the id when that is taken."""
+    first = col.create(tmp_path, codex)
+    second = col.create(tmp_path, pubmed(cleaning_version=2))
+    names = sorted(n for n, _ in col.list_named(tmp_path))
+    assert names[0] == "pubmed"
+    assert names[1] == "pubmed-" + second.collection_id.split(":")[1][:12]
+    assert first.collection_id != second.collection_id
+
+
+def test_a_name_holds_one_collection_for_its_life(tmp_path: Path, codex):
+    col.create(tmp_path, codex, name="mine")
+    with pytest.raises(CodexError, match="already holds"):
+        col.create(tmp_path, pubmed(cleaning_version=2), name="mine")
+
+
+def test_a_name_that_now_holds_another_collection_no_longer_answers_the_old_id(
+        tmp_path: Path, codex):
+    """The directory claims no id, so the refusal that used to hang on the
+    directory's name is gone (09 §9.3, corrected). What replaces it: the id
+    simply does not resolve, because nothing under the root holds it."""
+    c = col.create(tmp_path, codex)
+    (tmp_path / "pubmed" / "codex.json").write_bytes(
+        pubmed(cleaning_version=99).canonical())
+    with pytest.raises(CodexError, match="no collection"):
         col.read(tmp_path, c.collection_id)
+    assert col.read(tmp_path, "pubmed").cleaning_version == 99
 
 
 def test_a_retitled_copy_keeps_its_directory(tmp_path: Path, codex):
     """Two peers may hold one collection_id under two titles (09 §9.3), so
     the directory name still resolves and only `codex_hash` differs."""
     c = col.create(tmp_path, codex)
-    d = tmp_path / c.collection_id.replace("sha256:", "")
     retitled = replace(codex, descriptive=Descriptive("PubMed (mirror)", "A copy."))
-    (d / "codex.json").write_bytes(retitled.canonical())
+    (tmp_path / "pubmed" / "codex.json").write_bytes(retitled.canonical())
     back = col.read(tmp_path, c.collection_id)
     assert back.collection_id == c.collection_id
     assert back.codex_hash != c.codex_hash
