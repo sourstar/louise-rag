@@ -208,3 +208,20 @@ yields byte-identical cleaned text, every `content_hash` is unchanged
 and every existing vector stays admissible under 03 §3.5. **Re-fetch and
 re-parse, but no re-embed** — provided figures stay out of
 `content_hash`, which is the same decision as the first section.
+
+---
+
+## DECIDED 2026-09-08 by the operator: shape (b)
+
+Figures travel as an optional member. Records stay text; a figure is
+named in the record by hash and carried in `figures/<slice>/…`, which a
+peer may fetch or not. The caption stays in `sections` and stays
+indexed, so (b) composes with (a) rather than replacing it.
+
+Figures do NOT enter `content_hash` — see the first section above: the
+`possession.json` binding of 09 §9.7 makes that the difference between
+a format change and re-embedding the corpus at every peer.
+
+The bill above is the bill. Nothing is implemented yet: the amendment
+touches nine documents, two schema versions and three closed lists, and
+it lands before step 8 of the migration plan, not before step 2.

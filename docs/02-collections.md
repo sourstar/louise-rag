@@ -62,7 +62,6 @@ codex = {
   credits: [{                        -- the embedding work this collection stands on (§2.7); derived, never written by hand
     archive: "upstash-wikipedia-2024-06",
     producer: "Upstash",
-    key: "ed25519:…",                -- the key its bundles are signed with; how an uncredited archive is refused (03 §3.5)
     license: "apache-2.0",
     attribution: "<the line that licence requires, byte-exact>",
     coverage: "all" | {ids_per_shard: 1000000, shards: 37}   -- which documents; decides their layer (06 §6.3)
@@ -757,19 +756,33 @@ who inherit the same vectors derive the same entries in the same order —
 sorted by archive id — and therefore the same `collection_id`.
 
 Each entry carries everything the collection depends on from that
-archive: who produced it, the key its bundles are signed with, under
+archive: who produced it, under
 which licence, the attribution that licence requires byte-exact, and the
 coverage — which documents the archive holds vectors for, either
 `"all"` when the corpus is itself the archive or the stride and count
 of its shards. All of it is hashed.
 
-The key is what makes the declaration enforceable rather than merely
-stated. An archive signs its bundles like any producer, so a peer
-importing one compares its `producer_pubkey` against the keys this
-collection credits, and refuses a registered archive's bundle that no
-entry names (03 §3.5). Without the key the entry would name a producer
-in prose and nothing could match a bundle to it — the rule would hold
-only for a creator who chose to obey it.
+The declaration is enforceable, and what enforces it is the archive's
+NAME rather than its key. A bundle carries a `producer_pubkey` and no
+archive id (09 §9.7), so an importing peer resolves the one into the
+other through the platform's registry, which maps each archive to the
+keys its bundles are signed with, and then refuses a registered
+archive's bundle that this collection's `credits` does not name
+(03 §3.5).
+
+The keys are in the registry and not here for the same reason the
+licence and the attribution are here and not there — each belongs where
+its own rate of change belongs. A licence and an attribution are
+permanent facts about whom the collection stands on, and hashing them
+makes them unalterable. A key is the opposite: it is lost and reissued
+(09 §9.2, "a lost key is a new key"), and an archive that published
+nothing signed may begin. Hashing a key would fork the identity every
+time one moved, and would leave a collection written before an archive
+began signing permanently unable to import it, since an archive its
+`credits` does not name is refused. The lookup needs the registry in any
+case — a Codex alone cannot tell whether a key belongs to an archive —
+so putting the key in the Codex would buy nothing and freeze what must
+be free to change.
 
 That the licence and the attribution are hashed is the point of putting
 them here rather than leaving them to the platform's registry. A

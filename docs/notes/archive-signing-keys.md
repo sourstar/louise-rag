@@ -155,3 +155,25 @@ does not add the divergence, it stops pretending the Codex prevents it.
   nowhere in 01\u201309.** 04 \u00a74.5's rendezvous covers record shards only.
   It decides whether NCBI is fetched 37 times network-wide or thousands
   of times, and it belongs beside this decision.
+
+---
+
+## DECIDED 2026-09-08 by the operator: (c)
+
+The key leaves `credits` and lives in the platform's registry, which
+maps an archive id to the set of keys its bundles are signed with.
+03 §3.5's refusal resolves an arriving `producer_pubkey` through that
+map to an archive id, then refuses a bundle whose archive this
+collection's `credits` does not name. `credits` keeps `producer`,
+`license`, `attribution` and `coverage`, all hashed.
+
+Applied to the documents in the same commit: 09 §9.3's `credits` row,
+03 §3.5's archive paragraph, 06 §6.6's registry sentence, and
+02 §2.7's "the key is what makes the declaration enforceable"
+paragraph, which argued the position that was dropped.
+
+Left open by this decision, and recorded above: who partitions an
+archive's shards across peers (04 §4.5's rendezvous covers record
+shards only), and whether 01's promise 3 needs a clause for vectors
+converted locally from an unsigned archive, which carry the converter's
+signature rather than the producer's.

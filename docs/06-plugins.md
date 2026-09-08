@@ -519,7 +519,23 @@ content; a resolver never returns a bare symbol.
    and `create` copies that entry into the Codex whole. So an importer
    neither composes the acknowledgement nor is free to omit it, no later
    build can alter it, and a collection cannot acquire a debt it never
-   declared.
+   declared. The registry ALSO holds, per archive, the SET OF KEYS that
+   archive's bundles are signed with, and `create` does not copy those
+   into the Codex. They are what 03 §3.5's refusal resolves a
+   `producer_pubkey` through, and they are the one part of an archive's
+   entry that legitimately changes: a key is lost and reissued, and an
+   archive that published nothing signed may start. A collection's
+   credit is a permanent statement about whom it stands on; the keys are
+   how a peer recognises that archive's work this year. The first is
+   hashed into the identity, the second ships in a platform release and
+   may be updated by one. An archive that publishes no signed bundles at
+   all — a directory of `.npy` files, a dataset on a model hub — has an
+   empty key set: it is credited and imported exactly as any other, and
+   §3.5's refusal simply never fires for it, because no bundle can carry
+   a key nobody has. What a peer converts from such an archive it signs
+   with its own key, and those bundles are its own work under its own
+   name (01, promise 3); the archive is credited in the Codex, which is
+   where the licence's attribution clause is satisfied.
 6. `hold check` runs the validation plan.
 7. `share` makes the result available and announces it; for a
    `privacy: public` collection it follows a completed fetch on its own
