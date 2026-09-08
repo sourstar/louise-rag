@@ -30,7 +30,7 @@ def other_space(codex) -> Space:
 def test_create_writes_canonical_bytes_under_its_local_name(tmp_path: Path, codex):
     """07 §7.8: the directory is the local name — the plugin's, by default."""
     c = col.create(tmp_path, codex)
-    d = tmp_path / "pubmed"
+    d = tmp_path / "pubmed" / "drag"
     assert (d / "codex.json").read_bytes() == c.canonical()
     assert col.name_of(tmp_path, c.collection_id) == "pubmed"
     col.create(tmp_path, pubmed())                       # idempotent
@@ -79,7 +79,7 @@ def test_a_name_that_now_holds_another_collection_no_longer_answers_the_old_id(
     directory's name is gone (09 §9.3, corrected). What replaces it: the id
     simply does not resolve, because nothing under the root holds it."""
     c = col.create(tmp_path, codex)
-    (tmp_path / "pubmed" / "codex.json").write_bytes(
+    (tmp_path / "pubmed" / "drag" / "codex.json").write_bytes(
         pubmed(cleaning_version=99).canonical())
     with pytest.raises(CodexError, match="no collection"):
         col.read(tmp_path, c.collection_id)
@@ -91,7 +91,7 @@ def test_a_retitled_copy_keeps_its_directory(tmp_path: Path, codex):
     the directory name still resolves and only `codex_hash` differs."""
     c = col.create(tmp_path, codex)
     retitled = replace(codex, descriptive=Descriptive("PubMed (mirror)", "A copy."))
-    (tmp_path / "pubmed" / "codex.json").write_bytes(retitled.canonical())
+    (tmp_path / "pubmed" / "drag" / "codex.json").write_bytes(retitled.canonical())
     back = col.read(tmp_path, c.collection_id)
     assert back.collection_id == c.collection_id
     assert back.codex_hash != c.codex_hash

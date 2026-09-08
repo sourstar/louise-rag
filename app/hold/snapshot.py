@@ -273,3 +273,189 @@ def reissued(previous: Snapshot | None, current: Snapshot) -> list[Shard]:
     return sorted((s for s in current.shards
                    if before.get((s.slice, s.n)) not in (None, s.root)),
                   key=lambda s: (s.slice, s.n))
+
+
+# --------------------------------------------------------------------------
+# creating one from a build (07 §7.4: `hold.snapshot.create`)
+
+def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snapshot:
+    """`louise hold snapshot create <collection>` — freeze the records the
+    drag now holds as this period's snapshot.
+
+    The shard entries come from the staging build database, where step 2c's
+    `close_shard` put them: `root`, `records_root`, `chunks_root` and the
+    native-id range are computed where the shards are cut, because two of
+    the three cannot be recomputed from the drag alone without re-chunking
+    the corpus.
+
+    Re-running for an id that exists: identical bytes is nothing to do and
+    exits 0; different bytes is refused (07 §7.3), because a snapshot is
+    content-addressed and two different ones under one id is the dispute
+    04 §4.3 exists to resolve, not something to create locally.
+    """
+    import json
+    import sqlite3
+    from datetime import datetime
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from . import collection as col, drag as drag_mod, records as rec
+
+    name, codex = col.resolve(Path(root), ref)
+    base = Path(root) / name
+    drag_dir, staging = base / "drag", base / rec.STATE / rec.BUILD
+
+    db_path = staging / ".build" / "build.db"
+    if not db_path.is_file():
+        raise CodexError(f"{name}: no build to freeze; `hold records build` "
+                         f"first (07 §7.3)")
+
+    if snapshot_id is None:
+        clock = ZoneInfo(codex.origin.clock)
+        snapshot_id = snapshot_id_for(datetime.now(clock), codex.update.cadence)
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM shards ORDER BY slice, n")]
+    finally:
+        con.close()
+    if not rows:
+        raise CodexError(f"{name}: the build wrote no shards")
+
+    missing = [r["path"] for r in rows if not r.get("chunks_root")]
+    if missing:
+        raise CodexError(
+            f"{name}: {len(missing)} shard(s) were built before the roots of "
+            f"09 §9.4 were computed — rebuild them; a snapshot may not carry "
+            f"a root it did not compute (first: {missing[0]})")
+
+    shards = tuple(
+        Shard(slice=r["slice"], n=r["n"], root=r["root"],
+              records_root=r["records_root"],
+              first_id=r["first_native_id"], last_id=r["last_native_id"],
+              records=r["records"], chunks=r["chunks"],
+              chunks_root=r["chunks_root"],
+              tokens=r["chunks"] * codex.space.ctx,
+              bytes=r["bytes"], toolchain="own")
+        for r in rows)
+
+    previous, prev_hashes = _previous(drag_dir, snapshot_id)
+    current = _content_hashes(drag_dir, shards)
+    snap = Snapshot(
+        collection_id=codex.collection_id, snapshot_id=snapshot_id,
+        previous=previous.hash if previous else None,
+        shards=shards,
+        delta=compute_delta(prev_hashes, current),
+        relations=_relation_shards(drag_dir, shards),
+        files=_files(drag_dir, codex),
+    )
+
+    out = drag_dir / drag_mod.snapshot_path(snapshot_id)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.is_file():
+        if out.read_bytes() == snap.canonical():
+            log(f"[snapshot create] {name}: {snapshot_id} already frozen, "
+                f"identical bytes")
+            return snap
+        raise CodexError(
+            f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
+            f"content-addressed and is written once; two under one id is a "
+            f"dispute between peers (04 §4.3), not something to overwrite here")
+    out.write_bytes(snap.canonical())
+    log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
+        f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
+    return snap
+
+
+def _previous(drag_dir, snapshot_id: str):
+    """The snapshot before this one in the chain, and its uid → content_hash
+    map. `None` when this is the first."""
+    from pathlib import Path
+    from . import drag as drag_mod
+    d = Path(drag_dir) / "snapshots"
+    if not d.is_dir():
+        return None, None
+    ids = sorted(p.stem for p in d.glob("*.json")
+                 if not p.name.endswith(".sig.json") and p.stem < snapshot_id)
+    if not ids:
+        return None, None
+    raw = (d / f"{ids[-1]}.json").read_bytes()
+    prev = _load(raw)
+    return prev, _content_hashes(drag_dir, prev.shards)
+
+
+def _load(raw: bytes) -> Snapshot:
+    import json
+    d = json.loads(raw)
+    if d.get("kind") != SNAPSHOT_KIND:
+        raise CodexError(f"not a snapshot: kind={d.get('kind')!r}")
+    if d.get("version") != SNAPSHOT_VERSION:
+        raise CodexError(f"unsupported snapshot version {d.get('version')!r}")
+    return Snapshot(
+        collection_id=d["collection_id"], snapshot_id=d["snapshot_id"],
+        previous=d["previous"],
+        shards=tuple(Shard(**s) for s in d["shards"]),
+        delta=Delta(tuple(d["delta"]["added"]), tuple(d["delta"]["changed"]),
+                    tuple(Tombstone(**t) for t in d["delta"]["tombstoned"])),
+        relations=tuple(RelationShard(**r) for r in d["relations"]),
+        files=d["files"])
+
+
+def load(path) -> Snapshot:
+    from pathlib import Path
+    return _load(Path(path).read_bytes())
+
+
+def _content_hashes(drag_dir, shards) -> dict[str, str]:
+    """uid → content_hash over the shards named, read from the drag."""
+    from pathlib import Path
+    from app.pack import records as pack_records
+    out = {}
+    for s in shards:
+        p = Path(drag_dir) / s.path
+        if not p.is_file():
+            continue
+        for r in pack_records.iter_records(p):
+            out[r["uid"]] = r["content_hash"]
+    return out
+
+
+def _relation_shards(drag_dir, shards) -> tuple[RelationShard, ...]:
+    """One beside each record shard of the same slice and number, where the
+    plugin wrote any (09 §9.14). `()` when the collection has none."""
+    from pathlib import Path
+    from . import drag as drag_mod
+    out = []
+    for s in shards:
+        p = Path(drag_dir) / drag_mod.relations_path(s.slice, s.n)
+        if not p.is_file():
+            continue
+        raw = p.read_bytes()
+        out.append(RelationShard(slice=s.slice, n=s.n,
+                                 root=drag_mod.pieces_root(raw),
+                                 edges=_count_edges(p), bytes=len(raw)))
+    return tuple(out)
+
+
+def _count_edges(path) -> int:
+    from app.pack import records as pack_records
+    return sum(1 for _ in pack_records.iter_records(path))
+
+
+def _files(drag_dir, codex) -> dict:
+    """Every whole-collection member with its transport root (09 §9.4). A
+    member that is not there is `null` where §9.4 allows one and absent
+    where it does not — nothing is invented."""
+    from pathlib import Path
+    from . import drag as drag_mod
+    out: dict = {}
+    for member in (drag_mod.VALIDATION_PATH, drag_mod.TERMS_PATH):
+        p = Path(drag_dir) / member
+        if p.is_file():
+            raw = p.read_bytes()
+            out[member] = {"root": drag_mod.pieces_root(raw), "bytes": len(raw)}
+        elif member == drag_mod.TERMS_PATH:
+            out[member] = None          # green: no terms member (02 §2.6)
+    return out

@@ -43,10 +43,16 @@ def check_name(name: str) -> str:
 
 
 def dir_of(root: Path, name: str) -> Path:
+    """`<LOUISE_ROOT>/collections/<name>/` — the collection's whole
+    directory: the drag, the state, the index and the vector table."""
     return root / check_name(name)
 
 
 def drag_of(root: Path, name: str) -> Path:
+    """`<name>/drag/` — the copy, exactly the tree of 02 §2.6, which is
+    what `share` serves and nothing else (07 §7.8). `codex.json` is the
+    first line of that tree, so it lives HERE and not a level up: it is a
+    member, and one of the three fetchable before an acknowledgement."""
     return dir_of(root, name) / DRAG
 
 
@@ -72,9 +78,9 @@ def write(root: Path, codex: Codex, mother: Codex | None = None, *,
                 raise CodexError(
                     f"{codex.collection_id} is already held here as "
                     f"{held_name!r}; a collection has one local name")
-            return dir_of(root, held_name)
+            return drag_of(root, held_name)
     name = check_name(name) if name else default_name(root, codex)
-    d = dir_of(root, name)
+    d = drag_of(root, name)
     p = d / CODEX_FILE
     if p.exists():
         # Idempotent, but only for the SAME collection: a name holds one
@@ -100,7 +106,7 @@ def _normalise(cid: str) -> str:
 def _held(root: Path) -> list[tuple[str, Codex]]:
     out = []
     for d in sorted(root.iterdir()) if root.exists() else []:
-        p = d / CODEX_FILE
+        p = d / DRAG / CODEX_FILE
         if p.is_file():
             out.append((d.name, cx.loads(p.read_bytes())))
     return out

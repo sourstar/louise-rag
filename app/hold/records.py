@@ -217,3 +217,143 @@ def chunks_root_of(blob: bytes) -> str:
     """`chunks_root` over an already-concatenated sequence of
     `chunk_contribution` values, in chunk order."""
     return "sha256:" + hashlib.sha256(blob).hexdigest()
+
+
+# --------------------------------------------------------------------------
+# the build driver (07 §7.4: `hold.records.build` is what the command calls)
+#
+# Everything above this line is a pure function over bytes. Below it is the
+# one thing that touches disk: driving the existing pack builder into a
+# collection's drag. It is a WRAPPER — the shard cutting, the parse pool,
+# the resumability and the cutoff rule all stay in `app/pack/build.py`,
+# which has been carrying real corpora for months.
+
+STATE = "state"
+BUILD = "build"
+
+
+def _paths(root, name: str):
+    from pathlib import Path
+    base = Path(root) / name
+    return base / "drag", base / STATE, base / STATE / BUILD
+
+
+def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
+          records_per_shard: int | None = None, log=print, stop=None):
+    """`louise hold records build <collection>` — parse, slice, shard, hash.
+
+    The build runs into a STAGING directory under the collection's state,
+    and its records are promoted into the drag in one step. That is how a
+    fetch already works (04 §4.3, "Fetched shards land in staging and are
+    promoted into the copy in one step"), and it is what keeps the drag
+    holding only what the Codex or a snapshot names (07 §7.8) — the legacy
+    builder also writes a `manifest.json`, a `TERMS.txt` and a
+    `validation.json` of its own shape, none of which are drag members
+    under a Codex.
+
+    Returns the underlying `BuildResult`. The shard entries 09 §9.4 needs
+    are in the staging build database, where `hold snapshot create` reads
+    them; nothing is written to the drag but the record shards themselves.
+    """
+    from dataclasses import replace as _dc_replace
+    from pathlib import Path
+
+    from app import collections as collections_mod, db, discovery
+    from app.pack import build as pack_build
+
+    from . import collection as col
+
+    name, codex = col.resolve(Path(root), ref)
+    drag_dir, state_dir, staging = _paths(root, name)
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    if corpus_dir is None:
+        raise RecordsError(
+            f"{name}: no corpus directory. `records build` parses what is on "
+            f"disk; `records fetch` is what puts it there (07 §7.3), and "
+            f"until that lands the corpus is named with --corpus")
+
+    src = collections_mod.Collection(
+        name=name, plugin=codex.plugin, profile=None, embed_mode_default=None,
+        corpus_dir=Path(corpus_dir),
+        manifest_path=state_dir / "manifest.sqlite",
+        fts_dir=Path(root) / name / "index",
+        lance_dir=Path(root) / name / "lance",
+        acquire_enabled=False,
+        license_ack=_ack_of(codex, state_dir),
+    )
+
+    # The manifest is the list of documents the corpus holds. `records
+    # fetch` will fill it from the acquisition spec; for a corpus already on
+    # disk, scanning it is the same act, so an empty manifest is scanned
+    # rather than refused.
+    con = db.connect(src)
+    try:
+        held = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        if not held:
+            log(f"[records build] {name}: manifest is empty, scanning {corpus_dir}")
+            discovery.sync_collection(con, src)
+    finally:
+        con.close()
+
+    result = pack_build.build(
+        src, staging, snapshot=snapshot_id, name=name, sign=False,
+        records_per_shard=records_per_shard, log=log, stop=stop)
+
+    promoted = _promote_records(staging, drag_dir)
+    log(f"[records build] {name}: {result.records} records in {result.shards} "
+        f"shard(s), {promoted} promoted into the drag")
+    return result
+
+
+def _ack_of(codex, state_dir):
+    """A yellow or red collection is not built until its acknowledgement
+    exists (invariant 9; 04 §4.4). The ack lives in the collection's state
+    directory (09 §9.13), and `app/licensing.py` is THE resolution — this
+    only carries what it wrote, and never decides."""
+    import json
+    if codex.license.cls == "green":
+        return None
+    p = state_dir / "ack.json"
+    if not p.is_file():
+        raise RecordsError(
+            f"{codex.license.cls}-class: no acknowledgement recorded. "
+            f"`hold collection ack` prints the terms and records it "
+            f"(04 §4.4); nothing below it runs until it exists")
+    ack = json.loads(p.read_text(encoding="utf-8"))
+    return f"{ack['time']}/{ack['terms_sha256'].replace('sha256:', '')}"
+
+
+def _promote_records(staging, drag_dir) -> int:
+    """Move the built record shards into the drag, atomically per file."""
+    import os
+    from pathlib import Path
+    src = Path(staging) / "records"
+    if not src.is_dir():
+        return 0
+    dst = Path(drag_dir) / "records"
+    n = 0
+    for f in sorted(src.rglob("*.jsonl.zst")):
+        target = dst / f.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(f, target)
+        n += 1
+    return n
+
+
+def write_validation(root, ref: str) -> int:
+    """`validation.json` at the drag root is the Codex's `validation` block
+    written out in canonical JSON for tools; `hold check` reads it and
+    refuses to run when its bytes differ from the block in the Codex
+    (02 §2.6, 09 §9.3). It is a member like any other and waits for the
+    acknowledgement with the rest."""
+    from pathlib import Path
+    from .codex import canonical_json
+    from . import collection as col, drag as drag_mod
+
+    name, codex = col.resolve(Path(root), ref)
+    drag = Path(root) / name / "drag"
+    drag.mkdir(parents=True, exist_ok=True)
+    raw = canonical_json(codex.validation.to_dict())
+    (drag / drag_mod.VALIDATION_PATH).write_bytes(raw)
+    return len(raw)
