@@ -141,7 +141,10 @@ bytes are 09 §9.12's *peer's calibration statement*, a different
 object from the space author's calibration member defined in the same
 section. It names the space, the encoder image and weights
 digests, the seed and the sampled texts, the worst and median cosine
-over the whole set, the endpoint's maximum input length, and the
+OVER THOSE SAMPLED TEXTS — not over all 512, so that the statement
+carries the very numbers the pass decision used and anyone holding it
+can recheck the verdict from the seed alone — the endpoint's maximum
+input length, and the
 benchmark below; it is published in the peer's digest (04 §4.2), and
 the `calibration` attestation of a collection names it. An endpoint
 whose maximum input is below the space's `ctx` produces a statement
