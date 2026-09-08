@@ -172,11 +172,11 @@ Applied to the documents in the same commit: 09 §9.3's `credits` row,
 02 §2.7's "the key is what makes the declaration enforceable"
 paragraph, which argued the position that was dropped.
 
-Left open by this decision, and recorded above: who partitions an
-archive's shards across peers (04 §4.5's rendezvous covers record
-shards only), and whether 01's promise 3 needs a clause for vectors
-converted locally from an unsigned archive, which carry the converter's
-signature rather than the producer's.
+Both points left open by this decision are now closed: the rendezvous
+extends to archive shards (below), and 01 promise 3 gained its clause on
+2026-09-08 (03390e4) — it now says that the producer is whoever
+published the bundle, which is who vouches for its bytes rather than
+necessarily who computed them.
 
 ---
 
