@@ -228,7 +228,9 @@ medcpt-pubmed` exits 2 today. See
 PubMed import and nothing else.
 
 **Numbers.** 22 tests in `test_drag.py`, 27 in `test_template.py`, 119
-in `tests/hold` in 3.8 s.
+in `tests/hold` in 3.8 s; **1445 passed, 1 failed** over the whole suite
+in 211 s — the one failure is §1's pre-existing `st_mtime_ns` proxy,
+unchanged. Baseline before step 0 was 1362 passed, 1 failed.
 
 ### Step 2 — `hold records build` and `hold snapshot create`
 *02 §2.2, 02 §2.3, 06 §6.6, 09 §9.4, 09 §9.5, 09 §9.14. Wraps
@@ -394,8 +396,18 @@ and any collection whose documents need figures. Those wait for step 8.
 data rather than fixtures.
 
 ### Step 7 — GATE: what may be in a cleaned corpus besides text
-*Blocks step 8 and nothing before it. See
+*Blocks importing for keeps — step 8 — and nothing before it. See
 [`figures-in-the-corpus.md`](figures-in-the-corpus.md).*
+
+The note prefers deciding this "before the record format is
+implemented, since questions 2 and 3 land in `content_hash` and the
+record line". Step 2 does not pre-empt it: the record line and
+`content_hash` of 09 §9.5 are already implemented in
+`app/pack/records.py` and step 2 wraps them rather than designing them.
+What the decision would change is the same either way — a figure
+entering `content_hash` re-derives every record, chunk and vector, which
+is why it must be settled before a corpus is imported for keeps and not
+before the code that imports one exists.
 
 Gutenberg has books that are not the book without their plates
 (architecture, interior design, technology); PubMed has structures,
