@@ -98,27 +98,45 @@ def test_discovery_and_fetch_go_through_the_pack_and_match_the_old_shape(tmp_pat
     assert not hasattr(source_mod, "_parsed_cache")
 
 
+def _pack_meta(path):
+    return pq.read_metadata(path).metadata or {}
+
+
 def test_pack_is_rebuilt_when_the_container_or_the_format_changes(tmp_path, monkeypatch):
+    """A rebuild is proved by what the pack RECORDS, not by the pack file's
+    own mtime. st_mtime_ns is nanoseconds by unit and milliseconds by
+    granularity on most filesystems, so a rebuild that takes under a tick
+    leaves the timestamp unchanged — this test failed for exactly that
+    reason while the rebuild it doubted was demonstrably happening. The
+    pack stores the container's size and mtime and its own format version
+    (`is_fresh` reads all three), so those are the evidence.
+    """
     corpus = _corpus(tmp_path)
     container = corpus / "pubmed25n0001.xml"
     path = pack.ensure(container)
-    first = path.stat().st_mtime_ns
-    assert pack.ensure(container) == path and path.stat().st_mtime_ns == first, "fresh: reused"
+    assert pack.is_fresh(container, path)
+    before = _pack_meta(path)
+    assert pack.ensure(container) == path, "fresh: reused"
+    assert _pack_meta(path) == before, "fresh: not rewritten"
 
     # the container changes (an updatefile re-landed): stale → rebuilt
     os.utime(container, (container.stat().st_atime, container.stat().st_mtime + 5))
     assert not pack.is_fresh(container, path)
     pack.ensure(container)
-    assert path.stat().st_mtime_ns != first
+    assert pack.is_fresh(container, path), "stale → rebuilt → fresh again"
+    assert _pack_meta(path)[b"louise.source_mtime_ns"] == \
+        str(container.stat().st_mtime_ns).encode(), \
+        "the rebuilt pack records the container it was built from"
+    assert _pack_meta(path)[b"louise.source_mtime_ns"] != \
+        before[b"louise.source_mtime_ns"]
 
     # the pack format changes: stale → rebuilt
     monkeypatch.setattr(pack, "PACK_VERSION", pack.PACK_VERSION + 1)
     assert not pack.is_fresh(container, path)
-    second = path.stat().st_mtime_ns
     pack.ensure(container)
-    assert path.stat().st_mtime_ns != second
-    meta = pq.read_metadata(path).metadata
-    assert meta[b"louise.pack_version"] == str(pack.PACK_VERSION).encode()
+    assert pack.is_fresh(container, path)
+    assert _pack_meta(path)[b"louise.pack_version"] == \
+        str(pack.PACK_VERSION).encode()
 
 
 def test_a_corrupt_container_leaves_no_pack_and_costs_one_error_ref(tmp_path):
