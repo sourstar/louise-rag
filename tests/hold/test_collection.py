@@ -10,7 +10,7 @@ import pytest
 from app.hold import collection as col
 from app.hold.codex import (CodexError, Defect, Descriptive, Encoder, Space,
                             Update, Work)
-from tests.hold.conftest import PLATFORM, a_credit, pubmed
+from tests.hold.conftest import PLATFORM, a_credit, a_root, fake_embed, pubmed
 
 PLATFORM2 = "sha256:" + "2a" * 32
 ENCODER2 = "sha256:" + "9d" * 32
@@ -105,8 +105,9 @@ def test_create_refuses_lineage_fields(tmp_path: Path, codex):
 # ---- derive: a sister -----------------------------------------------------
 
 def test_derive_makes_a_sister_in_a_new_space(tmp_path: Path, codex):
-    mother = col.create(tmp_path, codex)
-    sister = col.derive(tmp_path, mother.collection_id, space=other_space(codex))
+    mother = a_root(tmp_path, codex)
+    sister = col.derive(tmp_path, mother.collection_id, space=other_space(codex),
+                        embed=fake_embed)
     assert sister.relation == "sister"
     assert sister.derived_from == mother.collection_id
     assert sister.space_id != mother.space_id
@@ -118,7 +119,7 @@ def test_derive_makes_a_sister_in_a_new_space(tmp_path: Path, codex):
 
 
 def test_a_sister_may_change_only_space_layers_update_and_work(tmp_path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     weekly = col.derive(tmp_path, mother.collection_id,
                         update=Update("weekly", 1, 0), work=Work(9_000_000, "P1W"))
     assert weekly.space_id == mother.space_id, "same encoder, same space"
@@ -129,7 +130,7 @@ def test_a_sister_may_change_only_space_layers_update_and_work(tmp_path, codex):
 
 def test_a_sister_who_changes_nothing_but_the_cadence_shares_every_vector(tmp_path, codex):
     """02 §2.7's motivating case, and the one 09 §9.3's epoch rule broke."""
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     weekly = col.derive(tmp_path, mother.collection_id, update=Update("weekly", 1, 0))
     assert weekly.space_id == mother.space_id
     assert weekly.credits == mother.credits
@@ -137,35 +138,36 @@ def test_a_sister_who_changes_nothing_but_the_cadence_shares_every_vector(tmp_pa
 
 def test_a_sisters_credits_follow_the_space(tmp_path: Path):
     credited = pubmed(credits=(a_credit(),))
-    mother = col.create(tmp_path, credited)
+    mother = a_root(tmp_path, credited)
 
     same_space = col.derive(tmp_path, mother.collection_id, update=Update("weekly", 1, 0))
     assert same_space.credits == mother.credits, "in her mother's space she owes"
 
-    elsewhere = col.derive(tmp_path, mother.collection_id, space=other_space(credited))
+    elsewhere = col.derive(tmp_path, mother.collection_id, space=other_space(credited),
+                             embed=fake_embed)
     assert elsewhere.credits == (), "in another space nothing of her mother's is admissible"
 
 
 def test_a_sister_in_a_new_space_may_declare_her_own_archives(tmp_path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     hers = (a_credit("zenodo-medcpt"),)
     sister = col.derive(tmp_path, mother.collection_id, space=other_space(codex),
-                        credits=hers)
+                        credits=hers, embed=fake_embed)
     assert sister.credits == hers
 
 
 def test_archives_are_refused_where_the_space_brings_its_own_credits(tmp_path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     with pytest.raises(CodexError, match="carries her mother's credits"):
         col.derive(tmp_path, mother.collection_id, update=Update("weekly", 1, 0),
                    credits=(a_credit(),))
 
 
 def test_space_from_copies_the_space_and_its_credits(tmp_path: Path, codex):
-    source = col.create(tmp_path, pubmed(
+    source = a_root(tmp_path, pubmed(
         descriptive=Descriptive("PubMed on BGE", "Another space."),
         space=other_space(codex), credits=(a_credit(),)))
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     sister = col.derive(tmp_path, mother.collection_id, space_from=source)
     assert sister.space_id == source.space_id
     assert sister.space_from == source.collection_id
@@ -176,16 +178,16 @@ def test_space_from_refuses_a_different_cleaning_version(tmp_path: Path, codex):
     """Copying it would re-derive the corpus the sister is defined to
     inherit; not copying it makes her space_id differ from the source's,
     which is the whole of what the flag promises (07 §7.3, 09 §9.3)."""
-    source = col.create(tmp_path, pubmed(
+    source = a_root(tmp_path, pubmed(
         descriptive=Descriptive("PubMed cleaned again", "A different cleaner."),
         cleaning_version=2, space=other_space(codex)))
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     with pytest.raises(CodexError, match="cleaning_version is 2 and the mother's is 1"):
         col.derive(tmp_path, mother.collection_id, space_from=source)
 
 
 def test_a_sister_keeps_her_mothers_epoch(tmp_path: Path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     corrective = col.replace(tmp_path, mother.collection_id, defect=A_DEFECT,
                              platform_image=PLATFORM2)
     her_sister = col.derive(tmp_path, corrective.collection_id,
@@ -197,7 +199,7 @@ def test_a_sister_keeps_her_mothers_epoch(tmp_path: Path, codex):
 # ---- continue: a daughter -------------------------------------------------
 
 def test_continue_makes_a_daughter_in_the_same_space_with_a_lineage(tmp_path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     d1 = col.continue_(tmp_path, mother.collection_id, platform_image=PLATFORM2,
                        continues_through="2026-10",
                        origin_reachable_until="2026-09")
@@ -213,7 +215,7 @@ def test_continue_makes_a_daughter_in_the_same_space_with_a_lineage(tmp_path, co
 
 
 def test_a_daughter_carries_her_mothers_platform_image(tmp_path: Path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     d = col.continue_(tmp_path, mother.collection_id, platform_image=PLATFORM2,
                       continues_through="2026-10")
     assert d.toolchain.mother_platform_image == PLATFORM
@@ -223,7 +225,7 @@ def test_a_daughter_carries_her_mothers_platform_image(tmp_path: Path, codex):
 # ---- replace: a corrective sister -----------------------------------------
 
 def test_replace_makes_a_corrective_sister_with_a_fresh_space(tmp_path, codex):
-    mother = col.create(tmp_path, codex)
+    mother = a_root(tmp_path, codex)
     fixed = col.replace(tmp_path, mother.collection_id, defect=A_DEFECT,
                         platform_image=PLATFORM2)
     assert fixed.relation == "corrective-sister"
@@ -239,7 +241,7 @@ def test_replace_makes_a_corrective_sister_with_a_fresh_space(tmp_path, codex):
 
 def test_a_corrective_sister_owes_nothing(tmp_path: Path):
     """Her space is fresh, so no archive's bundles are admissible to her."""
-    mother = col.create(tmp_path, pubmed(credits=(a_credit(),)))
+    mother = a_root(tmp_path, pubmed(credits=(a_credit(),)))
     fixed = col.replace(tmp_path, mother.collection_id, defect=A_DEFECT)
     assert fixed.credits == ()
 

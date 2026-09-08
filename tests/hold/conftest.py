@@ -137,3 +137,24 @@ def a_facet(field_: str = "subjects") -> Facet:
 @pytest.fixture
 def codex() -> Codex:
     return pubmed()
+
+
+def a_root(root, codex, **kw):
+    """`create`, plus the calibration member `create_from_recipe` writes.
+
+    The low-level `create` takes a finished Codex and so has no vectors to
+    write, but every derivation INHERITS the member (09 §9.12, and it is in
+    every snapshot's `files`, §9.4) — so a mother without one is a
+    collection that could not exist, and a test built on one would prove
+    nothing about `derive`.
+    """
+    from app.hold import calibration as _cal, collection as _col, drag as _drag
+    out = _col.create(root, codex, **kw)
+    v, e, _, _ = _cal.build_member(CAL_TEXTS, fake_embed, normalise=True,
+                                   dim=codex.space.dim)
+    member, _sig = _drag.calibration_paths(codex.space.calibration.set)
+    d = _col.drag_of(root, _col.name_of(root, out.collection_id))
+    _cal.write_member(d / member, v, e, set_id_=codex.space.calibration.set,
+                      encoder_image=codex.space.encoder.image,
+                      encoder_weights=codex.space.encoder.weights, key="")
+    return out

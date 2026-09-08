@@ -274,9 +274,18 @@ def derive(root: Path, mother_id: str, *,
            update: Update | None = None,
            work: Work | None = None,
            credits: tuple[Credit, ...] | None = None,
-           descriptive: Descriptive | None = None) -> Codex:
+           descriptive: Descriptive | None = None,
+           embed=None) -> Codex:
     """A sister: her mother's corpus, and at most `space`, `layers`, `update`
     and `work` changed (02 §2.7).
+
+    `embed` IS REQUIRED WHEN THE SISTER'S ENCODER DIFFERS, and ignored when
+    it does not. A new build needs its own reference vectors — the mother's
+    were produced by another build, so comparing against them would compare
+    nothing — and 06 §6.6 puts that embedding at collection creation. A
+    sister who changes only her cadence, her layers or her work inherits
+    the mother's member and needs no endpoint. `--space-from` inherits the
+    SOURCE's, since her space was copied from it byte for byte.
 
     `cleaning_version` is never copied and never changed — changing it would
     re-derive the corpus she is defined to inherit. `space_from` copies
@@ -344,8 +353,133 @@ def derive(root: Path, mother_id: str, *,
     elif not same_space:
         sister = _replace(sister, credits=())
 
-    write(root, sister, mother)
+    sources = (mother,) if space_from is None else (mother, space_from)
+    if embed is not None and not any(_same_reference(sister, s) for s in sources):
+        # A new build: embed, and let the new hashes into the Codex BEFORE
+        # it is written, since they are Codex fields.
+        sister = _replace(sister, space=recalibrate(sister.space,
+                                                    mother.modality, embed))
+    drag_path = write(root, sister, mother)
+    if any(_same_reference(sister, s) for s in sources):
+        carry_calibration(root, sister, drag_path, *sources)
+    else:
+        _write_own_calibration(sister, drag_path, embed, mother.modality)
     return sister
+
+
+def _write_own_calibration(codex: Codex, drag_path: Path, embed,
+                           modality: str) -> None:
+    """The member for a collection whose reference is its own, not a
+    source's. Re-embeds rather than keeping the vectors from `recalibrate`,
+    because the two hashes are already in the Codex and this must produce
+    the file they name — `read_member` inside would catch a disagreement,
+    which is the point of doing it this way round."""
+    from . import calibration as cal, drag as drag_mod
+
+    if embed is None:
+        raise CodexError(
+            f"{codex.collection_id} names encoder {codex.space.encoder.image}, "
+            f"which no source it derives from holds a reference for. A new "
+            f"build needs its own reference vectors, embedded at an endpoint "
+            f"(06 §6.6) — pass `embed`")
+    texts = cal.verify(modality, codex.space.calibration.set)
+    vectors, envelope, got_v, got_e = cal.build_member(
+        texts, embed, normalise=codex.space.normalise, dim=codex.space.dim)
+    if (got_v, got_e) != (codex.space.calibration.vectors, codex.space.envelope):
+        raise CodexError(
+            f"the encoder produced reference vectors {got_v} and the Codex "
+            f"names {codex.space.calibration.vectors}; the same build over "
+            f"the same set must produce the same bytes twice")
+    member, _ = drag_mod.calibration_paths(codex.space.calibration.set)
+    cal.write_member(drag_path / member, vectors, envelope,
+                     set_id_=codex.space.calibration.set,
+                     encoder_image=codex.space.encoder.image,
+                     encoder_weights=codex.space.encoder.weights, key="")
+
+
+def _same_reference(a: Codex, b: Codex) -> bool:
+    """Whether two Codices name the same calibration reference — the same
+    encoder build over the same set, with the same resulting hashes. Then
+    one's member IS the other's and copying it is exact."""
+    return (a.space.encoder.image, a.space.encoder.weights,
+            a.space.calibration.set, a.space.calibration.vectors,
+            a.space.envelope) == \
+           (b.space.encoder.image, b.space.encoder.weights,
+            b.space.calibration.set, b.space.calibration.vectors,
+            b.space.envelope)
+
+
+def carry_calibration(root: Path, child: Codex, drag_path: Path,
+                      *sources: Codex) -> None:
+    """Copy a derived collection's calibration member from whichever source
+    holds the same reference.
+
+    The member is a member of EVERY snapshot (09 §9.4's `files`), and T0's
+    envelope, T1's probe set, T2's goldens and the gate's reference are all
+    read from it — so a daughter or sister without one cannot be checked,
+    shared, or admitted from. Only `create` and a new-encoder `derive`
+    embed; everything else INHERITS, because the reference is a property of
+    the encoder build and re-embedding the same set with the same build to
+    get bit-identical vectors is not something float arithmetic promises.
+
+    `sources` is tried in order: the mother, and for `--space-from` the
+    Codex that supplied the space — whose member is the one the sister's
+    hashes name, since her space was copied from it byte for byte.
+    """
+    from . import calibration as cal, drag as drag_mod
+
+    src = next((s for s in sources if _same_reference(child, s)), None)
+    if src is None:
+        raise CodexError(
+            f"{child.collection_id} names encoder {child.space.encoder.image} "
+            f"over calibration set {child.space.calibration.set}, and no "
+            f"source it derives from holds that reference. A different build "
+            f"needs its own reference vectors, which means embedding the set "
+            f"at an endpoint (06 §6.6) — pass `embed`")
+
+    src_drag = drag_of(root, name_of(root, src.collection_id))
+    for name in drag_mod.calibration_paths(src.space.calibration.set):
+        origin = src_drag / name
+        if not origin.is_file():
+            if name.endswith(".sig.json"):
+                continue                # optional: the hashes bind, not it
+            raise CodexError(
+                f"{src.collection_id} has no calibration member at {name}. "
+                f"It is written by `hold collection create` (09 §9.12); a "
+                f"collection derived from one that lacks it would inherit a "
+                f"drag nothing can check")
+        dst = drag_path / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(origin.read_bytes())
+
+    # The Codex's hashes bind the member (09 §9.12), so what was copied is
+    # checked against the CHILD's Codex and not assumed from the source's.
+    member, _ = drag_mod.calibration_paths(child.space.calibration.set)
+    cal.read_member(drag_path / member,
+                    expect_vectors=child.space.calibration.vectors,
+                    expect_envelope=child.space.envelope)
+
+
+def recalibrate(space: Space, modality: str, embed) -> Space:
+    """`space` with the reference vectors THIS encoder produces.
+
+    A sister in a new space has a new encoder build, and a new build needs
+    its own reference: the mother's vectors were produced by another build
+    and comparing against them would compare nothing. So `derive` embeds
+    exactly as `create` does (06 §6.6), and the two hashes it writes are
+    outputs here too — whatever the caller's `space` carried in those two
+    fields is replaced, never trusted.
+
+    Neither hash is inside `space_id` (02 §2.4), so this does not move the
+    sister's space; it makes her drag checkable.
+    """
+    from . import calibration as cal
+
+    texts = cal.verify(modality, space.calibration.set)
+    _, _, vectors, envelope = cal.build_member(
+        texts, embed, normalise=space.normalise, dim=space.dim)
+    return _replace(space, envelope=envelope,
+                    calibration=_replace(space.calibration, vectors=vectors))
 
 
 def continue_(root: Path, mother_id: str, *, platform_image: str,
@@ -375,7 +509,7 @@ def continue_(root: Path, mother_id: str, *, platform_image: str,
         origin_reachable_until=origin_reachable_until,
         derived_from=None, space_from=None, replaces=None,
     )
-    write(root, daughter, mother)
+    carry_calibration(root, daughter, write(root, daughter, mother), mother)
     return daughter
 
 
@@ -405,7 +539,7 @@ def replace(root: Path, mother_id: str, *, defect: Defect,
         continues_through=None, origin_reachable_until=None,
         credits=(),
     )
-    write(root, corrective, mother)
+    carry_calibration(root, corrective, write(root, corrective, mother), mother)
     return corrective
 
 
