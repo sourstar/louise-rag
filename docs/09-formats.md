@@ -445,7 +445,7 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the snapshot named by the Codex's `continues_through` |
 | `shards` | list of shard | yes | every record shard the snapshot consists of, sorted by (`slice` bytes, `n`) |
 | `relations` | list of relation shard | yes | the relations shards (§9.14), same order; `[]` when the collection has none |
-| `files` | object | yes | the whole-collection members with their transport roots: `{"LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}` |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A drag file that is neither here nor a shard a `shards` entry names is not a member and is not served (07 §7.8) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A shard entry:
@@ -1316,6 +1316,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `centres-<space>-v<n>` | `vectors/<space>/centres/v<n>.safetensors` | in `index.json` |
 | `index-<space>` | `vectors/<space>/index.json` | in the digest |
 | `calibration-<set>` | `calibration/<set>.safetensors` and `.sig.json` | in the snapshot's `files` |
+| `validation` | `validation.json` | in the snapshot's `files` |
 | `terms` | `LICENSE-TERMS` | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json` | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
@@ -1336,8 +1337,9 @@ swarm is found through the DHT and the peer messages. The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
 DHT needs 20; the piece layers are exchanged in the swarm. A member of
 several files is that many torrents. Nothing is served from a torrent
-that is not in the drag or in the platform's encoder store (04 §4.3),
-and the same key that signs digests seeds them.
+that is not in the drag, in `state/bundles/` (§9.7), or in the
+platform's encoder store (04 §4.3), and the same key that signs digests
+seeds them.
 
 **DHT keys.** The mainline DHT (BEP 5). A collection's key for a
 snapshot is the first 20 bytes of `H(collection_id ‖ snapshot_id)`; the

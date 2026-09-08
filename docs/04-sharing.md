@@ -197,9 +197,13 @@ certifier (§3.8). Promotion is one rename into the drag path and, in the
 same transaction of the state database, the holdings mark: the durable
 marker is the snapshot's row in the manifest naming that member as held.
 At start, a member present in the copy without its mark goes back to
-staging. A member whose root is in no snapshot the peer holds stays in
-staging until a snapshot naming it arrives, and is discarded after
-`grace_days`.
+staging. A shard or `files` member whose root is in no snapshot the peer
+holds stays in staging until a snapshot naming it arrives, and is
+discarded after `grace_days`. The members no snapshot lists are
+admitted by their own rule instead, never by this one: a bundle by the
+ladder of 03 §3.5, a text-index member by the pin its header carries
+(02 §2.6), a `centres` or `index-<space>` member by the root
+`index.json` gives it.
 
 **Two snapshots under one id.** When two different snapshots carry the
 same id (02 §2.2), the shard where they differ is named and

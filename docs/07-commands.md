@@ -582,12 +582,20 @@ collection is another name.
 ```
 
 `drag/` holds only what the Codex or a snapshot names, so a member is
-hashed as it lies and `share` refuses a drag directory containing a
-file no snapshot lists. `state/`, `index/`, `lance/`, the files and the
-keys never travel: the state database holds state (the cursor of 06 §6.1
-beside it, the acknowledgement of 09 §9.13, the attestations of 09
-§9.8, the bundles this peer produced), Lance holds the vectors search
-reads, and neither is a member. The trust list is peer-wide, one file
+hashed as it lies and `share` refuses a drag directory holding a file
+that neither the Codex names, nor a snapshot of the chain lists — as a
+shard or in its `files` (09 §9.4) — nor 09 §9.6 defines as a local
+derived file under `vectors/`.
+
+`index/`, `lance/`, the configuration files and the keys never travel,
+and neither does the state database, which holds the cursor of 06 §6.1,
+the acknowledgement of 09 §9.13 and the attestations of 09 §9.8. Two
+things it keeps DO travel, by their own routes rather than as drag
+members: a bundle, as the member `bundle-<space>-<bundle id>` served
+from `state/bundles/` (09 §9.7, §9.16), and an attestation, as an event
+(09 §9.9). Lance holds the vectors a search reads and is a local
+rebuild of what the bundles carry, never a member. The trust list is
+peer-wide, one file
 for every collection. Two nodes on one machine are two roots, two ports
 and two keys.
 

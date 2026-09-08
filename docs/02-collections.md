@@ -553,6 +553,7 @@ local, and its form is 09 §9.10.
 ├── snapshots/2026-08.sig.json           -- the sidecar: signatures and attestations on that snapshot (§2.2)
 ├── validation.json                      -- the Codex's validation block written out for tools; checked to equal it (§3.2)
 ├── calibration/<set>.safetensors        -- the calibration set, its reference vectors and the envelope (§2.4)
+├── calibration/<set>.sig.json           -- who produced that reference, signed (09 §9.12)
 ├── seals/2026-08.json                   -- certified collections: origin seal evidence (§3.7)
 ├── records/<slice>/NNNNN.jsonl.zst      -- and NNNNN.<snapshot id>.jsonl.zst for superseded versions (§2.3)
 ├── relations/<slice>/NNNNN.jsonl.zst    -- typed edges between records (§5.5; 09 §9.14)
