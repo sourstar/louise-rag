@@ -233,6 +233,9 @@ in 211 s — the one failure is §1's pre-existing `st_mtime_ns` proxy,
 unchanged. Baseline before step 0 was 1362 passed, 1 failed.
 
 ### Step 2 — `hold records build` and `hold snapshot create`
+*2a (the snapshot at 09 §9.4) and 2b (the roots and the refusals) are
+DONE, 2026-09-08. 2c — wiring them into `app/pack/build.py`, where the
+shards are actually cut — is what remains.*
 *02 §2.2, 02 §2.3, 06 §6.6, 09 §9.4, 09 §9.5, 09 §9.14. Wraps
 `app/pack/build.py`, `records.py`, `slicing.py`, `cutoff.py`,
 `tools/pack_convert.py`.*
