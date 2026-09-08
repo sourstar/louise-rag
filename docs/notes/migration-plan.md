@@ -365,33 +365,98 @@ entry per space.
 **Operator**: nothing.
 
 ### Step 4 — `hold vectors build|import|export|check`
-*02 §2.4, 03 §3.5, 09 §9.7. Wraps the embed stage, `app/bundles`,
-`genesis import`, `tools/vector_compliance.py`, `tools/vector_sweep.py`.*
+*02 §2.4, 03 §3.5, 09 §9.7. **This step does NOT wrap `app/bundles` and
+`app/verify`.** See [`step4-vectors-study.md`](step4-vectors-study.md) —
+eight agents against the documents and the code.*
 
-- `build(collection, shard)`: the existing embed stage over one shard,
-  emitting a signed bundle every few hundred chunks. Labels against the
-  current centres when the index exists.
-- `import(bundle | --archive ID)`: one path for a peer's bundle and a
-  public pre-embedded archive, through T0–T3. Admissibility is
-  `space_id` plus per-record `content_hash`; `collection` and
-  `snapshot_id` on a bundle are provenance and never gates.
-  **`--archive` refuses an archive not already in the Codex's `credits`**
-  (06 §6.6) — which is why `credits` must be declared at creation.
-  `--strict` refuses a producer not on this peer's allow list and never
-  admits below T3; with an empty allow list it admits nothing, which is
-  why it is off by default.
-- `check([--drop])`: `vector_compliance` and `vector_sweep` as one
+**Rewritten 2026-09-08** after the study and after `a` and `b` below
+landed. The step as first written asked to wrap `genesis.py` and to emit
+"a signed bundle every few hundred chunks"; both were wrong.
+
+WHY IT CANNOT WRAP. Every tier of `app/verify`'s ladder disagrees with 03
+§3.5 in substance and not in wording: T3 is a Wald SPRT over 64 chunks
+against a constant `0.95` where §3.5 draws sixteen on the Codex's
+`tolerance`; T2 is a beacon-and-age protocol with a golden bank where
+§3.5 embeds the calibration set's first sixteen texts; T0's envelope test
+reads a "space artifact" that exists for no collection here.
+`app/bundles/trust.py` implements trust on first use and REFUSES every
+producer key after the first, which 03 §3.5 and 08 §8.1 forbid in as many
+words. And `app/bundles/format.py` forces `challenge` to null in both
+directions, so it refuses every conformant bundle by construction. This
+is an exception to §0's wrap rule, recorded here with the sentences that
+force it.
+
+WHAT IS GENUINELY WRAPPED: the exporter's shape, the ledger, and
+`format.py`'s *posture* — verify the wire bytes, never re-serialise —
+which is right and is carried into `app/hold/bundle.py`.
+
+**Sub-tasks, in order. `a` and `b` are DONE (`e61d4d2`, `728b127`).**
+
+- **a. DONE — 09 §9.7's bytes** as `app/hold/bundle.py`: the closed
+  sixteen-key header, ASCII-only serialisation (NOT §9.1's canonical
+  JSON — the one trap that is silent when wrong), `content_digest` as one
+  SHA-256 over the concatenation, `row_order_key` for the tuple sort under
+  which `:10:` follows `:2:`, the framed payload, `bundle_id`, and no
+  trust decision anywhere near `verify`.
+- **b. DONE — possession keyed on `content_hash`**, not the `raw_hash`
+  the old code sent. Both are 32 hex characters, so the confusion is
+  invisible on the wire and refuses every record silently.
+  `refused_uids` implements decision 5's per-record refusal; a uid with
+  no entry still refuses the bundle whole.
+- **c. `space_id` from the Codex.** `app/spaces.py:compute_space_id` is a
+  different function over a different preimage (see
+  [`step6-preflight.md`](step6-preflight.md) §4), so nothing this node
+  produces today is admissible anywhere. Nothing else in step 4 means
+  anything until this lands.
+- **d. `export` writes the four-file DIRECTORY** of §9.7. 07 §7.3 spells
+  `--out FILE`; 09 defines a directory and fixes no container. Read
+  `--out` as a directory and amend 07.
+- **e. `import`** through T0–T3, replacing `app/verify`'s tiers. Fix the
+  accepted row set BEFORE any tier runs and slice the sixteen
+  `calibration:*` challenge rows off first — otherwise a producer pads a
+  bundle with rows it knows will be refused and dilutes T0's statistic by
+  the padding factor. Derive coverage from merged chunk ids, never by
+  expanding the header's `uids: [first, last]` range: that was only
+  accidentally correct under whole-bundle refusal.
+- **f. The licence gate.** `licensing.require_ack` in the importer and in
+  the archive path (invariant 9). Three lines; it is absent today.
+- **g. The admission budget** (08 §8.2) in the same commit that removes
+  TOFU — 07 §7.8 already gives the surface.
+- **h. `check([--drop])`**: `vector_compliance` and `vector_sweep` as one
   command. `vectors-sample` draws **sixteen** chunks per sampled shard,
   always; the plan sets how many shards and never how many chunks.
 
-**Tests**: the existing `tests/bundles`, `tests/verify` and genesis
-tests pass under the new entry points; a bundle with foreign vectors is
-refused at T0; a bundle whose `collection` differs but whose `space_id`
-and `content_hash`es match is ADMITTED; an uncredited archive is
-refused; `--strict` on an empty allow list admits nothing; a corrupted
-stored vector is found and dropped by `check --drop`.
+`import(bundle | --archive ID)` keeps its shape: one path for a peer's
+bundle and a public pre-embedded archive. Admissibility is `space_id`
+plus per-record `content_hash`; `collection` and `snapshot_id` are
+provenance and never gates. **`--archive` refuses an archive not in the
+Codex's `credits`** (06 §6.6) — which is why `credits` is declared at
+creation. `--strict` refuses a producer not on this peer's allow list and
+never admits below T3; with an empty allow list it admits nothing, which
+is why it is off by default.
 
-**Operator**: nothing.
+**Depends on step 2** for two things it cannot be written without:
+`documents.content_hash` as an indexed column, written inside the
+transaction that closes the shard; and `shard_of` yielding
+`"<slice>/<n>"`, because §9.7 makes `shard` a required header field and
+"one shard per bundle" a hard constraint.
+
+**Tests**: a conformant bundle round-trips through export and import; a
+bundle with foreign vectors is refused at T0; a bundle whose `collection`
+differs but whose `space_id` and `content_hash`es match is ADMITTED; a
+FIRST-SEEN producer key is admitted (the TOFU regression); one re-issued
+record has its rows refused and the import exits 0 while the rest lands;
+a uid with no possession entry refuses the bundle whole; a padded bundle
+does not move T0's statistic; an uncredited archive is refused; `--strict`
+on an empty allow list admits nothing; a corrupted stored vector is found
+and dropped by `check --drop`.
+
+**Operator**: two, and they are small. The `refused` field on 09 §9.10's
+coverage row — all three documents now promise the refusal is recorded
+and no field table has a place for it. And the bundle size: 04 §4.5 says
+"a few hundred chunks", §9.10's worked example shows ~15,000, and T3 is
+sixteen recomputes per bundle, so the difference is 0.16 % of production
+or 5.3 %. Record the chosen number in the commit message.
 
 ### Step 5 — `hold check`, `validation.json`, attestations
 *03 §3.1–3.6, 09 §9.8. Wraps `app/verify`, `pack verify`.*
@@ -431,34 +496,84 @@ candidate: a corpus already on disk, green licence, no acknowledgement
 to record, and a `native_id` that sorts numerically, so step 2's
 ordering refusal will not fire spuriously.
 
-1. `hold embedder calibrate` the encoder actually running; record the
-   tolerance it can bear, which becomes the recipe's `space.tolerance`.
-2. `hold collection create gutenberg --recipe …` with the platform and
-   encoder digests of the images actually running
-   (`docker inspect --format '{{index .RepoDigests 0}}' <image>`). If
-   the encoder digest is not the one the approved-encoder list names for
-   this device class, **stop**: that is the drift the migration exists
-   to make impossible.
-3. `hold records build` over the corpus directory already on disk. No
-   fetch, no re-download.
+**REWRITTEN 2026-09-08 (operator decision 7). The proof-of-concept
+RE-EMBEDS A SMALL CLEAN SLICE. It does not import this node's legacy
+vectors** — that became step 6b. Three reasons, and the third is the one
+that decided it:
+
+- 09 §9.7 requires the header's `encoder_image`/`encoder_weights` to be
+  "equal to the Codex's, or a build attested compliant". The Lance table
+  stores **no per-row build identity**, and those rows were written by at
+  least three builds — one of them the unapproved b10630.
+- `legacy-local` is not a key, and 09 §9.10 types `producer` as one. The
+  honest value is THIS NODE'S OWN KEY with `source: "local"` — so the node
+  would sign the b10630 damage under its own name, and is burnable for it.
+- **The damage would not fall out at import.** At the measured 8 % bad
+  fraction, T3's sixteen-chunk quorum fires with probability ≈ 0.006; even
+  inside a 21 %-bad book it fires ≈ 0.23. The tier that found the damage
+  was the sweep (`tools/vector_sweep.py`), not the ladder. Sweep before
+  importing, not after.
+
+Before it runs, **every line of [`step6-preflight.md`](step6-preflight.md)
+must read DONE or DELIBERATE.** `create` mints a permanent `collection_id`
+and `space_id`, a collection is never edited (02 §2.7), and this plan has
+no mechanism for reopening a step marked done.
+
+0. Confirm the encoder digest against the approved-encoder list for this
+   device class (`docker inspect --format '{{index .RepoDigests 0}}'`).
+   If it differs, **stop**: that is the drift the migration exists to make
+   impossible, and it is what b10630 was.
+1. `hold embedder calibrate` against both endpoints; record the tolerance,
+   which becomes the recipe's `space.tolerance`. This also yields the T0
+   envelope measurement the pre-flight asks for.
+2. `hold collection create gutenberg-poc --recipe …` **into a scratch
+   root**, not the real one. The Codex is a throwaway; its purpose is to
+   prove the round trip, not to found the collection. NOTE THIS NEEDS A
+   LIVE ENCODER — `create` embeds the calibration set (06 §6.6) — which
+   is one step earlier than "steps 3+ need the node" implied.
+3. `hold records build` over ~20 books already on disk. No fetch.
 4. `hold snapshot create`.
-5. `hold vectors import` this node's already-computed vectors with
-   producer `legacy-local`. Vectors that fail the ladder are not
-   migrated; the report says how many and where. (Gutenberg's known
-   corrupt fraction is expected to fall out here.)
-6. `hold check` the whole plan and read the report.
-7. `ask search` one question against it and read the result object.
+5. `hold vectors build` — the verb the old step 6 never exercised — over
+   that slice. ~1,500 chunks, minutes on the GPU. This is the deliberate
+   exception to "nothing is re-embedded", and it is small and named.
+6. `hold vectors export` to a directory, then `hold vectors import` it
+   into a SECOND scratch root with its own key. A peer's bundle, made by
+   us, admitted by us through T0–T3 with nothing shared in common but the
+   bytes. **This is the actual proof** and the old step 6 contained no
+   part of it.
+7. `hold check` the whole plan and read the report.
 
-**Done when** the report is clean, the search answers, and the numbers —
-records, shards, chunks, admitted vectors, rejected vectors, wall clock
-per stage — are written into `docs/notes/STATUS.md`. **A step whose
-commit message has no numbers in it is a guess.**
+**Done when** the round trip closes, the report is clean, and the numbers
+— records, shards, chunks, bundle bytes, admitted, refused, wall clock per
+stage — are in `docs/notes/STATUS.md`. **A step whose commit message has
+no numbers in it is a guess.**
 
-**Not in this step**: PubMed, Wikipedia, the genome collections, sharing,
-and any collection whose documents need figures. Those wait for step 8.
+**Deliberately NOT proved here**: that the legacy vectors are good (step
+6b), that anything works at PubMed scale, that sharing works (step 9), or
+that `ask search` answers — §4's own graph schedules retrieval at step 11
+and the old step 6 called it four steps early.
 
-**Operator**: runs it on the NAS. This is the first acceptance on real
-data rather than fixtures.
+**Free while the GPU is busy**: cosine the ~1,500 fresh vectors against
+the legacy rows for the same books. That is a direct measurement of the
+b10630 damage on known-good text, and it costs nothing extra.
+
+**Operator**: runs it on the NAS. First acceptance on real data.
+
+### Step 6b — the legacy vectors, gated on a sweep
+
+*Split out of step 6 by decision 7. Not an afternoon.*
+
+`tools/vector_sweep.py` over the collection FIRST, producing a per-shard
+bad fraction and a dated suspect set. Then import only what the sweep
+cleared, and decide what happens to the rest with the numbers in hand:
+the 8 % is a per-CHUNK rate over 163 chunks from a cluster-biased sample,
+and the choice between sweeping (~3.6 GPU-days) and re-embedding
+everything (~8.1) may flip on the real figure. A stride-1 pass over a few
+hundred books answers it in hours.
+
+The question buried here, and it is the operator's: **may a peer sign
+vectors whose producing build it cannot name?** Everything else in 6b
+follows from the answer.
 
 ### Step 7 — GATE: what may be in a cleaned corpus besides text
 *Blocks importing for keeps — step 8 — and nothing before it. See
