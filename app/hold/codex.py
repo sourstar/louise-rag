@@ -1021,3 +1021,47 @@ def dumps(codex: Codex) -> bytes:
 # is read.
 space_from_dict = _space
 layer_from_dict = _layer
+
+
+# --------------------------------------------------------------------------
+# the seeded sample (09 §9.1)
+
+def sample(seed: bytes, n: int, universe: Iterable[str]) -> list[str]:
+    """09 §9.1's ONE sampling function, used by every sampled check.
+
+    "sort the universe of ids by their UTF-8 bytes; score each id by
+    HMAC-SHA256 with key `seed` over the id's UTF-8 bytes, reading the first
+    8 bytes of the tag as a big-endian unsigned integer; take the `n` ids
+    with the lowest scores, ties by the id's bytes."
+
+    The seed is published in the attestation (§9.8), so a sample is
+    reproducible by anyone once published and predictable by no one before.
+    That is the whole design: a verifier cannot be steered toward the shards
+    a producer prepared, and cannot be accused of choosing them either.
+    """
+    import hmac
+    ids = sorted(universe, key=lambda s: s.encode("utf-8"))
+    if len(seed) != 32:
+        raise CodexError(f"a sample seed is 32 bytes, got {len(seed)}")
+    if n < 0:
+        raise CodexError("a sample size is not negative")
+
+    def score(i: str) -> tuple[int, bytes]:
+        tag = hmac.new(seed, i.encode("utf-8"), hashlib.sha256).digest()
+        return int.from_bytes(tag[:8], "big"), i.encode("utf-8")
+
+    return sorted(ids, key=score)[:n]
+
+
+def sample_size(fraction: str, universe_size: int) -> int:
+    """"A fraction `f` of a universe of size `N` is `n = max(1, ⌈f × N⌉)`"
+    (09 §9.1). `fraction` is a decimal STRING, because the plan carries it
+    in canonical JSON where floats are refused (§9.1)."""
+    from decimal import Decimal
+    if not _DECIMAL_RE.match(fraction):
+        raise CodexError(f"a sample fraction is a decimal string, got {fraction!r}")
+    f = Decimal(fraction)
+    if not 0 < f <= 1:
+        raise CodexError(f"a sample fraction is in (0, 1], got {fraction!r}")
+    from math import ceil
+    return max(1, ceil(f * universe_size))

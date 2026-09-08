@@ -452,3 +452,59 @@ def test_an_unresolvable_mother_stops_the_walk_honestly(codex):
     assert cx.lineage_id(d1, lambda _cid: None) == codex.collection_id
     assert [c.collection_id for c in cx.walk_lineage(d1, lambda _cid: None)] == \
            [d1.collection_id]
+
+
+# ---- the seeded sample (09 §9.1) ------------------------------------------
+
+def test_the_sample_is_hmac_over_the_ids_lowest_first():
+    import hmac as _hmac
+    seed = bytes(range(32))
+    universe = [str(i) for i in range(20)]
+    got = cx.sample(seed, 5, universe)
+    scored = sorted(universe, key=lambda i: (
+        int.from_bytes(_hmac.new(seed, i.encode(), hashlib.sha256).digest()[:8], "big"),
+        i.encode()))
+    assert got == scored[:5]
+
+
+def test_the_same_seed_draws_the_same_sample_anywhere():
+    """Reproducible by anyone once the seed is published, predictable by
+    nobody before (09 §9.1)."""
+    seed = b"\x07" * 32
+    u = [str(i) for i in range(512)]
+    assert cx.sample(seed, 16, u) == cx.sample(seed, 16, list(reversed(u)))
+
+
+def test_a_different_seed_draws_a_different_sample():
+    u = [str(i) for i in range(512)]
+    assert cx.sample(b"\x01" * 32, 16, u) != cx.sample(b"\x02" * 32, 16, u)
+
+
+def test_the_universe_sorts_by_utf8_bytes_not_numerically():
+    """§9.12's universe is {"0"…"511"} — decimal indices as STRINGS, so
+    "10" sorts before "9". The order only breaks ties, but it is written
+    into the rule and two peers must break them the same way."""
+    seed = b"\x03" * 32
+    u = ["9", "10", "100"]
+    assert cx.sample(seed, 3, u) == cx.sample(seed, 3, ["100", "9", "10"])
+
+
+def test_a_seed_is_thirty_two_bytes():
+    with pytest.raises(CodexError, match="32 bytes"):
+        cx.sample(b"short", 1, ["a"])
+
+
+def test_a_fraction_of_a_universe_is_at_least_one():
+    """`n = max(1, ⌈f × N⌉)` (09 §9.1)."""
+    assert cx.sample_size("0.05", 100) == 5
+    assert cx.sample_size("0.05", 101) == 6
+    assert cx.sample_size("0.001", 10) == 1, "never zero"
+    assert cx.sample_size("1", 40) == 40, "\"1\" is exhaustive"
+
+
+def test_a_fraction_is_a_decimal_string_because_the_plan_forbids_floats():
+    with pytest.raises(CodexError, match="decimal string"):
+        cx.sample_size("five percent", 100)
+    for bad in ("0", "1.5", "-0.1"):
+        with pytest.raises(CodexError, match=r"in \(0, 1\]|decimal string"):
+            cx.sample_size(bad, 100)

@@ -7,6 +7,7 @@ test pass against a Codex the specification refuses.
 """
 import pytest
 
+from app.hold import calibration as _cal
 from app.hold.codex import (Calibration, Chunker, Codex, Credit, Descriptive,
                             Encoder, Facet, Layer, License, Origin, Parser,
                             Query, Space, Toolchain, Update, Validation, Work)
@@ -16,7 +17,10 @@ ENCODER = "sha256:" + "8c" * 32
 WEIGHTS = "sha256:" + "e2" * 32
 Q_ENCODER = "sha256:" + "0a" * 32
 Q_WEIGHTS = "sha256:" + "b7" * 32
-CAL_SET = "sha256:" + "6b" * 32
+# The REAL set this platform ships: a Codex naming a set the platform does
+# not carry cannot be calibrated, so the fixture names the real one and
+# stays honest if the set is ever re-frozen.
+CAL_SET = _cal.load("text")[0]
 CAL_VECS = "sha256:" + "d4" * 32
 ENVELOPE = "sha256:" + "77" * 32
 TERMS = "sha256:" + "b9" * 32
