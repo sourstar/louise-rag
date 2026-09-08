@@ -233,12 +233,35 @@ in 211 s — the one failure is §1's pre-existing `st_mtime_ns` proxy,
 unchanged. Baseline before step 0 was 1362 passed, 1 failed.
 
 ### Step 2 — `hold records build` and `hold snapshot create`
-*2a (the snapshot at 09 §9.4), 2b (the roots and the refusals) and 2c
-(wiring them into `app/pack/build.py`) are DONE, 2026-09-08. What remains
-of step 2: the relations MEMBER is not yet written by a build — the edge
-line and `edges_of` exist and are tested, but no plugin implements
-`relations()` yet, so there is nothing to write; and `hold records build`
-/ `hold snapshot create` are not yet CLI verbs over this.*
+**DONE 2026-09-08**, in four parts: 2a the snapshot at 09 §9.4, 2b the
+roots and the refusals, 2c wiring them into `app/pack/build.py`, 2d the
+build driver, `hold snapshot create` and the CLI verbs.
+
+A corpus on disk now becomes a drag end to end, and the drag holds
+exactly what 02 §2.6 says — `codex.json`, the record shards,
+`snapshots/<id>.json`, `validation.json` — because the build runs in
+staging and only record shards are promoted, the way a fetch already
+works (04 §4.3).
+
+**What step 2 still owes.** The relations MEMBER is not written by a
+build: `edge_line` and `edges_of` exist and are tested, but no plugin
+implements `relations()` yet, so there is nothing to write. It arrives
+with the Gazzetta plugin (step 10).
+
+**Two errors this step caught in earlier steps**, both by tests that
+assert the whole visible state rather than one field: `codex.json` was
+being written OUTSIDE the drag (07 §7.8 — `drag/` is "exactly the tree
+of 02 §2.6", whose first line is `codex.json`), which would have made it
+unservable though it is one of the three members fetchable before an
+acknowledgement; and `create` was idempotent by NAME rather than by
+identity, so re-running it built a second directory for the same
+collection.
+
+**And one contradiction between documents**, found because the CLI has
+to resolve what a person types: 09 §9.3 said a collection's directory is
+named by its `collection_id`, 07 says in three places that it is the
+local name. Fixed on main (63613a7); the directory is the name and
+resolves by all four of 07 §7.7's forms.
 
 **One thing needs the node.** `chunks_root` is computed by folding each
 chunk into a blob inside the parse pool's children, because re-chunking

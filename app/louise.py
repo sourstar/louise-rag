@@ -9,6 +9,10 @@
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
     louise hold collection list
     louise hold collection show <codex>
+    louise hold records build <collection> --corpus DIR [--snapshot ID]
+    louise hold records validation <collection>
+    louise hold snapshot create <collection> [--snapshot ID]
+    louise hold snapshot list <collection>
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
@@ -177,6 +181,40 @@ def cmd_show(a) -> int:
     return 0
 
 
+def cmd_records_build(a) -> int:
+    from app.hold import records as rec
+    rec.build(a.root, a.collection, corpus_dir=a.corpus,
+              snapshot_id=a.snapshot_id, records_per_shard=a.records_per_shard)
+    return 0
+
+
+def cmd_records_validation(a) -> int:
+    from app.hold import records as rec
+    n = rec.write_validation(a.root, a.collection)
+    print(f"validation.json: {n} bytes")
+    return 0
+
+
+def cmd_snapshot_create(a) -> int:
+    from app.hold import snapshot as sn
+    snap = sn.create(a.root, a.collection, snapshot_id=a.snapshot_id)
+    print(snap.hash)
+    return 0
+
+
+def cmd_snapshot_list(a) -> int:
+    from app.hold import collection as c, snapshot as sn
+    name, _ = c.resolve(a.root, a.collection)
+    d = a.root / name / "drag" / "snapshots"
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        if f.name.endswith(".sig.json"):
+            continue
+        s = sn.load(f)
+        print(f"{s.snapshot_id}  {s.hash}  {s.records:>9} records  "
+              f"{len(s.shards):>5} shards")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="louise", description="Louise — knowledge, kept.")
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|ask")
@@ -239,6 +277,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = verbs.add_parser("show", help="a Codex and the ids derived from it")
     root_arg(p); p.add_argument("codex_id"); p.set_defaults(fn=cmd_show)
+
+    # ---- hold records ---------------------------------------------------
+    recs = nouns.add_parser("records", help="the parsed text of documents")
+    rverbs = recs.add_subparsers(dest="verb", required=True)
+
+    p = rverbs.add_parser("build", help="parse, slice, shard, hash")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--corpus", help="the corpus directory to parse (until `records fetch`)")
+    p.add_argument("--snapshot", dest="snapshot_id", help="the cutoff to build to")
+    p.add_argument("--shard-records", type=int, dest="records_per_shard",
+                   help="override the Codex's slicing.shard_records (tests)")
+    p.set_defaults(fn=cmd_records_build)
+
+    p = rverbs.add_parser("validation", help="write validation.json from the Codex")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_records_validation)
+
+    # ---- hold snapshot --------------------------------------------------
+    snaps = nouns.add_parser("snapshot", help="a collection's records at one cutoff")
+    sverbs = snaps.add_subparsers(dest="verb", required=True)
+
+    p = sverbs.add_parser("create", help="freeze the current records as this period's snapshot")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--snapshot", dest="snapshot_id",
+                   help="the id; by default the period that closed, from the Codex's clock")
+    p.set_defaults(fn=cmd_snapshot_create)
+
+    p = sverbs.add_parser("list", help="the chain this peer holds")
+    root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_snapshot_list)
     return top
 
 
