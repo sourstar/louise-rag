@@ -20,9 +20,37 @@ Q_WEIGHTS = "sha256:" + "b7" * 32
 # The REAL set this platform ships: a Codex naming a set the platform does
 # not carry cannot be calibrated, so the fixture names the real one and
 # stays honest if the set is ever re-frozen.
-CAL_SET = _cal.load("text")[0]
-CAL_VECS = "sha256:" + "d4" * 32
-ENVELOPE = "sha256:" + "77" * 32
+CAL_SET, CAL_TEXTS = _cal.load("text")
+DIM = 768
+
+
+def fake_embed(texts, *, dim: int = DIM, tag: bytes = b""):
+    """A deterministic stand-in for the encoder `hold collection create`
+    calls (06 §6.6). Every vector is a function of the text, so the same
+    text embeds to the same place and two different texts do not — which is
+    all the fixtures need, and all an offline test can honestly have.
+
+    It exists because `create` genuinely needs an encoder: the reference
+    vectors' hashes are Codex fields, so there is no offline path that
+    produces a valid Codex. A test that hard-coded those hashes would be
+    asserting numbers no computation ever produced.
+    """
+    import hashlib
+    import numpy as np
+    out = np.empty((len(texts), dim), dtype="float32")
+    for i, t in enumerate(texts):
+        seed = hashlib.blake2b(tag + t.encode("utf-8"), digest_size=8).digest()
+        v = np.random.default_rng(int.from_bytes(seed, "big")) \
+              .standard_normal(dim).astype("float32")
+        out[i] = v / np.linalg.norm(v)
+    return out.tolist()
+
+
+# Computed, never invented: these two ARE the hashes of what `fake_embed`
+# produces over the real 512 texts, so a fixture Codex is one `create`
+# could have written.
+CAL_VECS, ENVELOPE = _cal.build_member(
+    CAL_TEXTS, fake_embed, normalise=True, dim=DIM)[2:]
 TERMS = "sha256:" + "b9" * 32
 
 PUBMED_SPEC = {

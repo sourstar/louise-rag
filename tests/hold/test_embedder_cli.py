@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app import louise
-from tests.hold.conftest import PLATFORM
+from tests.hold.conftest import PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
 
@@ -17,7 +17,7 @@ def _collection(tmp_path: Path) -> Path:
     root = tmp_path / "collections"
     from app.hold import collection as col
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           name="gutenberg")
+                           embed=fake_embed, name="gutenberg")
     return root
 
 
@@ -35,6 +35,9 @@ def test_check_without_a_calibration_member_is_refused_not_deferred(tmp_path):
     The member is written by `hold collection create` (09 §9.12) and without
     it there is nothing to compare against — that is not a network problem."""
     root = _collection(tmp_path)
+    # `create` wrote it; a drag that lost it is the case under test.
+    member, = (root / "gutenberg" / "drag" / "calibration").glob("*.safetensors")
+    member.unlink()
     assert louise.main(["hold", "embedder", "check", "gutenberg",
                         "--root", str(root)]) == 2
 

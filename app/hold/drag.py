@@ -107,7 +107,7 @@ def vector_index_member(space: str) -> str:
 
 
 def calibration_member(set_id: str) -> str:
-    return f"calibration-{_hex(set_id)}"
+    return f"calibration-{_segment(set_id)}"
 
 
 def seals_member(snapshot_id: str) -> str:
@@ -124,6 +124,15 @@ VALIDATION_MEMBER = "validation"
 
 def _hex(identity: str) -> str:
     return identity.split(":", 1)[1] if ":" in identity else identity
+
+
+def _segment(identity: str) -> str:
+    """09 §9.1: "where a digest names a directory — the `<space>` segment
+    under `vectors/`, the `<set>` segment of the calibration member — the
+    segment is the first 16 hexadecimal" digits. §9.12's worked example is
+    `calibration/6b1a3f0e9c2d4b7f.safetensors`, which is those 16 and not
+    the whole digest."""
+    return _hex(identity)[:16]
 
 
 # --------------------------------------------------------------------------
@@ -172,7 +181,7 @@ def vector_index_path(space: str) -> str:
 
 
 def calibration_paths(set_id: str) -> tuple[str, str]:
-    h = _hex(set_id)
+    h = _segment(set_id)
     return f"calibration/{h}.safetensors", f"calibration/{h}.sig.json"
 
 

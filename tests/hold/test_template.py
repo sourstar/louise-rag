@@ -14,7 +14,16 @@ from app.hold.codex import Codex, CodexError
 from app.hold.template import TemplateError
 from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
                                  PLATFORM, PUBMED_SAMPLE, Q_ENCODER,
-                                 Q_WEIGHTS, TERMS, WEIGHTS, a_credit, pubmed)
+                                 Q_WEIGHTS, TERMS, WEIGHTS, a_credit,
+                                 fake_embed, pubmed)
+
+
+def from_recipe(plugin, r, **kw):
+    """`template.from_recipe` with the two hashes `create` would have
+    computed. They are required and have no default (06 §6.6), so every
+    call supplies them; the tests that care about that are below."""
+    kw.setdefault("calibration", (CAL_VECS, ENVELOPE))
+    return template.from_recipe(plugin, r, **kw)
 
 SPACE = {
     "encoder": {"image": ENCODER, "weights": WEIGHTS, "label": "MedCPT"},
@@ -23,9 +32,11 @@ SPACE = {
     "query": {"encoder": {"image": Q_ENCODER, "weights": Q_WEIGHTS},
               "instruction": None},
     "tolerance": "0.95",
-    "calibration": {"set": CAL_SET, "vectors": CAL_VECS,
-                    "quorum": {"n": 16, "min_pass": 12}},
-    "envelope": ENVELOPE, "epoch": "0", "evaluation": None,
+    # No `vectors` and no `envelope`: `create` computes both by embedding
+    # the set, and a recipe that carried them would be asserting the
+    # result of a computation its author never ran (06 §6.6).
+    "calibration": {"set": CAL_SET, "quorum": {"n": 16, "min_pass": 12}},
+    "epoch": "0", "evaluation": None,
 }
 
 ORIGIN = {
@@ -124,7 +135,7 @@ def test_a_tree_facet_declares_its_separator():
 def test_a_plugin_and_two_blocks_make_a_collection():
     """The whole point of the template: a new collection is a plugin plus a
     `space` block plus a `work` block (07 §7.3)."""
-    codex = template.from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
+    codex = from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
     assert isinstance(codex, Codex)
     assert codex.plugin == "gutenberg"
     assert codex.parser.id == "gutenberg" and codex.parser.version == 3
@@ -140,13 +151,13 @@ def test_a_plugin_and_two_blocks_make_a_collection():
 
 
 def test_work_per_defaults_to_the_cadence_and_is_written_out():
-    monthly = template.from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
+    monthly = from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
     assert monthly.work.per == "P1M"
-    weekly = template.from_recipe(
+    weekly = from_recipe(
         "gutenberg", recipe(update={"cadence": "weekly", "day": 1, "grace_days": 0}),
         platform_image=PLATFORM)
     assert weekly.work.per == "P1W"
-    named = template.from_recipe(
+    named = from_recipe(
         "gutenberg", recipe(work={"tokens": 1, "per": "P7D"}),
         platform_image=PLATFORM)
     assert named.work.per == "P7D"
@@ -157,19 +168,19 @@ def test_space_and_work_are_required_and_never_guessed():
         r = recipe()
         del r[missing]
         with pytest.raises(TemplateError, match=f"{missing} is required"):
-            template.from_recipe("gutenberg", r, platform_image=PLATFORM)
+            from_recipe("gutenberg", r, platform_image=PLATFORM)
 
 
 def test_a_typo_in_a_recipe_is_an_error_not_a_silent_default():
     with pytest.raises(TemplateError, match="unknown key.*spce"):
-        template.from_recipe("gutenberg", recipe(spce={}), platform_image=PLATFORM)
+        from_recipe("gutenberg", recipe(spce={}), platform_image=PLATFORM)
 
 
 def test_a_yellow_plugin_needs_its_terms_named_by_hash():
     r = recipe(origin=dict(ORIGIN, spec=dict(ORIGIN["spec"], source_id="pubmed")))
     with pytest.raises(TemplateError, match="terms_sha256 is required"):
-        template.from_recipe("pubmed", r, platform_image=PLATFORM)
-    ok = template.from_recipe(
+        from_recipe("pubmed", r, platform_image=PLATFORM)
+    ok = from_recipe(
         "pubmed", dict(r, license={"class": "yellow", "terms_sha256": TERMS}),
         platform_image=PLATFORM)
     assert ok.license.terms_sha256 == TERMS
@@ -178,7 +189,7 @@ def test_a_yellow_plugin_needs_its_terms_named_by_hash():
 def test_a_recipe_may_tighten_a_class_and_never_loosen_it():
     """04 §4.4: the plugin declares the default and a collection may tighten
     it, never loosen it."""
-    tighter = template.from_recipe(
+    tighter = from_recipe(
         "gutenberg", recipe(privacy="restricted",
                             license={"class": "yellow", "terms_sha256": TERMS}),
         platform_image=PLATFORM)
@@ -187,36 +198,36 @@ def test_a_recipe_may_tighten_a_class_and_never_loosen_it():
     r = recipe(origin=dict(ORIGIN, spec=dict(ORIGIN["spec"], source_id="pubmed")),
                license={"class": "green", "terms_sha256": None})
     with pytest.raises(TemplateError, match="loosens the plugin's 'yellow'"):
-        template.from_recipe("pubmed", r, platform_image=PLATFORM)
+        from_recipe("pubmed", r, platform_image=PLATFORM)
 
 
 def test_a_validation_plan_is_required():
     r = recipe()
     del r["validation"]
     with pytest.raises(TemplateError, match="validation is required"):
-        template.from_recipe("gutenberg", r, platform_image=PLATFORM)
+        from_recipe("gutenberg", r, platform_image=PLATFORM)
 
 
 def test_an_origin_is_required_until_the_spec_is_serialised():
     r = recipe()
     del r["origin"]
     with pytest.raises(TemplateError, match="origin is required"):
-        template.from_recipe("gutenberg", r, platform_image=PLATFORM)
+        from_recipe("gutenberg", r, platform_image=PLATFORM)
 
 
 def test_archives_without_an_expanded_registry_entry_are_refused():
     """06 §6.6: an archive a collection draws on is credited at creation or
     not at all — the Codex is written once and never edited."""
     with pytest.raises(TemplateError, match="names archives but none were expanded"):
-        template.from_recipe("gutenberg", recipe(archives=["wikipedia-bge-m3"]),
+        from_recipe("gutenberg", recipe(archives=["wikipedia-bge-m3"]),
                              platform_image=PLATFORM)
-    ok = template.from_recipe("gutenberg", recipe(archives=["wikipedia-bge-m3"]),
+    ok = from_recipe("gutenberg", recipe(archives=["wikipedia-bge-m3"]),
                               platform_image=PLATFORM, credits=(a_credit(),))
     assert [c.archive for c in ok.credits] == ["wikipedia-bge-m3"]
 
 
 def test_a_recipe_may_override_any_default_it_tightens():
-    codex = template.from_recipe(
+    codex = from_recipe(
         "gutenberg",
         recipe(slicing={"keys": [], "unknown": "all", "shard_records": 25,
                         "order": "numeric"},
@@ -230,7 +241,7 @@ def test_a_recipe_may_override_any_default_it_tightens():
 
 def test_a_slicing_block_may_not_name_a_space_shaped_slice():
     with pytest.raises(CodexError, match="collide with a vector index"):
-        template.from_recipe(
+        from_recipe(
             "gutenberg",
             recipe(slicing={"keys": [], "unknown": "03ae64488c899305",
                             "shard_records": 25, "order": "numeric"}),
@@ -241,9 +252,9 @@ def test_a_slicing_block_may_not_name_a_space_shaped_slice():
 
 def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
     a = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM)
+                               platform_image=PLATFORM, embed=fake_embed)
     b = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM)
+                               platform_image=PLATFORM, embed=fake_embed)
     assert a.collection_id == b.collection_id
     assert (tmp_path / "gutenberg" / "drag" / "codex.json").read_bytes() == a.canonical()
     assert [c.collection_id for c in col.list_all(tmp_path)] == [a.collection_id]
@@ -251,12 +262,12 @@ def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
 
 def test_two_plugins_make_two_collections(tmp_path: Path):
     g = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM)
+                               platform_image=PLATFORM, embed=fake_embed)
     p = col.create_from_recipe(
         tmp_path, "pubmed",
         recipe(origin=dict(ORIGIN, spec=dict(ORIGIN["spec"], source_id="pubmed")),
                license={"class": "yellow", "terms_sha256": TERMS}),
-        platform_image=PLATFORM)
+        platform_image=PLATFORM, embed=fake_embed)
     assert g.collection_id != p.collection_id
     assert g.space_id != p.space_id, "different layers, different space"
 
@@ -369,7 +380,7 @@ def test_a_recipe_may_omit_what_a_codex_writes_as_null():
     origin = {k: v for k, v in ORIGIN.items() if k != "jurisdiction"}
     origin["spec"] = {k: v for k, v in ORIGIN["spec"].items() if k != "files"}
 
-    codex = template.from_recipe("gutenberg",
+    codex = from_recipe("gutenberg",
                                  recipe(space=space, origin=origin),
                                  platform_image=PLATFORM)
     assert codex.space.evaluation is None
@@ -391,7 +402,7 @@ def test_an_empty_toml_table_reads_as_null_not_as_malformed():
     """TOML cannot write `null`, so `[space.query]` with nothing in it is
     how a symmetric space says it has no query encoder."""
     space = dict(SPACE, query={"instruction": ""}, evaluation=[])
-    codex = template.from_recipe("gutenberg", recipe(space=space),
+    codex = from_recipe("gutenberg", recipe(space=space),
                                  platform_image=PLATFORM)
     assert codex.space.query.encoder is None
     assert codex.space.query.instruction is None

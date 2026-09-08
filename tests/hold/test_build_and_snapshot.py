@@ -13,7 +13,7 @@ import pytest
 from app.hold import collection as col, drag, records as rec, snapshot as sn
 from app.hold.codex import CodexError
 from app.hold.records import RecordsError
-from tests.hold.conftest import PLATFORM
+from tests.hold.conftest import PLATFORM, fake_embed
 from tests.hold.test_template import ORIGIN, SPACE, VALIDATION, recipe
 
 
@@ -21,7 +21,8 @@ def _collection(tmp_path: Path, **over):
     """A gutenberg collection under a LOUISE_ROOT-shaped tree."""
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(**over),
-                           platform_image=PLATFORM, name="gutenberg")
+                           platform_image=PLATFORM, embed=fake_embed,
+                           name="gutenberg")
     return root
 
 
@@ -53,7 +54,11 @@ def test_the_drag_holds_only_records_after_a_build(
     _build(root, corpus_dir, records_per_shard=2)
     d = root / "gutenberg" / "drag"
     present = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
-    assert present == ["codex.json",
+    # The calibration member is written by `create`, before any build, and
+    # is a member of every snapshot (09 §9.4, §9.12) — so it belongs here.
+    cal_member, = (d / "calibration").glob("*.safetensors")
+    assert present == [f"calibration/{cal_member.name}",
+                       "codex.json",
                        "records/lang=en/00000.jsonl.zst",
                        "records/lang=fr/00000.jsonl.zst"]
     assert not (d / "manifest.json").exists()

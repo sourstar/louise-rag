@@ -29,8 +29,10 @@ def test_every_kind_has_the_name_the_table_gives_it():
     assert drag.vector_index_member(SPACE) == f"index-{SPACE}"
     assert drag.bundle_member(SPACE, "sha256:" + "ab" * 32) == \
         f"bundle-{SPACE}-" + "ab" * 32
+    # 09 §9.1: a `<set>` in a path is the id's first 16 hex digits, and
+    # §9.12's worked example is `calibration/6b1a3f0e9c2d4b7f.safetensors`.
     assert drag.calibration_member("sha256:" + "6b" * 32) == \
-        "calibration-" + "6b" * 32
+        "calibration-" + "6b" * 8
     assert drag.seals_member("2026-08") == "seals-2026-08"
     assert drag.origin_member("year=1980") == "origin-year=1980"
 
@@ -97,8 +99,8 @@ def test_the_whole_collection_paths():
     assert drag.centres_path(SPACE, 2) == f"vectors/{SPACE}/centres/v2.safetensors"
     assert drag.vector_index_path(SPACE) == f"vectors/{SPACE}/index.json"
     assert drag.calibration_paths("sha256:" + "6b" * 32) == (
-        "calibration/" + "6b" * 32 + ".safetensors",
-        "calibration/" + "6b" * 32 + ".sig.json")
+        "calibration/" + "6b" * 8 + ".safetensors",
+        "calibration/" + "6b" * 8 + ".sig.json")
 
 
 def test_scaffold_makes_the_tree_of_2_6(tmp_path: Path):

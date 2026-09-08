@@ -197,17 +197,74 @@ def create(root: Path, codex: Codex, *, name: str | None = None) -> Codex:
 
 
 def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
-                       platform_image: str, credits: tuple = (),
-                       name: str | None = None) -> Codex:
+                       platform_image: str, embed, credits: tuple = (),
+                       name: str | None = None,
+                       key: Any | None = None,
+                       now: str | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
 
     Re-running with the same recipe prints the same id and exits 0: the hash
     is the identity, and writing it twice is nothing.
+
+    THIS NEEDS AN ENCODER. 06 §6.6 step 2: "the calibration comes first and
+    needs no record: the calibration set is a corpus-independent file
+    shipped with the platform, `create` embeds it with the named encoder,
+    writes the reference vectors' hash into `space.calibration` and their
+    envelope into `space.envelope`, and stores the vectors as the drag
+    member `calibration/<set>.safetensors`". So `embed` is required and has
+    no offline default: those two hashes are what every peer's gate and
+    every T0 admission are decided against, and a collection created with
+    placeholders for them is one nobody else can ever join.
+
+    It runs BEFORE the Codex is built, because the hashes are Codex fields —
+    an encoder that cannot answer means no collection, not a collection
+    with a hole in it.
     """
-    from . import template
-    return create(root, template.from_recipe(plugin, recipe,
-                                             platform_image=platform_image,
-                                             credits=credits), name=name)
+    from . import calibration as cal, drag, envelope as env, template
+
+    space = recipe.get("space")
+    if not isinstance(space, dict):
+        raise CodexError("recipe: a space block is required (06 §6.6)")
+    set_id = (space.get("calibration") or {}).get("set")
+    if not set_id:
+        raise CodexError(
+            "recipe: space.calibration.set names the 512-text set the "
+            "reference vectors are produced over (09 §9.12); without it "
+            "there is nothing to embed")
+    modality = recipe.get("modality") or template.source_for(plugin).modality.value
+    # `verify` and not `load`: the recipe names a set by hash, and a
+    # platform whose file for this modality is a different 512 texts would
+    # produce a reference that measures something else entirely.
+    texts = cal.verify(modality, set_id)
+    vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
+        texts, embed, normalise=bool(space.get("normalise")),
+        dim=int(space["dim"]))
+
+    codex = template.from_recipe(plugin, recipe, platform_image=platform_image,
+                                 calibration=(vectors_hash, envelope_hash),
+                                 credits=credits)
+    created = create(root, codex, name=name)
+    member, sig_path = drag.calibration_paths(set_id)
+    d = drag_of(root, name_of(root, created.collection_id))
+    cal.write_member(d / member, vectors, envelope, set_id_=set_id,
+                     encoder_image=codex.space.encoder.image,
+                     encoder_weights=codex.space.encoder.weights,
+                     key=env.key_text(key.verify_key) if key else "")
+    if key is not None:
+        if not now:
+            raise CodexError("signing the calibration reference needs "
+                             "the time to sign it at; nothing here reads "
+                             "the clock (the snapshots do the same)")
+        # 09 §9.12: a signature rests beside the member. It says who
+        # produced the reference, not that it is the right one — "the
+        # Codex's hashes, not the signature, are what bind it".
+        (d / sig_path).write_text(json.dumps(env.sign(env.ATTESTATION, {
+            "kind": "louise-calibration-reference", "version": 1,
+            "space_id": codex.space_id, "collection_id": codex.collection_id,
+            "set": set_id, "vectors": vectors_hash, "envelope": envelope_hash,
+            "key": env.key_text(key.verify_key), "time": now},
+            key), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return created
 
 
 def derive(root: Path, mother_id: str, *,

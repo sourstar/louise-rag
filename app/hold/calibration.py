@@ -187,3 +187,135 @@ def verify(modality: str, expected_id: str) -> list[str]:
             f"the creator's set; embedding a different 512 texts and "
             f"comparing would compare nothing")
     return texts
+
+
+# --------------------------------------------------------------------------
+# the member `hold collection create` writes (09 §9.12, 06 §6.6)
+
+VECTORS = "vectors"
+ENVELOPE = "envelope"
+
+
+def tensor_hash(arr) -> str:
+    """`H` over the bytes of a tensor (09 §9.12).
+
+    The bytes are the tensor's own raw buffer — C-contiguous, float32,
+    row-major — which is what safetensors stores and what a verifier
+    recomputes. Hashing the FILE instead would fold in the header, and two
+    honest writers may order a header's keys differently.
+    """
+    import numpy as np
+    a = np.ascontiguousarray(arr, dtype=np.float32)
+    return "sha256:" + hashlib.sha256(a.tobytes()).hexdigest()
+
+
+def envelope_of(vectors):
+    """09 §9.12: "row 0 the per-dimension mean of `vectors`, row 1 the
+    per-dimension standard deviation". It is what T0 checks a stranger's
+    bundle against before anything more expensive runs (03 §3.5)."""
+    import numpy as np
+    v = np.ascontiguousarray(vectors, dtype=np.float32)
+    return np.ascontiguousarray(
+        np.stack([v.mean(axis=0), v.std(axis=0)]), dtype=np.float32)
+
+
+def build_member(texts, embed, *, normalise: bool, dim: int):
+    """Embed the set and produce the member's two tensors and their hashes.
+
+    06 §6.6: "the calibration comes first and needs no record … `create`
+    embeds it with the named encoder, writes the reference vectors' hash
+    into `space.calibration` and their envelope into `space.envelope`, and
+    stores the vectors as the drag member". So these two hashes are OUTPUTS
+    of `create`, never inputs a recipe supplies — a recipe carrying them
+    would be asserting the result of a computation it did not do.
+    """
+    import numpy as np
+    got = embed(list(texts))
+    if len(got) != SIZE:
+        raise CalibrationError(f"the encoder returned {len(got)} vectors for "
+                               f"{SIZE} calibration texts")
+    v = np.asarray(got, dtype=np.float32)
+    if v.shape != (SIZE, dim):
+        raise CalibrationError(f"the encoder returned {v.shape} vectors, the "
+                               f"space is ({SIZE}, {dim})")
+    if normalise:
+        # 09 §9.12: "unit-normalised when `space.normalise`". Done here and
+        # not left to the endpoint, because `normalise` is inside `space_id`
+        # and so is a property of the space rather than of a deployment.
+        norms = np.linalg.norm(v, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        v = np.ascontiguousarray(v / norms, dtype=np.float32)
+    env = envelope_of(v)
+    return v, env, tensor_hash(v), tensor_hash(env)
+
+
+def canonical_safetensors(raw: bytes) -> bytes:
+    """The same file with its header's keys in sorted order.
+
+    MEASURED, not assumed: six identical `save_file` calls produce six
+    different files. safetensors serialises the header from a Rust hash map,
+    so `__metadata__`'s key order varies from write to write. The tensors
+    and their offsets are identical; only the header's byte order moves.
+
+    That is fatal for a drag member. A member's transport root is a BitTorrent
+    v2 pieces root over the FILE (09 §9.4, §9.16), so a header that reorders
+    itself gives the same collection a different root on every write — two
+    honest nodes with the same encoder would publish snapshots that disagree,
+    and re-running `create` would appear to change the collection.
+
+    The data buffer is untouched and `data_offsets` are relative to its
+    start, so re-serialising the header is safe; the header is padded to a
+    multiple of 8 so the data stays aligned as `save_file` leaves it.
+    """
+    n = int.from_bytes(raw[:8], "little")
+    header = json.loads(raw[8:8 + n])
+    text = json.dumps(header, sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 8)
+    return len(text).to_bytes(8, "little") + text + raw[8 + n:]
+
+
+def write_member(path, vectors, envelope_, *, set_id_: str, encoder_image: str,
+                 encoder_weights: str, key: str) -> None:
+    """`calibration/<set>.safetensors` at the drag root, with 09 §9.12's
+    four headers. A member of every snapshot (`files`, §9.4), so its bytes
+    are made deterministic before they land."""
+    import tempfile
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=p.parent) as tmp:
+        staged = Path(tmp) / p.name
+        save_file({VECTORS: vectors, ENVELOPE: envelope_}, str(staged),
+                  metadata={"set": set_id_, "encoder_image": encoder_image,
+                            "encoder_weights": encoder_weights, "key": key})
+        p.write_bytes(canonical_safetensors(staged.read_bytes()))
+
+
+def read_member(path, *, expect_vectors: str, expect_envelope: str):
+    """The two tensors, refusing a member whose tensors hash otherwise.
+
+    09 §9.12: "a member whose tensors hash otherwise is refused" — and note
+    what binds it, which is not the signature beside it: "the Codex's
+    hashes, not the signature, are what bind it".
+    """
+    from safetensors.numpy import load_file
+    tensors = load_file(str(path))
+    for name in (VECTORS, ENVELOPE):
+        if name not in tensors:
+            raise CalibrationError(f"{path}: no `{name}` tensor (09 §9.12)")
+    got_v, got_e = tensor_hash(tensors[VECTORS]), tensor_hash(tensors[ENVELOPE])
+    if got_v != expect_vectors:
+        raise CalibrationError(
+            f"{path}: the `vectors` tensor hashes to {got_v}, the Codex says "
+            f"{expect_vectors}. The reference is what every peer's encoder is "
+            f"compared against, so a member that is not the one the Codex "
+            f"names compares nothing")
+    if got_e != expect_envelope:
+        raise CalibrationError(
+            f"{path}: the `envelope` tensor hashes to {got_e}, the Codex says "
+            f"{expect_envelope}")
+    return tensors[VECTORS], tensors[ENVELOPE]

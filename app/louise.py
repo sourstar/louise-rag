@@ -84,15 +84,70 @@ def cmd_create(a) -> int:
                 f"The flag exists so that two collections land in one space by "
                 f"construction (02 §2.7), and it copies no cleaner version the "
                 f"plugin could not run")
-        recipe["space"] = source.space.to_dict()
+        space = source.space.to_dict()
+        # The two computed fields do not travel: `create` re-embeds
+        # the set with this node's encoder and writes its OWN
+        # reference. Neither is inside `space_id` (02 §2.4), so the
+        # two collections still land in one space by construction —
+        # and a difference here is real news about the encoder build,
+        # which is why it is re-measured rather than copied.
+        drifted = (space.pop("envelope"), space["calibration"].pop("vectors"))
+        recipe["space"] = space
         recipe["layers"] = [l.to_dict() for l in source.layers]
 
     credits = tpl.expand_archives(recipe.get("archives") or ())
     codex = col.create_from_recipe(a.root, a.plugin, recipe,
                                    platform_image=a.platform_image,
+                                   embed=_embed_for_recipe(recipe["space"]),
                                    credits=credits)
+    if a.space_from and (codex.space.envelope,
+                         codex.space.calibration.vectors) != drifted:
+        print(f"warning: --space-from {a.space_from} recorded reference "
+              f"vectors {drifted[1]} and this node's encoder produced "
+              f"{codex.space.calibration.vectors}. Both collections are "
+              f"in space {codex.space_id} — calibration is not inside "
+              f"space_id — but the two builds are not the same build.",
+              file=sys.stderr)
     print(codex.collection_id)
     return 0
+
+
+def _embed_for_recipe(space: dict):
+    """The encoder `create` embeds the calibration set with (06 §6.6).
+
+    There is no Codex yet — the two hashes this produces are Codex
+    fields — so the endpoint is resolved from the RECIPE's space block.
+    Same three-step resolution as `_recipe_for`, and for now the same
+    single available step: EMBED_URL.
+
+    An unreachable encoder here is not `GateDeferred`: there is no
+    collection to defer a check on. It is a plain refusal to create.
+    """
+    from app import collections as collections_mod, embeddings
+
+    url = os.environ.get("EMBED_URL")
+    if not url:
+        raise CodexError(
+            "EMBED_URL is unset. `hold collection create` embeds the "
+            "512-text calibration set with the encoder the recipe names "
+            "and writes the reference vectors' hash into the Codex "
+            "(06 §6.6); there is no offline path that produces a valid "
+            "Codex, because a placeholder there is a collection no peer "
+            "can ever join")
+    enc = space.get("encoder") or {}
+    recipe = collections_mod.EmbedRecipe(
+        url=url, api="openai", model=enc.get("label") or "",
+        dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
+
+    def embed(texts):
+        try:
+            return embeddings.embed_texts(texts, recipe=recipe)
+        except Exception as e:                      # noqa: BLE001
+            raise CodexError(
+                f"the encoder at {url} could not embed the calibration "
+                f"set: {e}. Nothing was created") from e
+
+    return embed
 
 
 def cmd_derive(a) -> int:
@@ -267,11 +322,11 @@ def _gate(a):
     resolves one: the collection's own endpoint, then the platform default,
     then EMBED_URL."""
     from app import embeddings
-    from app.hold import collection as col, embedder as emb
+    from app.hold import collection as col, drag, embedder as emb
 
     name, codex = col.resolve(a.root, a.collection)
-    member = a.root / name / "drag" / "calibration" / \
-        f"{codex.space.calibration.set.split(':', 1)[1]}.safetensors"
+    member = a.root / name / "drag" / \
+        drag.calibration_paths(codex.space.calibration.set)[0]
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. It is written "

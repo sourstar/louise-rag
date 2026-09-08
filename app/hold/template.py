@@ -175,8 +175,32 @@ _QUERY_NULLABLE = {"encoder": None, "instruction": None}
 _ORIGIN_NULLABLE = {"jurisdiction": None}
 
 
-def _space_from_recipe(block: dict[str, Any]) -> Any:
+def _space_from_recipe(block: dict[str, Any],
+                       calibration: tuple[str, str]) -> Any:
+    """The space block, with the two hashes `create` computed spliced in.
+
+    `calibration.vectors` and `envelope` are OUTPUTS of `hold collection
+    create` (it embeds the calibration set with the named encoder, 06 §6.6),
+    never inputs. A recipe carrying them would assert the result of a
+    computation its author never ran, and the two would be believed: nothing
+    downstream recomputes them, because they ARE the reference.
+    """
     b = dict(block)
+    cal_block = dict(b.get("calibration") or {})
+    if "vectors" in cal_block or "envelope" in b:
+        raise TemplateError(
+            "recipe: space.calibration.vectors and space.envelope are written "
+            "by `hold collection create`, which embeds the calibration set "
+            "with the encoder the recipe names (06 §6.6). A recipe cannot "
+            "carry them: they are the hashes of vectors it never computed")
+    if "set" not in cal_block:
+        raise TemplateError(
+            "recipe: space.calibration.set is required — it names which "
+            "512-text set the reference vectors were produced over, and a "
+            "peer holding another set compares nothing (09 §9.12)")
+    cal_block["vectors"] = calibration[0]
+    b["calibration"] = cal_block
+    b["envelope"] = calibration[1]
     for k, v in _SPACE_NULLABLE.items():
         b.setdefault(k, v)
     if isinstance(b.get("encoder"), dict):
@@ -218,8 +242,14 @@ def _origin_from_recipe(block: dict[str, Any]) -> Origin:
 
 def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 platform_image: str,
+                calibration: tuple[str, str],
                 credits: tuple = ()) -> Codex:
     """Build a Codex from a plugin's defaults and a creator's recipe.
+
+    `calibration` is `(vectors_hash, envelope_hash)` — what the caller got
+    by embedding the calibration set with the recipe's encoder (06 §6.6).
+    It is required and has no default: a Codex whose reference vectors are
+    a placeholder passes every check made here and fails every peer's gate.
 
     `credits` is what the caller expanded from the platform's registry for
     the recipe's `archives` (06 §6.6); this function never composes one,
@@ -260,7 +290,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "layers" in recipe else default_layers(source)),
         slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
                  else default_slicing(source)),
-        space=_space_from_recipe(recipe["space"]),
+        space=_space_from_recipe(recipe["space"], calibration),
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
         erasure=recipe.get("erasure", source.erasure.value),
