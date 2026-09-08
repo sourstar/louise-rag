@@ -1,4 +1,4 @@
-"""louise — the command line. docs/07-commands.md.
+"""louise â the command line. docs/07-commands.md.
 
     louise hold collection create <plugin> --recipe FILE [--space-from CODEX]
                                     [--platform-image D] [--root DIR]
@@ -16,9 +16,9 @@
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
-until §7.6's migration is complete.
+until Â§7.6's migration is complete.
 
-One flag of §7.3's tree is accepted and refused here rather than
+One flag of Â§7.3's tree is accepted and refused here rather than
 silently doing something else, because what it needs is not built yet:
 `--encoder-image` / `--encoder-weights`, which must re-embed the
 calibration set to fill the space's `calibration` and `envelope` (migration
@@ -55,8 +55,8 @@ def _not_yet(flag: str, step: str) -> None:
 
 
 def _recipe(path: str) -> dict:
-    """A recipe is TOML (07 §7.3). JSON is accepted for a file that is
-    already a whole Codex — what `create` took before the template existed,
+    """A recipe is TOML (07 Â§7.3). JSON is accepted for a file that is
+    already a whole Codex â what `create` took before the template existed,
     and what a test fixture is easiest to write."""
     p = Path(path)
     if p.suffix == ".json":
@@ -82,13 +82,13 @@ def cmd_create(a) -> int:
                 f"--space-from names a Codex whose cleaning_version is "
                 f"{source.cleaning_version} and this collection's is {want}. "
                 f"The flag exists so that two collections land in one space by "
-                f"construction (02 §2.7), and it copies no cleaner version the "
+                f"construction (02 Â§2.7), and it copies no cleaner version the "
                 f"plugin could not run")
         space = source.space.to_dict()
         # The two computed fields do not travel: `create` re-embeds
         # the set with this node's encoder and writes its OWN
-        # reference. Neither is inside `space_id` (02 §2.4), so the
-        # two collections still land in one space by construction —
+        # reference. Neither is inside `space_id` (02 Â§2.4), so the
+        # two collections still land in one space by construction â
         # and a difference here is real news about the encoder build,
         # which is why it is re-measured rather than copied.
         drifted = (space.pop("envelope"), space["calibration"].pop("vectors"))
@@ -96,8 +96,8 @@ def cmd_create(a) -> int:
         recipe["layers"] = [l.to_dict() for l in source.layers]
 
     credits = tpl.expand_archives(recipe.get("archives") or ())
-    # The creator's key: 09 §9.12 makes the calibration member's `key`
-    # header required and §9.4 lists its signature among a snapshot's files
+    # The creator's key: 09 Â§9.12 makes the calibration member's `key`
+    # header required and Â§9.4 lists its signature among a snapshot's files
     # without allowing null, so there is no unsigned collection. Loaded by
     # PATH (invariant 8) and never printed.
     from app.bundles import keys as node_keys
@@ -111,18 +111,18 @@ def cmd_create(a) -> int:
         print(f"warning: --space-from {a.space_from} recorded reference "
               f"vectors {drifted[1]} and this node's encoder produced "
               f"{codex.space.calibration.vectors}. Both collections are "
-              f"in space {codex.space_id} — calibration is not inside "
-              f"space_id — but the two builds are not the same build.",
+              f"in space {codex.space_id} â calibration is not inside "
+              f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
     print(codex.collection_id)
     return 0
 
 
 def _utc_now() -> str:
-    """09 §9.1's time: RFC 3339 in UTC to the second.
+    """09 Â§9.1's time: RFC 3339 in UTC to the second.
 
-    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it —
-    every signed body takes its `time` from a caller — so that a test can
+    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it â
+    every signed body takes its `time` from a caller â so that a test can
     pin what was signed, and so that two objects signed in one command
     cannot disagree about when it ran.
     """
@@ -132,10 +132,10 @@ def _utc_now() -> str:
 
 
 def _embed_for_recipe(space: dict):
-    """The encoder `create` embeds the calibration set with (06 §6.6).
+    """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
-    There is no Codex yet — the two hashes this produces are Codex
-    fields — so the endpoint is resolved from the RECIPE's space block.
+    There is no Codex yet â the two hashes this produces are Codex
+    fields â so the endpoint is resolved from the RECIPE's space block.
     Same three-step resolution as `_recipe_for`, and for now the same
     single available step: EMBED_URL.
 
@@ -150,7 +150,7 @@ def _embed_for_recipe(space: dict):
             "EMBED_URL is unset. `hold collection create` embeds the "
             "512-text calibration set with the encoder the recipe names "
             "and writes the reference vectors' hash into the Codex "
-            "(06 §6.6); there is no offline path that produces a valid "
+            "(06 Â§6.6); there is no offline path that produces a valid "
             "Codex, because a placeholder there is a collection no peer "
             "can ever join")
     enc = space.get("encoder") or {}
@@ -193,7 +193,7 @@ def cmd_derive(a) -> int:
 
 def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
     """Creating a sister is an acceptance, of the space and of what follows
-    from it (02 §2.7). What can be said without the drag on disk is said
+    from it (02 Â§2.7). What can be said without the drag on disk is said
     here; how many chunks are already covered arrives with the coverage map."""
     same = sister.space_id == mother.space_id
     verdict = "matches" if same else "DIFFERS FROM"
@@ -201,14 +201,14 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
                    if same else
                    "her mother's vectors do NOT carry over: this Codex breaks "
                    "with every vector that exists")
-    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}…)",
+    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}â¦)",
           file=sys.stderr)
     print(f"  {consequence}", file=sys.stderr)
     if sister.credits:
         print("  credits inherited: " + ", ".join(c.archive for c in sister.credits),
               file=sys.stderr)
     else:
-        print("  credits: none — she owes nothing and starts from zero",
+        print("  credits: none â she owes nothing and starts from zero",
               file=sys.stderr)
 
 
@@ -277,11 +277,11 @@ def cmd_snapshot_create(a) -> int:
 
 
 def cmd_embedder_check(a) -> int:
-    """`hold embedder check` — the calibration gate of 03 §3.3.
+    """`hold embedder check` â the calibration gate of 03 Â§3.3.
 
     Exit 0 on a pass, 1 on a fail, 3 when the encoder was unreachable:
-    03 §3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
-    pass", and 07 §7.7 reserves 3 for exactly that. A gate that exited 1
+    03 Â§3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
+    pass", and 07 Â§7.7 reserves 3 for exactly that. A gate that exited 1
     on an unreachable endpoint would flag a collection for a network
     problem.
     """
@@ -293,7 +293,7 @@ def cmd_embedder_check(a) -> int:
         return 3
     verdict = "PASS" if run.ok else "FAIL"
     print(f"{verdict}  {run.why()}")
-    print(f"  space       {run.space_id[:23]}…")
+    print(f"  space       {run.space_id[:23]}â¦")
     print(f"  encoder     {codex.space.encoder.label or codex.space.encoder.image[:23]}")
     print(f"  tolerance   {run.tolerance}")
     print(f"  seed        {run.seed.hex()}")
@@ -310,9 +310,9 @@ def cmd_embedder_check(a) -> int:
 
 
 def cmd_embedder_benchmark(a) -> int:
-    """`hold embedder benchmark` — the same run, reporting the rate.
+    """`hold embedder benchmark` â the same run, reporting the rate.
 
-    03 §3.3 measures it on the same pass as the gate, so this is not a
+    03 Â§3.3 measures it on the same pass as the gate, so this is not a
     second measurement: it runs the gate and reports the number the
     statement would carry.
     """
@@ -323,8 +323,8 @@ def cmd_embedder_benchmark(a) -> int:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
     print(f"{run.tokens_per_s} tokens/s over {512} calibration texts "
-          f"({'compliant' if run.ok else 'NOT COMPLIANT — the rate of a '
-             'non-compliant encoder weights nothing (04 §4.5)'})")
+          f"({'compliant' if run.ok else 'NOT COMPLIANT â the rate of a '
+             'non-compliant encoder weights nothing (04 Â§4.5)'})")
     return 0 if run.ok else 1
 
 
@@ -337,7 +337,7 @@ def cmd_embedder_calibrate(a) -> int:
 
 
 def _gate(a):
-    """Run the gate for a collection, resolving its encoder the way 07 §7.8
+    """Run the gate for a collection, resolving its encoder the way 07 Â§7.8
     resolves one: the collection's own endpoint, then the platform default,
     then EMBED_URL."""
     from app import embeddings
@@ -349,7 +349,7 @@ def _gate(a):
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. It is written "
-            f"by `hold collection create` (09 §9.12) and is a member of every "
+            f"by `hold collection create` (09 Â§9.12) and is a member of every "
             f"snapshot; without it there is nothing to compare against")
     reference = _read_reference(member, codex)
 
@@ -361,8 +361,8 @@ def _gate(a):
         except emb.GateDeferred:
             raise
         except Exception as e:                      # noqa: BLE001
-            # 03 §3.1: an unreachable encoder is INCONCLUSIVE, not a
-            # failure — "it produces no attestation and no flag, it is
+            # 03 Â§3.1: an unreachable encoder is INCONCLUSIVE, not a
+            # failure â "it produces no attestation and no flag, it is
             # reported with its reason, and it is retried".
             raise emb.GateDeferred(
                 f"the encoder for {name} was unreachable or failed: {e}") from e
@@ -374,14 +374,14 @@ def _read_reference(member, codex):
     from safetensors.numpy import load_file
     tensors = load_file(str(member))
     if "vectors" not in tensors:
-        raise CodexError(f"{member.name}: no `vectors` tensor (09 §9.12)")
+        raise CodexError(f"{member.name}: no `vectors` tensor (09 Â§9.12)")
     return tensors["vectors"].tolist()
 
 
 def _recipe_for(codex, name):
     """The endpoint that serves this space's encoder.
 
-    07 §7.8 resolves it in three steps, "each a fallback for the one before
+    07 Â§7.8 resolves it in three steps, "each a fallback for the one before
     it, never an override": the collection's `[encoder]`, then
     `platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`.
     Only the third is available here, because the first two live in
@@ -391,7 +391,7 @@ def _recipe_for(codex, name):
 
     The rest of the recipe comes from the Codex and not from any file: the
     dtype, ctx and dim are inside `space_id`, so a file that disagreed with
-    them would be describing another space (02 §2.4).
+    them would be describing another space (02 Â§2.4).
     """
     from app import collections as collections_mod
     url = os.environ.get("EMBED_URL")
@@ -399,14 +399,14 @@ def _recipe_for(codex, name):
         from app.hold import embedder as emb
         raise emb.GateDeferred(
             "EMBED_URL is unset and no collection endpoint is configured; "
-            "07 §7.8: everything that needs an encoder defers (exit 3)")
+            "07 Â§7.8: everything that needs an encoder defers (exit 3)")
     return collections_mod.EmbedRecipe(
         url=url, api="openai", model=codex.space.encoder.label or "",
         dtype=codex.space.dtype, ctx=codex.space.ctx, dim=codex.space.dim)
 
 
 def _write_statement(a, run, codex):
-    """`--accept`. 09 §9.12: the statement is "kept in `state/`"."""
+    """`--accept`. 09 Â§9.12: the statement is "kept in `state/`"."""
     from app.bundles import keys as node_keys
     from app.hold import collection as col, embedder as emb
 
@@ -436,7 +436,7 @@ def cmd_snapshot_list(a) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog="louise", description="Louise — knowledge, kept.")
+    top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|ask")
 
     hold = surfaces.add_parser("hold", help="your own copy: complete, current, checked")
@@ -453,7 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("plugin", nargs="?", default=None,
                    help="the plugin the collection is of; omit when the file is a whole Codex")
     p.add_argument("--recipe", required=True,
-                   help="TOML with every Codex field the plugin does not default (06 §6.6)")
+                   help="TOML with every Codex field the plugin does not default (06 Â§6.6)")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--platform-image", default=cx.digest(b""),
                    help="the digest of the platform this command runs in")
@@ -470,14 +470,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archives", nargs="*", default=None,
                    help="archive ids a sister in a new space draws on")
     p.add_argument("--accept", action="store_true", required=True,
-                   help="creating a sister is an acceptance (02 §2.7)")
+                   help="creating a sister is an acceptance (02 Â§2.7)")
     p.set_defaults(fn=cmd_derive)
 
     p = verbs.add_parser("continue", help="a daughter: a new toolchain, the same space")
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--platform-image", required=True)
     p.add_argument("--continues-through", required=True,
-                   help="the mother's LAST snapshot — the boundary, named from "
+                   help="the mother's LAST snapshot â the boundary, named from "
                         "the side that already exists")
     p.add_argument("--origin", help="JSON file with the new origin block")
     p.add_argument("--origin-reachable-until")
@@ -495,20 +495,27 @@ def build_parser() -> argparse.ArgumentParser:
     p = verbs.add_parser("list", help="collections held, with their lineage")
     root_arg(p); p.set_defaults(fn=cmd_list)
 
+    def args_show(p):
+        root_arg(p); p.add_argument("codex_id")
+
     p = verbs.add_parser("show", help="a Codex and the ids derived from it")
-    root_arg(p); p.add_argument("codex_id"); p.set_defaults(fn=cmd_show)
+    args_show(p); p.set_defaults(fn=cmd_show)
 
     # ---- hold records ---------------------------------------------------
     recs = nouns.add_parser("records", help="the parsed text of documents")
     rverbs = recs.add_subparsers(dest="verb", required=True)
 
+    def args_records_build(p):
+        root_arg(p); p.add_argument("collection")
+        p.add_argument("--corpus",
+                       help="the corpus directory to parse (until `records fetch`)")
+        p.add_argument("--snapshot", dest="snapshot_id",
+                       help="the cutoff to build to")
+        p.add_argument("--shard-records", type=int, dest="records_per_shard",
+                       help="override the Codex's slicing.shard_records (tests)")
+
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
-    root_arg(p); p.add_argument("collection")
-    p.add_argument("--corpus", help="the corpus directory to parse (until `records fetch`)")
-    p.add_argument("--snapshot", dest="snapshot_id", help="the cutoff to build to")
-    p.add_argument("--shard-records", type=int, dest="records_per_shard",
-                   help="override the Codex's slicing.shard_records (tests)")
-    p.set_defaults(fn=cmd_records_build)
+    args_records_build(p); p.set_defaults(fn=cmd_records_build)
 
     p = rverbs.add_parser("validation", help="write validation.json from the Codex")
     root_arg(p); p.add_argument("collection")
@@ -518,23 +525,30 @@ def build_parser() -> argparse.ArgumentParser:
     snaps = nouns.add_parser("snapshot", help="a collection's records at one cutoff")
     sverbs = snaps.add_subparsers(dest="verb", required=True)
 
-    p = sverbs.add_parser("create", help="freeze the current records as this period's snapshot")
-    root_arg(p); p.add_argument("collection")
-    p.add_argument("--snapshot", dest="snapshot_id",
-                   help="the id; by default the period that closed, from the Codex's clock")
-    p.set_defaults(fn=cmd_snapshot_create)
+    def args_snapshot_create(p):
+        root_arg(p); p.add_argument("collection")
+        p.add_argument("--snapshot", dest="snapshot_id",
+                       help="the id; by default the period that closed, "
+                            "from the Codex's clock")
+
+    def args_collection(p):
+        root_arg(p); p.add_argument("collection")
+
+    p = sverbs.add_parser("create",
+                          help="freeze the current records as this period's snapshot")
+    args_snapshot_create(p); p.set_defaults(fn=cmd_snapshot_create)
 
     p = sverbs.add_parser("list", help="the chain this peer holds")
-    root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_snapshot_list)
+    args_collection(p); p.set_defaults(fn=cmd_snapshot_list)
 
     # ---- hold embedder --------------------------------------------------
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
     everbs = embd.add_subparsers(dest="verb", required=True)
 
-    p = everbs.add_parser("check", help="the calibration gate (03 §3.3)")
+    p = everbs.add_parser("check", help="the calibration gate (03 Â§3.3)")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--accept", action="store_true",
-                   help="record a passing run as this peer's statement (09 §9.12)")
+                   help="record a passing run as this peer's statement (09 Â§9.12)")
     p.set_defaults(fn=cmd_embedder_check)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
@@ -546,10 +560,79 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", nargs="*", default=[])
     p.add_argument("--set", dest="set_id")
     p.set_defaults(fn=cmd_embedder_calibrate)
+    add_deprecated(surfaces, {
+        "records_build": args_records_build,
+        "snapshot_create": args_snapshot_create,
+        "collection": args_collection,
+        "show": args_show,
+    })
     return top
 
 
+# --------------------------------------------------------------------------
+# 07 Â§7.6's aliases
+
+def deprecated(fn, old: str, new: str):
+    """Wrap a command so the old name prints what to use instead.
+
+    07 Â§7.6: "Old names are accepted for one release as hidden aliases â
+    `louise <old â¦>` and `python -m app.cli <old â¦>` both â each dispatching
+    to the new function and printing `deprecated: use louise <new â¦>` on
+    stderr."
+
+    ONE function, two names. The alias calls the SAME `fn` and its parser is
+    built from the SAME argument definition, so the two cannot drift â which
+    is the whole point of an alias over a second implementation.
+    """
+    def run(a):
+        print(f"deprecated: use louise {new}", file=sys.stderr)
+        return fn(a)
+    return run
+
+
+def add_deprecated(top, args_of) -> None:
+    """The previous command tree, hidden, for the names whose new command
+    EXISTS on this branch (07 Â§7.6's table).
+
+    The rest arrive with the steps that build them: `corpus add`/`grow` need
+    `hold records fetch`, `pack verify` needs `hold check`, `pack cat`/`dump`
+    need `hold records show`, `corpus add --ack-terms` needs `hold collection
+    ack`, and `pack adopt` needs `dev adopt`. Each is owed by its own step;
+    none is quietly forgotten here.
+
+    "Hidden" means NO `help=` at all. `argparse.SUPPRESS` does not work on a
+    subparser — argparse prints the literal string `==SUPPRESS==` in the
+    command list, which is worse than showing the name. A subparser with no
+    `help` is simply not listed, while still parsing.
+    """
+    pack = top.add_parser("pack")
+    pv = pack.add_subparsers(dest="verb", required=True)
+    p = pv.add_parser("build")
+    args_of["records_build"](p)
+    p.set_defaults(fn=deprecated(cmd_records_build, "pack build",
+                                 "hold records build"))
+
+    corpus = top.add_parser("corpus")
+    cv = corpus.add_subparsers(dest="verb", required=True)
+    p = cv.add_parser("status")
+    args_of["show"](p)
+    p.set_defaults(fn=deprecated(cmd_show, "corpus status",
+                                 "hold collection show"))
+
+    snap = top.add_parser("snapshot")
+    sv = snap.add_subparsers(dest="verb", required=True)
+    p = sv.add_parser("record")
+    args_of["snapshot_create"](p)
+    p.set_defaults(fn=deprecated(cmd_snapshot_create, "snapshot record",
+                                 "hold snapshot create"))
+    p = sv.add_parser("list")
+    args_of["collection"](p)
+    p.set_defaults(fn=deprecated(cmd_snapshot_list, "snapshot list",
+                                 "hold snapshot list"))
+
+
 def main(argv=None) -> int:
+
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
     a = build_parser().parse_args(argv)

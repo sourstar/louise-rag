@@ -34,9 +34,19 @@ def content_hash(title: str, sections: Sequence[Sequence[str]]) -> str:
     whatever the origin's own revision fields say.
 
     Nothing else may enter it. A figure, an `extra` key, a locator: none of
-    them are what the chunker reads, and `possession.json` (09 §9.7) binds a
-    bundle to this value, so moving it orphans that record's vectors on
-    every peer that holds them.
+    them are what the chunker reads. A figure is the case worth naming,
+    because it is the one that keeps being proposed: it is a MEMBER, named
+    in the record by hash and carried under `figures/<slice>/`, while its
+    caption stays in `sections` and stays indexed (operator decision,
+    2026-09-08).
+
+    `possession.json` (09 §9.7) binds a bundle to this value, so moving it
+    costs that record's rows on every peer holding them — its rows, not the
+    bundle's, since §9.7 was amended to 03 §3.5 and 07 §7.3's per-record
+    refusal. That is two to three orders of magnitude cheaper than the
+    older reading and it is still not free, and it is not the reason
+    anyway: a figure stays out because it is not text, not because moving
+    it would be expensive.
     """
     blob = json.dumps([title or "", [[h or "", t or ""] for h, t in sections]],
                       ensure_ascii=False, separators=(",", ":")).encode("utf-8")

@@ -1003,6 +1003,34 @@ def cmd_snapshot_vectors(args) -> int:
     return 0
 
 
+def _deprecated(fn, old: str, new: str):
+    """Name the replacement on stderr, and run the old command anyway.
+
+    07 §7.6 asks for more than this — "each dispatching to the new function"
+    — and for these four that is NOT YET SAFE, which is why it is a notice
+    and not a redirect:
+
+      * `pack build` takes `--out DIR` and writes a pack there; `hold
+        records build` writes into the collection's DRAG under `--root`.
+        Dispatching would ignore `--out` and write somewhere else, on a
+        node that is running.
+      * `snapshot record` and `corpus status` read the legacy manifest;
+        their replacements read a Codex, and no collection here has one yet.
+
+    Both halves become one implementation when each step finishes wrapping
+    the old code — which is what migration steps 2 and 5 are for. Until
+    then the user-facing half lands, because a user on an old name learning
+    the new one is worth having a release early, and the `louise <old …>`
+    aliases in `app/louise.py` DO dispatch, because there the new command is
+    the only implementation.
+    """
+    def run(args):
+        print(f"deprecated: use louise {new}", file=sys.stderr)
+        return fn(args)
+    run.__name__ = getattr(fn, "__name__", "run")
+    return run
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="app.cli")
     top = p.add_subparsers(dest="command", required=True)
@@ -1087,7 +1115,8 @@ def main(argv=None) -> int:
                                          "origin on this date (YYYY-MM-DD) and nothing later — "
                                          "gutenberg by release date, pubmed by DateRevised")
     p_build.add_argument("--unsigned", action="store_true")
-    p_build.set_defaults(func=cmd_pack_build)
+    p_build.set_defaults(func=_deprecated(
+        cmd_pack_build, "pack build", "hold records build"))
     p_adopt = pack_sub.add_parser(
         "adopt", help="move an origin collection's vectors (and index) into its packed twin")
     p_adopt.add_argument("origin", help="the collection indexed from the origin files")
@@ -1150,11 +1179,13 @@ def main(argv=None) -> int:
     s_rec.add_argument("collection")
     s_rec.add_argument("--snapshot",
                        help="id to record under (default: the collection pin)")
-    s_rec.set_defaults(func=cmd_snapshot_record)
+    s_rec.set_defaults(func=_deprecated(
+        cmd_snapshot_record, "snapshot record", "hold snapshot create"))
 
     s_list = snapshot.add_parser("list", help="recorded snapshots")
     s_list.add_argument("collection")
-    s_list.set_defaults(func=cmd_snapshot_list)
+    s_list.set_defaults(func=_deprecated(
+        cmd_snapshot_list, "snapshot list", "hold snapshot list"))
 
     s_delta = snapshot.add_parser("delta", help="diff two recorded snapshots")
     s_delta.add_argument("collection")
@@ -1233,7 +1264,8 @@ def main(argv=None) -> int:
 
     p_status = corpus.add_parser("status")
     p_status.add_argument("collection", nargs="?")
-    p_status.set_defaults(func=cmd_status)
+    p_status.set_defaults(func=_deprecated(
+        cmd_status, "corpus status", "hold collection show"))
 
     embed_parser = top.add_parser("embed", help="embedding recipe management")
     embed_sub = embed_parser.add_subparsers(dest="verb", required=True)
