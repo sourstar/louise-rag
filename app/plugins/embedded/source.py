@@ -28,7 +28,8 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+                    Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 
 _SEG_SEP = "|"
 _LOCATOR_SEP = "::"
@@ -221,6 +222,16 @@ class EmbeddedSource:
     # PRODUCER'S, which is the whole basis for reusing their vectors.
     # Re-cutting them for any reason would orphan every one.
     mutability = Mutability.IMMUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 1
+    modality = Modality.TEXT
+    # A published dataset release is frozen; a corrected release is a new
+    # dataset, not an erasure of this one.
+    erasure = Erasure.APPEND_ONLY
+    native_id_order = "numeric"          # the producer's article ids
+    default_facets = [
+        {"field": "lang", "kind": "flat", "separator": None, "authority": None},
+    ]
 
     def discover(self, state: DiscoverState):
         import pyarrow.parquet as pq

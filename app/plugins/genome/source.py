@@ -24,7 +24,8 @@ import hashlib
 from pathlib import Path
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+                    Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 
 _LOCATOR_SEP = "::"
 _FASTA_SUFFIXES = (".fa", ".fa.gz", ".fasta", ".fasta.gz", ".fna", ".fna.gz")
@@ -84,6 +85,15 @@ class GenomeSource:
     # a new collection (§9). The windows ARE coordinates, and moving
     # them would break the chunk-id-to-locus mapping.
     mutability = Mutability.IMMUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 1
+    modality = Modality.DNA              # decides encoder eligibility (02 §2.4)
+    erasure = Erasure.APPEND_ONLY        # a frozen assembly retracts nothing
+    # Sequence names ("chr1", "chrX", "scaffold_17") are names, not
+    # numbers: "chr10" must sort after "chr1" the way bytes say, not the
+    # way an integer parse would fail.
+    native_id_order = "bytes"
+    default_facets = []
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

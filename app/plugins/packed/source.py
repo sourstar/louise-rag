@@ -22,8 +22,8 @@ import threading
 from pathlib import Path
 
 from .. import cursor
-from ..base import (CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability,
-                    PrivacyClass, RawDoc)
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+                    Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from ...pack import manifest as manifest_mod, records
 
 _LOCATOR_SEP = "::"
@@ -45,6 +45,12 @@ class PackedSource:
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "book"
     mutability = Mutability.IMMUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 1
+    modality = Modality.TEXT
+    erasure = Erasure.APPEND_ONLY
+    native_id_order = "bytes"            # whatever the origin used; bytes is safe
+    default_facets = []
 
     def __init__(self, pack_dir: Path | None = None, manifest: dict | None = None):
         self.pack_dir = Path(pack_dir) if pack_dir else None

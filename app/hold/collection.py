@@ -80,6 +80,19 @@ def create(root: Path, codex: Codex) -> Codex:
     return codex
 
 
+def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
+                       platform_image: str, credits: tuple = ()) -> Codex:
+    """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
+
+    Re-running with the same recipe prints the same id and exits 0: the hash
+    is the identity, and writing it twice is nothing.
+    """
+    from . import template
+    return create(root, template.from_recipe(plugin, recipe,
+                                             platform_image=platform_image,
+                                             credits=credits))
+
+
 def derive(root: Path, mother_id: str, *,
            space: Space | None = None,
            space_from: Codex | None = None,

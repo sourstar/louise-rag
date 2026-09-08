@@ -11,8 +11,9 @@ import hashlib
 from pathlib import Path
 
 from .. import cursor
-from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, LicenseClass,
-                    Mutability, PrivacyClass, RawDoc, UnindexableDocument)
+from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, Erasure,
+                    LicenseClass, Modality, Mutability, PROTOCOL_VERSION,
+                    PrivacyClass, RawDoc, UnindexableDocument)
 from . import pg_text, rdf
 
 
@@ -24,6 +25,18 @@ class GutenbergSource:
     # Books are published finished. The catalogue grows; a text
     # already in it does not get edited.
     mutability = Mutability.IMMUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 3
+    modality = Modality.TEXT
+    # PG does withdraw a text on a copyright claim, and the tombstone
+    # stays: a removal is never silent (04 §4.4).
+    erasure = Erasure.RETRACTABLE
+    native_id_order = "numeric"          # PG book numbers, issued ascending
+    default_facets = [
+        {"field": "lang", "kind": "flat", "separator": None, "authority": None},
+        {"field": "subjects", "kind": "flat", "separator": None,
+         "authority": {"name": "LCSH"}},
+    ]
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

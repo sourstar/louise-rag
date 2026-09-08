@@ -1,6 +1,7 @@
 """louise — the command line. docs/07-commands.md.
 
-    louise hold collection create <spec.json> [--root DIR]
+    louise hold collection create <plugin> --recipe FILE [--space-from CODEX]
+                                    [--platform-image D] [--root DIR]
     louise hold collection derive <codex> (--space-from CODEX | --space FILE)
                                     [--layers FILE] [--update FILE] [--work FILE] --accept
     louise hold collection continue <codex> --platform-image D --continues-through <snapshot>
@@ -13,13 +14,12 @@ Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
 until §7.6's migration is complete.
 
-Two flags of §7.3's tree are accepted and refused here rather than
-silently doing something else, because what they need is not built yet:
-`--archives`, which expands archive ids into `credits` from the platform's
-registry (migration step 1), and `--encoder-image` / `--encoder-weights`,
-which must re-embed the calibration set to fill the space's `calibration`
-and `envelope` (step 3). Until then a new space is given whole, by
-`--space` or `--space-from`.
+One flag of §7.3's tree is accepted and refused here rather than
+silently doing something else, because what it needs is not built yet:
+`--encoder-image` / `--encoder-weights`, which must re-embed the
+calibration set to fill the space's `calibration` and `envelope` (migration
+step 3). Until then a new space is given whole, by `--space` or
+`--space-from`.
 """
 from __future__ import annotations
 
@@ -28,9 +28,10 @@ import json
 import os
 import signal
 import sys
+import tomllib
 from pathlib import Path
 
-from app.hold import codex as cx, collection as col
+from app.hold import codex as cx, collection as col, template as tpl
 from app.hold.codex import CodexError, Defect, Origin, Update, Work
 
 DEFAULT_ROOT = Path(os.environ.get("LOUISE_ROOT", "collections"))
@@ -49,18 +50,48 @@ def _not_yet(flag: str, step: str) -> None:
                      f"space with --space or --space-from until it is.")
 
 
+def _recipe(path: str) -> dict:
+    """A recipe is TOML (07 §7.3). JSON is accepted for a file that is
+    already a whole Codex — what `create` took before the template existed,
+    and what a test fixture is easiest to write."""
+    p = Path(path)
+    if p.suffix == ".json":
+        return _json(path)
+    return tomllib.loads(p.read_text(encoding="utf-8"))
+
+
 def cmd_create(a) -> int:
-    spec = _json(a.spec)
-    spec.setdefault("kind", cx.CODEX_KIND)
-    spec.setdefault("version", cx.CODEX_VERSION)
-    codex = col.create(a.root, cx.from_dict(spec))
+    if a.plugin is None:
+        # the pre-template form: the file IS a Codex
+        spec = _json(a.recipe)
+        spec.setdefault("kind", cx.CODEX_KIND)
+        spec.setdefault("version", cx.CODEX_VERSION)
+        print(col.create(a.root, cx.from_dict(spec)).collection_id)
+        return 0
+
+    recipe = _recipe(a.recipe)
+    if a.space_from:
+        source = col.read(a.root, a.space_from)
+        want = recipe.get("cleaning_version", 1)
+        if source.cleaning_version != want:
+            raise CodexError(
+                f"--space-from names a Codex whose cleaning_version is "
+                f"{source.cleaning_version} and this collection's is {want}. "
+                f"The flag exists so that two collections land in one space by "
+                f"construction (02 §2.7), and it copies no cleaner version the "
+                f"plugin could not run")
+        recipe["space"] = source.space.to_dict()
+        recipe["layers"] = [l.to_dict() for l in source.layers]
+
+    credits = tpl.expand_archives(recipe.get("archives") or ())
+    codex = col.create_from_recipe(a.root, a.plugin, recipe,
+                                   platform_image=a.platform_image,
+                                   credits=credits)
     print(codex.collection_id)
     return 0
 
 
 def cmd_derive(a) -> int:
-    if a.archives:
-        _not_yet("--archives", "the platform's archive registry (migration step 1)")
     if a.encoder_image or a.encoder_weights:
         _not_yet("--encoder-image/--encoder-weights",
                  "`hold embedder calibrate`, which re-embeds the calibration "
@@ -75,7 +106,8 @@ def cmd_derive(a) -> int:
     work = Work(**_json(a.work)) if a.work else None
 
     sister = col.derive(a.root, a.codex_id, space=space, space_from=space_from,
-                        layers=layers, update=update, work=work)
+                        layers=layers, update=update, work=work,
+                        credits=tpl.expand_archives(a.archives) if a.archives else None)
     _acceptance(mother, sister)
     print(sister.collection_id)
     return 0
@@ -158,8 +190,16 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--root", type=Path, default=DEFAULT_ROOT,
                        help="where collections live (default: ./collections or $LOUISE_ROOT)")
 
-    p = verbs.add_parser("create", help="write a Codex from a spec file; print its id")
-    root_arg(p); p.add_argument("spec"); p.set_defaults(fn=cmd_create)
+    p = verbs.add_parser("create", help="write a Codex from a plugin and a recipe; print its id")
+    root_arg(p)
+    p.add_argument("plugin", nargs="?", default=None,
+                   help="the plugin the collection is of; omit when the file is a whole Codex")
+    p.add_argument("--recipe", required=True,
+                   help="TOML with every Codex field the plugin does not default (06 §6.6)")
+    p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
+    p.add_argument("--platform-image", default=cx.digest(b""),
+                   help="the digest of the platform this command runs in")
+    p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")
     root_arg(p); p.add_argument("codex_id")

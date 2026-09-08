@@ -16,7 +16,8 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+                    Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import wikitext
 
 _LOCATOR_SEP = "::"
@@ -86,6 +87,14 @@ class WikipediaSource:
     # The one source here that revises in place, indefinitely, and
     # the reason content-defined chunking exists in this codebase.
     mutability = Mutability.MUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 1
+    modality = Modality.TEXT
+    erasure = Erasure.RETRACTABLE        # pages are deleted; the tombstone stays
+    native_id_order = "numeric"          # page_id, issued ascending
+    default_facets = [
+        {"field": "lang", "kind": "flat", "separator": None, "authority": None},
+    ]
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

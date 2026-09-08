@@ -51,6 +51,59 @@ class Mutability(str, Enum):
     MUTABLE = "mutable"
 
 
+class Modality(str, Enum):
+    """What the bytes are (docs/02 §2.4, docs/06 §6.1). It decides encoder
+    and reranker eligibility: a text encoder is not offered a DNA
+    collection, and a DNA space's tolerance means nothing to a text one."""
+    TEXT = "text"
+    DNA = "dna"
+
+
+class Erasure(str, Enum):
+    """How content may leave a collection (docs/04 §4.4).
+
+      APPEND_ONLY  nothing leaves without a trace; a removal is a
+                   tombstone with a reason.
+      RETRACTABLE  the publisher may retract a record, and the tombstone
+                   stays.
+      ERASABLE     removal may be mandatory and must leave no trace.
+
+    Sharing cannot un-publish: once a shard is served, no later snapshot
+    reaches the peers who hold it. So ERASABLE requires
+    `privacy: never-share`, and a drag build refuses the pair otherwise.
+    Every collection that travels is APPEND_ONLY or RETRACTABLE.
+    """
+    APPEND_ONLY = "append-only"
+    RETRACTABLE = "retractable"
+    ERASABLE = "erasable"
+
+
+#: How a source's `native_id` sorts within a slice (docs/02 §2.2, docs/09
+#: §9.3). "numeric" is integer order of the id; "bytes" is UTF-8 byte order.
+#: It is what makes shard ranges a partition, so `hold records build`
+#: refuses a record that sorts before the open shard's `first_id`.
+NativeIdOrder = Literal["bytes", "numeric"]
+
+#: The plugin protocol version this platform implements (docs/06 §6.1,
+#: docs/09 §9.17). The platform refuses to load a plugin whose version it
+#: does not implement, and the version is part of the image the Codex names
+#: by digest.
+PROTOCOL_VERSION = 1
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One typed edge out of a document, yielded by the optional
+    `relations()` (docs/06 §6.1; docs/09 §9.14). `to` is the uid the edge
+    points at — which this collection need not hold, a dangling edge being
+    data rather than an error — and `type` is the plugin's own name for the
+    kind of edge. The platform supplies `from` (the document's own uid) and
+    `snapshot` (the one in which the edge is first listed), which the plugin
+    cannot know."""
+    to: str
+    type: str
+
+
 @dataclass(frozen=True)
 class DocRef:
     """One discoverable document — cheap to enumerate, no content read yet.
@@ -155,16 +208,45 @@ class CorpusSource(Protocol):
     A new plugin that also fetches its corpus ships an AcquisitionSpec
     (app/acquire/spec.py) — read its docstring's LISTING CONTRACT
     (amendment 33): the origin's complete listing is enumerated per pass
-    and recorded, and every UI denominator and ETA depends on it."""
+    and recorded, and every UI denominator and ETA depends on it.
+
+    What a source declares is docs/06 §6.1. It is what `hold collection
+    create` writes into a Codex unless the recipe says otherwise — the
+    plugin supplies `plugin`, `origin`, `parser`, `layers`, `slicing`, the
+    classes and the cadence, and the recipe supplies what only a creator
+    knows: the space, the work parameter, the descriptive block, the
+    validation plan and the archives to draw on (docs/06 §6.6).
+    `app/hold/template.py` is where the two meet."""
     source_id: str
+    protocol_version: int          # the version of this protocol implemented (06 §6.1)
+    PARSER_VERSION: int            # bumped when and only when parse() output changes
     license_class: LicenseClass
     privacy_class: PrivacyClass
+    modality: Modality
+    erasure: Erasure
     chunking_profile: str
     mutability: Mutability
+    native_id_order: NativeIdOrder
+
+    # 06 §6.1's `default_layers`, `default_slicing` and `default_facets`, as
+    # plain dicts: this module stays free of app.hold so that it can be
+    # imported by anything. `app/hold/template.py` materialises them into
+    # the Codex's Layer, slicing and Facet objects, and derives the first
+    # two from `chunking_profile`/`mutability` and app/pack/slicing.py
+    # where a plugin does not override them — a plugin declares its cut
+    # once, not twice.
+    default_layers: list           # [{chunker: {id, version, params}, rule}]
+    default_slicing: dict          # 09 §9.3's slicing block
+    default_facets: list           # [{field, kind, separator, authority}] — 05 §5.7
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...
     def parse(self, raw: RawDoc) -> CanonicalDoc: ...
+
+    # Optional. The default yields nothing and the collection has no
+    # relations member. Called once per parsed document, so an edge is
+    # discovered where its source document is (06 §6.1; 09 §9.14).
+    def relations(self, doc: CanonicalDoc) -> Iterator[Edge]: ...
 
 
 @dataclass(frozen=True)

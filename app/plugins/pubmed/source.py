@@ -20,7 +20,8 @@ from xml.etree import ElementTree as ET
 from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
 from .. import cursor
-from ..base import CanonicalDoc, DiscoverState, DocRef, LicenseClass, Mutability, PrivacyClass, RawDoc
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+                    Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import medline, pack
 
 DELETE_MARKER = "deleted (DeleteCitation)"
@@ -75,6 +76,15 @@ class PubmedSource:
     # is a single chunk — there are no downstream boundaries for an
     # edit to shift, so content-defined chunking would buy nothing.
     mutability = Mutability.IMMUTABLE
+    protocol_version = PROTOCOL_VERSION
+    PARSER_VERSION = 4
+    modality = Modality.TEXT
+    erasure = Erasure.RETRACTABLE        # a retraction notice is a fact of the corpus
+    native_id_order = "numeric"          # PMIDs, issued ascending
+    default_facets = [
+        {"field": "subjects", "kind": "tree", "separator": "/",
+         "authority": {"name": "MeSH"}},
+    ]
 
     def discover(self, state: DiscoverState):
         root = state.corpus_root

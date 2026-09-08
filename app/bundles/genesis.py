@@ -108,6 +108,44 @@ class GenesisArchive:
     ids_per_shard: int | None = None
     shard_bytes: int = 0              # size hint per shard (cache bound, preflight)
 
+    # ---- what the Codex credits (docs/06 §6.6, docs/09 §9.3) --------------
+    # The registry is where an archive is declared, and `hold collection
+    # create` copies the entry into the Codex's `credits` WHOLE — hashed
+    # into `collection_id`, so neither the licence, the attribution nor the
+    # coverage can be altered by a later build, and an importer neither
+    # composes the acknowledgement nor is free to omit it.
+    producer: str = ""                # who produced the vectors, as people say it
+    license: str = ""                 # the licence the VECTORS carry, SPDX where there is one
+    attribution: str = ""             # the credit line that licence requires
+    # The `ed25519:…` this archive's bundles are signed with. It is what
+    # lets an uncredited archive's bundle be refused (09 §9.3, 03 §3.5), so
+    # it must be the same on every peer — a fact shipped with the platform,
+    # like the calibration set. None means nobody has published signed
+    # bundles for this archive yet: it can still be READ locally, but it
+    # cannot be credited in a Codex, and `create --archives` says so rather
+    # than inventing a key or hashing a per-peer one into an identity.
+    key: str | None = None
+
+    def credit(self) -> dict:
+        """The archive's entry as 09 §9.3's credit object, ready to hash."""
+        if not self.key:
+            raise ValueError(
+                f"archive {self.archive_id!r} has no published signing key, so "
+                f"it cannot be credited in a Codex (09 §9.3): `credits[].key` "
+                f"is what refuses an uncredited archive's bundle, and a "
+                f"per-peer key hashed into a collection_id would give every "
+                f"peer a different collection")
+        return {"archive": self.archive_id, "producer": self.producer,
+                "key": self.key, "license": self.license,
+                "attribution": self.attribution, "coverage": self.coverage()}
+
+    def coverage(self):
+        """`"all"` when the archive covers the corpus, else the declared
+        id ranges (09 §9.3)."""
+        if self.ids_per_shard and self.shards:
+            return {"ids_per_shard": self.ids_per_shard, "shards": len(self.shards)}
+        return "all"
+
     def id_range_of(self, shard: str) -> tuple[int, int] | None:
         if not self.ids_per_shard or not shard.isdigit():
             return None
@@ -138,6 +176,12 @@ MEDCPT_PUBMED = GenesisArchive(
     uid_prefix="pubmed:",
     ids_per_shard=1_000_000,
     shard_bytes=3_070_000_000,
+    producer="NCBI (National Library of Medicine)",
+    license="public-domain",
+    attribution="MedCPT article embeddings, NCBI/NLM",
+    # No signed bundles have been published for it: it is a directory of
+    # .npy files. Readable, not creditable — see GenesisArchive.key.
+    key=None,
 )
 
 # The vectors travel WITH the corpus (format v1: data/{lang}/NNN.parquet
@@ -150,6 +194,10 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     shards=(),
     uid_prefix="embedded:",
     local=True,
+    producer="Upstash",
+    license="CC-BY-SA-4.0",           # the CONTENT is Wikipedia's; the vectors follow it
+    attribution="Wikipedia 2024-06 embeddings (BGE-M3), Upstash",
+    key=None,
 )
 
 ARCHIVES: dict[str, GenesisArchive] = {

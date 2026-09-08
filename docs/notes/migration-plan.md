@@ -150,7 +150,7 @@ holds the worked example whole.
 suite in 182 s — the one failure is §1's pre-existing `st_mtime_ns`
 proxy, unchanged.
 
-### Step 1 — The drag on disk, and the collection template
+### Step 1 — The drag on disk, and the collection template — **DONE 2026-09-08**
 *02 §2.6, 09 §9.16, 09 §9.3, 07 §7.3, 07 §7.8. Wraps
 `app/pack/manifest.py`, `app/collections.py`, `app/plugins/base.py`.*
 
@@ -195,6 +195,40 @@ unaccounted
 for.
 
 **Operator**: nothing.
+
+**What landed.** `app/hold/drag.py` — 09 §9.16's member table, 02 §2.6's
+tree, and BEP 52's pieces root implemented rather than delegated to
+libtorrent, because `roots` is a check and a peer must be able to say
+what a file's root should be without a torrent session.
+`app/hold/template.py` — the plugin half and the recipe half meeting;
+all six plugins now declare what 06 §6.1 requires (`protocol_version`,
+`PARSER_VERSION`, `modality`, `erasure`, `native_id_order`,
+`default_facets`), and `default_layers`/`default_slicing` are derived
+from `chunking_profile`/`mutability` and `app/pack/slicing.py` so a
+plugin declares its cut once, not twice. `hold collection create
+<plugin> --recipe FILE [--space-from CODEX]` works end to end from a
+TOML recipe. `GenesisArchive` gained what 06 §6.6 says the platform's
+registry declares.
+
+**Two things the documents could not be implemented as written.** Both
+are recorded rather than papered over: 09 §9.16's `index-<slice>` and
+`index-<space>` could be the same member name, fixed on main (94cf2b5)
+by refusing a slice segment of sixteen lowercase hex; and 07 §7.4's
+module listing did not admit a module backing no command, clarified on
+main (d73dcb4).
+
+**One thing that needs the operator.** 09 §9.3 requires
+`credits[].key`, "the `ed25519:…` its bundles are signed with", and no
+archive that exists is signed by anyone — the first peer to convert
+MedCPT or Upstash signs with its own key, which cannot be hashed into
+`collection_id`. Implemented honestly (the key is null, crediting is
+refused, and the refusal says why), which means `create --archives
+medcpt-pubmed` exits 2 today. See
+[`archive-signing-keys.md`](archive-signing-keys.md); it blocks the full
+PubMed import and nothing else.
+
+**Numbers.** 22 tests in `test_drag.py`, 27 in `test_template.py`, 119
+in `tests/hold` in 3.8 s.
 
 ### Step 2 — `hold records build` and `hold snapshot create`
 *02 §2.2, 02 §2.3, 06 §6.6, 09 §9.4, 09 §9.5, 09 §9.14. Wraps
