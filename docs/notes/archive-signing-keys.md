@@ -80,9 +80,78 @@ credit them is refused by 06 §6.6, so PubMed cannot yet draw on MedCPT
 through the documented path. **This is the thing to decide before the
 full PubMed import**, and it is independent of the figures question.
 
-My reading, for what it is worth: **(b)**. The key's stated job is to
-refuse an uncredited archive's bundle, and the archive *id* already does
-that job at the only place it is checked. A key that exists to enforce
-something the id enforces, at the cost of making the platform a trust
-root and blocking every archive nobody has re-published, is paying a
-real price for a duplicate.
+## Corrected 2026-09-08, after reading the documents properly
+
+The paragraph that stood here recommended (b) on the ground that "the
+archive id already does that job at the only place it is checked". That
+was wrong, and the error is worth keeping visible because it is easy to
+repeat.
+
+**There are two doors, not one, and they hold different handles.** The
+LOCAL door is `hold vectors import --archive ID`, where the importer has
+an archive id and 06 §6.6 refuses an id that `credits` does not name.
+The NETWORK door is a gossiped bundle, whose header carries
+`producer_pubkey` and — by 09 §9.7's closed field list — no archive id
+at all. 03 §3.5 guards that one: "A bundle whose `producer_pubkey` is a
+registered archive's key is refused unless an entry in this collection's
+`credits` names that key." The id cannot reach the network door. The key
+is not a duplicate.
+
+**But the rule never fires on the path the vectors actually take.**
+09 §9.6 fixes it: the per-space vector files are "assembled from
+accepted bundles (§9.7), never a member's bytes, never fetched as such —
+vectors travel only as bundles (04 §4.3)". MedCPT's vectors therefore
+reach a second peer as bundles signed by the CONVERTING PEER'S node key,
+so `credits[].key` is compared against a producer key that is by
+construction not an archive's. `app/bundles/genesis.py` already writes
+`producer = f"genesis:{archive.archive_id}"`, with the comment "There is
+no signing key: an archive is admitted by the same-function proof, not a
+signature" \x{2014} a third answer, in the code, that neither document
+describes.
+
+**And the rule is not self-contained in the Codex.** Deciding "is this
+producer a registered archive's key?" needs the platform's registry,
+which every peer already holds. So `credits[].key` freezes a LOCAL and
+CHANGEABLE fact into an IMMUTABLE identity, with no rotation path:
+09 §9.2, "Ordinary keys do not rotate: a lost key is a new key".
+
+**(b) has a trap that was not visible before.** Creating PubMed now with
+`credits[].key: null` hashes that null into `collection_id` for ever.
+When MedCPT is later published signed, it is a new registry entry, and
+06 §6.6 forbids importing an archive `credits` does not name \x{2014} so
+adopting it means re-creating the collection under a new id. Nullable
+looks cheap and is not.
+
+## The recommendation, revised: (c)
+
+Take the key OUT of `credits`. The registry maps an archive id to a key
+SET; 03 §3.5's refusal looks an arriving `producer_pubkey` up in the
+registry to get an archive id, then checks `credits` by id. The same
+refusal, the same strength, and the mutable half lives where mutable
+facts belong \x{2014} keys rotate, and an archive may start signing, without
+touching any collection's identity.
+
+`credits` keeps `producer`, `license`, `attribution` and `coverage`.
+Note that it is NOT a pure compliance record and cannot be reshaped as
+one: 06 §6.3's `archive:<archive id>` layer rule reads
+`credits[].coverage` to decide which layer a document falls in, and so
+how it is chunked and what its vectors are. `coverage` survives any
+version of this decision.
+
+**The strongest argument against (c):** it moves a rule that 09 states
+inside a hashed object out into platform code, where two peers on
+different releases can disagree about which keys an archive uses. The
+answer is that they can disagree today too \u2014 the registry is already
+the second input to 03 §3.5's rule and 09 never specified it \u2014 so (c)
+does not add the divergence, it stops pretending the Codex prevents it.
+
+## Two adjacent things this turned up
+
+- 01 promise 3 says "the results carry the producer's signature and are
+  checked before they are used". Archive vectors converted locally carry
+  the converter's signature, not the producer's. The promise is true by
+  the letter and misleading in spirit; it deserves a clause.
+- **Who partitions an archive's shards across peers is specified
+  nowhere in 01\u201309.** 04 \u00a74.5's rendezvous covers record shards only.
+  It decides whether NCBI is fetched 37 times network-wide or thousands
+  of times, and it belongs beside this decision.
