@@ -229,14 +229,27 @@ failure. The `collection_id` and `snapshot_id` in the header are
 provenance: they say where the work was done, and gate nothing.
 
 One further refusal, and it is about attribution rather than
-correctness. A pre-embedded archive — NCBI's MedCPT release, Upstash's
-Wikipedia — signs its bundles like any producer, and a collection
-declares at creation which archives it draws on, in `credits` (02 §2.7).
-A bundle whose `producer_pubkey` is a registered archive's key is
-refused unless an entry in this collection's `credits` names that key:
-the Codex is immutable, so a collection cannot come to stand on work it
-never declared, and the acknowledgement cannot be dropped after the
-fact by whoever holds the copy.
+correctness. A collection declares at creation which pre-embedded
+archives it draws on, in `credits` (02 §2.7). The refusal is on the
+ARCHIVE, and it is resolved in two steps because a bundle carries no
+archive id: the importing peer looks `producer_pubkey` up in the
+platform's registry, which maps each archive to the set of keys its
+bundles are signed with (06 §6.6); if that lookup names an archive, the
+bundle is refused unless this collection's `credits` names that archive.
+A key the registry does not know belongs to no archive, and the bundle
+is an ordinary producer's — admitted or not by the ladder below, like
+any other. The Codex is immutable, so a collection cannot come to stand
+on work it never declared, and the acknowledgement cannot be dropped
+after the fact by whoever holds the copy.
+
+The keys live in the registry and not in the Codex on purpose. The
+lookup needs the registry either way — a Codex alone cannot tell whether
+a key belongs to an archive — so hashing the key into `collection_id`
+would buy nothing and cost everything a frozen key costs: no rotation
+(§9.2, "a lost key is a new key"), and no way for a collection written
+before an archive began signing to ever import it, since 06 §6.6
+refuses an archive `credits` does not name. What must never change is
+WHO IS CREDITED and on what terms, and that is what the Codex holds.
 
 What that stops is a collection quietly built on an archive it does not
 credit. What it does not stop is a peer re-exporting someone else's
