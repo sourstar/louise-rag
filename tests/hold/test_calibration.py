@@ -163,3 +163,52 @@ def test_verify_refuses_a_platform_whose_set_hashes_otherwise(monkeypatch, tmp_p
     assert cal.verify("text", real)
     with pytest.raises(CalibrationError, match="names sha256:00"):
         cal.verify("text", "sha256:" + "00" * 32)
+
+
+# ---- the set this platform actually ships --------------------------------
+
+def test_the_shipped_text_set_is_512_valid_texts():
+    sid, texts = cal.load("text")
+    assert len(texts) == cal.SIZE
+    cal.check(texts)
+    assert sid == cal.set_id(cal.path_for("text").read_bytes())
+
+
+def test_the_shipped_set_spans_the_regimes_it_exists_to_span():
+    """The failure a hash cannot see. These floors are deliberately loose —
+    they exist to catch a set that lost a whole regime, not to pin an exact
+    composition. Tightening them would make an honest re-author fail."""
+    _, texts = cal.load("text")
+    c = cal.coverage(texts)
+    assert c["short"] >= 40, "no short texts: pooling differences hide"
+    assert c["long"] >= 40, "no long texts: truncation differences hide"
+    assert c["non_latin"] >= 50, "no non-Latin script: a whole tokeniser regime untested"
+    assert c["latin_diacritics"] >= 40, "no accented Latin"
+    assert c["numeric"] >= 40, "no numerals: a tokeniser's worst regime"
+    assert c["punctuation_dense"] >= 40
+    assert c["short"] + c["medium"] + c["long"] == cal.SIZE
+    assert c["ascii_only"] + c["latin_diacritics"] + c["non_latin"] == cal.SIZE
+
+
+def test_the_shipped_set_carries_adjacent_near_duplicate_pairs():
+    """32 pairs at the end, each differing in one controlled way. A build
+    that is subtly wrong tends to collapse or exaggerate exactly these
+    small differences, which unrelated texts would never reveal."""
+    _, texts = cal.load("text")
+    tail = texts[-64:]
+    close = 0
+    for a, b in zip(tail[0::2], tail[1::2]):
+        sa, sb = set(a.split()), set(b.split())
+        overlap = len(sa & sb) / max(len(sa | sb), 1)
+        if overlap >= 0.7:
+            close += 1
+    assert close >= 24, f"only {close}/32 tail pairs are near-duplicates"
+
+
+def test_the_shipped_sets_id_is_stable():
+    """The id is the file's hash, and every Codex naming it needs this exact
+    file forever. If this test fails, the set was edited — which is a NEW
+    set and a new id, not a correction to this one."""
+    sid, _ = cal.load("text")
+    assert sid == ("sha256:6a1bac6e6cfb63e219bce570526d9418d"
+                   "0827d7ae7cf3a56ecaa9901f1ad6e19")
