@@ -567,8 +567,8 @@ fixes byte for byte. The drag is the copy:
 What never travels — the manifest, cursors, the acknowledgement, the
 trust list, the working text index and the vector table a search reads
 — sits beside it (07 §7.8). A text-index member is
-a cache: a peer imports it only when a signed snapshot of the chain
-lists its root and the pin in the member's own header — `fts_version`
+a cache, and no snapshot lists its root: a peer imports it only when
+the pin in the member's own header — `fts_version`
 and tokenizer, written by the peer that built it (09 §9.6) — matches
 the platform that would read it; otherwise it rebuilds, which is always
 possible and is not a check. Green collections have no `LICENSE-TERMS`
@@ -657,7 +657,10 @@ both the corpus is one corpus, and only what is built on top of it
 differs.
 
 So a sister may change only what no record depends on: `space`,
-`layers` and `update`. Everything that decides a record byte it keeps —
+`layers`, `update` and `work` — the last because the rate is
+denominated in the declared encoder's tokenizer (§2.4), so a sister on
+another encoder must measure her own or state a rate in units she does
+not use (08 §8.5). Everything that decides a record byte it keeps —
 `plugin`, `origin`, `toolchain.platform_image`, `parser`,
 `cleaning_version`, `slicing`, `license`, `privacy`, `erasure`,
 `modality` — and `hold collection derive` refuses anything else, and

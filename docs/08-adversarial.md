@@ -74,7 +74,8 @@ sisters collapses into a single low-priority row.
 **Against the avalanche, limit the aggregate, not the sender.** A peer
 accepts and propagates only so much *new unverified* material per unit
 time in total, regardless of who sends it; beyond that, new material goes
-to a slow, low-priority queue. Unverified material is Codexes, snapshots
+to a slow, low-priority queue. Unverified material is Codexes,
+snapshots, attestations
 and bundles arriving from other peers and signed by keys none of whose
 work this peer has seen reproduced — no bundle of theirs accepted through
 the ladder (§3.5), no attestation of theirs this peer re-ran and

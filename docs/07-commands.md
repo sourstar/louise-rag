@@ -55,13 +55,13 @@ one.
 ```
 louise hold
   collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
-              derive <codex> [--space-from CODEX | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] --accept
+              derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
-              replace <codex> --defect FILE [--platform-image D] [--encoder-image D --encoder-weights D]
+              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-image D --encoder-weights D]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
@@ -70,7 +70,8 @@ louise hold
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, what refuses to start
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
-  records     fetch <collection> [--slice …] [--snapshot ID]           run the acquisition spec to the cutoff, for these slices
+  records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
+                                                                       run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
               build <collection> [--snapshot ID]                       parse, slice, shard, hash
               check <collection> [--origin] [--seal] [--sample F]      records against roots, origin, seal
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
@@ -80,7 +81,9 @@ louise hold
               list <collection>
   embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept records a passing run as this peer's baseline
               benchmark <collection>                                   tokens per second on the calibration set
-              calibrate <collection>                                   measure the tolerance a space can bear (space authors)
+              calibrate --encoder-image D --encoder-weights D [--against IMAGE:WEIGHTS …] [--set SHA256]
+                                                                       the tolerance a space can bear, measured between the reference build and each --against build
+                                                                       over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle every few hundred chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
@@ -436,6 +439,15 @@ Codex declares (02 §2.1); any other is exit 2, listing the fields that
 are. A `tree` facet matches a value and everything under it, so
 `--subjects Neoplasms` takes `Neoplasms/genetics` with it; a `range`
 facet takes `FROM..TO`, either end omitted for open.
+`--profile` takes a profile name the collection's acquisition spec
+declares (06 §6.2) and expands to that profile's slices; it may not be
+combined with `--slice`. `--space` and `--work` take a TOML holding
+that Codex block in the form 09 §9.3 fixes; `--encoder-image` and
+`--encoder-weights` are shorthand for a `--space` file changing only
+those two digests, and any other field a new encoder needs — `dim`,
+`ctx`, `pooling`, `normalise`, `query`, `tolerance` — is given in
+`--space`, the calibration and envelope being computed from the named
+encoder as `create` computes them.
 `--kinds` takes the kind names of 02 §2.6; the default is records and
 vectors. `--checks` takes the check names of 03 §3.2. `--seed` takes 32
 bytes as hex (03 §3.2).

@@ -933,7 +933,7 @@ the peer list (04 §4.2).
 | `time` | time | yes | |
 | `address` | string | yes | where the sender answers pulls: `https://host:port` |
 | `neighbours` | list of `{key, address}` | yes | up to sixteen live neighbours |
-| `benchmarks` | list | yes | `{encoder_image, encoder_weights, tokens_per_s: integer}` per encoder build this peer has passed calibration with (03 §3.3) |
+| `benchmarks` | list | yes | `{space_id, encoder_image, encoder_weights, tokens_per_s: integer}`, one per space this peer holds a passing calibration statement for (03 §3.3). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
 | `collections` | list | yes | one entry per collection held, below |
 
 A collection entry:

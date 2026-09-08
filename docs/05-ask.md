@@ -224,10 +224,11 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, limit?, as_of?)
+louise_search(query, collections?, space?, filters?, limit?, as_of?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}
+    filters: {<facet field>: <value> | {not: <value>}}
 louise_lookup(id, as_of?)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?)

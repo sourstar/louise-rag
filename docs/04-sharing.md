@@ -105,8 +105,9 @@ one address given by hand becomes a neighbourhood within a few
 intervals.
 
 **Events.** An event's id is `H` of the canonical JSON of its body
-(09 §9.9), computed by the receiver; an event whose carried id differs is
-dropped, so nobody can suppress a real event by forging its id. The hop
+(09 §9.9), computed by the receiver from the signed body and carried
+nowhere in the message, so there is no id to forge and none to suppress
+a real event with. The hop
 count sits outside the signed body, starts at 8, is decremented on each
 forward, and an event at 0 is not forwarded. A peer keeps the ids it has
 seen for seven days and drops an event whose time is older than that or
@@ -397,7 +398,11 @@ when the live set or the set of open shards changes — a digest arrived,
 a bundle was accepted — and a peer keeps, per shard, only the head of
 the ordering, extending it when the cascade needs the next candidate.
 
-**Weight and eligibility.** The weight is the peer's benchmark (§3.3),
+**Weight and eligibility.** The weight is the peer's benchmark for this
+collection's space — the `benchmarks` entry of its digest whose
+`space_id` matches (§3.3; 09 §9.9), a peer with no such entry being
+unscored here, since a rate measured on another encoder says nothing
+about this one —
 so a peer with half the throughput is half as likely to be top on any
 given shard. Before scoring, a peer is *eligible* for a shard only if
 its expected time on it — chunks over benchmark, times a margin of about
@@ -500,8 +505,10 @@ An open collection's origin changes and two peers publish two
 daughters (§2.7). Their Codexes propagate — kilobytes, harmless. What
 must not propagate is GPU spend on both.
 
-If they parse the new origin the same way, their snapshots have the same
-hash and they are one collection under two names; a peer holding both
+If they parse the new origin the same way, their snapshots list the
+same `records_root` for every shard — never the same snapshot hash,
+which carries each one's own `collection_id` — and they are one
+collection under two names; a peer holding both
 says so with an attestation and catalogues merge them.
 
 If they differ, the choice is made at the records stage, where it is
