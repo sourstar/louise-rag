@@ -16,6 +16,7 @@ What is here, and why it is kept:
 | `calibration.md`, `calibration.live.md`, `approved-encoders.md` | how the tolerance was measured, and which encoder builds were found compliant on which hardware |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
 | `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
+| `figures-in-the-corpus.md` | whether anything but text may enter a cleaned corpus — open, and it blocks full import of any corpus whose figures matter |
 | `spec-review-2026-09-07.md` | the review that produced documents 01–09 as they stand: what fifteen lenses found, every decision taken where the documents were silent, and the questions left for the operator |
 | `gazzetta-plugin.md`, `eli-legal-plugins.md` | the Italian law corpus researched to a design, and ELI adopted as the template for EU legal plugins — with the clash check that found the pack format compatible |
 | `collection-classes.md`, `embedder-choice-and-supersession.md`, `reranker-scope.md` | the three general questions that corpus forced: what a collection must declare about its bytes, who chooses the encoder and what is done when the choice was wrong, and whether a pack may ever require a reranker |
