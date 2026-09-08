@@ -562,7 +562,9 @@ alike:
   chunk count × `space.ctx` tokens, the same upper bound the snapshot
   uses per shard;
 - an **attestation** — a completed check, signed, naming its seed and
-  the shards it sampled (03 §3.6) — counting the tokens of the chunks it
+  the shards it sampled (03 §3.6) — counting, for a deterministic check,
+  the `tokens` the snapshot lists for the shards it names, and otherwise
+  the tokens of the chunks it
   re-embedded, and `work.tokens` for a deterministic check, which
   reproduces a whole shard rather than a sample of it.
 

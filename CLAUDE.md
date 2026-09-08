@@ -40,18 +40,23 @@ are the ones that have drifted; prefer to add a test when you touch them.
    pooling, normalisation and query encoder, and the epoch. Not the
    tolerance, not the calibration, not the device. A vector table whose
    dim/space mismatches the Codex is a
-   REFUSE-TO-BOOT error, never a warning or auto-migration. *Enforced:
-   boot; layers by test (app/layers.py, tests/test_layers.py: one layer =
+   REFUSE-TO-START error FOR THAT COLLECTION, never a warning or
+   auto-migration: the node keeps running its others, that one is not
+   served, shared or searched, and `hold collection show` names the
+   reason (docs/02 §2.4, docs/07 §7.8). *Enforced: per-collection refusal
+   at start; layers by test (app/layers.py, tests/test_layers.py: one layer =
    the pre-layers space id byte for byte; every stage cuts a document
    through `layers.chunks_for_document`, never a plugin's chunker directly).*
 2. IDEMPOTENCE. Every write is delete-then-insert keyed on uid / chunk id.
    Every stage is resumable and safe to re-run. A stage marks done only
    AFTER its durable commit, inside the same transaction — marking first is
-   the one ordering that loses data. SIGTERM = finish the current unit,
-   commit, exit 0; the unit is a document where that is possible, smaller
-   where it is not (acquisition checkpoints mid-file at byte granularity,
-   bundle import stops between documents) — lossless and truthful, always,
-   and bounded in time. *Enforced: test + review.*
+   the one ordering that loses data. SIGTERM or SIGINT = finish the
+   current unit, commit, exit 130 (docs/07 §7.7); `louise node stop`
+   finishes its units and exits 0. The unit is a document where that is
+   possible and smaller where it is not — acquisition checkpoints mid-file
+   at byte granularity, bundle import stops between bundles; docs/07 §7.7
+   fixes the unit per stage — lossless and truthful, always, and bounded
+   in time. *Enforced: test + review.*
 3. DETERMINISM. Chunking is a pure function of (cleaned text, chunker id,
    chunker version). Any change to chunking or cleaning bumps the version
    of the thing that changed, explicitly — never silently, and never via a

@@ -127,7 +127,10 @@ louise dev                                                             operator 
   schedule-report      what the worker spent its rounds on
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
-  migrate pack <name> --platform-image D --encoder-image D             give a pre-Codex pack its Codexes and first snapshot (§7.6); writes
+  migrate pack <name> --recipe FILE [--platform-image D]               give a pre-Codex pack its Codexes and first snapshot (§7.6); writes.
+                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder image and
+                                                                       weights, tolerance, work, validation, descriptive — and the calibration set is embedded per space
+                                                                       as `create` does; the first space named is the root, the others `derived_from` it
   adopt <origin> <drag>                                                the one-time move of vectors and index into a drag twin; writes
   refs-sync            reference tables from their origins; writes
 ```

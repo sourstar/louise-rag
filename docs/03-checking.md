@@ -68,7 +68,7 @@ create` and at `hold check` alike.
 |---|---|---|---|
 | `roots` | every shard's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
 | `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled shard's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
-| `records-vs-origin` | a seeded sample of shards, re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces the records byte for byte: the same `records_root` | the origin, the platform image | exact |
+| `records-vs-origin` | a seeded sample of shards, re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every record line of the shard byte for byte — the decompressed lines in order, not merely the same `records_root` | the origin, the platform image | exact |
 | `chunks` | recomputing chunks from the records reproduces every chunk id and text — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3) | the copy | exact; can be exhaustive |
 | `vectors-sample` | in a seeded sample of shards, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
 | `calibration` | the calibration set's reference vectors reproduce on this peer's encoder — the gate of §3.3, run for this collection's space | an encoder | statistical |

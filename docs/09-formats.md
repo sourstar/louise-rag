@@ -112,9 +112,10 @@ bundle header's `created_at` is an integer of Unix seconds (§9.7).
 Durations are ISO 8601, `P1M`, `P6M`, `P14D`; `seconds(d)` counts a month
 as thirty days and a year as 365.
 
-**Worked example.** The PubMed collection's identity is `H` of its
-Codex file (§9.3): `sha256(bytes of codex.json)`, written
-`sha256:9d3e…41ab`; its September cutoff snapshot is announced under
+**Worked example.** The PubMed collection's identity is `H` of the
+canonical JSON of its Codex with the `descriptive` block removed
+(§9.3), written `sha256:9d3e…41ab` — `H` of the file's own bytes is its
+`codex_hash`, a different value; its September cutoff snapshot is announced under
 the DHT key made of the first 20 bytes of
 `SHA-256(["sha256:9d3e…41ab","2026-08"])` (§9.16); a record in it,
 PMID 38112034, carries `content_hash` `a3f0…7c19` (BLAKE2b-128 of its

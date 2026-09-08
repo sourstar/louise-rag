@@ -206,9 +206,13 @@ is reproducible only from peers, and the next daughter says so
 ```
 snapshot = {kind: "louise-snapshot", version: 1,
             collection_id, snapshot_id: "2026-08", previous: <hash> | null,
-            shards: [{slice, n, root, records_root, ids: [first, last],
-                      records, chunks, tokens, toolchain: "own" | "mother"}],
-            delta: {added: [...], changed: [...], tombstoned: [...]}}
+            shards: [{slice, n, root, records_root, first_id, last_id,
+                      records, chunks, tokens, bytes,
+                      toolchain: "own" | "mother"}],
+            relations: [...],           -- the relations shards, same shape (05 §5.5)
+            files: {...},               -- the whole-collection members and their roots (09 §9.4)
+            delta: {added: [...], changed: [...],
+                    tombstoned: [{uid, reason}]}}
 snapshot hash = H(canonical-json(snapshot))
 ```
 
@@ -495,9 +499,12 @@ with the collection's encoder. Because the set does not depend on the
 corpus, a Codex is complete before a single record exists (06 §6.6),
 and every collection on one encoder shares one calibration (08 §8.3).
 A peer whose encoder differs from the reference build — another driver,
-a quantised variant — embeds `quorum.n` texts sampled from the set and
-passes when at least `quorum.min_pass` of them reach cosine ≥
-`tolerance` and the median does (`hold embedder check`, 03 §3.3). A
+a quantised variant — embeds the whole set with its own encoder and
+passes when, over `quorum.n` texts drawn from it by the seeded rule of
+03 §3.2, at least `quorum.min_pass` reach cosine ≥ `tolerance` and the
+median of those n does (`hold embedder check`, 03 §3.3). The whole set
+is embedded because the statement it produces reports over all of it,
+and because T0's envelope and T1's probe set are the whole set too. A
 peer that fails may still search with what it holds. The same
 reference vectors are the probe set of 03 §3.5's T1, their first
 sixteen texts are T2's golden pairs, and their per-dimension mean and
