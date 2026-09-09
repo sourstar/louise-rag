@@ -232,7 +232,8 @@ Now measured rather than assumed: a 10 %- or 25 %-random bundle passes
 both statistics (cosine 0.752, indistinguishable from clean). The extremum
 rule caught those with the very statistic that refuses honest work, so no
 version of this test sees partial contamination AND admits real bundles.
-T3 fails a 10 % bundle about four times in five; T4 re-embeds what a
+T3 fails a 10 % bundle 1.70 % of the time (computed, not estimated — the
+first draft of this note said "four times in five"); T4 re-embeds what a
 search cites.
 
 **And it answers the operator's design question** — should the rule be
