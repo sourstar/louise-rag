@@ -330,7 +330,9 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
 
 **PARTLY DONE 2026-09-08 — and NOT as a wrap.** 3a the calibration set
 (`app/hold/calibration.py`, `calibration/text.jsonl`, 512 texts frozen at
-`sha256:6a1bac6e…`), 3b the envelope signer (`app/hold/envelope.py`,
+`sha256:7d06a2f6…`, REBUILT 2026-09-09 to reach 8192 tokens — the
+first set topped out at 174 and could not have caught b10630), 3b the
+envelope signer (`app/hold/envelope.py`,
 09 §9.2's six domains), 3c the gate itself (`app/hold/embedder.py`) and
 09 §9.1's seeded `sample()` in `codex.py`.
 
