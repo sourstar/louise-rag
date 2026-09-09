@@ -325,11 +325,36 @@ class Facet:
                 "separator": self.separator, "authority": self.authority}
 
 
+#: 09 §9.3's three kinds of debt, in the order they sort.
+CORPUS, ARCHIVE, COMMUNITY = "corpus", "archive", "community"
+CREDIT_KINDS = (ARCHIVE, COMMUNITY, CORPUS)          # sorted, as the list is
+
+
 @dataclass(frozen=True)
 class Credit:
-    """A pre-embedded archive whose vectors this collection carries. Derived
-    at creation from the platform's registry, never composed by hand
-    (02 §2.7); hashed, so nothing here can be altered by a later build.
+    """Work this collection stands on: its text, its archives, its peers.
+
+    One closed six-key shape for all three kinds, `kind` saying which keys
+    mean anything (09 §9.3) — and, more importantly, by which rule the
+    entry descends to a relative:
+
+      corpus     whom the TEXT is from. Exactly one, on every collection
+                 including green ones. Declared by the plugin (06 §6.1),
+                 copied by `create`, never writable by a recipe. Descends
+                 to every relative without exception: a new encoder does
+                 not unwrite whose text it read.
+      archive    a pre-embedded archive whose vectors this collection
+                 carries. Expanded from the platform's registry by the
+                 recipe's `archives`. Follows the SPACE — a sister in a
+                 new space has her own, a corrective sister has none.
+      community  the peers who embed, as ONE collective and never a
+                 roster: a roster is unbounded and changing and belongs
+                 in the coverage map (02 §2.5), where it cannot fix at
+                 creation a membership nobody knows then. Derived from
+                 `embedding`: present when "open" or "endorsed".
+
+    Never composed by hand, and all of it hashed, so nothing here can be
+    altered or dropped by a later build.
 
     The archive's SIGNING KEYS are deliberately absent: they live in the
     registry (06 §6.6). A licence and an attribution are permanent facts
@@ -338,18 +363,35 @@ class Credit:
     Hashing one would fork the identity whenever it moved.
 
     `coverage` is not merely compliance: 06 §6.3's `archive:<id>` layer
-    rule reads it to decide which layer a document falls in.
+    rule reads it to decide which layer a document falls in — and reads
+    ONLY the archive entries, the other two being `"all"` because a
+    corpus provider and the community are owed for everything.
     """
-    archive: str
+    kind: str                # corpus | archive | community
+    archive: str | None      # non-null on `archive` only
     producer: str
-    license: str
+    license: str | None      # null on `community`; on `corpus` only where none
     attribution: str
     coverage: Any            # "all" or {ids_per_shard, shards}
 
     def to_dict(self) -> dict[str, Any]:
-        return {"archive": self.archive, "producer": self.producer,
+        return {"kind": self.kind, "archive": self.archive,
+                "producer": self.producer,
                 "license": self.license, "attribution": self.attribution,
                 "coverage": self.coverage}
+
+
+def credit_order(c: Credit) -> tuple[str, str, str]:
+    """09 §9.3's sort: `(kind, archive, producer)`. Two creators building
+    the same collection derive the same order and so the same
+    `collection_id` — which is the whole reason `credits` is derived."""
+    return (c.kind, c.archive or "", c.producer)
+
+
+def archive_credits(codex) -> tuple[Credit, ...]:
+    """The `kind: "archive"` entries — what 03 §3.5's key refusal and
+    06 §6.3's layer rule read, and the only kind that follows the space."""
+    return tuple(c for c in codex.credits if c.kind == ARCHIVE)
 
 
 # --------------------------------------------------------------------------
@@ -721,20 +763,71 @@ def _validate_facets(codex: Codex) -> None:
 
 
 def _validate_credits(codex: Codex) -> None:
-    archives = [c.archive for c in codex.credits]
-    if archives != sorted(archives):
-        raise CodexError("credits are sorted by archive")
-    if len(set(archives)) != len(archives):
-        raise CodexError("credits: one entry per archive")
+    keys = [credit_order(c) for c in codex.credits]
+    if keys != sorted(keys):
+        raise CodexError("credits are sorted by (kind, archive, producer)")
+    if len(set(keys)) != len(keys):
+        raise CodexError("credits: one entry per (kind, archive, producer)")
+
     for c in codex.credits:
-        if not c.archive:
-            raise CodexError("credits[].archive names the archive; it is what "
-                             "03 §3.5's refusal resolves a producer key to")
-        if not c.license or not c.attribution:
-            raise CodexError(f"credits[{c.archive}]: an archive is credited under "
-                             f"a licence and with the attribution that licence "
-                             f"requires; both are hashed so neither can be "
-                             f"altered by a later build (02 §2.7)")
+        if c.kind not in CREDIT_KINDS:
+            raise CodexError(f"credits[].kind is one of "
+                             f"{', '.join(CREDIT_KINDS)}, not {c.kind!r}")
+        if not c.producer or not c.attribution:
+            raise CodexError(
+                f"credits[{c.kind}]: every credit names a producer and carries "
+                f"the attribution line for them; both are hashed so neither "
+                f"can be altered or dropped by a later build (02 §2.7)")
+
+    # Exactly one corpus entry, always. `credits` is therefore never empty:
+    # every collection's text came from somewhere, green ones included —
+    # a provider that asks nothing is still the provider.
+    corpus = [c for c in codex.credits if c.kind == CORPUS]
+    if len(corpus) != 1:
+        raise CodexError(
+            f"credits carries exactly one kind=\"corpus\" entry, not "
+            f"{len(corpus)}: whom the TEXT is from, declared by the plugin "
+            f"(06 §6.1) and on every collection including green ones (02 §2.7)")
+
+    # At most one community entry, and it is DERIVED from `embedding` rather
+    # than declared — so a collection that accepts no contributed vectors
+    # credits nobody for them, and one that accepts them cannot omit it.
+    community = [c for c in codex.credits if c.kind == COMMUNITY]
+    wanted = codex.embedding in ("open", "endorsed")
+    if len(community) > 1:
+        raise CodexError("credits carries at most one kind=\"community\" entry: "
+                         "the peers who embed are ONE collective, never a "
+                         "roster — a roster belongs in the coverage map (02 §2.5)")
+    if bool(community) != wanted:
+        raise CodexError(
+            f"embedding is {codex.embedding!r}, so credits "
+            f"{'carries' if wanted else 'carries no'} kind=\"community\" entry "
+            f"(02 §2.7): it is present exactly when contributed vectors are "
+            f"admissible, and is derived from `embedding`, never declared")
+
+    for c in codex.credits:
+        if c.kind == ARCHIVE:
+            if not c.archive:
+                raise CodexError(
+                    "credits[archive].archive names the archive; it is what "
+                    "03 §3.5's refusal resolves a producer key to")
+            if not c.license:
+                raise CodexError(
+                    f"credits[{c.archive}]: an archive is credited under a "
+                    f"licence (02 §2.7)")
+        elif c.archive is not None:
+            raise CodexError(f"credits[{c.kind}].archive is null: only an "
+                             f"archive entry names an archive")
+        if c.kind == COMMUNITY and c.license is not None:
+            raise CodexError("credits[community].license is null: contributed "
+                             "vectors carry the collection's own terms and "
+                             "there is no second licence to record (02 §2.7)")
+        if c.kind != ARCHIVE and c.coverage != "all":
+            raise CodexError(
+                f"credits[{c.kind}].coverage is \"all\": a corpus provider and "
+                f"the community are owed for every document. Only an archive "
+                f"entry declares a range, and only those are read for layers "
+                f"(06 §6.3)")
         if c.coverage != "all" and set(c.coverage or {}) != {"ids_per_shard", "shards"}:
             raise CodexError(f"credits[{c.archive}].coverage is \"all\" or "
                              f"{{ids_per_shard, shards}}")
@@ -812,9 +905,21 @@ def _validate_against_mother(codex: Codex, mother: Codex) -> None:
         if not changed:
             raise CodexError("a sister changes something: same everything is the "
                              "same collection")
-        if codex.space_id == mother.space_id and codex.credits != mother.credits:
+        # Only the ARCHIVE entries follow the space. Her corpus entry is her
+        # mother's on every relation — she shares the corpus by definition —
+        # and her community entry follows her own `embedding`, which is hers
+        # to change: a sister may open a certifier-only mother to
+        # contribution, or close an open one, and her credits say which.
+        if (codex.space_id == mother.space_id
+                and archive_credits(codex) != archive_credits(mother)):
             raise CodexError("a sister in her mother's space carries her mother's "
-                             "credits (02 §2.7)")
+                             "archive credits (02 §2.7)")
+        mine = [c for c in codex.credits if c.kind == CORPUS]
+        hers = [c for c in mother.credits if c.kind == CORPUS]
+        if mine != hers:
+            raise CodexError("a sister keeps her mother's corpus credit: she "
+                             "shares the corpus, and a new encoder does not "
+                             "unwrite whose text it read (02 §2.7)")
         if codex.space.epoch != mother.space.epoch and codex.space_from is None:
             raise CodexError("a sister keeps her mother's space.epoch unless she "
                              "copied a space from another Codex")
@@ -989,9 +1094,9 @@ def _facet(f: dict[str, Any], i: int) -> Facet:
 
 
 def _credit(c: dict[str, Any], i: int) -> Credit:
-    c = _only(c, ("archive", "producer", "license", "attribution",
+    c = _only(c, ("kind", "archive", "producer", "license", "attribution",
                   "coverage"), f"credits[{i}]")
-    return Credit(c["archive"], c["producer"], c["license"],
+    return Credit(c["kind"], c["archive"], c["producer"], c["license"],
                   c["attribution"], c["coverage"])
 
 

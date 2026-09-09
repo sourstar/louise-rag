@@ -76,6 +76,17 @@ def _records(path: Path):
 class GenomeSource:
     source_id = "genome"
     license_class = LicenseClass.GREEN     # consortium reference assemblies
+    # 06 §6.1's corpus credit. This one is GENERIC where the others are
+    # specific, and deliberately so: one collection is one assembly, and
+    # the producer differs per assembly (GRC for human, BDGP/FlyBase for
+    # dm6, SGD for sacCer3). A class attribute cannot vary, and inventing
+    # one consortium's name for all of them would credit the wrong body.
+    # When assemblies are declared rather than found on disk, this becomes
+    # a per-assembly value the way `packed` takes its from the manifest.
+    corpus_provider = "the assembly's producing consortium"
+    corpus_license = "public-domain"
+    corpus_attribution = ("Reference genome assembly, released by its "
+                          "producing consortium")
     privacy_class = PrivacyClass.PUBLIC    # REFERENCE genomes only — §8's
                                             # never-share rule is about personal
                                             # genomes, which this plugin does

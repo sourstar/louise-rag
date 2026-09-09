@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.hold import collection as col, template
+from app.hold import codex as cx, collection as col, template
 from app.hold.codex import Codex, CodexError
 from app.hold.template import TemplateError
 from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE, KEY, NOW,
@@ -82,6 +82,14 @@ def test_every_plugin_declares_what_6_1_requires():
         assert s.erasure.value in ("append-only", "retractable", "erasable")
         assert s.native_id_order in ("bytes", "numeric")
         assert isinstance(s.default_facets, list)
+        # 06 §6.1's corpus credit, of EVERY plugin — green ones included.
+        # `create` cannot assemble `credits` without them, and a collection
+        # without a corpus entry is one the specification refuses, so a
+        # plugin that forgot these is a plugin no collection can be made
+        # from. That failure belongs here and not at someone's `create`.
+        assert s.corpus_provider and isinstance(s.corpus_provider, str)
+        assert s.corpus_attribution and isinstance(s.corpus_attribution, str)
+        assert template.corpus_credit(s).kind == "corpus"
 
 
 def test_an_unknown_plugin_names_the_ones_there_are():
@@ -223,7 +231,13 @@ def test_archives_without_an_expanded_registry_entry_are_refused():
                              platform_image=PLATFORM)
     ok = from_recipe("gutenberg", recipe(archives=["wikipedia-bge-m3"]),
                               platform_image=PLATFORM, credits=(a_credit(),))
-    assert [c.archive for c in ok.credits] == ["wikipedia-bge-m3"]
+    assert [c.archive for c in cx.archive_credits(ok)] == ["wikipedia-bge-m3"]
+    # And the two the caller did NOT supply, assembled by `build` from the
+    # plugin and from `embedding` (02 §2.7). Gutenberg is GREEN and is
+    # credited anyway: a provider that asks for nothing is still the provider.
+    assert [c.kind for c in ok.credits] == ["archive", "community", "corpus"]
+    corpus = next(c for c in ok.credits if c.kind == "corpus")
+    assert corpus.producer == "Project Gutenberg"
 
 
 def test_a_recipe_may_override_any_default_it_tightens():

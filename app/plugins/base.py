@@ -221,6 +221,15 @@ class CorpusSource(Protocol):
     protocol_version: int          # the version of this protocol implemented (06 §6.1)
     PARSER_VERSION: int            # bumped when and only when parse() output changes
     license_class: LicenseClass
+    #: 06 §6.1: whom the TEXT is from, and the credit line for them.
+    #: `create` copies both into the `kind: "corpus"` entry of `credits`
+    #: (02 §2.7), which every collection carries — green ones included,
+    #: because a provider that asks for nothing is still the provider.
+    #: Not tightenable and not overridable by a recipe: a creator free to
+    #: phrase an attribution is a creator free to phrase it away.
+    corpus_provider: str
+    corpus_attribution: str
+    corpus_license: str | None
     privacy_class: PrivacyClass
     modality: Modality
     erasure: Erasure

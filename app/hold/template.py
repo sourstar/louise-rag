@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import codex as codex_mod
 from .codex import (Chunker, Codex, CodexError, Credit, Descriptive, Facet,
                     Layer, License, Origin, Parser, Toolchain, Update,
                     Validation, Work, default_per, space_from_dict)
@@ -54,14 +55,23 @@ def source_for(plugin: str):
     return reg[plugin]
 
 
-def expand_archives(ids) -> tuple[Credit, ...]:
-    """The archive ids a recipe names, expanded into `credits` from the
-    platform's registry (06 §6.6). The entry is copied WHOLE: an importer
-    neither composes the acknowledgement nor is free to omit it, and because
-    `credits` is hashed into `collection_id`, no later build can alter the
-    licence, the attribution or the coverage.
+#: 02 §2.7's community credit. ONE collective, not a roster — a roster is
+#: unbounded and changing and belongs in the coverage map (02 §2.5), where
+#: it does not have to be knowable at creation. This is a constant, so it
+#: costs one entry and forks nothing.
+COMMUNITY_PRODUCER = "the Project Louise community"
+COMMUNITY_ATTRIBUTION = ("Vectors contributed by the Project Louise "
+                         "community")
 
-    Sorted by archive, as 09 §9.3 requires.
+
+def expand_archives(ids) -> tuple[Credit, ...]:
+    """The archive ids a recipe names, expanded into `kind: "archive"`
+    credits from the platform's registry (06 §6.6). The entry is copied
+    WHOLE: an importer neither composes the acknowledgement nor is free to
+    omit it, and because `credits` is hashed into `collection_id`, no later
+    build can alter the licence, the attribution or the coverage.
+
+    Archive entries only — `build_credits` assembles the whole list.
     """
     from app.bundles.genesis import ARCHIVES
     out = []
@@ -72,7 +82,46 @@ def expand_archives(ids) -> tuple[Credit, ...]:
                 f"no archive {aid!r} in the platform's registry; it has "
                 f"{', '.join(sorted(ARCHIVES)) or 'none'}")
         out.append(Credit(**entry.credit()))
-    return tuple(sorted(out, key=lambda c: c.archive))
+    return tuple(sorted(out, key=codex_mod.credit_order))
+
+
+def corpus_credit(source) -> Credit:
+    """The `kind: "corpus"` entry: whom the TEXT is from (02 §2.7).
+
+    Declared by the plugin (06 §6.1) and copied here — never taken from a
+    recipe. A creator free to phrase an attribution is a creator free to
+    phrase it away, and this is the one credit no collection can be
+    without: every corpus came from someone.
+    """
+    provider = getattr(source, "corpus_provider", None)
+    attribution = getattr(source, "corpus_attribution", None)
+    if not provider or not attribution:
+        raise TemplateError(
+            f"plugin {source.source_id!r} declares no corpus_provider / "
+            f"corpus_attribution; 06 §6.1 requires both of every plugin, "
+            f"green ones included — a provider that asks for nothing is "
+            f"still the provider")
+    licence = getattr(source, "corpus_license", None)
+    return Credit(kind=codex_mod.CORPUS, archive=None, producer=provider,
+                  license=licence, attribution=attribution, coverage="all")
+
+
+def build_credits(source, archives, embedding: str) -> tuple[Credit, ...]:
+    """The whole of 09 §9.3's `credits`, derived and never composed.
+
+    Three sources, one per kind, and a creator writes none of them: the
+    corpus entry from the plugin, the archive entries from the recipe's
+    `archives` through the registry, and the community entry from
+    `embedding` — present exactly when contributed vectors are admissible.
+    Sorted by `(kind, archive, producer)`, so two creators building the
+    same collection derive the same list and the same `collection_id`.
+    """
+    out = [corpus_credit(source), *archives]
+    if embedding in ("open", "endorsed"):
+        out.append(Credit(kind=codex_mod.COMMUNITY, archive=None,
+                          producer=COMMUNITY_PRODUCER, license=None,
+                          attribution=COMMUNITY_ATTRIBUTION, coverage="all"))
+    return tuple(sorted(out, key=codex_mod.credit_order))
 
 
 def archive_of_key(producer_pubkey: str) -> str | None:
@@ -98,7 +147,11 @@ def credits_admit(codex, producer_pubkey: str) -> bool:
     archive = archive_of_key(producer_pubkey)
     if archive is None:
         return True                       # not an archive's key
-    return any(c.archive == archive for c in codex.credits)
+    # Only the archive entries answer this. The corpus and community entries
+    # name no archive and gate nothing — the community entry is precisely the
+    # standing acknowledgement of the peers whose keys the registry does NOT
+    # know, which is the branch above (03 §3.5).
+    return any(c.archive == archive for c in codex_mod.archive_credits(codex))
 
 
 # --------------------------------------------------------------------------
@@ -251,10 +304,13 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
     It is required and has no default: a Codex whose reference vectors are
     a placeholder passes every check made here and fails every peer's gate.
 
-    `credits` is what the caller expanded from the platform's registry for
-    the recipe's `archives` (06 §6.6); this function never composes one,
-    and refuses a recipe naming archives when none were expanded, so an
-    unreachable registry is an error rather than an uncredited collection.
+    `credits` is the ARCHIVE entries the caller expanded from the platform's
+    registry for the recipe's `archives` (06 §6.6); this function never
+    composes one, and refuses a recipe naming archives when none were
+    expanded, so an unreachable registry is an error rather than an
+    uncredited collection. The corpus and community entries are added here
+    from the plugin's declaration and from `embedding` — neither is the
+    caller's to supply and neither is a recipe field (02 §2.7).
     """
     unknown = sorted(set(recipe) - set(REQUIRED) - set(OPTIONAL))
     if unknown:
@@ -272,6 +328,9 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
             "creation or not at all (06 §6.6)")
 
     source = source_for(plugin)
+    # Read once: it is written into the Codex AND it decides whether the
+    # community is credited (02 §2.7), and the two must not disagree.
+    _embedding = recipe.get("embedding", "open")
     update = Update(**recipe["update"]) if "update" in recipe else Update()
     work = dict(recipe["work"])
     work.setdefault("per", default_per(update.cadence))
@@ -299,13 +358,13 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         privacy=recipe.get("privacy", source.privacy_class.value),
         update=update,
         publication=recipe.get("publication", "open"),
-        certifier=None, embedding=recipe.get("embedding", "open"),
+        certifier=None, embedding=_embedding,
         succession=recipe.get("succession", "frozen"),
         content=recipe.get("content"),
         facets=(tuple(sorted((_facet(d) for d in recipe["facets"]),
                              key=lambda f: f.field))
                 if "facets" in recipe else default_facets(source)),
-        credits=tuple(credits),
+        credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
     )
     _refuse_a_loosened_class(source, codex)

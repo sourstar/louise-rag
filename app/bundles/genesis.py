@@ -139,7 +139,8 @@ class GenesisArchive:
 
         The keys are NOT part of it; see the field above.
         """
-        return {"archive": self.archive_id, "producer": self.producer,
+        return {"kind": "archive", "archive": self.archive_id,
+                "producer": self.producer,
                 "license": self.license, "attribution": self.attribution,
                 "coverage": self.coverage()}
 

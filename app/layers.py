@@ -108,13 +108,32 @@ def _codex_coverage(collection, archive_id: str):
     space id. Nothing detects it — both computed the id the document
     prescribes, and both are honest. It is invariant 1's failure mode.
     """
-    for credit in getattr(collection, "credits", None) or ():
+    for credit in _archive_credits(collection):
         archive = (getattr(credit, "archive", None)
                    or (credit.get("archive") if isinstance(credit, dict) else None))
         if archive == archive_id:
             return (getattr(credit, "coverage", None)
                     or (credit.get("coverage") if isinstance(credit, dict) else None))
     return None
+
+
+def _archive_credits(collection) -> list:
+    """`credits` entries of `kind: "archive"` — the ONLY kind a layer rule
+    reads (06 §6.3).
+
+    The corpus and community entries carry `coverage: "all"` because a
+    provider and the community are owed for every document; a rule that
+    read them would match everything and put the whole corpus in the first
+    layer. An entry with no `kind` at all predates the three kinds and is
+    an archive entry, which is what every one of them was.
+    """
+    out = []
+    for credit in getattr(collection, "credits", None) or ():
+        kind = (getattr(credit, "kind", None)
+                or (credit.get("kind") if isinstance(credit, dict) else None))
+        if kind in (None, "archive"):
+            out.append(credit)
+    return out
 
 
 def _rule_matches(rule: str, collection, native_id: int) -> bool:

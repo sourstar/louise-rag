@@ -216,6 +216,15 @@ class EmbeddedSource:
     # The dataset repo's metadata license does not relicense the CONTENT:
     # Wikipedia text inside stays CC BY-SA (amendment 11).
     license_class = LicenseClass.YELLOW
+    # 06 §6.1's corpus credit. The one pre-embedded dataset this plugin is
+    # used for is Upstash's Wikipedia (`DEFAULT_ARCHIVE_BY_PLUGIN`), whose
+    # TEXT is Wikipedia's — the embedder is credited separately, as the
+    # `kind: "archive"` entry. A different pre-embedded corpus under this
+    # plugin needs its own provider here; the plugin is generic and this
+    # line is not, which is why it says which dataset it means.
+    corpus_provider = "Wikipedia contributors"
+    corpus_license = "CC-BY-SA-4.0"
+    corpus_attribution = "Wikipedia contributors, CC BY-SA 4.0"
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "verbatim"
     # A frozen published dataset — and its boundaries are the

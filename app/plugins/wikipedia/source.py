@@ -82,6 +82,12 @@ def _lang_of(dump_name: str) -> str:
 class WikipediaSource:
     source_id = "wikipedia"
     license_class = LicenseClass.YELLOW     # CC BY-SA: attribution + share-alike
+    # 06 §6.1's corpus credit — and here the licence does compel it. The
+    # authors are the contributors, not the Wikimedia Foundation, which
+    # hosts rather than writes.
+    corpus_provider = "Wikipedia contributors"
+    corpus_license = "CC-BY-SA-4.0"
+    corpus_attribution = "Wikipedia contributors, CC BY-SA 4.0"
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "wiki"
     # The one source here that revises in place, indefinitely, and

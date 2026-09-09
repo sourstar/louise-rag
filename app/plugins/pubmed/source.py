@@ -70,6 +70,14 @@ def _verify_md5_sidecar(container: Path) -> None:
 class PubmedSource:
     source_id = "pubmed"
     license_class = LicenseClass.YELLOW   # publisher copyright on text; raw is pointer-only (§8)
+    # 06 §6.1's corpus credit. NLM compiles and distributes MEDLINE; the
+    # abstracts inside remain their publishers', which is what the yellow
+    # class is about — the credit names who we obtained the corpus from
+    # and under what, and `license.terms_sha256` hashes the terms text.
+    corpus_provider = "the U.S. National Library of Medicine"
+    corpus_license = "nlm-terms"
+    corpus_attribution = ("PubMed/MEDLINE, U.S. National Library of "
+                          "Medicine, National Institutes of Health")
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "abstract"
     # Articles are occasionally revised or retracted, but an abstract

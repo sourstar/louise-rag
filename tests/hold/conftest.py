@@ -118,14 +118,82 @@ def pubmed(**over) -> Codex:
         succession="frozen", content=None,
         continues=None, continues_through=None, origin_reachable_until=None,
         derived_from=None, space_from=None, replaces=None,
-        facets=(), credits=(), profile=None,
+        facets=(), credits=BASE_CREDITS, profile=None,
     )
     base.update(over)
+    # The community credit is DERIVED from `embedding` (02 §2.7), so a test
+    # that overrides `embedding` gets credits that agree with it without
+    # having to know that the two are connected — which is the whole claim
+    # the rule makes. A test that passes `credits` explicitly is taken at
+    # its word, because some of them are testing exactly that disagreement.
+    if "credits" not in over:
+        base["credits"] = derive_credits(base["credits"], base["embedding"])
     return Codex(**base)
 
 
+def replaced(codex: Codex, **over) -> Codex:
+    """`dataclasses.replace`, keeping `credits` consistent with `embedding`.
+
+    A test that changes `embedding` is almost never testing the credits
+    rule — it is testing certification, or the open-collection rule — but
+    the two fields ARE connected (02 §2.7), so a bare `replace` produces a
+    Codex the specification refuses for a reason the test does not care
+    about. Pass `credits` explicitly to opt out and test the disagreement.
+    """
+    from dataclasses import replace as _r
+    out = _r(codex, **over)
+    if "embedding" in over and "credits" not in over:
+        out = _r(out, credits=derive_credits(out.credits, out.embedding))
+    return out
+
+
+def derive_credits(credits, embedding: str) -> tuple[Credit, ...]:
+    """`credits` with its community entry present or absent as `embedding`
+    says, in 09 §9.3's order."""
+    from app.hold.codex import credit_order
+    out = [c for c in credits if c.kind != "community"]
+    if embedding in ("open", "endorsed"):
+        out.append(a_community_credit())
+    return tuple(sorted(out, key=credit_order))
+
+
+def a_corpus_credit() -> Credit:
+    """02 §2.7's corpus entry. Every collection has exactly one, so a
+    fixture without it is a Codex the specification refuses — which is the
+    whole reason this file builds a WHOLE Codex rather than a convenient
+    one."""
+    return Credit(kind="corpus", archive=None,
+                  producer="the U.S. National Library of Medicine",
+                  license="nlm-terms",
+                  attribution=("PubMed/MEDLINE, U.S. National Library of "
+                               "Medicine, National Institutes of Health"),
+                  coverage="all")
+
+
+def a_community_credit() -> Credit:
+    """02 §2.7's community entry: present exactly when `embedding` is
+    `"open"` or `"endorsed"`, which the fixture's is."""
+    return Credit(kind="community", archive=None,
+                  producer="the Project Louise community", license=None,
+                  attribution=("Vectors contributed by the Project Louise "
+                               "community"),
+                  coverage="all")
+
+
+#: What every fixture Codex carries before a test adds an archive: the two
+#: kinds that are not a creator's to choose. Sorted as 09 §9.3 requires —
+#: "community" before "corpus".
+BASE_CREDITS = (a_community_credit(), a_corpus_credit())
+
+
+def with_credits(*archives: Credit) -> tuple[Credit, ...]:
+    """`BASE_CREDITS` plus archive entries, in 09 §9.3's order."""
+    from app.hold.codex import credit_order
+    return tuple(sorted(BASE_CREDITS + archives, key=credit_order))
+
+
 def a_credit(archive: str = "wikipedia-bge-m3") -> Credit:
-    return Credit(archive=archive, producer="Cohere",
+    return Credit(kind="archive", archive=archive, producer="Cohere",
                   license="CC-BY-SA-4.0",
                   attribution="Wikipedia embeddings, BGE-M3, 2025-11",
                   coverage="all")

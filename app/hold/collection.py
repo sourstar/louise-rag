@@ -185,6 +185,19 @@ def list_named(root: Path) -> list[tuple[str, Codex]]:
     return _held(root)
 
 
+def _merge_credits(kept: Iterable[Credit],
+                   archives: Iterable[Credit]) -> tuple[Credit, ...]:
+    """The corpus and community entries a relative keeps, plus whichever
+    archive entries the space gives her, in 09 §9.3's order.
+
+    Sorting here rather than trusting the caller is the point: `credits` is
+    hashed into `collection_id`, so two peers deriving the same sister must
+    produce the same list in the same order or they have made two
+    collections out of one (02 §2.7).
+    """
+    return tuple(sorted(tuple(kept) + tuple(archives), key=cx.credit_order))
+
+
 # ---- the four ways to make one -------------------------------------------
 
 def create(root: Path, codex: Codex, *, name: str | None = None) -> Codex:
@@ -326,11 +339,16 @@ def derive(root: Path, mother_id: str, *,
     that Codex's `cleaning_version` differs from the mother's, because the
     resulting `space_id` could not then equal the source's.
 
-    Credits follow the space (02 §2.7): her mother's when `space_id` matches,
-    the `space_from` Codex's when that supplied the space, and otherwise
-    whatever `credits` names — `()` when it names nothing. The caller
-    expands archive ids into `Credit`s from the platform's registry, exactly
-    as `create` does; nothing here composes one by hand.
+    The ARCHIVE credits follow the space (02 §2.7): her mother's when
+    `space_id` matches, the `space_from` Codex's when that supplied the
+    space, and otherwise whatever `credits` names — none when it names
+    nothing. The caller expands archive ids into `Credit`s from the
+    platform's registry, exactly as `create` does; nothing here composes one
+    by hand.
+
+    The CORPUS and COMMUNITY credits do not follow the space and are kept
+    on every path: a sister shares the corpus by definition, and a new
+    encoder does not unwrite whose text it read.
     """
     mother = read(root, mother_id)
 
@@ -372,19 +390,25 @@ def derive(root: Path, mother_id: str, *,
         toolchain=_replace(mother.toolchain, mother_platform_image=None),
     )
 
+    # Only the archive entries are in play. `kept` is what descends on every
+    # path — the corpus entry (hers because the corpus is hers) and the
+    # community entry (hers because her `embedding` is her mother's).
+    kept = tuple(c for c in mother.credits if c.kind != cx.ARCHIVE)
     same_space = sister.space_id == mother.space_id
     if credits is not None:
         if same_space:
             raise CodexError("derive: a sister in her mother's space carries "
-                             "her mother's credits; --archives is refused here")
+                             "her mother's archive credits; --archives is "
+                             "refused here")
         if space_from is not None:
-            raise CodexError("derive: --space-from brings that Codex's credits; "
-                             "--archives is refused here")
-        sister = _replace(sister, credits=tuple(credits))
+            raise CodexError("derive: --space-from brings that Codex's archive "
+                             "credits; --archives is refused here")
+        sister = _replace(sister, credits=_merge_credits(kept, credits))
     elif space_from is not None:
-        sister = _replace(sister, credits=space_from.credits)
+        sister = _replace(sister, credits=_merge_credits(
+            kept, cx.archive_credits(space_from)))
     elif not same_space:
-        sister = _replace(sister, credits=())
+        sister = _replace(sister, credits=_merge_credits(kept, ()))
 
     sources = (mother,) if space_from is None else (mother, space_from)
     if embed is not None and not any(_same_reference(sister, s) for s in sources):
@@ -567,7 +591,12 @@ def replace(root: Path, mother_id: str, *, defect: Defect,
         replaces=Replaces(mother.collection_id, defect),
         derived_from=None, space_from=None, continues=None,
         continues_through=None, origin_reachable_until=None,
-        credits=(),
+        # No archive credit: a correction starts from zero and carries none
+        # of the mother's vectors. It keeps the corpus and community entries,
+        # which were never about the vectors it discarded — the text is the
+        # same text, re-derived from the same origin (02 §2.7).
+        credits=_merge_credits(
+            (c for c in mother.credits if c.kind != cx.ARCHIVE), ()),
     )
     carry_calibration(root, corrective, write(root, corrective, mother), mother)
     return corrective
@@ -589,7 +618,12 @@ def show(root: Path, ref: str) -> dict[str, Any]:
         "space": codex.space_segment,
         "publication": codex.publication,
         "license": {"class": codex.license.cls},
-        "credits": [c.archive for c in codex.credits],
+        # Every credit, not only the archives: a reader asking whom this
+        # collection stands on is owed the corpus provider and the community
+        # too, which is the entire reason those entries exist (02 §2.7).
+        "credits": [{"kind": c.kind, "archive": c.archive,
+                     "producer": c.producer, "attribution": c.attribution}
+                    for c in codex.credits],
         "refused": None,
         "codex": json.loads(codex.canonical()),
     }

@@ -19,7 +19,9 @@ from app.hold.codex import (Calibration, Chunker, CodexError, Certifier,
 from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
                                  PLATFORM, PUBMED_CHECKS, PUBMED_SAMPLE,
                                  PUBMED_SLICING, PUBMED_SPEC, Q_ENCODER,
-                                 Q_WEIGHTS, TERMS, WEIGHTS, a_credit, a_facet)
+                                 Q_WEIGHTS, TERMS, WEIGHTS, a_credit, a_facet,
+                                 a_community_credit, a_corpus_credit,
+                                 replaced, with_credits)
 
 
 def _h(obj) -> str:
@@ -71,7 +73,24 @@ WORKED_EXAMPLE = {
     "succession": "frozen", "content": None,
     "continues": None, "continues_through": None, "origin_reachable_until": None,
     "derived_from": None, "space_from": None, "replaces": None,
-    "facets": [], "credits": [], "profile": None,
+    "facets": [],
+    # 02 §2.7's three kinds. Two of them are on every collection: the
+    # corpus provider, because the text came from someone, and the
+    # community, because `embedding` is "open". Sorted by (kind, archive,
+    # producer), which puts "community" before "corpus".
+    "credits": [
+        {"kind": "community", "archive": None,
+         "producer": "the Project Louise community", "license": None,
+         "attribution": "Vectors contributed by the Project Louise community",
+         "coverage": "all"},
+        {"kind": "corpus", "archive": None,
+         "producer": "the U.S. National Library of Medicine",
+         "license": "nlm-terms",
+         "attribution": ("PubMed/MEDLINE, U.S. National Library of Medicine, "
+                         "National Institutes of Health"),
+         "coverage": "all"},
+    ],
+    "profile": None,
 }
 
 
@@ -324,11 +343,13 @@ def test_a_credit_carries_its_licence_and_attribution_and_no_key(codex):
     live in the registry, because a key is lost and reissued and an archive
     that published nothing signed may begin (02 §2.7, 09 §9.3)."""
     assert set(a_credit().to_dict()) == {
-        "archive", "producer", "license", "attribution", "coverage"}
-    for missing in ("license", "attribution"):
+        "kind", "archive", "producer", "license", "attribution", "coverage"}
+    assert "key" not in a_credit().to_dict()
+    for missing, msg in (("license", "credited under"),
+                         ("attribution", "names a producer")):
         bad = replace(a_credit(), **{missing: ""})
-        with pytest.raises(CodexError, match="credited under"):
-            cx.validate(replace(codex, credits=(bad,)))
+        with pytest.raises(CodexError, match=msg):
+            cx.validate(replace(codex, credits=with_credits(bad)))
 
 
 # ---- publication ----------------------------------------------------------
@@ -337,8 +358,8 @@ CERT = Certifier("ed25519:" + "5c" * 32, "https://gazzetta.example/.well-known/l
 
 
 def test_a_certified_collection_is_manifest_only(codex):
-    certified = replace(codex, publication="certified", certifier=CERT,
-                        content="manifest-only", embedding="certifier-only")
+    certified = replaced(codex, publication="certified", certifier=CERT,
+                         content="manifest-only", embedding="certifier-only")
     cx.validate(certified)
     with pytest.raises(CodexError, match='content is "manifest-only"'):
         cx.validate(replace(certified, content=None))

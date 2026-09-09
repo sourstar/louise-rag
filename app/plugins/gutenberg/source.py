@@ -20,6 +20,13 @@ from . import pg_text, rdf
 class GutenbergSource:
     source_id = "gutenberg"
     license_class = LicenseClass.GREEN
+    # 06 §6.1's corpus credit. Green, so nothing compels it — and it is here
+    # anyway: a provider that asks for nothing is still the provider, and
+    # 02 §2.7 puts a corpus entry in every collection's `credits`.
+    corpus_provider = "Project Gutenberg"
+    corpus_license = "public-domain"
+    corpus_attribution = ("Project Gutenberg — public-domain texts from "
+                          "www.gutenberg.org")
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "book"
     # Books are published finished. The catalogue grows; a text

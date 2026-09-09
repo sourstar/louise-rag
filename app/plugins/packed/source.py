@@ -42,6 +42,15 @@ class PackedSource:
     identity fields come from the pack's manifest."""
     source_id = "packed"
     license_class = LicenseClass.YELLOW        # the safe default; the pack says
+    # 06 §6.1's corpus credit. A pack's corpus provider is the ORIGIN's —
+    # packing does not make the text ours — so the real values are copied
+    # from the origin plugin in `__init__`, beside chunking_profile. These
+    # are the abstract placeholder instance's, and are never written into
+    # a Codex: a collection always gets a per-pack instance.
+    corpus_provider = "the origin corpus's provider"
+    corpus_license = None
+    corpus_attribution = ("A packed corpus; the origin plugin declares whom "
+                          "the text is from")
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "book"
     mutability = Mutability.IMMUTABLE
@@ -67,6 +76,12 @@ class PackedSource:
             if base is not None:
                 self.chunking_profile = getattr(base, "chunking_profile", "book")
                 self.mutability = getattr(base, "mutability", Mutability.IMMUTABLE)
+                # Whom the TEXT is from is the origin's fact, not the
+                # packer's: packing does not make it ours (02 §2.7).
+                for f in ("corpus_provider", "corpus_license",
+                          "corpus_attribution"):
+                    if getattr(base, f, None) is not None:
+                        setattr(self, f, getattr(base, f))
             self.layers = manifest.get("layers") or None
 
     @property
