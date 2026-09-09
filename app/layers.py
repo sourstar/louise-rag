@@ -22,19 +22,31 @@ Rules:
                        cover (a remote archive with declared id ranges); a
                        local archive (the corpus IS the archive) covers all
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import chunking
 
 
 @dataclass(frozen=True)
 class Layer:
-    chunker: str                 # chunking.BOOK | VERBATIM | ABSTRACT | CDC
+    chunker: str                 # chunking.BOOK | FIXED | VERBATIM | ABSTRACT | CDC
     version: int
     rule: str
+    #: What the chunker cuts with. 06 §6.3: "a chunker reads no node
+    #: configuration" — so a chunker that takes parameters takes them from
+    #: HERE, and 09 §9.3 hashes them into `space_id`. Empty for the
+    #: chunkers that take none, and empty for `book`, which is
+    #: grandfathered and reads the environment (chunking.chunk_book).
+    params: dict = field(default_factory=dict)
 
     def as_manifest(self) -> dict:
-        return {"chunker": {"id": self.chunker, "version": self.version}, "rule": self.rule}
+        c = {"id": self.chunker, "version": self.version}
+        # Only when non-empty: every collection on this node predates
+        # params, and a manifest that gained an empty key would differ
+        # from the bytes already on disk for no reason.
+        if self.params:
+            c["params"] = self.params
+        return {"chunker": c, "rule": self.rule}
 
 
 class LayerError(ValueError):
@@ -58,7 +70,11 @@ def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
         rule = str(entry.get("rule", "default"))
         if not (rule == "default" or rule.startswith("archive:")):
             raise LayerError(f"{where}: layers[{i}]: unknown rule {rule!r}")
-        out.append(Layer(chunker=name, version=chunking.chunk_version_for(name), rule=rule))
+        params = entry.get("params", {})
+        if not isinstance(params, dict):
+            raise LayerError(f"{where}: layers[{i}]: params is a table")
+        out.append(Layer(chunker=name, version=chunking.chunk_version_for(name),
+                         rule=rule, params=params))
     if out[-1].rule != "default":
         raise LayerError(f"{where}: the last layer must have rule = \"default\"")
     if any(l.rule == "default" for l in out[:-1]):
@@ -110,9 +126,10 @@ def chunker_for_document(collection, native_id):
     layer = layer_of(collection, native_id)
     fn = chunking._CHUNKERS[layer.chunker]
     version = layer.version
+    params = layer.params
 
     def _chunk(uid, nid, sections):
-        return fn(uid, nid, sections, version)
+        return fn(uid, nid, sections, version, params)
     return _chunk
 
 

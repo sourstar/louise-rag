@@ -12,12 +12,20 @@ def _est_tokens(s: str) -> int:
     return max(1, len(s) // 4)
 
 def chunk_book(uid: str, native_id, chapters: list[tuple[str, str]],
-                version=None):
+                version=None, params=None):
     """Yield dicts: id, book_id, seq, chapter, text, tokens.
 
     `uid` (e.g. "gutenberg:1342") namespaces the chunk id; `native_id` is the
     physical `book_id` stored on each chunk row for Tantivy/Lance filtering
     and delete-then-insert, unchanged from pre-refactor behavior.
+
+    Reads its window from the ENVIRONMENT, which 06 §6.3 forbids
+    ("a chunker reads no node configuration") — and it stays that way. This
+    is the grandfathered chunker: the vectors already on this node were cut
+    by it under whatever CHUNK_TOKENS was set then, and changing where it
+    reads from would re-cut them. `fixed` below is the same windows with the
+    parameters carried in the layer, which is what a new collection uses.
+    `params` is accepted and ignored so that every chunker has one shape.
     """
     max_chars = config.CHUNK_TOKENS * 4
     # Clamped to guarantee the hard-split loop below terminates. That loop
@@ -31,6 +39,56 @@ def chunk_book(uid: str, native_id, chapters: list[tuple[str, str]],
     # a no-op. Only the configurations that could never produce output at all
     # are affected, so no existing chunking changes (invariant 3).
     overlap_chars = min(config.CHUNK_OVERLAP * 4, max_chars - 1)
+    yield from _fixed_windows(uid, native_id, chapters, version,
+                              max_chars, overlap_chars)
+
+
+def chunk_fixed(uid: str, native_id, chapters: list[tuple[str, str]],
+                 version=None, params=None):
+    """06 §6.3's `fixed`: windows of `tokens` with `overlap` between
+    neighbours, paragraph-aligned, a paragraph larger than the window split
+    hard. Byte for byte what `chunk_book` does — the ONE difference is where
+    the two numbers come from.
+
+    They come from the LAYER, which is the whole point: 06 §6.3 says "a
+    chunker reads no node configuration", and `space_id` covers the layer's
+    params (09 §9.3), so a chunker that read the environment would let two
+    peers agree on a space id and disagree on chunks. That is invariant 1's
+    failure mode and it is undetectable — both peers computed the id the
+    document prescribes, and both are honest.
+
+    So there is no default. A layer that does not say is refused.
+    """
+    if not params or "tokens" not in params or "overlap" not in params:
+        raise ChunkerError(
+            "the `fixed` chunker takes `tokens` and `overlap` from its "
+            "layer's params (06 §6.3, 09 §9.3); it has no defaults and does "
+            "not read the environment, because two peers that agreed on a "
+            "space_id and disagreed on chunks would never find out")
+    tokens, overlap = int(params["tokens"]), int(params["overlap"])
+    if tokens < 1:
+        raise ChunkerError(f"fixed: tokens is at least 1, got {tokens}")
+    if not 0 <= overlap < tokens:
+        raise ChunkerError(
+            f"fixed: overlap is at least 0 and less than tokens, got "
+            f"{overlap} against {tokens}; at or above it the hard-split loop "
+            f"stops shrinking and yields for ever")
+    yield from _fixed_windows(uid, native_id, chapters, version,
+                              tokens * 4, overlap * 4)
+
+
+class ChunkerError(ValueError):
+    """A layer does not give a chunker what it needs."""
+
+
+def _fixed_windows(uid: str, native_id, chapters, version,
+                   max_chars: int, overlap_chars: int):
+    """The windows themselves, shared by `book` and `fixed` so that the two
+    cannot drift. `book` passes the environment's numbers and `fixed` the
+    layer's; everything below this line is identical for both, which is what
+    makes `fixed{tokens: CHUNK_TOKENS, overlap: CHUNK_OVERLAP}` produce the
+    same chunk ids as `book` — and therefore what lets a Codex collection
+    adopt the vectors a legacy pack already holds."""
     seq = 0
     for chapter_title, body in chapters:
         paras = [p for p in body.split("\n\n") if p.strip()]
@@ -57,7 +115,7 @@ def chunk_book(uid: str, native_id, chapters: list[tuple[str, str]],
             seq += 1
 
 def chunk_abstract(uid: str, native_id, sections: list[tuple[str, str]],
-                    version=None):
+                    version=None, params=None):
     """One chunk per record: chunking_profile='abstract' (PubMed) — the
     whole title+abstract becomes a single chunk, no windowing/overlap.
 
@@ -80,7 +138,7 @@ def chunk_abstract(uid: str, native_id, sections: list[tuple[str, str]],
     yield _mk(uid, native_id, 0, "", text, version)
 
 def chunk_verbatim(uid: str, native_id, sections: list[tuple[str, str]],
-                    version=None):
+                    version=None, params=None):
     """One chunk per SECTION, exactly as the plugin emitted it — no windowing,
     no merge, no hard-split (amendment 11). This is the pre-embedded corpus
     profile: the producer already chunked, their embedding input IS the
@@ -181,7 +239,8 @@ def cdc_split(text: str) -> list[str]:
     return pieces
 
 
-def chunk_cdc(uid: str, native_id, sections: list[tuple[str, str]], version=None):
+def chunk_cdc(uid: str, native_id, sections: list[tuple[str, str]],
+               version=None, params=None):
     """Content-defined chunks, per section.
 
     Per SECTION rather than over the whole document, for the same reason CDC
@@ -201,11 +260,12 @@ def chunk_cdc(uid: str, native_id, sections: list[tuple[str, str]], version=None
 # ---------------- which chunker, and at which version ----------------
 
 BOOK = "book"
+FIXED = "fixed"
 VERBATIM = "verbatim"
 ABSTRACT = "abstract"
 CDC = "cdc"
 
-_CHUNKERS = {BOOK: chunk_book, VERBATIM: chunk_verbatim,
+_CHUNKERS = {BOOK: chunk_book, FIXED: chunk_fixed, VERBATIM: chunk_verbatim,
              ABSTRACT: chunk_abstract, CDC: chunk_cdc}
 
 # CDC is versioned SEPARATELY from the fixed-width chunkers, and that
@@ -222,6 +282,16 @@ CDC_CHUNK_VERSION = 1
 # reason: it enters ONLY PubMed's space id. Bump it — and only it — when
 # how an article becomes its one chunk changes.
 ABSTRACT_CHUNK_VERSION = 1
+
+# `fixed` is `book` with its window carried in the layer instead of read
+# from the environment, and it is version 1 BECAUSE THAT IS WHAT `book`
+# IS: config.CHUNK_VERSION defaults to 1, a chunk id is
+# `{uid}:{seq}:{version}`, and the two chunkers cut identically at the
+# same window. So a Codex collection declaring
+# `fixed{tokens: 1000, overlap: 120}` produces the chunk ids a legacy
+# gutenberg pack already holds, and its vectors carry over rather than
+# being re-embedded. Bump this only when the WINDOWS change.
+FIXED_CHUNK_VERSION = 1
 
 
 def chunker_name(profile: str | None, mutability=None) -> str:
@@ -251,6 +321,8 @@ def chunk_version_for(name: str) -> int:
         return CDC_CHUNK_VERSION
     if name == ABSTRACT:
         return ABSTRACT_CHUNK_VERSION
+    if name == FIXED:
+        return FIXED_CHUNK_VERSION
     return config.CHUNK_VERSION
 
 
