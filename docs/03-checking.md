@@ -261,7 +261,11 @@ ARCHIVE, and it is resolved in two steps because a bundle carries no
 archive id: the importing peer looks `producer_pubkey` up in the
 platform's registry, which maps each archive to the set of keys its
 bundles are signed with (06 §6.6); if that lookup names an archive, the
-bundle is refused unless this collection's `credits` names that archive.
+bundle is refused unless one of this collection's `kind: "archive"`
+credits names that archive. Only that kind is consulted: the corpus and
+community entries name no archive, and a bundle whose key the registry
+does not know is an ordinary peer's — which is what the community entry
+is the standing acknowledgement of, and why it gates nothing.
 A key the registry does not know belongs to no archive, and the bundle
 is an ordinary producer's — admitted or not by the ladder below, like
 any other. The Codex is immutable, so a collection cannot come to stand

@@ -176,9 +176,12 @@ reader needs at the command line:
   collections land in one space by construction (02 §2.7), and it never
   copies a cleaner version the plugin could not run. `--archives` names
   the pre-embedded archives a sister in a NEW space draws on, expanded
-  into `credits` from the platform's registry as `create` does; it is
+  into the `kind: "archive"` entries of `credits` from the platform's
+  registry as `create` does; it is
   refused when `space_id` matches the mother's, and when `--space-from`
-  supplied the space, both of which bring their own credits (02 §2.7).
+  supplied the space, both of which bring their own archive credits
+  (02 §2.7). It reaches no other kind: the corpus entry is the mother's
+  on every relation, and the community entry follows `embedding`.
   The defect file is the `replaces.defect` object of 03 §3.6.
 - **`ack`.** Prints `LICENSE-TERMS` from the copy (04 §4.4; 09 §9.13)
   and, on a terminal, waits for consent; `--yes` records without asking.

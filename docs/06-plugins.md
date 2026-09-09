@@ -15,6 +15,8 @@ class CorpusSource(Protocol):
     protocol_version: int          # the version of this protocol the plugin implements (§7.4)
     PARSER_VERSION: int            # bumped when and only when parse() output changes for some input
     license_class: LicenseClass    # green | yellow | red                  (§4.4)
+    corpus_provider: str           # whom the TEXT is from — "Wikipedia contributors" (02 §2.7)
+    corpus_attribution: str        # the credit line for them, byte-exact  (02 §2.7)
     privacy_class: PrivacyClass    # public | restricted | never-share     (§4.4)
     modality: Modality             # text | dna — what the bytes are        (§2.4)
     erasure: Erasure               # append-only | retractable | erasable   (§4.4)
@@ -59,6 +61,17 @@ plugin (§2.1). A recipe (§6.6) may tighten a class the plugin declares
 — yellow to red, public to never-share — and never loosen it: a
 hand-populated folder under a plugin may hold material its author never
 saw. What each licence and privacy class permits is the table in §4.4.
+
+`corpus_provider` and `corpus_attribution` are declared beside the
+classes and for the same reason — they are properties of the source,
+not of a creator's judgement — and `create` copies them into the
+`kind: "corpus"` entry of `credits` (02 §2.7). They are NOT tightenable
+and not overridable: a recipe may make a collection stricter about what
+it shares, and may not restate whom the text is from. Every plugin
+declares them, GREEN ONES INCLUDED: a public-domain corpus compels no
+attribution and gets one anyway, because a provider that asks nothing is
+still the provider, and a rule with an exception is a rule someone will
+land on the wrong side of.
 `modality` decides which encoders and rerankers are eligible: a Codex
 whose encoder declares another modality than the plugin is refused at
 `create` and at boot, the same class of error as a space mismatch
@@ -318,7 +331,11 @@ A layer's **rule** is one of three forms: `default`, every document;
 `archive:<archive id>`, the documents a pre-embedded archive covers —
 read from that archive's `coverage` in the Codex's `credits` (02 §2.7),
 so the rule is computable from the record and the Codex alone, and a
-platform build cannot move a document between layers;
+platform build cannot move a document between layers. Only the
+`kind: "archive"` entries are read here: the corpus and community
+entries carry `coverage: "all"` because they are owed for everything,
+and a layer rule that read them would put every document in the first
+layer;
 `field:<name>=<value>`, the documents whose record field (a top-level
 field, or `extra.<key>`) has that value. Rules are
 evaluated in list order and the first match wins; the last layer's rule
@@ -522,8 +539,17 @@ content; a resolver never returns a bare symbol.
    draw vectors from, by id, which `create` expands into `credits` from
    the platform's registry (02 §2.7) — and any default it tightens; the
    plugin supplies
-   `plugin`, `origin`, `parser`, `layers`, `slicing`, the classes and
-   the cadence, and the platform supplies the toolchain digests. The
+   `plugin`, `origin`, `parser`, `layers`, `slicing`, the classes, the
+   cadence and the CORPUS PROVIDER, and the platform supplies the
+   toolchain digests. `credits` is assembled from all three and from
+   nothing a creator writes: the corpus entry from the plugin's declared
+   provider and attribution, the archive entries from the recipe's
+   `archives` expanded through the registry, and the community entry
+   from `embedding` — present when it is `"open"` or `"endorsed"`,
+   absent when it is `"certifier-only"`. A recipe that tried to name a
+   corpus or community credit is refused: those are facts about the
+   plugin and the collection's own policy, and a creator free to phrase
+   them could phrase them away. The
    calibration comes first and needs no record: the calibration set is
    a corpus-independent file shipped with the platform, `create` embeds
    it with the named encoder, writes the reference vectors' hash into
@@ -542,7 +568,8 @@ content; a resolver never returns a bare symbol.
    compliant encoder are bundled and shared like any other. A
    pre-embedded public archive is imported through the same ladder as a
    peer's bundle, with the archive named as producer. An archive whose
-   entry is not already in the Codex's `credits` is REFUSED, not
+   entry is not already among the Codex's `kind: "archive"` credits is
+   REFUSED, not
    credited late: the Codex is written once and never edited (02 §2.1),
    so an archive a collection means to draw on is named in the recipe at
    step 2 and hashed into the identity there. The platform's registry is
