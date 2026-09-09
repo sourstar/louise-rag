@@ -52,6 +52,7 @@ codex = {
   space: {
     encoder: {image: "sha256:…", weights: "sha256:…", label: "medcpt-article"},
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
+                                     -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
     query: {encoder: null | {image: "sha256:…", weights: "sha256:…"}, instruction: null | "<prefix>"},
     tolerance: "0.95",
     calibration: {set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}},
@@ -81,6 +82,8 @@ codex = {
   continues: null | "<collection_id>", continues_through: null | "2026-08",
   origin_reachable_until: null | "2026-08",
   derived_from: null | "<collection_id>", space_from: null | "<collection_id>",
+  derivation: null | {from: "<space_id>", kind: "truncate" | "quantise", params: {...}},
+                                     -- vectors obtainable from another space without an encoder (§2.7)
   replaces: null | {codex: "<collection_id>", defect: {...}},   -- the defect block is 03 §3.6
   profile: null | {...}                                -- plugin-defined and hashed like every other field: an ELI profile
 }
@@ -437,7 +440,17 @@ space_id = H(canonical-json({encoder: {image, weights}, layers, cleaning_version
 ```
 
 Not `tolerance`, not `calibration`, not `envelope`, not `work`: those
-are the contract around the function, not the function. `space.epoch`
+are the contract around the function, not the function. **Not
+`derivation` either, and that one is load-bearing.** A derived space
+(§2.7) is reached by a pure function of another space's vectors, and two
+creators who apply the same function to the same source produce THE SAME
+NUMBERS. If the derivation entered `space_id` they would land in
+different spaces and could not share one bundle, which is the whole
+point of allowing it; and a model that emits 256 dimensions natively
+would differ from a 256-dimension truncation of its own 1024, although
+the vectors are identical. `derivation` is a ROUTE TO the vectors, never
+a property of them: `dim`, `dtype`, the encoder and the rest already
+distinguish one space from another. `space.epoch`
 is `"0"` for a root, the mother's for a daughter or a sister, and
 `H(canonical-json({"replaces": <replaced collection_id>}))` for a
 corrective sister (§2.7). A sister inherits it because the rule that
@@ -734,6 +747,34 @@ holds every shard the monthly holds, and more snapshots naming them.
 for byte, and the encoder image must match too or `derive` refuses — so
 two collections meant to be searched together land in one space by
 construction rather than by hoping their settings match.
+
+**A sister may DERIVE her vectors instead of embedding them.** Where her
+space is a pure function of another's — a quantisation of it, or a
+prefix of it in a Matryoshka encoder — a peer holding the source
+vectors computes hers without an encoder, and the Codex says so in
+`derivation`: `{from: <space_id>, kind: "truncate" · "quantise",
+params}` (09 §9.3). `from` names a SPACE and not a collection, because
+any collection in that space has qualifying vectors and sisterhood
+already guarantees the corpus, and therefore the chunk ids, are the
+same.
+
+The test a derivation must pass is narrow and is the whole of why this
+is safe: **it is a pure function of the vector alone** — no encoder, no
+text, no corpus, no node. Truncation takes the first `keep` dimensions
+and re-normalises where the space does; quantisation is 09 §9.6's
+symmetric absmax. Anything that needed the text back would be
+re-embedding under another name and is not admissible here.
+
+Whether to derive, and whether the result is worth its loss, is the new
+sister's creator's to judge. Two things they should know. A quantised
+sister usually needs a LOOSER `tolerance` than her mother: two honest
+peers whose vectors agree within her mother's tolerance can quantise to
+values a whole step apart, and at four bits the grid is coarse enough
+that the difference crosses a bin. Truncation has no such effect — it is
+linear and order-preserving — so a truncated sister may keep her
+mother's number. And a derived sister costs no GPU at all: her
+calibration member is her mother's, derived (03 §3.3), so she can be
+created entirely offline.
 
 **Credits travel with the vectors, and cannot be separated from them.**
 Where a collection's vectors come from a pre-embedded archive — NCBI's

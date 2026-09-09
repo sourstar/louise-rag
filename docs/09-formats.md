@@ -278,6 +278,7 @@ number written as a decimal string is marked *decimal*.
 | `origin_reachable_until` | snapshot id or null | yes | daughter: the last snapshot whose shards the origin still reproduces |
 | `derived_from` | id or null | yes | sister and corrective sister: the mother's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space` and `layers` were copied byte for byte. `cleaning_version` is not among them: a sister keeps her mother's in any case, since changing it would re-derive the corpus she inherits (02 §2.7) |
+| `derivation` | object or null | yes | how this space's vectors may be obtained WITHOUT an encoder, when it is a pure function of another space's: `{from: id, kind: "truncate" · "quantise", params: {…}}`, `from` being a `space_id` and never a `collection_id`. `null` where there is none. NOT part of `space_id` (02 §2.4) |
 | `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
 | `facets` | list of objects | yes | which record fields a search may filter on and a reader may list (05 §5.7), sorted by `field`, `[]` when none. Each is `{field: string, kind: "flat" · "tree" · "range", separator: string or null, authority: {name: string} or null}`; `separator` is non-null exactly when `kind` is `"tree"`. `field` is a top-level record field (§9.5) or `extra.<key>`. Declares structure only: the values live in the records |
 | `credits` | list of objects | yes | the pre-embedded archives whose vectors this collection carries, sorted by `archive`, `[]` when none. Each is `{archive: string, producer: string, license: string, attribution: string, coverage: "all" or {ids_per_shard: integer, shards: integer}}`. Derived at creation from the platform's registry and from what is inherited, never composed by hand (02 §2.7); hashed, so neither the licence, the attribution nor the coverage can be altered by a later build. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — it is lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written. `coverage` stays because it decides which layer a document falls in (06 §6.3): `credits` is not a pure compliance record |
@@ -334,7 +335,7 @@ a `<space>` segment and `index-<slice>` would then be a member name
 |---|---|---|---|
 | `encoder` | object | yes | `{image: "sha256:…", weights: "sha256:…", label: string}` — the encoder container's digest, the digest of the weights file it serves, and a readable label without guarantee. The encoder image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
-| `dtype` | `"f16"` · `"f32"` | yes | storage type of vectors |
+| `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by `derivation` below rather than by an encoder, because few encoders emit integers |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
 | `pooling` | string | yes | `"cls"`, `"mean"`, `"last"` — the pooling the encoder is run with |
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
@@ -785,6 +786,38 @@ The row for a chunk is the vector from the first bundle accepted for it
 stored, unless the first is flagged. Labels are computed by the
 importer against the centres it holds, never read from a bundle.
 
+**The quantised types.** `i8`, `i5` and `i4` are symmetric absmax
+quantisations of a unit vector, with a per-vector scale. A file in one
+of them carries a third tensor:
+
+| tensor | type | required | meaning |
+|---|---|---|---|
+| `scales` | `[n]` f32 | for `i8`, `i5`, `i4` | row `r`'s scale; `0.0` for a row with no vector |
+
+With `Q = 2^(bits-1) - 1` — 127, 15 and 7 — one vector `v` becomes
+
+```
+scale = max over d of |v[d]|
+q[d]  = clamp(round_half_even(v[d] / scale * Q), -Q, +Q)
+```
+
+and is read back as `v'[d] = q[d] * scale / Q`. The negative extreme of
+the two's-complement range (-128, -16, -8) is therefore NEVER WRITTEN,
+and a reader that meets one refuses the file: the range is symmetric so
+that negating a vector is exact, and a value outside it is a writer that
+used a different rule.
+
+Packing is little-endian by bit, element `d` occupying bits `[bd, bd+b)`
+of the row's bit stream for `b` bits: `i8` is one byte per element,
+two's complement; `i4` packs two elements per byte, element 0 in the LOW
+nibble; `i5` packs eight elements per five bytes. A row occupies
+`ceil(dim * b / 8)` bytes and any trailing bits are zero.
+
+Quantisation is applied to the NORMALISED vector where `space.normalise`
+is true, and the scale is then close to but not exactly `1/sqrt(dim)`'s
+neighbourhood — it is stored rather than derived because a vector whose
+largest component is unusual is exactly the vector that would suffer.
+
 **Index metadata.** `vectors/<space>/index.json`, canonical JSON, a
 member (`index-<space>`, §9.16) shipped by whoever trains first:
 
@@ -881,7 +914,7 @@ uids); no floats anywhere.
 | `uids` | list of strings | yes | the uids whose chunks the bundle covers, every chunk of each, sorted by bytes, no duplicates: the bundle's chunk range |
 | `chunk_count` | integer | yes | rows in `vectors.parquet` after the challenge rows |
 | `dim` | integer | yes | |
-| `dtype` | `"f16"` · `"f32"` | yes | the parquet element type |
+| `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | the parquet element type; an integer type adds the `scale` column below |
 | `producer_pubkey` | key | yes | the signer; `ed25519:…` |
 | `encoder_image`, `encoder_weights` | id | yes | the producer's encoder build; equal to the Codex's, or a build attested compliant (03 §3.3) |
 | `content_digest` | id | yes | the container-independent digest of the rows, below |
@@ -892,7 +925,10 @@ uids); no floats anywhere.
 | `challenge` | object | yes | `{set: id, n: 16}` — the T2 challenge: the first `n` rows of `vectors.parquet` are the calibration set's first `n` texts (§9.12) embedded by the producer, with `chunk_id` `"calibration:<i>"`, `i` from 0 |
 
 **vectors.parquet.** Two columns, `chunk_id` (string) and `vector`
-(fixed-size list of `dim` elements of `dtype`); the challenge rows first
+(fixed-size list of `dim` elements of `dtype`) — and, where `dtype` is
+an integer type, a third, `scale` (f32), carrying that row's absmax
+scale (§9.6). The packing of a quantised row is §9.6's, byte for byte.
+The challenge rows come first
 in index order, then the chunk rows sorted by (uid UTF-8 bytes, `seq` as
 an integer) — a tuple sort, under which `:10:` follows `:2:`. Parquet
 bytes are not stable across writers, so the signature covers the file's
@@ -905,7 +941,13 @@ content_digest = sha256( "louise-rag/vectors/v1" ‖ 0x00
                          ‖ for each row in file order: u32be(len(chunk_id)) ‖ chunk_id ‖ vector as big-endian dtype bytes )
 ```
 
-written `sha256:…`.
+written `sha256:…`. For an integer `dtype` a row's contribution is its
+PACKED bytes as §9.6 lays them out — which are already byte-ordered by
+that packing, so "big-endian" does not arise — followed by `u32be(4)`
+and its `scale` as big-endian f32. The scale is inside the digest
+because a vector and its scale are one value: two bundles agreeing on
+every quantised integer and differing in one scale describe different
+vectors, and a digest that missed it would call them the same.
 
 **possession.json.** A JSON object, sorted keys, ASCII, mapping each uid
 in `uids` to the `content_hash` of the record whose text the producer
