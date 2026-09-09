@@ -183,9 +183,46 @@ The fields, with their values:
 | `certification` | `{certified_by, anchor_state}` — the certifier's key and `anchored` · `stale` · `mismatch` (§3.7); `null` for an open collection |
 | `verified_on_use` | `local` · `imported` · `verified` · `failed`: this peer produced the vector; produced elsewhere and not yet re-embedded here; re-embedded and within tolerance; re-embedded and outside it. A chunk whose producer is unknown is `imported`, never `local` |
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
-| `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text. A FIGURE IS NEVER A FIELD HERE: a plate's caption is text, lives in `sections` like any other, and is returned inside `text` when a chunk carrying it matches — which is also the only way a figure is searchable at all, since nothing embeds a picture. What a reader then does with the record's `figures` (09 §9.5) is the reader's, and this table stays closed |
+| `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
+| `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
+
+**Figures are placed, never ranked.** Nothing embeds a picture, so a
+figure is never scored, never fused and never a leg: it is a fact about
+the chunk that was returned, of the same kind as a reference source's
+row (§5.1) — looked up, not retrieved. What makes a figure findable is
+its CAPTION, which is text, lives in `sections` like any other text and
+is inside `text` above whenever the chunk carrying it matches.
+
+Which plates belong to a chunk is decided by the markers in that chunk:
+09 §9.5 makes the Nth `[Illustration…]` marker of a record its
+`figures[N]`, so a chunk carrying markers 3 and 4 carries those two
+entries and no others.
+
+**The three states exist so that a reader is never left guessing which
+kind of absence it is facing.** `held` — this peer has the bytes.
+`not-held` — the collection carries this plate and this peer does not
+have the member yet, so asking again later works. `not-carried` — the
+origin has an image here that the collection does not admit (09 §9.5's
+`carried: false`), so asking again NEVER works and the reader should
+stop looking. `figures: null` is the fourth and commonest case: this
+collection has no plates at all, and a caption in the text is all there
+has ever been.
+
+The distinction is not pedantry. A record whose text says
+`[Illustration: A TABLEAU OF THE DAY.]` announces a picture; a reader
+told nothing more will go hunting for something that may not exist
+anywhere.
+
+**The bytes come separately, and never in this object.** A result
+carries the hash; `GET /api/ask/figure` returns the image itself
+(07 §7.4), and a client renders it beside the chunk that cited it. Two
+consequences worth stating: a search result stays small however
+illustrated the book is, and a TEXT MODEL NEVER SEES THE PICTURE — what
+reaches its context is the caption, already in `text`. The plate is for
+the person reading the answer, not for the model composing it, unless a
+multimodal client fetches it and passes it on.
 
 The chunk's text is what the peer holds. For a red-class collection
 the peer's own copy of the text — fetched from the origin, never from a

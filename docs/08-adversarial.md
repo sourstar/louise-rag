@@ -300,17 +300,35 @@ every such failure.
 
 **Caps, applied before decoding.** At most 16 MiB of bytes per figure, at
 most 64 megapixels once the header is read but before any pixel is, and
-at most 1,024 figures per record. The first two are what stop a
+at most 4,096 figures per record. The first two are what stop a
 decompression bomb — a few hundred kilobytes of PNG that decodes to
 tens of gigabytes — and they are applied to the DECLARED dimensions in
 the header, so the decoder is never handed something it will die inside.
 The third stops a record from being a container in its own right.
 
-These three numbers are the section's weakest part and are marked as
-such: they are chosen to be obviously sufficient rather than measured
-against a real distribution. The measurement is cheap — one pass over the
-corpus counting plates, bytes and dimensions per record — and should
-replace them.
+These three numbers were the section's weakest part until 2026-09-09,
+when they were measured against 44,477 illustrated epubs holding 786,699
+images. Two held and one did not.
+
+The byte cap is generous and stays: the largest plate in that corpus is
+1.8 MB and the 99.9th percentile is under 1 MB, so 16 MiB refuses
+nothing real. It bounds ATTACKER bytes rather than honest ones, and
+tightening it against one corpus would be unwise when patent drawings
+and maps are the cases still to come.
+
+The count cap was 1,024 and refused eleven books, the largest carrying
+3,503 images — which is 0.025 % of the corpus and the WRONG 0.025 %:
+they are the most illustrated books in it, which is what a plates
+collection is for. A rule that admits a novel's frontispiece and refuses
+an illustrated natural history is backwards, so the cap is 4,096.
+
+The media-type list was measured too: `image/jpeg` and `image/png` cover
+99.66 % of that corpus. SVG is REAL in it — 2,407 images — so refusing
+it is a live cost and not a hypothetical one, and the cost was counted:
+ten books lose at least one plate and NO BOOK loses all of them. A
+record whose image is refused still names it, with `carried: false`
+(09 §9.5), so a reader meeting the caption is told the picture is gone
+rather than left to hunt for it.
 
 **A figure is never executed, never fetched from, and never resolved.**
 Whatever a format permits, a peer that stores or serves a figure treats
