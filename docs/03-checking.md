@@ -326,8 +326,8 @@ and its SHAPE were wrong.** They had been written without data — cosine
 the envelope's — and `space.envelope` is a Codex field, so a wrong test
 freezes at `create` and every peer inherits it.
 
-Four runs, each 512 calibration texts against 300 chunks of real Project
-Gutenberg prose cut by the collection's own chunker:
+Five runs, each 512 calibration texts against 300 chunks of a real
+corpus cut by the collection's own chunker:
 
 | | encoder | dim | class | corpus | cosine | ratio min | outside half-to-twice |
 |---|---|---|---|---|---|---|---|
@@ -335,6 +335,12 @@ Gutenberg prose cut by the collection's own chunker:
 | B | Qwen3-Embedding-8B | 4096 | decoder | Chinese | 0.658 | 0.355 | **33** |
 | C | Qwen3-Embedding-4B | 2560 | decoder | English | 0.747 | 0.532 | 0 |
 | D | MedCPT article | 768 | BERT | English | 0.933 | 0.453 | 0 |
+| E | MedCPT article | 768 | BERT | **PubMed** | 0.882 | 0.674 | 0 |
+
+Run E is a different CORPUS SHAPE and not merely a different corpus:
+PubMed abstracts under the `abstract` chunker, one chunk per article,
+302 to 3,034 characters where every Gutenberg bundle was 3,892 to 4,000.
+It is the case the other four could not speak for.
 
 Rows A and B refused bundles whose vectors were entirely correct. Rows C
 and D say why, and the last column is the whole diagnosis: nothing lands
@@ -360,19 +366,22 @@ model SIZE. All four clear the floor, and the binding case is the lowest
 of them rather than the average.
 
 So the shape changed and the constants barely had to. Measured over the
-four honest bundles and seven deliberately broken ones, the 2nd and 98th
+five honest bundles and seven deliberately broken ones (the controls run
+twice, in the two spaces where each side of the band binds), the 2nd and 98th
 percentiles against a band of four tenths to twice gives the honest
-bundles between 0.157 and 0.9 of margin at both ends, at 768, 2560 and
-4096 dimensions alike, while still refusing: random unit vectors (cosine −0.02),
+bundles 0.157 of margin at the low end and 0.334 at the high one, at 768,
+2560 and 4096 dimensions alike, while still refusing: random unit vectors (cosine −0.02),
 a foreign model modelled as the same vectors with dimensions permuted
 (p2 = 0.277), an un-normalised bundle (p2 = 1.77, which the cosine does
 not notice at all), a bundle half real and half random (p98 = 2.28), and
 a degenerate bundle of one repeated vector.
 
 **What it does NOT refuse, and this is the honest limit of the tier.** A
-bundle that is 10 % or 25 % random passes both statistics — its cosine is
-0.752, indistinguishable from clean, and its percentiles sit inside the
-band. The extremum rule did catch those, and it caught them with the very
+bundle a tenth random passes both statistics in every space measured —
+its cosine is indistinguishable from clean, and its percentiles sit
+inside the band, though only just where the band binds (p98 = 1.930
+against a ceiling of 2.0 on the PubMed space, where a quarter random IS
+caught). The extremum rule did catch those, and it caught them with the very
 statistic that refuses honest work, so there is no version of this test
 that sees partial contamination and admits real bundles. That is not a
 gap to be closed here: it is why the tier is labelled sanity, why T3
@@ -390,21 +399,41 @@ a poisoned chunk nobody reads harms nobody, and one that is read is
 re-embedded the first time it is cited. A few percent of wrong vectors is
 not caught by admission at all, and no tier here claims otherwise.
 
-**How far these numbers can be trusted.** Three encoders across two model
-classes and a five-fold span of dimension, and two corpora — but ONE
-plugin and ONE chunker, and that is the gap. Every bundle measured was
-Gutenberg prose cut at a thousand tokens. A corpus whose documents are
-short and technical and cut one-per-document — PubMed abstracts under the
-`abstract` chunker — or one in another modality is untested, and the
-cosine's demonstrated range is wide enough (0.658 to 0.933 over what has
-been tried) that an untested shape could land outside it in either
-direction. The deviation percentiles are the steadier of the two: 0.557
-to 0.682 at p2 across everything, which is why the band did not have to
-move when the dimension did.
+**The band is TWO-SIDED, and which side binds depends on the corpus.**
+Run E is the one that establishes this, and it overturned the reading the
+first four supported. Every Gutenberg bundle was LESS varied than the
+calibration set — ratios from 0.36 to 1.54, sitting under 1 — which made
+the floor the only side that seemed to matter and the ceiling look like
+2.6 times more headroom than anything needed. A PubMed bundle is the
+other way round: short technical abstracts, one chunk per article, on an
+encoder whose window truncates the probe set hard, and its ratios
+STRADDLE 1 — median 1.322, 98th percentile 1.666.
 
-The band is a floor for honest work, not a wall against dishonest work,
-and the first honest bundle it refuses is evidence to re-measure rather
-than to widen.
+| | worst honest value | bound | margin |
+|---|---|---|---|
+| low side | p2 = 0.557 (Qwen3 4096, Chinese) | 0.4 | 0.157 |
+| high side | p98 = 1.666 (MedCPT 768, PubMed) | 2.0 | 0.334 |
+
+Both hold, neither is generous, and a reading that watched only one of
+them would have been wrong about the next corpus. The tier is also
+SHARPER in that space, not weaker: re-running the controls against the
+MedCPT envelope with a PubMed bundle catches six of seven rather than
+five, because contamination there pushes the ratios UP through a ceiling
+rather than down toward a floor. Only a bundle a tenth random still
+passes, and it passes at p98 = 1.930 against a ceiling of 2.0.
+
+**How far these numbers can be trusted.** Three encoders across two model
+classes, a five-fold span of dimension, three corpora and two chunkers.
+What is still untested is another MODALITY — a genome collection, where
+both the alphabet and the encoder family change at once. Given that the
+cosine has already ranged 0.658 to 0.933 and the deviation percentiles
+0.557 to 1.666 over what has been tried, an untested shape can land
+outside either bound, and the honest expectation is that it eventually
+will.
+
+The band admits honest work; it is not a wall against dishonest work. The
+first honest bundle it refuses is evidence to re-measure rather than to
+widen.
 
 A stricter test than a percentile exists and is worth naming, since a
 peer may already have it: one aggregate decision over the whole
