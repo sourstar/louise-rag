@@ -1,14 +1,16 @@
-# The figures amendment — drafted, not applied
+# The figures amendment — APPLIED 2026-09-09
 
 *Written 2026-09-09. Pairs with [`figures-in-the-corpus.md`](figures-in-the-corpus.md),
 which holds the decision this implements.*
 
-**Nothing in this file has been written into docs/01–09.** It is the shape
-of the amendment, put in front of the operator before any specification
-text moves, because the amendment turns out to be much larger than the
-decision record's bill and because **four wire-format calls are genuinely
-open** — the drafters disagree on them, and each is a byte every peer must
-agree on for the life of the network.
+**Applied in `c8adbc6` across all nine documents.** This file is kept as
+the record of what the amendment had to decide and why, because the four
+wire-format calls below were genuinely open — the drafters disagreed on
+each — and the reasoning is worth more than the diff.
+
+The operator settled all four on 2026-09-09. Where a call differs from
+what a drafter proposed, the drafter's version is stated too, so nobody
+re-derives the rejected one from the journal.
 
 ## How this was produced, and what that is worth
 
@@ -96,33 +98,60 @@ orders of magnitude more swarm state for the same bytes. It also means
 §9.1's first-16-hex path-segment rule does not reach figures at all,
 because no directory is ever named after a figure.
 
-## The four open calls — these need the operator
+## The four calls, as settled
 
-**1. Which hash names a figure: SHA-256 or BLAKE2b-128?**
-Every other in-record hash is BLAKE2b-128 (`content_hash`, `origin_hash`),
-which argues for consistency. Against it: a figure's hash is *the whole of
-what a peer checks fetched bytes against*, where `content_hash`'s subject
-sits on the same line and is cheap to re-derive. Figures number in the
-hundreds of thousands, not the tens of millions, so BLAKE2b's speed
-argument does not bite. The drafters split.
+**1. The figure's hash is `H` (SHA-256), not BLAKE2b-128.** §9.1 gives
+BLAKE2b three criteria and a figure meets only the first. There are
+~275,000 plates, not PubMed's 36 million, so neither the cost of the
+function nor the width of the field is the constraint. The one that
+decided it: `content_hash`'s subject is on the same line and can be
+re-derived, where a figure's hash stands alone over bytes that arrive
+separately and is the whole of what a peer checks them against. A
+producer chooses the hash it publishes, so the attack is a COLLISION —
+2^64 against 128 bits — and the prize is a plate a human looks at.
+Bonus: §9.1's "the only two places BLAKE2b appears" stayed true and
+needed no amendment. (One drafter proposed BLAKE2b for consistency.)
 
-**2. Where is the container's root published — the snapshot, or the
-sharer's digest?** This decides whether `louise-snapshot` bumps to 2. The
-snapshot is the conservative answer (07 §7.8's "a file no snapshot lists
-is not served" then just works); the digest is cheaper but leaves the
-container's integrity resting on something unsigned by the certifier.
+**2. The container's root goes in the SNAPSHOT, not the sharer's digest.**
+`louise-snapshot` → 2. The container is re-issued exactly when its record
+shard is — a plate arriving rewrites the line, which moves the shard root
+— so the snapshot carries what it was carrying anyway. It also lets a
+peer price the plates, often the larger half of a collection, before
+fetching a byte, and 07 §7.8's "a file no snapshot lists is not served"
+then works unamended. The digest route's only saving was avoiding this
+bump, which is illusory in an amendment where the record line bumps
+regardless.
 
-**3. Does `louise-codex` bump to 2?** One drafter says forced — the record
-line has no version field of its own, and an immutable Codex is the only
-carrier a collection has for one. Another says nothing forces it. This one
-is worth deciding on its merits: it is the difference between "a
-collection's record-line version is knowable from its Codex" and "you have
-to read a shard to find out".
+**3. `louise-codex` → 2, and it was FORCED, not a judgement.** The
+drafter who said "nothing forces it" checked whether an existing field
+changes; none does. But carrying the record line's version AT ALL is
+itself a change to the Codex schema, and §9.18's rule closes it.
 
-**4. Per-member licence class.** A green text with yellow-class plates is a
-real case (a public-domain book scanned by a library that asserts rights in
-the scan), and 04 §4.4's table has one class per collection. The decision
-does not settle it and every drafter that met it flagged it.
+The refinement, against what the other drafter proposed: the shape is a
+new `record_line` field rather than an overloaded `version`. §9.18
+already versions the record line separately; `version` tracks what wrote
+the Codex, `record_line` what is in the shards. Overloading would make a
+future v3 Codex still have to imply "has figures", and the meanings pile
+up.
+
+The implication worth keeping: `record_line` is inside `collection_id`,
+so **a Codex edited to change it is a different collection by
+construction**. 02 §2.7's "a collection whose records gain plates is a
+new collection" stops being a rule anyone has to remember. Note also that
+`version` is NOT in `space_id`, so the bump costs no vector sharing —
+what blocks sharing between plain Gutenberg and Gutenberg-with-plates is
+the epub's reflowed text moving `content_hash`, not the version.
+
+**4. No per-member licence class.** Figures ride the collection's class,
+on all three rows of 04 §4.4 — including red, where they do NOT travel,
+because a plate is the origin's content and not something derived from
+it, so it falls on the text's side of that line and not the vectors'.
+Where plates carry conditions the text does not, the collection takes the
+stricter class, by the rule that already lets a collection tighten and
+never loosen. Rejected because the acknowledgement is per collection —
+"one ack covers records, vectors and drag alike" — and splitting the
+class turns one ack into a matrix, for a case no corpus here presents.
+Reversible if one ever appears.
 
 ## Three findings worth acting on independently
 
@@ -141,14 +170,49 @@ does not settle it and every drafter that met it flagged it.
   row states something already false about bundles, `index-<slice>` and
   `origin-<slice>`.
 
-## What I would do next
+## What the code now owes
 
-Settle the four calls, then apply the amendment in one pass with the
-closed-list table above as the checklist — because the failure mode is not
-a bad sentence, it is a member that exists and that `share` refuses, which
-is precisely the bug found in `snapshot._files` on 2026-09-08 and which
-every test passed through.
+The documents are amended; **no code implements any of it.** What follows
+is what has to change before a plates collection can be built, and each
+item is a place where the code and the documents now disagree on purpose.
+
+* `app/plugins/base.py` — `CanonicalDoc` gains `figures`, and a `Figure`
+  type appears beside it (06 §6.1). `PARSER_VERSION` moves on any plugin
+  that starts yielding them.
+* `app/hold/codex.py` — `CODEX_VERSION` becomes an instance field, not a
+  module constant, so `loads` can accept 1 and 2; the Codex gains
+  `record_line`; `_TOP`'s closed list gains it. And `derive`,
+  `continue_` and `replace` must PRESERVE it and refuse to change it —
+  a sister shares her mother's corpus, so her lines are her mother's.
+* `app/hold/drag.py` — `MEMBER_KINDS` gains `figures`, with the member
+  name and the container path.
+* `app/hold/snapshot.py` — a `figures` list beside `relations`, and
+  `louise-snapshot` version 2.
+* `app/hold/records.py` — write the `figures` key iff the Codex says
+  `record_line` 2, and the container beside the shard. Nothing can check
+  that consistency at `create` (there are no records yet), so it lands
+  here and in `hold check`'s `records` check.
+* `app/plugins/gutenberg/pg_epub.py` already produces the right shape —
+  `Figure(href, media_type, sha256, bytes, caption, seq)` — and predates
+  the amendment. Its `sha256` is `H`, which call 1 confirms; `caption`
+  goes to `sections` and not to the record line, which the amendment
+  also confirms.
+
+## The measurement 08 §8.7 is waiting for
+
+§8.7's three caps — 16 MiB per figure, 64 megapixels, 1,024 figures per
+record — are marked in the document itself as its weakest part. They were
+chosen to be obviously sufficient, not measured.
+`tools/gutenberg_plates_recon.py --deep` produces exactly the
+distribution that would replace them: plates per book, bytes per plate,
+across the real corpus. Until it runs, the caps stand and are honest
+about what they are.
+
+## Provenance
 
 The full 100 drafted edits are in this session's workflow journal
-(`wf_1ff5024a-da9`), recoverable with the run id if the drafts are wanted
-verbatim rather than re-derived.
+(`wf_1ff5024a-da9`), recoverable with the run id. The applied text is not
+those edits: the four calls above settled differently from several of
+them, so the amendment was written against the settled shape with the
+closed-list table as its checklist. The drafts' value was the sweep and
+the anchors, both of which held up.
