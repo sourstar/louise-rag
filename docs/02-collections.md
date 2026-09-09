@@ -918,10 +918,13 @@ exception: a sister shares the corpus by definition, a daughter
 continues it, and a corrective sister re-derives it from the same
 origin — none of them is standing on less of the provider's work than
 the mother was, and a new encoder does not unwrite whose text it read.
-Her community entry follows her own `embedding`, which is hers to set
-and which she is free to change: a sister may open a certifier-only
-mother to contribution, or close an open one, and her credits say which
-she did. So a sister's `credits` are never empty, and neither are a
+Her community entry follows `embedding`, which she keeps from her mother
+like everything else outside the four fields a sister may change — so in
+practice it is her mother's too, and the rule is stated in terms of
+`embedding` rather than inheritance because that is what makes it
+derived: a collection credits the community exactly when it takes the
+community's vectors, and nothing else can put the entry there or take it
+away. So a sister's `credits` are never empty, and neither are a
 corrective sister's, though its archive entries are: a correction
 discards the vectors and keeps the debt for the text.
 
