@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-09-09.** What exists, what is designed but unbuilt,
+**Last updated: 2026-09-09 (late).** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **The specification moved.** `docs/README.md` and the nine numbered
@@ -982,6 +982,30 @@ gutenberg pack plan needs those vectors before the hand-over.
    which is what the citation resolver needs. The GU's own issue stream
    (concorsi, inserzioni) is deliberately NOT scoped: unread terms plus
    personal data.
+
+## Invariants re-audit (2026-09-09) — the review-only ones, plus #9
+
+CLAUDE.md says "the ones enforced by review alone are the ones that have
+drifted", which is a pointer worth following. #5 and #6 are the two, and
+#9 was checked with them because its own prose names a violation observed
+live.
+
+- **#5 BANDWIDTH — holds.** `app/acquire/transport_hf_hub.py` looked like
+  a gap: it moves corpus bytes and appears in no budget-drawing module.
+  It is not one — `fetch_one` delegates to `HttpsTransport.fetch_one`,
+  which calls `budget.acquire_bytes` per chunk. The only unmetered
+  traffic is the Hub's tree-listing JSON, which is metadata and not bulk.
+- **#6 STORAGE — holds.** Nothing in `app/` or `tools/` runs a VACUUM;
+  the single occurrence of the word is `app/db.py:337`, a comment saying
+  what to do if one is ever introduced (clear the alignment marker so
+  `catalog_fts` is rebuilt against the new rowids).
+- **#9 LICENSE GATES — had a hole, now closed.** `require_ack` was called
+  from exactly ONE place in the tree, the archive FETCH. A shard already
+  on disk never passes through it, which is the bypass the invariant
+  itself names and records as observed live. The check now sits at
+  `genesis.import_shard` as well, with the test that was missing. The
+  IMPORTER half stays open by design — it belongs in the module step 4e
+  rewrites (migration plan, step 4f).
 
 ## Invariants review (2026-08-23 — amendments 30, 31)
 
