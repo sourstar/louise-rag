@@ -284,6 +284,43 @@ steadier of the two (p2 spans 0.557-0.682 across everything measured).
 
 Specs `4db9657` on main.
 
+**Run E — PubMed, and the band turns out to be two-sided.** The shape the
+note itself called untested: abstracts under the `abstract` chunker, one
+chunk per article, 302–3,034 characters against Gutenberg's 3,892–4,000.
+Same encoder and the cached envelope from run D, so only the bundle was
+embedded.
+
+| run | encoder | dim | corpus | cosine | p2 | p98 |
+|---|---|---|---|---|---|---|
+| A | Qwen3-8B | 4096 | gutenberg/en | 0.752 | 0.601 | ~1.05 |
+| B | Qwen3-8B | 4096 | gutenberg/zh | 0.658 | 0.557 | ~1.12 |
+| C | Qwen3-4B | 2560 | gutenberg/en | 0.747 | 0.645 | ~1.04 |
+| D | MedCPT | 768 | gutenberg/en | 0.933 | 0.682 | 1.274 |
+| E | MedCPT | 768 | **pubmed** | 0.882 | **0.953** | **1.666** |
+
+Every Gutenberg bundle sat UNDER 1 — less varied than the calibration
+set — and this note and 03 §3.5 both drew the obvious conclusion twice:
+that the floor was the side that mattered and that every perturbation
+pushed toward it. Both were properties of one corpus shape. PubMed
+straddles 1.
+
+| | worst honest | bound | margin |
+|---|---|---|---|
+| low side | p2 0.557 (qwen3/4096, chinese) | 0.4 | 0.157 |
+| high side | p98 1.666 (medcpt/768, pubmed) | 2.0 | 0.334 |
+
+The controls were re-run in the PubMed space, since a separation measured
+where the floor binds says nothing about where the ceiling does. The tier
+is sharper there — six of seven caught rather than five, a quarter random
+now among them — because contamination pushes ratios UP through a ceiling
+rather than down toward a floor. A tenth random still passes, at p98
+1.930 against 2.0.
+
+Three corpora, two chunkers, three encoders, two model classes, dims 768
+to 4096. What is left untested is another MODALITY.
+
+Specs `a1b5ca9` on main.
+
 **Still open under item 5, unchanged**: the reference is captured from
 whatever the encoder returned at `create` time with no independent check.
 
