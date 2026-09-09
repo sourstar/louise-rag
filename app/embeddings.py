@@ -52,6 +52,19 @@ def _request_vectors(batch: list[str], timeout: float,
 def _invalid(v) -> bool:
     return not v or any(x is None or not math.isfinite(x) for x in v)
 
+
+def _dense_script(ch: str) -> bool:
+    """Characters that cost roughly one token each rather than amortising
+    over four: CJK ideographs, kana and hangul. Measured at 1.02 chars per
+    token against Qwen3-Embedding-8B, versus 5.70 for Latin prose."""
+    o = ord(ch)
+    return (0x3040 <= o <= 0x30FF or          # hiragana, katakana
+            0x3400 <= o <= 0x4DBF or          # CJK extension A
+            0x4E00 <= o <= 0x9FFF or          # CJK unified
+            0xAC00 <= o <= 0xD7AF or          # hangul syllables
+            0xF900 <= o <= 0xFAFF or          # CJK compatibility
+            0x20000 <= o <= 0x2FA1F)          # CJK extension B+
+
 def _embed_batch(batch: list[str], timeout: float,
                  recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
@@ -62,6 +75,26 @@ def _embed_batch(batch: list[str], timeout: float,
     Other HTTP errors surface with the server's actual message."""
     budget = recipe.ctx * 4
     n_bad = 0
+    # The FIRST guess is script-aware; the loop below is what makes it
+    # correct. Measured 2026-09-09 over the 512 calibration texts against
+    # Qwen3-Embedding-8B, chars per real token ran 1.02 to 5.70 — so a flat
+    # `ctx * 4` is four times too generous for CJK, which then costs three
+    # or four refused round-trips before the 20 % steps find the length.
+    # Counting dense scripts at about a token each spends the first attempt
+    # near the right size instead.
+    #
+    # It is an ESTIMATE and cannot be made a bound: fitted over the same
+    # 512 texts, `ctx * 4` under-counts 284 of them (worst 4.04x) and the
+    # best character rule tried still under-counts 65 (worst 2.38x) while
+    # throwing away 37 % of every Latin window. Tokenization follows a
+    # vocabulary, not a script, and the platform holds no tokenizer
+    # (invariant 7). Shrink-on-refusal is therefore the mechanism that fits
+    # every case, and this only decides how often it has to run.
+    dense = sum(1 for t in batch for ch in t if _dense_script(ch))
+    chars = sum(len(t) for t in batch)
+    if dense and chars:
+        per_char = (dense / 1.0 + (chars - dense) / 4.0) / chars
+        budget = max(256, int(recipe.ctx / per_char))
     for attempt in range(10):
         cut = [t[:budget] for t in batch]
         try:

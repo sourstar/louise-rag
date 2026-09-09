@@ -103,6 +103,23 @@ PAIRS = 64
 LADDER = ((1, 175, 2048), (1, 2049, 8192))
 
 #: A token is four characters, the same rule `app/chunking.py` uses.
+#:
+#: MEASURED against the real thing on 2026-09-09 — every text in the frozen
+#: set embedded by Qwen3-Embedding-8B-Q4_K_M, the encoder the Gutenberg
+#: collection pins — the rule is right in the middle and wrong at both ends:
+#:
+#:     chars per REAL token   min 1.02   median 3.68   max 5.70
+#:
+#: So 4 is a good MEDIAN and no kind of bound. Latin prose runs 5-ish, which
+#: makes the estimate pessimistic and harmless; CJK runs 1.02, which makes it
+#: FOUR TIMES optimistic — a text this file calls 8192 tokens can be 32,000.
+#: 67 of the 512 therefore exceed `ctx` 8192 and are truncated to fit by
+#: `app/embeddings.py` before they reach the encoder (09 §9.12).
+#:
+#: That is not a defect in the set and it is why the numbers below are called
+#: estimates. A long text that overshoots is truncated to exactly what the
+#: window holds, which is a BETTER full-window probe than one built to a
+#: guess: the guess falls short, the overshoot never does.
 CHARS = 4
 
 #: Languages to draw long text from, in a fixed order so the selection is

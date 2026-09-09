@@ -219,6 +219,17 @@ def test_the_shipped_set_reaches_the_largest_context_window():
     `coverage`'s `long` counts anything over 128 tokens, which the first
     set satisfied while failing at exactly this. Length is therefore
     asserted here in tokens, at the windows real encoders declare.
+
+    THE UNIT IS AN ESTIMATE, and the estimate was measured on 2026-09-09
+    against Qwen3-Embedding-8B, the encoder the Gutenberg collection pins:
+    chars per real token ran 1.02 (CJK) to 5.70 (Latin prose), median 3.68.
+    So `//4` is a good median and no bound in either direction, and 67 of
+    the 512 texts really exceed an 8192 window — they are truncated to fit
+    by `app/embeddings.py` before they reach an encoder (09 §9.12), which
+    is what makes an overshooting text a better full-window probe than one
+    built to a guess. Nothing here can assert real tokens: the platform
+    holds no tokenizer (invariant 7), and the estimate is the only unit a
+    test has.
     """
     _, texts = cal.load("text")
     tok = sorted(len(t) // 4 for t in texts)          # chunking.py's rule
