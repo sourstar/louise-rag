@@ -287,3 +287,100 @@ Note what it is not: it is not a question about whether the epub is a
 better source. It is a question about whether the two parsers, after
 cleaning, agree — and if they nearly-but-not-quite agree, the near miss
 is worth understanding before it is designed around.
+
+---
+
+## What the corpus actually holds — measured 2026-09-09
+
+Run over `<gutenberg-root>`: 79,292 book directories,
+44,477 illustrated epubs, 786,699 images. Every number below is counted,
+not estimated.
+
+**A COVER IS NOT A PLATE, and the epub says which is which.** 09 §9.5
+defines a figure as "a plate, a diagram or a drawing the origin carries
+BESIDE THE TEXT". Gutenberg's cover is none of those: it generates one
+for its own catalogue, for nearly every book, illustrated or not.
+
+100 % of illustrated epubs DECLARE their cover — 
+`properties="cover-image"` (EPUB 3) and `<meta name="cover">` (EPUB 2) in
+almost equal numbers. So it is identified exactly, with no filename
+heuristic and no threshold on the image count. `pg_epub.figures()` reads
+both and skips it.
+
+That single exclusion is the difference between a plates collection of
+44,486 books and one of the books that have plates:
+
+| | books | plates | member | GPU-days |
+|---|---|---|---|---|
+| any images epub | 44,486 | 786,699 | 51.0 GB | 14.59 |
+| **≥ 1 non-cover plate** | **25,488** | **739,771** | **47.8 GB** | **8.11** |
+| cover only | 18,988 (42.7 %) | — | — | — |
+
+**NO OTHER NON-CONTENT MARKER EXISTS.** Swept for every semantic tag
+EPUB provides. Present: `cover-image`, `cover` (guide), `nav`, `svg`,
+`toc`, and one instance each of `text`, `linked_image`, `icon`. There is
+no `logo`, `ornament`, `titlepage`, `colophon` or `frontmatter` marker
+anywhere — EPUB defines a vocabulary for these and Gutenberg does not use
+it. The cover is the only non-content image the format lets us name.
+
+**CAPTIONS DO NOT IDENTIFY ORNAMENTS.** 10.4 % of non-cover images are
+under 5 KB, which is ornament-sized, so caption presence was tested as a
+filter. It is not one — the small images are captioned MORE often than
+the large:
+
+| image size | has `alt` |
+|---|---|
+| < 5 KB | 58.7 % |
+| 5–50 KB | 60.4 % |
+| ≥ 50 KB | 43.5 % |
+
+**ABOUT TWO THIRDS OF PLATES CARRY A CAPTION, and it is already indexed.**
+53.4 % have an `alt`. Of the rest, 31 % are followed immediately by
+caption-shaped text — real captions, "A TABLEAU OF THE DAY.", "THE PET
+DOGS OF NEW-YORK PRESENT THEIR COMPLIMENTS…" — which is another ~14 % of
+all plates.
+
+The other three fifths of the alt-less ones are NOT captions and a naive
+"take the next text" rule would be wrong about them: 55.8 % are followed
+by the literal word `back`, a navigation link in Gutenberg's
+scanned-page epubs (6,462 occurrences), 9.3 % by body prose, and 3.9 %
+by nothing.
+
+**Nothing needs to change for searchability**, and this is the point that
+was got wrong first time round: that text is ordinary document text, so
+`read_clean` already captures it, it is already in `sections`, already
+chunked and already indexed. The reading order also already puts it
+where it belongs —
+
+```
+[Illustration]
+
+A TABLEAU OF THE DAY.
+```
+
+— so a reader, or an LLM given the chunk, sees the caption under its
+plate without the parser associating them explicitly.
+
+What an explicit association would buy is precision, not reach, and it
+would cost a heuristic: separating a caption from a `back` link needs
+length bounds and link-skipping, and **that heuristic would sit inside
+`content_hash`** (the marker is in `sections`). It would therefore be
+frozen at `create` and unfixable after, and getting it wrong later means
+re-embedding. Left alone deliberately.
+
+Capturing Gutenberg's `<p class="caption">` convention was measured
+separately and rejected: it rescues 1.1 % of images, because where a
+caption paragraph exists the `alt` almost always does too.
+(`<figcaption>` appears ZERO times in 4,747 epubs — Gutenberg predates
+HTML5.)
+
+**Thumbnail pairs are negligible**: `_sm_`/`_lg_` duplicates of one plate
+appear in 2 books out of 5,745. Real, not worth a rule — and note the
+hash-dedup in `figures()` does not catch them, since they are genuinely
+different bytes.
+
+**The plates are already on disk.** That tree is a full Gutenberg mirror
+carrying both `-images.epub` and `-images-3.epub`. The acquisition
+filter's `exclude=("*images*",)` applies to the `extras` path and not to
+this corpus, so no re-fetch is needed and "nothing is re-downloaded"
+needs no exception.

@@ -276,3 +276,94 @@ def test_epub_text_differs_from_hard_wrapped_text(tmp_path: Path):
 
     assert pg_text.read_clean(txt) != pg_epub.read_clean(epub)
     assert pg_epub.read_clean(epub) == prose, "the epub gives it back unwrapped"
+
+
+# ---- the cover is not a plate ---------------------------------------------
+
+def build_with_cover(path, docs, images, *, how):
+    """An epub that declares its cover the way Gutenberg does — EPUB 3's
+    `properties="cover-image"` or EPUB 2's `<meta name="cover">`. Measured
+    over 44,477 real illustrated epubs, both appear in almost equal numbers
+    and ONE HUNDRED PER CENT use one of them."""
+    ids = {name: f"d{i}" for i, (name, _) in enumerate(docs)}
+    manifest = [f'<item id="d{i}" href="{n}" media-type="application/xhtml+xml"/>'
+                for i, (n, _) in enumerate(docs)]
+    meta = ""
+    for j, (name, _) in enumerate(images):
+        props = ' properties="cover-image"' if (how == "epub3" and j == 0) else ""
+        manifest.append(f'<item id="i{j}" href="{name}" media-type="image/jpeg"{props}/>')
+    if how == "epub2":
+        meta = '<meta name="cover" content="i0"/>'
+    spine = "".join(f'<itemref idref="{ids[n]}"/>' for n, _ in docs)
+    opf = ('<?xml version="1.0"?>'
+           '<package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+           f'<metadata>{meta}</metadata>'
+           f'<manifest>{"".join(manifest)}</manifest>'
+           f'<spine>{spine}</spine>'
+           '</package>')
+    container = ('<?xml version="1.0"?>'
+                 '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" '
+                 'version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" '
+                 'media-type="application/oebps-package+xml"/></rootfiles></container>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("META-INF/container.xml", container)
+        z.writestr("OEBPS/content.opf", opf)
+        for name, xhtml in docs:
+            z.writestr(f"OEBPS/{name}", xhtml)
+        for name, raw in images:
+            z.writestr(f"OEBPS/{name}", raw)
+    return path
+
+
+@pytest.mark.parametrize("how", ["epub3", "epub2"])
+def test_the_declared_cover_is_not_a_plate(tmp_path: Path, how):
+    """09 §9.5: a figure is "a plate, a diagram or a drawing the origin
+    carries BESIDE THE TEXT". Gutenberg's cover is none of those — it is
+    generated for its own catalogue, it is packaging, and it is present for
+    nearly every book whether the book is illustrated or not."""
+    p = build_with_cover(
+        tmp_path / f"pg1-images-{how}.epub",
+        [("a.xhtml", page('<img src="images/cover.jpg" alt="Cover"/>'
+                          '<p>text</p>'
+                          '<img src="images/plate1.jpg" alt="A ship"/>'))],
+        [("images/cover.jpg", OTHER), ("images/plate1.jpg", PLATE)],
+        how=how)
+    figs = pg_epub.figures(p)
+    assert [f.caption for f in figs] == ["A ship"], "the cover is excluded"
+    assert figs[0].sha256 == "sha256:" + hashlib.sha256(PLATE).hexdigest()
+
+
+@pytest.mark.parametrize("how", ["epub3", "epub2"])
+def test_a_cover_only_book_yields_no_figures(tmp_path: Path, how):
+    """Two thirds of Gutenberg's illustrated epubs are this. Excluding the
+    cover is the difference between a plates collection of 44,000 books and
+    one of the books that actually have plates."""
+    p = build_with_cover(
+        tmp_path / f"pg2-images-{how}.epub",
+        [("a.xhtml", page('<img src="images/cover.jpg" alt="Cover"/><p>t</p>'))],
+        [("images/cover.jpg", OTHER)],
+        how=how)
+    assert pg_epub.figures(p) == []
+
+
+@pytest.mark.parametrize("how", ["epub3", "epub2"])
+def test_the_cover_is_found_by_both_declarations(tmp_path: Path, how):
+    """Gutenberg uses EPUB 3's `properties` and EPUB 2's `<meta name=cover>`
+    in almost equal numbers, so reading only one would miss half the corpus."""
+    p = build_with_cover(
+        tmp_path / f"pg3-{how}.epub",
+        [("a.xhtml", page("<p>t</p>"))],
+        [("images/cover.jpg", OTHER)], how=how)
+    with zipfile.ZipFile(p) as z:
+        assert pg_epub.cover_href(z) == "OEBPS/images/cover.jpg"
+
+
+def test_an_epub_that_declares_no_cover_keeps_every_image(tmp_path: Path):
+    """The fixtures elsewhere in this file declare none, and every image in
+    them is a plate. Absence of a declaration is not a reason to guess."""
+    p = build(tmp_path / "b.epub",
+              [("a.xhtml", page('<img src="images/p1.jpg" alt="x"/>'))],
+              images=[("images/p1.jpg", PLATE)])
+    with zipfile.ZipFile(p) as z:
+        assert pg_epub.cover_href(z) is None
+    assert len(pg_epub.figures(p)) == 1
