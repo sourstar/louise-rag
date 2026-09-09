@@ -26,8 +26,8 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; two guards left |
 | 6 | T0's envelope gate | **OPEN — measure** |
 | 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
-| 8 | credits | **DECIDED** 2026-09-09 — and it opened item 9 |
-| 9 | the corpus attribution has no Codex field | **OPEN — operator**, and it is a wire-format change |
+| 8 | credits | **DONE** 2026-09-09 — and it opened item 9 |
+| 9 | the corpus and community credits | **DONE** 2026-09-09 — `credits` carries a `kind` |
 
 ---
 
@@ -223,6 +223,49 @@ changes `collection_id` for every collection — so it is not made here.
 The moment to make it is before the first `create` of step 6, and it is
 free right now only because nothing has been published beyond this
 operator's own machines.
+
+---
+
+## 9. The corpus and community credits — DONE 2026-09-09, operator
+
+Item 8's decision opened this one and the same day closed it. The
+operator's rule, verbatim: *"I want to credit the Project Louise community
+and the corpus provider, for the part that has been embedded by the
+community."*
+
+Neither had anywhere to go. `credits` held pre-embedded archives only;
+`license` is `{class, terms_sha256}` and `terms_sha256` hashes the licence
+TEXT, which for CC BY-SA says credit must be given without naming who is
+owed it; `origin` is a locator. The sharpest form of the gap: a CORRECTIVE
+SISTER of a Wikipedia collection would have carried every word of
+Wikipedia's text with `credits: []`.
+
+`credits` now carries a `kind` — `corpus`, `archive`, `community` — in one
+closed six-key shape, and the kind decides both which keys mean anything
+and by which rule the entry descends. Three lifetimes:
+
+| kind | where it comes from | what a relative gets |
+|---|---|---|
+| `corpus` | the plugin (06 §6.1's `corpus_provider` / `corpus_attribution`) | her mother's, on every relation without exception |
+| `archive` | the recipe's `archives`, through the registry | today's rule: the mother's when `space_id` matches, the recipe's when not, none on a corrective sister |
+| `community` | `embedding` — present when `open` or `endorsed` | follows `embedding`, which a sister keeps |
+
+Exactly one corpus entry on every collection, GREEN ONES INCLUDED: a
+provider that asks for nothing is still the provider, and a rule with an
+exception is a rule someone lands on the wrong side of. `credits` is
+therefore never empty.
+
+**The trap this could have set, and the reason it did not.** A corpus
+entry carries `coverage: "all"`, and 06 §6.3's `archive:<id>` layer rule
+reads coverage. Had it read the corpus entry, EVERY document would fall in
+the archive layer, be cut by the wrong chunker, and produce different
+vectors under a `space_id` two peers agree on — invariant 1's silent
+failure mode, introduced by a compliance field. The rule now reads
+`kind: "archive"` and nothing else, and a test asserts a corpus-only
+collection puts nothing in the archive layer.
+
+Specs `f33b62e` + `2e58d44` on main; code `c5778d2` on `louise`; 19 tests
+in `tests/hold/test_credit_kinds.py`.
 
 ---
 
