@@ -205,10 +205,62 @@ def test_the_shipped_set_carries_adjacent_near_duplicate_pairs():
     assert close >= 24, f"only {close}/32 tail pairs are near-duplicates"
 
 
+def test_the_shipped_set_reaches_the_largest_context_window():
+    """WHY THE SET WAS REBUILT, 2026-09-09, as an assertion.
+
+    The first set's longest text was 174 tokens, against spaces whose `ctx`
+    is 512 (MedCPT) and 8192 (BGE-M3) — nothing in it came within a third
+    of the smaller window. `approved-encoders.md` records that the b10630
+    build "tested clean afterwards at every concurrency, with identical and
+    with distinct long texts — all 1.000000. Short tests do not catch
+    this". So the gate would have passed the one build that has actually
+    damaged this corpus.
+
+    `coverage`'s `long` counts anything over 128 tokens, which the first
+    set satisfied while failing at exactly this. Length is therefore
+    asserted here in tokens, at the windows real encoders declare.
+    """
+    _, texts = cal.load("text")
+    tok = sorted(len(t) // 4 for t in texts)          # chunking.py's rule
+    assert tok[-1] >= 8192, f"longest text is {tok[-1]} tokens; nothing fills an 8192 window"
+    for window in (512, 1024, 2048, 4096, 8192):
+        n = sum(1 for t in tok if t >= window)
+        assert n >= 16, f"only {n} texts reach a {window}-token window"
+    assert sum(1 for t in tok if t <= 16) >= 8, "the short end went with it"
+
+
+def test_every_drawn_text_has_a_recorded_source():
+    """09 §9.12 wants a set nobody can tune to their own build. The short
+    texts are authored and the long ones are drawn from Project Gutenberg,
+    so the drawn ones — and only those — carry a book id in the sidecar. A
+    long text with no source, or a source with no text, means the set and
+    `tools/build_calibration_set.py` have drifted apart and the set is no
+    longer reproducible from the corpus.
+    """
+    import json
+    _, texts = cal.load("text")
+    sidecar = cal.path_for("text").with_name("text.sources.json")
+    assert sidecar.is_file(), f"{sidecar} is missing: the set's provenance"
+    sources = json.loads(sidecar.read_text(encoding="utf-8"))
+    drawn = [t for t in texts if len(t) // 4 >= 175]
+    assert len(sources) == len(drawn), (
+        f"{len(sources)} recorded sources for {len(drawn)} drawn texts")
+    for s in sources:
+        assert set(s) == {"lang", "book", "nth", "tokens"}, s
+        assert isinstance(s["book"], int) and s["book"] > 0, s
+
+
 def test_the_shipped_sets_id_is_stable():
     """The id is the file's hash, and every Codex naming it needs this exact
     file forever. If this test fails, the set was edited — which is a NEW
-    set and a new id, not a correction to this one."""
+    set and a new id, not a correction to this one.
+
+    It has been rebuilt once, on 2026-09-09, for the reason the test above
+    asserts; `tools/build_calibration_set.py` reproduces these bytes and
+    `calibration/text.sources.json` says where each drawn text came from.
+    The first set's id was sha256:6a1bac6e…f1ad6e19 — recorded because a
+    Codex written before that date names it, and nothing rewrites a Codex.
+    """
     sid, _ = cal.load("text")
-    assert sid == ("sha256:6a1bac6e6cfb63e219bce570526d9418d"
-                   "0827d7ae7cf3a56ecaa9901f1ad6e19")
+    assert sid == ("sha256:7d06a2f6a4a773da01a517cb30571cac"
+                   "421753df3e30b20fca4716e5441fbf0f")

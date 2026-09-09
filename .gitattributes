@@ -1,9 +1,11 @@
 # Line endings are load-bearing here: the golden tests hash chunked fixture
-# text, and possession binding hashes raw corpus bytes — a CRLF checkout would
-# silently change both. Everything is committed and checked out as LF, and the
-# fixtures plus vendored assets are never converted at all.
+# text, possession binding hashes raw corpus bytes, and a calibration set's
+# id IS the sha256 of its file — a CRLF checkout would silently change all
+# three. Everything is committed and checked out as LF, and the fixtures,
+# the calibration sets and vendored assets are never converted at all.
 * text=auto eol=lf
 tests/fixtures/** -text
+calibration/** -text
 app/static/vendor/** -text
 *.png binary
 *.npy binary
