@@ -137,6 +137,17 @@ check --accept` is the only way a changed build becomes the one this
 peer stands behind: it keeps that run's signed statement, which is what
 the digest publishes and what 04 §4.5 weights.
 
+**A peer that DERIVES rather than embeds passes no gate, because there
+is no encoder to gate.** Where a space declares a `derivation` (02
+§2.7), its vectors are a pure function of another space's, computed by
+arithmetic that cannot drift: there is no driver, no build and no
+quantisation of the endpoint's choosing to test. What the derived
+vectors rest on is the admission the SOURCE vectors already passed in
+their own space, and a peer that holds none of those derives nothing.
+For the same reason a derived space's reference vectors are its
+source's, derived by the same function, and `hold collection create`
+writes its calibration member without calling an encoder at all.
+
 There is no separate drift detector, and deliberately so. "Is this
 encoder still the same function?" already has an answer — run the gate —
 and the worker runs it before every embedding session and whenever the
@@ -299,7 +310,7 @@ thousand chunks whose production took about half a GPU-hour.
 | **T0 algebraic** | dimension compared four ways — bundle header, vector column width, the Codex's `space.dim`, the local table — and dtype match the space; unit norm; no NaN, no duplicates; for every record, the bundle's set of chunk ids equals the set `chunks` derives locally, or the record is refused whole; the bundle's mean vector has cosine ≥ 0.9 to the envelope's mean and every per-dimension standard deviation lies within half and twice the envelope's (§3.3) | tens of ms, CPU | missing normalisation, random or foreign vectors, a wrong chunk geometry; sanity only, never a security control |
 | **T1 geometric** | each vector's cosine profile against the calibration vectors, recorded as evidence; sampled (vector, probe, probe) triples must be geometrically realisable, which real vectors cannot fail and mis-decoded bytes do; and, for `fixed` layers, consecutive chunks overlap by construction, so their cosine must sit in a band measured on the local text — the 1st to 99th percentile of the same statistic over the vectors this peer already holds for that layer, not run until it holds a thousand such pairs or when the bundle has fewer than eight adjacent pairs; for `cdc`, `abstract` and `verbatim` layers the band does not exist and is not run | under a second, CPU | wrong dtype or shape, shuffled or perturbed vectors |
 | **T2 challenge** | golden (text, vector) pairs — the calibration set's first sixteen texts and their reference vectors — re-embedded by the producer into the bundle header (09 §9.7); passes on the calibration quorum; no age rule | none for the importer | misconfiguration — proof of a correct oven, not of each loaf; not a security control |
-| **T3 spot recompute** | sixteen chunks chosen by the importer's private randomness, re-embedded with the importer's own compliant encoder; fails when fewer than twelve reach `tolerance` or the median is below it — the calibration quorum reused | a few seconds, GPU — under one percent of production | bulk substitution: a wrong model, a wrong quantisation, a bundle mostly garbage |
+| **T3 spot recompute** | sixteen chunks chosen by the importer's private randomness, re-embedded with the importer's own compliant encoder; fails when fewer than twelve reach `tolerance` or the median is below it — the calibration quorum reused. In a DERIVED space (02 §2.7) the importer embeds with the SOURCE space's encoder and applies the declared derivation before comparing, because a derived space may have no encoder that emits it natively — a truncation at a width the model never publishes — and re-embedding is then impossible by definition | a few seconds, GPU — under one percent of production | bulk substitution: a wrong model, a wrong quantisation, a bundle mostly garbage |
 | **T4 verify on use** | a poisoned vector is inert until a search surfaces it; the chunks a search actually cites — those in the list it returns to its caller — are re-embedded once with this peer's compliant encoder, asynchronously, and marked *verified here* forever | a few seconds per answer, once per chunk ever cited | targeted poisoning, which sampling cannot find |
 
 The importer's randomness in T3 is private and never derived from the
