@@ -430,8 +430,15 @@ and `c` by measurement rather than by code — see below).**
   the padding factor. Derive coverage from merged chunk ids, never by
   expanding the header's `uids: [first, last]` range: that was only
   accidentally correct under whole-bundle refusal.
-- **f. The licence gate.** `licensing.require_ack` in the importer and in
-  the archive path (invariant 9). Three lines; it is absent today.
+- **f. HALF DONE.** `licensing.require_ack` in the importer and in
+  the archive path (invariant 9). The ARCHIVE half landed early, because
+  its path survives `e` and the hole was live: `genesis_fetch` gated the
+  FETCH, so a shard already on disk — a local archive whose vectors
+  travel with the corpus, a hand-populated cache, a peer copy — reached
+  `import_shard` ack-free, which is the bypass the invariant names and
+  records as observed. The check now sits at `import_shard`, the
+  chokepoint both entry points reach, with a test. The IMPORTER half
+  waits for `e`, which rewrites the module it belongs in.
 - **g. The admission budget** (08 §8.2) in the same commit that removes
   TOFU — 07 §7.8 already gives the surface.
 - **h. `check([--drop])`**: `vector_compliance` and `vector_sweep` as one

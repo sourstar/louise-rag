@@ -82,6 +82,47 @@ def test_the_worker_withholds_the_scan_and_the_archive_without_an_ack(pubmed_pac
     con.close()
 
 
+def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_pack, tmp_path):
+    """Invariant 9's ingestion half, on the path that had no gate.
+
+    `genesis_fetch` refuses to FETCH an archive without an ack, which
+    covers the bytes that move over the network. It does not cover a shard
+    that is already on disk — a local archive whose vectors travel with
+    the corpus, a hand-populated cache directory, a peer copy. The
+    invariant names exactly those: "hand-populated folders and peer copies
+    are not a bypass (observed live: a peer-copied shard was indexed and
+    imported ack-free)". What it gates is USE, not transport.
+
+    So the check belongs at `import_shard`, which every path reaches:
+    `import_archive` walks through it and `app/cli.py` is the only caller
+    of either.
+    """
+    from app.bundles import genesis
+
+    origin, pack_dir = pubmed_pack
+    packed = _coll(tmp_path, "pm-arch", "packed", pack_dir)
+    assert licensing.state_for(packed) == licensing.MISSING
+    con = db.connect(packed)
+    archive = genesis.ARCHIVES["medcpt-pubmed"]
+
+    def never(*a, **k):                       # nothing may be read
+        raise AssertionError("the shard was read before the licence was checked")
+
+    with pytest.raises(Exception, match="requires an acknowledgement"):
+        genesis.import_shard(con, packed, archive, "0", fetch=never)
+    with pytest.raises(Exception, match="requires an acknowledgement"):
+        genesis.import_archive(con, packed, archive, shards=["0"], fetch=never)
+
+    # Nothing was recorded either: a refused import leaves no cursor row
+    # to short-circuit a later, acknowledged one.
+    assert con.execute("SELECT COUNT(*) FROM genesis_imports").fetchone()[0] == 0
+
+    # And a green collection is never blocked by it.
+    green = _coll(tmp_path, "g-arch", "gutenberg", tmp_path / "corpus")
+    assert licensing.state_for(green) == licensing.NOT_REQUIRED
+    con.close()
+
+
 @pytest.fixture
 def client(isolated_config, monkeypatch, tmp_path):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))

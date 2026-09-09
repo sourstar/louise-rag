@@ -3,12 +3,13 @@ the archive. Vectors are read from the collection's own parquet shards,
 shards are revisited as documents become eligible, the settle-wait is
 waived, and corpus files are never deleted by the importer.
 """
+from dataclasses import replace
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from app import collections as collections_mod, db, discovery, embeddings
+from app import collections as collections_mod, db, discovery, embeddings, licensing
 from app.bundles import genesis
 from app.plugins.embedded.source import embed_input
 
@@ -62,6 +63,13 @@ def collection(isolated_config, tmp_path):
         ("13", 0, "Izmir", "coastal"),
         ("14", 0, "Konya", "plains"),
     ])
+    # `embedded` is a YELLOW plugin, and importing an archive is USE of
+    # the corpus it describes (invariant 9). The vectors here travel WITH
+    # the corpus, so nothing is ever fetched and the fetch-path gate never
+    # sees this collection — which is exactly the case `import_shard`
+    # gates, and exactly why this fixture needs a real acknowledgement
+    # rather than none.
+    c = replace(c, license_ack=licensing.make_ack(c))
     con = db.connect(c)
     discovery.sync_collection(con, c)
     return c

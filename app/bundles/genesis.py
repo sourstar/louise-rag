@@ -34,7 +34,8 @@ from typing import Callable, Iterator
 
 import numpy as np
 
-from .. import chunking, config, db, embeddings, parallel, plugin_io
+from .. import (chunking, config, db, embeddings, licensing, parallel,
+                plugin_io)
 from ..collections import recipe_for
 from . import ledger
 from .checks import check_degenerate, check_structural
@@ -850,6 +851,19 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     coverage a revisit pass narrows itself: one indexed range query on
     the manifest names the eligible documents of the shard's id range,
     and only their rows are read — the pass costs the new documents."""
+    # INVARIANT 9, and the half of it that was missing. `genesis_fetch`
+    # gates the FETCH — before the first byte moves from the origin — but
+    # a shard already on disk never passes through it: a local archive's
+    # vectors travel with the corpus, a hand-populated cache directory is
+    # not a fetch, and a peer copy is not a fetch either. The invariant is
+    # explicit that those are not a bypass ("hand-populated folders and
+    # peer copies are not a bypass — observed live: a peer-copied shard was
+    # indexed and imported ack-free"), and USE is what it gates, not
+    # transport. So the check belongs here too, at the chokepoint every
+    # path reaches: `import_archive` walks through this function and
+    # `app/cli.py` is the only caller of either.
+    licensing.require_ack(collection, use="an archive's vectors are imported")
+
     existing = con.execute(
         "SELECT state, updated_at, next_pass_at, proven_at, docs FROM genesis_imports "
         "WHERE archive=? AND shard=?", (archive.archive_id, shard)).fetchone()
