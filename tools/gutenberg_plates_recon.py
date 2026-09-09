@@ -209,6 +209,29 @@ def report(t: Totals, deep: bool) -> None:
                 f"{_h(sum(b.image_bytes for b in with_imgs)):>9}"
                 f"   <- the figures member, uncompressed")
 
+            # A COVER IS NOT A PLATE. Gutenberg generates `pg<id>-images.epub`
+            # for nearly every book, and for most of them the only image in
+            # it is the cover it made itself. A collection built on "has an
+            # images epub" would be the whole corpus; one built on "carries
+            # pictures the book actually has" is what was decided. The
+            # threshold is the operator's, so the shape is printed rather
+            # than a single number chosen here.
+            say("")
+            say("  HOW MANY ARE REALLY ILLUSTRATED")
+            for lo in (2, 3, 5, 10, 25, 100):
+                sel = [b for b in with_imgs if b.image_count >= lo]
+                if not sel:
+                    continue
+                ch = sum(b.chunks for b in sel)
+                say(f"    >= {lo:>3} images            {len(sel):>9,} books  "
+                    f"{sum(b.image_count for b in sel):>9,} images  "
+                    f"{_h(sum(b.image_bytes for b in sel)):>10}  "
+                    f"{ch / CHUNKS_PER_S / 86400:>6.2f} GPU-days to re-embed")
+            only1 = len([b for b in with_imgs if b.image_count == 1])
+            say(f"    exactly 1 image            {only1:>9,} books  "
+                f"({100.0 * only1 / len(with_imgs):.0f}% of them — a cover, "
+                f"almost always)")
+
 
 def _h(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
