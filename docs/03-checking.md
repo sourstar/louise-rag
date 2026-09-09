@@ -369,7 +369,17 @@ that sees partial contamination and admits real bundles. That is not a
 gap to be closed here: it is why the tier is labelled sanity, why T3
 re-embeds sixteen chunks on the importer's private randomness, and why T4
 re-embeds what a search actually cites. A partially poisoned bundle is
-theirs to catch, and T3 fails a 10 % bundle about four times in five.
+theirs to catch — though "theirs to catch" is weaker than it sounds and
+the arithmetic belongs here rather than in a reader's head. T3 draws
+sixteen chunks and fails when fewer than twelve reach `tolerance`, so it
+needs five bad draws: against a 10 % bundle that happens **1.7 %** of the
+time, and against a 5 % bundle 0.09 %. Detection is the network's, not
+one importer's — 175 independent importers to reach 95 % confidence on a
+10 % bundle, and 3,493 on a 5 % one — which is exactly why T4 exists and
+why it is keyed on what a search actually cites rather than on a sample:
+a poisoned chunk nobody reads harms nobody, and one that is read is
+re-embedded the first time it is cited. A few percent of wrong vectors is
+not caught by admission at all, and no tier here claims otherwise.
 
 **How far these numbers can be trusted.** Two corpora and two encoders,
 one plugin, one chunker. The cosine's corpus sensitivity is the open
@@ -396,9 +406,10 @@ The importer's randomness in T3 is private and never derived from the
 bundle, or a producer could re-roll a nonce until the sample missed its
 corruption. What sixteen chunks on the quorum catch is stated
 honestly: one importer fails a half-corrupt bundle nineteen times in
-twenty and a bundle with a third of its vectors wrong about half the
-time; a bundle with a few percent of wrong vectors passes T3 nearly
-always and is left to T4 and to `vectors-sample` across the network.
+twenty (96 %) and a bundle with a third of its vectors wrong about two
+times in three (66 %); a bundle with a few percent of wrong vectors
+passes T3 nearly always — 98 % of the time at one chunk in ten — and is
+left to T4 and to `vectors-sample` across the network.
 The network carries the safety, not one importer: honest import costs
 about a fifth of a percent of production, so fifty peers importing one
 shared bundle spend, together, under a tenth of what one of them
