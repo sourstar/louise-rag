@@ -1309,11 +1309,32 @@ collection_id: "sha256:0c8f…", snapshot_id: "2026-08", snapshot_hash:
 ## 9.12 The calibration member
 
 **The set.** A calibration set is a corpus-independent file of 512
-short texts shipped with the platform, `calibration/<set>.jsonl` in
+texts shipped with the platform, `calibration/<set>.jsonl` in
 the platform image — one line per text, `{"i": <0…511>, "text": "…"}`,
 compact, `\n`-terminated. Its id is `H(bytes of the file)`; `<set>` in
 a path is the id's 16-digit segment. The platform ships one set per
 modality; the Codex names the one it uses in `space.calibration.set`.
+
+**A set spans the encoder's whole input range, and that is a
+requirement.** It read "512 short texts" until 2026-09-09, and short
+texts alone cannot see the failure this gate exists to catch: a build
+correct on a sentence and wrong on a full context window passes every
+check while the corpus takes damage — which is not hypothetical, it is
+what happened here, and the trial that missed it used sixteen short
+texts. So a set carries texts at every length up to the largest `ctx`
+any space it serves declares. A text longer than a given `ctx` is
+truncated deterministically, so ONE long text is a full-window probe for
+a small-`ctx` encoder and a genuinely long input for a large one, and a
+single set therefore serves every space: it needs to reach the largest
+window, and the smaller ones come free. It keeps the short end too —
+degenerate inputs, tokeniser edges, near-duplicate pairs differing in
+one controlled way, and every script the corpora use — because those are
+the regimes a hash cannot check and length is not the only one.
+
+None of this is hashed: the set's id is its bytes, so a set that does
+none of it is still a valid set, and the requirement binds whoever
+composes one rather than whoever reads it. What a peer checks is that
+the id matches; what this paragraph fixes is what a set is FOR.
 
 **The member.** `calibration/<set>.safetensors` at the drag root,
 written by `hold collection create` (06 §6.6) and a member of every

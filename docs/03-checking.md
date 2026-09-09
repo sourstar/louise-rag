@@ -110,8 +110,11 @@ contributed to the platform and reviewed there.
 ## 3.3 Before contributing: the gate and the benchmark
 
 **The calibration set** is corpus-independent: a fixed file of 512
-short texts shipped with the platform, `calibration/<set>.jsonl`,
-identified by its SHA-256. The Codex names the set and pins the
+texts shipped with the platform, `calibration/<set>.jsonl`,
+identified by its SHA-256, spanning the encoder's whole input range up
+to the largest `ctx` it serves — a gate that never fills a context
+window cannot see a build that is wrong only when one is full (09
+§9.12). The Codex names the set and pins the
 reference vectors the creator produced for it with the space's encoder
 (`space.calibration`), together with their per-dimension mean and
 standard deviation, the space's **envelope** (`space.envelope`). All

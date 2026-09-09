@@ -530,7 +530,8 @@ collection show` names the reason (07 §7.8).
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed
-file of 512 short texts shipped with the platform,
+file of 512 texts shipped with the platform, spanning the encoder's
+whole input range up to the largest `ctx` it serves (09 §9.12),
 `calibration/<set>.jsonl`, identified by its SHA-256, which
 `space.calibration.set` names; `space.calibration.vectors` is the
 SHA-256 of the reference vectors the creator produced for those texts

@@ -32,7 +32,7 @@ continuously has its own name.
 
 | verb | produces |
 |---|---|
-| `create` | a description — a Codex, a snapshot. No corpus is read and nothing is embedded from it; `hold collection create` does embed the calibration set, 512 short texts, which needs a reachable encoder and takes seconds (06 §6.6) |
+| `create` | a description — a Codex, a snapshot. No corpus is read and nothing is embedded from it; `hold collection create` does embed the calibration set, 512 texts spanning the encoder's whole input range, which needs a reachable encoder and takes about a minute (06 §6.6) |
 | `build` | an artefact derived from its inputs — records from origin files, vectors from records, an index from either |
 | `fetch` | bytes arriving here, from the origin or from peers |
 | `share` | bytes leaving here, and the announcement that they exist |
