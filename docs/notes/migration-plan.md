@@ -644,6 +644,39 @@ Codex whose `collection_id` is stable across two runs; record counts
 match the old manifest; the admitted-vector count is reported; running
 the migration twice is a no-op.
 
+**BLOCKED for the two genome collections, and nothing earlier reveals
+it** (found 2026-09-09 while looking for a fourth modality to measure T0
+against). 09 §9.12 ships one calibration set PER MODALITY; this platform
+ships `calibration/text.jsonl` and nothing else. `create` embeds the set
+for the collection's modality, `GenomeSource.modality` is `dna`, and
+`cal.load("dna")` refuses:
+
+    this platform ships no calibration set for modality 'dna'
+    (calibration/dna.jsonl); a Codex naming one cannot be calibrated here
+
+So a genome collection cannot be given a Codex at all — not by `create`,
+not by `dev migrate pack`. It is not a gap in this step's code; the
+artefact it needs does not exist. What closing it takes:
+
+- **A DNA calibration set**, 512 sequences, built to §9.12's rules and to
+  the same standard the text set was rebuilt to on 2026-09-09 — spanning
+  the length range up to the space's `ctx` rather than stopping short of
+  it, since that defect is what the text set had. `tools/build_calibration_set.py`
+  is the shape to follow, not the code: the strata are different (GC
+  content, repeat density, coding versus non-coding, and the near-
+  duplicate pairs that make a subtle build show itself) and there is no
+  "script" axis at all.
+- **A decision the operator has already half-taken**, which is why this
+  is worth surfacing now rather than at step 8: STATUS.md's open threads
+  carry a pending move of the genome collections to DNABERT-S on the Arc,
+  and the window is cheap while dm6/hg38 sit at zero embedded. A
+  calibration set is per MODALITY and not per encoder, so it survives
+  that move — but the `tolerance` it produces does not, and building the
+  set before the encoder is chosen means calibrating twice.
+
+Neither is on the critical path to step 6, which is Gutenberg. Recorded
+here so step 8 does not discover it with the corpus already migrated.
+
 **Operator**: per collection, on the NAS, with the digests. Record each
 outcome in `docs/notes/STATUS.md`.
 
