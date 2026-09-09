@@ -392,7 +392,8 @@ WHAT IS GENUINELY WRAPPED: the exporter's shape, the ledger, and
 `format.py`'s *posture* — verify the wire bytes, never re-serialise —
 which is right and is carried into `app/hold/bundle.py`.
 
-**Sub-tasks, in order. `a` and `b` are DONE (`e61d4d2`, `728b127`).**
+**Sub-tasks, in order. `a`, `b` and `c` are DONE (`e61d4d2`, `728b127`,
+and `c` by measurement rather than by code — see below).**
 
 - **a. DONE — 09 §9.7's bytes** as `app/hold/bundle.py`: the closed
   sixteen-key header, ASCII-only serialisation (NOT §9.1's canonical
@@ -405,11 +406,20 @@ which is right and is carried into `app/hold/bundle.py`.
   invisible on the wire and refuses every record silently.
   `refused_uids` implements decision 5's per-record refusal; a uid with
   no entry still refuses the bundle whole.
-- **c. `space_id` from the Codex.** `app/spaces.py:compute_space_id` is a
-  different function over a different preimage (see
-  [`step6-preflight.md`](step6-preflight.md) §4), so nothing this node
-  produces today is admissible anywhere. Nothing else in step 4 means
-  anything until this lands.
+- **c. DONE — and it needed no code.** This read "`space_id` from the
+  Codex … nothing this node produces today is admissible anywhere.
+  Nothing else in step 4 means anything until this lands." That was
+  written before [`step6-preflight.md`](step6-preflight.md) §4 settled
+  it, and the settlement was to STOP TRYING TO MAKE THE TWO FUNCTIONS
+  AGREE. They name different things: `app/spaces.py:compute_space_id`
+  (BLAKE2b, its own preimage) governs legacy packs, `codex.space_id`
+  (SHA-256, 09 §9.3) governs Codex collections, and a collection is one
+  or the other until `dev adopt` moves it. The alarming half of the
+  finding was about the legacy EXPORTER, which `e` below deletes, and
+  `app/hold/bundle.py` already refuses a header whose `space_id` is not
+  a `sha256:` id — so the legacy bare-hex value cannot travel in a
+  conformant bundle even by accident. Asserted by
+  `tests/hold/test_bundle.py`, so it cannot quietly stop being true.
 - **d. `export` writes the four-file DIRECTORY** of §9.7. 07 §7.3 spells
   `--out FILE`; 09 defines a directory and fixes no container. Read
   `--out` as a directory and amend 07.
