@@ -327,20 +327,33 @@ the envelope's — and `space.envelope` is a Codex field, so a wrong test
 freezes at `create` and every peer inherits it.
 
 Five runs, each 512 calibration texts against 300 chunks of a real
-corpus cut by the collection's own chunker:
+corpus cut by the collection's own chunker. Four of them are a LIVE
+collection's own space — its encoder, its dimension, its corpus — and
+the fifth is a control:
 
-| | encoder | dim | class | corpus | cosine | ratio min | outside half-to-twice |
-|---|---|---|---|---|---|---|---|
-| A | Qwen3-Embedding-8B | 4096 | decoder | English | 0.752 | 0.375 | **16** |
-| B | Qwen3-Embedding-8B | 4096 | decoder | Chinese | 0.658 | 0.355 | **33** |
-| C | Qwen3-Embedding-4B | 2560 | decoder | English | 0.747 | 0.532 | 0 |
-| D | MedCPT article | 768 | BERT | English | 0.933 | 0.453 | 0 |
-| E | MedCPT article | 768 | BERT | **PubMed** | 0.882 | 0.674 | 0 |
+| | encoder | dim | class | corpus | the space it is | cosine | ratio min | outside half-to-twice |
+|---|---|---|---|---|---|---|---|---|
+| A | Qwen3-Embedding-8B | 4096 | decoder | English | `gutenberg-pack` | 0.752 | 0.375 | **16** |
+| B | Qwen3-Embedding-8B | 4096 | decoder | Chinese | that encoder, another corpus | 0.658 | 0.355 | **33** |
+| C | Qwen3-Embedding-4B | 2560 | decoder | English | `gutenberg` | 0.747 | 0.532 | 0 |
+| D | MedCPT article | 768 | BERT | English | that encoder, another corpus | 0.933 | 0.453 | 0 |
+| E | MedCPT article | 768 | BERT | **PubMed** | `pubmed` | 0.882 | 0.674 | 0 |
 
 Run E is a different CORPUS SHAPE and not merely a different corpus:
 PubMed abstracts under the `abstract` chunker, one chunk per article,
 302 to 3,034 characters where every Gutenberg bundle was 3,892 to 4,000.
 It is the case the other four could not speak for.
+
+**Which literal fails where matters, and the two halves differ.** The
+COSINE bound of 0.9 refuses three of the four live spaces — `gutenberg`
+at 0.747, `gutenberg-pack` at 0.752, `pubmed` at 0.882 — so that half was
+wrong for this node whatever the dimension. The DEVIATION bound refuses
+only the 4096-dimensional one, `gutenberg-pack`: at 2560 and 768 nothing
+lands outside it. So a reader looking only at `gutenberg`, which is the
+step-6 target and runs at 2560, would have seen the old deviation rule
+pass and concluded it was sound. It is not sound; it is untriggered at
+that dimension, and a peer sharing that space from a 4096-dimensional
+encoder would have found out for them.
 
 Rows A and B refused bundles whose vectors were entirely correct. Rows C
 and D say why, and the last column is the whole diagnosis: nothing lands
@@ -423,9 +436,16 @@ rather than down toward a floor. Only a bundle a tenth random still
 passes, and it passes at p98 = 1.930 against a ceiling of 2.0.
 
 **How far these numbers can be trusted.** Three encoders across two model
-classes, a five-fold span of dimension, three corpora and two chunkers.
-What is still untested is another MODALITY — a genome collection, where
-both the alphabet and the encoder family change at once. Given that the
+classes, a five-fold span of dimension, three corpora and two chunkers —
+covering four of this node's live spaces. Two are NOT covered. `bge-m3`
+at dim 1024 and `ctx` 2048 carries `wikipedia` and `wikivec`, the two
+largest collections by document count and the only ones on the `cdc` and
+`verbatim` chunkers, and it sits between the dimensions measured rather
+than outside them, which is the mild case. The other is another MODALITY
+— a genome collection, where the alphabet and the encoder family change
+at once — and that one cannot be measured at all until a DNA calibration
+set exists, since 09 §9.12 ships one set per modality and the platform
+ships only `text`. Given that the
 cosine has already ranged 0.658 to 0.933 and the deviation percentiles
 0.557 to 1.666 over what has been tried, an untested shape can land
 outside either bound, and the honest expectation is that it eventually
