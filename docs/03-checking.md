@@ -314,72 +314,83 @@ thousand chunks whose production took about half a GPU-hour.
 
 | tier | check | cost | catches |
 |---|---|---|---|
-| **T0 algebraic** | dimension compared four ways — bundle header, vector column width, the Codex's `space.dim`, the local table — and dtype match the space; unit norm; no NaN, no duplicates; for every record, the bundle's set of chunk ids equals the set `chunks` derives locally, or the record is refused whole; the bundle's mean vector has cosine ≥ 0.5 to the envelope's mean and every per-dimension standard deviation lies within a quarter and four times the envelope's (§3.3), both MEASURED and not guessed — see below | tens of ms, CPU | missing normalisation, random or foreign vectors, a wrong chunk geometry; sanity only, never a security control |
+| **T0 algebraic** | dimension compared four ways — bundle header, vector column width, the Codex's `space.dim`, the local table — and dtype match the space; unit norm; no NaN, no duplicates; for every record, the bundle's set of chunk ids equals the set `chunks` derives locally, or the record is refused whole; the bundle's mean vector has cosine ≥ 0.5 to the envelope's mean, and the 2nd and 98th PERCENTILES of the per-dimension standard-deviation ratios lie within four tenths and twice the envelope's (§3.3) — a percentile and not an extremum, for the reason below, and both literals measured rather than guessed | tens of ms, CPU | missing normalisation, random or foreign vectors, a wrong chunk geometry; sanity only, never a security control |
 | **T1 geometric** | each vector's cosine profile against the calibration vectors, recorded as evidence; sampled (vector, probe, probe) triples must be geometrically realisable, which real vectors cannot fail and mis-decoded bytes do; and, for `fixed` layers, consecutive chunks overlap by construction, so their cosine must sit in a band measured on the local text — the 1st to 99th percentile of the same statistic over the vectors this peer already holds for that layer, not run until it holds a thousand such pairs or when the bundle has fewer than eight adjacent pairs; for `cdc`, `abstract` and `verbatim` layers the band does not exist and is not run | under a second, CPU | wrong dtype or shape, shuffled or perturbed vectors |
 | **T2 challenge** | golden (text, vector) pairs — the calibration set's first sixteen texts and their reference vectors — re-embedded by the producer into the bundle header (09 §9.7); passes on the calibration quorum; no age rule | none for the importer | misconfiguration — proof of a correct oven, not of each loaf; not a security control |
 | **T3 spot recompute** | sixteen chunks chosen by the importer's private randomness, re-embedded with the importer's own compliant encoder; fails when fewer than twelve reach `tolerance` or the median is below it — the calibration quorum reused. In a DERIVED space (02 §2.7) the importer embeds with the SOURCE space's encoder and applies the declared derivation before comparing, because a derived space may have no encoder that emits it natively — a truncation at a width the model never publishes — and re-embedding is then impossible by definition | a few seconds, GPU — under one percent of production | bulk substitution: a wrong model, a wrong quantisation, a bundle mostly garbage |
 | **T4 verify on use** | a poisoned vector is inert until a search surfaces it; the chunks a search actually cites — those in the list it returns to its caller — are re-embedded once with this peer's compliant encoder, asynchronously, and marked *verified here* forever | a few seconds per answer, once per chunk ever cited | targeted poisoning, which sampling cannot find |
 
-**T0's two envelope literals were measured on 2026-09-09, and the first
-pair would have refused every honest bundle.** They had been written
-without data — cosine ≥ 0.9 and a standard-deviation band of half to
-twice — and `space.envelope` is a Codex field, so a wrong pair freezes at
-`create` and every peer inherits it. The run: 512 calibration texts and
-300 chunks of real Project Gutenberg prose, cut by the collection's own
-chunker and embedded by the encoder that collection pins
-(Qwen3-Embedding-8B, dim 4096, ctx 8192). The honest bundle scored a
-mean-vector cosine of **0.75**, and 16 of its 4096 dimensions fell
-outside the band. Both tests failed, on vectors that were entirely
-correct.
+**T0's envelope test was measured on 2026-09-09, and BOTH its literals
+and its SHAPE were wrong.** They had been written without data — cosine
+≥ 0.9, and every per-dimension standard deviation within half and twice
+the envelope's — and `space.envelope` is a Codex field, so a wrong test
+freezes at `create` and every peer inherits it.
 
-The reason is not subtle in hindsight. The calibration set is
-deliberately diverse — every script, five tokens to a full window — and
-a bundle is one collection's prose in one language at one chunk size.
-Their mean directions are not meant to coincide, and a real bundle is
-LESS varied than the set, not more: the measured ratios ran 0.375 to
-1.379, sitting under 1 rather than straddling it.
+Three runs, each 512 calibration texts against 300 chunks of real
+Project Gutenberg prose cut by the collection's own chunker:
 
-The replacements were checked against what T0 is *for* rather than
-loosened until the honest case passed. At cosine ≥ 0.5 and a band of a
-quarter to four times, on the same vectors: the honest bundle passes
-with 0.25 of margin and no dimension outside; random unit vectors fail
-(cosine −0.02); a foreign model, modelled as the same vectors with their
-dimensions permuted, fails (−0.02, 26 dimensions outside); an
-un-normalised bundle fails on 44 dimensions though its cosine is
-untouched; a bundle half real and half random fails; and a degenerate
-bundle of one repeated vector fails both. The two statistics catch
-different things and neither is redundant — the cosine catches random,
-foreign and degenerate vectors, the deviation band catches the
-un-normalised and the half-substituted, which the cosine does not
-notice at all.
+| | encoder | dim | corpus | cosine | SD ratio min | dims outside half-to-twice |
+|---|---|---|---|---|---|---|
+| A | Qwen3-Embedding-8B | 4096 | English | 0.752 | 0.375 | 16 |
+| B | Qwen3-Embedding-8B | 4096 | Chinese | 0.658 | 0.355 | 33 |
+| C | Qwen3-Embedding-4B | 2560 | English | 0.747 | 0.532 | 0 |
 
-What that exercise also shows is how thin the margin is on the last two:
-a half-random bundle is caught by two dimensions out of 4096. T0 is
-sanity, exactly as the table says, and bulk substitution is T3's and
-T4's to catch. The literals here are set to admit honest work, not to
-be the wall.
+Rows A and B refused bundles whose vectors were entirely correct. Row C
+is the one that explains why. Holding the corpus fixed and changing the
+ENCODER moved the cosine by 0.005; holding the encoder fixed and
+changing the CORPUS moved it by 0.095, nineteen times as much. And the
+standard-deviation test passed at 2560 dimensions and failed at 4096 —
+on the same corpus, the same encoder family, the same honest vectors.
 
-**And the SHAPE of the deviation test is a known risk, not only its
-band.** A per-dimension gate over thousands of dimensions is a
-multiple-comparison problem: every honest bundle gets thousands of
-chances to trip it, so the false-alarm rate grows with the dimension and
-no band is wide enough forever. This platform's own T0 says so in as
-many words — *"at dim=1024 that is 2.76 expected alarms per bundle, so
-P(at least one) = 0.94: it rejects 94 % of HONEST bundles. Tightening
-sigma does not fix it; it just destroys the power you wanted"* — and
-implements a single aggregate decision instead: a sum of squared
-per-dimension z-scores compared against a bootstrapped null published
-for bundles of that size, with the per-dimension numbers kept as
-evidence rather than as verdicts.
+That last fact is the whole diagnosis. `min` over 4096 samples is smaller
+than `min` over 2560 for no reason but the count, so a rule written as
+*every* dimension is a multiple-comparison problem: an honest bundle gets
+one chance to fail per dimension, and the false-alarm rate grows with the
+space. It cannot be fixed by widening, only postponed — at some dimension
+any band fails. Stating the same rule as a PERCENTILE removes the
+dependence, because a percentile does not drift with sample count.
 
-That is the better test and it is not what this section requires,
-because it needs something the envelope does not carry: a published null
-distribution per bundle size, where §9.12's envelope is two rows of `dim`
-and nothing else. So the band stays, with its measured constants and one
-honest caveat: it is calibrated on one collection at dim 4096, and the
-first observed refusal of an honest bundle is evidence that the shape is
-wrong rather than that the band is narrow. The remedy then is the
-aggregate statistic and the member that feeds it — not a wider band.
+So the shape changed and the constants barely had to. Measured over the
+three honest bundles and seven deliberately broken ones, the 2nd and 98th
+percentiles against a band of four tenths to twice gives the honest
+bundles between 0.157 and 0.9 of margin at both ends, at dimensions 2560
+and 4096 alike, while still refusing: random unit vectors (cosine −0.02),
+a foreign model modelled as the same vectors with dimensions permuted
+(p2 = 0.277), an un-normalised bundle (p2 = 1.77, which the cosine does
+not notice at all), a bundle half real and half random (p98 = 2.28), and
+a degenerate bundle of one repeated vector.
+
+**What it does NOT refuse, and this is the honest limit of the tier.** A
+bundle that is 10 % or 25 % random passes both statistics — its cosine is
+0.752, indistinguishable from clean, and its percentiles sit inside the
+band. The extremum rule did catch those, and it caught them with the very
+statistic that refuses honest work, so there is no version of this test
+that sees partial contamination and admits real bundles. That is not a
+gap to be closed here: it is why the tier is labelled sanity, why T3
+re-embeds sixteen chunks on the importer's private randomness, and why T4
+re-embeds what a search actually cites. A partially poisoned bundle is
+theirs to catch, and T3 fails a 10 % bundle about four times in five.
+
+**How far these numbers can be trusted.** Two corpora and two encoders,
+one plugin, one chunker. The cosine's corpus sensitivity is the open
+edge: 0.095 between English and Chinese within one plugin says that a
+corpus far from Gutenberg — PubMed abstracts under the `abstract`
+chunker, a genome collection in another modality — could sit lower again,
+and every perturbation measured so far has pushed the honest statistic
+TOWARD the floor rather than away from it. The band is a floor for honest
+work, not a wall against dishonest work, and the first honest bundle it
+refuses is evidence to re-measure rather than to widen.
+
+A stricter test than a percentile exists and is worth naming, since a
+peer may already have it: one aggregate decision over the whole
+deviation profile — a sum of squared per-dimension z-scores against a
+null distribution bootstrapped for bundles of that size — which controls
+the false-alarm rate exactly rather than approximately, and keeps the
+per-dimension numbers as evidence. It is not required here because it
+needs a published null per bundle size, where §9.12's envelope is two
+rows and nothing else. A peer that computes it anyway may report it, and
+its verdict is evidence like any other; what admits a bundle is the test
+in the table.
 
 The importer's randomness in T3 is private and never derived from the
 bundle, or a producer could re-roll a nonce until the sample missed its
