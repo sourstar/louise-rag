@@ -181,23 +181,36 @@ def test_figures_come_in_reading_order_across_documents(tmp_path: Path):
     assert [f.seq for f in pg_epub.figures(p)] == [0, 1]
 
 
-def test_one_plate_used_twice_is_one_figure(tmp_path: Path):
-    """The same bytes, the same hash, one entry — it is one plate however
-    many times the book shows it."""
+def test_one_plate_used_twice_is_two_appearances(tmp_path: Path):
+    """SUPERSEDES `test_one_plate_used_twice_is_one_figure`, which asserted
+    one entry. 09 §9.5 now makes `figures` a list of APPEARANCES: the same
+    hash twice, two `seq`, and the container storing the bytes once.
+
+    The reason is alignment. The text carries one marker per appearance,
+    so deduplicating desynchronises `figures[N]` from the Nth marker for
+    every plate after the first repeat — in 39 % of Gutenberg's
+    illustrated books, silently."""
     p = build(tmp_path / "b.epub",
               [("a.xhtml", page('<img src="images/p1.jpg" alt="x"/>'
-                                '<img src="images/p1.jpg" alt="x"/>'))],
+                                '<img src="images/p1.jpg" alt="y"/>'))],
               images=[("images/p1.jpg", PLATE)])
-    assert len(pg_epub.figures(p)) == 1
+    figs = pg_epub.figures(p)
+    assert [f.seq for f in figs] == [0, 1]
+    assert figs[0].sha256 == figs[1].sha256, "one plate, stored once"
+    assert [f.caption for f in figs] == ["x", "y"]
 
 
-def test_a_broken_image_reference_is_not_a_plate(tmp_path: Path):
-    """It names nothing in the zip, so there are no bytes to carry. The
-    caption still anchors in the text."""
+def test_a_broken_image_reference_leaves_no_marker(tmp_path: Path):
+    """SUPERSEDES the assertion that the caption still anchors. It named
+    nothing in the zip, so there is no picture and nothing should announce
+    one — and a marker with no figure behind it would desynchronise every
+    figure after it (09 §9.5). It drops from BOTH or from neither."""
     p = build(tmp_path / "b.epub",
-              [("a.xhtml", page('<img src="images/missing.jpg" alt="gone"/>'))])
+              [("a.xhtml", page('<p>before</p>'
+                                '<img src="images/missing.jpg" alt="gone"/>'
+                                '<p>after</p>'))])
     assert pg_epub.figures(p) == []
-    assert "[Illustration: gone]" in pg_epub.read_clean(p)
+    assert pg_epub.read_clean(p) == "before\n\nafter"
 
 
 def test_a_book_with_no_plates_has_no_figures(tmp_path: Path):
@@ -367,3 +380,65 @@ def test_an_epub_that_declares_no_cover_keeps_every_image(tmp_path: Path):
     with zipfile.ZipFile(p) as z:
         assert pg_epub.cover_href(z) is None
     assert len(pg_epub.figures(p)) == 1
+
+
+# ---- the alignment the restructure exists for -----------------------------
+
+def markers_in(text: str) -> int:
+    import re
+    return len(re.findall(r"\[Illustration(?::[^\]]*)?\]", text))
+
+
+def test_the_nth_marker_is_figures_n(tmp_path: Path):
+    """09 §9.5's rule, and the only reason a search result can say WHICH
+    plates belong to the chunk it returned (05 §5.3).
+
+    The fixture is deliberately the awkward case: a cover, a repeat and a
+    broken reference in one book — the three things that desynchronised the
+    two lists before `_walk` made them one walk."""
+    p = build_with_cover(
+        tmp_path / "pg9-images.epub",
+        [("a.xhtml", page('<img src="images/cover.jpg" alt="Cover"/>'
+                          '<p>one</p><img src="images/p1.jpg" alt="first"/>'
+                          '<p>two</p><img src="images/gone.jpg" alt="broken"/>'
+                          '<p>three</p><img src="images/p1.jpg" alt="again"/>'
+                          '<p>four</p><img src="images/p2.jpg" alt="last"/>'))],
+        [("images/cover.jpg", OTHER), ("images/p1.jpg", PLATE),
+         ("images/p2.jpg", b"\xff\xd8" + b"third" * 50)],
+        how="epub3")
+    text = pg_epub.read_clean(p)
+    figs = pg_epub.figures(p)
+    assert markers_in(text) == len(figs) == 3, "cover and broken ref drop from both"
+    assert [f.caption for f in figs] == ["first", "again", "last"]
+    assert [f.seq for f in figs] == [0, 1, 2]
+    assert figs[0].sha256 == figs[1].sha256, "the repeat is the same plate"
+    assert "Cover" not in text and "broken" not in text
+
+
+def test_a_refused_type_stays_in_both_and_is_marked_not_carried(tmp_path: Path):
+    """08 §8.7 admits jpeg and png. SVG is REAL in Gutenberg — 2,407 images
+    — so refusing it is a live cost, and the record must SAY so: the origin
+    has a picture here that this collection does not carry, and a reader
+    meeting the caption should stop looking rather than ask again later."""
+    p = build(tmp_path / "b.epub",
+              [("a.xhtml", page('<img src="images/p1.jpg" alt="kept"/>'
+                                '<img src="images/d.svg" alt="refused"/>'))],
+              images=[("images/p1.jpg", PLATE), ("images/d.svg", b"<svg/>")])
+    figs = pg_epub.figures(p)
+    assert [f.carried for f in figs] == [True, False]
+    assert [f.caption for f in figs] == ["kept", "refused"]
+    assert markers_in(pg_epub.read_clean(p)) == 2, \
+        "the refused image is still announced; it is not a broken reference"
+
+
+def test_the_cover_drops_from_the_text_as_well_as_the_figures(tmp_path: Path):
+    """It vanished from `figures` already; if its MARKER stayed, every
+    figure after it would be off by one."""
+    p = build_with_cover(
+        tmp_path / "pg8-images.epub",
+        [("a.xhtml", page('<img src="images/cover.jpg" alt="Cover"/>'
+                          '<p>body</p><img src="images/p1.jpg" alt="plate"/>'))],
+        [("images/cover.jpg", OTHER), ("images/p1.jpg", PLATE)], how="epub2")
+    text = pg_epub.read_clean(p)
+    assert markers_in(text) == len(pg_epub.figures(p)) == 1
+    assert text == "body\n\n[Illustration: plate]"

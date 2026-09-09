@@ -46,6 +46,10 @@ from xml.etree import ElementTree as ET
 
 CONTAINER = "META-INF/container.xml"
 
+#: Stands in the text for one `<img>`, replaced once the filtering is
+#: known. A NUL cannot occur in XHTML text, so it cannot collide.
+_IMG = "\x00"
+
 _OPF_NS = "{http://www.idpf.org/2007/opf}"
 _CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
 
@@ -87,8 +91,14 @@ class Figure:
     media_type: str
     sha256: str
     bytes: int
-    caption: str         # the alt text, or the figcaption beside it
-    seq: int             # order of first appearance in the reading order
+    caption: str         # the alt text
+    seq: int             # this appearance's position in the reading order
+    carried: bool = True # False where the origin HAS the image and this
+                         # collection may not admit it — a media type
+                         # outside 08 §8.7's list. The entry is still
+                         # written: a reader that meets a caption and no
+                         # picture must be able to tell "not here yet"
+                         # from "not here ever" (05 §5.3)
 
 
 # --------------------------------------------------------------------------
@@ -208,10 +218,13 @@ class _Text(HTMLParser):
             alt = (a.get("alt") or "").strip()
             if src:
                 self.images.append((src, alt))
-                # The caption stays in the text and stays indexed
-                # (decision 1); the bytes leave as a member.
-                self.parts.append(f"\n\n[Illustration: {alt}]\n\n" if alt
-                                  else "\n\n[Illustration]\n\n")
+                # A SENTINEL, not the marker itself. Which images become
+                # markers is decided later, once the cover and the broken
+                # references are known — and the same decision produces the
+                # figure list, so the two cannot disagree (09 §9.5). One
+                # sentinel per `<img>`, in document order, is what makes
+                # "the Nth marker is figures[N]" true by construction.
+                self.parts.append(_IMG)
             return
         if tag in _BLOCK:
             self.parts.append("\n\n")
@@ -274,6 +287,60 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
     return out
 
 
+#: 08 §8.7's closed list. A type outside it is named in the record with
+#: `carried: false` and its bytes are not carried.
+_ADMITTED = {"image/jpeg", "image/png"}
+
+
+def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
+    """`(text with one sentinel per surviving image, [(target, alt, carried)])`.
+
+    THE ONE PLACE the filtering happens, which is what makes 09 §9.5's
+    alignment true rather than hoped for: the text and the figure list are
+    both derived from this single sequence, so a cover, a broken reference
+    and a refused type drop from both together or from neither.
+
+    Three outcomes, and they are not the same:
+      * the COVER and a BROKEN REFERENCE vanish from both. There is no
+        picture and nothing announces one.
+      * a REFUSED TYPE stays in both. The origin has the image, the text
+        says so, and the record says `carried: false` so a reader knows to
+        stop looking rather than to ask again later.
+      * everything else is carried.
+    """
+    names = set(z.namelist())
+    cover = cover_href(z)
+    text_parts: list[str] = []
+    images: list[tuple[str, str, bool]] = []
+
+    for href, parsed in _documents(z):
+        base = posixpath.dirname(href)
+        pieces = parsed.text().split(_IMG)
+        text_parts.append(pieces[0])
+        for i, (src, alt) in enumerate(parsed.images):
+            target = posixpath.normpath(posixpath.join(base, src.split("#")[0]))
+            tail = pieces[i + 1] if i + 1 < len(pieces) else ""
+            if target in names and target != cover:
+                images.append((target, alt, _media_type(target) in _ADMITTED))
+                text_parts.append(_IMG)
+            text_parts.append(tail)
+
+    return "".join(text_parts), images
+
+
+def _media_type(target: str) -> str:
+    return _IMAGE_TYPES.get(posixpath.splitext(target)[1].lower(),
+                            "application/octet-stream")
+
+
+def _marker(alt: str) -> str:
+    """What an image leaves in the text. The caption stays in `sections` and
+    stays indexed (decision 1, 2026-09-08), and `[Illustration: …]` is the
+    convention Gutenberg's own plain-text edition already uses — so a
+    caption reads the same way in both editions."""
+    return f"\n\n[Illustration: {alt}]\n\n" if alt else "\n\n[Illustration]\n\n"
+
+
 def read_clean(path: Path) -> str:
     """The book's text, in reading order, with the PG wrapper removed.
 
@@ -282,7 +349,15 @@ def read_clean(path: Path) -> str:
     `pg_text.split_chapters`, which is edition-independent.
     """
     with zipfile.ZipFile(path) as z:
-        text = "\n\n".join(p.text() for _, p in _documents(z))
+        raw, images = _walk(z)
+
+    # One marker per surviving image, substituted into the sentinels the
+    # parser left. Both come from `_walk`, so the count matches by
+    # construction and `figures[N]` is the Nth marker (09 §9.5).
+    pieces = raw.split(_IMG)
+    text = pieces[0]
+    for i, (_, alt, _carried) in enumerate(images):
+        text += _marker(alt) + pieces[i + 1]
 
     m = _START.search(text)
     if m:
@@ -297,47 +372,35 @@ def read_clean(path: Path) -> str:
 # the plates
 
 def figures(path: Path) -> list[Figure]:
-    """Every plate, in the order it first appears in the reading order.
+    """Every APPEARANCE of a plate, in reading order — one entry per marker
+    in the text, so `figures[N]` is the Nth `[Illustration…]` (09 §9.5).
+
+    A plate used twice is two entries with one hash: the container stores
+    the bytes once, being addressed by hash, and the two entries are what
+    keep the alignment. Deduplicating would break it from the first repeat
+    onward — 39 % of Gutenberg's illustrated books repeat a plate, one of
+    them 703 times over 66 distinct images — and break it silently.
 
     Hashed here and never later: `sha256` is what names the figure in the
-    record, and the bytes travel separately as a member. A figure that
-    appears twice is one figure — the same bytes, the same hash, one entry.
+    record, and the bytes travel separately as a member.
     """
     out: list[Figure] = []
-    seen: dict[str, Figure] = {}
-
     with zipfile.ZipFile(path) as z:
-        names = set(z.namelist())
-        # A cover is packaging, not content (see `cover_href`). Excluded
-        # here rather than by a threshold on the count, because the epub
-        # SAYS which image it is and a threshold would be a guess about the
-        # same fact. Two thirds of Gutenberg's illustrated epubs hold the
-        # cover and nothing else, so this is the difference between a
-        # plates collection of 44,000 books and one of the books that
-        # actually have plates.
-        cover = cover_href(z)
-        for href, parsed in _documents(z):
-            base = posixpath.dirname(href)
-            for src, alt in parsed.images:
-                target = posixpath.normpath(posixpath.join(base, src.split("#")[0]))
-                if target not in names:
-                    continue                # a broken reference; not a plate
-                if target == cover:
-                    continue                # the catalogue's cover, not a plate
-                if target in seen:
-                    continue                # the same plate used twice
-                raw = z.read(target)
-                ext = posixpath.splitext(target)[1].lower()
-                fig = Figure(
-                    href=target,
-                    media_type=_IMAGE_TYPES.get(ext, "application/octet-stream"),
-                    sha256="sha256:" + hashlib.sha256(raw).hexdigest(),
-                    bytes=len(raw),
-                    caption=alt,
-                    seq=len(out),
-                )
-                seen[target] = fig
-                out.append(fig)
+        _, images = _walk(z)
+        raws: dict[str, bytes] = {}
+        for seq, (target, alt, carried) in enumerate(images):
+            if target not in raws:
+                raws[target] = z.read(target)
+            raw = raws[target]
+            out.append(Figure(
+                href=target,
+                media_type=_media_type(target),
+                sha256="sha256:" + hashlib.sha256(raw).hexdigest(),
+                bytes=len(raw),
+                caption=alt,
+                seq=seq,
+                carried=carried,
+            ))
     return out
 
 
