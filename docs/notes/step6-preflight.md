@@ -24,7 +24,7 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | 3 | the chunker's parameters | **DONE** 2026-09-09 |
 | 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
 | 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; two guards left |
-| 6 | T0's envelope gate | **OPEN — measure** |
+| 6 | T0's envelope gate | **DONE** 2026-09-09 — measured; both literals were refusing honest bundles |
 | 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
 | 8 | credits | **DONE** 2026-09-09 — and it opened item 9 |
 | 9 | the corpus and community credits | **DONE** 2026-09-09 — `credits` carries a `kind` |
@@ -145,18 +145,68 @@ reference is captured from whatever the encoder returned at `create` time
 provenance to record it. Produce it against a digest-pinned build and
 cross-check on a second endpoint before `create` writes it.
 
-## 6. T0's envelope gate has never been measured — OPEN
+## 6. T0's envelope gate — MEASURED 2026-09-09, and it was refusing honest work
 
 03 §3.5's T0 compares a bundle's vectors against the calibration member's
-`envelope` tensor. Its literals have never been checked against real data,
+`envelope` tensor. Its literals had never been checked against real data,
 and the envelope's hash is a Codex field — so an envelope that refuses
 honest bundles freezes at `create` too.
 
-One afternoon, no decision required: embed the 512 calibration texts,
-embed one real Gutenberg shard, print the mean-vector cosine and the max
-and min per-dimension SD ratio across all dimensions. If honest bundles
-would be refused, amending 03 §3.5's literals is a spec change every peer
-must adopt — which is why it is cheaper to know now.
+**Run**: 512 calibration texts and 300 chunks of real Gutenberg prose, cut
+by the collection's own `chunk_book` and embedded by the encoder that
+collection pins — `embed-gpu-qwen3-8b`, Qwen3-Embedding-8B-Q4_K_M, dim
+4096, ctx 8192, ~2,600 tok/s. About nine minutes end to end.
+
+| statistic | measured | the old literal | |
+|---|---|---|---|
+| mean-vector cosine | **0.7522** | ≥ 0.9 | **FAIL** |
+| per-dim SD ratio | p0 0.375, p50 0.797, p100 1.379 | all within [0.5, 2.0] | **FAIL**, 16 of 4096 |
+
+Both refused a bundle whose vectors were entirely correct. The reason is
+plain once seen: the calibration set is deliberately diverse — every
+script, five tokens to a full window — and a bundle is one collection's
+prose in one language at one chunk size. Their mean directions were never
+going to coincide, and a real bundle is LESS varied than the set, so the
+ratios sit under 1 rather than straddling it.
+
+**New literals, cosine ≥ 0.5 and a band of [0.25, 4.0]**, chosen against
+what T0 is FOR rather than by loosening until green. Same vectors, no
+re-embedding — the negative controls are computed from the two cached
+matrices:
+
+| bundle | cosine | dims outside [0.25, 4] | |
+|---|---|---|---|
+| real Gutenberg chunks | 0.752 | 0 | **PASS**, +0.25 margin |
+| random unit vectors | −0.023 | 3 | FAIL |
+| dimension-permuted (a foreign model) | −0.018 | 26 | FAIL |
+| un-normalised (rows scaled) | 0.752 | 44 | FAIL — the cosine misses it entirely |
+| half real, half random | 0.766 | 2 | FAIL — likewise |
+| degenerate (one vector repeated) | 0.476 | 4096 | FAIL |
+
+The two statistics are not redundant: the cosine catches random, foreign
+and degenerate vectors; the deviation band catches the un-normalised and
+the half-substituted, which the cosine does not notice at all.
+
+**Two things the run also settled.** No dimension has zero SD (min
+2.3e-06), so the ratio test is not a division by zero. And the margin on
+the last two rows is thin — a half-random bundle is caught by two
+dimensions out of 4096 — which is consistent with T0 being sanity, as its
+own table says, with bulk substitution left to T3 and T4.
+
+**The open risk is the SHAPE, not the constants.** `app/verify/t0.py`
+already argues that a per-dimension gate over thousands of dimensions is a
+multiple-comparison problem — *"at dim=1024 ... it rejects 94% of HONEST
+bundles"* — and implements one aggregate decision instead (a sum of
+squared z-scores against a bootstrapped null published per bundle size).
+That is the better test, and §9.12's envelope of two rows cannot feed it.
+So the band stays with measured constants, and 03 §3.5 now records that
+the first honest bundle it refuses is evidence the shape is wrong rather
+than the band narrow.
+
+Specs `7848f59` + `31b99b3` on main.
+
+**Still open under item 5, unchanged**: the reference is captured from
+whatever the encoder returned at `create` time with no independent check.
 
 ## 7 and 8. Layers, and credits — DECIDED 2026-09-09, operator
 
