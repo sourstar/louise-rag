@@ -24,7 +24,7 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | 3 | the chunker's parameters | **DONE** 2026-09-09 |
 | 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
 | 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; two guards left |
-| 6 | T0's envelope gate | **DONE** 2026-09-09 — measured; both literals were refusing honest bundles |
+| 6 | T0's envelope gate | **DONE** 2026-09-09 — 3 runs; the SHAPE was the defect, not the constants |
 | 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
 | 8 | credits | **DONE** 2026-09-09 — and it opened item 9 |
 | 9 | the corpus and community credits | **DONE** 2026-09-09 — `credits` carries a `kind` |
@@ -169,7 +169,8 @@ prose in one language at one chunk size. Their mean directions were never
 going to coincide, and a real bundle is LESS varied than the set, so the
 ratios sit under 1 rather than straddling it.
 
-**New literals, cosine ≥ 0.5 and a band of [0.25, 4.0]**, chosen against
+**First fix (SUPERSEDED by runs B and C below), cosine ≥ 0.5 and an
+every-dimension band of [0.25, 4.0]**, chosen against
 what T0 is FOR rather than by loosening until green. Same vectors, no
 re-embedding — the negative controls are computed from the two cached
 matrices:
@@ -203,7 +204,49 @@ So the band stays with measured constants, and 03 §3.5 now records that
 the first honest bundle it refuses is evidence the shape is wrong rather
 than the band narrow.
 
-Specs `7848f59` + `31b99b3` on main.
+
+**Runs B and C, later the same day, overturned the first fix.** The band
+had been widened and the rule left as "every dimension". Wrong lever.
+
+| run | encoder | dim | corpus | cosine | SD min | outside [0.5, 2] |
+|---|---|---|---|---|---|---|
+| A | Qwen3-Embedding-8B | 4096 | Gutenberg English | 0.752 | 0.375 | 16 |
+| B | Qwen3-Embedding-8B | 4096 | Gutenberg **Chinese** | 0.658 | 0.355 | 33 |
+| C | Qwen3-Embedding-**4B** | **2560** | Gutenberg English | 0.747 | 0.532 | **0** |
+
+Changing the ENCODER moved the cosine 0.005. Changing the CORPUS moved it
+0.095 — nineteen times as much. And the deviation test passed at 2560
+dimensions and failed at 4096 on the same honest vectors, which nothing
+about the encoder or the corpus explains: `min` over 4096 samples is
+smaller than `min` over 2560 for no reason but the count.
+
+So the rule was a multiple-comparison problem and widening only postpones
+it. Stated as a PERCENTILE the dimension dependence disappears. A grid
+over quantiles and bands against three honest bundles and seven broken
+ones picked **p2/p98 within [0.4, 2.0]** — honest margin +0.157 at the low
+end against +0.014 for p1/p99 at the original band, with the same five of
+seven controls caught. The constants barely moved; the shape was the
+defect.
+
+Now measured rather than assumed: a 10 %- or 25 %-random bundle passes
+both statistics (cosine 0.752, indistinguishable from clean). The extremum
+rule caught those with the very statistic that refuses honest work, so no
+version of this test sees partial contamination AND admits real bundles.
+T3 fails a 10 % bundle about four times in five; T4 re-embeds what a
+search cites.
+
+**And it answers the operator's design question** — should the rule be
+tailored per embedder, estimated at `create`? Mostly not, once the
+statistic is expressed correctly. The apparent per-embedder variation was
+the badly-shaped statistic, and the percentile removes it: 2560 and 4096
+now agree to within 0.04 at p2. What genuinely varies is the CORPUS, and
+that is the one term a create-time estimate cannot capture, because 06
+§6.6 fixes that a Codex is complete before a single record exists. The
+sample is still two corpora and two encoders, one plugin, one chunker;
+PubMed under the `abstract` chunker is the untested case most unlike
+Gutenberg, and is the next measurement worth making.
+
+Specs `1c4c1f3` on main supersedes `7848f59` and `31b99b3`.
 
 **Still open under item 5, unchanged**: the reference is captured from
 whatever the encoder returned at `create` time with no independent check.
