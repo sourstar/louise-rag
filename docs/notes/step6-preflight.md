@@ -23,7 +23,7 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | 2 | the chunker's id | **DONE** 2026-09-09 |
 | 3 | the chunker's parameters | **DONE** 2026-09-09 |
 | 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
-| 5 | the calibration reference | **OPEN — operator** |
+| 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; two guards left |
 | 6 | T0's envelope gate | **OPEN — measure** |
 | 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
 | 8 | credits | **DECIDED** 2026-09-09 — and it opened item 9 |
@@ -113,31 +113,37 @@ deletes. `app/hold/bundle.py` already refuses a bare-hex `space_id`, so
 a conformant bundle cannot carry the legacy value — now asserted by a
 test (`4e1e559`) so it cannot quietly stop being true. No code changed.
 
-## 5. The calibration reference — OPEN, operator
+## 5. The calibration reference — DONE 2026-09-09 (the set), OPEN (the guards)
 
 `create` embeds the 512-text calibration set and writes the reference
 vectors' hash into the Codex. That hash is what every peer's gate is
 decided against, forever.
 
-**Measured 2026-09-08, and the set cannot do its job.** Longest text 118
-words ≈ 174 tokens, median 26 words, against a space `ctx` of 512 — nothing
-in it comes within a third of the context window. `approved-encoders.md` on
-the b10630 incident: *"Short tests do not catch this, which is precisely
-why the approval trial (16 texts) and the backend gate both pass while the
-corpus takes damage."* The gate as specified would have passed the exact
-build that damaged this node's corpus.
+**Measured 2026-09-08, and the set could not do its job.** Longest text
+118 words ≈ 174 tokens, median 26 words, against a space `ctx` of 512 —
+nothing in it came within a third of the context window.
+`approved-encoders.md` on the b10630 incident: *"Short tests do not catch
+this, which is precisely why the approval trial (16 texts) and the backend
+gate both pass while the corpus takes damage."* The gate as specified would
+have passed the exact build that damaged this node's corpus.
 
-It is a SPEC defect, not an implementation one — 09 §9.12 says "512 SHORT
-texts". The proposal is one word out of §9.12 and a length ladder reaching
-the largest `ctx` in use; cost is ~1 minute per gate run instead of 7
-seconds, and **zero bandwidth** (the member is `512 × dim × f32`, fixed).
-Re-freezing is free until step 6 and impossible after.
+**Both halves are now done.** It was a SPEC defect as well as an artefact
+one — 09 §9.12 said "512 SHORT texts", in four documents. §9.12 now
+requires a set to span the encoder's whole input range up to the largest
+`ctx` it serves, and says why one set serves every space (`7bda70d`, on
+`main`). The set itself was rebuilt (`d99ca7f`): 5 → 8192 tokens, 58
+texts filling an 8192 window, id `sha256:7d06a2f6…`, the 32
+near-duplicate pairs carried over verbatim and still last,
+`tools/build_calibration_set.py` reproducing the bytes and
+`calibration/text.sources.json` recording where each drawn text came
+from. A gate run costs about a minute instead of seven seconds, and zero
+bandwidth: the member is `512 × dim × f32` whatever the texts weigh.
 
-Two further guards the workflow raised and nobody has taken: the reference
-is captured from whatever the encoder returned at `create` time **with no
-independent check**, and §9.12 already defines the `.sig.json` provenance
-to record it. Produce it against a digest-pinned build and cross-check on a
-second endpoint before `create` writes it.
+**Still open, and they are the guards rather than the set:** the
+reference is captured from whatever the encoder returned at `create` time
+**with no independent check**, and §9.12 already defines the `.sig.json`
+provenance to record it. Produce it against a digest-pinned build and
+cross-check on a second endpoint before `create` writes it.
 
 ## 6. T0's envelope gate has never been measured — OPEN
 
