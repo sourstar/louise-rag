@@ -107,6 +107,31 @@ Notes:
 - Measured on the reference deployment: the same model file and the same
   llama.cpp build produce different vectors on its GPU backend and its CPU
   backend, and the CPU backend does not reproduce its own output run to run.
+  That last clause is about **llama.cpp's** CPU backend and has not been
+  re-measured. A DIFFERENT CPU stack was measured on 2026-09-09 and does
+  not behave that way: `embed-cpu-bge-m3` (TEI, BAAI/bge-m3, dim 1024),
+  seven texts from 61 to 16,920 characters, five rounds — self-cosine
+  **1.000000000** on every text, three of the seven bit-identical and the
+  rest differing only at float64 machine epsilon, which is the cosine's
+  own rounding rather than the encoder's. So "CPU is unstable" is not a
+  property of CPU inference; it is a property of a particular build, and
+  the llama.cpp case is the one still to be re-measured.
+
+**What this means for `tolerance`, which is the number it feeds.** The
+loosest HONEST deviation measured anywhere in this project is 4x10^-4 —
+Intel SYCL against AMD Vulkan, two different ISAs and two different
+kernel sets. Same-backend, same-stack is zero to machine epsilon. Against
+that, `tolerance` at 0.95 leaves 125 times more room than the worst
+honest case has ever needed, and 03 §3.1 is explicit about what that
+room costs: "the tolerance window is also the widest perturbation an
+adversary can hide in, which is why it is kept as tight as calibration
+allows". 0.95 is not as tight as calibration allows; it is a round number
+in the middle of the empty gap between 0.9996 and the 0.7 where a
+different model lands. Tightening it sharpens T3 and T4, the tiers that
+actually carry detection — T0's envelope is unaffected either way,
+because it measures distribution and not deviation. The measurement that
+should set it is the llama.cpp CPU case above, since it is the only
+honest backend anyone has claimed is noisy.
 
 Sources: [cuBLAS](https://docs.nvidia.com/cuda/cublas/) ·
 [rocBLAS](https://rocm.docs.amd.com/projects/rocBLAS/en/docs-6.4.0/how-to/what-is-rocblas.html) ·
