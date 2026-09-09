@@ -182,7 +182,8 @@ MEDCPT_PUBMED = GenesisArchive(
     shard_bytes=3_070_000_000,
     producer="NCBI (National Library of Medicine)",
     license="public-domain",
-    attribution="MedCPT article embeddings, NCBI/NLM",
+    # The provider AND the corpus, by the same rule as Upstash below.
+    attribution="MedCPT article embeddings over PubMed, NCBI/NLM (public domain)",
     # It signs nothing: a directory of .npy files on an FTP server.
     keys=(),
 )
@@ -199,7 +200,14 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     local=True,
     producer="Upstash",
     license="CC-BY-SA-4.0",           # the CONTENT is Wikipedia's; the vectors follow it
-    attribution="Wikipedia 2024-06 embeddings (BGE-M3), Upstash",
+    # Both parties, in that order, because both are owed (operator, 2026-09-09).
+    # CC BY-SA is Wikipedia's licence, not Upstash's: the vectors are a
+    # derivative of the articles, so the clause that has to be satisfied names
+    # the ARTICLES' authors, and Upstash is credited for the embedding work on
+    # top of them. An attribution naming only the party we obtained the file
+    # from would satisfy nobody's licence.
+    attribution="Wikipedia contributors (CC BY-SA 4.0), embedded by Upstash "
+                "as wikipedia-2024-06-bge-m3",
     keys=(),
 )
 

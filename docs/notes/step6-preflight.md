@@ -25,8 +25,9 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
 | 5 | the calibration reference | **OPEN — operator** |
 | 6 | T0's envelope gate | **OPEN — measure** |
-| 7 | layers: one or two | **OPEN — operator** |
-| 8 | credits | **OPEN — operator** |
+| 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
+| 8 | credits | **DECIDED** 2026-09-09 — and it opened item 9 |
+| 9 | the corpus attribution has no Codex field | **OPEN — operator**, and it is a wire-format change |
 
 ---
 
@@ -151,14 +152,71 @@ and min per-dimension SD ratio across all dimensions. If honest bundles
 would be refused, amending 03 §3.5's literals is a spec change every peer
 must adopt — which is why it is cheaper to know now.
 
-## 7 and 8. Layers, and credits — OPEN, operator
+## 7 and 8. Layers, and credits — DECIDED 2026-09-09, operator
 
-* **Wikipedia and wikivec**: one collection with two layers, as 06 §6.3's
-  own worked example spells out, or two collections as today? `layers` is
-  inside `space_id`, so the first `create` freezes the choice.
-* **Which archives each recipe credits**: 06 §6.6 refuses an uncredited
-  archive and a Codex is never edited, so a missing credit is a new
-  collection rather than an amendment.
+**7. Wikipedia and wikivec are ONE collection with TWO layers**, as 06
+§6.3's own worked example spells out. Layer 1 is `verbatim` over the
+documents the Upstash archive covers; layer 2 is the default chunker over
+everything past that coverage — the post-snapshot articles this node
+embeds itself, which is the entire point of two layers. The rule is read
+from the Codex's `credits`, never from the platform's build (`9b98012`,
+`app/layers.py`, `tests/test_layers_archive_rule.py`).
+
+**8. Credits: the recipe names the archive whose vectors the collection
+carries, and the archive's entry names the corpus its vectors were
+computed over.** The operator's rule, in their words: "the pre-embeddings
+credits the provider of the pre-embeddings and wikipedia (like 'wikipedia
+embedded by...'), the part embedded by the community credits wikipedia".
+
+| recipe | `archives =` | why |
+|---|---|---|
+| wikipedia | `["upstash-wikipedia-2024-06"]` | one entry covers layer 1; its `attribution` names Wikipedia's authors AND Upstash |
+| pubmed | `["medcpt-pubmed"]` | `DEFAULT_ARCHIVE_BY_PLUGIN` already says so |
+| gutenberg, genome, gazzetta | `[]` | no pre-embedded archive; every vector is this node's or a peer's |
+
+The registry's two attribution strings were rewritten to carry both
+parties, because both are owed and the licence clause turns on the corpus
+author rather than on whoever we obtained the file from:
+
+    Wikipedia contributors (CC BY-SA 4.0), embedded by Upstash
+    as wikipedia-2024-06-bge-m3
+
+    MedCPT article embeddings over PubMed, NCBI/NLM (public domain)
+
+`create` copies these into `credits` whole and hashes them into
+`collection_id`, so no later build can alter or drop either name.
+
+**The second half of the operator's rule has nowhere to go, and this is
+now the open item.** "The part embedded by the community credits
+wikipedia" is about the CORPUS, not about an archive — layer 2 draws on
+no archive at all, and its peers belong in the coverage map (02 §2.5)
+rather than in `credits`. But the Codex has no field that names whom the
+corpus licence requires attributing: `license` is `{class,
+terms_sha256}` (09 §9.3), `terms_sha256` hashes the licence TEXT, which
+for CC BY-SA states that credit must be given without naming who is owed
+it, and `origin` is a locator.
+
+`credits` cannot hold it. `credits` is SPACE-scoped by construction —
+02 §2.7, "a sister's `credits` are her mother's when `space_id` matches"
+and are her own recipe's when it does not, and 09 §9.3, "a corrective
+sister's are `[]`". A corrective sister of Wikipedia therefore carries
+every word of Wikipedia's text with an empty `credits`. A corpus credit
+is CORPUS-scoped: it must survive every sister, every daughter and every
+correction, exactly as `license`, `origin` and `cleaning_version` do.
+
+So the proposal is a third key in the block that already has the right
+lifetime: `license: {class, terms_sha256, attribution}` — the credit
+line the corpus licence requires, byte-exact, declared by the plugin
+(06 §6.1) and copied by `create` like every other licence field, `null`
+on green and only on green, by the same rule `terms_sha256` already
+follows. It costs one field, it is hashed, and a sister keeps it because
+a sister already keeps `license` byte for byte.
+
+It is a CODEX WIRE-FORMAT CHANGE — CLAUDE.md says ask first, and it
+changes `collection_id` for every collection — so it is not made here.
+The moment to make it is before the first `create` of step 6, and it is
+free right now only because nothing has been published beyond this
+operator's own machines.
 
 ---
 
