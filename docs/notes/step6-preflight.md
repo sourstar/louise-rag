@@ -249,6 +249,41 @@ Gutenberg, and is the next measurement worth making.
 
 Specs `1c4c1f3` on main supersedes `7848f59` and `31b99b3`.
 
+**Run D, dim 768 — the third dimension, and a correction.** MedCPT
+article encoder (BERT-class, ctx 512, TEI) on the SAME Gutenberg slice as
+run A.
+
+| run | encoder | dim | class | corpus | cosine | ratio min | outside [0.5, 2] |
+|---|---|---|---|---|---|---|---|
+| A | Qwen3-Embedding-8B | 4096 | decoder | English | 0.752 | 0.375 | 16 |
+| B | Qwen3-Embedding-8B | 4096 | decoder | Chinese | 0.658 | 0.355 | 33 |
+| C | Qwen3-Embedding-4B | 2560 | decoder | English | 0.747 | 0.532 | 0 |
+| D | MedCPT article | 768 | BERT | English | 0.933 | 0.453 | 0 |
+
+The last column is now a clean monotone in the dimension and in nothing
+else — 0 at 768, 0 at 2560, 16 at 4096, 33 at 4096 on a harder corpus —
+which is the multiple-comparison signature and not a property of any
+encoder or corpus. The percentile form holds on all four at p2 = 0.601,
+0.557, 0.645, 0.682.
+
+It also corrects what runs A-C implied. "Changing the encoder moved the
+cosine 0.005" was a SIZE change inside one family. Across a model CLASS
+it moves 0.18. The three terms, separated:
+
+| what changes | Δ cosine |
+|---|---|
+| model size (8B → 4B) | 0.005 |
+| corpus (English → Chinese) | 0.095 |
+| model class (decoder → BERT) | 0.181 |
+
+So the operator's per-embedder instinct was better founded than run C
+alone suggested — the encoder does matter, just not its size. What has
+not changed is the conclusion: all four clear the 0.5 floor, the
+percentile rule needs no per-space tuning, and the deviation half is the
+steadier of the two (p2 spans 0.557-0.682 across everything measured).
+
+Specs `4db9657` on main.
+
 **Still open under item 5, unchanged**: the reference is captured from
 whatever the encoder returned at `create` time with no independent check.
 
