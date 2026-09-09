@@ -648,7 +648,8 @@ object with exactly these keys in this order:
 | `hash` | id | `H` over the figure's bytes as the origin ships them |
 | `media_type` | string | one of 08 §8.7's admitted types; compared against what the bytes actually are, never trusted |
 | `bytes` | integer | the size of those bytes |
-| `seq` | integer | order of first appearance in the record's text, from 0 |
+| `seq` | integer | this appearance's position in the record's text, from 0 |
+| `carried` | boolean | whether this collection carries the bytes. `false` where the origin HAS the image and the collection does not admit it — a media type outside 08 §8.7's list, or a figure over one of its caps. The entry is still written, because a reader that meets the caption and no picture must be able to tell "not here yet" from "not here ever" |
 
 `hash` is `H` — SHA-256 — and not the BLAKE2b-128 of `content_hash` and
 `origin_hash` beside it, which is the one place in a record line the two
@@ -663,8 +664,21 @@ either: figures number in the hundreds of thousands, not the thirty-six
 million of PubMed's records, so neither the cost of the function nor the
 width of the field is the constraint.
 
-The same figure used twice in a document is ONE entry: the same bytes,
-the same hash, the lowest `seq` at which it appears.
+**`figures` LISTS APPEARANCES, NOT DISTINCT PLATES.** A plate used twice
+is two entries with the same `hash` and different `seq`; the container
+stores its bytes once, being addressed by hash. The reason is
+alignment: the record's text carries one `[Illustration…]` marker per
+appearance (06 §6.4), so THE Nth MARKER IS `figures[N]` and a reader
+returning part of a record can say which plates belong to the part it
+returned (05 §5.3). Deduplicating would break that alignment from the
+first repeat onward, silently and for most books — measured over
+Gutenberg, 39 % of illustrated books repeat a plate, one of them 703
+times over 66 distinct images.
+
+The alignment is a rule about the WRITER: whatever produces the text and
+whatever produces this list walk one filtered sequence of images, so a
+cover, a broken reference and a refused type drop from both together or
+from neither.
 
 **The figures container.** `figures/<slice>/<NNNNN>.fig.zst`, one
 container per record shard of the same slice and number, holding every

@@ -377,6 +377,28 @@ A verb that outlives the request answers 202 and runs under the node;
 `node show` lists it. The web interface is a client of these routes and
 shows the command line of every action it offers.
 
+**One route is not JSON, and it is the only one.**
+
+```
+GET /api/ask/figure?collection=<id>&uid=<uid>&hash=<id>
+```
+
+answers with the figure's bytes and its `Content-Type` — never base64,
+never wrapped. It is an exception to the rule above and is written out
+so that nobody adds a second one by analogy: a search result carries a
+plate's HASH (05 §5.3) and a client fetches the picture separately, so
+that a result stays small however illustrated the book is. Encoding a
+1.8 MB plate into JSON would put 2.4 MB inside a search response, and
+several of them inside one answer.
+
+It is an `ask` route because it is read-only and returns nothing secret,
+and it obeys the same licence rule as the text beside it: a collection's
+class decides whether its figures travel at all (04 §4.4), so a
+red-class figure is never served, exactly as its text never is. The
+peer answers 404 for a hash it does not hold and for one the record
+marks `carried: false` — the result object already told the caller
+which of those it was, before the request was made.
+
 Who may call what:
 
 - `hold` and `node` routes require the token read from
