@@ -326,35 +326,44 @@ and its SHAPE were wrong.** They had been written without data — cosine
 the envelope's — and `space.envelope` is a Codex field, so a wrong test
 freezes at `create` and every peer inherits it.
 
-Three runs, each 512 calibration texts against 300 chunks of real
-Project Gutenberg prose cut by the collection's own chunker:
+Four runs, each 512 calibration texts against 300 chunks of real Project
+Gutenberg prose cut by the collection's own chunker:
 
-| | encoder | dim | corpus | cosine | SD ratio min | dims outside half-to-twice |
-|---|---|---|---|---|---|---|
-| A | Qwen3-Embedding-8B | 4096 | English | 0.752 | 0.375 | 16 |
-| B | Qwen3-Embedding-8B | 4096 | Chinese | 0.658 | 0.355 | 33 |
-| C | Qwen3-Embedding-4B | 2560 | English | 0.747 | 0.532 | 0 |
+| | encoder | dim | class | corpus | cosine | ratio min | outside half-to-twice |
+|---|---|---|---|---|---|---|---|
+| A | Qwen3-Embedding-8B | 4096 | decoder | English | 0.752 | 0.375 | **16** |
+| B | Qwen3-Embedding-8B | 4096 | decoder | Chinese | 0.658 | 0.355 | **33** |
+| C | Qwen3-Embedding-4B | 2560 | decoder | English | 0.747 | 0.532 | 0 |
+| D | MedCPT article | 768 | BERT | English | 0.933 | 0.453 | 0 |
 
-Rows A and B refused bundles whose vectors were entirely correct. Row C
-is the one that explains why. Holding the corpus fixed and changing the
-ENCODER moved the cosine by 0.005; holding the encoder fixed and
-changing the CORPUS moved it by 0.095, nineteen times as much. And the
-standard-deviation test passed at 2560 dimensions and failed at 4096 —
-on the same corpus, the same encoder family, the same honest vectors.
+Rows A and B refused bundles whose vectors were entirely correct. Rows C
+and D say why, and the last column is the whole diagnosis: nothing lands
+outside at 768 or 2560 dimensions, sixteen do at 4096, thirty-three do at
+4096 on a harder corpus. `min` over 4096 samples is smaller than `min`
+over 2560 for no reason but the count. A rule written as *every*
+dimension is therefore a multiple-comparison problem — an honest bundle
+gets one chance to fail per dimension, so the false-alarm rate grows with
+the space, and widening the band only postpones the failure to a larger
+one. Stating the same rule as a PERCENTILE removes the dependence,
+because a percentile does not drift with sample count. It holds on all
+four: 0.601, 0.557, 0.645 and 0.682 at the 2nd percentile, across a
+five-fold span of dimension and two model classes.
 
-That last fact is the whole diagnosis. `min` over 4096 samples is smaller
-than `min` over 2560 for no reason but the count, so a rule written as
-*every* dimension is a multiple-comparison problem: an honest bundle gets
-one chance to fail per dimension, and the false-alarm rate grows with the
-space. It cannot be fixed by widening, only postponed — at some dimension
-any band fails. Stating the same rule as a PERCENTILE removes the
-dependence, because a percentile does not drift with sample count.
+The COSINE moves for a different reason and it is worth separating.
+Within one model family a size change is nothing — 8B to 4B moved it
+0.005. Across a corpus, 0.095. Across a model CLASS, 0.18: MedCPT sits at
+0.933 where Qwen3 sits at 0.75, because a BERT-class encoder pooled to
+768 dimensions puts a diverse probe set and a single corpus much closer
+together than a decoder-class one at 4096 does. So the encoder is not the
+small term it looks like from a same-family comparison; what is small is
+model SIZE. All four clear the floor, and the binding case is the lowest
+of them rather than the average.
 
 So the shape changed and the constants barely had to. Measured over the
-three honest bundles and seven deliberately broken ones, the 2nd and 98th
+four honest bundles and seven deliberately broken ones, the 2nd and 98th
 percentiles against a band of four tenths to twice gives the honest
-bundles between 0.157 and 0.9 of margin at both ends, at dimensions 2560
-and 4096 alike, while still refusing: random unit vectors (cosine −0.02),
+bundles between 0.157 and 0.9 of margin at both ends, at 768, 2560 and
+4096 dimensions alike, while still refusing: random unit vectors (cosine −0.02),
 a foreign model modelled as the same vectors with dimensions permuted
 (p2 = 0.277), an un-normalised bundle (p2 = 1.77, which the cosine does
 not notice at all), a bundle half real and half random (p98 = 2.28), and
@@ -381,15 +390,21 @@ a poisoned chunk nobody reads harms nobody, and one that is read is
 re-embedded the first time it is cited. A few percent of wrong vectors is
 not caught by admission at all, and no tier here claims otherwise.
 
-**How far these numbers can be trusted.** Two corpora and two encoders,
-one plugin, one chunker. The cosine's corpus sensitivity is the open
-edge: 0.095 between English and Chinese within one plugin says that a
-corpus far from Gutenberg — PubMed abstracts under the `abstract`
-chunker, a genome collection in another modality — could sit lower again,
-and every perturbation measured so far has pushed the honest statistic
-TOWARD the floor rather than away from it. The band is a floor for honest
-work, not a wall against dishonest work, and the first honest bundle it
-refuses is evidence to re-measure rather than to widen.
+**How far these numbers can be trusted.** Three encoders across two model
+classes and a five-fold span of dimension, and two corpora — but ONE
+plugin and ONE chunker, and that is the gap. Every bundle measured was
+Gutenberg prose cut at a thousand tokens. A corpus whose documents are
+short and technical and cut one-per-document — PubMed abstracts under the
+`abstract` chunker — or one in another modality is untested, and the
+cosine's demonstrated range is wide enough (0.658 to 0.933 over what has
+been tried) that an untested shape could land outside it in either
+direction. The deviation percentiles are the steadier of the two: 0.557
+to 0.682 at p2 across everything, which is why the band did not have to
+move when the dimension did.
+
+The band is a floor for honest work, not a wall against dishonest work,
+and the first honest bundle it refuses is evidence to re-measure rather
+than to widen.
 
 A stricter test than a percentile exists and is worth naming, since a
 peer may already have it: one aggregate decision over the whole
