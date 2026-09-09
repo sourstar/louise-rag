@@ -26,6 +26,20 @@ CREATE TABLE IF NOT EXISTS documents (
   mtime INTEGER,
   size INTEGER,
   txt_hash TEXT,
+  -- 09 §9.5's `content_hash`: BLAKE2b-128 of the canonical JSON of
+  -- [title, sections] — the cleaned text as the chunker sees it. NOT
+  -- `txt_hash`, which is the ORIGIN bytes' hash (§9.5 calls that
+  -- `origin_hash`); both are 32 hex characters, so the two are
+  -- indistinguishable by inspection and a peer that sent one where the
+  -- other was meant would refuse every record in silence.
+  --
+  -- Stored, and indexed, because `possession.json` (§9.7) binds a
+  -- bundle's uids to this value: verifying an arriving bundle is then
+  -- one indexed SELECT over its uids. Deriving it instead would mean
+  -- re-reading and re-hashing the shards each import — a per-bundle cost
+  -- that scales with the CORPUS, which is the engineering rule this
+  -- project keeps paying for.
+  content_hash TEXT,
   in_scope INTEGER DEFAULT 1,
   rdf_done INTEGER DEFAULT 0,
   fts_done INTEGER DEFAULT 0,
@@ -42,6 +56,10 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_native ON documents(source, native_id);
 CREATE INDEX IF NOT EXISTS idx_documents_scope ON documents(in_scope, rdf_done, fts_done, embed_done);
 CREATE INDEX IF NOT EXISTS idx_documents_lang ON documents(lang);
+-- The import path looks these up BY UID for a bundle's uid set, so the
+-- index is on the pair and covers the lookup without touching the row.
+CREATE INDEX IF NOT EXISTS idx_documents_content_hash
+  ON documents(uid, content_hash);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS catalog_fts USING fts5(
   uid UNINDEXED, title, authors, subjects, bookshelves
@@ -242,6 +260,10 @@ def connect(collection=None) -> sqlite3.Connection:
         con.execute("ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # column already exists — no reusable "add column" migration tool for this
+    try:
+        con.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
+    except sqlite3.OperationalError:
+        pass  # same; NULL on every pre-existing row until its shard is rebuilt
     try:
         con.execute("ALTER TABLE bundles ADD COLUMN tier_reached INTEGER")
     except sqlite3.OperationalError:

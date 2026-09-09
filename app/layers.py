@@ -92,12 +92,67 @@ def layers_for(collection) -> tuple[Layer, ...]:
     return (Layer(chunker=name, version=version, rule="default"),)
 
 
+def _codex_coverage(collection, archive_id: str):
+    """The archive's `coverage` as the COLLECTION declares it, or None.
+
+    06 §6.3 is explicit that this is where it comes from: the documents an
+    archive covers are "read from that archive's `coverage` in the Codex's
+    `credits` (02 §2.7), so the rule is computable from the record and the
+    Codex alone, and A PLATFORM BUILD CANNOT MOVE A DOCUMENT BETWEEN
+    LAYERS".
+
+    That last clause is the whole reason. `layers` is inside `space_id`, so
+    two peers agree on the space; if they then read coverage from their own
+    platform builds, they can put the same document in different layers,
+    cut it with different chunkers, and produce different vectors under one
+    space id. Nothing detects it — both computed the id the document
+    prescribes, and both are honest. It is invariant 1's failure mode.
+    """
+    for credit in getattr(collection, "credits", None) or ():
+        archive = (getattr(credit, "archive", None)
+                   or (credit.get("archive") if isinstance(credit, dict) else None))
+        if archive == archive_id:
+            return (getattr(credit, "coverage", None)
+                    or (credit.get("coverage") if isinstance(credit, dict) else None))
+    return None
+
+
 def _rule_matches(rule: str, collection, native_id: int) -> bool:
     if rule == "default":
         return True
     if rule.startswith("archive:"):
+        archive_id = rule[len("archive:"):]
+        declared = getattr(collection, "credits", None)
+        if declared:
+            # A collection that declares credits AT ALL is authoritative
+            # about every archive, including the ones it does not name: an
+            # archive absent from `credits` covers nothing here. Falling
+            # through to the platform registry for those would reintroduce
+            # the bug — the platform would be deciding coverage again, just
+            # for a narrower set of archives.
+            coverage = _codex_coverage(collection, archive_id)
+            if coverage is None:
+                return False
+            if coverage == "all":
+                return True
+            if not isinstance(coverage, dict):
+                return False
+            per = coverage.get("ids_per_shard")
+            shards = coverage.get("shards")
+            if not per:
+                return True         # the corpus IS the archive: it covers all
+            # The Codex writes `shards` as a COUNT, so the covered ids are
+            # shards 0 … shards-1. The platform registry below instead holds
+            # shard NAMES and can express a gap; the Codex form cannot, and
+            # an archive with a hole in it would need §2.1 to say so.
+            return 0 <= int(native_id) // int(per) < int(shards)
+
+        # A collection with no `credits` predates them: fall back to the
+        # platform's registry, which is what every collection on this node
+        # uses today. Grandfathered, exactly as `book` is beside `fixed` —
+        # a Codex collection reads its own Codex and never comes here.
         from .bundles.genesis import ARCHIVES
-        archive = ARCHIVES.get(rule[len("archive:"):])
+        archive = ARCHIVES.get(archive_id)
         if archive is None:
             return False
         if archive.local or not archive.ids_per_shard:

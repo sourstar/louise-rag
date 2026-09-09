@@ -284,3 +284,48 @@ def test_shards_are_numbered_from_one(isolated_config, tmp_path, corpus_dir):
         assert s.path.endswith("/00001.jsonl.zst")
         assert (root / "gutenberg" / "drag" / s.path).is_file()
     assert not list((root / "gutenberg" / "drag" / "records").rglob("00000.*"))
+
+
+def test_the_build_stores_each_records_content_hash(
+        isolated_config, tmp_path, corpus_dir):
+    """09 §9.5's `content_hash`, on the manifest, written as each shard
+    closes.
+
+    Why stored rather than derived: `possession.json` (09 §9.7) binds a
+    bundle's uids to this value, so verifying an arriving bundle is one
+    indexed lookup over its uids. Deriving it instead means re-reading and
+    re-hashing shards on every import — a per-bundle cost that scales with
+    the CORPUS, which is the rule this project keeps paying for.
+
+    NOT `txt_hash`: that is the ORIGIN bytes' hash, which §9.5 calls
+    `origin_hash`. Both are 32 hex characters, so a peer that sent one
+    where the other was meant would refuse every record in silence.
+    """
+    import sqlite3
+    from app.pack import records as pack_records
+
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+
+    d = root / "gutenberg" / "drag"
+    on_disk = {}
+    for shard in sorted(d.rglob("*.jsonl.zst")):
+        for rec in pack_records.iter_records(shard):
+            on_disk[rec["uid"]] = rec["content_hash"]
+    assert on_disk, "the fixture must produce records"
+
+    # The collection's OWN manifest, the one `hold records build`
+    # writes (app/hold/records.py builds a Collection whose
+    # manifest_path is under the collection's state directory) — not
+    # whatever the global config would resolve.
+    con = sqlite3.connect(root / "gutenberg" / "state" / "manifest.sqlite")
+    try:
+        rows = dict(con.execute(
+            "SELECT uid, content_hash FROM documents WHERE content_hash IS NOT NULL"))
+    finally:
+        con.close()
+
+    assert rows == on_disk, "every record's hash is on the manifest, and matches"
+    for uid, h in rows.items():
+        assert len(h) == 32 and all(c in "0123456789abcdef" for c in h), \
+            f"{uid}: a content_hash is BLAKE2b-128 as 32 lowercase hex (09 §9.5)"

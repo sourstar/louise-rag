@@ -264,6 +264,26 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                  root, records_root, chunks_root,
                  buf[0]["native_id"], buf[-1]["native_id"]))
             con_build.execute("COMMIT")
+
+            # 09 §9.5's `content_hash`, onto the manifest, for the shard
+            # that just closed. It is computed above either way; storing it
+            # is what lets an arriving bundle's `possession.json` (§9.7) be
+            # checked with ONE indexed lookup over its uids instead of
+            # re-reading and re-hashing shards per bundle — a per-bundle
+            # cost that would scale with the corpus.
+            #
+            # A separate database, so not the shard's transaction: the
+            # shards live in the staging build db and `documents` in the
+            # manifest, and SQLite has no transaction across the two. It is
+            # safe because it is idempotent and re-runnable (invariant 2) —
+            # a crash between the two leaves NULLs, and the next build over
+            # that shard writes them again.
+            con_src.execute("BEGIN IMMEDIATE")
+            con_src.executemany(
+                "UPDATE documents SET content_hash=? WHERE uid=?",
+                [(r["content_hash"], r["uid"]) for r in buf])
+            con_src.execute("COMMIT")
+
             written += 1
             n_records += info.records
             n_chunks += info.chunks
