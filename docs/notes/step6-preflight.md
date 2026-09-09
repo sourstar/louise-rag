@@ -20,9 +20,9 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 | # | what freezes | state |
 |---|---|---|
 | 1 | shard numbering | **DONE** 2026-09-08 |
-| 2 | the chunker's id | **OPEN — step 2** |
-| 3 | the chunker's parameters | **OPEN — step 2, invariant 1** |
-| 4 | `space_id`'s function | **OPEN — step 4** |
+| 2 | the chunker's id | **DONE** 2026-09-09 |
+| 3 | the chunker's parameters | **DONE** 2026-09-09 |
+| 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
 | 5 | the calibration reference | **OPEN — operator** |
 | 6 | T0's envelope gate | **OPEN — measure** |
 | 7 | layers: one or two | **OPEN — operator** |
@@ -41,7 +41,7 @@ the member name (09 §9.16) and in a bundle header's `shard` field (§9.7),
 so two peers that number differently disagree about which shard a bundle
 covers — and `space_id` would not catch it, because numbering is not in it.
 
-## 2. The chunker's id — OPEN
+## 2. The chunker's id — DONE
 
 `app/plugins/gutenberg/source.py` declares `chunking_profile = "book"`.
 06 §6.3's registry has four chunkers and `book` is not one of them:
@@ -54,13 +54,16 @@ The id is inside `space_id` (invariant 1), so this freezes at `create`.
 `fixed` layers, so a Gutenberg collection whose layer says `book` is never
 T1-checked by anyone, for the life of the collection.
 
-WHY IT IS NOT ALREADY FIXED: renaming it in `app/spaces.py`'s legacy path
-would move the LEGACY space id, which existing vectors on this node are
-keyed to. `GRANDFATHERED_CHUNKERS = frozenset({"book", "verbatim"})` is
-what currently holds that together. The rename has to land with step 2,
-where the new `hold` path becomes the only one that cuts documents.
+RESOLVED by ADDING `fixed` beside `book` rather than renaming anything
+(`4e1e559`). `book` is untouched and stays grandfathered; a new Codex
+recipe declares `fixed`. The two share `_fixed_windows`, so
+`fixed{tokens: 1000, overlap: 120}` cuts byte-identically to `book` at
+the config defaults AND produces the same chunk ids, since
+FIXED_CHUNK_VERSION is 1 exactly as config.CHUNK_VERSION is. A Codex
+collection therefore inherits a legacy pack's chunk ids and its vectors
+carry over. Nothing in the legacy path moved.
 
-## 3. The chunker's parameters — OPEN, and it is invariant 1's exact failure
+## 3. The chunker's parameters — DONE
 
 06 §6.3, immediately above its registry table: **"a chunker reads no node
 configuration."**
@@ -82,11 +85,14 @@ There are TWO `Layer` types and only one is right:
 * `app/hold/codex.py`'s — `Chunker(id, version, params)`, which is 09
   §9.3's shape and carries them.
 
-Step 2's job is to make the second the only one. Until then a Codex can
-declare `{tokens: 1000, overlap: 120}` and the chunker will still read the
-environment.
+RESOLVED (`4e1e559`). `app/layers.py`'s Layer gained `params`, the
+dispatch passes them, and `fixed` refuses a layer that does not say.
+`space_payload` was checked and does NOT carry params, so the legacy
+space id every existing vector is keyed to did not move; `as_manifest`
+emits them only when non-empty, so existing manifests are byte-identical.
+Both are pinned by tests.
 
-## 4. `space_id` is computed by two different functions — OPEN
+## 4. `space_id` is computed by two different functions — DONE, and needed no change
 
 They are not variants. They hash different things:
 
@@ -97,11 +103,14 @@ They are not variants. They hash different things:
   `{cleaning_version, encoder:{image,weights}, layers,
   space:{ctx,dim,dtype,epoch,normalise,pooling,query}}`
 
-09 §9.3 fixes the second. A bundle written through the legacy path carries
-a `space_id` in a form and a value **no conformant peer could ever match**,
-so every exchange fails at T0 for a reason nobody can see. Step 4's header
-work takes it from the Codex; until then nothing this node produces is
-admissible anywhere.
+09 §9.3 fixes the second — and the right answer turned out to be to STOP
+TRYING TO MAKE THEM AGREE. They name different things: the legacy id
+governs legacy packs, `codex.space_id` governs Codex collections, and a
+collection is one or the other until `dev adopt` moves it. The alarming
+version of this finding was about the LEGACY EXPORTER, which step 4
+deletes. `app/hold/bundle.py` already refuses a bare-hex `space_id`, so
+a conformant bundle cannot carry the legacy value — now asserted by a
+test (`4e1e559`) so it cannot quietly stop being true. No code changed.
 
 ## 5. The calibration reference — OPEN, operator
 
