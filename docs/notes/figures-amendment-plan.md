@@ -198,15 +198,81 @@ item is a place where the code and the documents now disagree on purpose.
   goes to `sections` and not to the record line, which the amendment
   also confirms.
 
-## The measurement 08 §8.7 is waiting for
+## The measurement 08 §8.7 was waiting for — TAKEN 2026-09-09
 
-§8.7's three caps — 16 MiB per figure, 64 megapixels, 1,024 figures per
-record — are marked in the document itself as its weakest part. They were
-chosen to be obviously sufficient, not measured.
-`tools/gutenberg_plates_recon.py --deep` produces exactly the
-distribution that would replace them: plates per book, bytes per plate,
-across the real corpus. Until it runs, the caps stand and are honest
-about what they are.
+Run over the real corpus on the NAS: **79,292 book directories, 44,477
+illustrated epubs, 786,699 images.** §8.7 marked its three numbers as
+"chosen to be obviously sufficient, not measured". They are measured now.
+
+**Cap 1 — at most 16 MiB per figure: HOLDS.**
+
+| p50 | p90 | p99 | p99.9 | max |
+|---|---|---|---|---|
+| 44 KB | 146 KB | 533 KB | 981 KB | 1.8 MB |
+
+Nothing over 16 MiB; the cap is ~9× the largest real plate. Generous,
+but it bounds ATTACKER bytes rather than honest ones, and it now
+demonstrably refuses nothing real. Leave it — tightening against
+Gutenberg alone would be unwise when patent drawings and maps are the
+cases still to come.
+
+**Cap 3 — at most 1,024 figures per record: CONTRADICTED.** Eleven books
+exceed it, the worst carrying 3,503 images. That is 0.025 % of the
+corpus and it is the wrong 0.025 %: they are the most illustrated books
+in it, which is what a plates collection is FOR. A rule that admits a
+novel's frontispiece and refuses an illustrated natural history is
+backwards. **Raise to 4,096** — above the observed 3,503 with headroom,
+still bounding a record against becoming a container in its own right.
+
+**The media-type closed list — VALIDATED, and the cost of refusing SVG
+is now known.**
+
+| | share |
+|---|---|
+| `.jpg` / `.jpeg` | 65.5 % |
+| `.png` | 34.2 % |
+| `.svg` | 0.31 % (2,407 images) |
+| `.gif` | 0.01 % (46) |
+
+So `{image/jpeg, image/png}` covers 99.66 %. SVG is REAL in this corpus,
+so refusing it is a live cost rather than a hypothetical one — and the
+follow-up measured that cost exactly: **10 books lose at least one
+plate, and NO book loses all of them.** The security call stands at a
+price of ten books each missing a picture or two.
+
+## What the same run settled about the collection itself
+
+**The plates are already on disk.** `<gutenberg-root>`
+is a full Gutenberg mirror — `.mobi`, `.tex`, qrcodes and both
+`pg<id>-images.epub` and `-images-3.epub`. The fetch filter's
+`exclude=("*images*",)` applies to the `extras` acquisition path and not
+to this tree, so **the ~90 GB re-fetch and its exception to "nothing is
+re-downloaded" are both unnecessary.**
+
+**"Has an images epub" is not "has plates".** 82 % of books have one,
+because Gutenberg generates a cover for nearly everything; 43 % of those
+epubs contain exactly that one image. The real question is a threshold,
+and the plates turn out to be heavily concentrated:
+
+| threshold | books | images kept | figures member | GPU-days |
+|---|---|---|---|---|
+| any images epub | 44,486 | 786,699 | 51.0 GB | 14.59 |
+| ≥ 2 images | 25,488 | 767,711 | 49.7 GB | 8.11 |
+| ≥ 5 | 16,882 | 745,136 | 48.4 GB | 5.51 |
+| ≥ 10 | 12,322 | 714,952 (91 %) | 46.4 GB | 4.09 |
+| ≥ 25 | 6,997 | 630,969 (80 %) | 40.5 GB | 2.61 |
+| ≥ 100 | 1,681 | 376,307 | 24.1 GB | 0.85 |
+
+Going from ≥2 to ≥10 halves the books and halves the GPU cost while
+keeping 91 % of the pictures. **The threshold trades embedding cost, not
+images** — which makes it a cheap decision rather than a painful one,
+and it is the operator's: it decides what the collection IS.
+
+Two things the same scan turned up that belong to other steps: 34,574 of
+the 79,292 directories are EMPTY (rsync stubs for titles published only
+as epub or mobi, exactly as `pg_text.scan_dir` anticipates), and 44,463
+directories hold a `.txt` against STATUS.md's "59,627 indexed,
+unembedded documents" — a 15,000 gap worth understanding before step 8.
 
 ## Provenance
 
