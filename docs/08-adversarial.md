@@ -266,3 +266,65 @@ such key is still contributing; when none is, it decays, and anyone may
 revive it. No history of who began it is used — *first published by* is
 recorded in catalogues as a fact (§2.1) and decides nothing; what counts
 is the changing set of who currently holds it.
+
+## 8.7 Figures: the one thing here a viewer renders
+
+Everything else a peer accepts is consumed by a program — text is chunked,
+vectors are multiplied, an index is queried. A **figure** (09 §9.5) is
+different in kind: it is attacker-supplied bytes that end up in front of a
+person, through an image decoder the platform does not write. That is a
+larger attack surface than the rest of the exchange put together, and the
+hash chain does not touch it.
+
+**What the hash does and does not buy.** A record names its plates by
+hash, the record line is in a shard whose root a snapshot signs, so a
+plate SWAPPED IN TRANSIT is caught. Nothing about that catches a plate the
+producer meant to send. A figure is published, not merely relayed, and a
+hostile publisher's plate verifies perfectly. So the defences below are
+about what a well-formed figure may be, and none of them is a signature.
+
+**The admitted types are a closed list**: `image/jpeg` and `image/png`.
+Two, because they are the two the measured corpora hold, and a format
+admitted "in case" is a decoder admitted in case. `media_type` on the
+record line is compared against what the bytes ACTUALLY ARE — the magic
+number and a structural parse — and a disagreement refuses the figure,
+never the reverse. Extending the list is an amendment to this section and
+a new `record_line` version, because a peer that cannot decode a type
+cannot show the document.
+
+**SVG is refused, and is the reason the list is closed rather than open.**
+An SVG is a document, not an image: it carries script, external
+references and its own fetches. There is no safe subset worth the cost of
+policing one, and "we strip the script tags" is the sentence that precedes
+every such failure.
+
+**Caps, applied before decoding.** At most 16 MiB of bytes per figure, at
+most 64 megapixels once the header is read but before any pixel is, and
+at most 1,024 figures per record. The first two are what stop a
+decompression bomb — a few hundred kilobytes of PNG that decodes to
+tens of gigabytes — and they are applied to the DECLARED dimensions in
+the header, so the decoder is never handed something it will die inside.
+The third stops a record from being a container in its own right.
+
+These three numbers are the section's weakest part and are marked as
+such: they are chosen to be obviously sufficient rather than measured
+against a real distribution. The measurement is cheap — one pass over the
+corpus counting plates, bytes and dimensions per record — and should
+replace them.
+
+**A figure is never executed, never fetched from, and never resolved.**
+Whatever a format permits, a peer that stores or serves a figure treats
+it as opaque bytes; only a peer that DISPLAYS one decodes it, and it
+decodes with the caps above. An embedded reference in a figure is not
+followed. This is 01's "never anything executable", which figures bind
+harder than any other member.
+
+**What is out of scope, and stated so nobody assumes otherwise.** A plate
+whose hash is right, whose type is right and whose bytes decode, but
+which is not the picture the caption describes, is not detectable here —
+a correct swap made upstream of the parser is a corpus-fidelity question
+(invariant 11) answered by `records-vs-origin`, which re-fetches from the
+origin and reproduces. And a figure carries whatever its own metadata
+says: EXIF is not stripped, because stripping it would change the bytes
+and so the hash, and a figure that does not match its record is worse
+than one carrying a camera model.

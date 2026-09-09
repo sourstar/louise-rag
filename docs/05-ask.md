@@ -183,7 +183,7 @@ The fields, with their values:
 | `certification` | `{certified_by, anchor_state}` — the certifier's key and `anchored` · `stale` · `mismatch` (§3.7); `null` for an open collection |
 | `verified_on_use` | `local` · `imported` · `verified` · `failed`: this peer produced the vector; produced elsewhere and not yet re-embedded here; re-embedded and within tolerance; re-embedded and outside it. A chunk whose producer is unknown is `imported`, never `local` |
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
-| `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
+| `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text. A FIGURE IS NEVER A FIELD HERE: a plate's caption is text, lives in `sections` like any other, and is returned inside `text` when a chunk carrying it matches — which is also the only way a figure is searchable at all, since nothing embeds a picture. What a reader then does with the record's `figures` (09 §9.5) is the reader's, and this table stays closed |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
 

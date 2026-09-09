@@ -249,7 +249,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `1` | yes | the Codex format version (§9.18) |
+| `version` | `2` | yes | the Codex format version (§9.18). Version 1 is this object without `record_line`; a Codex already written stays 1 and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -257,6 +257,7 @@ number written as a decimal string is marked *decimal*.
 | `parser` | object | yes | `{id: string, version: integer}` — the readable alias of what the platform image contains |
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
+| `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the shards, and a figureless collection created under a later format writes `version` 2 with `record_line` 1 |
 | `layers` | list of layer | yes | `{chunker: {id, version, params}, rule}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none |
 | `slicing` | object | yes | below |
 | `space` | object | yes | below |
@@ -398,14 +399,14 @@ applies to it (07 §7.8).
 fields that carry its choices (every other field is present in the file):
 
 ```
-{"kind":"louise-codex","version":1,
+{"kind":"louise-codex","version":2,
  "descriptive":{"title":"PubMed","summary":"Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
  "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
            "form":"the XML baseline and update files, because the API paginates and the FTP files are checksummed",
            "unit":"container-member","clock":"America/New_York","cutoff_rule":"update-files","jurisdiction":null},
  "toolchain":{"platform_image":"sha256:1f…","mother_platform_image":null},
- "parser":{"id":"pubmed","version":4},"cleaning_version":1,"protocol_version":1,
+ "parser":{"id":"pubmed","version":4},"cleaning_version":1,"protocol_version":2,"record_line":1,
  "layers":[{"chunker":{"id":"abstract","version":1,"params":{}},"rule":"default"}],
  "slicing":{"keys":["year"],"year":{"field":"date","bins":["<1950","5y<2000","1y"]},
             "unknown":"year=unknown","shard_records":30000,"order":"numeric"},
@@ -464,13 +465,14 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-snapshot"` | yes | |
-| `version` | `1` | yes | |
+| `version` | `2` | yes | version 1 is this object without `figures`. A platform writing this document's format writes 2 for every collection, with `figures: []` where there are none; snapshots already written stay 1, and a chain links by `previous` hash rather than by version, so nothing is re-issued (§9.18) |
 | `collection_id` | id | yes | the Codex this snapshot applies |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | by the cadence, below |
 | `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the snapshot named by the Codex's `continues_through` |
 | `shards` | list of shard | yes | every record shard the snapshot consists of, sorted by (`slice` bytes, `n`) |
 | `relations` | list of relation shard | yes | the relations shards (§9.14), same order; `[]` when the collection has none |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A drag file that is neither here nor a shard a `shards` entry names is not a member and is not served (07 §7.8) |
+| `figures` | list of figures shard | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A drag file that is neither here nor a shard a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A shard entry:
@@ -491,6 +493,18 @@ A shard entry:
 
 A relations shard entry has `slice`, `n`, `root`, `edges` (integer) and
 `bytes`; it sits beside the record shard of the same slice and number.
+
+A figures shard entry has `slice`, `n`, `root`, `figures` (integer) and
+`bytes`, and sits beside the record shard of the same slice and number,
+holding every plate that shard's records name (§9.5). Its `root` is here
+rather than in a sharer's digest for two reasons: the container is
+re-issued exactly when its shard is, so it costs a snapshot nothing to
+carry what it is already carrying; and a peer can price the plates —
+often the larger half of a collection — before it fetches one byte. The
+entry carries no digest over the figure hashes themselves: those are on
+the record lines, whose shard `root` this snapshot already fixes and a
+certifier already signs, and a second digest over them would be a second
+answer to a question that has one.
 
 **Shards, exactly.** Within a slice, records sort by `native_id` under
 `slicing.order`; they are cut every `shard_records` records; shards are
@@ -540,7 +554,7 @@ staging and not promoted (04 §4.3).
 **Worked example.** PubMed, the snapshot closing at the September cutoff:
 
 ```
-{"kind":"louise-snapshot","version":1,"collection_id":"sha256:9d3e…41ab","snapshot_id":"2026-08",
+{"kind":"louise-snapshot","version":2,"collection_id":"sha256:9d3e…41ab","snapshot_id":"2026-08",
  "previous":"sha256:51c0…2e7a",
  "shards":[{"slice":"year=1975-1979","n":1,"root":"sha256:0be4…","records_root":"sha256:a91c…",
             "first_id":"1","last_id":"137402","records":30000,"chunks":30000,"tokens":15360000,
@@ -549,6 +563,7 @@ staging and not promoted (04 §4.3).
             "first_id":"40931122","last_id":"40952017","records":18317,"chunks":18317,"tokens":9378304,
             "bytes":6291456,"toolchain":"self"}],
  "relations":[],
+ "figures":[],
  "files":{"LICENSE-TERMS":{"root":"sha256:b9…","bytes":4210},
           "calibration/6b1a3f0e9c2d4b7f.safetensors":{"root":"sha256:d4…","bytes":1573376},
           "seals/2026-08.json":null},
@@ -580,6 +595,16 @@ order is fixed so that two writers produce the same bytes; a line is
 canonical JSON with the key order fixed by this table instead of by code
 point.
 
+**Two shapes, and which one a collection uses.** A line has no version
+field of its own: its shape is its Codex's `record_line` (§9.3), which is
+`1` for a line without `figures` and `2` for a line with it. The Codex
+carries it because the shape is fixed for a collection's LIFE — a
+collection whose records gain plates is a new collection (02 §2.7), never
+the same one amended — and the Codex is the only immutable per-collection
+object there is. A reader therefore knows which shape to expect before it
+fetches a single shard, `codex.json` being one of the three members
+fetchable before an acknowledgement (04 §4.4).
+
 | key | type | required | meaning |
 |---|---|---|---|
 | `uid` | string | yes | `<plugin>:<native_id>` (06 §6.1) |
@@ -591,6 +616,7 @@ point.
 | `subjects` | list of strings | yes | in the origin's order |
 | `keys` | list of strings | yes | canonical ids `<namespace>:<id>` the document is about (06 §6.5); sorted by bytes |
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
+| `figures` | list of figure | `record_line` 2 only | the plates this document carries, in `seq` order; `[]` when it has none, and `[]` on a pointer record. An entry NAMES a figure and never holds it — the bytes are the member `figures-<slice>` (§9.16), which a peer may hold or not. Absent entirely where `record_line` is 1 |
 | `extra` | object | yes | plugin-defined, fixed keys; `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
 | `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL, and where the document is a member of a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
 | `content_hash` | BLAKE2b-128 | yes | below |
@@ -601,6 +627,64 @@ point.
 the chunker sees them, so the same hash means the same chunks and the
 same vectors whatever the origin's own revision fields say. A pointer
 record (below) carries the `content_hash` of the text it points at.
+
+**A FIGURE IS NEVER IN `content_hash`.** `content_hash` is over exactly
+what the chunker reads, and a plate is not read by a chunker: its caption
+is, and the caption is in `sections` like any other text. Putting a
+figure in would make a record `changed` in the delta (§9.4) the moment a
+plate arrived, refuse that record's rows out of every bundle already
+computed for it (§9.7's `possession.json`), and re-embed text that never
+moved. The two senses of "changed" stay apart: `delta.changed` means
+RE-EMBED, a moved shard `root` means RE-FETCH, and a plate arriving means
+neither for the text.
+
+**figures.** A figure is a plate, a diagram or a drawing the origin
+carries beside the text. It is a MEMBER, not text. Each entry is an
+object with exactly these keys in this order:
+
+| key | type | meaning |
+|---|---|---|
+| `hash` | id | `H` over the figure's bytes as the origin ships them |
+| `media_type` | string | one of 08 §8.7's admitted types; compared against what the bytes actually are, never trusted |
+| `bytes` | integer | the size of those bytes |
+| `seq` | integer | order of first appearance in the record's text, from 0 |
+
+`hash` is `H` — SHA-256 — and not the BLAKE2b-128 of `content_hash` and
+`origin_hash` beside it, which is the one place in a record line the two
+functions differ and is worth the sentence. Those two fingerprint text
+this peer already holds and can re-derive; a figure's hash stands alone
+over bytes that arrive SEPARATELY, from a container, and is the whole of
+what a peer checks them against before storing them. A producer chooses
+the hash it publishes, so the attack is a collision rather than a second
+preimage — 2^64 work against BLAKE2b-128 — and the prize is a plate a
+human will look at. §9.1's other reason for BLAKE2b does not apply
+either: figures number in the hundreds of thousands, not the thirty-six
+million of PubMed's records, so neither the cost of the function nor the
+width of the field is the constraint.
+
+The same figure used twice in a document is ONE entry: the same bytes,
+the same hash, the lowest `seq` at which it appears.
+
+**The figures container.** `figures/<slice>/<NNNNN>.fig.zst`, one
+container per record shard of the same slice and number, holding every
+figure that shard's records name, each stored once and ordered by
+`hash`. A figure is addressed BY HASH INSIDE the container and never by a
+path of its own, so §9.1's "path segments from digests" rule does not
+reach here — no directory is ever named after a figure.
+
+One container per shard, and not one file per plate, because §9.16 makes
+every FILE of a member its own BitTorrent v2 torrent. A corpus of
+275,000 plates over 1,591 record shards is two orders of magnitude more
+swarm state under one file each, for the same bytes and the same
+integrity — the per-figure hashes on the record lines are what verify a
+plate either way.
+
+The container is re-issued exactly when its record shard is, because a
+record gaining or losing a plate rewrites its line and so moves the
+shard's own `root`. Its layout is that of the record shard above — zstd
+frames, then one skippable frame carrying the index — with the magic
+`LOUISE-FIGURES-1` and, per entry, the 32-byte `hash` and the offset and
+length of its bytes, entries ordered by `hash`.
 
 **Chunks** are not stored: a record's chunks are recomputed from its
 `sections` by its layer's chunker (06 §6.3), and a chunk id is
@@ -918,6 +1002,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `calibration` | statistical | `{n: 16, passed: n, median: decimal}` |
 | `centres` | exact | `{index_version: n}` |
 | `labels` | exact | `{index_version: n, failed: [chunk id…]}` |
+| `figures` | sampled | `{shards: n, named: n, held: n, failed: [hash…]}` — `named` counts the plates the sampled shards' records name and `held` those this peer has; `named - held` is not a failure, and `failed` names only plates whose bytes disagree with their hash |
 | `license` | exact | `{}` |
 | `signature` | exact | `{keys: [key…]}` — the sidecar signatures that verified |
 | `anchor` | exact | `{state: "anchored" · "stale" · "mismatch"}` |
@@ -1362,6 +1447,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 |---|---|---|
 | `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` of the current snapshot | per shard, in the snapshot |
 | `relations-<slice>` | `relations/<slice>/*.jsonl.zst` | per shard, in the snapshot |
+| `figures-<slice>` | `figures/<slice>/*.fig.zst` | per shard, in the snapshot |
 | `index-<slice>` | `index/<slice>/<NNNNN>/*` — the text-index segments | per file, in the digest |
 | `bundle-<space>-<bundle_id hex>` | the four bundle files | member root, in the bundle event and the digest |
 | `vectors-<space>-<slice>`, `buckets-<space>-v<n>-g<k>` | names only: resolve to the bundles covering those chunks (04 §4.3) | — |
@@ -1470,7 +1556,8 @@ saves it only after the manifest commits.
 
 `CanonicalDoc`: the fields of 06 §6.1, in the record's order — `uid`,
 `title`, `creators`, `language`, `date`, `subjects`, `keys`, `extra`,
-`sections`, `origin_hash`; the platform adds `lang` (from `language`),
+`sections`, `figures`, `origin_hash`; the platform adds `lang` (from
+`language`),
 `origin` (from the `DocRef`) and `content_hash` when it writes the
 record (§9.5). It adds no layer: which layer a document falls in is
 derived from the Codex's rules whenever it is needed, never stored
@@ -1485,8 +1572,17 @@ kind of edge. The platform adds `from`, the document's own uid, and
 nothing and the collection has no relations member.
 
 The error contract's exceptions are `Deferred` and `Unavailable`
-(06 §6.1); `protocol_version` is `1`, and `relations()` is part of it:
-the protocol is fixed with this version and not amended into it.
+(06 §6.1); `protocol_version` is `2`, and `relations()` is part of it:
+the protocol is fixed with this version and not amended into it. Version
+1 is this protocol without `figures` on `CanonicalDoc` and without the
+`Figure` type below; a plugin that yields no plates implements 2 and
+returns `[]`, because the protocol is what the platform may CALL and not
+what a particular source happens to carry.
+
+`Figure`: `{hash: str, media_type: str, bytes: int, seq: int, data:
+bytes}` — what `parse()` yields for each plate. `data` is the only field
+that does not reach the record line: the platform writes it into the
+figures container (§9.5) and keeps the other four.
 
 **Reference source types** (06 §6.5).
 
@@ -1519,18 +1615,29 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 1 | §9.3 |
-| `louise-snapshot`, `louise-snapshot-sig` | 1 | §9.4 |
-| record line, shard index (`LOUISE-PACK-IDX1`) | 1 | §9.5 |
+| `louise-codex` | 2 | §9.3 |
+| `louise-snapshot` | 2 | §9.4 |
+| `louise-snapshot-sig` | 1 | §9.4 |
+| record line | 2 | §9.5 |
+| shard index (`LOUISE-PACK-IDX1`) | 1 | §9.5 |
+| figures container index (`LOUISE-FIGURES-1`) | 1 | §9.5 |
 | `louise-index` | 1 | §9.6 |
 | bundle header | 1 | §9.7 |
-| `louise-attestation` | 1 | §9.8 |
+| `louise-attestation` | 2 | §9.8 |
 | `louise-digest`, `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 1 | §9.12 |
 | `louise-calibration-run` | 1 | §9.12 |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
+
+Two rows above were one row each until the figures amendment, and the
+split is the point: a schema pinned beside another moves only when its
+OWN bytes move. `louise-snapshot` gained a `figures` list and
+`louise-snapshot-sig` did not; the record line gained a `figures` key
+and the shard's frame layout did not. `protocol_version` (§9.3, §9.17)
+is 2 and is not in this table: it versions the plugin contract, which
+is a boundary inside one platform rather than a byte on the wire.
 
 **Unknown versions.** A reader that meets a `version` it does not
 implement refuses the object — exit 2 for a command, a dropped message

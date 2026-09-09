@@ -658,8 +658,17 @@ collection is another name.
 `drag/` holds only what the Codex or a snapshot names, so a member is
 hashed as it lies and `share` refuses a drag directory holding a file
 that neither the Codex names, nor a snapshot of the chain lists — as a
-shard or in its `files` (09 §9.4) — nor 09 §9.6 defines as a local
-derived file under `vectors/`.
+record shard, a relations shard, a figures container, or in its `files`
+(09 §9.4) — nor 09 §9.6 defines as a local derived file under
+`vectors/`.
+
+The list is spelled out because it is a refusal and a refusal that
+omits a member kind does not omit a file, it refuses THE WHOLE DRAG.
+Until the figures amendment this sentence said "as a shard or in its
+`files`", which named neither the relations shards nor the figures
+containers — both of which 09 §9.4 lists in their own top-level arrays
+rather than in `shards` or `files`. A collection with relations was
+unshareable and nothing said why.
 
 `index/`, `lance/`, the configuration files and the keys never travel,
 and neither does the state database, which holds the cursor of 06 §6.1,

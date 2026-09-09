@@ -54,13 +54,26 @@ holding exactly what everyone else holds.
 
 ## What Louise promises
 
-1. **Only useful data travels.** Parsed text, vectors, derived indexes;
-   never markup, never anything executable, and never an origin file —
-   with one exception a certified collection may offer, because for a
-   sealed law the origin file IS the evidence: `origin-<slice>` carries
-   the signed originals for whoever needs legal standing, is optional to
-   fetch and to serve, and is never what a record is built from (03 §3.7,
-   09 §9.16).
+1. **Only useful data travels.** Parsed text, figures, vectors, derived
+   indexes; never markup, never anything executable, and never an origin
+   file — with two exceptions, each carried because the bytes ARE the
+   content rather than the packaging around it, and each optional to
+   fetch and to serve.
+
+   The first is a certified collection's, because for a sealed law the
+   origin file IS the evidence: `origin-<slice>` carries the signed
+   originals for whoever needs legal standing, and is never what a record
+   is built from (03 §3.7, 09 §9.16).
+
+   The second is a **figure** — a plate, a diagram, a drawing the origin
+   carries beside the text. A figure is not parsed and not derived; it
+   travels as the origin's own bytes, in `figures-<slice>`, named from
+   the record by hash (09 §9.5). It is admitted for the same reason the
+   text is: it is what the document says. "Never anything executable"
+   binds it hardest of all, because a figure is the one thing here a
+   viewer RENDERS — so the admitted types are a closed list, SVG is not
+   on it, and the type is checked against the bytes rather than believed
+   (08 §8.7).
 2. **A peer takes the part it wants** — one language, one period, with
    or without vectors — and knows from the Codex and the snapshot what
    it is getting before the first byte.
@@ -106,7 +119,7 @@ they are needed.
 | snapshot | the state of a collection's records at one cutoff of its update cadence; content-addressed |
 | drag | a collection on disk, and the name of the format it is written in — DRAG, *distributed RAG*: the Codex, the snapshots, the records, the vectors and everything else a peer shares, in one directory (02 §2.6, 09) |
 | shard | a run of one slice's records, sorted by native id and cut at the Codex's `shard_records`; closed once full, re-issued under the same number while it is still filling or when a record in it changes. The unit of transfer, of embedding and of verification (02 §2.2–2.3) |
-| member | what a peer fetches or shares as one unit (02 §2.6): one slice of one kind — records, vectors, buckets, index, relations — or a whole-collection file such as the calibration member or the licence terms; the snapshot names each member's size and root before the first byte moves |
+| member | what a peer fetches or shares as one unit (02 §2.6): one slice of one kind — records, vectors, buckets, index, relations, figures — or a whole-collection file such as the calibration member or the licence terms; 09 §9.16 gives the closed list of kinds. The snapshot names the size and root of each member it lists, before the first byte moves; a bundle and an `index-<slice>` are named by their own rules instead (04 §4.3) |
 | holdings | what your copy actually has — which slices, which kinds |
 | space | a function from cleaned text to vectors: the encoder build and its settings, the layers and the cleaning version, named by `space_id` (02 §2.4). One collection, one space; collections in one space are searched as one ranked list (05 §5.1), and vectors from different spaces are never compared |
 | bundle (signed block) | a batch of vectors on a collection's own records, signed by the key that produced them; the unit in which embedding work travels — 03 §3.5, 09 §9.7; 08 §8.6 says *signed block* |
