@@ -91,7 +91,7 @@ louise hold
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle every few hundred chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
-              export <collection> [--shard <slice>/<n>] --out FILE     a signed bundle of what this peer produced
+              export <collection> [--shard <slice>/<n>] --out DIR      a signed bundle of what this peer produced — a DIRECTORY of four files (09 §9.7), not a container
               check <collection> [--drop]                              are stored vectors still what this encoder produces; --drop removes the ones that are not
               show <collection>                                        coverage, producers, verification
   index       build <collection> [--text | --vector]                   the text index per shard; the centres and labels of the space
