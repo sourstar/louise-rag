@@ -359,6 +359,28 @@ sanity, exactly as the table says, and bulk substitution is T3's and
 T4's to catch. The literals here are set to admit honest work, not to
 be the wall.
 
+**And the SHAPE of the deviation test is a known risk, not only its
+band.** A per-dimension gate over thousands of dimensions is a
+multiple-comparison problem: every honest bundle gets thousands of
+chances to trip it, so the false-alarm rate grows with the dimension and
+no band is wide enough forever. This platform's own T0 says so in as
+many words — *"at dim=1024 that is 2.76 expected alarms per bundle, so
+P(at least one) = 0.94: it rejects 94 % of HONEST bundles. Tightening
+sigma does not fix it; it just destroys the power you wanted"* — and
+implements a single aggregate decision instead: a sum of squared
+per-dimension z-scores compared against a bootstrapped null published
+for bundles of that size, with the per-dimension numbers kept as
+evidence rather than as verdicts.
+
+That is the better test and it is not what this section requires,
+because it needs something the envelope does not carry: a published null
+distribution per bundle size, where §9.12's envelope is two rows of `dim`
+and nothing else. So the band stays, with its measured constants and one
+honest caveat: it is calibrated on one collection at dim 4096, and the
+first observed refusal of an honest bundle is evidence that the shape is
+wrong rather than that the band is narrow. The remedy then is the
+aggregate statistic and the member that feeds it — not a wider band.
+
 The importer's randomness in T3 is private and never derived from the
 bundle, or a producer could re-roll a nonce until the sample missed its
 corruption. What sixteen chunks on the quorum catch is stated
