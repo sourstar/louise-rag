@@ -60,13 +60,14 @@ codex = {
     epoch: "0",
     evaluation: null | {...}         -- the creator's published score, if any (notes/embedder-choice-and-supersession.md)
   },
-  credits: [{                        -- the embedding work this collection stands on (§2.7); derived, never written by hand
-    archive: "upstash-wikipedia-2024-06",
+  credits: [{                        -- whom the content and the vectors are owed to (§2.7); derived, never written by hand
+    kind: "archive" | "community" | "corpus",         -- what is owed, and by which rule it descends
+    archive: "upstash-wikipedia-2024-06" | null,      -- non-null on "archive" only
     producer: "Upstash",
-    license: "apache-2.0",
+    license: "apache-2.0" | null,
     attribution: "<the line that licence requires, byte-exact>",
-    coverage: "all" | {ids_per_shard: 1000000, shards: 37}   -- which documents; decides their layer (06 §6.3)
-  }],
+    coverage: "all" | {ids_per_shard: 1000000, shards: 37}   -- which documents; on "archive", decides their layer (06 §6.3)
+  }],                                -- sorted by (kind, archive, producer); never empty — the corpus entry is always there
   work: {tokens: <int>, per: "P1M"},                  -- the work parameter (§2.4, 08 §8.5)
   modality: "text",                                   -- what the bytes are: encoder and reranker eligibility
   erasure: "append-only" | "retractable" | "erasable",
@@ -777,35 +778,73 @@ mother's number. And a derived sister costs no GPU at all: her
 calibration member is her mother's, derived (03 §3.3), so she can be
 created entirely offline.
 
-**Credits travel with the vectors, and cannot be separated from them.**
-Where a collection's vectors come from a pre-embedded archive — NCBI's
-MedCPT release, Upstash's Wikipedia — the Codex names that archive in
-`credits`, and a collection that inherits those vectors inherits the
-entry with them. It is not the creator's to write, edit or drop: the
-vectors are the archive's work, and a recipe that carries the work
-carries the acknowledgement. Refusing the credit means refusing the
-vectors, which is allowed and costs the GPU-days the archive would have
-saved.
+**A collection stands on three kinds of work, and `credits` names all
+three.** The text came from somewhere. The vectors came either from a
+pre-embedded archive or from peers who embedded them. `credits` carries
+one entry per debt, each tagged with its `kind`, and the tag is not
+decoration: it says by which rule the entry descends to a relative, and
+which parts of the entry mean anything.
 
-`credits` is written once, at creation, like every other field: the
-recipe names the archives the collection will draw on, by id, and
-`hold collection create` expands each into its entry from the
-platform's registry. An archive absent from `credits` cannot be
-imported later (06 §6.6) — the Codex is immutable, so a debt this
-collection never declared is one it may not incur, and a creator who
-wants an archive's vectors says so before the identity is fixed.
+**`kind: "corpus"` — whom the text is from.** Exactly one entry, on
+every collection. The plugin declares the provider and the credit line
+(06 §6.1) and `create` copies them; a recipe may not write, restate or
+omit them, because a creator free to phrase an attribution is a creator
+free to phrase it away. It is there on GREEN collections too, where no
+licence compels it: Project Gutenberg asks for nothing and is named
+anyway. A rule with an exception is a rule someone lands on the wrong
+side of, and the cost of the general rule is one line per collection.
 
-Because `credits` is derived and not composed, it does not fork a
-collection the way a hand-written acknowledgement would: two creators
-who inherit the same vectors derive the same entries in the same order —
-sorted by archive id — and therefore the same `collection_id`.
+**`kind: "archive"` — a pre-embedded archive whose vectors this
+collection carries.** NCBI's MedCPT release, Upstash's Wikipedia: the
+Codex names the archive, and a collection that inherits those vectors
+inherits the entry with them. Not the creator's to write, edit or drop
+either — the vectors are the archive's work, and a recipe that carries
+the work carries the acknowledgement. Refusing the credit means
+refusing the vectors, which is allowed and costs the GPU-days the
+archive would have saved. The recipe names the archives by id and
+`create` expands each into its entry from the platform's registry. An
+archive absent from `credits` cannot be imported later (06 §6.6) — the
+Codex is immutable, so a debt this collection never declared is one it
+may not incur, and a creator who wants an archive's vectors says so
+before the identity is fixed.
 
-Each entry carries everything the collection depends on from that
-archive: who produced it, under
-which licence, the attribution that licence requires byte-exact, and the
-coverage — which documents the archive holds vectors for, either
-`"all"` when the corpus is itself the archive or the stride and count
-of its shards. All of it is hashed.
+**`kind: "community"` — the peers who embed for this collection.** At
+most one entry, naming them as ONE collective rather than as a list of
+names, and derived from a field the Codex already carries: present
+exactly when `embedding` is `"open"` or `"endorsed"`, absent when it is
+`"certifier-only"`. So a collection that accepts contributed vectors
+acknowledges the people who contribute them, in the same immutable
+place as everyone else it stands on, and a collection that accepts none
+credits none. Nothing is declared and nothing can be dropped.
+
+The collective is the point, and the distinction it turns on is between
+a name and a roster. **Peers who embedded shards are still not listed in
+`credits`** — they are named in the coverage map, bundle by bundle
+(§2.5), which is where an unbounded and changing list belongs, and a
+list hashed into `collection_id` would fix at creation a membership that
+is not knowable then and not fixed ever. "The community" is neither
+unbounded nor changing: it is a constant string, it costs one entry, and
+it says the true thing, which is that the work was not the creator's
+alone.
+
+Because `credits` is derived and not composed — every kind of it, from
+the plugin, the registry and `embedding` respectively — it does not fork
+a collection the way a hand-written acknowledgement would: two creators
+building the same collection derive the same entries in the same order,
+sorted by `(kind, archive, producer)`, and therefore the same
+`collection_id`.
+
+Every entry has the same shape, and `kind` says which of it means
+anything. An ARCHIVE entry carries all of it: who produced the vectors,
+under which licence, the attribution that licence requires byte-exact,
+and the coverage — which documents the archive holds vectors for, either
+`"all"` when the corpus is itself the archive or the stride and count of
+its shards. A CORPUS entry names the provider, the corpus licence and
+the credit line, with no archive and `coverage: "all"`, since a
+provider is owed for everything. A COMMUNITY entry names only the
+collective and its line: no archive, no licence — contributed vectors
+carry the collection's own terms and there is no second licence to
+record. All of it is hashed, in every kind.
 
 The declaration is enforceable, and what enforces it is the archive's
 NAME rather than its key. A bundle carries a `producer_pubkey` and no
@@ -847,12 +886,9 @@ way: it decides which layer a document falls in, and therefore how it is
 chunked and what its vectors are (06 §6.3). Anything that changes a byte
 belongs in the recipe, not in a build the recipe merely names.
 
-Peers who embedded shards themselves are not in `credits`: they are
-named in the coverage map, bundle by bundle (§2.5), which is where an
-unbounded and changing list belongs.
-
-**Credits follow the space, and are not a choice.** A sister's
-`credits` are her mother's when `space_id` matches. There is nothing to
+**The archive entries follow the space, and are not a choice.** A
+sister's archive credits are her mother's when `space_id` matches. There
+is nothing to
 decline in between, because the space decides it: in a matching space
 the archive's bundles are admissible to her whether she wanted them or
 not (03 §3.5), so any peer will merge them and the work is hers to
@@ -868,13 +904,26 @@ archives are admissible to her and its `credits` are hers, copied
 entire. A sister who names an encoder instead lands in a space no
 archive of her mother's covers, so hers are the archives she declares —
 `derive --archives ID …`, expanded from the platform's registry exactly
-as `create` does (07 §7.3) — and `[]` when she declares none, which is
+as `create` does (07 §7.3) — and none when she declares none, which is
 the ordinary case and leaves her embedding from zero. She must declare
 them at creation or not at all: `credits` is hashed into her
 `collection_id`, and 06 §6.6 refuses an archive import that is not
-already credited. So `credits` is never a field a sister sets beside the
-others — it is determined by the space, and `--archives` reaches it only
-where the space is new.
+already credited. So the archive entries are never a field a sister sets
+beside the others — they are determined by the space, and `--archives`
+reaches them only where the space is new.
+
+**The other two kinds do not follow the space, and are not a choice
+either.** Her corpus entry is her mother's on every relation without
+exception: a sister shares the corpus by definition, a daughter
+continues it, and a corrective sister re-derives it from the same
+origin — none of them is standing on less of the provider's work than
+the mother was, and a new encoder does not unwrite whose text it read.
+Her community entry follows her own `embedding`, which is hers to set
+and which she is free to change: a sister may open a certifier-only
+mother to contribution, or close an open one, and her credits say which
+she did. So a sister's `credits` are never empty, and neither are a
+corrective sister's, though its archive entries are: a correction
+discards the vectors and keeps the debt for the text.
 
 **Creating a sister is still an acceptance**, of the space and of what
 follows from it. `hold collection derive` never writes a Codex without
@@ -891,8 +940,10 @@ stopping for: a sister is one changed field away from a collection whose
 two hundred GPU-days do not carry, and the difference between
 deliberate and accidental is whether anyone was told. A daughter is not
 asked, because she has no choice: her space is her mother's by
-construction, so the vectors and the credits copy with her. A corrective
-sister starts from zero by definition and inherits neither.
+construction, so the vectors and every credit copy with her. A
+corrective sister starts from zero by definition and inherits no
+vectors and no archive credit — but it keeps the corpus and community
+entries, which were never about the vectors it discarded.
 
 **A cleaning change is not a sister.** Cleaning output *is* the record
 (§2.3), so changing `cleaning_version` re-derives every record from the

@@ -281,18 +281,29 @@ number written as a decimal string is marked *decimal*.
 | `derivation` | object or null | yes | how this space's vectors may be obtained WITHOUT an encoder, when it is a pure function of another space's: `{from: id, kind: "truncate" · "quantise", params: {…}}`, `from` being a `space_id` and never a `collection_id`. `null` where there is none. NOT part of `space_id` (02 §2.4) |
 | `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
 | `facets` | list of objects | yes | which record fields a search may filter on and a reader may list (05 §5.7), sorted by `field`, `[]` when none. Each is `{field: string, kind: "flat" · "tree" · "range", separator: string or null, authority: {name: string} or null}`; `separator` is non-null exactly when `kind` is `"tree"`. `field` is a top-level record field (§9.5) or `extra.<key>`. Declares structure only: the values live in the records |
-| `credits` | list of objects | yes | the pre-embedded archives whose vectors this collection carries, sorted by `archive`, `[]` when none. Each is `{archive: string, producer: string, license: string, attribution: string, coverage: "all" or {ids_per_shard: integer, shards: integer}}`. Derived at creation from the platform's registry and from what is inherited, never composed by hand (02 §2.7); hashed, so neither the licence, the attribution nor the coverage can be altered by a later build. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — it is lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written. `coverage` stays because it decides which layer a document falls in (06 §6.3): `credits` is not a pure compliance record |
+| `credits` | list of objects | yes | whom this collection's content and vectors are owed to, sorted by `(kind, archive, producer)`, never empty. Each entry has the same six keys — `{kind: "archive" · "community" · "corpus", archive: string or null, producer: string, license: string or null, attribution: string, coverage: "all" or {ids_per_shard: integer, shards: integer}}` — and `kind` fixes which of them carry meaning, below. Derived at creation from the plugin's declaration, the platform's registry and what is inherited, never composed by hand (02 §2.7); hashed, so no later build can alter or drop any of it |
+| ↳ `kind: "corpus"` | | | the corpus provider — whom the TEXT is from. Exactly one entry, on every collection including green ones: every corpus has a provider and every provider is named, whether or not a licence compels it. `archive` is null, `coverage` is `"all"`, `license` is the corpus licence (`null` only where there is none to name), `producer` and `attribution` come from the plugin (06 §6.1) |
+| ↳ `kind: "archive"` | | | a pre-embedded archive whose vectors this collection carries — zero or more, one per archive, `archive` naming it. Expanded from the platform's registry by the recipe's `archives`. `coverage` is load-bearing and not merely compliance: 06 §6.3's `archive:<id>` layer rule reads it to decide which layer a document falls in, and NO OTHER KIND is read there. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written |
+| ↳ `kind: "community"` | | | the peers who embed for this collection, as ONE collective and never as a roster. At most one entry, present exactly when `embedding` is `"open"` or `"endorsed"` and absent when it is `"certifier-only"` — so it is derived from a field already in the Codex rather than declared, and a collection that accepts no community vectors credits none. `archive` and `license` are null, `coverage` is `"all"` |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
 
 The relations are exclusive in this way: a daughter has `continues` and
 `continues_through`; a sister has `derived_from` and, when it was made with
 `--space-from`, `space_from`; a corrective sister has `derived_from` and
 `replaces`; a root has none of them. Any other combination is refused.
-A daughter's `credits` equal her mother's, since she inherits the
+`credits` descends by KIND, because the three kinds have three
+lifetimes. The `corpus` and `community` entries are the same on every
+relative without exception — a daughter, a sister in any space, a
+corrective sister: the corpus is the same corpus, and the community will
+embed for whichever of them accepts community vectors, so neither credit
+is inherited work that a new space could leave behind. The `archive`
+entries are: a daughter's equal her mother's, since she inherits the
 vectors; a sister's equal her mother's when her `space_id` matches her
-mother's and are her own recipe's when it does not, there being no
-third case; a corrective sister's are `[]`, since it starts from zero
-(02 §2.7).
+mother's and are her own recipe's when it does not, there being no third
+case; a corrective sister has none, since it starts from zero (02 §2.7).
+So `credits` is never `[]` — the corpus entry is always there — and the
+part of it a relative may differ in is exactly the part that describes
+vectors it did not compute.
 
 **The origin block.**
 
