@@ -201,8 +201,9 @@ certifier (§3.8). Promotion is one rename into the drag path and, in the
 same transaction of the state database, the holdings mark: the durable
 marker is the snapshot's row in the manifest naming that member as held.
 At start, a member present in the copy without its mark goes back to
-staging. A shard or `files` member whose root is in no snapshot the peer
-holds stays in staging until a snapshot naming it arrives, and is
+staging. A record shard, a relations shard, a figures container or a
+`files` member whose root is in no snapshot the peer holds stays in
+staging until a snapshot naming it arrives, and is
 discarded after `grace_days`. The members no snapshot lists are
 admitted by their own rule instead, never by this one: a bundle by the
 ladder of 03 §3.5, a text-index member by the pin its header carries
@@ -290,9 +291,19 @@ class, the Codex's `license.class` records it and is authoritative
 
 | class | examples | what may be shared |
 |---|---|---|
-| **green** | public domain, CC0: Gutenberg, reference genomes, public vector archives | records, vectors, index; no acknowledgement |
-| **yellow** | open with conditions: Wikipedia (CC BY-SA), most reference databases (attribution) | records, vectors, index — after the peer has recorded its acknowledgement of the terms |
-| **red** | text under publisher copyright with free bulk access: PubMed abstracts | vectors, pointer records and index — after the same acknowledgement; the text is never exchanged, and a reader shows the origin's page |
+| **green** | public domain, CC0: Gutenberg, reference genomes, public vector archives | records, vectors, index, figures; no acknowledgement |
+| **yellow** | open with conditions: Wikipedia (CC BY-SA), most reference databases (attribution) | records, vectors, index, figures — after the peer has recorded its acknowledgement of the terms |
+| **red** | text under publisher copyright with free bulk access: PubMed abstracts | vectors, pointer records and index — after the same acknowledgement; the text is never exchanged, and a reader shows the origin's page. FIGURES DO NOT TRAVEL either: a plate is the origin's content and not something derived from it, so it falls on the text's side of this line and not the vectors' |
+
+THE CLASS IS THE COLLECTION'S, AND FIGURES DO NOT GET ONE OF THEIR OWN.
+Where the plates carry conditions the text does not — a public-domain
+book whose scans a library asserts rights in — the collection takes the
+stricter class, by the same rule that lets a collection tighten its
+plugin's declared class and never loosen it. A per-member class was
+considered and refused: the acknowledgement is per collection, one ack
+covering "records, vectors and drag alike", and splitting the class
+would turn one acknowledgement into a matrix for a case no corpus here
+presents.
 
 The acknowledgement is a timestamp and the hash of the terms text, and it
 is required before a yellow or red collection's data is *used*, however

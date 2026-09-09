@@ -175,8 +175,27 @@ class CanonicalDoc:
     keys: list[str]                 # canonical entity ids this document is about: "<namespace>:<id>" (§5.2)
     extra: dict[str, Any]           # plugin-defined, fixed keys; origin_url for a red source
     sections: list[tuple[str, str]] # (heading, text), in order
+    figures: list[Figure]           # the plates, in order of first appearance; [] when none
     origin_hash: str                # BLAKE2b-128 of this document's own origin bytes (§6.4)
 ```
+
+```python
+@dataclass(frozen=True)
+class Figure:
+    hash: str                       # H over `data` — SHA-256, not BLAKE2b (09 §9.5)
+    media_type: str                 # one of 08 §8.7's admitted types
+    bytes: int                      # len(data)
+    seq: int                        # order of first appearance in the text, from 0
+    data: bytes                     # the plate itself; the only field that does not
+                                    # reach the record line — it goes to the container
+```
+
+A plugin whose source carries no plates returns `[]` and is done: the
+protocol is what the platform may CALL, not what a source happens to
+hold. A plugin that DOES yield figures leaves the caption in `sections`
+where the text is — a caption is text, it is what a search matches, and
+a reader holding no plates still wants it — so a figure appears twice, in
+two different roles, and that is deliberate.
 
 Everything downstream — chunking, records, indexes, vectors — works on
 `CanonicalDoc` and never on a source's native form. The platform, not
@@ -430,6 +449,19 @@ For a certified source the sealed form wins even when a structured form
 would parse more robustly, because the seal covers what was parsed and
 authenticity is the point; the parser's fragility is then pinned by the
 platform image's digest and caught by `records-vs-origin`.
+
+**Where only one form carries the figures, that form wins, and the cost
+is named rather than discovered.** Gutenberg is the worked case: the
+plates are in the epub and in nothing else the project holds, so a
+collection that carries them takes the epub as its `origin.form` and
+says so. The cost is that the two forms do not clean to the same text —
+the plain-text edition is hard-wrapped and an epub's text is reflowable,
+so `sections` differ, `content_hash` differs, and no vector computed
+against the other form is admissible (09 §9.7). That is a corpus to
+re-embed, and it is a decision to take with the number in hand, not a
+surprise to meet during a build. It is also why the two are separate
+collections rather than one amended: a Codex is never edited, and a
+collection whose records gain plates is a new collection (02 §2.7).
 
 ## 6.5 Reference sources
 

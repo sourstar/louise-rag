@@ -330,7 +330,9 @@ snapshot can still be served and checked (01, promise 7).
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,
 `origin`, `content_hash`, `origin_hash`, in that order, compact, UTF-8,
-`\n`-terminated; 09 §9.5 fixes the bytes and the shard's frame layout.
+`\n`-terminated — and `figures` after `sections` where the collection
+carries plates (`record_line` 2, 09 §9.3); 09 §9.5 fixes the bytes and
+the shard's frame layout.
 `uid` is `<plugin>:<native_id>`; `native_id` is a string, unique within
 the plugin and stable for the life of the document, which the platform
 never parses except under `slicing.order: numeric`. `sections` — pairs
@@ -588,6 +590,7 @@ local, and its form is 09 §9.10.
 ├── seals/2026-08.json                   -- certified collections: origin seal evidence (§3.7)
 ├── records/<slice>/NNNNN.jsonl.zst      -- and NNNNN.<snapshot id>.jsonl.zst for superseded versions (§2.3)
 ├── relations/<slice>/NNNNN.jsonl.zst    -- typed edges between records (§5.5; 09 §9.14)
+├── figures/<slice>/NNNNN.fig.zst        -- the plates that shard's records name (09 §9.5); fetchable or not
 ├── index/<slice>/NNNNN/                 -- the text index of that shard (optional to share; a cache)
 └── vectors/<space>/…                    -- as above
 ```
@@ -615,8 +618,8 @@ A **member** is what a peer fetches or shares: one slice of one kind —
 `records-year=1975-1979`, `vectors-<space>-year=1975-1979`,
 `buckets-<space>-v2-g07` — plus the whole-collection ones. The kinds
 are closed, and `--kinds` (07 §7.3) takes their names: `records`,
-`vectors`, `buckets`, `index`, `relations`, `bundle`, `centres`,
-`calibration`, `terms`, `seals` and `origin`; 09 §9.16 gives each its
+`vectors`, `buckets`, `index`, `relations`, `figures`, `bundle`,
+`centres`, `calibration`, `terms`, `seals` and `origin`; 09 §9.16 gives each its
 name and its files. Every file of a member is a BitTorrent v2 torrent,
 grouped by one torrent collection per (collection, snapshot); a member
 of one file has that file's piece-layer root as its root, and a member of
