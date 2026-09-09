@@ -219,6 +219,93 @@ def envelope_of(vectors):
         np.stack([v.mean(axis=0), v.std(axis=0)]), dtype=np.float32)
 
 
+#: 03 §3.5's T0 envelope literals, measured 2026-09-09 (three runs: two
+#: encoders, two corpora, dims 2560 and 4096) and defended against seven
+#: deliberately broken bundles. `tools/measure_t0_envelope.py` reproduces
+#: the table and the controls.
+ENVELOPE_COS_MIN = 0.5
+ENVELOPE_BAND = (0.4, 2.0)
+
+#: THE PERCENTILE IS THE POINT, not the band. Stated as "every dimension
+#: within the band", this test is a multiple-comparison problem: an honest
+#: bundle gets one chance to fail per dimension, so the false-alarm rate
+#: grows with the space. Measured: the SAME honest vectors passed at 2560
+#: dimensions and put 16 of 4096 outside at 4096, because `min` over more
+#: samples is smaller for no reason but the count. A percentile does not
+#: drift with sample size, so the rule holds at any dimension and the band
+#: barely had to move (it was [0.5, 2.0] before, applied to the extremes).
+ENVELOPE_QUANTILE = 2
+
+
+def envelope_verdict(vectors, envelope_) -> dict:
+    """T0's envelope test (03 §3.5): does this bundle look like it came
+    out of this space?
+
+    Returns the two statistics and a verdict rather than a bare bool,
+    because a refusal that cannot say which number failed is a refusal
+    nobody can act on — and because §3.5 keeps the per-dimension numbers
+    as EVIDENCE even when they are not the decision.
+
+    What it does not see, measured rather than assumed: a bundle 10 % or
+    25 % random passes both statistics, its mean vector indistinguishable
+    from clean. The extremum form did catch those — with the very
+    statistic that refuses honest work — so no version of this test sees
+    partial contamination AND admits real bundles. That is T3's and T4's,
+    and §3.5 says so.
+    """
+    import numpy as np
+    v = np.asarray(vectors, dtype=np.float64)
+    env = np.asarray(envelope_, dtype=np.float64)
+    if env.ndim != 2 or env.shape[0] != 2:
+        raise CalibrationError(
+            f"an envelope is [2, dim] — row 0 the mean, row 1 the standard "
+            f"deviation (09 §9.12); got {env.shape}")
+    if v.ndim != 2 or v.shape[1] != env.shape[1]:
+        raise CalibrationError(
+            f"the bundle is {v.shape} and the envelope is for dim "
+            f"{env.shape[1]}")
+
+    mean, sd = env[0], env[1]
+    m = v.mean(axis=0)
+    denom = np.linalg.norm(m) * np.linalg.norm(mean)
+    cos = float(m @ mean / denom) if denom else 0.0
+
+    # A dead dimension — zero deviation across the whole set — would make
+    # the ratio a division by zero. None was found on any measured space
+    # (the smallest was 2.3e-06), but a space that had one must not turn
+    # into a NaN that compares false against every bound.
+    live = sd > 0
+    ratio = np.full(sd.shape, np.nan)
+    ratio[live] = v.std(axis=0)[live] / sd[live]
+    finite = ratio[np.isfinite(ratio)]
+    if finite.size == 0:
+        raise CalibrationError("the envelope has no dimension that varies")
+
+    lo = float(np.percentile(finite, ENVELOPE_QUANTILE))
+    hi = float(np.percentile(finite, 100 - ENVELOPE_QUANTILE))
+    band_lo, band_hi = ENVELOPE_BAND
+    reasons = []
+    if cos < ENVELOPE_COS_MIN:
+        reasons.append(f"mean-vector cosine {cos:.4f} < {ENVELOPE_COS_MIN}")
+    if lo < band_lo:
+        reasons.append(f"p{ENVELOPE_QUANTILE} of the deviation ratios "
+                       f"{lo:.3f} < {band_lo}")
+    if hi > band_hi:
+        reasons.append(f"p{100 - ENVELOPE_QUANTILE} of the deviation ratios "
+                       f"{hi:.3f} > {band_hi}")
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "cosine": cos,
+        "p_lo": lo,
+        "p_hi": hi,
+        # Evidence, never the decision (03 §3.5).
+        "ratio_min": float(finite.min()),
+        "ratio_max": float(finite.max()),
+        "dead_dims": int((~live).sum()),
+    }
+
+
 def build_member(texts, embed, *, normalise: bool, dim: int):
     """Embed the set and produce the member's two tensors and their hashes.
 

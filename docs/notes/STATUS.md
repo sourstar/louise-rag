@@ -1000,6 +1000,18 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 
+- **`tests/test_worker_parallel_embed.py::test_one_bad_document_is_isolated`
+  is FLAKY (seen 2026-09-09).** Failed once in a full-suite run, then passed
+  alone, passed with its own file, and passed in two further full-suite runs
+  — including with `-p no:randomly`, so it is not an ordering effect between
+  files. It drives `worker._embed_parallel`, a thread pool, and asserts both
+  a retry count and that all seven healthy documents finished; under a loaded
+  container either could plausibly lose a race. Not diagnosed, and NOT caused
+  by anything on this branch (it also passes with the branch's changes
+  stashed). Worth a proper look before it is dismissed as noise a second
+  time: a test of parallel isolation that is itself timing-dependent is the
+  one that will hide a real scheduling regression.
+
 - **8% of gutenberg's stored vectors are corrupt, and the encoder that
   wrote them was an UNAPPROVED build (2026-08-28).** `tools/vector_compliance
   gutenberg` over 163 sampled chunks: 13 below TAU (8.0%), worst cosine
