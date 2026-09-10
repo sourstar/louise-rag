@@ -356,6 +356,83 @@ def cmd_vectors_export(a) -> int:
     return 0
 
 
+def cmd_vectors_archive_import(a) -> int:
+    """`hold vectors import <collection> --archive ID` — a published
+    pre-embedded set, through the archive route.
+
+    THIS ONE WRAPS, and deliberately: 07 §7.3 gives `import` one shape for
+    "a signed bundle, or a public pre-embedded archive", but they are not
+    one mechanism. A bundle is 09 §9.7's four files and goes through
+    `app/hold/admit.py`'s ladder; an archive is millions of vectors in
+    someone else's format, discovered or downloaded shard by shard, and
+    `app/bundles/genesis.py` already does that — resumably, with a
+    same-function proof per archive and a cache bound. The migration
+    plan's own rule is wrap, do not rewrite, and step 4's note says this
+    path SURVIVES the ladder rewrite.
+
+    What the new command adds is the gate the old path never had: 03
+    §3.5's archive refusal. "A key that resolves through the platform's
+    registry to an archive this collection's `credits` does not name" is
+    refused, because a Codex is written once and a collection cannot come
+    to stand on work it never declared.
+    """
+    from app import db, embeddings, licensing
+    from app.bundles import genesis
+    from app.hold import collection as col, embedder as emb, records as rec, \
+        template as tpl
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    licensing.require_ack(
+        local, use="an archive's vectors are imported into this collection")
+
+    archive = genesis.ARCHIVES.get(a.archive)
+    if archive is None:
+        raise CodexError(
+            f"no archive {a.archive!r} in the platform's registry; it has "
+            f"{', '.join(sorted(genesis.ARCHIVES)) or 'none'}")
+
+    # 06 §6.6 and 03 §3.5: the archive must be one this Codex CREDITS.
+    # `credits` is hashed into `collection_id`, so this cannot be satisfied
+    # after the fact by editing anything — which is the point.
+    credited = {c.archive for c in cx.archive_credits(codex)}
+    if archive.archive_id not in credited:
+        raise CodexError(
+            f"{name} does not credit archive {archive.archive_id!r} (06 "
+            f"§6.6). It credits {', '.join(sorted(credited)) or 'no archive'}. "
+            f"A Codex is written once, so a collection cannot come to stand "
+            f"on work it never declared; a collection that should draw on "
+            f"this archive is a different collection, created naming it")
+
+    embed_fn = None
+    try:
+        recipe = _recipe_for(codex, name)
+        embed_fn = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+    except emb.GateDeferred as e:
+        # The same-function proof needs the encoder. genesis DEFERS a shard
+        # rather than admitting it unproven, which is the right refusal —
+        # so say so here rather than letting it look like a failure.
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+
+    con = db.connect(local)
+    try:
+        out = genesis.import_archive(
+            con, local, archive, shards=a.shards or None, embed_fn=embed_fn)
+    finally:
+        con.close()
+
+    ok = [s for s in out["shards"] if s.get("ok")]
+    print(f"{archive.archive_id}")
+    print(f"  shards      {len(ok)} of {len(out['shards'])} admitted")
+    print(f"  landed      {out['chunks']} chunks over {out['docs']} documents")
+    for s in out["shards"]:
+        if not s.get("ok"):
+            print(f"  refused     {s.get('shard')}: {s.get('detail') or s}",
+                  file=sys.stderr)
+    return 0 if len(ok) == len(out["shards"]) else 1
+
+
 def cmd_vectors_import(a) -> int:
     """`hold vectors import` — a peer's bundle through 03 §3.5's ladder.
 
@@ -374,6 +451,9 @@ def cmd_vectors_import(a) -> int:
     from app import embeddings, licensing
     from app.hold import admission as adms, admit as adm, collection as col, \
         drag, embedder as emb, land as landing, records as rec, vectors as vec
+
+    if getattr(a, "archive", None):
+        return cmd_vectors_archive_import(a)
 
     name, codex = col.resolve(a.root, a.collection)
     local = rec.local_collection(a.root, name, codex)
@@ -1164,8 +1244,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = vverbs.add_parser("import",
                           help="a peer's bundle through 03 §3.5's T0–T3 ladder")
     root_arg(p); p.add_argument("collection")
-    p.add_argument("--bundle", required=True,
-                   help="the bundle DIRECTORY to import (09 §9.7's four files)")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--bundle",
+                     help="the bundle DIRECTORY to import (09 §9.7's four files)")
+    src.add_argument("--archive", metavar="ID",
+                     help="a published pre-embedded set from the platform's "
+                          "registry, e.g. medcpt-pubmed. Refused unless this "
+                          "collection's `credits` names it (06 §6.6)")
+    p.add_argument("--shards", nargs="*",
+                   help="with --archive: only these shards (default: all)")
     p.add_argument("--snapshot",
                    help="which snapshot's records to check against "
                         "(default: the one the bundle names)")
