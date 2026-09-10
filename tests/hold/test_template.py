@@ -421,3 +421,44 @@ def test_an_empty_toml_table_reads_as_null_not_as_malformed():
     assert codex.space.query.encoder is None
     assert codex.space.query.instruction is None
     assert codex.space.evaluation is None
+
+
+# ---- a recipe's layer refuses what it does not know ----------------------
+
+def test_a_stray_key_in_the_chunker_table_is_refused():
+    """TOML binds a bare key to the table above it, so a top-level setting
+    written after `[layers.chunker]` lands INSIDE the chunker. `from_recipe`
+    validates top-level keys only, so it passed silently — and on
+    2026-09-10 that created a permanent pubmed `collection_id` with no
+    archive credited, which `hold vectors import --archive` then correctly
+    refused. One `create` wasted; 09 §9.18 refuses unknown keys on every
+    hashed object and a recipe's layer should too.
+    """
+    r = recipe(layers=[{"chunker": {"id": "abstract", "version": 1,
+                                    "params": {},
+                                    "archives": ["medcpt-pubmed"]},
+                        "rule": "default"}])
+    with pytest.raises(TemplateError, match="unknown key.*archives"):
+        from_recipe("pubmed", r, platform_image=PLATFORM)
+
+
+def test_a_stray_key_beside_the_chunker_is_refused_too():
+    r = recipe(layers=[{"chunker": {"id": "abstract", "version": 1},
+                        "rule": "default", "archives": ["medcpt-pubmed"]}])
+    with pytest.raises(TemplateError, match="unknown key.*archives"):
+        from_recipe("pubmed", r, platform_image=PLATFORM)
+
+
+def test_a_layer_missing_its_chunker_says_so():
+    with pytest.raises(TemplateError, match="missing key.*chunker"):
+        from_recipe("pubmed", recipe(layers=[{"rule": "default"}]),
+                    platform_image=PLATFORM)
+
+
+def test_a_well_formed_layer_still_works():
+    """`params` and `rule` are optional; the rest is required."""
+    c = from_recipe("gutenberg", recipe(layers=[
+        {"chunker": {"id": "abstract", "version": 1}}]),
+        platform_image=PLATFORM)
+    assert [(l.chunker.id, l.chunker.version, l.rule) for l in c.layers] == \
+        [("abstract", 1, "default")]

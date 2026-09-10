@@ -196,10 +196,50 @@ def default_facets(source) -> tuple[Facet, ...]:
     return tuple(sorted(facets, key=lambda f: f.field))
 
 
+#: What a recipe's layer and its chunker may carry (09 §9.3).
+_LAYER_KEYS = ("chunker", "rule")
+_CHUNKER_KEYS = ("id", "version", "params")
+
+
 def _layer(d: dict[str, Any], i: int) -> Layer:
-    ch = d["chunker"]
+    """UNKNOWN KEYS ARE REFUSED, as 09 §9.18 refuses them on every hashed
+    object — and here the reason is TOML rather than typos.
+
+    TOML binds a bare key to the table that precedes it, so a recipe
+    written as
+
+        [layers.chunker]
+        id = "abstract"
+
+        archives = ["medcpt-pubmed"]
+
+    puts `archives` inside the CHUNKER. `from_recipe` validates top-level
+    keys only, so it passed silently and the collection was created with
+    no archive credited — a permanent `collection_id` standing on work it
+    never declared, which `hold vectors import --archive` then correctly
+    refuses. Cost one `create` on 2026-09-10 taking pubmed through step 8.
+    """
+    d = _only(d, _LAYER_KEYS, f"layers[{i}]", optional=("rule",))
+    ch = _only(d["chunker"], _CHUNKER_KEYS, f"layers[{i}].chunker",
+               optional=("params",))
     return Layer(Chunker(ch["id"], ch["version"], ch.get("params") or {}),
                  d.get("rule", "default" if i == 0 else ""))
+
+
+def _only(d: dict[str, Any], allowed: tuple[str, ...], where: str,
+          *, optional: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Like `codex._only`, but a recipe MAY omit what has a default."""
+    unknown = sorted(set(d) - set(allowed))
+    if unknown:
+        raise TemplateError(
+            f"{where}: unknown key(s) {', '.join(unknown)}. A recipe's layer "
+            f"carries {', '.join(allowed)} and nothing else — and in TOML a "
+            f"bare key belongs to the table above it, so a top-level setting "
+            f"written after a [table] header lands inside that table")
+    missing = sorted(set(allowed) - set(optional) - set(d))
+    if missing:
+        raise TemplateError(f"{where}: missing key(s) {', '.join(missing)}")
+    return d
 
 
 def _facet(d: dict[str, Any]) -> Facet:
