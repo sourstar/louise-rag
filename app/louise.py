@@ -17,6 +17,8 @@
     louise hold vectors export <collection> --shard S --out DIR [--snapshot ID]
     louise hold vectors import <collection> --bundle DIR [--snapshot ID]
                                     [--strict [--allow KEY...]] [--require-t3] [--seed HEX]
+                                    [--budget]
+    louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
@@ -460,6 +462,90 @@ def cmd_vectors_import(a) -> int:
     return 0
 
 
+def cmd_vectors_check(a) -> int:
+    """`hold vectors check [--drop]` — 03 §3.2's `vectors-sample`, locally.
+
+    Exit 0 on a pass, 1 on a fail, 3 when the encoder was unreachable or
+    the sample turned up nothing to reproduce: 03 §3.1's third outcome is
+    INCONCLUSIVE, "neither a failure nor a pass", and reporting that as a
+    pass is the one outcome that would let an empty table certify itself.
+    """
+    import os
+
+    from app import embeddings
+    from app.hold import collection as col, embedder as emb, land as landing, \
+        records as rec, vectors_check as vck
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    snapshot = _latest_snapshot(a.root, name, a.snapshot)
+
+    embed = None
+    try:
+        recipe = _recipe_for(codex, name)
+        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+    except emb.GateDeferred:
+        pass
+
+    # `check` asks for a shard's chunk ids before it asks for any of its
+    # text, so the cut is done once per sampled shard and the text is read
+    # out of it. Cutting a shard is the expensive part — a re-cut per
+    # sampled chunk would be sixteen passes over the same records.
+    cut: dict[str, dict] = {}
+
+    def chunk_ids_for(entry):
+        cut.clear()
+        cut.update(landing.cut(codex, landing.records_for(
+            a.root, name, snapshot, f"{entry.slice}/{entry.n:05d}", None)))
+        return sorted(cut)
+
+    def text_of(cid):
+        entry = cut.get(cid)
+        return entry["text"] if entry else None
+
+    report = vck.check(
+        codex, snapshot, seed=bytes.fromhex(a.seed) if a.seed else os.urandom(32),
+        chunk_ids_for=chunk_ids_for, text_of=text_of,
+        vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
+        embed=embed, fraction=a.sample,
+        drop=(lambda ids: embeddings.delete_chunks(ids, collection=local))
+        if a.drop else None)
+
+    print(f"{report.verdict.upper()}  {report.why}")
+    print(f"  seed        {report.seed.hex()}")
+    print(f"  tolerance   {report.tolerance}  quorum {report.min_pass}/{report.n}")
+    for s in report.shards:
+        print(f"  {s.verdict:<13} {s.shard}  {s.passed}/{s.checked} of "
+              f"{s.sampled} drawn, median {s.median:.4f}, worst {s.worst:.4f}")
+    for cid in report.failing:
+        print(f"  failing     {cid}", file=sys.stderr)
+    if report.verdict == vck.INCONCLUSIVE:
+        return 3
+    return 1 if report.verdict == vck.FAIL else 0
+
+
+def _latest_snapshot(root, name, snapshot_id=None):
+    """The named snapshot, or the latest this peer holds.
+
+    Snapshot ids sort chronologically by construction (09 §9.4), so the
+    last name IS the latest — no need to open every file to find out.
+    """
+    from app.hold import collection as col, drag as drag_mod, snapshot as snap
+    d = col.drag_of(Path(root), name) / "snapshots"
+    if snapshot_id:
+        p = col.drag_of(Path(root), name) / drag_mod.snapshot_path(snapshot_id)
+        if not p.is_file():
+            raise CodexError(f"no snapshot {snapshot_id!r} in this copy")
+        return snap.load(p)
+    ids = sorted(p.stem for p in d.glob("*.json")
+                 if not p.name.endswith(".sig.json")) if d.is_dir() else []
+    if not ids:
+        raise CodexError(
+            f"{name} holds no snapshot; a sampled check draws over a "
+            f"snapshot's shards (03 §3.2) and there is not one yet")
+    return snap.load(d / f"{ids[-1]}.json")
+
+
 def _admission_limits():
     """`platform.toml`'s `[admission]`, or 08 §8.2's defaults."""
     from app import platform_config
@@ -817,6 +903,25 @@ def build_parser() -> argparse.ArgumentParser:
                         "reproduced. Off by default: an operator naming a "
                         "path is not material arriving from a stranger")
     p.set_defaults(fn=cmd_vectors_import)
+
+    p = vverbs.add_parser("check",
+                          help="03 §3.2's `vectors-sample` over this peer's "
+                               "own vectors")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--snapshot",
+                   help="which snapshot's shards to sample (default: the "
+                        "latest held)")
+    p.add_argument("--sample",
+                   help="raise the plan's shard fraction for this run, as a "
+                        "decimal string. It cannot lower it (07 §7.3)")
+    p.add_argument("--seed",
+                   help="hex seed for the draw, to repeat a check (default: "
+                        "fresh randomness, printed)")
+    p.add_argument("--drop", action="store_true",
+                   help="empty a row that no longer reproduces (02 §2.4) so "
+                        "the coverage map stops claiming it. Off by default: "
+                        "deleting vectors on a cosine is an operator's call")
+    p.set_defaults(fn=cmd_vectors_check)
 
     add_deprecated(surfaces, {
         "records_build": args_records_build,

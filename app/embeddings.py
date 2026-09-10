@@ -460,6 +460,43 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
     return len(out)
 
 
+def delete_chunks(chunk_ids, collection=None, lock_con=None) -> int:
+    """Empty specific rows — 02 §2.4's remedy for a vector that no longer
+    reproduces (`hold vectors check --drop`).
+
+    Same narrowing and the same id check as `upsert_chunks`, for the same
+    reasons. Returns how many of the ids were actually present.
+    """
+    ids = [str(c) for c in chunk_ids]
+    if not ids:
+        return 0
+    for cid in ids:
+        if not _CHUNK_ID.match(cid):
+            raise ValueError(
+                f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
+                f"(09 §9.5); nothing is deleted and no filter is built from it")
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return 0
+    books = sorted({int(c.rsplit(":", 3)[1]) for c in ids})
+    want = set(ids)
+    gone = 0
+    with _write_lock(lock_con):
+        tbl = db.open_table(TABLE)
+        for i in range(0, len(books), 500):
+            part = ",".join(str(b) for b in books[i:i + 500])
+            have = [x["id"] for x in
+                    tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})",
+                                       prefilter=True)
+                    .select(["id"]).limit(_RESUME_SCAN_MAX).to_list()
+                    if x["id"] in want]
+            for j in range(0, len(have), 500):
+                quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
+                tbl.delete(f"{BOOK_COLUMN_NAME} IN ({part}) AND id IN ({quoted})")
+            gone += len(have)
+    return gone
+
+
 @contextmanager
 def _write_lock(lock_con):
     """No-op when no manifest connection is supplied, so callers that predate

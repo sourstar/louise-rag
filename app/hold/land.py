@@ -65,21 +65,25 @@ def snapshot_named(root, name: str, snapshot_id: str) -> snap.Snapshot:
 
 
 def records_for(root, name: str, snapshot: snap.Snapshot, shard: str,
-                uids: Iterable[str]) -> list[dict]:
-    """This peer's records for the uids a bundle carries.
+                uids: Iterable[str] | None) -> list[dict]:
+    """This peer's records for the uids a bundle carries, or all of them.
 
     Read from the shard the bundle names, because that is where the
     exporter read them and because a snapshot's roots cover shards. A uid
     the shard does not hold is simply absent from the result — it is not
     an error here, it is a record this peer does not have, and the rows
     that mention it become `unplaceable` below.
+
+    `uids=None` is the whole shard, which is what a sampled check over
+    this peer's own vectors wants (`hold vectors check`): there is no
+    bundle there to name a subset.
     """
-    want = set(uids)
+    want = None if uids is None else set(uids)
     drag = col.drag_of(Path(root), name)
     entry = exp._shard_of(snapshot, shard)
     from app.pack import records as pack_records
     return [r for r in pack_records.iter_records(drag / entry.path)
-            if r["uid"] in want]
+            if want is None or r["uid"] in want]
 
 
 def cut(codex, records: Sequence[dict]) -> dict[str, dict]:
