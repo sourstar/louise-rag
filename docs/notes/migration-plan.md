@@ -400,9 +400,10 @@ WHAT IS GENUINELY WRAPPED: the exporter's shape, the ledger, and
 `format.py`'s *posture* — verify the wire bytes, never re-serialise —
 which is right and is carried into `app/hold/bundle.py`.
 
-**Sub-tasks, in order. `a`-`f` are DONE (`e61d4d2`, `728b127`, `c` by
+**Sub-tasks. ALL DONE, 2026-09-10** — `e61d4d2`, `728b127`, `c` by
 measurement rather than by code, `6f4c7c2` + `945e5f7`, `dc8a2b2` +
-`567574b`). `g` and `h` remain; `g` is what removes TOFU for good.**
+`567574b`, `f01c04f`, `de8d5c4`, `8fd9cab`. The last of those is the verb
+`a`–`h` never named; see below.
 
 - **a. DONE — 09 §9.7's bytes** as `app/hold/bundle.py`: the closed
   sixteen-key header, ASCII-only serialisation (NOT §9.1's canonical
@@ -478,12 +479,55 @@ measurement rather than by code, `6f4c7c2` + `945e5f7`, `dc8a2b2` +
   exit 2 rather than re-raising it as a CodexError at each call site,
   which would be a second implementation of a check `app/licensing.py`
   owns.
-- **g. The admission budget** (08 §8.2) in the same commit that removes
-  TOFU — 07 §7.8 already gives the surface.
-- **h. `check([--drop])`**: `vector_compliance` and `vector_sweep` as one
-  command. `vectors-sample` draws **sixteen** chunks per sampled shard,
-  always; the plan sets how many shards and never how many chunks.
+- **g. DONE** (`f01c04f`). `app/hold/admission.py` is 08 §8.2's aggregate
+  limit — 64 MB and one thousand objects per hour, whichever binds first,
+  over material from keys whose work this peer has not seen reproduced,
+  and beyond that a bounded queue that DROPS THE NEWEST. It rests on one
+  durable fact, the `reproduced` ledger, and that is why it lands with
+  step 4's importer rather than with step 9's intake: the fact
+  ACCUMULATES, and a ledger that started on the day `share fetch` was
+  written would count every peer who had already contributed as a
+  stranger. `platform.toml` gains `[admission]`; the node's own state is
+  `<LOUISE_ROOT>/state/node.sqlite`, a sibling of `collections/`.
 
+  **Two readings to disagree with if they are wrong.** (1) `--budget` is
+  OFF by default on `hold vectors import`. §8.2 governs what a peer
+  "accepts and propagates" from other peers on its own initiative; an
+  operator naming a path is not an arrival from a stranger, and
+  rate-limiting the operator's own command would refuse the one arrival
+  nobody needs protecting from, step 6's included. `share fetch` passes
+  it always. (2) `app/bundles/trust.py` is NOT removed, though this step
+  says `g` lands "in the same commit that removes TOFU". `python -m
+  app.cli bundle import` is the legacy command and keeps working until
+  step 12 retires the old names; what is removed is TOFU from the path
+  that admits bundles under the documented architecture, and
+  `hold vectors import` never had it.
+- **h. DONE** (`de8d5c4`). `app/hold/vectors_check.py` is 03 §3.2's
+  `vectors-sample` over this peer's own vectors, which step 5's plan
+  runner calls and `hold vectors check` runs with one plan entry. THE
+  PLAN SETS SHARDS AND NEVER CHUNKS, as this step required, and there is
+  now a test: sixteen is `space.calibration.n` and travels with the
+  space, so a plan that could set it would let a peer publish an
+  attestation that looked like everyone else's and rested on four chunks.
+  Two things it turned up. A failure here is not T3's — this judges what
+  is ALREADY STORED, whoever put it there — and **the two verdicts are at
+  different granularities on purpose**: §3.2's is statistical over the
+  calibration quorum, so one bad chunk in three does not condemn a shard,
+  while 02 §2.4's `--drop` is per ROW. So a row is emptied while the
+  verdict stays `pass`, and neither is a mistake.
+- **The verb no sub-task named: `build`** — DONE (`8fd9cab`), and its
+  absence from `a`–`h` was a gap in this plan rather than a decision.
+  Step 6 runs it at point 5 and calls it "the verb the old step 6 never
+  exercised", so the proof-of-concept was blocked on it.
+  `app/hold/vectors_build.py` embeds what has no vector yet, shard by
+  shard, writing every `EMBED_SLICE_CHUNKS` chunks (07 §7.7's unit is
+  "the chunks in flight to the encoder"). Its gate is the one b10630
+  cost: a passing calibration statement for THIS `space_id`, read through
+  `embedder.read_statement` so the envelope is verified and the gate
+  cannot be satisfied by writing a file that says pass. `--delta ID` is
+  derived from the shard roots and NOT from `snapshot.reissued`, whose
+  answer excludes a shard that is NEW — every shard of a growing corpus.
+  It emits no bundles: the size is still an operator decision (below).
 `import(bundle | --archive ID)` keeps its shape: one path for a peer's
 bundle and a public pre-embedded archive. Admissibility is `space_id`
 plus per-record `content_hash`; `collection` and `snapshot_id` are
@@ -499,7 +543,7 @@ transaction that closes the shard; and `shard_of` yielding
 `"<slice>/<n>"`, because §9.7 makes `shard` a required header field and
 "one shard per bundle" a hard constraint.
 
-**Tests**: all of these are green except the last, which is `h`'s.
+**Tests**: ALL GREEN, 2026-09-10.
 A conformant bundle round-trips through export and import; a bundle with
 foreign vectors is refused at T0 (against `tier0` directly — see `e`); a
 bundle whose `collection` differs but whose `space_id` and
