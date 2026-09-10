@@ -54,6 +54,37 @@ from .verify import backend_gate
 from . import stats as stats_mod
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _asset_version() -> str:
+    """A tag that changes when the served assets do, for cache-busting.
+
+    `StaticFiles` sends an ETag and a Last-Modified and no `Cache-Control`,
+    so a browser applies HEURISTIC caching — typically a tenth of the
+    file's age — and may serve a stale copy for hours without ever
+    revalidating. That is invisible until a CSS change lands and the page
+    keeps rendering the old rules.
+
+    Observed 2026-09-10: a licence badge gained `.lic-yellow`, the server
+    served it, and the browser kept a cached stylesheet that had no such
+    rule — so the span matched nothing, inherited the badge's green, and
+    the fix looked like it had not shipped. A URL that changes with the
+    file makes that impossible rather than a thing to remember.
+
+    The newest mtime across the static tree, not a build constant: it is
+    right in development, where files change without a rebuild, and right
+    on the node, where a deploy rewrites them.
+    """
+    d = Path(__file__).parent / "static"
+    try:
+        newest = max((p.stat().st_mtime_ns for p in d.rglob("*") if p.is_file()),
+                     default=0)
+    except OSError:
+        return "0"
+    return format(newest & 0xFFFFFFFF, "x")
+
+
+TEMPLATES.env.globals["asset_v"] = _asset_version()
 # Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
 # half the world — an operator read "+377,217/h" as 377.217 docs/h and
 # computed an 11-year ETA from a 4-day one. Dots as thousands separators,
