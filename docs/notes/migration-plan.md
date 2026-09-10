@@ -400,8 +400,9 @@ WHAT IS GENUINELY WRAPPED: the exporter's shape, the ledger, and
 `format.py`'s *posture* — verify the wire bytes, never re-serialise —
 which is right and is carried into `app/hold/bundle.py`.
 
-**Sub-tasks, in order. `a`, `b` and `c` are DONE (`e61d4d2`, `728b127`,
-and `c` by measurement rather than by code — see below).**
+**Sub-tasks, in order. `a`-`d` are DONE (`e61d4d2`, `728b127`, `c` by
+measurement rather than by code, `6f4c7c2` + `945e5f7`), and `f` is half
+done. `e` is the one that matters and is next.**
 
 - **a. DONE — 09 §9.7's bytes** as `app/hold/bundle.py`: the closed
   sixteen-key header, ASCII-only serialisation (NOT §9.1's canonical
@@ -428,9 +429,17 @@ and `c` by measurement rather than by code — see below).**
   a `sha256:` id — so the legacy bare-hex value cannot travel in a
   conformant bundle even by accident. Asserted by
   `tests/hold/test_bundle.py`, so it cannot quietly stop being true.
-- **d. `export` writes the four-file DIRECTORY** of §9.7. 07 §7.3 spells
-  `--out FILE`; 09 defines a directory and fixes no container. Read
-  `--out` as a directory and amend 07.
+- **d. DONE** (`6f4c7c2`, `945e5f7`). `export` writes §9.7's four-file
+  DIRECTORY; 07 §7.3 said `--out FILE` and was amended (`f844931`).
+  `app/hold/export.py` does the gathering — which records are in the
+  shard, which chunks they cut into, which of those this peer holds a
+  vector for — and takes `vectors_for` by injection so `app/hold/` keeps
+  no dependency on Lance. Two things it turned up: `layers_for` could not
+  cut a CODEX collection's documents at all (09 §9.3 nests the chunker
+  where `app/layers.py` keeps it flat), which invariant 1 needs since
+  every stage is meant to cut through that one function; and the vector
+  lookup has to filter on the INDEXED `book_id` rather than on `id`,
+  which has no index. 11 tests, all through a real drag.
 - **e. `import`** through T0–T3, replacing `app/verify`'s tiers. Fix the
   accepted row set BEFORE any tier runs and slice the sixteen
   `calibration:*` challenge rows off first — otherwise a producer pads a
