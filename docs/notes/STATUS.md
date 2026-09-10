@@ -63,6 +63,43 @@ Everything except two items travels through this repository.
 | **8** — full migration | not started. **Scope fixed by the operator 2026-09-10**: four destinations, not seven — `gutenberg`; `pubmed` + the MedCPT pre-embeddings; `wikipedia` + the wikivec pre-embeddings (wikivec stops being a collection and becomes wikipedia's layer 1); and the three genome collections **stay on the old format**, because no DNA calibration set exists so `create` cannot write them a Codex at all |
 | **9**–**12** — share, certified, ask, retire | not started |
 
+
+### The node's deployment — replaced 2026-09-10
+
+It was **pre-migration**: `src/app` dated 2026-08-28, no `app/hold` at
+all, so none of steps 0–6 was on it. Operator: *"the current louise in
+the nas is an half cooked deployment, replace it."*
+
+Replaced by the procedure in `deploy/reference/DEPLOYMENT.md`, which was
+itself wrong in two ways and is now fixed:
+
+* **`calibration/` was not in the deploy tar.** `app/hold/calibration.py`
+  resolves its sets as `<src root>/calibration/<modality>.jsonl`, so the
+  documented deploy shipped code that could not find its own calibration
+  set.
+* **`COPY calibration` was not in the Dockerfile either** (`9b883ed`) —
+  the same omission one layer down, and the one that mattered more.
+  **Every local test run bind-mounts the repo over `/srv`, which shadows
+  the image's contents entirely**, so 1942 passing tests here have never
+  once exercised what `COPY` actually put in the image. It took a
+  `docker run` with no mount, on the node, to see it.
+* The procedure now **stages then promotes** rather than extracting over
+  the live tree. `tar -x` overlays: a module deleted on the branch
+  survives on the node and stays importable, which is one way a
+  deployment becomes half-cooked without anyone doing anything wrong.
+
+Verified rather than assumed: `calibration/text.jsonl` hashes to
+`7d06a2f6…` on the node — the very set id the Codex names — and the
+suite runs **1942 passed** in the built image (a first run had one flaky
+failure, recorded above). The previous tree is kept at `src.old/` until
+the operator is satisfied.
+
+**The app itself is still STOPPED.** It was stopped before any of this
+and starting it is a separate decision: the worker would begin rounds
+over pubmed, wikipedia and genome on code that has never run against
+them, and `RECORD_KEYS` gained `origin` today, so any pack rebuild writes
+different record bytes than the ones on disk.
+
 ### What is waiting on the operator
 
 **Three were settled 2026-09-10** and are recorded here rather than
@@ -1120,6 +1157,20 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
     | `pubmed` | MedCPT article | 30440 | 768 | 512 |
   | `wikipedia`, `wikivec` | bge-m3 | 30442 | 1024 | 2048 |
   | `genome-sacCer3/dm6/hg38` | DNABERT-2 | 30443 | 768 | 1024 |
+
+- **`tests/test_fts_batching.py::test_index_book_still_works_for_single_document_callers`
+  is FLAKY (seen 2026-09-10, on the NODE).** Failed once in the first
+  full-suite run there, passed alone, and passed in the next full run
+  (1942/1942). The assertion is `fts.search(...)` returning a hit, and
+  `search()` wraps everything in `try:` and returns `[]` on any exception
+  — so the symptom of ANY failure inside it is "no results", which is the
+  same trap `get_index` documents for a schema mismatch. Under ~1,900
+  tests the pressure on tantivy handles is the obvious suspect and is not
+  demonstrated. NOT caused by this branch: `app/fts.py`, `app/worker.py`
+  and this test file are all untouched by `main..louise`. The pair of it
+  and the parallel-embed flake below share a shape — a legacy test that
+  loses a race under load — and both are worth one proper look rather
+  than two dismissals.
 
 - **`tests/test_worker_parallel_embed.py::test_one_bad_document_is_isolated`
   is FLAKY (seen 2026-09-09).** Failed once in a full-suite run, then passed
