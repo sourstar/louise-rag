@@ -315,7 +315,64 @@ def report_boot_status(collections: list) -> list[dict]:
     return report
 
 
+def _validate_codex(con, collection, *, pin_if_missing: bool = True) -> bool:
+    """Invariant 1, for a collection run from its Codex (07 §7.8).
+
+    The pin is `codex.space_id` — 09 §9.3's SHA-256 over the encoder, the
+    layers, the cleaning version and the space block — and NOT
+    `compute_space_id`'s BLAKE2b preimage. The two are different
+    functions naming different things (step6-preflight §4 settled that
+    they are not meant to agree), so a Codex collection validated against
+    the legacy one would refuse to boot for a difference that means
+    nothing.
+
+    "A vector table whose dim/space mismatches the Codex is a
+    REFUSE-TO-START error FOR THAT COLLECTION, never a warning or
+    auto-migration" — so this raises, the node keeps its others running,
+    and `hold collection show` names the reason.
+
+    There is NO weak-hash softening here. The legacy path tolerates an
+    unconfirmable embed-model hash because it probes a live endpoint; a
+    Codex names its encoder BY DIGEST, so there is nothing to be unsure
+    about and nothing to soften.
+    """
+    codex = collection.codex
+    want, want_dim = codex.space_id, codex.space.dim
+    observed_dim = known_lance_dim(collection.lance_dir)
+
+    row = con.execute("SELECT space_id, dim FROM space WHERE id=1").fetchone()
+    if row is None:
+        if not pin_if_missing:
+            return False
+        con.execute(
+            "INSERT INTO space(id,space_id,dim,components,pinned_at) "
+            "VALUES(1,?,?,?,?)",
+            (want, observed_dim or want_dim, None, int(time.time())))
+        db.log_event(con, "info", "spaces",
+                     f"collection '{collection.name}': pinned Codex space "
+                     f"{want[:23]}… (dim {want_dim})")
+        return True
+
+    if row["space_id"] != want:
+        raise BootValidationError(
+            f"collection '{collection.name}': the vector table is pinned to "
+            f"space {str(row['space_id'])[:23]}… and its Codex says "
+            f"{want[:23]}…. No vector crosses a space boundary (02 §2.4, "
+            f"invariant 1); this collection is not served, shared or "
+            f"searched until the table is emptied or the name holds the "
+            f"Codex it was built for")
+    if observed_dim is not None and observed_dim != want_dim:
+        raise BootValidationError(
+            f"collection '{collection.name}': the vector table is "
+            f"{observed_dim}-dimensional and its Codex's space is "
+            f"{want_dim}. A width mismatch is a different encoder, not a "
+            f"migration")
+    return True
+
+
 def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
+    if getattr(collection, "codex", None) is not None:
+        return _validate_codex(con, collection, pin_if_missing=pin_if_missing)
     components = gather_components(collection)
     computed_id = compute_space_id(components)
     computed_config_id = _config_id(components)

@@ -186,6 +186,13 @@ class Collection:
     # plugin's chunker — every collection that predates layers. TOML:
     # [[layers]] chunker = "verbatim" rule = "archive:<id>" ... last "default".
     layers: tuple | None = None
+    # THE CODEX, when this collection is run from one (07 §7.8's `codex`
+    # key). None for every legacy TOML, which is every collection that
+    # predates step 8 — so nothing that does not name a Codex changes.
+    # Where it is set it is the IDENTITY: `space_id`, layers, plugin and
+    # licence all come from it, and `spaces.validate_boot` pins the vector
+    # table against `codex.space_id` rather than the legacy preimage.
+    codex: Any = None
 
     def plugin_instance(self) -> CorpusSource:
         if self.plugin == "packed":
@@ -214,10 +221,128 @@ def _config_dir() -> Path:
     return Path(os.getenv("CONFIG_DIR", "."))
 
 
+def louise_root() -> Path:
+    """`<LOUISE_ROOT>` — the one directory of 07 §7.8, whose
+    `collections/<name>/` holds a Codex collection's drag, state, index
+    and vector table. Defaults to `DATA_DIR` so a node that never sets it
+    behaves exactly as before."""
+    import os
+    value = os.getenv("LOUISE_ROOT")
+    return Path(value) if value else config.DATA_DIR
+
+
+def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
+    """A collection the worker runs FROM ITS CODEX (07 §7.8).
+
+    The bridge between the `hold` tree and the running node, and the one
+    piece that stood between "migrated" and "in use": step 8 produced
+    complete, verified Codex collections under
+    `<LOUISE_ROOT>/collections/<name>/` that nothing in the worker could
+    see, because `Collection` was built entirely from a legacy TOML's
+    `[paths]` block.
+
+    A TOML that names `codex` gets §7.8's tree instead — `state/`,
+    `index/`, `lance/` beside the drag — and its plugin, layers and
+    corpus come from the Codex rather than from the file, because the
+    Codex is the identity and a file that could disagree with it would be
+    a second answer to the same question.
+
+    THE HASH IS CHECKED, not trusted. §7.8: a collection whose
+    `drag/codex.json` has an inner hash other than its file's `codex` "is
+    not served, not shared and not searched". That is a per-collection
+    refusal, so it is raised here and the caller keeps its other
+    collections.
+    """
+    from .hold import codex as cx
+
+    want = str(raw["codex"])
+    want = want if want.startswith("sha256:") else "sha256:" + want
+    d = louise_root() / "collections" / name
+    p = d / "drag" / "codex.json"
+    if not p.is_file():
+        raise ValueError(
+            f"{path}: names codex {want[:23]}… and there is no {p}. A "
+            f"collection's Codex is the first line of its drag (07 §7.8); "
+            f"without it there is nothing to run")
+    codex = cx.loads(p.read_bytes())
+    if codex.collection_id != want:
+        raise ValueError(
+            f"{path}: names codex {want[:23]}… and {p} is "
+            f"{codex.collection_id[:23]}…. A name holds one collection for "
+            f"its life (07 §7.8); this one is not served, shared or searched "
+            f"until they agree")
+
+    corpus = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
+    embed_mode = _embed_mode(raw.get("embed", raw.get("embed_mode")), path)
+    from . import layers as layers_mod
+    return Collection(
+        name=name,
+        # FROM THE CODEX, not the file: plugin and layers are inside
+        # `collection_id`, so a TOML that set them could name a collection
+        # and then chunk it differently — invariant 1's failure mode, and
+        # undetectable, because both peers computed the id honestly.
+        plugin=codex.plugin,
+        profile=raw.get("profile"),
+        embed_mode_default=embed_mode,
+        corpus_dir=corpus,
+        manifest_path=d / "state" / "manifest.sqlite",
+        fts_dir=d / "index",
+        lance_dir=d / "lance",
+        acquire_enabled=bool(raw.get("acquire_enabled", False)),
+        license_ack=_codex_ack(codex, d / "state"),
+        embed=parse_recipe(raw.get("embed_recipe") or raw.get("encoder"),
+                           where=str(path)),
+        genesis_archive=raw.get("genesis_archive"),
+        extras=tuple(raw.get("extras") or ()),
+        snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
+        layers=layers_mod.layers_for(codex),
+        codex=codex,
+    )
+
+
+#: 07 §7.8 spells the middle mode `on-demand`; the code has always called
+#: it `lazy`, and `EMBED_MODES` is stored in the runtime-override table and
+#: read by the worker and the UI. The documents fix the vocabulary
+#: (CLAUDE.md), so a Codex TOML is written in THEIR word and canonicalised
+#: here rather than the rename being done under a running node mid-
+#: migration. Retiring `lazy` belongs with the other old names, step 12.
+_EMBED_MODE_ALIASES = {"on-demand": "lazy"}
+
+
+def _embed_mode(value, path: Path) -> str | None:
+    if value is None:
+        return None
+    mode = _EMBED_MODE_ALIASES.get(str(value), str(value))
+    if mode not in EMBED_MODES:
+        raise ValueError(
+            f"{path}: embed must be one of off | on-demand | all "
+            f"(07 §7.8), got {value!r}")
+    return mode
+
+
+def _codex_ack(codex, state_dir: Path) -> str | None:
+    """The acknowledgement `hold collection ack` recorded (09 §9.13),
+    in the shape `licensing.state_for` compares — read, never decided
+    here; `app/licensing.py` is THE resolution."""
+    if codex.license.cls == "green":
+        return None
+    import json
+    p = state_dir / "ack.json"
+    if not p.is_file():
+        return None
+    try:
+        ack = json.loads(p.read_text(encoding="utf-8"))
+        return f"{ack['time']}/{ack['terms_sha256'].replace('sha256:', '')}"
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def _load_one(path: Path) -> Collection:
     with open(path, "rb") as f:
         raw: dict[str, Any] = tomllib.load(f)
     name = raw.get("name") or path.stem
+    if raw.get("codex"):
+        return _codex_collection(path, raw, name)
     plugin = raw.get("plugin", name)
     paths = raw.get("paths", {})
 
