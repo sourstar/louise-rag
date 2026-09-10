@@ -70,10 +70,28 @@ class TrustConfig:
 
 
 @dataclass(frozen=True)
+class AdmissionConfig:
+    """`[admission]` — 08 §8.2's aggregate limit (07 §7.8).
+
+    What THIS peer accepts per hour from keys whose work it has not seen
+    reproduced. "Nothing in the protocol reads another peer's setting,
+    and no peer can tell what another's is: the limit governs what *this*
+    peer accepts, so unlike a threshold that had to be agreed it cannot
+    drift, cannot be negotiated, and cannot be gamed by anyone but its
+    owner." Zero on either allowance accepts nothing from strangers,
+    which §8.2 calls a complete configuration and not a broken one.
+    """
+    bytes_per_hour: int = 64 * 1024 ** 2
+    objects_per_hour: int = 1000
+    queue_bytes: int = 256 * 1024 ** 2
+
+
+@dataclass(frozen=True)
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
     trust: TrustConfig = TrustConfig()
+    admission: AdmissionConfig = AdmissionConfig()
     # [embed_defaults.<plugin>] -> the raw [embed]-shaped table. Kept RAW
     # here on purpose: app/collections.py owns EmbedRecipe and parses it,
     # and importing that module from this one would close an import cycle
@@ -120,6 +138,38 @@ def _parse_fraction(value: Any, key: str) -> float:
         raise schedule_mod.ScheduleError(
             f"{key}: {value!r} out of range — expected 0% <= x < 100%")
     return pct / 100.0
+
+
+_SIZE_UNITS = {"": 1, "b": 1, "kb": 1000, "mb": 1000 ** 2, "gb": 1000 ** 3,
+               "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3}
+
+
+def _parse_bytes(value: Any, key: str, default: int) -> int:
+    """`"64MB"` | `67108864` | `0` -> bytes. `0` is meaningful (08 §8.2:
+    a peer that accepts nothing from strangers), so it is not a falsy
+    stand-in for "unset" — absence is."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        n = int(value)
+    else:
+        text = str(value).strip().lower()
+        i = 0
+        while i < len(text) and (text[i].isdigit() or text[i] in "._"):
+            i += 1
+        unit = text[i:].strip()
+        if unit not in _SIZE_UNITS:
+            raise schedule_mod.ScheduleError(
+                f"{key}: unknown size unit in {value!r} — use B, KB, MB, GB "
+                f"(powers of 1000) or KiB, MiB, GiB (powers of 1024)")
+        try:
+            n = int(float(text[:i].replace("_", "")) * _SIZE_UNITS[unit])
+        except ValueError:
+            raise schedule_mod.ScheduleError(
+                f"{key}: cannot parse a size from {value!r}") from None
+    if n < 0:
+        raise schedule_mod.ScheduleError(f"{key}: must be >= 0, got {n}")
+    return n
 
 
 def _positive_int(raw: dict, key: str, default: int) -> int:
@@ -195,8 +245,32 @@ def _load_one(path: Path) -> PlatformConfig:
             raise schedule_mod.ScheduleError(
                 f"embed_defaults.{plugin} must be a table, got {type(table).__name__}")
 
+    adm_raw = raw.get("admission", {}) or {}
+    if not isinstance(adm_raw, dict):
+        raise schedule_mod.ScheduleError("admission must be a table")
+    defaults = AdmissionConfig()
+    objects = adm_raw.get("objects_per_hour", defaults.objects_per_hour)
+    try:
+        objects = int(objects)
+    except (TypeError, ValueError):
+        raise schedule_mod.ScheduleError(
+            f"admission.objects_per_hour: expected an integer, got {objects!r}"
+        ) from None
+    if objects < 0:
+        raise schedule_mod.ScheduleError(
+            f"admission.objects_per_hour: must be >= 0, got {objects}")
+    admission = AdmissionConfig(
+        bytes_per_hour=_parse_bytes(adm_raw.get("bytes_per_hour"),
+                                    "admission.bytes_per_hour",
+                                    defaults.bytes_per_hour),
+        objects_per_hour=objects,
+        queue_bytes=_parse_bytes(adm_raw.get("queue"), "admission.queue",
+                                 defaults.queue_bytes),
+    )
+
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
+                          admission=admission,
                           embed_defaults={str(k): dict(v) for k, v in embed_raw.items()},
                           source_path=path)
 

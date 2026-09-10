@@ -175,6 +175,74 @@ def test_a_yellow_collection_without_an_ack_is_not_imported_into(importable,
     assert _stored(root, codex) == {}
 
 
+# ---- 08 §8.2's ledger and allowance --------------------------------------
+
+def test_a_first_seen_producer_is_admitted_and_then_remembered(importable, capsys):
+    """The TOFU regression, at the command. `app/bundles/trust.py` pins
+    the first key a collection sees and refuses every later one; 08 §8.1
+    forbids needing to know whom to trust in advance. The key is recorded
+    only AFTER the ladder passed — known by what it produced, never by
+    having sent something."""
+    from app.hold import admission as adms
+    root, _, codex, dest, ids = importable
+    assert _import(root, dest) == 0
+    assert "FIRST SEEN" in capsys.readouterr().out
+
+    con = adms.connect(root)
+    header, _, _, _ = vec.read(dest)
+    row = adms.reproduced(con, header["producer_pubkey"])
+    assert row and row["bundles"] == 1 and row["chunks"] == len(ids)
+
+    assert _import(root, dest) == 0
+    assert "1 bundle(s) accepted here before" in capsys.readouterr().out
+
+
+def test_a_refused_bundle_does_not_enter_the_ledger(importable, monkeypatch):
+    """A key is known here by work that PASSED. A bundle refused at a tier
+    is not work; recording it would make the sender known for having
+    tried."""
+    from app.hold import admission as adms
+    root, _, codex, dest, _ = importable
+    monkeypatch.setattr("app.hold.admit.tier0",
+                        lambda *a, **k: admit.Tier(admit.T0, admit.FAIL, "no"))
+    assert _import(root, dest) == 1
+    header, _, _, _ = vec.read(dest)
+    assert adms.reproduced(adms.connect(root), header["producer_pubkey"]) is None
+
+
+def test_the_allowance_is_off_unless_asked_for(importable, tmp_path, monkeypatch,
+                                               capsys):
+    """08 §8.2 governs material "arriving from other peers" — what this
+    peer accepts and forwards on its own initiative. An operator naming a
+    path is not that, and rate-limiting the operator's own command would
+    refuse the one arrival nobody needs protecting from. Step 9's `share
+    fetch` is the caller that passes `--budget` always."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "platform.toml").write_text(
+        "[admission]\nbytes_per_hour = 0\nobjects_per_hour = 0\n",
+        encoding="utf-8")
+    root, _, _, dest, _ = importable
+    assert _import(root, dest) == 0                    # the operator's own
+    capsys.readouterr()
+
+    assert _import(root, dest, "--budget") == 0, \
+        "the producer is in the ledger now, and 8.2 never queues a known key"
+
+
+def test_a_stranger_beyond_the_allowance_waits(importable, tmp_path,
+                                               monkeypatch, capsys):
+    """Queued, and nothing is written: §8.2's queued material "is neither
+    forwarded nor announced by this peer until admitted"."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "platform.toml").write_text(
+        "[admission]\nbytes_per_hour = 0\nobjects_per_hour = 0\n",
+        encoding="utf-8")
+    root, _, codex, dest, _ = importable
+    assert _import(root, dest, "--budget") == 2
+    assert "08 §8.2" in capsys.readouterr().err
+    assert _stored(root, codex) == {}
+
+
 # ---- placement, on its own -----------------------------------------------
 
 def test_a_chunk_id_this_peers_cut_does_not_produce_is_unplaceable(importable):

@@ -348,8 +348,8 @@ def cmd_vectors_import(a) -> int:
     from pathlib import Path
 
     from app import embeddings, licensing
-    from app.hold import admit as adm, collection as col, drag, embedder as emb, \
-        land as landing, records as rec, vectors as vec
+    from app.hold import admission as adms, admit as adm, collection as col, \
+        drag, embedder as emb, land as landing, records as rec, vectors as vec
 
     name, codex = col.resolve(a.root, a.collection)
     local = rec.local_collection(a.root, name, codex)
@@ -369,7 +369,29 @@ def cmd_vectors_import(a) -> int:
             f"without one cannot judge a bundle at all")
     reference, envelope = _read_member(member)
 
+    node = adms.connect(a.root)
     header, rows, possession, bundle_id = vec.read(Path(a.bundle))
+
+    # 08 §8.2's aggregate limit. OFF unless asked for, because an operator
+    # naming a path is not material "arriving from other peers": §8.2
+    # governs what this peer accepts and forwards on its own initiative,
+    # and rate-limiting the operator's own command would refuse the one
+    # arrival nobody needs protecting from. Step 9's `share fetch` is the
+    # caller that passes it always.
+    if a.budget:
+        limits = _admission_limits()
+        verdict = adms.offer(node, header["producer_pubkey"],
+                             _bundle_bytes(Path(a.bundle)), kind="bundle",
+                             ref=bundle_id, limits=limits)
+        if verdict in (adms.QUEUED, adms.REFUSED):
+            b, n = adms.spent(node)
+            print(f"louise: {verdict}: 08 §8.2's hourly allowance for keys "
+                  f"whose work this peer has not seen reproduced is spent "
+                  f"({b} of {limits.bytes_per_hour} bytes, {n} of "
+                  f"{limits.objects_per_hour} objects). This is not a "
+                  f"judgement about the sender and is not remembered.",
+                  file=sys.stderr)
+            return 2
 
     # What this peer knows, looked up from the VERIFIED header and not a
     # moment earlier (`admit.judge`'s note).
@@ -402,8 +424,14 @@ def cmd_vectors_import(a) -> int:
                        embed=embed, seed=seed,
                        strict_allow=set(a.allow) if a.strict else None)
 
+    known = adms.reproduced(node, report.producer)
+    # 08 §8.1: "no countermeasure may require knowing whom to trust in
+    # advance". A first-seen key is reported as such and admitted anyway;
+    # the old importer refused it, which is the TOFU this replaces.
+    standing = (f"{known['bundles']} bundle(s) accepted here before" if known
+                else "FIRST SEEN — and admitted, which is the point (08 §8.1)")
     print(f"{report.bundle_id}")
-    print(f"  producer    {report.producer[:31]}…")
+    print(f"  producer    {report.producer[:31]}…  {standing}")
     print(f"  shard       {header['shard']}  of snapshot {header['snapshot_id']}")
     for t in report.tiers:
         print(f"  {t.tier:<11} {t.verdict.upper():<8} {t.why}")
@@ -418,12 +446,36 @@ def cmd_vectors_import(a) -> int:
         codex, report, records=records,
         write=lambda r: embeddings.upsert_chunks(r, collection=local,
                                                  dtype=codex.space.dtype))
+    # 08 §8.2's one durable fact, and it is recorded only on a bundle that
+    # PASSED: a key is known here by what it produced, never by having
+    # sent something. This is what later makes its material not
+    # "unverified" and so never queued.
+    adms.record_reproduced(node, report.producer, ref=report.bundle_id,
+                           chunks=out["written"])
     for cid, why in out["unplaceable"]:
         print(f"  unplaceable {cid}: {why}", file=sys.stderr)
     print(f"  seed        {seed.hex()}")
     print(f"  landed      {out['written']} chunks over {len(mine)} records"
           f"{f', {report.padded} row(s) dropped before the tiers' if report.padded else ''}")
     return 0
+
+
+def _admission_limits():
+    """`platform.toml`'s `[admission]`, or 08 §8.2's defaults."""
+    from app import platform_config
+    from app.hold import admission as adms
+    c = platform_config.load().admission
+    return adms.Limits(bytes_per_hour=c.bytes_per_hour,
+                       objects_per_hour=c.objects_per_hour,
+                       queue_bytes=c.queue_bytes)
+
+
+def _bundle_bytes(src) -> int:
+    """What this bundle costs the hourly allowance: its four files (09
+    §9.7), not the header's `parquet_bytes` alone."""
+    from app.hold import bundle as bd
+    return sum((src / n).stat().st_size for n in bd.FILES
+               if (src / n).is_file())
 
 
 def _read_member(member):
@@ -759,6 +811,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed",
                    help="hex seed for T3's sample, to repeat a check "
                         "deliberately (default: fresh randomness, printed)")
+    p.add_argument("--budget", action="store_true",
+                   help="subject this arrival to 08 §8.2's hourly allowance "
+                        "for keys whose work this peer has not seen "
+                        "reproduced. Off by default: an operator naming a "
+                        "path is not material arriving from a stranger")
     p.set_defaults(fn=cmd_vectors_import)
 
     add_deprecated(surfaces, {
