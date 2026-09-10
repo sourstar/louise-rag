@@ -84,12 +84,30 @@ def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
 
 def layers_for(collection) -> tuple[Layer, ...]:
     """The collection's layers: its declaration, or the one implicit layer
-    every collection had before layers existed (the plugin's chunker)."""
+    every collection had before layers existed (the plugin's chunker).
+
+    A CODEX declares the same thing in a different shape — 09 §9.3 nests
+    the chunker as `{id, version, params}` where this module keeps it
+    flat — and it is normalised here rather than at every call site.
+    Invariant 1 asks that every stage cut a document through
+    `chunks_for_document`, and a stage holding a Codex (an export, a
+    check, a bundle import) is a stage; making each of them convert would
+    be four chances to convert it differently.
+    """
     declared = getattr(collection, "layers", None)
     if declared:
-        return tuple(declared)
+        return tuple(_normalise(l) for l in declared)
     name, version = chunking.chunker_version_for_collection(collection)
     return (Layer(chunker=name, version=version, rule="default"),)
+
+
+def _normalise(layer) -> Layer:
+    """This module's Layer, from either shape."""
+    if isinstance(getattr(layer, "chunker", None), str):
+        return layer
+    c = layer.chunker                      # 09 §9.3's {id, version, params}
+    return Layer(chunker=c.id, version=c.version, rule=layer.rule,
+                 params=dict(c.params or {}))
 
 
 def _codex_coverage(collection, archive_id: str):
