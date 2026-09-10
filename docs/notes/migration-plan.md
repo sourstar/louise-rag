@@ -748,9 +748,35 @@ them costs hours rather than the GPU-days that made the question hard, so
 the answer can be **no — re-embed them** without arguing the principle.
 Confirm the count per collection before committing to it.
 
-### Step 7 — GATE: what may be in a cleaned corpus besides text
-*Blocks importing for keeps — step 8 — and nothing before it. See
-[`figures-in-the-corpus.md`](figures-in-the-corpus.md).*
+### Step 7 — GATE: what may be in a cleaned corpus besides text — **DECIDED 2026-09-09; NOT A BLOCKER**
+*See [`figures-in-the-corpus.md`](figures-in-the-corpus.md) for the
+decision and [`figures-amendment-plan.md`](figures-amendment-plan.md) for
+what it costs in code.*
+
+**This step is closed and the text below is kept for its reasoning
+only.** The operator settled all four open calls on 2026-09-09 and the
+amendment landed across all nine documents in `c8adbc6`: a figure is an
+optional MEMBER, it never enters `content_hash`, and the record line it
+appears in is version 2, declared per collection by the Codex's
+`record_line`.
+
+**It does not block step 8.** The three destinations step 8 ferries —
+`gutenberg`, `pubmed`, `wikipedia` — are all whole as text, and
+Gutenberg-with-plates was decided (operator, 2026-09-08) to be a NEW
+collection rather than an amendment of this one. So step 8 runs at
+`record_line` 1 throughout.
+
+**What is still owed is CODE, not a decision.** `record_line` itself
+landed 2026-09-10 (`248dd3b`) and a new Codex is written at version 2
+with `record_line` 1; `record_line` 2 is REFUSED at create, with its
+reason, because the rest is unbuilt: `CanonicalDoc` has no `figures`
+field, `drag.MEMBER_KINDS` has no figures member, a snapshot has no
+`figures` list, and `records.py` writes no `figures` key.
+`figures-amendment-plan.md` lists it file by file. It is owed by the
+first collection that actually carries plates, and by nothing before.
+
+*The original framing, kept because it is why the answer took the shape
+it did:*
 
 The note prefers deciding this "before the record format is
 implemented, since questions 2 and 3 land in `content_hash` and the
