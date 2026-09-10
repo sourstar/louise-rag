@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS documents (
   summary_done INTEGER DEFAULT 0,
   chunks INTEGER DEFAULT 0,
   tokens INTEGER DEFAULT 0,
+  -- Added here 2026-09-10. It arrived only through the ALTER below, which
+  -- meant a FRESH database got the table without it and an OLD one got it
+  -- afterwards — two shapes for one schema, and the difference was
+  -- invisible because both ended up with the column. It stopped being
+  -- invisible when the ALTERs had to move ahead of this script (see
+  -- `connect`): an ALTER that runs before `CREATE TABLE` cannot add a
+  -- column to a table that does not exist yet. Declared here, every ALTER
+  -- below is now an OLD-database repair and nothing else.
+  entity_version INTEGER DEFAULT 0,
   error TEXT,
   retries INTEGER DEFAULT 0,
   updated_at INTEGER
@@ -255,15 +264,31 @@ def connect(collection=None) -> sqlite3.Connection:
     # transient loss dressed up as a failure. The PRAGMA governs; the
     # connect(timeout=) argument above is its Python-side twin.
     con.execute("PRAGMA busy_timeout=60000")
+    # THE COLUMNS COME BEFORE THE SCHEMA SCRIPT, and the order is the whole
+    # point. `SCHEMA` carries `CREATE INDEX … ON documents(uid,
+    # content_hash)`, and on a manifest that predates the column
+    # `CREATE TABLE IF NOT EXISTS` is a no-op — so the index refers to a
+    # column that is not there yet and `executescript` dies with
+    # "no such column: content_hash", taking the whole worker with it.
+    #
+    # Observed live 2026-09-10 on the reference node's 79,320-row manifest:
+    # the app crash-looped on first boot after the migration branch was
+    # deployed. It cannot happen in the tests, because every test builds a
+    # fresh manifest where `CREATE TABLE` makes the column and these ALTERs
+    # are all no-ops — the bug needs an OLD database to appear at all.
+    #
+    # On a fresh database each ALTER raises "no such table" and is caught
+    # here, exactly as it is caught for "duplicate column" on an old one.
+    for statement in (
+            "ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0",
+            # NULL on every pre-existing row until its shard is rebuilt
+            "ALTER TABLE documents ADD COLUMN content_hash TEXT"):
+        try:
+            con.execute(statement)
+        except sqlite3.OperationalError:
+            pass  # already there, or no table yet — see above
+
     con.executescript(SCHEMA)
-    try:
-        con.execute("ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass  # column already exists — no reusable "add column" migration tool for this
-    try:
-        con.execute("ALTER TABLE documents ADD COLUMN content_hash TEXT")
-    except sqlite3.OperationalError:
-        pass  # same; NULL on every pre-existing row until its shard is rebuilt
     try:
         con.execute("ALTER TABLE bundles ADD COLUMN tier_reached INTEGER")
     except sqlite3.OperationalError:
