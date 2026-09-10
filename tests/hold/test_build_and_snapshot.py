@@ -82,9 +82,23 @@ def test_a_build_needs_a_corpus_to_parse(isolated_config, tmp_path):
 
 def test_a_yellow_collection_is_not_built_without_its_acknowledgement(
         isolated_config, tmp_path, corpus_dir):
-    """Invariant 9, 04 §4.4: however the data arrived."""
-    root = _collection(tmp_path, license={"class": "yellow",
-                                          "terms_sha256": "sha256:" + "b9" * 32})
+    """Invariant 9, 04 §4.4: however the data arrived.
+
+    The collection TIGHTENS gutenberg's green to yellow, which 04 §4.4
+    allows — and a tightened collection's plugin ships no terms text, so
+    the recipe supplies the one it is tightening to. Without that,
+    `create` refuses: a yellow collection whose terms text exists nowhere
+    is one no peer could ever acknowledge (09 §9.13).
+    """
+    import hashlib
+    body = b"Terms this collection tightens to.\n"
+    p = tmp_path / "TERMS.txt"
+    p.write_bytes(body)
+    root = _collection(tmp_path, license={
+        "class": "yellow",
+        "terms_sha256": "sha256:" + hashlib.sha256(body).hexdigest(),
+        "terms_path": str(p)})
+    assert (root / "gutenberg" / "drag" / "LICENSE-TERMS").read_bytes() == body
     with pytest.raises(RecordsError, match="no acknowledgement recorded"):
         _build(root, corpus_dir, records_per_shard=2)
 

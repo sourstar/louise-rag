@@ -51,7 +51,11 @@
     <span class="badge brass">profile: {{ c.profile }}</span>
     <span class="badge lapis">space: {{ c.space_id }}</span>
     {% if c.license.class %}
-    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}">license: {{ c.license.class }}{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ack_recorded else '') }}</span>
+    {# The BORDER is the acknowledgement — green once these terms are
+       accepted, red while one is still needed. The class WORD keeps its
+       own colour, so a yellow licence reads yellow inside a green
+       border instead of the whole badge reading green. #}
+    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}">license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ack_recorded else '') }}</span>
     {% endif %}
   </div>
   {% if c.fetched %}

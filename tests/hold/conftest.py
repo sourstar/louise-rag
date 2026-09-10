@@ -52,7 +52,15 @@ def fake_embed(texts, *, dim: int = DIM, tag: bytes = b""):
 # could have written.
 CAL_VECS, ENVELOPE = _cal.build_member(
     CAL_TEXTS, fake_embed, normalise=True, dim=DIM)[2:]
-TERMS = "sha256:" + "b9" * 32
+#: The REAL hash of the terms text the pubmed plugin ships, not a made-up
+#: digest. `collection.write_terms` copies that file into the drag as
+#: `LICENSE-TERMS` and refuses when its bytes do not hash to what the
+#: Codex pins (09 §9.13, "byte-exact and never converted") — so a fixture
+#: with an invented digest describes a collection that cannot be created,
+#: and every red-class fixture below would be testing an impossibility.
+TERMS = "sha256:" + __import__("hashlib").sha256(
+    (__import__("pathlib").Path(__file__).resolve().parents[2]
+     / "app" / "plugins" / "pubmed" / "TERMS.txt").read_bytes()).hexdigest()
 
 PUBMED_SPEC = {
     "source_id": "pubmed", "transport": "ftp",

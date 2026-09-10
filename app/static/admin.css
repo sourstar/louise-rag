@@ -63,6 +63,15 @@ td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
 .badge.lapis{color:var(--lapis);border-color:var(--lapis)}
 .badge.ok{color:var(--ok);border-color:var(--ok)}
 .badge.err{color:var(--err);border-color:var(--err)}
+/* A licence badge says TWO things at once, and they are not the same
+   thing: the border is whether this peer has acknowledged the terms
+   (green = yes, red = still needed), the class word is the licence's own
+   colour. "license: yellow" printed entirely in green read as if the
+   licence were green. */
+.badge .lic-green{color:var(--ok)}
+.badge .lic-yellow{color:var(--amber)}
+.badge .lic-red{color:var(--err)}
+.badge .lic-unknown{color:var(--muted)}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--line);
   border-radius:14px;font-size:11px;color:var(--muted);margin:0 6px 6px 0}
 .chip.on{color:var(--brass);border-color:var(--brass)}

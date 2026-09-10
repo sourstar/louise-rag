@@ -126,3 +126,65 @@ def test_the_ack_is_what_records_build_looks_for(isolated_config, tmp_path):
     ack = rec._ack_of(codex, state)
     assert ack and "/" in ack
     assert ack.endswith(digest.replace("sha256:", ""))
+
+
+# ---- the member `ack` needs, which `create` never wrote ------------------
+
+def test_create_writes_LICENSE_TERMS_for_a_non_green_collection(isolated_config,
+                                                                tmp_path):
+    """09 §9.13 puts the terms text at the drag root and 02 §2.6 lists it
+    as a member. Nothing wrote it until 2026-09-10, so `create` produced a
+    yellow collection that could never be acknowledged and therefore never
+    built — found taking `pubmed` through step 8.
+    """
+    import hashlib
+    from app.acquire.specs import ACQUIRE_REGISTRY
+    from tests.hold.test_template import ORIGIN, SPACE, VALIDATION
+
+    body = ACQUIRE_REGISTRY["pubmed"].terms_text_path.read_bytes()
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    root = tmp_path / "collections"
+    recipe = {
+        "descriptive": {"title": "PubMed", "summary": "Abstracts."},
+        "space": dict(SPACE), "work": {"tokens": 40_000_000},
+        "origin": dict(ORIGIN), "validation": dict(VALIDATION),
+        "license": {"class": "red", "terms_sha256": digest},
+    }
+    col.create_from_recipe(root, "pubmed", recipe, platform_image=PLATFORM,
+                           embed=fake_embed, name="pubmed", key=KEY, now=NOW)
+    terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
+    assert terms.is_file(), "no LICENSE-TERMS: the collection cannot be acked"
+    assert terms.read_bytes() == body, "byte-exact, never converted"
+
+    # and it is immediately usable: ack records against it without help
+    assert louise.main(["hold", "collection", "ack", "pubmed",
+                        "--root", str(root), "--yes"]) == 0
+    doc = json.loads((root / "pubmed" / "state" / "ack.json").read_bytes())
+    assert doc["terms_sha256"] == digest
+
+
+def test_a_green_collection_gets_no_terms_member(isolated_config, tmp_path):
+    """"a green collection has `terms_sha256: null` and no member"."""
+    from tests.hold.test_template import recipe
+    root = tmp_path / "collections"
+    col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
+                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+    assert not (root / "gutenberg" / "drag" / "LICENSE-TERMS").exists()
+
+
+def test_a_recipe_pinning_the_wrong_terms_hash_is_refused(isolated_config,
+                                                          tmp_path):
+    """The check that makes the member meaningful: the bytes written must
+    be the bytes the Codex pins, or nothing is written."""
+    from app.hold.codex import CodexError
+    from tests.hold.test_template import ORIGIN, SPACE, VALIDATION
+    root = tmp_path / "collections"
+    recipe = {
+        "descriptive": {"title": "PubMed", "summary": "Abstracts."},
+        "space": dict(SPACE), "work": {"tokens": 40_000_000},
+        "origin": dict(ORIGIN), "validation": dict(VALIDATION),
+        "license": {"class": "red", "terms_sha256": "sha256:" + "ab" * 32},
+    }
+    with pytest.raises(CodexError, match="byte-exact"):
+        col.create_from_recipe(root, "pubmed", recipe, platform_image=PLATFORM,
+                               embed=fake_embed, name="pubmed", key=KEY, now=NOW)

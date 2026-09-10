@@ -259,7 +259,60 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     created = create(root, codex, name=name)
     d = drag_of(root, name_of(root, created.collection_id))
     write_calibration(d, codex, vectors, envelope, key=key, now=now)
+    write_terms(d, codex, plugin,
+                terms_path=(recipe.get("license") or {}).get("terms_path"))
     return created
+
+
+def write_terms(drag_path: Path, codex: Codex, plugin: str,
+                terms_path: Any = None) -> None:
+    """`LICENSE-TERMS` at the drag root — the origin's terms text, byte
+    for byte (09 §9.13).
+
+    A yellow or red collection's Codex PINS `license.terms_sha256`, and
+    everything downstream needs the text those bytes hash to: `hold
+    collection ack` cannot record an acknowledgement without it, `check`'s
+    `license` compares against it, and 04 §4.4 makes it one of the three
+    members a peer may fetch BEFORE acknowledging anything. Nothing wrote
+    it until 2026-09-10, so `create` produced a yellow collection that
+    could never be acknowledged and therefore never built — found taking
+    `pubmed` through step 8.
+
+    Copied from the plugin's own file and then CHECKED against the hash
+    the Codex pins, because "byte-exact and never converted" is the whole
+    property: a CRLF checkout that changed a line ending would silently
+    invalidate every ack ever recorded against it.
+    """
+    import hashlib
+
+    want = codex.license.terms_sha256
+    if not want:
+        return                       # green: no member, and none expected
+    # The recipe's own file first, then the plugin's. A collection may
+    # TIGHTEN its class (04 §4.4) — green to yellow — and its plugin then
+    # ships no terms text at all, so the creator has to supply the one
+    # they are tightening to. Without this the tightening is declarable
+    # and unusable.
+    src = terms_path
+    if not src:
+        from app.acquire.specs import ACQUIRE_REGISTRY
+        spec = ACQUIRE_REGISTRY.get(plugin)
+        src = getattr(spec, "terms_text_path", None) if spec else None
+    if not src or not Path(src).is_file():
+        raise CodexError(
+            f"{codex.license.cls}-class: the Codex pins terms {want[:23]}… "
+            f"and there is no terms text to write as LICENSE-TERMS (09 "
+            f"§9.13) — plugin {plugin!r} ships none and the recipe names no "
+            f"`license.terms_path`. The collection would be one nobody could "
+            f"ever acknowledge")
+    body = Path(src).read_bytes()
+    got = "sha256:" + hashlib.sha256(body).hexdigest()
+    if got != want:
+        raise CodexError(
+            f"the recipe pins license.terms_sha256 {want[:23]}… and "
+            f"{Path(src).name} hashes to {got[:23]}…. Terms are byte-exact "
+            f"and never converted (09 §9.13); nothing is written")
+    (drag_path / "LICENSE-TERMS").write_bytes(body)
 
 
 def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
