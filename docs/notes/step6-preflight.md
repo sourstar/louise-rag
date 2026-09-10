@@ -321,6 +321,36 @@ to 4096. What is left untested is another MODALITY.
 
 Specs `a1b5ca9` on main.
 
+**Run F — bge-m3 at dim 1024, and the coverage is now complete.** The gap
+this note named: `wikipedia` and `wikivec`, the largest collections here
+and the only ones on the `cdc` and `verbatim` chunkers.
+
+| | encoder | dim | corpus | what it is | cosine | p2 | p98 |
+|---|---|---|---|---|---|---|---|
+| C | Qwen3-4B | 2560 | gutenberg | **`gutenberg`** | 0.747 | 0.645 | ~1.04 |
+| E | MedCPT | 768 | pubmed | **`pubmed`** | 0.882 | 0.953 | 1.666 |
+| F | bge-m3 | 1024 | wikipedia | **`wikivec`** / `wikipedia` | 0.813 | 0.811 | 1.332 |
+
+All three live text spaces pass, on both statistics and both forms of the
+deviation rule.
+
+**It cost almost nothing and was the most faithful of the six**, because
+the bundle needed no re-embedding at all. wikivec's Lance table already
+holds the collection's own vectors AND, in its `text` column, the exact
+inputs that produced them — `title\nparagraph`, which is `embed_input`.
+So 300 rows came straight out. The trap recorded above — that a run over
+bare paragraphs would measure a different function and produce an
+envelope describing a space nobody holds — could not fire, because
+nothing about the input was reconstructed. Only the envelope needed the
+encoder, 512 texts in 866 s on the CPU endpoint.
+
+Run F's ratios straddle 1 (p50 1.037) as PubMed's do. That is now two of
+three live spaces, which makes straddling the normal case and the
+Gutenberg runs sitting wholly under 1 the exception — the opposite of
+what the first four runs implied.
+
+Specs `f5ef0f4` on main.
+
 **Which collection each run actually IS (corrected 2026-09-10).** The
 first four runs were attributed to the wrong collection for a day.
 `DEPLOYMENT.md` says `embed-gpu-qwen3-8b` "serves gutenberg" and does not
