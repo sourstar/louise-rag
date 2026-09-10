@@ -186,8 +186,40 @@ collection are NOT in one space. That is correct and costs nothing: the
 proof proved the round trip, not the space, and the throwaway holds 1,637
 vectors nobody will ever import.
 
-**Records build running** over 77,866 usable books at
-PARSE_PROCESSES=10.
+
+**MEASURED 2026-09-10, running it for real: pass 1 parses the whole
+corpus SERIALLY, and pass 2 parses it again.** `pack_build.plan` asks
+`slicing.slice_hint(origin, row)` for each document's slice and falls
+back to a full `plugin_io.canonical_doc` parse when the hint cannot
+answer. Gutenberg slices by `lang` — and `discovery.sync_collection`
+inserts `(uid, source, native_id, path, txt_name, mtime, size,
+updated_at)` and **no lang**: lang is filled later, by the rdf stage. So
+on a FRESH manifest the hint never fires, and pass 1 parses every book
+just to learn its language.
+
+Measured on 77,866 books: **19.2 documents/s, single-threaded** —
+`plan` does not use the parse pool — for about 68 minutes, before pass 2
+starts and parses the same corpus again (that one does use the pool).
+Discovery itself was 395 s for 79,320 directories.
+
+It is not a bug and nothing is wrong with the output; it is a per-corpus
+cost paid twice, and CLAUDE.md's rule about costs that scale with the
+corpus is the one it brushes against. Two cheap fixes when someone wants
+them, in order of value:
+
+* have discovery record `lang` when the plugin can supply it cheaply
+  (gutenberg's RDF is already opened during the scan), so `slice_hint`
+  answers from the manifest and pass 1 costs a table walk;
+* failing that, give pass 1 the parse pool, which it has no reason not
+  to use — it is the same parse per document that pass 2 parallelises.
+
+Also worth fixing in the deploy doc: `python -m app.louise` in a
+container is not a tty, so **stdout is block-buffered** and `pack build`'s
+progress lines do not appear in `docker logs` until the process exits.
+The discovery lines do appear because they go through the app logger to
+stderr. Run detached builds with `-e PYTHONUNBUFFERED=1`; without it a
+working build is indistinguishable from a hung one, which cost twenty
+minutes of doubt here.
 
 ### What is waiting on the operator
 
