@@ -137,6 +137,58 @@ There is still **no `hold collection forget`** — 07 §7.3 specifies it and
 neither CLI implements it, so this was done by hand. That is the command
 step 12 owes, and until it exists every cleanup is manual and unaudited.
 
+
+### Step 8 — `gutenberg`, in progress 2026-09-10
+
+**Created for keeps.** `collection_id
+sha256:dd528265706eddb1f56787fcebd34b5339dc6d428f266a8ad0cc8371236d6670`,
+`space_id sha256:c6f8b7c102e9fb48…`, version 2 / `record_line` 1, on the
+node against the re-pinned b10603 encoder. 284 s, all of it embedding the
+512-text calibration set. The recipe is
+`config/recipes/gutenberg-real.toml` on the node.
+
+**PREFLIGHT ITEM 2 CAUGHT IT, one `create` too late and one records build
+in time.** The first attempt was created with `layers = [('book', 1, {},
+'default')]` — the plugin's `chunking_profile`, inherited because the
+recipe did not declare `layers`. `book` is NOT one of 06 §6.3's four
+chunkers; it is a grandfathered name. Preflight item 2 spells out the
+consequence: *"03 §3.5 gates the overlap-band check on `fixed` layers, so
+a Gutenberg collection whose layer says `book` is never T1-checked by
+anyone, for the life of the collection."* `layers` is inside
+`collection_id`, so that is not correctable — only replaceable.
+
+The first collection was discarded (it had no records and no vectors) and
+the recipe now declares the layer explicitly:
+
+```toml
+[[layers]]
+rule = "default"
+[layers.chunker]
+id = "fixed"
+version = 1
+params = { tokens = 1000, overlap = 120 }
+```
+
+Those numbers are the node's own live settings, read from the worker's
+environment the same day (`CHUNK_TOKENS=1000`, `CHUNK_OVERLAP=120`,
+`CHUNK_VERSION=1`), and preflight item 2 established that `fixed` at them
+cuts byte-identically to `book` and produces the same chunk ids. So
+declaring it cost nothing and bought T1 for the life of the collection.
+
+**The lesson for `pubmed` and any later `create`: a recipe that omits
+`layers` inherits the plugin's grandfathered profile.** The template is
+doing what it is told; the recipe has to say.
+
+Note that `space_id` moved between the two attempts — `673f7a32…` with
+`book`, `c6f8b7c1…` with `fixed` — because layers are inside it. The
+step-6 proof shares the FIRST one, so the throwaway and the real
+collection are NOT in one space. That is correct and costs nothing: the
+proof proved the round trip, not the space, and the throwaway holds 1,637
+vectors nobody will ever import.
+
+**Records build running** over 77,866 usable books at
+PARSE_PROCESSES=10.
+
 ### What is waiting on the operator
 
 **Three were settled 2026-09-10** and are recorded here rather than
