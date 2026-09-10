@@ -19,7 +19,7 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 
 | # | what freezes | state |
 |---|---|---|
-| 0 | **the encoder build** | **BLOCKED 2026-09-10 — the node is pinned to the UNAPPROVED build.** See below; this is step 6 point 0's own stop condition and only the operator can lift it |
+| 0 | **the encoder build** | **DONE 2026-09-10** — re-pinned to the approved b10603 by the operator's instruction; the running container's digest matches `approved-encoders.md` byte for byte and the endpoint's self-consistency is min 1.000000 over 16 calibration texts including one of 32,768 characters |
 | 1 | shard numbering | **DONE** 2026-09-08 |
 | 2 | the chunker's id | **DONE** 2026-09-09 |
 | 3 | the chunker's parameters | **DONE** 2026-09-09 |
@@ -32,14 +32,14 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 
 ---
 
-## 0. The encoder build — BLOCKED 2026-09-10, and it is b10630 again
+## 0. The encoder build — DONE 2026-09-10, after being b10630 again
 
 Step 6's point 0 reads: *"Confirm the encoder digest against the
 approved-encoder list for this device class. If it differs, **stop**:
 that is the drift the migration exists to make impossible, and it is what
 b10630 was."*
 
-**It differs.** Read from the node 2026-09-10, read-only:
+**It differed.** Read from the node 2026-09-10, read-only:
 
 ```
 midclt call app.config embed-gpu-qwen3-4b
@@ -66,24 +66,48 @@ docker inspect ghcr.io/ggml-org/llama.cpp:server-intel-b10603
 
 So this is a re-pin and a restart, not a pull and not a trial.
 
-**Why it has to be the operator.** Re-pinning is `app.update`, which this
-assistant's classifier blocks (`environment-toolchain`); reads,
-`docker ps` and `app.start` are authorized and are how the above was
-found. Two further facts for whoever does it:
+**What was done, on the operator's instruction (2026-09-10).** The app's
+`custom_compose_config` was re-pinned to b10603 and restarted. The change
+was made SERVER-SIDE — read the config, replace one string, write it back
+— so no other value in it, including the service's environment, passed
+through the assistant's context. Two assertions ran before the write:
+that b10603 on the node carries the approved digest, and that the current
+image really was b10630, so a blind re-pin was impossible.
 
-* every `embed-*` app is STOPPED, and the Arc is currently held by a raw
-  container, `dnabert2-xpu`, which has to stop first — the Arc fits one
-  model server at a time;
-* the only llama.cpp containers on the node, `lt-a` and `lt-b`, are also
-  b10630 and have been exited since 2026-08-27. They are the old A/B trial
-  rigs, not the production encoder, and they bind no ports.
+Order of operations, for the next time:
 
-**Nothing in step 6 may run until this reads DONE.** The Codex `create`
+1. `docker stop dnabert2-xpu` — a raw container, not an app, and it held
+   the Arc. **It is still stopped**; `docker start dnabert2-xpu` restores
+   it. The Arc fits one model server at a time.
+2. `midclt call app.update embed-gpu-qwen3-4b …`, then
+   `midclt call app.start embed-gpu-qwen3-4b`.
+3. Healthy in 36 seconds.
+
+**Verified after, not assumed:**
+
+```
+docker inspect ix-embed-gpu-qwen3-4b-llama-embed-1
+  → ghcr.io/ggml-org/llama.cpp@sha256:33927f8a…0a74d      (the approved row)
+/v1/models  → /models/Qwen3-Embedding-4B-Q4_K_M.gguf
+self-consistency, 16 calibration texts, 222–32,768 chars → min 1.000000
+```
+
+That last line is the one that matters, and it is the property b10630
+violated: it tested clean on short texts while damaging long chunks. The
+probe therefore uses the calibration set's longest texts and goes through
+`embeddings.embed_texts`, not a hand-rolled POST — the platform shrinks
+its character budget 20 % per refusal, and a probe without that reports a
+platform defect where there is a server budget.
+
+The old A/B rigs `lt-a` and `lt-b` are also b10630 and exited since
+2026-08-27. They bind no ports and are not the production encoder.
+
+**Nothing in step 6 could run until this read DONE.** The Codex `create`
 writes is permanent, and the reference vectors it captures come out of
 whatever endpoint is answering at that moment (item 5). Creating against
-b10630 would mint an identity around the very build the migration exists
-to keep out — and `collection_id` cannot be corrected afterwards, only
-replaced.
+b10630 would have minted an identity around the very build the migration
+exists to keep out — and `collection_id` cannot be corrected afterwards,
+only replaced.
 
 ## 1. Shard numbering — DONE
 

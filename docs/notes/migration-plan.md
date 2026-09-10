@@ -593,7 +593,7 @@ changing the count is CAUGHT (this is the test that justifies
 
 **Operator**: nothing.
 
-### Step 6 — Proof-of-concept import — ONE collection, end to end
+### Step 6 — Proof-of-concept import — ONE collection, end to end — **DONE 2026-09-10**
 *Everything above, on real data, at a scale that fits in an afternoon.
 **This is the milestone the operator asked for, and the stop before the
 full import.***
@@ -665,6 +665,40 @@ the legacy rows for the same books. That is a direct measurement of the
 b10630 damage on known-good text, and it costs nothing extra.
 
 **Operator**: runs it on the NAS. First acceptance on real data.
+
+**WHAT RAN, 2026-09-10.** All seven points, against the node's re-pinned
+encoder from a local Docker build into two scratch roots. The numbers are
+in [`STATUS.md`](STATUS.md); the ones that are findings rather than
+figures:
+
+* **Point 0 fired.** The node was still pinned to b10630 — the unapproved
+  build — on the very app that serves gutenberg. The stop condition this
+  step wrote is the reason that was caught before `create` ran, and not
+  after it had minted an identity around it. Re-pinned to b10603 on the
+  operator's instruction; [`step6-preflight.md`](step6-preflight.md) item
+  0 has the procedure and the verification.
+* **The proof is the import, and it passed cleanly.** Peer B held nothing
+  but the drag — codex, validation, records, snapshot and its signature,
+  the calibration member — and its own key. A's bundle went through T0
+  (1,637 rows, envelope cosine **0.891**), T1 (64 triples), T2 (16/16,
+  median 1.0000) and T3 (16/16, median 1.0000, B's own encoder
+  reproducing A's vectors). The producer key was FIRST SEEN and admitted,
+  which is the TOFU regression closed on real data.
+* **`hold check` on the importer: seven checks, seven passes, seven signed
+  attestations** — including `signature`, which had nothing to check until
+  this week because `snapshot create` never wrote a sidecar.
+* **The bundle did not split.** 1,637 chunks is well under the 15,000
+  decided the same day, so one shard made one bundle of 8,509,256 bytes.
+  The splitting path is tested but unexercised here.
+* **`--sample` needed an entry per SAMPLED check** at `create` time, not
+  just `chunks`: the first recipe was refused with "validation.sample has
+  no size for planned check 'vectors-sample'". Correct, and worth knowing
+  before step 8's recipes are written.
+
+**Deliberately not proved**, as this step said: nothing at PubMed scale,
+no sharing, no `ask`. The "free while the GPU is busy" cosine against
+legacy rows did not run and cannot — gutenberg starts from zero vectors,
+which is what dissolved step 6b.
 
 ### Step 6b — the legacy vectors — MOSTLY DISSOLVED 2026-09-10
 
