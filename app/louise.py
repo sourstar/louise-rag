@@ -14,6 +14,8 @@
     louise hold snapshot create <collection> [--snapshot ID]
     louise hold snapshot list <collection>
     louise hold embedder check|benchmark <collection> [--accept]
+    louise hold vectors build <collection> [--snapshot ID | --delta ID] [--shard S | --slice V...]
+                                    [--dry-run]
     louise hold vectors export <collection> --shard S --out DIR [--snapshot ID]
     louise hold vectors import <collection> --bundle DIR [--snapshot ID]
                                     [--strict [--allow KEY...]] [--require-t3] [--seed HEX]
@@ -462,6 +464,109 @@ def cmd_vectors_import(a) -> int:
     return 0
 
 
+def cmd_vectors_build(a) -> int:
+    """`hold vectors build` — this peer's own chunks, embedded here.
+
+    Exit 0 when it finished (including "nothing to do"), 2 when a rule
+    stood in the way — the licence, or no passing calibration check for
+    this space — 3 when the encoder is unreachable, 130 when a signal
+    arrived and the batches already written stayed written.
+    """
+    import threading
+
+    from app import config, embeddings, licensing
+    from app.hold import collection as col, embedder as emb, land as landing, \
+        records as rec, vectors_build as vb
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    # Embedding is a USE of the text (invariant 9): a corpus that may not
+    # be read may not be embedded either.
+    licensing.require_ack(local, use="this collection's text is embedded")
+    # 07 §7.3's gate, and the one b10630 cost: an encoder that drifted
+    # produces vectors nobody can tell from good ones.
+    vb.require_statement(a.root, name, codex)
+
+    snapshot = _latest_snapshot(a.root, name, a.snapshot)
+    if a.delta:
+        previous = _snapshot_before(a.root, name, a.delta)
+        shards = vb.delta_shards(previous, _latest_snapshot(a.root, name, a.delta))
+    elif a.shard:
+        from app.hold import export as exp
+        shards = [exp._shard_of(snapshot, a.shard)]
+    elif a.slice:
+        shards = [s for s in snapshot.shards if s.slice in set(a.slice)]
+        if not shards:
+            raise CodexError(
+                f"{name}: snapshot {snapshot.snapshot_id} has no shard in "
+                f"{', '.join(a.slice)}")
+    else:
+        shards = sorted(snapshot.shards, key=lambda s: (s.slice, s.n))
+
+    embed = None
+    if not a.dry_run:
+        try:
+            recipe = _recipe_for(codex, name)
+        except emb.GateDeferred as e:
+            print(f"louise: deferred: {e}", file=sys.stderr)
+            return 3
+
+        def embed(texts):                            # noqa: F811
+            try:
+                return embeddings.embed_texts(texts, recipe=recipe)
+            except Exception as e:                   # noqa: BLE001
+                raise emb.GateDeferred(
+                    f"the encoder at {recipe.url} could not embed: {e}") from e
+
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):                # not the main thread
+            pass
+
+    try:
+        out = vb.build(
+            codex, shards=shards,
+            records_for=lambda s: landing.records_for(
+                a.root, name, snapshot, f"{s.slice}/{s.n:05d}", None),
+            vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
+                ids, collection=local),
+            embed=embed or (lambda t: []),
+            write=lambda rows: embeddings.upsert_chunks(
+                rows, collection=local, dtype=codex.space.dtype),
+            batch=config.EMBED_SLICE_CHUNKS, stop=stop,
+            log=lambda m: print(m, file=sys.stderr), dry_run=a.dry_run)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+
+    what = "would embed" if a.dry_run else "embedded"
+    print(f"{out.chunks_written if not a.dry_run else out.chunks_seen} "
+          f"chunk(s) {what} over {out.shards} shard(s)")
+    print(f"  missing     {out.chunks_seen} of the shards' chunks had no vector here")
+    print(f"  tokens      ~{out.tokens} (the chunker's estimate)")
+    if out.interrupted:
+        print("  interrupted at a batch boundary; what was written stayed "
+              "written and a re-run continues (07 §7.7)", file=sys.stderr)
+        return 130
+    return 0
+
+
+def _snapshot_before(root, name, snapshot_id):
+    """The snapshot before `snapshot_id` in this peer's copy, or None.
+
+    Ids sort chronologically by construction (09 §9.4), so "before" is a
+    name comparison and not a chain walk.
+    """
+    from app.hold import collection as col, snapshot as snap
+    d = col.drag_of(Path(root), name) / "snapshots"
+    ids = sorted(p.stem for p in d.glob("*.json")
+                 if not p.name.endswith(".sig.json")) if d.is_dir() else []
+    earlier = [i for i in ids if i < snapshot_id]
+    return snap.load(d / f"{earlier[-1]}.json") if earlier else None
+
+
 def cmd_vectors_check(a) -> int:
     """`hold vectors check [--drop]` — 03 §3.2's `vectors-sample`, locally.
 
@@ -861,6 +966,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     vecs = nouns.add_parser("vectors", help="this peer's vectors, and the bundles that carry them")
     vverbs = vecs.add_subparsers(dest="verb", required=True)
+    p = vverbs.add_parser("build",
+                          help="embed this peer's own chunks that have no "
+                               "vector yet")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--snapshot",
+                   help="which snapshot's shards (default: the latest held)")
+    p.add_argument("--delta", metavar="ID",
+                   help="embed exactly the shards holding `delta.added ∪ "
+                        "delta.changed` of snapshot ID (07 §7.3)")
+    p.add_argument("--shard", help="one shard, as \"<slice>/<n>\"")
+    p.add_argument("--slice", nargs="*", help="whole slices, by their value")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print what would be embedded and exit 0 without "
+                        "writing a byte (07 §7.7)")
+    p.set_defaults(fn=cmd_vectors_build)
+
     p = vverbs.add_parser("export",
                           help="a signed bundle of one shard's vectors (09 §9.7)")
     root_arg(p); p.add_argument("collection")
