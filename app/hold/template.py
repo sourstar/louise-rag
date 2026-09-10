@@ -35,7 +35,7 @@ OPTIONAL = ("validation", "publication", "certifier", "embedding",
             "succession", "content", "archives", "layers", "slicing",
             "facets", "update", "license", "privacy", "erasure", "modality",
             "profile", "origin", "parser", "cleaning_version",
-            "toolchain", "protocol_version")
+            "toolchain", "protocol_version", "record_line")
 
 
 class TemplateError(CodexError):
@@ -366,9 +366,37 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
+        version=codex_mod.CODEX_VERSION,
+        record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)
     return codex
+
+
+def _record_line(recipe: dict[str, Any]) -> int:
+    """09 §9.5's record shape, declared once and for the collection's life.
+
+    Defaults to 1, and 2 is REFUSED rather than accepted: `record_line` 2
+    needs the figures containers, the `figures` member kind, the snapshot's
+    `figures` list and the plugin side of the amendment, none of which is
+    built (docs/notes/figures-amendment-plan.md). Writing 2 into a Codex
+    and then producing record lines without a `figures` key would be a
+    collection whose own identity says what its shards are not — and
+    `record_line` is inside `collection_id`, so it could never be
+    corrected, only replaced.
+    """
+    want = int(recipe.get("record_line", codex_mod.RECORD_LINE_BUILT))
+    if want not in codex_mod.RECORD_LINES:
+        raise TemplateError(f"record_line is 1 or 2 (09 §9.3), got {want!r}")
+    if want != codex_mod.RECORD_LINE_BUILT:
+        raise TemplateError(
+            f"record_line {want} needs the figures containers of 09 §9.5, "
+            f"the `figures` member kind and the plugin side of the figures "
+            f"amendment, none of which is built "
+            f"(docs/notes/figures-amendment-plan.md). `record_line` is inside "
+            f"`collection_id`, so a collection created claiming plates it "
+            f"cannot write could never be corrected, only replaced")
+    return want
 
 
 def _origin(source, recipe: dict[str, Any]) -> Origin:

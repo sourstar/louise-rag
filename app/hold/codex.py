@@ -27,7 +27,26 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 CODEX_KIND = "louise-codex"
-CODEX_VERSION = 1
+
+#: What a NEW Codex is written at. 09 §9.3: "`version` tracks what wrote
+#: the Codex, `record_line` tracks what is in the shards, and a figureless
+#: collection created under a later format writes `version` 2 with
+#: `record_line` 1".
+CODEX_VERSION = 2
+
+#: What this build can READ. "A Codex already written stays 1 and cannot
+#: be moved, because `version` is inside the canonical bytes and so inside
+#: `collection_id` — changing it does not upgrade a collection, it names a
+#: different one" (§9.3). So 1 is read forever and never rewritten.
+CODEX_VERSIONS = (1, 2)
+
+#: 09 §9.5's two record shapes: 1 without a `figures` key, 2 with it. Only
+#: 1 can be CREATED here — `record_line` 2 needs the figures containers,
+#: the member kind and the plugin side of the amendment, none of which is
+#: built (docs/notes/figures-amendment-plan.md). Refused at create with
+#: that reason rather than accepted and quietly written without plates.
+RECORD_LINES = (1, 2)
+RECORD_LINE_BUILT = 1
 
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _KEY_RE = re.compile(r"^ed25519:[0-9a-f]{64}$")
@@ -439,15 +458,46 @@ class Codex:
     facets: tuple[Facet, ...] = ()
     credits: tuple[Credit, ...] = ()
     profile: dict[str, Any] | None = None
+    #: 09 §9.3's `version` and `record_line`. Last in the field list and
+    #: not first, where they read, because the canonical form sorts and
+    #: putting them where they belong would renumber every positional
+    #: construction in the codebase for no change of bytes.
+    version: int = CODEX_VERSION
+    #: `None` exactly when `version` is 1 — §9.3: "Version 1 is this
+    #: object without `record_line`".
+    record_line: int | None = None
+
+    def __post_init__(self) -> None:
+        """`record_line` follows `version`, so no construction has to spell
+        both. 09 §9.3: version 1 is the object WITHOUT the key, and a
+        figureless collection at a later format writes 2 with
+        `record_line` 1. Normalised here rather than at each call site,
+        because the two fields are one fact and a Codex that disagreed
+        with itself about it would be a shape nobody else hashes."""
+        if self.version == 1:
+            if self.record_line is not None:
+                raise CodexError(
+                    "a version 1 Codex has no `record_line` (09 §9.3); "
+                    "adding it does not upgrade a collection, it names a "
+                    "different one")
+        elif self.record_line is None:
+            object.__setattr__(self, "record_line", RECORD_LINE_BUILT)
+        elif self.record_line not in RECORD_LINES:
+            raise CodexError(f"record_line is 1 or 2 (09 §9.3, §9.5), got "
+                             f"{self.record_line!r}")
+        if self.version not in CODEX_VERSIONS:
+            raise CodexError(f"unsupported Codex version {self.version!r}; "
+                             f"this build reads "
+                             f"{', '.join(str(v) for v in CODEX_VERSIONS)}")
 
     # ---- the object ---------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         """The Codex as it is written to `codex.json`, `descriptive` included.
         Key order does not matter: the canonical form sorts."""
-        return {
+        out = {
             "kind": CODEX_KIND,
-            "version": CODEX_VERSION,
+            "version": self.version,
             "descriptive": self.descriptive.to_dict(),
             "plugin": self.plugin,
             "origin": self.origin.to_dict(),
@@ -480,6 +530,13 @@ class Codex:
             "credits": [c.to_dict() for c in self.credits],
             "profile": self.profile,
         }
+        if self.version >= 2:
+            # ABSENT at version 1, not null: §9.3 says "Version 1 is this
+            # object without `record_line`", and 09 §9.18 refuses an
+            # unknown key — so a version-1 Codex carrying it, even as
+            # null, is a different object that no reader accepts.
+            out["record_line"] = self.record_line
+        return out
 
     def identity_dict(self) -> dict[str, Any]:
         """The object with `descriptive` REMOVED — removed, not set to null:
@@ -986,21 +1043,43 @@ def walk_lineage(codex: Codex, resolve: Callable[[str], Codex | None]) -> Iterat
 # (de)serialisation
 
 _TOP = ("kind", "version", "descriptive", "plugin", "origin", "toolchain",
-        "parser", "cleaning_version", "protocol_version", "layers", "slicing",
+        "parser", "cleaning_version", "protocol_version", "record_line",
+        "layers", "slicing",
         "space", "work", "modality", "erasure", "validation", "license",
         "privacy", "update", "publication", "certifier", "embedding",
         "succession", "content", "continues", "continues_through",
         "origin_reachable_until", "derived_from", "space_from", "replaces",
         "facets", "credits", "profile")
 
+#: 09 §9.3: "Version 1 is this object without `record_line`."
+_TOP_V1 = tuple(k for k in _TOP if k != "record_line")
+
 
 def from_dict(d: dict[str, Any]) -> Codex:
     if d.get("kind") != CODEX_KIND:
         raise CodexError(f"not a Codex: kind={d.get('kind')!r}")
-    if d.get("version") != CODEX_VERSION:
-        raise CodexError(f"unsupported Codex version {d.get('version')!r}; "
-                         f"this build implements {CODEX_VERSION}")
-    _only(d, _TOP, "codex")
+    version = d.get("version")
+    if version not in CODEX_VERSIONS:
+        raise CodexError(f"unsupported Codex version {version!r}; this build "
+                         f"reads {', '.join(str(v) for v in CODEX_VERSIONS)}")
+    # 09 §9.3: "Version 1 is this object without `record_line`". Absent at
+    # 1 and present at 2, both enforced by the schema itself, because
+    # `version` and `record_line` are inside `collection_id` — a Codex
+    # that carried the key at version 1, or omitted it at 2, would be a
+    # third shape nobody else computes the same id for.
+    if version == 1 and "record_line" in d:
+        raise CodexError(
+            "a version 1 Codex is this object WITHOUT `record_line` (09 "
+            "§9.3). A Codex already written stays 1 and cannot be moved: "
+            "`version` is inside `collection_id`, so adding the key does not "
+            "upgrade a collection, it names a different one")
+    _only(d, _TOP if version >= 2 else _TOP_V1, "codex")
+
+    record_line = d.get("record_line")
+    if version >= 2 and record_line not in RECORD_LINES:
+        raise CodexError(
+            f"record_line is 1 or 2 (09 §9.3, §9.5) and this Codex says "
+            f"{record_line!r}; a version {version} Codex carries it")
 
     de = _only(d["descriptive"], ("title", "summary"), "descriptive")
     og = _only(d["origin"], ("spec", "form", "unit", "clock", "cutoff_rule",
@@ -1049,6 +1128,8 @@ def from_dict(d: dict[str, Any]) -> Codex:
         facets=tuple(_facet(f, i) for i, f in enumerate(d["facets"])),
         credits=tuple(_credit(c, i) for i, c in enumerate(d["credits"])),
         profile=d["profile"],
+        version=version,
+        record_line=record_line,
     )
 
 

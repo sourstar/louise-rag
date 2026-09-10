@@ -33,7 +33,7 @@ def _h(obj) -> str:
 # ---- the worked example, written out by hand ------------------------------
 
 WORKED_EXAMPLE = {
-    "kind": "louise-codex", "version": 1,
+    "kind": "louise-codex", "version": 2,
     "descriptive": {
         "title": "PubMed",
         "summary": "Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
@@ -48,6 +48,11 @@ WORKED_EXAMPLE = {
     "parser": {"id": "pubmed", "version": 4},
     "cleaning_version": 1,
     "protocol_version": 1,
+    # 09 §9.3: "a figureless collection created under a later format writes
+    # `version` 2 with `record_line` 1". The document's own worked example
+    # says so; this file said `version` 1 and omitted the key until
+    # 2026-09-10, so the test that "pins the format" pinned a variant.
+    "record_line": 1,
     "layers": [{"chunker": {"id": "abstract", "version": 1, "params": {}},
                 "rule": "default"}],
     "slicing": PUBMED_SLICING,
@@ -218,9 +223,59 @@ def test_a_missing_field_is_refused(codex):
 
 
 def test_an_unknown_version_is_refused(codex):
-    d = dict(codex.to_dict(), version=2)
-    with pytest.raises(CodexError, match="unsupported Codex version 2"):
+    d = dict(codex.to_dict(), version=3)
+    with pytest.raises(CodexError, match="unsupported Codex version 3"):
         cx.from_dict(d)
+
+
+def test_version_1_is_read_and_is_the_object_WITHOUT_record_line(codex):
+    """09 §9.3: "Version 1 is this object without `record_line`; a Codex
+    already written stays 1 and cannot be moved, because `version` is
+    inside the canonical bytes and so inside `collection_id` — changing it
+    does not upgrade a collection, it names a different one\"."""
+    d = dict(codex.to_dict(), version=1)
+    del d["record_line"]
+    old = cx.from_dict(d)
+    assert old.version == 1 and old.record_line is None
+    assert "record_line" not in old.to_dict()
+    assert old.collection_id != codex.collection_id, \
+        "a version bump names a different collection, which is the point"
+
+
+def test_a_version_1_codex_carrying_record_line_is_refused(codex):
+    """Absent at 1, present at 2, both enforced by the schema — a Codex
+    that carried the key at 1 would be a third shape nobody else computes
+    the same id for."""
+    d = dict(codex.to_dict(), version=1)
+    with pytest.raises(CodexError, match="WITHOUT `record_line`"):
+        cx.from_dict(d)
+
+
+def test_a_version_2_codex_without_record_line_is_refused(codex):
+    d = codex.to_dict()
+    del d["record_line"]
+    with pytest.raises(CodexError, match="missing field.*record_line"):
+        cx.from_dict(d)
+
+
+def test_record_line_is_inside_the_identity(codex):
+    """It is what makes the format enforce the rule rather than a
+    reviewer: "a collection never moves between them — one whose records
+    gain plates is a NEW collection (02 §2.7)"."""
+    from dataclasses import replace
+    assert replace(codex, record_line=2).collection_id != codex.collection_id
+
+
+def test_record_line_2_cannot_be_CREATED_yet(codex):
+    """The figures containers, the member kind and the plugin side of the
+    amendment are unbuilt. A Codex claiming plates it cannot write could
+    never be corrected — `record_line` is inside `collection_id` — only
+    replaced."""
+    from app.hold import template as tpl
+    from tests.hold.test_template import recipe
+    with pytest.raises(tpl.TemplateError, match="figures containers"):
+        tpl._record_line(recipe(record_line=2))
+    assert tpl._record_line(recipe()) == 1
 
 
 # ---- the space block ------------------------------------------------------
