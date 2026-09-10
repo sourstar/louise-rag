@@ -356,6 +356,69 @@ def cmd_vectors_export(a) -> int:
     return 0
 
 
+def cmd_collection_ack(a) -> int:
+    """`hold collection ack <collection>` — record 09 §9.13's acknowledgement.
+
+    Invariant 9: a yellow- or red-class collection's data is not USED —
+    not built, not imported, not exchanged — until a peer has recorded
+    that it read the terms. The record is a timestamp and the sha256 of
+    the terms TEXT, so it is an acknowledgement OF A TEXT and not of a
+    collection: "a collection whose Codex names a hash this peer has
+    acknowledged under any collection is acknowledged" (§9.13).
+
+    The terms are PRINTED unless `--yes`, because an acknowledgement
+    nobody read is a checkbox, and 07 §7.7 says `ack --yes` "records
+    without printing the terms" — which is the flag a script uses, not
+    the default a person gets.
+    """
+    import json
+
+    from app.hold import collection as col, drag as drag_mod
+
+    name, codex = col.resolve(a.root, a.collection)
+    want = codex.license.terms_sha256
+    if not want:
+        print(f"{name} is {codex.license.cls}-class and names no terms text; "
+              f"there is nothing to acknowledge (09 §9.13)")
+        return 0
+
+    terms = a.root / name / "drag" / "LICENSE-TERMS"
+    if not terms.is_file():
+        raise CodexError(
+            f"{name}: the Codex pins terms {want[:23]}… and this copy has no "
+            f"drag/LICENSE-TERMS. It is one of the three members fetchable "
+            f"BEFORE an acknowledgement (04 §4.4), so a copy without it "
+            f"cannot be acknowledged — fetch it first")
+
+    import hashlib
+    got = "sha256:" + hashlib.sha256(terms.read_bytes()).hexdigest()
+    if got != want:
+        raise CodexError(
+            f"{name}: drag/LICENSE-TERMS hashes to {got[:23]}… and the Codex "
+            f"pins {want[:23]}…. Terms are byte-exact and never converted — a "
+            f"CRLF checkout silently invalidates every recorded ack (09 §9.13). "
+            f"Nothing is recorded")
+
+    if not a.yes:
+        print(terms.read_text(encoding="utf-8", errors="replace"))
+        print("-" * 72)
+        reply = input(f"Acknowledge these terms for {name}? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("not acknowledged; nothing was written", file=sys.stderr)
+            return 2
+
+    out = a.root / name / "state" / "ack.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(cx.canonical_json({
+        "kind": "louise-ack", "version": 1,
+        "terms_sha256": want, "time": _utc_now(),
+        "collection_id": codex.collection_id,
+    }))
+    print(f"acknowledged  {want}")
+    print(f"  {out}")
+    return 0
+
+
 def cmd_vectors_archive_import(a) -> int:
     """`hold vectors import <collection> --archive ID` — a published
     pre-embedded set, through the archive route.
@@ -1126,6 +1189,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = verbs.add_parser("show", help="a Codex and the ids derived from it")
     args_show(p); p.set_defaults(fn=cmd_show)
+
+    p = verbs.add_parser("ack",
+                         help="record the licence acknowledgement a yellow- "
+                              "or red-class collection needs (09 §9.13)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--yes", action="store_true",
+                   help="record WITHOUT printing the terms (07 §7.7). For a "
+                        "script; a person should read them")
+    p.set_defaults(fn=cmd_collection_ack)
 
     # ---- hold records ---------------------------------------------------
     recs = nouns.add_parser("records", help="the parsed text of documents")
