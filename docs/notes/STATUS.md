@@ -138,7 +138,52 @@ neither CLI implements it, so this was done by hand. That is the command
 step 12 owes, and until it exists every cleanup is manual and unaudited.
 
 
-### Step 8 — `gutenberg`, in progress 2026-09-10
+### Step 8 — `gutenberg` — DONE 2026-09-10
+
+**DONE AND VERIFIED 2026-09-10.** The numbers, and the check that proves
+them:
+
+| | |
+|---|---|
+| `collection_id` | `sha256:dd528265706eddb1f56787fcebd34b5339dc6d428f266a8ad0cc8371236d6670` |
+| `space_id` | `sha256:c6f8b7c102e9fb489033183d121e4eef63f838e1f24d725c82fcb79c32bfdb1e` |
+| snapshot `2026-08` | `sha256:0cf129d224632c17a6a08edc0a347cf9e08b82de33b5e1b54b5d09fd028b7484`, signed by 1 key |
+| records | **77,866** in **1,602 shards** across **56 slices** |
+| chunks | **8,705,606** |
+| drag | 8.9 GB |
+| discovery | 395 s — 79,320 seen, 77,866 added, 1,454 without text, 40 empty stubs |
+| records build | ~75 min (pass 1 serial at 19.2 docs/s; pass 2 at PARSE_PROCESSES=10) |
+| snapshot | 115 s |
+| `hold check` | 500 s |
+
+`hold check` over the plan, sampling 81 of 1,602 shards at the plan's
+0.05:
+
+```
+PASS  roots              1602 shard(s) held, 0 whose bytes are not the snapshot's root
+PASS  records            3937 record(s) over 81 sampled shard(s), 0 failing
+PASS  chunks             3937 record(s) re-cut over 81 sampled shard(s), 0 failing
+PASS  records-vs-origin  3937 record(s) re-parsed from the origin, 0 differing
+PASS  license            green: the Codex records no terms text
+PASS  signature          1 signature(s) over this snapshot's hash
+PASS  calibration        16/16 reached 0.95, median 1.0000
+INCONCLUSIVE vectors-sample  nothing to reproduce, which is not a pass
+```
+
+Seven signed attestations; the inconclusive check correctly produced
+none. **`records-vs-origin` passing on 3,937 records is the `origin`
+locator added the same morning, working at scale** — every sampled record
+re-fetched from the corpus and re-parsed to the same line, byte for byte.
+
+`vectors-sample` is inconclusive because gutenberg holds ZERO vectors,
+which is the expected state: the move to `qwen3-embedding-4b` emptied its
+table and this collection starts from nothing. 8,705,606 chunks at step
+6's measured 4,030 tokens/s is roughly 23 GPU-days, which is what
+`embed = on-demand` exists for and is nobody's afternoon.
+
+**The legacy `gutenberg` is untouched and still what the running node
+serves.** Per the operator's rule — complete, verify, and only then clean
+up — it stays until pubmed and wikipedia are done too.
 
 **Created for keeps.** `collection_id
 sha256:dd528265706eddb1f56787fcebd34b5339dc6d428f266a8ad0cc8371236d6670`,
