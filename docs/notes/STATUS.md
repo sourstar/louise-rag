@@ -1038,8 +1038,7 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
   | collection | encoder | port | dim | ctx |
   |---|---|---|---|---|
   | `gutenberg` | Qwen3-Embedding-4B | 30437 | 2560 | 8192 |
-  | `gutenberg-pack` | Qwen3-Embedding-8B | 30436 | 4096 | 8192 |
-  | `pubmed` | MedCPT article | 30440 | 768 | 512 |
+    | `pubmed` | MedCPT article | 30440 | 768 | 512 |
   | `wikipedia`, `wikivec` | bge-m3 | 30442 | 1024 | 2048 |
   | `genome-sacCer3/dm6/hg38` | DNABERT-2 | 30443 | 768 | 1024 |
 

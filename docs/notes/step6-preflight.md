@@ -331,19 +331,49 @@ mention the 4B app at all; the live
 | collection | encoder | port | dim | ctx | measured by |
 |---|---|---|---|---|---|
 | `gutenberg` | Qwen3-Embedding-4B | 30437 | 2560 | 8192 | **run C** |
-| `gutenberg-pack` | Qwen3-Embedding-8B | 30436 | 4096 | 8192 | **run A** |
 | `pubmed` | MedCPT article | 30440 | 768 | 512 | **run E** |
 | `wikipedia` | bge-m3 | 30442 | 1024 | 2048 | — |
 | `wikivec` | bge-m3 | 30442 | 1024 | 2048 | — |
 | `genome-*` (3) | DNABERT-2 | 30443 | 768 | 1024 | unreachable |
 
-So run A was not a configuration nobody uses — `gutenberg-pack` is live —
-but every sentence calling the 8B "the Gutenberg collection's encoder"
-was wrong, and run C is the step-6 target's space.
+**What a bge-m3 run must do, so it is not a repeat of the 4B mistake in a
+subtler form.** `wikipedia` and `wikivec` are the outstanding gap, and
+their space is NOT a choice this node made: wikivec's vectors came
+pre-embedded from Upstash, so the space IS the archive's function and
+anything embedded into it must reproduce that function exactly. Two
+parts, and the second is the one a naive run would miss:
 
-**The correction sharpens the finding.** The two literals fail in
-different places, which the old framing hid: the COSINE bound of 0.9
-refuses three of the four live spaces measured (0.747, 0.752, 0.882),
+- the ENDPOINT — bge-m3 under TEI, `ctx` 2048, dim 1024, `dtype` f16,
+  normalised (`config/collections/wikivec.toml`, port 30442);
+- the INPUT FORMAT — Upstash prefixed each paragraph with its article
+  title, so a chunk's embedding input is `f"{title}\n{text}"`, not the
+  paragraph. That is `app/plugins/embedded/source.py::embed_input`, and
+  it was established empirically rather than read anywhere: the genesis
+  sample re-encode compares this node's re-embedding against the
+  archive's own vectors at cos ≥ 0.95, so a wrong separator refuses every
+  shard and imports nothing.
+
+A T0 run that embedded bare paragraphs would therefore be measuring a
+DIFFERENT function from the one that produced the collection's vectors,
+and its envelope would describe a space nobody holds. The calibration
+set, by contrast, is embedded plain — it is corpus-independent and has no
+titles — and that asymmetry is correct: the envelope is the encoder's
+response to the fixed probe set, and the bundle is the collection's
+chunks as it actually produces them.
+
+STATUS.md records the same trap from the other end: "the create dialog's
+default `[embed]` is the node's encoder — right for a corpus this node
+embeds, wrong for a pre-embedded one, whose recipe must be the ARCHIVE's
+function (BGE-M3 for wikivec) or the genesis proof rejects every shard".
+
+Every sentence calling the 8B "the Gutenberg collection's encoder" was
+wrong, and run C is the step-6 target's space. `gutenberg-pack` ran the
+8B but is an INTERMEDIATE PRODUCT (operator, 2026-09-10) and is not a
+collection to reason about — so no live space runs at 4096 at all, and
+runs A and B are dimension probes rather than a collection's space.
+
+**And that weakens one half of the finding, which is worth stating.** The
+COSINE bound of 0.9 refuses BOTH live text spaces measured (0.747, 0.882),
 while the DEVIATION bound refuses only the 4096-dimensional one. Someone
 looking only at `gutenberg` — at 2560 — would have seen the old
 deviation rule pass and called it sound. It is not sound at 2560; it is
