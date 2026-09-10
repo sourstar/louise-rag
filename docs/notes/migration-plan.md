@@ -22,12 +22,20 @@ changed how it is hashed.*
 - **Old names stay as aliases** until §7.6's migration is complete: a
   new command lands beside the old one, the old one prints a deprecation
   line naming the new one, and both call the same function.
-- **Nothing is re-downloaded and nothing is re-embedded.** The corpora on
-  disk (Gutenberg, PubMed baseline and update files, Wikipedia dumps),
-  the plugins that parse them, and the vectors already computed or
-  imported (MedCPT, the BGE-M3 Wikipedia archive, this node's own) are
-  the starting point. The migration gives them a Codex and admits them
+- **Nothing is re-downloaded, and almost nothing is re-embedded.** The
+  corpora on disk (Gutenberg, PubMed baseline and update files, Wikipedia
+  dumps), the plugins that parse them, and the 48 million vectors that
+  came from the two archives (MedCPT, the BGE-M3 Wikipedia set) are the
+  starting point. The migration gives them a Codex and admits them
   through the same gates a stranger's copy would pass.
+  **Amended 2026-09-10** in two places, both narrowing what "nothing
+  re-embedded" covers: Gutenberg's own vectors are already gone — the
+  move to `qwen3-embedding-4b` changed its `space_id` and emptied its
+  Lance table, so it starts from zero and there is nothing to preserve —
+  and the ~253,000 chunks this node embedded ITSELF across pubmed and
+  wikivec are proposed for re-embedding rather than migration, because
+  no build identity was stored per row and re-embedding that many costs
+  hours (step 6b). The archives' 48 million are untouched by both.
 - **The invariants in CLAUDE.md are unchanged**: idempotent writes,
   deterministic chunking, the GPU boundary (HTTP only), secrets by path,
   licence gates before use, `origin_hash` on every record.
@@ -578,21 +586,53 @@ b10630 damage on known-good text, and it costs nothing extra.
 
 **Operator**: runs it on the NAS. First acceptance on real data.
 
-### Step 6b — the legacy vectors, gated on a sweep
+### Step 6b — the legacy vectors — MOSTLY DISSOLVED 2026-09-10
 
-*Split out of step 6 by decision 7. Not an afternoon.*
+*Split out of step 6 by decision 7. It was going to be the expensive
+step; it is not one any more, and the reason is worth keeping.*
 
-`tools/vector_sweep.py` over the collection FIRST, producing a per-shard
-bad fraction and a dated suspect set. Then import only what the sweep
-cleared, and decide what happens to the rest with the numbers in hand:
-the 8 % is a per-CHUNK rate over 163 chunks from a cluster-biased sample,
-and the choice between sweeping (~3.6 GPU-days) and re-embedding
-everything (~8.1) may flip on the real figure. A stride-1 pass over a few
-hundred books answers it in hours.
+**It was written about Gutenberg's legacy vectors and Gutenberg has
+none.** When the collection moved to `qwen3-embedding-4b` its `space_id`
+changed to `45e41e7b…`, and its Lance table was emptied on 2026-08-29:
+`data/lancedb/` is 512 bytes and holds no `chunks` table. The manifest
+agrees — 79,320 documents, `embed_done` 0. The 9,996 vectors this plan
+was written around are under the OLD space `c0ac8a52…`, which belongs to
+`gutenberg-pack`, an intermediate product the operator has struck from
+the account (2026-09-10) and whose vectors were the known-corrupt 8 %
+anyway.
 
-The question buried here, and it is the operator's: **may a peer sign
-vectors whose producing build it cannot name?** Everything else in 6b
-follows from the answer.
+So the sweep-versus-re-embed decision is gone with them: there is nothing
+to sweep, ~3.6 GPU-days versus ~8.1 is a choice about a set that no
+longer exists, and `tools/vector_sweep.py` has no subject. Gutenberg
+starts step 6 at zero vectors under a clean space, which is the best
+possible position for a proof of concept.
+
+**What is genuinely left is smaller by two orders of magnitude, and it is
+not Gutenberg's.** Counted from each collection's `genesis_imports` on
+2026-09-10:
+
+| collection | embedded | from the ARCHIVE | this node's own |
+|---|---|---|---|
+| pubmed | 35,463,335 | 35,301,888 (37 shards, `final`) | ~161,000 |
+| wikivec | 12,814,619 | 12,722,130 (959 shards, `applied`) | ~92,000 |
+| wikipedia | 9 | — | 9 |
+| gutenberg | 0 | — | — |
+
+**99.4 % of every vector this node holds came from an archive**, and an
+archive's vectors have a specified route into the new format that has
+nothing to do with signing what we cannot name: `hold vectors import
+--archive ID`, refused unless the Codex's `credits` names it (06 §6.6),
+re-proved by the same-function sample re-encode that admitted them
+originally. They are not legacy vectors in the sense that worried this
+step; they are the archive's, and the archive is still there.
+
+That leaves **roughly 253,000 chunks this node embedded itself**, spread
+across two collections, as the entire remaining subject of the operator's
+question — *may a peer sign vectors whose producing build it cannot
+name?* The cheap answer is now available: at ~253k chunks, re-embedding
+them costs hours rather than the GPU-days that made the question hard, so
+the answer can be **no — re-embed them** without arguing the principle.
+Confirm the count per collection before committing to it.
 
 ### Step 7 — GATE: what may be in a cleaned corpus besides text
 *Blocks importing for keeps — step 8 — and nothing before it. See
@@ -632,6 +672,51 @@ Until then, step 8 imports only what is whole as text.
 *02 §2.1, 02 §2.7, 07 §7.6. New: `louise dev migrate pack --recipe FILE`
 and `louise dev adopt <pack-dir> <collection>`.*
 
+**WHAT IS BEING FERRIED, and what is not (operator, 2026-09-10).** Four
+destinations, not seven:
+
+| destination | what goes into it |
+|---|---|
+| `gutenberg` | itself. Zero vectors, clean space `45e41e7b…` |
+| `pubmed` | itself **+ the MedCPT pre-embeddings** |
+| `wikipedia` | itself **+ the wikivec pre-embeddings** |
+| genome × 3 | **stay on the old format for now** |
+
+**"In the end the pre-embeddings will be incorporated in the collection
+they belong to."** That is the shape both archives already have in the
+new format, so nothing new is invented for it: an archive is not a
+collection, it is an entry in `credits` and a source `hold vectors import
+--archive` draws from. `pubmed` is already exactly that. `wikivec` is the
+one that changes — it stops being a collection and becomes
+**`wikipedia`'s layer 1**, which is preflight decision 7 (one collection,
+two layers: `verbatim` over the documents the archive covers, the default
+chunker past its coverage) and is already implemented and tested in
+`app/layers.py`.
+
+**One consequence of that merge, and it needs deciding before the
+`create`.** `layers` is inside `space_id` (02 §2.4), so a two-layer
+`wikipedia` has a space that is neither today's `wikipedia`
+(`f20c530c…`) nor today's `wikivec` (`ed34b4b0…`). Today's wikipedia
+vectors are 9 and do not matter. Today's wikivec vectors are 12.7 million
+and they DO — but they are the archive's, so they arrive by the archive
+route, which re-proves them against this node's own encoder rather than
+inheriting them on a matching `space_id`. That works only if layer 1
+reproduces the archive's function exactly: bge-m3 as Upstash ran it, and
+the input `f"{title}\n{text}"` (see the bge-m3 note in
+[`step6-preflight.md`](step6-preflight.md)). Get that wrong and the
+same-function proof refuses all 959 shards, which is a loud failure
+rather than a silent one — but it is 12.7 million vectors of re-import
+either way, so prove the function on ONE shard before running the rest.
+
+**Genome stays on the old format**, and the operator has pre-authorised
+it: "if there is some issue with the genome collections, put them on old
+for now; genome collections were mostly an experiment and for a serious
+genomic research they likely need in any case more refinements." There is
+such an issue and it is absolute rather than awkward — see the blocker
+below: no DNA calibration set exists, so `create` cannot write them a
+Codex at all. They keep working exactly as they do now; nothing about the
+old format stops on their account.
+
 Step 6 for each remaining collection, plus the pre-Codex packs already
 on disk:
 
@@ -651,9 +736,10 @@ Codex whose `collection_id` is stable across two runs; record counts
 match the old manifest; the admitted-vector count is reported; running
 the migration twice is a no-op.
 
-**BLOCKED for the two genome collections, and nothing earlier reveals
-it** (found 2026-09-09 while looking for a fourth modality to measure T0
-against). 09 §9.12 ships one calibration set PER MODALITY; this platform
+**BLOCKED for the THREE genome collections — and the operator has
+already decided the outcome: they stay on the old format** (2026-09-10).
+Found 2026-09-09 while looking for a fourth modality to measure T0
+against. 09 §9.12 ships one calibration set PER MODALITY; this platform
 ships `calibration/text.jsonl` and nothing else. `create` embeds the set
 for the collection's modality, `GenomeSource.modality` is `dna`, and
 `cal.load("dna")` refuses:
@@ -681,8 +767,13 @@ artefact it needs does not exist. What closing it takes:
   that move — but the `tolerance` it produces does not, and building the
   set before the encoder is chosen means calibrating twice.
 
-Neither is on the critical path to step 6, which is Gutenberg. Recorded
-here so step 8 does not discover it with the corpus already migrated.
+Neither is on the critical path to step 6, which is Gutenberg, and
+neither is on the critical path to step 8 any more either: the genome
+collections are out of scope for the ferry until someone wants them in
+it. What this section is FOR, now, is that the decision was taken with
+the reason known rather than by drift — and that whoever eventually
+builds the DNA set finds the requirements here instead of rediscovering
+them.
 
 **Operator**: per collection, on the NAS, with the digests. Record each
 outcome in `docs/notes/STATUS.md`.
