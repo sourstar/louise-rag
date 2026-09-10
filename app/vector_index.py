@@ -11,13 +11,24 @@ refine ×50; WITHOUT re-ranking recall drops to 0.66 on MedCPT's tight
 cone, so the refine factor is not optional).
 
 Lifecycle, all off the GPU loop:
-  ensure()   builds the index once the table has VECTOR_INDEX_MIN_ROWS
-             rows and none exists (k-means on a sample, minutes);
+  ensure()   the worker's entry point: prunes, then builds or refreshes;
+  prune()    drops superseded Lance VERSIONS. Cheap, needs no disk
+             headroom, runs on a plain interval and is gated on nothing
+             else — see its docstring for what happened when it was
+             neither of those things;
   refresh()  folds rows added since into the index (Lance's optimize:
              new fragments are flat-scanned until then) once
-             VECTOR_INDEX_REFRESH_ROWS have accumulated;
+             VECTOR_INDEX_REFRESH_ROWS have accumulated. This one
+             COMPACTS, so it is gated on free space;
   query()    applies nprobes / refine_factor when an index exists — the
              ONE place search learns whether to probe or scan.
+
+Lance is a versioned store and that is the trap this module exists to
+avoid: every write leaves a manifest, and a manifest pins the fragments
+it referenced, so a table grows with its write COUNT and not with its
+row count. Pruning and compaction are different operations with opposite
+disk profiles — pruning only deletes, compaction writes before it
+deletes — and they must not share a free-space guard.
 
 Distance: L2 over unit vectors (embeddings.py L2-normalises client-side),
 which orders exactly like cosine — the same metric the flat scan used.
@@ -34,6 +45,7 @@ BOOK_COLUMN = "book_id"
 
 _state_lock = threading.Lock()
 _has_index: dict[str, tuple[float, bool]] = {}     # lance dir -> (checked_at, has index)
+_pruned_at: dict[str, float] = {}                  # lance dir -> monotonic of last prune (absent = never)
 _HAS_INDEX_TTL_S = 60.0
 # Lance dirs under maintenance right now (a build or a refresh in this
 # process). The worker's vector WRITERS — the embed step, an archive pass —
@@ -217,6 +229,162 @@ def stats(collection) -> dict | None:
             "book_id_indexed": book_id_indexed}
 
 
+def prune(collection, con=None, *, log=None) -> dict:
+    """Delete Lance versions older than the retention window.
+
+    Lance is a versioned store: every write — every `add`, every
+    delete-then-insert — leaves a manifest, and a manifest pins the data
+    fragments it referenced. So a table grows with its write COUNT and not
+    with its row count, and something has to drop the old versions.
+
+    MEASURED on the reference node 2026-09-10, with the app stopped:
+
+        table     rows         versions   data      _versions   _indices
+        pubmed    35,457,919     29,007   76.2 GiB   36.6 GiB    3.7 GiB
+        wikivec   91,238,804     13,656  208.7 GiB    2.9 GiB   63.0 GiB
+
+    The `data` columns are honest — 91 M chunks at 1024 f16 dimensions IS
+    about 209 GiB — so this is not a story about fragments piling up. It
+    is about **29,007 retained manifests costing 36.6 GiB on one table**,
+    and about whatever share of wikivec's 63 GiB of indices belongs to
+    superseded generations.
+
+    WHY IT NEVER RAN — two independent reasons, both fixed by calling this
+    from `ensure` on its own interval:
+
+      1. it was reachable only through `refresh`, which `refresh_due`
+         gates on UNINDEXED ROWS. A table with an index and few new rows
+         never pruned; a table with NO index never pruned at all, because
+         `refresh_due` returns False without one. Version growth is caused
+         by writes and has nothing to do with either condition.
+      2. it shared a FLAT free-space floor with compaction, which
+         deadlocks: under the floor nothing ran, so nothing was freed, so
+         free space never climbed back over it. That floor is now
+         proportional to the table — see `headroom_ok`.
+
+    A NOTE ON THE CALL. Pruning and compaction have opposite disk
+    profiles: pruning only deletes, compaction writes before it deletes.
+    They ought to be separable and in this lancedb they are not —
+    `cleanup_old_versions` is deprecated as of 0.21 and needs `pylance`,
+    which this image does not carry, so `optimize` (compact + prune +
+    index, one call) is the only entry point. That is why this function
+    still checks headroom at all; if a prune-only call becomes available,
+    the check belongs on `refresh` alone and this one can drop it.
+    """
+    tbl = _table(collection)
+    if tbl is None:
+        return {"pruned": False, "reason": "no table"}
+    if not headroom_ok(collection, tbl):
+        # `optimize` compacts as well as prunes (see the docstring), so it
+        # does need headroom. What it must not have is a flat floor no
+        # table can climb back over.
+        free = free_bytes(collection)
+        msg = (f"version prune deferred: {(free or 0) / 2**30:.0f} GiB free is "
+               f"under what a compaction of this table needs")
+        if con is not None:
+            db.log_event(con, "warn", "index", msg)
+        elif log:
+            log(msg)
+        return {"pruned": False, "reason": "low disk"}
+    keep = timedelta(hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H))
+    before = _versions(tbl)
+    t0 = time.monotonic()
+    try:
+        # `delete_unverified` stays FALSE by omission: it would remove
+        # files Lance cannot prove are unreferenced, which is exactly the
+        # file a concurrent writer has just written and not yet committed.
+        tbl.optimize(cleanup_older_than=keep)
+    except Exception as e:                              # noqa: BLE001
+        # A prune that fails is not a failure of the caller: the table is
+        # intact and larger than it needs to be, which is a cost and not
+        # a fault. Never let it break an embed pass.
+        msg = f"version prune skipped: {type(e).__name__}: {e}"
+        if con is not None:
+            db.log_event(con, "warn", "index", msg)
+        elif log:
+            log(msg)
+        return {"pruned": False, "reason": str(e)}
+    dt = time.monotonic() - t0
+    after = _versions(_table(collection) or tbl)
+    removed = None if (before is None or after is None) else before - after
+    out = {"pruned": True, "seconds": round(dt, 1),
+           "versions_before": before, "versions_after": after,
+           "versions_removed": removed}
+    if removed:
+        msg = (f"pruned {removed} superseded Lance version(s), "
+               f"{after} kept ({dt:.0f}s)")
+        if con is not None:
+            db.log_event(con, "info", "index", msg)
+        elif log:
+            log(msg)
+    return out
+
+
+def _versions(tbl) -> int | None:
+    try:
+        return len(tbl.list_versions())
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def table_bytes(collection) -> int | None:
+    """Bytes on disk under the table directory."""
+    import os
+    root = str(collection.lance_dir)
+    if not os.path.isdir(root):
+        return None
+    total = 0
+    for base, _, files in os.walk(root):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(base, f))
+            except OSError:
+                pass
+    return total
+
+
+def headroom_ok(collection, tbl=None) -> bool:
+    """Is there room for a compaction of THIS table?
+
+    The guard this replaces was a flat 150 GiB of free space, and it
+    deadlocked: below the floor nothing ran, so nothing was ever freed,
+    so free space never climbed back over the floor. A collection could
+    only get further from being able to fix itself.
+
+    A proportional test cannot deadlock the same way, because the thing
+    it scales with is the thing the operation shrinks. The fraction comes
+    from the one measurement on record — a compaction of a 291 GiB table
+    took free space down by 23 GiB before releasing anything, which is
+    about 8 % — with `VECTOR_INDEX_COMPACT_HEADROOM` at 0.25 for margin,
+    and an absolute floor underneath for the case where the pool is in
+    trouble for reasons that have nothing to do with this table.
+    """
+    free = free_bytes(collection)
+    if free is None:
+        return True                    # cannot tell: do not block maintenance
+    size = table_bytes(collection)
+    need = config.VECTOR_INDEX_MIN_FREE_GB * 2**30
+    if size:
+        need = max(need, int(size * config.VECTOR_INDEX_COMPACT_HEADROOM))
+    return free >= need
+
+
+def prune_due(collection) -> bool:
+    """Once per VECTOR_INDEX_PRUNE_S per collection, in this process."""
+    key = str(collection.lance_dir)
+    now = time.monotonic()
+    with _state_lock:
+        last = _pruned_at.get(key)
+        # None means NEVER, and that is not the same as "long ago": under a
+        # monotonic clock that starts near zero — a fresh container — a
+        # sentinel of 0.0 reads as "pruned moments ago" and suppresses the
+        # first prune of the process. Caught by the interval test.
+        if last is not None and now - last < config.VECTOR_INDEX_PRUNE_S:
+            return False
+        _pruned_at[key] = now
+    return True
+
+
 def ensure(collection, con=None, *, log=None) -> dict | None:
     """The worker's automatic path: build when the table is big enough and
     has no index; refresh when enough unindexed rows accumulated. Returns
@@ -224,6 +392,15 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
     st = stats(collection)
     if st is None:
         return None
+    # BEFORE any of the index work, and independent of all of it: drop
+    # superseded versions. This is what keeps the table from growing
+    # without bound, it costs no disk headroom, and it must not be
+    # reachable only through a path that a table without an index — or
+    # without new rows — never takes. See `prune`.
+    if prune_due(collection):
+        pruned = prune(collection, con, log=log)
+        if pruned.get("bytes_freed"):
+            st = stats(collection) or st
     # the book_id index FIRST: it is cheap and every write pays for its
     # absence (build_scalar explains), including the writes the vector
     # index build itself waits behind
@@ -273,15 +450,21 @@ def refresh(collection, con=None, *, log=None) -> dict:
     if tbl is None:
         return {"refreshed": False}
     free = free_bytes(collection)
-    if free is not None and free < config.VECTOR_INDEX_MIN_FREE_GB * 2**30:
+    if not headroom_ok(collection, tbl):
         # optimize() COMPACTS before it prunes: it writes the new fragments
         # first and only then deletes the old ones, so it needs headroom and
         # temporarily makes a full disk fuller. Observed on the reference
         # node at 92% full — a compaction of wikivec's 291 GB table took
         # free space DOWN from 116 GB to 93 GB before it had freed anything.
         # A maintenance pass must never be the thing that fills the pool.
-        msg = (f"vector index refresh SKIPPED: {free / 2**30:.0f} GiB free is "
-               f"below VECTOR_INDEX_MIN_FREE_GB={config.VECTOR_INDEX_MIN_FREE_GB}; "
+        #
+        # The test is PROPORTIONAL to the table (headroom_ok) rather than a
+        # flat floor, because a flat floor deadlocks: under it nothing runs,
+        # so nothing is freed, so free space never rises back over it.
+        msg = (f"vector index refresh SKIPPED: {(free or 0) / 2**30:.0f} GiB free is "
+               f"under what compacting this table needs "
+               f"({config.VECTOR_INDEX_COMPACT_HEADROOM:.0%} of it, floor "
+               f"{config.VECTOR_INDEX_MIN_FREE_GB:.0f} GiB); "
                f"compaction needs headroom before it releases any")
         if con is not None:
             db.log_event(con, "warn", "index", msg)

@@ -274,7 +274,28 @@ VECTOR_INDEX_KEEP_VERSIONS_H = float(os.getenv("VECTOR_INDEX_KEEP_VERSIONS_H", "
 # reference node at 92% full: a wikivec compaction took free space from
 # 116 GB down to 93 GB without releasing anything. Maintenance must never be
 # the thing that fills the disk.
-VECTOR_INDEX_MIN_FREE_GB = float(os.getenv("VECTOR_INDEX_MIN_FREE_GB", "150"))
+#: A small safety margin for the operation itself — NOT a judgement about
+#: pool health. It used to be 150 GiB and it was the WHOLE test, which
+#: deadlocked: below the floor nothing ran, so nothing was freed, so free
+#: space never climbed back over it. A large absolute floor is that same
+#: deadlock for every table at once, and a large floor applied to a SMALL
+#: table is it in miniature — compacting a 100 MiB table needs about
+#: 25 MiB, and refusing to do it because the pool is under 150 GiB free
+#: forbids exactly the cheap reclamation that would help. What scales is
+#: below.
+VECTOR_INDEX_MIN_FREE_GB = float(os.getenv("VECTOR_INDEX_MIN_FREE_GB", "2"))
+
+#: Free space a compaction of a table needs, as a fraction of that table.
+#: Measured once: compacting a 291 GiB table took free space down by 23 GiB
+#: before it released anything, about 8 %. 0.25 is that with margin.
+VECTOR_INDEX_COMPACT_HEADROOM = float(os.getenv("VECTOR_INDEX_COMPACT_HEADROOM", "0.25"))
+
+#: How often a collection drops its superseded Lance versions. Pruning is
+#: cheap and frees space without needing headroom (vector_index.prune), so
+#: this is a plain interval and NOT gated on free space or on the index
+#: having work to do — the pair of those two conditions is what let one
+#: table reach 13,657 versions and 267 GiB over 40 GiB of live data.
+VECTOR_INDEX_PRUNE_S = int(os.getenv("VECTOR_INDEX_PRUNE_S", "3600"))
 # The well-known root where PACKS are mounted (pack-format.md): the
 # create dialog offers the packs present here as `packed` corpora.
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
