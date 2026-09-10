@@ -1026,6 +1026,38 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 
+- **Lance versions used to accumulate without bound — FIXED and cleaned
+  2026-09-10.** Lance is a versioned store: every write leaves a
+  manifest, and a manifest pins the fragments it referenced, so a table
+  grows with its write COUNT and not its row count. Pruning existed but
+  sat behind two conditions unrelated to what causes growth — it was
+  reachable only through the index `refresh`, which is gated on unindexed
+  rows (so a table with no index never pruned AT ALL), and it shared a
+  flat 150 GiB free-space floor with compaction, which deadlocks: under
+  the floor nothing runs, so nothing is freed, so free space never climbs
+  back. `vector_index.prune` now runs hourly per collection from
+  `ensure`, independent of every index decision, and the floor is
+  proportional to the table (25 %, over a 2 GiB margin).
+
+  The one-time cleanup, app stopped, verified by row count, a text read
+  and a kNN query on each table afterwards:
+
+  | table | versions | size | freed |
+  |---|---|---|---|
+  | pubmed | 29,007 → 2 | 116.4 → 79.3 GiB | **37.1 GiB** |
+  | wikivec | 13,656 → 2 | 274.6 → 223.3 GiB | **51.3 GiB** |
+
+  **88.4 GiB** in total, 43 minutes, no row touched. Most of wikivec's was
+  not manifests but STALE INDEX GENERATIONS: `_indices` went 63.0 → 23.9
+  GiB. Worth knowing, because the manifests alone (2.9 GiB) would not
+  have justified looking.
+
+  `louise index vector prune <collection> [--keep-hours H] [--force]`
+  does it on demand. Careful with what the numbers mean: wikivec's 208
+  GiB of `data` is NOT bloat — 91 M chunks at 1024 f16 dimensions really
+  is about 209 GiB, and it is 91 M chunks rather than 12.8 M because the
+  `verbatim` layer is one chunk per PARAGRAPH, about seven per article.
+
 - **`deploy/reference/DEPLOYMENT.md` is STALE about encoders (found
   2026-09-10) and only the operator can fix it** — it is gitignored, the
   copy of record is on the node, and the procedure copies it back with

@@ -589,6 +589,49 @@ def cmd_vindex_build(args) -> int:
     return 0
 
 
+def cmd_vindex_prune(args) -> int:
+    """Drop superseded Lance versions now, and report what it freed.
+
+    The worker does this hourly per collection (vector_index.prune). This
+    is for the case where it has not run for a long time and someone
+    wants the disk back today: on the reference node 2026-09-10, pubmed
+    held 29,007 versions costing 36.6 GiB of manifests, and one pass took
+    it to 2 versions and freed 37.1 GiB in eleven minutes without
+    touching a row.
+    """
+    from . import config, vector_index
+    collection = _collection_by_name(args.collection)
+    if args.keep_hours is not None:
+        config.VECTOR_INDEX_KEEP_VERSIONS_H = float(args.keep_hours)
+    st = vector_index.stats(collection)
+    if st is None:
+        print("no vector table")
+        return 0
+    size = vector_index.table_bytes(collection) or 0
+    free = vector_index.free_bytes(collection)
+    print(f"{st['rows']:,} rows, {size / 2**30:.1f} GiB on disk, "
+          f"{(free or 0) / 2**30:.0f} GiB free")
+    if args.force:
+        # The estimate is a heuristic from one measurement; an operator
+        # who knows the pool has room may say so. It still writes before
+        # it deletes, so this can fill a full disk — that is the risk
+        # being accepted, and it is named here rather than hidden.
+        vector_index.headroom_ok = lambda *a, **k: True
+    out = vector_index.prune(collection, log=print)
+    if not out.get("pruned"):
+        print(f"not pruned: {out.get('reason')}", file=sys.stderr)
+        return 1
+    after = vector_index.table_bytes(collection) or 0
+    print(f"versions {out.get('versions_before')} -> {out.get('versions_after')}; "
+          f"{(size - after) / 2**30:+.1f} GiB freed in {out.get('seconds')}s")
+    st2 = vector_index.stats(collection)
+    if st2 and st2["rows"] != st["rows"]:
+        print(f"ROW COUNT CHANGED: {st['rows']} -> {st2['rows']} — investigate",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_vindex_status(args) -> int:
     from . import vector_index
     collection = _collection_by_name(args.collection)
@@ -1157,6 +1200,17 @@ def main(argv=None) -> int:
     v_status = v_sub.add_parser("status")
     v_status.add_argument("collection")
     v_status.set_defaults(func=cmd_vindex_status)
+
+    v_prune = v_sub.add_parser(
+        "prune", help="drop superseded Lance versions and compact (frees disk)")
+    v_prune.add_argument("collection")
+    v_prune.add_argument("--keep-hours", type=float, default=None,
+                          help="retention window; 0 keeps only the current "
+                               "version (default: VECTOR_INDEX_KEEP_VERSIONS_H)")
+    v_prune.add_argument("--force", action="store_true",
+                          help="run even when free space is below what a "
+                               "compaction of this table is estimated to need")
+    v_prune.set_defaults(func=cmd_vindex_prune)
 
     backend_parser = top.add_parser("backend", help="embedding backend gate")
     backend = backend_parser.add_subparsers(dest="verb", required=True)
