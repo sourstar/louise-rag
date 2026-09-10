@@ -268,6 +268,12 @@ minutes of doubt here.
 
 ### What is waiting on the operator
 
+* **The legacy artefacts each migration leaves behind** are tracked in
+  [`legacy-to-delete.md`](legacy-to-delete.md), with the conditions that
+  must hold before each is removed (operator, 2026-09-10: complete,
+  confirm, and only then delete). About 587 GB is recoverable once every
+  condition is met, and none of it before.
+
 **Three were settled 2026-09-10** and are recorded here rather than
 deleted, because each was a genuine fork:
 
