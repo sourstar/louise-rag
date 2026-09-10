@@ -203,6 +203,65 @@ def _written_chunks(db, book_id: int) -> dict[str, str]:
         return {}
 
 
+def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
+    """The stored vectors for these chunk ids, keyed on the id.
+
+    FILTERED ON `book_id`, NOT ON `id`, and the difference is the whole
+    reason this is a function rather than a one-liner at the call site.
+    `book_id` carries the BTREE index every write already depends on
+    (`vector_index.build_scalar`); `id` carries none, so an `id IN (…)`
+    over a 91-million-row table is a full scan that reads like a filter.
+    The ids asked for are narrowed in Python afterwards, over the rows of
+    a handful of documents rather than of a corpus.
+
+    A chunk id is `{uid}:{seq}:{version}` and `uid` is
+    `{source}:{native_id}` (app/chunking.py), so the document a chunk
+    belongs to is two fields off the right — no manifest lookup needed,
+    which also means this works for a chunk whose document row has since
+    been deleted.
+    """
+    ids = list(chunk_ids)
+    if not ids:
+        return {}
+    books: set[int] = set()
+    for cid in ids:
+        parts = cid.rsplit(":", 2)
+        if len(parts) != 3:
+            continue
+        try:
+            books.add(int(parts[0].rsplit(":", 1)[-1]))
+        except ValueError:
+            continue
+    if not books:
+        return {}
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return {}
+    want = set(ids)
+    out: dict[str, list] = {}
+    tbl = db.open_table(TABLE)
+    # In batches: the predicate is a literal string, so a very large IN
+    # list is a very large query, and Lance parses it per call.
+    books_list = sorted(books)
+    for i in range(0, len(books_list), 500):
+        chunk = ",".join(str(b) for b in books_list[i:i + 500])
+        try:
+            rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({chunk})",
+                                       prefilter=True)
+                    .select(["id", "vector"]).limit(_RESUME_SCAN_MAX).to_list())
+        except Exception:                       # noqa: BLE001
+            return out
+        for r in rows:
+            if r["id"] in want:
+                out[r["id"]] = list(r["vector"])
+    return out
+
+
+#: The column `vectors_by_chunk_id` filters on. Named here rather than
+#: imported from `vector_index` so this module keeps no dependency on it.
+BOOK_COLUMN_NAME = "book_id"
+
+
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 lock_con=None, stop=None) -> int:
     """Write one document's vectors, delete-then-insert (invariant 2),

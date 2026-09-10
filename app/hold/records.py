@@ -283,15 +283,7 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
             f"disk; `records fetch` is what puts it there (07 §7.3), and "
             f"until that lands the corpus is named with --corpus")
 
-    src = collections_mod.Collection(
-        name=name, plugin=codex.plugin, profile=None, embed_mode_default=None,
-        corpus_dir=Path(corpus_dir),
-        manifest_path=state_dir / "manifest.sqlite",
-        fts_dir=Path(root) / name / "index",
-        lance_dir=Path(root) / name / "lance",
-        acquire_enabled=False,
-        license_ack=_ack_of(codex, state_dir),
-    )
+    src = local_collection(root, name, codex, corpus_dir=corpus_dir)
 
     # The manifest is the list of documents the corpus holds. `records
     # fetch` will fill it from the acquisition spec; for a corpus already on
@@ -314,6 +306,36 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     log(f"[records build] {name}: {result.records} records in {result.shards} "
         f"shard(s), {promoted} promoted into the drag")
     return result
+
+
+def local_collection(root, name: str, codex, *, corpus_dir=None):
+    """This peer's LOCAL side of a Codex collection, as 07 §7.8 lays it out.
+
+    A Codex says what a collection IS; the manifest, the text index and the
+    vector table are what this peer keeps about it, and they live beside
+    the drag rather than in it — `collections/<name>/state/`, `/index/`,
+    `/lance/`, none of which `share` serves.
+
+    Every stage that needs them builds this the same way, from here, and
+    not each for itself: `records build` fills the manifest, `vectors
+    export` reads the vector table, and a disagreement between two such
+    constructions would be one of them writing to a directory the other
+    never reads.
+    """
+    from pathlib import Path
+
+    from app import collections as collections_mod
+
+    _, state_dir, _ = _paths(root, name)
+    return collections_mod.Collection(
+        name=name, plugin=codex.plugin, profile=None, embed_mode_default=None,
+        corpus_dir=Path(corpus_dir) if corpus_dir is not None else None,
+        manifest_path=state_dir / "manifest.sqlite",
+        fts_dir=Path(root) / name / "index",
+        lance_dir=Path(root) / name / "lance",
+        acquire_enabled=False,
+        license_ack=_ack_of(codex, state_dir),
+    )
 
 
 def _ack_of(codex, state_dir):

@@ -216,6 +216,40 @@ def test_the_challenge_rows_come_first_and_in_index_order(drag, tmp_path):
     assert not any(r[0].startswith("calibration:") for r in rows[exp.CHALLENGE_N:])
 
 
+def test_the_lance_reader_finds_vectors_by_chunk_id(drag, tmp_path):
+    """The CLI's `vectors_for`, against a REAL Lance table.
+
+    It filters on `book_id` and not on `id`, because `book_id` carries the
+    BTREE index every write depends on and `id` carries none — an
+    `id IN (…)` over a 91-million-row table is a full scan that reads
+    like a filter. This asserts the narrowing is still correct after that
+    indirection, which is the thing a clever query gets wrong.
+    """
+    from app import embeddings
+    from app.hold import records as rec_mod
+    root, snapshot, codex = drag
+    shard = first_shard(snapshot)
+    store, ids = a_store(codex, root, snapshot, shard)
+    local = rec_mod.local_collection(root, "gutenberg", codex)
+
+    conn = embeddings._conn(local)
+    rows = [{"id": i, "book_id": int(i.rsplit(":", 2)[0].rsplit(":", 1)[-1]),
+             "text": "t", "vector": store[i]} for i in ids]
+    conn.create_table(embeddings.TABLE, data=rows)
+
+    got = embeddings.vectors_by_chunk_id(ids, collection=local)
+    assert set(got) == set(ids)
+    assert got[ids[0]] == pytest.approx(store[ids[0]])
+    # asking for a subset returns only that subset, though the underlying
+    # query reads whole documents
+    half = ids[: max(1, len(ids) // 2)]
+    assert set(embeddings.vectors_by_chunk_id(half, collection=local)) == set(half)
+    # and an id nobody holds is simply absent, never invented
+    assert embeddings.vectors_by_chunk_id(["gutenberg:999999:0:1"],
+                                          collection=local) == {}
+    assert embeddings.vectors_by_chunk_id([], collection=local) == {}
+
+
 def test_two_exports_of_one_shard_agree_on_everything_signed(drag, tmp_path):
     """Parquet bytes are not stable across writers and are not meant to
     be (`vectors.py`), but the LOGICAL content is: same header, same

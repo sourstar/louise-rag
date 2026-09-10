@@ -276,6 +276,58 @@ def cmd_snapshot_create(a) -> int:
     return 0
 
 
+def cmd_vectors_export(a) -> int:
+    """`hold vectors export` — one shard's vectors as 09 §9.7's bundle.
+
+    Exit 3 when the encoder is unreachable, not 1: a bundle needs the
+    sixteen challenge rows embedded now (§9.7's T2), so an absent encoder
+    makes this INCONCLUSIVE in 03 §3.1's sense — nothing is wrong with
+    the collection — and 07 §7.7 reserves 3 for that.
+    """
+    from pathlib import Path
+
+    from app import embeddings
+    from app.bundles.keys import load_signing_key
+    from app.hold import collection as col, embedder as emb, export as exp, \
+        records as rec
+
+    name, codex = col.resolve(a.root, a.collection)
+    # The local side of the collection — manifest, index, vector table —
+    # built the one way every stage builds it (07 §7.8, records.local_collection).
+    local = rec.local_collection(a.root, name, codex)
+    try:
+        recipe = _recipe_for(codex, name)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+
+    def embed(texts):
+        try:
+            return embeddings.embed_texts(texts, recipe=recipe)
+        except Exception as e:                      # noqa: BLE001
+            raise emb.GateDeferred(
+                f"the encoder at {recipe.url} could not embed the challenge "
+                f"texts: {e}") from e
+
+    try:
+        out = exp.export(
+            a.root, a.collection, shard=a.shard, dest=Path(a.out),
+            vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
+                ids, collection=local),
+            embed=embed, key=load_signing_key(), snapshot_id=a.snapshot)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+
+    print(f"{out['bundle_id']}")
+    print(f"  {out['path']}")
+    print(f"  shard       {out['shard']}  of snapshot {out['snapshot_id']}")
+    print(f"  carries     {out['chunks']} chunks over {out['uids']} of "
+          f"{out['records_in_shard']} records")
+    print(f"  space       {out['dim']} x {out['dtype']}")
+    return 0
+
+
 def cmd_embedder_check(a) -> int:
     """`hold embedder check` â the calibration gate of 03 Â§3.3.
 
@@ -560,6 +612,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", nargs="*", default=[])
     p.add_argument("--set", dest="set_id")
     p.set_defaults(fn=cmd_embedder_calibrate)
+
+    vecs = nouns.add_parser("vectors", help="this peer's vectors, and the bundles that carry them")
+    vverbs = vecs.add_subparsers(dest="verb", required=True)
+    p = vverbs.add_parser("export",
+                          help="a signed bundle of one shard's vectors (09 §9.7)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--shard", required=True,
+                   help="which shard, as \"<slice>/<n>\" — e.g. lang=it/00007. "
+                        "One shard per bundle: §9.7's header has a single "
+                        "`shard` field, so a bundle spanning two cannot be "
+                        "described by a conformant header")
+    p.add_argument("--out", required=True,
+                   help="the bundle DIRECTORY to write — §9.7 defines four "
+                        "files and fixes no container")
+    p.add_argument("--snapshot",
+                   help="which snapshot's records (default: the latest held)")
+    p.set_defaults(fn=cmd_vectors_export)
+
     add_deprecated(surfaces, {
         "records_build": args_records_build,
         "snapshot_create": args_snapshot_create,
