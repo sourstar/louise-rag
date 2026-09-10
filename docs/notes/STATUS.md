@@ -100,6 +100,43 @@ over pubmed, wikipedia and genome on code that has never run against
 them, and `RECORD_KEYS` gained `origin` today, so any pack rebuild writes
 different record bytes than the ones on disk.
 
+
+### The node's collections — cleaned 2026-09-10
+
+`gutenberg-pack` was dropped from the PLAN on 2026-09-10 (operator: *"an
+intermediate product, do not consider it"*) and was still a live
+collection on the NODE — an active TOML, a worker thread every boot, and
+48 GB of text index. Removed: the TOML, its `.paused` twin, and
+`/data/gutenberg-pack/`. It held 77,389 documents and **one** embedded
+vector, and its 48 GB was an fts index over
+`/mnt/tank/louise-packs/gutenberg-2026-06`, which survives — so nothing
+irreplaceable went, and no ZFS snapshot on `ssd4/apps` is holding the
+blocks.
+
+Eleven stale collection TOMLs (`.bak-*`, `.removed-manual`) were moved to
+`config/collections/_removed-2026-09-10/` rather than deleted; they are a
+few hundred bytes each and are config history.
+`genome-dm6.toml.cpu-backup` and `.gpu-backup` were KEPT — they encode a
+choice the operator makes by hand, not clutter.
+
+**Seven active collections**, and the worker starts exactly seven
+threads: genome ×3, gutenberg, pubmed, wikipedia, wikivec.
+
+**Deliberately NOT removed**, both of which look like candidates and are
+not:
+
+* **`wikivec`** — 296 GB and 12.8M archive vectors. Step 8 turns it into
+  `wikipedia`'s layer 1; deleting it destroys what the migration needs.
+* **`/data/pubmed-pack/`** — 61 GB, and NOT a collection at all: it is
+  the pubmed plugin's derived per-container Parquet cache
+  (`app/plugins/pubmed/pack.py`). Rebuilt automatically, at ~17 s per
+  container over ~1,200 containers, so deleting it costs hours of CPU the
+  next time pubmed is read.
+
+There is still **no `hold collection forget`** — 07 §7.3 specifies it and
+neither CLI implements it, so this was done by hand. That is the command
+step 12 owes, and until it exists every cleanup is manual and unaudited.
+
 ### What is waiting on the operator
 
 **Three were settled 2026-09-10** and are recorded here rather than
