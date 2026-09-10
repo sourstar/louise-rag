@@ -221,7 +221,8 @@ def test_the_shipped_set_reaches_the_largest_context_window():
     asserted here in tokens, at the windows real encoders declare.
 
     THE UNIT IS AN ESTIMATE, and the estimate was measured on 2026-09-09
-    against Qwen3-Embedding-8B, the encoder the Gutenberg collection pins:
+    against Qwen3-Embedding-8B, the `gutenberg-pack` collection's encoder
+    (`gutenberg` itself runs the 4B, at dim 2560):
     chars per real token ran 1.02 (CJK) to 5.70 (Latin prose), median 3.68.
     So `//4` is a good median and no bound in either direction, and 67 of
     the 512 texts really exceed an 8192 window — they are truncated to fit

@@ -321,6 +321,41 @@ to 4096. What is left untested is another MODALITY.
 
 Specs `a1b5ca9` on main.
 
+**Which collection each run actually IS (corrected 2026-09-10).** The
+first four runs were attributed to the wrong collection for a day.
+`DEPLOYMENT.md` says `embed-gpu-qwen3-8b` "serves gutenberg" and does not
+mention the 4B app at all; the live
+`config/collections/gutenberg.toml` points at port 30437,
+`qwen3-embedding-4b`. The TOML is what runs. The node's real spaces:
+
+| collection | encoder | port | dim | ctx | measured by |
+|---|---|---|---|---|---|
+| `gutenberg` | Qwen3-Embedding-4B | 30437 | 2560 | 8192 | **run C** |
+| `gutenberg-pack` | Qwen3-Embedding-8B | 30436 | 4096 | 8192 | **run A** |
+| `pubmed` | MedCPT article | 30440 | 768 | 512 | **run E** |
+| `wikipedia` | bge-m3 | 30442 | 1024 | 2048 | — |
+| `wikivec` | bge-m3 | 30442 | 1024 | 2048 | — |
+| `genome-*` (3) | DNABERT-2 | 30443 | 768 | 1024 | unreachable |
+
+So run A was not a configuration nobody uses — `gutenberg-pack` is live —
+but every sentence calling the 8B "the Gutenberg collection's encoder"
+was wrong, and run C is the step-6 target's space.
+
+**The correction sharpens the finding.** The two literals fail in
+different places, which the old framing hid: the COSINE bound of 0.9
+refuses three of the four live spaces measured (0.747, 0.752, 0.882),
+while the DEVIATION bound refuses only the 4096-dimensional one. Someone
+looking only at `gutenberg` — at 2560 — would have seen the old
+deviation rule pass and called it sound. It is not sound at 2560; it is
+untriggered there, and the peer who would have discovered that is one
+sharing the space from a 4096-dimensional encoder.
+
+**`DEPLOYMENT.md` is stale and only the operator can fix it** — it is
+gitignored, lives on the node, and the deploy procedure copies it back by
+`scp`, which this session cannot run. Two errors: the encoder table says
+the 8B serves `gutenberg` (it serves `gutenberg-pack`), and neither the
+4B app nor `gutenberg-pack` appears in the collection table at all.
+
 **Still open under item 5, unchanged**: the reference is captured from
 whatever the encoder returned at `create` time with no independent check.
 

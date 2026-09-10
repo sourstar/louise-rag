@@ -30,23 +30,37 @@ the matrix stage 2 already produced.
 
 WHAT IT FOUND, 2026-09-09, and why the rule is a percentile:
 
-    run  encoder              dim   corpus    cosine  sd min  outside[.5,2]
-    A    Qwen3-Embedding-8B  4096   english   0.752   0.375   16
-    B    Qwen3-Embedding-8B  4096   chinese   0.658   0.355   33
-    C    Qwen3-Embedding-4B  2560   english   0.747   0.532    0
+    run  encoder              dim   corpus    space              cosine  outside
+    A    Qwen3-Embedding-8B  4096   english   gutenberg-pack     0.752   16
+    B    Qwen3-Embedding-8B  4096   chinese   (that encoder)     0.658   33
+    C    Qwen3-Embedding-4B  2560   english   gutenberg          0.747    0
+    D    MedCPT article       768   english   (that encoder)     0.933    0
+    E    MedCPT article       768   pubmed    pubmed             0.882    0
 
-Changing the encoder moved the cosine 0.005; changing the corpus moved it
-0.095. And the deviation test PASSED at 2560 dimensions and FAILED at 4096
-on the same honest vectors — because `min` over 4096 samples is smaller
-than `min` over 2560 for no reason but the count. A rule written as *every
-dimension* is a multiple-comparison problem and widening it only postpones
-the failure to a larger space; a percentile does not drift with sample
-count, so the constants barely had to move.
+The deviation test PASSED at 2560 dimensions and FAILED at 4096 on the
+same honest vectors — because `min` over 4096 samples is smaller than
+`min` over 2560 for no reason but the count. A rule written as *every
+dimension* is a multiple-comparison problem and widening it only
+postpones the failure to a larger space; a percentile does not drift with
+sample count, so the constants barely had to move.
 
-Not measured, and the next thing worth measuring: a corpus far from
-Gutenberg — PubMed abstracts under the `abstract` chunker, or another
-modality. Every perturbation so far pushed the honest statistic TOWARD the
-floor rather than away from it.
+The cosine moves for three separate reasons, and they are worth keeping
+apart: model SIZE 0.005 (8B to 4B), CORPUS 0.095 (English to Chinese),
+model CLASS 0.18 (decoder to BERT). The old bound of 0.9 refused three of
+the four live spaces above; the old deviation band refused only the
+4096-dimensional one.
+
+Not measured: `bge-m3` at dim 1024 and `ctx` 2048, which carries
+`wikipedia` and `wikivec` — the largest collections here and the only
+ones on the `cdc` and `verbatim` chunkers. And another modality, which
+cannot be measured at all until a DNA calibration set exists (09 §9.12
+ships one set per modality; this platform ships only `text`).
+
+RUN IT AGAINST THE COLLECTION'S OWN ENCODER, from
+`config/collections/<name>.toml` and not from a deployment note. The
+first four runs above were attributed to the wrong collection for a day
+because a stale note said the 8B served `gutenberg`; the TOML says 4B,
+and the TOML is what runs.
 """
 from __future__ import annotations
 

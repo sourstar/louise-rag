@@ -1024,6 +1024,25 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 
 ## Known gaps and traps
 
+- **`deploy/reference/DEPLOYMENT.md` is STALE about encoders (found
+  2026-09-10) and only the operator can fix it** — it is gitignored, the
+  copy of record is on the node, and the procedure copies it back with
+  `scp`, which an assistant session cannot run. Two errors, both of which
+  sent a day of measurement at the wrong collection: the encoder table
+  says `embed-gpu-qwen3-8b` serves `gutenberg` (it serves
+  `gutenberg-pack`), and neither `embed-gpu-qwen3-4b` nor the
+  `gutenberg-pack` collection appears anywhere in it. **The authority is
+  `config/collections/<name>.toml` on the node** — that is what the app
+  reads. The live map:
+
+  | collection | encoder | port | dim | ctx |
+  |---|---|---|---|---|
+  | `gutenberg` | Qwen3-Embedding-4B | 30437 | 2560 | 8192 |
+  | `gutenberg-pack` | Qwen3-Embedding-8B | 30436 | 4096 | 8192 |
+  | `pubmed` | MedCPT article | 30440 | 768 | 512 |
+  | `wikipedia`, `wikivec` | bge-m3 | 30442 | 1024 | 2048 |
+  | `genome-sacCer3/dm6/hg38` | DNABERT-2 | 30443 | 768 | 1024 |
+
 - **`tests/test_worker_parallel_embed.py::test_one_bad_document_is_isolated`
   is FLAKY (seen 2026-09-09).** Failed once in a full-suite run, then passed
   alone, passed with its own file, and passed in two further full-suite runs

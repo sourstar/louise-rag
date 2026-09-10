@@ -105,8 +105,9 @@ LADDER = ((1, 175, 2048), (1, 2049, 8192))
 #: A token is four characters, the same rule `app/chunking.py` uses.
 #:
 #: MEASURED against the real thing on 2026-09-09 — every text in the frozen
-#: set embedded by Qwen3-Embedding-8B-Q4_K_M, the encoder the Gutenberg
-#: collection pins — the rule is right in the middle and wrong at both ends:
+#: set embedded by Qwen3-Embedding-8B-Q4_K_M, which is the `gutenberg-pack`
+#: collection's encoder (the `gutenberg` collection is on the 4B) — the rule
+#: is right in the middle and wrong at both ends:
 #:
 #:     chars per REAL token   min 1.02   median 3.68   max 5.70
 #:
