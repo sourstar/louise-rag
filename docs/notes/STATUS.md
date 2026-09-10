@@ -65,27 +65,48 @@ Everything except two items travels through this repository.
 
 ### What is waiting on the operator
 
-Three, and the first one blocks a check the design leans on:
+**Three were settled 2026-09-10** and are recorded here rather than
+deleted, because each was a genuine fork:
 
-1. **The record's `origin` locator is missing** — 09 §9.5 requires it of
-   every record, `RECORD_KEYS` does not carry it, and so no record this
-   platform has written says where its origin unit is. Half of invariant
-   11. A peer that BUILT a shard can re-parse it from its own manifest; a
-   peer that RECEIVED one never can, which is what 03 §3.4 and two rows
-   of §3.6's level table rest on. Fixing it changes every record line,
-   every `records_root`, every shard root and every snapshot — and
-   `RECORD_KEYS` is shared with the legacy pack writer the live
-   collections use. See [`records-origin-gap.md`](records-origin-gap.md)
-   for the three options.
-2. **The bundle size** (step 4's operator note): 04 §4.5 says "a few
-   hundred chunks", 09 §9.10's worked example shows ~15,000. Step 4e gave
-   the choice a floor with a reason — under 32 chunks T0's envelope is
-   not applied at all.
-3. **Two readings of step 4g to disagree with if they are wrong**:
-   `--budget` is off by default on an operator-named `hold vectors
-   import`, and `app/bundles/trust.py` is left alive until step 12
-   retires the old names.
+1. **The record's `origin` locator** — added to both writers
+   (`c4cba30`). 09 §9.5 requires it of every record and `RECORD_KEYS` did
+   not carry it, so half of invariant 11 was missing and a peer that
+   RECEIVED a shard could never re-fetch its source.
+   `records-vs-origin` now re-parses byte for byte. Measured blast
+   radius: the record LINES and so each shard file's transport root, and
+   nothing else — no `records_root`, no `chunks_root`, no chunk id, no
+   vector, nothing re-embedded.
+   [`records-origin-gap.md`](records-origin-gap.md) keeps the reasoning
+   and the one divergence still open in that list (`layer` and `chunks`,
+   which retire with the legacy pack verifier at step 12).
+2. **The Codex is written at version 2 with `record_line`** (`248dd3b`).
+   Version 1 is still read and never rewritten. `record_line` 2 is
+   refused at create with its reason — the figures machinery is unbuilt.
+   It also turned up that step 0's "single most valuable test in the
+   migration" was pinning a version-1 variant rather than the document's
+   own worked example.
+3. **A bundle is about 15,000 chunks** (`9eb9ba5`, and `8fb195c` on
+   main), split on RECORD boundaries. The documents disagreed — 04 §4.5
+   said "a few hundred", 09 §9.10's example shows 14,800 and 15,200 — and
+   the numbers settled it: ~2,400 coverage rows per fully covered PubMed
+   instead of ~120,000, and T3 at 0.16 % of production instead of 5.3 %.
+   The crash-granularity argument for small bundles is gone now that
+   `vectors build` commits every batch.
 
+**Still open:**
+
+- **`--budget` is off by default** on an operator-named `hold vectors
+  import`, and **`app/bundles/trust.py` is left alive** until step 12
+  retires the old names. Both are readings of step 4g stated in the plan;
+  neither needs a decision unless they are wrong.
+- **The `refused` field on 09 §9.10's coverage row** — all three
+  documents promise the refusal is recorded and no field table has a
+  place for it (step 4's operator note).
+- **An archive's signing key** — see
+  [`archive-signing-keys.md`](archive-signing-keys.md), open since step 1.
+- **A DNA calibration set**, which is why the three genome collections
+  stay on the old format: without one `create` cannot write them a Codex
+  at all.
 
 ## Built and running
 
