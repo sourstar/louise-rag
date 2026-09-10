@@ -211,24 +211,38 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool) ->
                 (uid, ref.source_id, ref.native_id, ref.locator, ref.error, now)))
             continue
         txt_name = ref.extra.get("txt_name")
+        # `lang` WHEN THE PLUGIN CAN SUPPLY IT CHEAPLY, and it is worth an
+        # explicit column rather than being left to the rdf stage.
+        # `slicing.slice_hint` exists so the planning pass does not cost a
+        # full parse per document, and gutenberg's hint is the manifest's
+        # `lang` — which nothing set until the rdf stage, long after
+        # `records build` needs it. Measured 2026-09-10 on 77,866 books:
+        # the hint never fired, pass 1 parsed every book SINGLE-THREADED to
+        # learn its language, 19.2 documents/s for 68 minutes, and pass 2
+        # then parsed the same corpus again. Every other plugin's hint
+        # answers from the locator or a derived index; gutenberg's was the
+        # one that could not.
+        lang = ref.extra.get("lang")
         row = con.execute(
             "SELECT path,mtime,size,txt_hash FROM documents WHERE uid=?",
             (uid,)).fetchone()
         if row is None:
             writes.append((
-                "INSERT INTO documents(uid,source,native_id,path,txt_name,mtime,size,"
-                "updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                (uid, ref.source_id, ref.native_id, ref.locator, txt_name,
+                "INSERT INTO documents(uid,source,native_id,path,txt_name,lang,"
+                "mtime,size,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (uid, ref.source_id, ref.native_id, ref.locator, txt_name, lang,
                  ref.mtime, ref.size, now)))
             local["added"] += 1
         elif row["mtime"] != ref.mtime or row["size"] != ref.size:
             raw = plugin.fetch(ref)                 # no lock held here
             if raw.raw_hash != row["txt_hash"]:
                 writes.append((
-                    "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,txt_hash=?,"
+                    "UPDATE documents SET path=?,txt_name=?,lang=COALESCE(?,lang),"
+                    "mtime=?,size=?,txt_hash=?,"
                     "rdf_done=0,fts_done=0,embed_done=0,summary_done=0,error=NULL,"
                     "retries=0,updated_at=? WHERE uid=?",
-                    (ref.locator, txt_name, ref.mtime, ref.size, raw.raw_hash, now, uid)))
+                    (ref.locator, txt_name, lang, ref.mtime, ref.size,
+                     raw.raw_hash, now, uid)))
                 local["changed"] += 1
             else:
                 writes.append(("UPDATE documents SET mtime=?,size=? WHERE uid=?",

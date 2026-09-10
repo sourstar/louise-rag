@@ -99,9 +99,22 @@ class GutenbergSource:
                 progress.stage(entry)
                 continue
             st = txt.stat()
+            # THE LANGUAGE, HERE, because `slicing.slice_hint` reads it from
+            # the manifest and gutenberg slices by it. Without it the
+            # planning pass of `records build` has no hint and parses every
+            # book — measured 2026-09-10 at 19.2 documents/s
+            # single-threaded over 77,866 books, 68 minutes, before the
+            # packing pass parsed them all again.
+            #
+            # The cost lands in the right place. This reads the RDF, a few
+            # kilobytes of XML beside a text file that averages 300 KB, and
+            # only for a book whose directory changed — `progress.unchanged`
+            # skips the rest. A parse that would otherwise happen once per
+            # book in a serial pass happens once per NEW book in the scan.
             yield DocRef(source_id=self.source_id, native_id=str(book_id),
                          locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
-                         extra={"txt_name": txt.name})
+                         extra={"txt_name": txt.name,
+                                "lang": rdf.parse(entry, book_id)["lang"]})
             progress.stage(entry)
         if stubs:
             # one scan report, not 21,000 documents
