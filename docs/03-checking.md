@@ -326,11 +326,12 @@ and its SHAPE were wrong.** They had been written without data — cosine
 the envelope's — and `space.envelope` is a Codex field, so a wrong test
 freezes at `create` and every peer inherits it.
 
-Five runs, each 512 calibration texts against 300 chunks of a real
-corpus cut by the collection's own chunker. TWO of them are a live
-collection's own space — its encoder, its dimension, its corpus. The
-other three vary one thing each so that what moves a statistic can be
-told apart from what does not:
+Six runs, each 512 calibration texts against 300 chunks of a real corpus
+cut by the collection's own chunker. THREE of them are a live
+collection's own space — its encoder, its dimension, its corpus — and
+between them they cover every text space the reference deployment runs.
+The other three vary one thing each so that what moves a statistic can
+be told apart from what does not:
 
 | | encoder | dim | class | corpus | what it is | cosine | ratio min | outside half-to-twice |
 |---|---|---|---|---|---|---|---|---|
@@ -339,6 +340,15 @@ told apart from what does not:
 | C | Qwen3-Embedding-4B | 2560 | decoder | English | **`gutenberg`** — the step-6 target | 0.747 | 0.532 | 0 |
 | D | MedCPT article | 768 | BERT | English | that encoder on the wrong corpus, a control | 0.933 | 0.453 | 0 |
 | E | MedCPT article | 768 | BERT | **PubMed** | **`pubmed`** | 0.882 | 0.674 | 0 |
+| F | bge-m3 | 1024 | BERT | **Wikipedia** | **`wikivec`** / `wikipedia` | 0.813 | 0.642 | 0 |
+
+Run F is the most faithful of the six and the least work: the bundle is
+not a re-embedding of anything. `wikivec`'s vectors came pre-embedded
+from Upstash and its table already holds them, along with the exact
+inputs that produced them — `title` and the paragraph, joined — so 300
+rows were taken straight out. Nothing about the input format could be
+got wrong, because nothing about it was reconstructed. Only the envelope
+needed the encoder.
 
 Run E is a different CORPUS SHAPE and not merely a different corpus:
 PubMed abstracts under the `abstract` chunker, one chunk per article,
@@ -457,16 +467,10 @@ five, because contamination there pushes the ratios UP through a ceiling
 rather than down toward a floor. Only a bundle a tenth random still
 passes, and it passes at p98 = 1.930 against a ceiling of 2.0.
 
-**How far these numbers can be trusted.** Three encoders across two model
-classes, a five-fold span of dimension, three corpora and two chunkers —
-covering TWO of the reference deployment's four live text spaces. The
-other two are not covered, and one of them carries more documents than
-everything measured put together. `bge-m3` at dim 1024 and `ctx` 2048 is
-`wikipedia` and `wikivec` — the largest collections here, and the only
-ones on the `cdc` and `verbatim` chunkers, so both the dimension and the
-chunk geometry are untried. Its dimension does at least sit BETWEEN
-those measured rather than outside them, which is the mild case. The
-other is another MODALITY
+**How far these numbers can be trusted.** Four encoders across two model
+classes, dimensions from 768 to 4096, four corpora and three chunkers —
+covering EVERY text space the reference deployment runs. What is left is
+another MODALITY
 — a genome collection, where the alphabet and the encoder family change
 at once — and that one cannot be measured at all until a DNA calibration
 set exists, since 09 §9.12 ships one set per modality and the platform
