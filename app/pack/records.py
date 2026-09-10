@@ -46,9 +46,23 @@ SUFFIX = ".jsonl.zst"
 
 # The record's keys, in the order they are written (a fixed order is what
 # makes two writers produce byte-identical lines for the same record).
+#: `origin` landed 2026-09-10, by operator decision, and it is 09 §9.5's
+#: order: after `extra`, before the two hashes. It is HALF OF INVARIANT 11
+#: — `origin_hash` is the hash of the origin unit and `origin` locates
+#: that unit — and without it a peer that RECEIVED a shard could never
+#: re-fetch its source, which is what 03 §3.4 and two rows of §3.6's level
+#: table rest on. Adding it changes each line's bytes and so each shard
+#: file's transport root; it changes NO `records_root` (over `content_hash`
+#: values), no `chunks_root`, no chunk id and no vector.
+#:
+#: `layer` and `chunks` are still here and are in NEITHER §9.5's table nor
+#: 03 §3.2, which says the layer is derived "from the Codex's rules, never
+#: reading it from the record, which carries none". They stay until the
+#: legacy pack verifier that reads `layer` retires with the old names
+#: (step 12) — see docs/notes/records-origin-gap.md.
 RECORD_KEYS = ("uid", "native_id", "lang", "title", "creators", "date",
                "subjects", "keys", "sections", "extra", "layer", "chunks",
-               "content_hash", "origin_hash")
+               "origin", "content_hash", "origin_hash")
 
 
 class ShardFormatError(RuntimeError):

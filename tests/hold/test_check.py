@@ -416,39 +416,98 @@ def test_a_peer_with_no_key_still_checks(checkable, monkeypatch, capsys):
     assert "unsigned" in capsys.readouterr().err
 
 
-# ---- records-vs-origin, and the gap it found -----------------------------
+# ---- records-vs-origin ---------------------------------------------------
 
-def test_records_vs_origin_is_inconclusive_because_no_record_is_locatable(
-        checkable):
-    """09 §9.5 makes `origin` a required record field — "the locator of
-    this record's own origin bytes" — and `pack/records.py::RECORD_KEYS`
-    does not carry it, so no record this platform has written says where
-    its origin unit is. Half of invariant 11 is implemented.
+def test_every_record_now_carries_its_origin_locator(checkable):
+    """09 §9.5's `origin`, added 2026-09-10 by operator decision. It is
+    half of invariant 11 — `origin_hash` is the hash of the origin unit
+    and this locates that unit — and without it a peer that RECEIVED a
+    shard could never re-fetch its source.
 
-    The check reports that rather than passing: a pass here would certify
-    records nobody could ever verify against their source, which is the
-    artefact the invariant calls the worst we could ship. See
-    docs/notes/records-origin-gap.md.
+    Relative and posix, never an absolute local path: the record travels,
+    and this machine's `/mnt/…` locates nothing on the peer that gets it.
     """
+    from app.pack import records as pack_records
+    root, snapshot, codex = checkable
+    assert "origin" in pack_records.RECORD_KEYS
+    for r in pack_records.iter_records(
+            root / "gutenberg" / "drag" / snapshot.shards[0].path):
+        o = r["origin"]
+        assert o and not o.startswith("/") and ":\\" not in o
+        assert "\\" not in o, "09 §9.5's locator is a posix path"
+        assert r["origin_hash"], "the other half of invariant 11"
+
+
+def test_records_vs_origin_without_an_origin_is_inconclusive_never_a_pass(
+        checkable):
+    """03 §3.2's `needs` column is "the origin, the platform image". A
+    check that passed for want of an origin would certify the copy
+    against itself."""
     root, snapshot, codex = checkable
     o = _run(root, codex, snapshot, ["records-vs-origin"],
              sample="1").outcome("records-vs-origin")
     assert o.result == chk.INCONCLUSIVE
-    assert o.detail["origin"] == "unlocatable"
+    assert o.detail["origin"] == "not given"
     assert o.detail["records"] > 0
-    assert "09 §9.5" in o.why and "records-origin-gap" in o.why
 
 
-def test_the_record_writer_still_omits_origin(checkable):
-    """The gap itself, pinned where a reader will meet it. When `origin`
-    is added to `RECORD_KEYS` this test fails and both it and the check
-    above are what change — deliberately, so the fix cannot land while
-    the check still reports the defect."""
+def test_records_vs_origin_reparses_the_origin_byte_for_byte(checkable,
+                                                             corpus_dir):
+    """"reproduces every record line of the shard byte for byte — the
+    decompressed lines in order, not merely the same `records_root`".
+
+    Comparing `records_root` would not do it: that root is over the
+    records' `content_hash` values, and `content_hash` is over title and
+    sections alone — so `creators`, `date`, `subjects`, `keys`, `extra`
+    and `origin` could all differ from what the origin says while the root
+    still matched.
+    """
+    from app import louise
+    root, snapshot, codex = checkable
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir)
+             ).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert o.detail["origin"] == "reachable" and o.detail["failed"] == []
+    assert o.detail["records"] > 0
+
+
+def test_a_record_the_origin_no_longer_reproduces_FAILS(checkable, corpus_dir):
+    """And it names the record, which is what §9.8's detail asks for."""
+    from app import louise
+    root, snapshot, codex = checkable
+    victim = next(iter(_records_of(root, snapshot)))
+    # the origin's text moved under us
+    p = corpus_dir / str(victim["native_id"])
+    txt = next(p.glob("*.txt*"))
+    txt.write_bytes(txt.read_bytes() + b"\n\nAn appended paragraph.\n")
+
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir)
+             ).outcome("records-vs-origin")
+    assert o.result == chk.FAIL, o.why
+    assert victim["uid"] in o.detail["failed"]
+
+
+def test_an_origin_that_is_not_there_is_inconclusive(checkable, tmp_path):
+    """"nothing is wrong and nothing was done" — an unreachable origin is
+    03 §3.1's third outcome, not a verdict about the records."""
+    from app import louise
+    root, snapshot, codex = checkable
+    empty = tmp_path / "no-origin"
+    empty.mkdir()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", empty)
+             ).outcome("records-vs-origin")
+    assert o.result == chk.INCONCLUSIVE
+    assert o.detail["origin"] == "unreachable"
+
+
+def _records_of(root, snapshot):
     from app.pack import records as pack_records
-    assert "origin_hash" in pack_records.RECORD_KEYS
-    assert "origin" not in pack_records.RECORD_KEYS, \
-        "`origin` landed: update check_records_vs_origin to re-fetch and " \
-        "re-parse, and retire docs/notes/records-origin-gap.md"
+    return list(pack_records.iter_records(
+        root / "gutenberg" / "drag" / snapshot.shards[0].path))
+
 
 
 def test_records_check_includes_records_and_nothing_else(checkable, monkeypatch,
@@ -471,13 +530,16 @@ def test_records_check_includes_records_and_nothing_else(checkable, monkeypatch,
 
 
 def test_records_check_origin_adds_the_two_origin_checks(checkable, monkeypatch,
-                                                         capsys):
+                                                         capsys, corpus_dir):
     from app import louise
     root, snapshot, codex = checkable
     monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
     assert louise.main(["hold", "records", "check", "gutenberg", "--root",
-                        str(root), "--json", "--origin",
-                        "--seed", SEED.hex()]) == 0
+                        str(root), "--json", "--origin", str(corpus_dir),
+                        "--sample", "1", "--seed", SEED.hex()]) == 0
     doc = json.loads(capsys.readouterr().out)
     assert [c["check"] for c in doc["checks"]] == \
         ["roots", "records", "records-vs-origin", "origin-seal"]
+    by = {c["check"]: c for c in doc["checks"]}
+    assert by["records-vs-origin"]["result"] == "pass", \
+        "the origin was given, so the re-parse ran"

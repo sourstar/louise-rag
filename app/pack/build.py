@@ -179,6 +179,14 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes]:
         "date": doc.date, "subjects": list(doc.subjects or []), "keys": list(doc.keys or []),
         "sections": sections, "extra": dict(doc.extra or {}),
         "layer": layer, "chunks": chunks,
+        # 09 §9.5's `origin`, relative to the origin base and never an
+        # absolute local path: the record travels, and this machine's
+        # `/mnt/…` locates nothing on the peer that receives it. Half of
+        # invariant 11 — `origin_hash` below is the hash of the bytes this
+        # locates — and what makes `records-vs-origin` a check a stranger
+        # can run at all.
+        "origin": plugin_io.origin_locator(plugin, row["path"],
+                                           collection.corpus_dir),
         "content_hash": records.content_hash(doc.title or "", sections),
         "origin_hash": doc.raw_hash,
     }

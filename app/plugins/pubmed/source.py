@@ -69,6 +69,11 @@ def _verify_md5_sidecar(container: Path) -> None:
 
 class PubmedSource:
     source_id = "pubmed"
+    #: What `plugin_io.origin_locator` translates to 09 §9.5's `#` when it
+    #: writes the record's `origin`. The locator stays opaque outside this
+    #: plugin; only its member SEPARATOR is declared, because the record
+    #: travels and is read by verifiers that do not have this plugin.
+    LOCATOR_SEP = _LOCATOR_SEP
     license_class = LicenseClass.YELLOW   # publisher copyright on text; raw is pointer-only (§8)
     # 06 §6.1's corpus credit. NLM compiles and distributes MEDLINE; the
     # abstracts inside remain their publishers', which is what the yellow

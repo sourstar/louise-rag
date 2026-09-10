@@ -167,7 +167,11 @@ class Ctx:
     embed: Callable[[list[str]], list[list[float]]] | None = None
     vectors_for: Callable[[list[str]], dict[str, list]] | None = None
     reference: Any = None
-    origin_fetch: Callable[[str], bytes] | None = None
+    #: `(uid, origin locator) -> the record line that origin produces now`.
+    #: Injected, like every other outside thing here: the re-parse needs
+    #: the plugin and the corpus machinery, and `app/hold/` stays free of
+    #: both so a peer that is only checking needs neither.
+    reparse: Callable[[str, str], bytes] | None = None
 
     @property
     def drag(self) -> Path:
@@ -417,28 +421,27 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     decompressed lines in order, not merely the same `records_root`"
     (03 §3.2).
 
-    THIS CHECK CANNOT RUN TODAY, and the reason is a defect rather than a
-    missing step: 09 §9.5 makes `origin` a required record field — "the
-    locator of this record's own origin bytes" — and
-    `app/pack/records.py::RECORD_KEYS` does not carry it, so no record
-    this platform has ever written says where its origin unit is. Half of
-    invariant 11 is implemented: every record carries `origin_hash`, and
-    nothing carries the locator that hash is of.
+    BYTE FOR BYTE, and the emphasis is the specification's. Comparing
+    `records_root` would not do it: that root is over the records'
+    `content_hash` values, and `content_hash` is over title and sections
+    alone (09 §9.5), so every field outside it — `creators`, `date`,
+    `subjects`, `keys`, `extra`, `origin` — could differ from what the
+    origin says while the root still matched. The line is the unit.
 
-    The consequence is precisely what invariant 11 exists to prevent. The
-    peer that BUILT a shard can still re-parse it, because its manifest
-    holds the paths; a peer who RECEIVED that shard cannot, ever, and 03
-    §3.4's whole argument — that a stranger's collection can be checked
-    against its origin — rests on this check. See
-    `docs/notes/records-origin-gap.md`; fixing it changes the record
-    bytes, so it is the operator's call and not mine.
+    IT NEEDS AN ORIGIN, and the absence of one is INCONCLUSIVE and never a
+    pass: 03 §3.2's `needs` column says "the origin, the platform image",
+    and a check that passed for want of an origin would certify the copy
+    against itself.
 
-    Written now, and not deferred with the rest, so that it reports the
-    defect where a verifier meets it rather than in a note nobody reads.
+    A record with no `origin` locator is likewise inconclusive rather than
+    failing. That was every record this platform wrote before 2026-09-10
+    (`docs/notes/records-origin-gap.md`), and such a record is not a bad
+    record — it is one nobody can put a question to.
     """
     shards = sampled_shards(ctx.codex, ctx.snapshot, "records-vs-origin",
                             seed=ctx.seed, override=ctx.override)
     ran, seen, missing = [], 0, 0
+    lines: list[tuple[str, str, bytes]] = []      # (uid, origin, the line)
     for s in shards:
         try:
             records = ctx.records_of(s)
@@ -449,6 +452,9 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             seen += 1
             if not r.get("origin"):
                 missing += 1
+                continue
+            from app.pack import records as pack_records
+            lines.append((r["uid"], r["origin"], pack_records.canonical_line(r)))
     if not ran:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -459,19 +465,48 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             ctx.seed, _shard_ids(ctx.codex, ran),
             why=f"{missing} of {seen} sampled record(s) carry no `origin` "
                 f"locator, which 09 §9.5 requires of every record. There is "
-                f"nothing to re-fetch: this platform's record writer omits "
-                f"the field (docs/notes/records-origin-gap.md), so the check "
-                f"is inconclusive rather than passing on records nobody "
-                f"could ever verify against their source")
-    if ctx.origin_fetch is None:
+                f"nothing to put a question to; records built before "
+                f"2026-09-10 are all of them "
+                f"(docs/notes/records-origin-gap.md)")
+    if ctx.reparse is None:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        {"records": seen, "failed": [], "origin": "not given"},
                        ctx.seed, _shard_ids(ctx.codex, ran),
-                       why="no origin to re-fetch from; `--origin` names one")
-    return Outcome("records-vs-origin", INCONCLUSIVE,
-                   {"records": seen, "failed": [], "origin": "reachable"},
+                       why="no origin to re-fetch from — `--origin DIR` names "
+                           "one. 03 §3.2 needs "
+                           "\"the origin, the platform image\", and a check "
+                           "that passed without one would certify the copy "
+                           "against itself")
+
+    failed, unreachable = [], 0
+    for uid, locator, line in lines:
+        try:
+            got = ctx.reparse(uid, locator)
+        except FileNotFoundError:
+            unreachable += 1
+            continue
+        except Exception as e:                          # noqa: BLE001
+            failed.append(f"{uid}: {e}")
+            continue
+        if got != line:
+            # The FIRST differing record, named — §9.8's detail asks for
+            # exactly that, because a list of every difference between two
+            # parsers is a diff and not a finding.
+            failed.append(uid)
+    if unreachable == len(lines):
+        return Outcome("records-vs-origin", INCONCLUSIVE,
+                       {"records": seen, "failed": [],
+                        "origin": "unreachable"},
+                       ctx.seed, _shard_ids(ctx.codex, ran),
+                       why=f"none of the {len(lines)} sampled record(s) could "
+                           f"be re-fetched from the origin given")
+    return Outcome("records-vs-origin", FAIL if failed else PASS,
+                   {"records": seen, "failed": sorted(failed)[:64],
+                    "origin": "reachable"},
                    ctx.seed, _shard_ids(ctx.codex, ran),
-                   why="the re-parse is not built; the locators are there")
+                   why=f"{len(lines) - unreachable} record(s) re-parsed from "
+                       f"the origin, {len(failed)} differing"
+                       + (f", {unreachable} not there" if unreachable else ""))
 
 
 def _not_yet(check: str, why: str):
@@ -515,7 +550,8 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
 
 def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         checks: Sequence[str] | None = None, sample: str | None = None,
-        embed=None, vectors_for=None, reference=None, log=None) -> Report:
+        embed=None, vectors_for=None, reference=None, reparse=None,
+        log=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that."""
     say = log or (lambda *_a: None)
     planned = plan_of(root, name, codex)
@@ -535,7 +571,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
             say(f"note: {', '.join(outside)} is not in this collection's plan")
 
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
-              vectors_for, reference)
+              vectors_for, reference, reparse)
     outcomes = []
     for c in want:
         o = CHECKS[c](ctx)

@@ -21,6 +21,50 @@ def canonical_doc(plugin, row) -> CanonicalDoc:
     return plugin.parse(plugin.fetch(ref))
 
 
+#: A plugin whose locator addresses a member of a container spells the
+#: separator its own way — pubmed's is `::`. 09 §9.5 fixes ONE spelling on
+#: the wire, `#`, because the record's `origin` is read by a verifier that
+#: does not have this plugin. Read as an attribute rather than added to the
+#: protocol: the protocol version is inside `collection_id` (06 §6.1), so
+#: a method here would move every collection's identity.
+DEFAULT_MEMBER_SEP = "#"
+
+
+def origin_locator(plugin, locator: str, base) -> str:
+    """09 §9.5's `origin` — "the locator of this record's own origin bytes".
+
+    "their path relative to the origin base or their URL, and where the
+    document is a member of a container the path followed by `#` and the
+    plugin's member index (06 §6.4); NEVER AN ABSOLUTE LOCAL PATH".
+
+    The last clause is the whole point and is why this is a conversion
+    rather than a copy. A plugin's `locator` is opaque and is an absolute
+    filesystem path today, because it addresses THIS machine's copy; the
+    record travels, and `/mnt/ssd4/corpora/gutenberg/1/3/4/1342` locates
+    nothing on the peer that receives it. Relative to the origin base, it
+    locates the same bytes for everyone who fetched from the same origin —
+    which is what makes `records-vs-origin` a check a stranger can run.
+    """
+    sep = getattr(plugin, "LOCATOR_SEP", None) or DEFAULT_MEMBER_SEP
+    text = str(locator)
+    path, found, member = text.rpartition(sep) if sep != DEFAULT_MEMBER_SEP \
+        else (text, "", "")
+    if not found:
+        path, member = text, ""
+    if "://" in path:                       # already a URL: §9.5 admits one
+        return path + (DEFAULT_MEMBER_SEP + member if member else "")
+    p = Path(path)
+    if base is not None:
+        try:
+            p = p.relative_to(Path(base))
+        except ValueError:
+            # Not under this peer's origin base — a hand-placed file, or a
+            # corpus moved since discovery. Fall back to the name rather
+            # than emitting an absolute path, which §9.5 forbids outright.
+            p = Path(p.name)
+    return p.as_posix() + (DEFAULT_MEMBER_SEP + member if member else "")
+
+
 def metadata(plugin, row) -> dict:
     if hasattr(plugin, "read_metadata"):
         return plugin.read_metadata(Path(row["path"]), int(row["native_id"]))

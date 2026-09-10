@@ -701,6 +701,7 @@ def cmd_check(a) -> int:
         a.root, name, codex, snapshot, seed=seed,
         checks=a.checks.split(",") if a.checks else None, sample=a.sample,
         embed=embed, reference=reference,
+        reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
             ids, collection=local),
         log=lambda m: print(m, file=sys.stderr))
@@ -734,6 +735,45 @@ def cmd_check(a) -> int:
     return 0 if report.ok else 1
 
 
+def _reparse_from(codex, name: str, origin_dir):
+    """`(uid, origin locator) -> the record line that origin produces now`.
+
+    03 §3.2 wants the origin "re-fetched … and re-parsed with the Codex's
+    toolchain". `origin_dir` is that origin as a local base — a fresh
+    mirror, a re-download, or the corpus directory itself. The last is
+    weaker and worth naming: re-parsing the copy we kept proves the parser
+    is deterministic and that the line matches the bytes on disk, not that
+    those bytes are still what the origin serves. It is what an offline
+    peer can do, and `origin_hash` is what makes even that meaningful.
+    """
+    if not origin_dir:
+        return None
+    from pathlib import Path
+
+    from app import collections as collections_mod, plugin_io
+    from app.pack import build as pack_build, records as pack_records
+
+    base = Path(origin_dir)
+    collection = collections_mod.Collection(
+        name=name, plugin=codex.plugin, profile=None,
+        embed_mode_default=None, corpus_dir=base,
+        manifest_path=base / "manifest.sqlite", fts_dir=base,
+        lance_dir=base, acquire_enabled=False, license_ack=None)
+    plugin = collection.plugin_instance()
+    sep = getattr(plugin, "LOCATOR_SEP", None) or plugin_io.DEFAULT_MEMBER_SEP
+
+    def reparse(uid: str, locator: str) -> bytes:
+        path, _, member = locator.partition(plugin_io.DEFAULT_MEMBER_SEP)
+        if not (base / path).exists():
+            raise FileNotFoundError(str(base / path))
+        row = {"uid": uid, "native_id": uid.rsplit(":", 1)[-1],
+               "path": str(base / path) + (f"{sep}{member}" if member else "")}
+        record, _layer, _blob = pack_build._record_of(collection, plugin, row)
+        return pack_records.canonical_line(record)
+
+    return reparse
+
+
 def cmd_records_check(a) -> int:
     """`hold records check` — 07 §7.3's alias, with `records` included.
 
@@ -745,7 +785,7 @@ def cmd_records_check(a) -> int:
     was given."
     """
     checks = ["roots", "records"]
-    if a.origin:
+    if a.origin_dir:
         checks += ["records-vs-origin", "origin-seal"]
     a.checks = ",".join(checks)
     return cmd_check(a)
@@ -1028,8 +1068,9 @@ def build_parser() -> argparse.ArgumentParser:
                           help="`hold check --checks roots,records"
                                "[,records-vs-origin]` and nothing else")
     root_arg(p); p.add_argument("collection")
-    p.add_argument("--origin", action="store_true",
-                   help="add `records-vs-origin`. Without it `--sample` "
+    p.add_argument("--origin", dest="origin_dir", metavar="DIR",
+                   help="an origin base to re-fetch and re-parse from; "
+                        "adds `records-vs-origin`. Without it `--sample` "
                         "affects nothing this command runs (07 §7.3)")
     p.add_argument("--sample",
                    help="raise the plan's shard fraction for this run")
@@ -1173,6 +1214,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "and it is printed and published in the attestation")
     p.add_argument("--snapshot",
                    help="which snapshot to check (default: the latest held)")
+    p.add_argument("--origin", dest="origin_dir", metavar="DIR",
+                   help="an origin base to re-fetch and re-parse from, for "
+                        "`records-vs-origin` (03 §3.2). Without it that "
+                        "check is inconclusive, never a pass")
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
