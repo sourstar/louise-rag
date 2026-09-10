@@ -88,7 +88,7 @@ louise hold
               calibrate --encoder-image D --encoder-weights D [--against IMAGE:WEIGHTS …] [--set SHA256]
                                                                        the tolerance a space can bear, measured between the reference build and each --against build
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
-  vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle every few hundred chunks
+  vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
               export <collection> [--shard <slice>/<n>] --out DIR      a signed bundle of what this peer produced — a DIRECTORY of four files (09 §9.7), not a container
@@ -235,8 +235,8 @@ reader needs at the command line:
   collection's space on the configured endpoint; the node runs the check
   before the first shard of a round.
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
-  delta.changed` of snapshot `ID` — a snapshot id, never a file. Every
-  few hundred chunks a bundle (09 §9.7) is signed and merged into the
+  delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
+  fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
   shard's vector file (02 §2.4); the bundle is kept for `share`.
 - **`vectors import`.** A bundle binds its space and, per record, the
   content hash it embedded; its `collection` and `snapshot_id` are

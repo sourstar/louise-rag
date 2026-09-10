@@ -443,8 +443,36 @@ peer's view and published no bundle for it within `grace_days` is not
 scored on that collection until a bundle from it is accepted, so an
 inflated number costs the collection one window, not one per shard.
 
-**Partial publication.** A contributor emits a signed bundle every few
-hundred chunks, not at the end of the shard. An abandoned shard loses
+**Partial publication.** A contributor emits a signed bundle **about
+every fifteen thousand chunks**, not at the end of the shard — 09 §9.10's
+worked example is one shard covered by two bundles of 14,800 and 15,200,
+and this sentence used to say "every few hundred", which the numbers do
+not support. At three hundred, a fully covered PubMed has some 120,000
+coverage rows and 120,000 members to announce, and a digest's `coverage`
+and `members` lists run to megabytes; at fifteen thousand it has about
+2,400. T3's sixteen recomputes are 5.3 % of production at three hundred
+and 0.16 % at fifteen thousand. What the small number was FOR — losing
+minutes rather than an hour to an abandoned shard — is bought instead by
+where vectors are written: a contributor commits them locally in slices
+as it goes (07 §7.7's unit for `vectors build` is the batch in flight to
+the encoder), so an interrupted shard loses a batch whatever the bundle
+size is. A bundle is a unit of SHARING, and sharing wants few large ones.
+There is a floor as well as a ceiling: below about thirty rows T0's
+envelope test (03 §3.5) cannot be applied at all, because the standard
+error of a sample deviation is around `1/sqrt(2n)` and the band would
+refuse honest work, so a bundle sized in the tens buys a weaker admission
+than one sized in the hundreds.
+
+A bundle is split on RECORD boundaries and never inside a record.
+`possession.json` maps a uid to the content hash its producer embedded
+against (09 §9.7), so a record whose rows straddled two bundles would be
+claimed by both — and a record re-issued since would then have to be
+refused twice, out of two bundles that need not arrive together. A record
+whose own chunks exceed the target is one bundle over the target, not a
+record cut in half; bundles are therefore uneven, as §9.10's example
+shows.
+
+An abandoned shard loses
 minutes, not an hour, and the coverage map shows progress rather than
 promises. Rendezvous yields a full ordering of eligible peers per shard,
 not just a winner; if the top peer has published nothing within the
