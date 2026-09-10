@@ -21,6 +21,7 @@
                                     [--strict [--allow KEY...]] [--require-t3] [--seed HEX]
                                     [--budget]
     louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
+    louise hold check <collection> [--checks A,B] [--sample F] [--seed HEX] [--snapshot ID] [--json]
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
@@ -36,6 +37,7 @@ step 3). Until then a new space is given whole, by `--space` or
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import signal
@@ -278,9 +280,24 @@ def cmd_records_validation(a) -> int:
 
 
 def cmd_snapshot_create(a) -> int:
-    from app.hold import snapshot as sn
+    from app.hold import collection as c, snapshot as sn
     snap = sn.create(a.root, a.collection, snapshot_id=a.snapshot_id)
     print(snap.hash)
+    # 09 §9.4's sidecar, and 02 §2.2's meaning: "a signature says *I
+    # computed this too*" — so it is written where the snapshot was
+    # computed, and merged rather than replaced, because a sidecar is a
+    # set two peers join by union. A peer with no key still produces the
+    # snapshot: 07 §7.8 says an unsigned peer's check and search work, and
+    # §9.4 holds an unsigned snapshot rather than refusing it.
+    name, _ = c.resolve(a.root, a.collection)
+    from app.bundles import keys as node_keys
+    try:
+        key = node_keys.load_signing_key()
+    except Exception as e:                              # noqa: BLE001
+        print(f"note: unsigned — {e}", file=sys.stderr)
+        return 0
+    doc = sn.sign_snapshot(a.root, name, snap, key, now=_utc_now())
+    print(f"  signed by   {len(doc['signatures'])} key(s)")
     return 0
 
 
@@ -649,6 +666,72 @@ def _latest_snapshot(root, name, snapshot_id=None):
             f"{name} holds no snapshot; a sampled check draws over a "
             f"snapshot's shards (03 §3.2) and there is not one yet")
     return snap.load(d / f"{ids[-1]}.json")
+
+
+def cmd_check(a) -> int:
+    """`hold check` — run the plan (03 §3.2) and attest what completed.
+
+    Exit 0 when nothing failed, 1 when a check did. An INCONCLUSIVE check
+    is neither (03 §3.1) and does not fail the run: it produces no
+    attestation, is reported with its reason, and is retried.
+    """
+    import os
+
+    from app import embeddings
+    from app.hold import check as chk, collection as col, drag, \
+        embedder as emb, records as rec
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    snapshot = _latest_snapshot(a.root, name, a.snapshot)
+    seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
+
+    member = a.root / name / "drag" / \
+        drag.calibration_paths(codex.space.calibration.set)[0]
+    reference = _read_member(member)[0] if member.is_file() else None
+
+    embed = None
+    try:
+        recipe = _recipe_for(codex, name)
+        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+    except emb.GateDeferred:
+        pass
+
+    report = chk.run(
+        a.root, name, codex, snapshot, seed=seed,
+        checks=a.checks.split(",") if a.checks else None, sample=a.sample,
+        embed=embed, reference=reference,
+        vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
+            ids, collection=local),
+        log=lambda m: print(m, file=sys.stderr))
+
+    written: dict[str, str] = {}
+    if any(o.attestable for o in report.outcomes):
+        from app.bundles import keys as node_keys
+        try:
+            key = node_keys.load_signing_key()
+        except Exception as e:                          # noqa: BLE001
+            # 07 §7.8: "`NODE_KEY_PATH` unset means this peer cannot sign …
+            # import, check and search work without it". The report counts
+            # on this peer alone, which is what §7.3 says it does.
+            print(f"note: unsigned — {e}", file=sys.stderr)
+            key = None
+        if key is not None:
+            written = chk.write_attestations(
+                a.root, name, report, codex, snapshot, key,
+                platform_image=codex.toolchain.platform_image, now=_utc_now())
+    report = dataclasses.replace(report, attestations=written)
+
+    if a.json:
+        _print(report.to_json())
+    else:
+        print(f"{'PASS' if report.ok else 'FAIL'}  {name}  "
+              f"snapshot {snapshot.snapshot_id}  seed {seed.hex()}")
+        for o in report.outcomes:
+            aid = written.get(o.check)
+            print(f"  {o.result.upper():<13} {o.check:<18} {o.why}"
+                  f"{f'  [{aid[:20]}…]' if aid else ''}")
+    return 0 if report.ok else 1
 
 
 def _admission_limits():
@@ -1043,6 +1126,25 @@ def build_parser() -> argparse.ArgumentParser:
                         "the coverage map stops claiming it. Off by default: "
                         "deleting vectors on a cosine is an operator's call")
     p.set_defaults(fn=cmd_vectors_check)
+
+    p = nouns.add_parser("check",
+                         help="run the collection's validation plan (03 §3.2) "
+                              "and attest what completed")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--checks",
+                   help="a comma-separated subset of 03 §3.2's table; the "
+                        "default is the collection's own plan")
+    p.add_argument("--sample",
+                   help="raise the plan's shard fraction for this run, as a "
+                        "decimal string. It cannot lower it (07 §7.3)")
+    p.add_argument("--seed",
+                   help="32 bytes as hex; the default is fresh OS entropy, "
+                        "and it is printed and published in the attestation")
+    p.add_argument("--snapshot",
+                   help="which snapshot to check (default: the latest held)")
+    p.add_argument("--json", action="store_true",
+                   help="09 §9.8's report object")
+    p.set_defaults(fn=cmd_check)
 
     add_deprecated(surfaces, {
         "records_build": args_records_build,

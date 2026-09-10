@@ -38,9 +38,17 @@ _DURATION_RE = re.compile(r"^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?"
 
 # The checks a plan may name (03 §3.2). §9.8's table is wider: it adds the
 # results a peer produces from what it finds rather than from a plan.
+# `figures` was missing here until 2026-09-10, and its absence was a real
+# refusal: §3.2 says "a `checks` entry that names no row of this table is
+# refused at `hold collection create` and at `hold check` alike", so a
+# collection with plates could not name the check that validates them.
+# The figures amendment added the row to §3.2 and this list was not
+# followed. Adding a name moves no existing `collection_id` — `validation`
+# is hashed, but this list only decides what is ACCEPTED into it.
 PLAN_CHECKS = ("roots", "records", "chunks", "records-vs-origin",
                "vectors-sample", "calibration", "centres", "labels",
-               "license", "signature", "anchor", "origin-seal", "evaluation")
+               "figures", "license", "signature", "anchor", "origin-seal",
+               "evaluation")
 
 # The checks whose plan entry is a sample size (§9.3, the validation block).
 SAMPLED_CHECKS = ("records", "chunks", "records-vs-origin", "vectors-sample")

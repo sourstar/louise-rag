@@ -369,6 +369,106 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     return snap
 
 
+# --------------------------------------------------------------------------
+# the sidecar (09 §9.4)
+
+SIDECAR_KIND = "louise-snapshot-sig"
+
+
+def sig_message(snapshot_hash: str) -> bytes:
+    """§9.4: `sig` is over `"louise/snapshot/v1" ‖ 0x00 ‖ <the 32 raw bytes
+    of snapshot>`.
+
+    NOT §9.2's envelope construction, which hashes a canonical-JSON body.
+    The sidecar is the one signed object in the design that is not an
+    envelope — because it is a SET that two peers merge by union, and a
+    body signed whole could not gain a signature without invalidating the
+    ones already there.
+    """
+    from . import envelope as env
+    raw = snapshot_hash.split(":", 1)[-1]
+    return env.SNAPSHOT.encode("ascii") + b"\x00" + bytes.fromhex(raw)
+
+
+def sidecar_add(existing: dict | None, snapshot_hash: str, key, *,
+                now: str) -> dict:
+    """This key's signature, merged into the sidecar by UNION.
+
+    "Two peers merge sidecars by union; a signature whose `snapshot` does
+    not equal the file's hash is dropped." So a sidecar that names another
+    snapshot is not merged into — it is replaced, having nothing to say
+    about this one.
+    """
+    from . import envelope as env
+    doc = existing if isinstance(existing, dict) and \
+        existing.get("snapshot") == snapshot_hash else \
+        {"kind": SIDECAR_KIND, "version": 1, "snapshot": snapshot_hash,
+         "signatures": []}
+    mine = {"key": env.key_text(key.verify_key), "time": now,
+            "sig": key.sign(sig_message(snapshot_hash)).signature.hex()}
+    others = [s for s in doc.get("signatures") or []
+              if (s.get("key"), s.get("time")) != (mine["key"], mine["time"])]
+    return {"kind": SIDECAR_KIND, "version": 1, "snapshot": snapshot_hash,
+            "signatures": sorted(others + [mine],
+                                 key=lambda s: (s["key"], s["time"]))}
+
+
+def sidecar_keys(doc: dict, snapshot_hash: str) -> tuple[list[str], list[str]]:
+    """`(verified keys, complaints)` — every signature §9.4 keeps.
+
+    A signature whose `snapshot` is not this file's hash is DROPPED rather
+    than failed: it is a signature about another snapshot that landed in
+    the wrong file, and calling it a forgery would be a verdict the bytes
+    do not support.
+    """
+    from nacl import signing as nacl_signing
+    from nacl.exceptions import BadSignatureError
+
+    from . import envelope as env
+    bad: list[str] = []
+    if not isinstance(doc, dict) or doc.get("kind") != SIDECAR_KIND:
+        return [], [f"not a {SIDECAR_KIND} (09 §9.4)"]
+    if doc.get("snapshot") != snapshot_hash:
+        return [], [f"the sidecar covers {str(doc.get('snapshot'))[:23]}… and "
+                    f"this snapshot is {snapshot_hash[:23]}…"]
+    msg = sig_message(snapshot_hash)
+    ok: list[str] = []
+    for s in doc.get("signatures") or []:
+        try:
+            vk = nacl_signing.VerifyKey(env.key_bytes(s["key"]))
+            vk.verify(msg, bytes.fromhex(s["sig"]))
+            ok.append(s["key"])
+        except (BadSignatureError, KeyError, ValueError, TypeError) as e:
+            bad.append(f"{str(s.get('key'))[:23]}…: {e or 'bad signature'}")
+    return ok, bad
+
+
+def sign_snapshot(root, name: str, snapshot: "Snapshot", key, *,
+                  now: str) -> dict:
+    """Write this peer's signature into the snapshot's sidecar.
+
+    "A signature says *I computed this too* (02 §2.2)" — so it is written
+    where the snapshot was computed, and merged rather than replaced,
+    because a sidecar is a set.
+    """
+    import json
+    from pathlib import Path
+
+    from . import drag as drag_mod
+    from .codex import canonical_json
+    p = Path(root) / name / "drag" / drag_mod.snapshot_sig_path(snapshot.snapshot_id)
+    existing = None
+    if p.is_file():
+        try:
+            existing = json.loads(p.read_bytes())
+        except Exception:                               # noqa: BLE001
+            existing = None
+    doc = sidecar_add(existing, snapshot.hash, key, now=now)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(canonical_json(doc))
+    return doc
+
+
 def _previous(drag_dir, snapshot_id: str):
     """The snapshot before this one in the chain, and its uid → content_hash
     map. `None` when this is the first."""
