@@ -267,3 +267,89 @@ def test_two_exports_of_one_shard_agree_on_everything_signed(drag, tmp_path):
     ha, _, _, _ = vec.read(tmp_path / "a")
     hb, _, _, _ = vec.read(tmp_path / "b")
     assert ha == hb
+
+
+# ---- how big a bundle is (operator, 2026-09-10) --------------------------
+
+def test_the_default_is_15000_chunks():
+    """04 §4.5 said "a few hundred" and 09 §9.10's worked example shows two
+    bundles of 14,800 and 15,200 for one shard. The numbers decided it: at
+    300 chunks a fully covered PubMed has ~120,000 coverage rows and
+    ~120,000 members to announce and the digest's lists become megabytes;
+    at 15,000 it has ~2,400. The crash-granularity argument for small
+    bundles is gone — `hold vectors build` commits every
+    EMBED_SLICE_CHUNKS chunks, so a bundle is purely a unit of sharing."""
+    assert exp.BUNDLE_CHUNKS == 15_000
+
+
+def test_a_shard_under_the_size_is_one_bundle_at_dest(drag, tmp_path):
+    root, snapshot, codex = drag
+    shard = first_shard(snapshot)
+    store, ids = a_store(codex, root, snapshot, shard)
+    dest = tmp_path / "one"
+    out = exp.export(root, "gutenberg", shard=shard, dest=dest,
+                     vectors_for=lambda w: {i: store[i] for i in w if i in store},
+                     embed=fake_embed, key=KEY)
+    assert len(out["bundles"]) == 1
+    assert out["path"] == str(dest)
+    assert (dest / "header.json").is_file(), "not nested when there is one"
+
+
+def test_a_shard_over_the_size_becomes_several_bundles(drag, tmp_path):
+    """09 §9.10's own worked example is one shard covered by two bundles."""
+    root, snapshot, codex = drag
+    shard = first_shard(snapshot)
+    store, ids = a_store(codex, root, snapshot, shard)
+    dest = tmp_path / "split"
+    out = exp.export(root, "gutenberg", shard=shard, dest=dest,
+                     vectors_for=lambda w: {i: store[i] for i in w if i in store},
+                     embed=fake_embed, key=KEY, max_chunks=1)
+    assert len(out["bundles"]) > 1
+    assert out["chunks"] == len(ids)
+    assert sum(b["chunks"] for b in out["bundles"]) == len(ids)
+    for i, b in enumerate(out["bundles"]):
+        assert b["path"] == str(dest / f"{i:05d}")
+        assert (dest / f"{i:05d}" / "header.json").is_file()
+    # every bundle reads, and each covers exactly its own uids
+    seen = set()
+    for b in out["bundles"]:
+        header, rows, possession, _ = vec.read(Path(b["path"]))
+        assert sorted(possession) == header["uids"]
+        assert not (seen & set(header["uids"])), \
+            "a record was claimed by two bundles"
+        seen |= set(header["uids"])
+
+
+def test_the_split_is_on_RECORD_boundaries_never_mid_record(drag):
+    """`possession.json` maps a uid to the content hash the producer
+    embedded against, so a record whose rows straddled two bundles would
+    be claimed by both — and a re-issued record would have to be refused
+    twice, out of two bundles that might not arrive together."""
+    root, snapshot, codex = drag
+    shard = first_shard(snapshot)
+    store, _ = a_store(codex, root, snapshot, shard)
+    entries = exp.grouped(codex, exp._records(col.drag_of(root, "gutenberg"),
+                                              exp._shard_of(snapshot, shard)),
+                          lambda w: {i: store[i] for i in w if i in store})
+    biggest = max(len(rows) for _u, _h, rows in entries)
+    for part in exp.parts(entries, max_chunks=1):
+        assert len(part) == 1, "one record per part at max_chunks=1"
+    # a record larger than the target is still one bundle, not a split one
+    assert len(exp.parts(entries, max_chunks=1)[0][0][2]) <= biggest
+
+
+def test_parts_fill_to_the_target_before_starting_another(drag):
+    root, snapshot, codex = drag
+    shard = first_shard(snapshot)
+    store, ids = a_store(codex, root, snapshot, shard)
+    entries = exp.grouped(codex, exp._records(col.drag_of(root, "gutenberg"),
+                                              exp._shard_of(snapshot, shard)),
+                          lambda w: {i: store[i] for i in w if i in store})
+    assert len(exp.parts(entries, max_chunks=10_000)) == 1
+    assert sum(len(rows) for part in exp.parts(entries, 1)
+               for _u, _h, rows in part) == len(ids)
+
+
+def test_a_zero_sized_bundle_is_refused(drag):
+    with pytest.raises(ExportError, match="at least one chunk"):
+        exp.parts([], max_chunks=0)

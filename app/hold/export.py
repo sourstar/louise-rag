@@ -54,6 +54,26 @@ from .codex import CodexError
 #: 09 §9.7's T2 challenge: the calibration set's first sixteen texts.
 CHALLENGE_N = 16
 
+#: HOW BIG A BUNDLE IS — operator decision, 2026-09-10, and the two
+#: documents disagreed. 04 §4.5 says a contributor emits one "every few
+#: hundred chunks"; 09 §9.10's worked example shows the same shard covered
+#: by two bundles of 14,800 and 15,200. The numbers decided it: at 300
+#: chunks a fully covered PubMed has ~120,000 coverage rows and ~120,000
+#: members to announce, and the digest's `coverage` and `members` lists
+#: become megabytes; at 15,000 it has ~2,400. T3's sixteen recomputes are
+#: 5.3 % of production at 300 and 0.16 % at 15,000.
+#:
+#: The argument FOR small bundles was crash granularity, and it is gone:
+#: `hold vectors build` commits to the local store every
+#: `EMBED_SLICE_CHUNKS` chunks, so nothing is lost by a bundle that spans
+#: an hour of work. A bundle is now purely a unit of SHARING.
+#:
+#: A floor, from step 4e: under 32 rows T0's envelope is not applied at
+#: all (a sample deviation's relative standard error is ~1/sqrt(2n)), so a
+#: bundle sized in the tens buys a weaker admission than one sized in the
+#: hundreds.
+BUNDLE_CHUNKS = 15_000
+
 
 class ExportError(CodexError):
     """The shard cannot be exported as a conformant bundle."""
@@ -91,6 +111,26 @@ def rows_for(codex, records: Sequence[dict],
     `layers.chunks_for_document` is what makes a wrong layer a caught
     error rather than a reproduced one (06 §6.3).
     """
+    chunk_rows: list[tuple[str, list]] = []
+    possession: dict[str, str] = {}
+    for uid, content_hash, rows in grouped(codex, records, vectors_for):
+        chunk_rows.extend(rows)
+        possession[uid] = content_hash
+    return chunk_rows, possession
+
+
+def grouped(codex, records: Sequence[dict],
+            vectors_for: Callable[[list[str]], dict[str, list]],
+            ) -> list[tuple[str, str, list[tuple[str, list]]]]:
+    """`(uid, content_hash, its held chunk rows)`, one entry per record.
+
+    The grouping exists because a bundle is SPLIT on record boundaries
+    (`parts` below) and not on a row count: `possession.json` maps a uid
+    to the content hash the producer embedded against, so a record whose
+    rows straddled two bundles would be claimed by both — and a re-issued
+    record would then have to be refused twice, out of two bundles that
+    might not arrive together.
+    """
     wanted: list[str] = []
     per_uid: dict[str, list[str]] = {}
     for rec in records:
@@ -102,16 +142,43 @@ def rows_for(codex, records: Sequence[dict],
         wanted.extend(ids)
 
     held = vectors_for(wanted) or {}
-    chunk_rows: list[tuple[str, list]] = []
-    possession: dict[str, str] = {}
     by_uid = {r["uid"]: r for r in records}
+    out = []
     for uid, ids in per_uid.items():
         mine = [(i, held[i]) for i in ids if i in held]
         if not mine:
             continue                      # not embedded here: not in this bundle
-        chunk_rows.extend(mine)
-        possession[uid] = by_uid[uid]["content_hash"]
-    return chunk_rows, possession
+        out.append((uid, by_uid[uid]["content_hash"], mine))
+    return out
+
+
+def parts(entries, max_chunks: int = BUNDLE_CHUNKS):
+    """Split a shard's records into bundles of about `max_chunks` chunks.
+
+    ON RECORD BOUNDARIES, for the reason `grouped` gives, and never
+    mid-record even when one record alone exceeds the target: a bundle
+    over the size is a bundle, and a record split across two is a
+    possession map that lies in both.
+
+    A record is placed in the current part unless doing so would take it
+    over — so the parts are at most one record's worth over the target,
+    and the last one may be much smaller. §9.10's own example is two
+    bundles of 14,800 and 15,200 for one shard, so uneven parts are the
+    documented shape and not a defect.
+    """
+    if max_chunks < 1:
+        raise ExportError("a bundle holds at least one chunk")
+    out, current, n = [], [], 0
+    for entry in entries:
+        size = len(entry[2])
+        if current and n + size > max_chunks:
+            out.append(current)
+            current, n = [], 0
+        current.append(entry)
+        n += size
+    if current:
+        out.append(current)
+    return out
 
 
 def challenge_rows(codex, embed) -> list[tuple[str, list]]:
@@ -133,8 +200,16 @@ def challenge_rows(codex, embed) -> list[tuple[str, list]]:
 
 def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
            snapshot_id: str | None = None, created_at: int | None = None,
-           ) -> dict[str, Any]:
-    """Write one shard's bundle into `dest` (a DIRECTORY, 09 §9.7).
+           max_chunks: int = BUNDLE_CHUNKS) -> dict[str, Any]:
+    """Write one shard's bundles into `dest` (a DIRECTORY, 09 §9.7).
+
+    ONE BUNDLE PER SHARD is the common case and `dest` is then the bundle
+    itself. A shard with more than `max_chunks` chunks becomes several,
+    at `dest/00000`, `dest/00001`, … — 09 §9.10's own worked example is
+    one shard covered by two bundles, and 04 §4.5 says a contributor
+    emits them rather than waiting for the end of a shard. The numbering
+    is not in any format: a bundle is named by its id, and these are only
+    where this command put the files.
 
     `vectors_for(chunk_ids) -> {chunk_id: vector}` is this peer's own
     store; `embed(texts) -> vectors` is its encoder. Both are injected —
@@ -163,43 +238,63 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
 
     entry = _shard_of(snapshot, shard)
     records = _records(drag_dir, entry)
-    chunk_rows, possession = rows_for(codex, records, vectors_for)
-    if not chunk_rows:
+    entries = grouped(codex, records, vectors_for)
+    if not entries:
         raise ExportError(
             f"this peer holds no vectors for any record of {shard}; there is "
             f"nothing to export. A bundle carries what a peer PRODUCED, so an "
             f"empty one is not a smaller bundle but an absent one")
 
-    header = {
-        "version": 1,
-        "collection": codex.collection_id,
-        "space_id": codex.space_id,
-        "snapshot_id": snapshot.snapshot_id,
+    split = parts(entries, max_chunks)
+    # The challenge is embedded ONCE and the same sixteen rows go in every
+    # bundle of this shard: they answer "is the producer's oven this
+    # space's", which is a fact about the producer and not about the rows
+    # beside them. Sixteen recomputes per split would also be sixteen more
+    # encoder calls for nothing.
+    challenge = challenge_rows(codex, embed)
+    now = int(created_at if created_at is not None else time.time())
+
+    out = []
+    for i, part in enumerate(split):
+        chunk_rows = [row for _uid, _h, rows in part for row in rows]
+        possession = {uid: h for uid, h, _rows in part}
+        where = Path(dest) if len(split) == 1 else Path(dest) / f"{i:05d}"
+        header = {
+            "version": 1,
+            "collection": codex.collection_id,
+            "space_id": codex.space_id,
+            "snapshot_id": snapshot.snapshot_id,
+            "shard": f"{entry.slice}/{entry.n:05d}",
+            # Sorted, and the same set possession names — `vectors.write`
+            # does not police that, but §9.7's reader does, on every import.
+            "uids": sorted(possession),
+            "dim": codex.space.dim,
+            "dtype": codex.space.dtype,
+            "producer_pubkey": "ed25519:" + bytes(key.verify_key).hex(),
+            "encoder_image": codex.space.encoder.image,
+            "encoder_weights": codex.space.encoder.weights,
+            "created_at": now,
+            "digest_alg": "sha256",
+            "sig_alg": "ed25519",
+            "challenge": {"set": codex.space.calibration.set, "n": CHALLENGE_N},
+        }
+        bundle_id = vec.write(where, header=header, challenge_rows=challenge,
+                              chunk_rows=chunk_rows, possession=possession,
+                              key=key)
+        out.append({"bundle_id": bundle_id, "path": str(where),
+                    "uids": len(possession), "chunks": len(chunk_rows)})
+
+    return {
+        # The first bundle's, for the common case where there is one. Every
+        # bundle is in `bundles`, always.
+        "bundle_id": out[0]["bundle_id"],
+        "path": out[0]["path"],
+        "bundles": out,
         "shard": f"{entry.slice}/{entry.n:05d}",
-        # Sorted, and the same set possession names — `vectors.write` does
-        # not police that, but §9.7's reader does, on every import.
-        "uids": sorted(possession),
+        "snapshot_id": snapshot.snapshot_id,
+        "uids": sum(b["uids"] for b in out),
+        "chunks": sum(b["chunks"] for b in out),
+        "records_in_shard": len(records),
         "dim": codex.space.dim,
         "dtype": codex.space.dtype,
-        "producer_pubkey": "ed25519:" + bytes(key.verify_key).hex(),
-        "encoder_image": codex.space.encoder.image,
-        "encoder_weights": codex.space.encoder.weights,
-        "created_at": int(created_at if created_at is not None else time.time()),
-        "digest_alg": "sha256",
-        "sig_alg": "ed25519",
-        "challenge": {"set": codex.space.calibration.set, "n": CHALLENGE_N},
-    }
-    bundle_id = vec.write(Path(dest), header=header,
-                          challenge_rows=challenge_rows(codex, embed),
-                          chunk_rows=chunk_rows, possession=possession, key=key)
-    return {
-        "bundle_id": bundle_id,
-        "path": str(dest),
-        "shard": header["shard"],
-        "snapshot_id": snapshot.snapshot_id,
-        "uids": len(possession),
-        "chunks": len(chunk_rows),
-        "records_in_shard": len(records),
-        "dim": header["dim"],
-        "dtype": header["dtype"],
     }

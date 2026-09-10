@@ -339,16 +339,19 @@ def cmd_vectors_export(a) -> int:
             a.root, a.collection, shard=a.shard, dest=Path(a.out),
             vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
                 ids, collection=local),
-            embed=embed, key=load_signing_key(), snapshot_id=a.snapshot)
+            embed=embed, key=load_signing_key(), snapshot_id=a.snapshot,
+            max_chunks=a.max_chunks or exp.BUNDLE_CHUNKS)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
 
-    print(f"{out['bundle_id']}")
-    print(f"  {out['path']}")
+    for b in out["bundles"]:
+        print(f"{b['bundle_id']}")
+        print(f"  {b['path']}  —  {b['chunks']} chunks over {b['uids']} records")
     print(f"  shard       {out['shard']}  of snapshot {out['snapshot_id']}")
     print(f"  carries     {out['chunks']} chunks over {out['uids']} of "
-          f"{out['records_in_shard']} records")
+          f"{out['records_in_shard']} records in "
+          f"{len(out['bundles'])} bundle(s)")
     print(f"  space       {out['dim']} x {out['dtype']}")
     return 0
 
@@ -1150,6 +1153,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "files and fixes no container")
     p.add_argument("--snapshot",
                    help="which snapshot's records (default: the latest held)")
+    p.add_argument("--max-chunks", type=int, dest="max_chunks",
+                   default=None,
+                   help="chunks per bundle; a shard with more becomes "
+                        "several, split on record boundaries. Default "
+                        "15,000 (operator, 2026-09-10; 09 §9.10's worked "
+                        "example is two bundles of 14,800 and 15,200)")
     p.set_defaults(fn=cmd_vectors_export)
 
     p = vverbs.add_parser("import",
