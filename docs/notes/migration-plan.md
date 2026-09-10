@@ -400,9 +400,9 @@ WHAT IS GENUINELY WRAPPED: the exporter's shape, the ledger, and
 `format.py`'s *posture* — verify the wire bytes, never re-serialise —
 which is right and is carried into `app/hold/bundle.py`.
 
-**Sub-tasks, in order. `a`-`d` are DONE (`e61d4d2`, `728b127`, `c` by
-measurement rather than by code, `6f4c7c2` + `945e5f7`), and `f` is half
-done. `e` is the one that matters and is next.**
+**Sub-tasks, in order. `a`-`f` are DONE (`e61d4d2`, `728b127`, `c` by
+measurement rather than by code, `6f4c7c2` + `945e5f7`, `dc8a2b2` +
+`567574b`). `g` and `h` remain; `g` is what removes TOFU for good.**
 
 - **a. DONE — 09 §9.7's bytes** as `app/hold/bundle.py`: the closed
   sixteen-key header, ASCII-only serialisation (NOT §9.1's canonical
@@ -440,22 +440,44 @@ done. `e` is the one that matters and is next.**
   every stage is meant to cut through that one function; and the vector
   lookup has to filter on the INDEXED `book_id` rather than on `id`,
   which has no index. 11 tests, all through a real drag.
-- **e. `import`** through T0–T3, replacing `app/verify`'s tiers. Fix the
-  accepted row set BEFORE any tier runs and slice the sixteen
-  `calibration:*` challenge rows off first — otherwise a producer pads a
-  bundle with rows it knows will be refused and dilutes T0's statistic by
-  the padding factor. Derive coverage from merged chunk ids, never by
-  expanding the header's `uids: [first, last]` range: that was only
-  accidentally correct under whole-bundle refusal.
-- **f. HALF DONE.** `licensing.require_ack` in the importer and in
-  the archive path (invariant 9). The ARCHIVE half landed early, because
-  its path survives `e` and the hole was live: `genesis_fetch` gated the
-  FETCH, so a shard already on disk — a local archive whose vectors
-  travel with the corpus, a hand-populated cache, a peer copy — reached
-  `import_shard` ack-free, which is the bypass the invariant names and
-  records as observed. The check now sits at `import_shard`, the
-  chokepoint both entry points reach, with a test. The IMPORTER half
-  waits for `e`, which rewrites the module it belongs in.
+- **e. DONE** (`dc8a2b2`, `567574b`). `app/hold/admit.py` is 03 §3.5's
+  ladder and does NOT wrap `app/verify`: every tier of that ladder
+  disagrees with §3.5 in substance rather than in wording, and
+  `app/bundles/trust.py` implements the TOFU that §3.5 and 08 §8.1 forbid
+  in as many words. The order is the design — whole-bundle refusals, then
+  the accepted row set FIXED before any tier sees a matrix, then the
+  tiers over that fixed set. `app/hold/land.py` places the admitted rows
+  against this peer's own cut of its own records (the text is not in the
+  bundle and that is the point), and `embeddings.upsert_chunks` writes
+  them keyed on the CHUNK ID rather than the document, because a bundle
+  may carry some of a record's chunks and this peer may hold the rest.
+  Coverage is derived from those merged chunk ids and never from the
+  header's `uids` range, as this step required.
+
+  Two findings worth carrying forward. **T0's envelope cannot judge a
+  small bundle**: the relative standard error of a sample deviation is
+  about 1/sqrt(2n) — 12 % at 32 rows and 41 % at 3 — so against the band
+  of [0.4, 2.0] measured on 2026-09-09 that noise alone refuses honest
+  work, which is the same multiple-comparison mistake the band itself was
+  fixed for, arriving from the other side. Under `ENVELOPE_MIN_ROWS = 32`
+  the structural half still runs and the envelope is recorded as NOT
+  applied. 04 §4.5 sizes a real bundle at a few hundred chunks, so this
+  is the tail; the mini corpus cuts three, so this file's foreign-vector
+  test runs against `tier0` directly. And **`dim`/`dtype` are inside
+  `space_id`**, so an honest header that disagrees about either is
+  already refused as another space's: those two checks are about a header
+  that lies, and are asserted against `check_admissible`.
+- **f. DONE** (`567574b`). `licensing.require_ack` now sits on both
+  doors. The ARCHIVE half landed early, because its path survives `e` and
+  the hole was live: `genesis_fetch` gated the FETCH, so a shard already
+  on disk — a local archive whose vectors travel with the corpus, a
+  hand-populated cache, a peer copy — reached `import_shard` ack-free,
+  which is the bypass the invariant names and records as observed. The
+  IMPORTER half is at the top of `hold vectors import`, before the bundle
+  is read, and `louise.main` maps `LicenseAckRequiredError` to 07 §7.7's
+  exit 2 rather than re-raising it as a CodexError at each call site,
+  which would be a second implementation of a check `app/licensing.py`
+  owns.
 - **g. The admission budget** (08 §8.2) in the same commit that removes
   TOFU — 07 §7.8 already gives the surface.
 - **h. `check([--drop])`**: `vector_compliance` and `vector_sweep` as one
@@ -477,22 +499,27 @@ transaction that closes the shard; and `shard_of` yielding
 `"<slice>/<n>"`, because §9.7 makes `shard` a required header field and
 "one shard per bundle" a hard constraint.
 
-**Tests**: a conformant bundle round-trips through export and import; a
-bundle with foreign vectors is refused at T0; a bundle whose `collection`
-differs but whose `space_id` and `content_hash`es match is ADMITTED; a
-FIRST-SEEN producer key is admitted (the TOFU regression); one re-issued
-record has its rows refused and the import exits 0 while the rest lands;
-a uid with no possession entry refuses the bundle whole; a padded bundle
-does not move T0's statistic; an uncredited archive is refused; `--strict`
-on an empty allow list admits nothing; a corrupted stored vector is found
-and dropped by `check --drop`.
+**Tests**: all of these are green except the last, which is `h`'s.
+A conformant bundle round-trips through export and import; a bundle with
+foreign vectors is refused at T0 (against `tier0` directly — see `e`); a
+bundle whose `collection` differs but whose `space_id` and
+`content_hash`es match is ADMITTED; a FIRST-SEEN producer key is admitted
+(the TOFU regression); one re-issued record has its rows refused and the
+import exits 0 while the rest lands; a uid with no possession entry
+refuses the bundle whole; a padded bundle does not move T0's statistic;
+an uncredited archive is refused; `--strict` on an empty allow list
+admits nothing; a corrupted stored vector is found and dropped by
+`check --drop`.
 
 **Operator**: two, and they are small. The `refused` field on 09 §9.10's
 coverage row — all three documents now promise the refusal is recorded
 and no field table has a place for it. And the bundle size: 04 §4.5 says
 "a few hundred chunks", §9.10's worked example shows ~15,000, and T3 is
 sixteen recomputes per bundle, so the difference is 0.16 % of production
-or 5.3 %. Record the chosen number in the commit message.
+or 5.3 %. Record the chosen number in the commit message. **`e` gave that
+choice a floor with a reason**: under 32 chunks T0's envelope is not
+applied at all, so a bundle sized in the tens buys a weaker admission
+than one sized in the hundreds, whatever else is said for it.
 
 ### Step 5 — `hold check`, `validation.json`, attestations
 *03 §3.1–3.6, 09 §9.8. Wraps `app/verify`, `pack verify`.*
