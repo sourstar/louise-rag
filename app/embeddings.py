@@ -383,6 +383,83 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 f"the document resumes from what is already written")
     return written + len(done)
 
+#: A chunk id is `{uid}:{seq}:{version}` and a uid is `{source}:{native_id}`
+#: (app/chunking.py, 09 §9.5). Lance filters are strings and not
+#: parameterised statements, so an id that reaches one is checked against
+#: the shape FIRST: `upsert_chunks` derives these from a bundle written by
+#: a stranger, and a filter string is the wrong place to discover a quote.
+_CHUNK_ID = re.compile(r"\A[A-Za-z0-9_.+-]+:[0-9]+:[0-9]+:[0-9]+\Z")
+
+
+def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
+                  dtype: str | None = None) -> int:
+    """Write vectors that came from ELSEWHERE, keyed on the chunk id.
+
+    `upsert_book` is the local build: it embeds text and owns a whole
+    document, so it deletes the document. This is the import — the
+    vectors already exist, they arrived for a subset of chunk ids, and
+    the same document may hold rows this peer embedded itself. Deleting
+    the document would throw away exactly the rows a partial bundle does
+    not carry, so the key is the chunk id (invariant 2 names both).
+
+    The delete is narrowed on `book_id` before `id`, for the reason
+    `vectors_by_chunk_id` gives at length: `book_id` carries the BTREE
+    index every write already depends on and `id` carries none, so an
+    `id IN (…)` alone is a full scan over the corpus that reads like a
+    filter — a per-bundle cost that would scale with the table.
+
+    `dtype` is the SPACE's (`"f16"`/`"f32"`), which the importer reads
+    from the Codex where it is one of the fields inside `space_id`
+    (invariant 1). It beats the node's own recipe, which is a deployment
+    detail — but an existing table still wins over both, because a column
+    is a fixed width and a bundle does not get to change it.
+    """
+    if not rows:
+        return 0
+    for r in rows:
+        if not _CHUNK_ID.match(r["id"]):
+            raise ValueError(
+                f"{r['id']!r} is not `<source>:<native_id>:<seq>:<version>` "
+                f"(09 §9.5); it is not written and no filter is built from it")
+
+    db = _conn(collection)
+    if TABLE in db.table_names():
+        np_dtype = _np_dtype_of_table(db.open_table(TABLE))
+    elif dtype is not None:
+        np_dtype = np.float16 if dtype == "f16" else np.float32
+    else:
+        np_dtype = _np_dtype_of_recipe(collections_mod.recipe_for(collection))
+    out = [dict(r, vector=np.asarray(r["vector"], dtype=np_dtype)) for r in rows]
+
+    with _write_lock(lock_con):
+        if TABLE in db.table_names():
+            tbl = db.open_table(TABLE)
+            books = sorted({int(r["book_id"]) for r in out})
+            ids = {r["id"] for r in out}
+            for i in range(0, len(books), 500):
+                part = ",".join(str(b) for b in books[i:i + 500])
+                have = [x["id"] for x in
+                        tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})",
+                                           prefilter=True)
+                        .select(["id"]).limit(_RESUME_SCAN_MAX).to_list()
+                        if x["id"] in ids]
+                for j in range(0, len(have), 500):
+                    quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
+                    tbl.delete(f"{BOOK_COLUMN_NAME} IN ({part}) AND "
+                               f"id IN ({quoted})")
+            tbl.add(out)
+        else:
+            dim = len(out[0]["vector"])
+            vt = pa.float16() if np_dtype is np.float16 else pa.float32()
+            db.create_table(TABLE, data=out, schema=pa.schema([
+                pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+                pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+                pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+                pa.field("vector", pa.list_(vt, dim)),
+            ]))
+    return len(out)
+
+
 @contextmanager
 def _write_lock(lock_con):
     """No-op when no manifest connection is supplied, so callers that predate

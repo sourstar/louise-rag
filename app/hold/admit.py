@@ -396,7 +396,25 @@ def admit(codex, src, *, envelope, reference=None, mine=None,
     peer arrives as a callable, so the ladder itself is a pure function of
     the bundle plus the Codex plus what this peer happens to know.
     """
-    header, rows, possession, bundle_id = vec.read(Path(src))
+    return judge(codex, *vec.read(Path(src)), envelope=envelope,
+                 reference=reference, mine=mine, text_of=text_of, embed=embed,
+                 seed=seed, credits_admit=credits_admit,
+                 strict_allow=strict_allow)
+
+
+def judge(codex, header: dict, rows, possession: dict[str, str], bundle_id: str,
+          *, envelope, reference=None, mine=None, text_of=None, embed=None,
+          seed: bytes = b"", credits_admit=None,
+          strict_allow: set[str] | None = None) -> Report:
+    """The ladder over a bundle ALREADY READ by `vectors.read`.
+
+    Separate from `admit` because a real importer must look at the
+    verified header before it can say what it knows: which records it
+    holds, their `content_hash`, the text behind each chunk id. Reading
+    the bundle twice to learn that would mean parsing the parquet twice,
+    and peeking at an UNVERIFIED header to avoid it would mean deciding
+    what to look up from bytes nobody has vouched for yet.
+    """
     check_admissible(codex, header, credits_admit=credits_admit)
 
     if strict_allow is not None and header["producer_pubkey"] not in strict_allow:

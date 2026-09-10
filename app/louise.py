@@ -13,6 +13,10 @@
     louise hold records validation <collection>
     louise hold snapshot create <collection> [--snapshot ID]
     louise hold snapshot list <collection>
+    louise hold embedder check|benchmark <collection> [--accept]
+    louise hold vectors export <collection> --shard S --out DIR [--snapshot ID]
+    louise hold vectors import <collection> --bundle DIR [--snapshot ID]
+                                    [--strict [--allow KEY...]] [--require-t3] [--seed HEX]
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
@@ -328,6 +332,110 @@ def cmd_vectors_export(a) -> int:
     return 0
 
 
+def cmd_vectors_import(a) -> int:
+    """`hold vectors import` — a peer's bundle through 03 §3.5's ladder.
+
+    Exit 0 when the bundle landed (T3 may be SKIPPED — the chunks are
+    then *unverified here*, which §3.5 allows and names), 1 when a tier
+    refused it, 2 on a malformed or inadmissible bundle, 3 when the
+    encoder was unreachable AND `--require-t3` asked for the spot
+    recompute. Without that flag an absent encoder is not a deferral: the
+    other three tiers are what make a bundle usable, and refusing to
+    import for want of a GPU would make importing a privilege of the
+    nodes that need it least.
+    """
+    import os
+    from pathlib import Path
+
+    from app import embeddings, licensing
+    from app.hold import admit as adm, collection as col, drag, embedder as emb, \
+        land as landing, records as rec, vectors as vec
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    # Invariant 9, the IMPORTER half (migration plan step 4f). However the
+    # bundle arrived — a peer copy, a hand-populated folder — a yellow- or
+    # red-class collection without a recorded acknowledgement is not
+    # imported. The archive half already sits at `genesis.import_shard`.
+    licensing.require_ack(
+        local, use="a peer's vectors are imported into this collection")
+
+    member = a.root / name / "drag" / \
+        drag.calibration_paths(codex.space.calibration.set)[0]
+    if not member.is_file():
+        raise CodexError(
+            f"{name}: no calibration member at {member.name}. T0's envelope "
+            f"and T2's challenge are both read from it (09 §9.12), so a peer "
+            f"without one cannot judge a bundle at all")
+    reference, envelope = _read_member(member)
+
+    header, rows, possession, bundle_id = vec.read(Path(a.bundle))
+
+    # What this peer knows, looked up from the VERIFIED header and not a
+    # moment earlier (`admit.judge`'s note).
+    snapshot = landing.snapshot_named(a.root, name,
+                                      a.snapshot or header["snapshot_id"])
+    records = landing.records_for(a.root, name, snapshot, header["shard"],
+                                  header["uids"])
+    mine = {r["uid"]: r["content_hash"] for r in records}
+    cut = landing.cut(codex, records)
+
+    embed = None
+    try:
+        recipe = _recipe_for(codex, name)
+        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+    except emb.GateDeferred as e:
+        if a.require_t3:
+            print(f"louise: deferred: {e}", file=sys.stderr)
+            return 3
+
+    # 03 §3.5: the T3 sample is drawn with this peer's PRIVATE randomness
+    # and never from the bundle — a producer who could predict it would
+    # re-roll a nonce until the sample missed its corruption. Fresh per
+    # run, like `embedder.run_gate`'s, and printed so the check can be
+    # repeated deliberately with `--seed`.
+    seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
+
+    report = adm.judge(codex, header, rows, possession, bundle_id,
+                       envelope=envelope, reference=reference, mine=mine,
+                       text_of=lambda cid: (cut.get(cid) or {}).get("text"),
+                       embed=embed, seed=seed,
+                       strict_allow=set(a.allow) if a.strict else None)
+
+    print(f"{report.bundle_id}")
+    print(f"  producer    {report.producer[:31]}…")
+    print(f"  shard       {header['shard']}  of snapshot {header['snapshot_id']}")
+    for t in report.tiers:
+        print(f"  {t.tier:<11} {t.verdict.upper():<8} {t.why}")
+    for uid, why in report.refused:
+        print(f"  refused     {uid}: {why}")
+    if not report.ok:
+        print(f"  seed        {seed.hex()}")
+        print("REFUSED — nothing was written", file=sys.stderr)
+        return 1
+
+    out = landing.land(
+        codex, report, records=records,
+        write=lambda r: embeddings.upsert_chunks(r, collection=local,
+                                                 dtype=codex.space.dtype))
+    for cid, why in out["unplaceable"]:
+        print(f"  unplaceable {cid}: {why}", file=sys.stderr)
+    print(f"  seed        {seed.hex()}")
+    print(f"  landed      {out['written']} chunks over {len(mine)} records"
+          f"{f', {report.padded} row(s) dropped before the tiers' if report.padded else ''}")
+    return 0
+
+
+def _read_member(member):
+    """`(vectors, envelope)` — 09 §9.12's two tensors, read once."""
+    from safetensors.numpy import load_file
+    tensors = load_file(str(member))
+    for want in ("vectors", "envelope"):
+        if want not in tensors:
+            raise CodexError(f"{member.name}: no `{want}` tensor (09 §9.12)")
+    return tensors["vectors"].tolist(), tensors["envelope"]
+
+
 def cmd_embedder_check(a) -> int:
     """`hold embedder check` â the calibration gate of 03 Â§3.3.
 
@@ -630,6 +738,29 @@ def build_parser() -> argparse.ArgumentParser:
                    help="which snapshot's records (default: the latest held)")
     p.set_defaults(fn=cmd_vectors_export)
 
+    p = vverbs.add_parser("import",
+                          help="a peer's bundle through 03 §3.5's T0–T3 ladder")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--bundle", required=True,
+                   help="the bundle DIRECTORY to import (09 §9.7's four files)")
+    p.add_argument("--snapshot",
+                   help="which snapshot's records to check against "
+                        "(default: the one the bundle names)")
+    p.add_argument("--strict", action="store_true",
+                   help="admit only the producer keys named by --allow. OFF by "
+                        "default: an empty allow list admits nothing, and 08 "
+                        "§8.1 forbids refusing a key merely for being new")
+    p.add_argument("--allow", nargs="*", default=[],
+                   help="producer public keys --strict admits")
+    p.add_argument("--require-t3", action="store_true",
+                   help="exit 3 rather than import when no encoder is "
+                        "reachable. Off by default: T0, T1 and T2 are what "
+                        "make a bundle usable and T3 is recorded as SKIPPED")
+    p.add_argument("--seed",
+                   help="hex seed for T3's sample, to repeat a check "
+                        "deliberately (default: fresh randomness, printed)")
+    p.set_defaults(fn=cmd_vectors_import)
+
     add_deprecated(surfaces, {
         "records_build": args_records_build,
         "snapshot_create": args_snapshot_create,
@@ -712,6 +843,17 @@ def main(argv=None) -> int:
         print(f"louise: {e}", file=sys.stderr)
         return 2
     except FileNotFoundError as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:                              # noqa: BLE001
+        # Invariant 9's refusal is the one that reaches here today, and it
+        # is 07 §7.7's exit 2 — "a rule stood in the way before anything
+        # was done" — not a crash. `app/licensing.py` is THE resolution
+        # and raises its own error type; re-raising it as a CodexError at
+        # every call site would be a second implementation of the check.
+        from app.acquire.spec import LicenseAckRequiredError
+        if not isinstance(e, LicenseAckRequiredError):
+            raise
         print(f"louise: {e}", file=sys.stderr)
         return 2
 
