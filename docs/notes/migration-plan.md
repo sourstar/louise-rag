@@ -819,7 +819,7 @@ destinations, not seven:
 |---|---|
 | `gutenberg` | itself. Zero vectors, clean space `45e41e7b…` |
 | `pubmed` | itself **+ the MedCPT pre-embeddings** |
-| `wikipedia` | itself **+ the wikivec pre-embeddings** |
+| `wikipedia` | itself **+ the wikivec pre-embeddings** — **BLOCKED, measured 2026-09-10**, see [`wikivec-merge-blocked.md`](wikivec-merge-blocked.md). The merge cannot carry the archive's 12.7M vectors: the two plugins cut the same articles into different objects (63 paragraphs vs 24 sections on article 12, 2–3× across the sample), a uid carries its plugin's name so the archive's `embedded:*` rows can never be a `wikipedia`-plugin collection's, and the two corpora are different Wikipedia snapshots (6 of 8 sampled leads differ). Recommendation: keep them as two collections, or make them SISTERS — not one a layer of the other |
 | genome × 3 | **stay on the old format for now** |
 
 **"In the end the pre-embeddings will be incorporated in the collection
