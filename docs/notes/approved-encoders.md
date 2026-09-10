@@ -56,6 +56,21 @@ confirms baseline reproduction on the first embed after the swap.
 > NOT sufficient; the corpus-side check is
 > `python -m tools.vector_compliance <collection>`.
 
+> **Still pinned to b10630 on 2026-09-10.** Read from the node while
+> starting step 6: `midclt call app.config embed-gpu-qwen3-4b` gives
+> `/services/llama-embed/image =
+> ghcr.io/ggml-org/llama.cpp:server-intel-b10630`, on port `30437:8080`,
+> which is the endpoint `config/collections/gutenberg.toml` names for
+> `qwen3-embedding-4b`. The app is STOPPED, so nothing is being written
+> through it — but step 6 cannot create a collection against it, and
+> [`step6-preflight.md`](step6-preflight.md) item 0 is that gate.
+>
+> The approved b10603 image is already present on the node and its digest
+> matches the row above exactly, so the fix is a re-pin and a restart —
+> no pull, no trial. It needs the operator: `app.update` is blocked for
+> the assistant. The Arc is held by a raw `dnabert2-xpu` container and
+> fits one model server at a time, so that stops first.
+
 <!-- encoder_trial verdicts are appended here -->
 
 ## AMD GPU (Vulkan) — RX 9060 XT (RDNA4), llama.cpp Windows binary

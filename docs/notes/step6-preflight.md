@@ -19,17 +19,71 @@ gate. **Every line must read DONE or DELIBERATE before step 6 runs.**
 
 | # | what freezes | state |
 |---|---|---|
+| 0 | **the encoder build** | **BLOCKED 2026-09-10 — the node is pinned to the UNAPPROVED build.** See below; this is step 6 point 0's own stop condition and only the operator can lift it |
 | 1 | shard numbering | **DONE** 2026-09-08 |
 | 2 | the chunker's id | **DONE** 2026-09-09 |
 | 3 | the chunker's parameters | **DONE** 2026-09-09 |
 | 4 | `space_id`'s function | **DONE** 2026-09-09 — needed no change |
-| 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; two guards left |
+| 5 | the calibration reference | **DONE** 2026-09-09 — set rebuilt, spec amended; one guard done, one DELIBERATE (operator, 2026-09-10: skipped as unverifiable on this hardware) |
 | 6 | T0's envelope gate | **DONE** 2026-09-09 — 3 runs; the SHAPE was the defect, not the constants |
 | 7 | layers: one or two | **DONE** 2026-09-09 — one collection, two layers |
 | 8 | credits | **DONE** 2026-09-09 — and it opened item 9 |
 | 9 | the corpus and community credits | **DONE** 2026-09-09 — `credits` carries a `kind` |
 
 ---
+
+## 0. The encoder build — BLOCKED 2026-09-10, and it is b10630 again
+
+Step 6's point 0 reads: *"Confirm the encoder digest against the
+approved-encoder list for this device class. If it differs, **stop**:
+that is the drift the migration exists to make impossible, and it is what
+b10630 was."*
+
+**It differs.** Read from the node 2026-09-10, read-only:
+
+```
+midclt call app.config embed-gpu-qwen3-4b
+  /services/llama-embed/image = ghcr.io/ggml-org/llama.cpp:server-intel-b10630
+  /services/llama-embed/ports/0 = 30437:8080
+```
+
+`embed-gpu-qwen3-4b` on `:30437` is gutenberg's encoder — the collection
+TOML on the node names exactly that endpoint and
+`model = "qwen3-embedding-4b"`. It is pinned to **b10630**, the build
+[`approved-encoders.md`](approved-encoders.md) lists as *"UNAPPROVED —
+found running in production 2026-08-28"*, the one that left 13 of 163
+sampled gutenberg chunks below tolerance with a worst cosine of 0.338.
+Note the transposition that file warns about: the approved build is
+b106**03**.
+
+**The approved image is already on the node** and its digest matches the
+approved list byte for byte:
+
+```
+docker inspect ghcr.io/ggml-org/llama.cpp:server-intel-b10603
+  → ghcr.io/ggml-org/llama.cpp@sha256:33927f8a9af7657469e5b3a65027a1b2d0419f185385cc82f7be59790590a74d
+```
+
+So this is a re-pin and a restart, not a pull and not a trial.
+
+**Why it has to be the operator.** Re-pinning is `app.update`, which this
+assistant's classifier blocks (`environment-toolchain`); reads,
+`docker ps` and `app.start` are authorized and are how the above was
+found. Two further facts for whoever does it:
+
+* every `embed-*` app is STOPPED, and the Arc is currently held by a raw
+  container, `dnabert2-xpu`, which has to stop first — the Arc fits one
+  model server at a time;
+* the only llama.cpp containers on the node, `lt-a` and `lt-b`, are also
+  b10630 and have been exited since 2026-08-27. They are the old A/B trial
+  rigs, not the production encoder, and they bind no ports.
+
+**Nothing in step 6 may run until this reads DONE.** The Codex `create`
+writes is permanent, and the reference vectors it captures come out of
+whatever endpoint is answering at that moment (item 5). Creating against
+b10630 would mint an identity around the very build the migration exists
+to keep out — and `collection_id` cannot be corrected afterwards, only
+replaced.
 
 ## 1. Shard numbering — DONE
 
@@ -139,11 +193,46 @@ near-duplicate pairs carried over verbatim and still last,
 from. A gate run costs about a minute instead of seven seconds, and zero
 bandwidth: the member is `512 × dim × f32` whatever the texts weigh.
 
-**Still open, and they are the guards rather than the set:** the
-reference is captured from whatever the encoder returned at `create` time
-**with no independent check**, and §9.12 already defines the `.sig.json`
-provenance to record it. Produce it against a digest-pinned build and
-cross-check on a second endpoint before `create` writes it.
+**The two guards, settled 2026-09-10.** The reference is captured from
+whatever the encoder returned at `create` time **with no independent
+check**, and §9.12 already defines the `.sig.json` provenance to record
+it. Two guards were proposed: produce it against a digest-pinned build,
+and cross-check it on a second endpoint before `create` writes it.
+
+**Guard 1 — a digest-pinned build: REQUIRED, and it is now item 0.** It
+is not a nicety; it is the same check step 6's point 0 makes, and as of
+2026-09-10 the node fails it.
+
+**Guard 2 — the second-endpoint cross-check: DELIBERATE, skipped
+(operator, 2026-09-10).** It is not verifiable on this hardware. The Arc
+Pro B70 fits ONE model server at a time, so two endpoints serving one
+model cannot answer side by side, and the two llama.cpp trial containers
+that exist (`lt-a`, `lt-b`) were exactly that experiment and are exited.
+Recorded here as a future reference rather than dropped, because the
+guard is sound and only the machine is in the way:
+
+* **What it would buy.** The reference vectors are the one artefact in a
+  Codex that is a MEASUREMENT rather than a declaration, and their hash
+  is what every peer's gate is decided against forever. A second endpoint
+  agreeing turns "this is what the encoder said" into "this is what the
+  encoder IS", which is the difference b10630 exploited: the endpoint
+  tested clean at every concurrency afterwards and the corpus was damaged
+  anyway.
+* **What can be done instead, on one GPU.** Sequentially: run the set on
+  build A, stop it, run the same set on build B, compare. That is the
+  `encoder_trial.py` procedure this file's sibling already documents for
+  approvals, and it costs two model loads rather than two GPUs. It is
+  weaker only in that the two runs are not simultaneous, which matters
+  for a shared-GPU throughput comparison and not for a same-function one.
+* **The cross-backend path already taken once.** `approved-encoders.md`
+  records exactly this comparison done ACROSS MACHINES — the Arc against
+  the Windows RX 9060 XT, same GGUF byte-copied, cosine min 0.999599 over
+  16 long texts. That is a second endpoint, on a second box, and it is
+  the shape guard 2 should take when it is done for real.
+* **When to revisit.** Before step 8 mints the PERMANENT collection ids.
+  Step 6's Codex is a throwaway by construction, so an unguarded
+  reference there costs nothing; step 8's cannot be corrected, only
+  replaced.
 
 ## 6. T0's envelope gate — MEASURED 2026-09-09, and it was refusing honest work
 
