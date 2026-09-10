@@ -50,7 +50,7 @@ Two ownership rules follow from the table and are load-bearing:
 | **the GIL** | every pipeline thread (one interpreter) | the whole worker was ONE core busy at 87 % with eleven idle — parse/chunk is pure Python (amendment 47) |
 | **the manifest write lock** (per collection) | rdf/fts marks, archive flush marks, discovery batches, control writes | an archive importing at 1,400 docs/s holds it in a near-continuous stream of short transactions; other writers wait |
 | **the Lance table** (per collection) | the embed step, archive flushes, the index maintainer | a build/refresh marks the collection busy and its vector writers stand down (rdf/fts continue) |
-| **the encoders** | GPU: all collections that do not own theirs; CPU: one per collection | GPU work is serial by doctrine; a CPU encoder is idle whenever its collection's archive covers what would be embedded |
+| **the encoders** | GPU: all collections that do not own theirs; CPU: one per collection | GPU work is serial by doctrine; a CPU encoder is idle whenever its collection's archive covers what would be embedded. **The Arc fits ONE model server at a time**, so today the GPU moves between collections BY HAND — see [`gpu-time-slots.md`](gpu-time-slots.md) for the deferred design that makes it serial by construction, in roughly one-hour slots (operator, 2026-09-10; waits for the multi-embedder llama server) |
 | **disk** | corpora on the HDD pool, `/data` (manifests, Lance, packs) on NVMe | a 437 MB shard read is ~6 s from the HDD; row-group reads keep it to a few MB |
 
 ## 3. The rules — each one paid for
