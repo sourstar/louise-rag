@@ -109,7 +109,7 @@ collection on the NODE — an active TOML, a worker thread every boot, and
 48 GB of text index. Removed: the TOML, its `.paused` twin, and
 `/data/gutenberg-pack/`. It held 77,389 documents and **one** embedded
 vector, and its 48 GB was an fts index over
-`/mnt/tank/louise-packs/gutenberg-2026-06`, which survives — so nothing
+the archive pool’s `louise-packs/gutenberg-2026-06`, which survives — so nothing
 irreplaceable went, and no ZFS snapshot on `ssd4/apps` is holding the
 blocks.
 
@@ -778,7 +778,7 @@ gutenberg pack plan needs those vectors before the hand-over.
    write; a delete-then-insert that loses is a deferred step, never lost
    data). Wikipedia's fetch caches the last decompressed
    stream (one slot) — ~100x fewer decompressions for every stage. NAS:
-   datasets `tank/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
+   datasets `<archive pool>/louise-packs/{gutenberg,pubmed,wikipedia}` (recordsize
    1M, lz4) mounted at `/packs` (PACK_MOUNTS_DIR; the create dialog
    lists them as "(pack)"), conversions started with `pack build` from
    the existing collections' manifests — detached inside the worker

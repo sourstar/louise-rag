@@ -115,7 +115,7 @@ current and only form of those collections. **Delete nothing.**
   pubmed's `records build` cheap: rebuilding costs ~17 s × ~1,200
   containers. Deleting it is legitimate housekeeping AFTER pubmed is
   migrated and no further build is planned, and pointless before.
-* **`/mnt/tank/louise-packs/*`, 17 G total** — pre-Codex packs
+* **the archive pool’s `louise-packs/*`, 17 G total** — pre-Codex packs
   (`gutenberg` 7.0 G, `gutenberg-2026-06` 7.9 G, `pubmed` 729 M,
   `wikipedia` 1.4 G). `gutenberg-2026-06` is the intermediate product the
   operator dropped, and its collection is already gone; the packs
@@ -140,5 +140,5 @@ answer back, plus the counts agreeing.
 `gutenberg-pack` and its 48 GB (2026-09-10), before this rule was
 stated. It sat outside the ferry list so the migration does not need it,
 and its 48 GB was a text index over a pack that survives on
-`/mnt/tank/louise-packs/gutenberg-2026-06`. Recorded here because the
+the archive pool’s `louise-packs/gutenberg-2026-06`. Recorded here because the
 rule arrived afterwards and the deletion should not be invisible.

@@ -108,7 +108,7 @@ what step 8 migrates. Changing it changes their record lines too.
 - `plugin_io.origin_locator(plugin, locator, base)` does the conversion a
   locator needs before it can be a record field, and the conversion is
   the point rather than a formality: a plugin's locator is an absolute
-  path on **this** machine, and `/mnt/ssd4/corpora/gutenberg/1/3/4/1342`
+  path on **this** machine, and `<corpora>/gutenberg/1/3/4/1342`
   locates nothing on the peer that receives the record. Relative to the
   origin base and posix-spelled, it locates the same bytes for everyone
   who fetched from the same origin.
