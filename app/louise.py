@@ -734,6 +734,23 @@ def cmd_check(a) -> int:
     return 0 if report.ok else 1
 
 
+def cmd_records_check(a) -> int:
+    """`hold records check` — 07 §7.3's alias, with `records` included.
+
+    "`records check` is `hold check --checks roots,records[,
+    records-vs-origin][,origin-seal]` and nothing else — `records` (03
+    §3.2) is the only local check that proves what is inside a shard
+    rather than that the file matches the snapshot, and leaving it out
+    made `--sample F` on this command affect nothing unless `--origin`
+    was given."
+    """
+    checks = ["roots", "records"]
+    if a.origin:
+        checks += ["records-vs-origin", "origin-seal"]
+    a.checks = ",".join(checks)
+    return cmd_check(a)
+
+
 def _admission_limits():
     """`platform.toml`'s `[admission]`, or 08 §8.2's defaults."""
     from app import platform_config
@@ -1006,6 +1023,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = rverbs.add_parser("validation", help="write validation.json from the Codex")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_records_validation)
+
+    p = rverbs.add_parser("check",
+                          help="`hold check --checks roots,records"
+                               "[,records-vs-origin]` and nothing else")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--origin", action="store_true",
+                   help="add `records-vs-origin`. Without it `--sample` "
+                        "affects nothing this command runs (07 §7.3)")
+    p.add_argument("--sample",
+                   help="raise the plan's shard fraction for this run")
+    p.add_argument("--seed", help="32 bytes as hex")
+    p.add_argument("--snapshot", help="which snapshot (default: the latest)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_records_check)
 
     # ---- hold snapshot --------------------------------------------------
     snaps = nouns.add_parser("snapshot", help="a collection's records at one cutoff")

@@ -414,3 +414,70 @@ def test_a_peer_with_no_key_still_checks(checkable, monkeypatch, capsys):
     assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
                         "--checks", "roots", "--seed", SEED.hex()]) == 0
     assert "unsigned" in capsys.readouterr().err
+
+
+# ---- records-vs-origin, and the gap it found -----------------------------
+
+def test_records_vs_origin_is_inconclusive_because_no_record_is_locatable(
+        checkable):
+    """09 §9.5 makes `origin` a required record field — "the locator of
+    this record's own origin bytes" — and `pack/records.py::RECORD_KEYS`
+    does not carry it, so no record this platform has written says where
+    its origin unit is. Half of invariant 11 is implemented.
+
+    The check reports that rather than passing: a pass here would certify
+    records nobody could ever verify against their source, which is the
+    artefact the invariant calls the worst we could ship. See
+    docs/notes/records-origin-gap.md.
+    """
+    root, snapshot, codex = checkable
+    o = _run(root, codex, snapshot, ["records-vs-origin"],
+             sample="1").outcome("records-vs-origin")
+    assert o.result == chk.INCONCLUSIVE
+    assert o.detail["origin"] == "unlocatable"
+    assert o.detail["records"] > 0
+    assert "09 §9.5" in o.why and "records-origin-gap" in o.why
+
+
+def test_the_record_writer_still_omits_origin(checkable):
+    """The gap itself, pinned where a reader will meet it. When `origin`
+    is added to `RECORD_KEYS` this test fails and both it and the check
+    above are what change — deliberately, so the fix cannot land while
+    the check still reports the defect."""
+    from app.pack import records as pack_records
+    assert "origin_hash" in pack_records.RECORD_KEYS
+    assert "origin" not in pack_records.RECORD_KEYS, \
+        "`origin` landed: update check_records_vs_origin to re-fetch and " \
+        "re-parse, and retire docs/notes/records-origin-gap.md"
+
+
+def test_records_check_includes_records_and_nothing_else(checkable, monkeypatch,
+                                                         capsys):
+    """07 §7.3: "`records check` is `hold check --checks roots,records[,
+    records-vs-origin][,origin-seal]` and nothing else — `records` … is
+    the only local check that proves what is inside a shard rather than
+    that the file matches the snapshot, and leaving it out made `--sample
+    F` on this command affect nothing unless `--origin` was given."
+    """
+    from app import louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    assert louise.main(["hold", "records", "check", "gutenberg", "--root",
+                        str(root), "--json", "--seed", SEED.hex(),
+                        "--sample", "1"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert [c["check"] for c in doc["checks"]] == ["roots", "records"]
+    assert doc["checks"][1]["detail"]["records"] > 0
+
+
+def test_records_check_origin_adds_the_two_origin_checks(checkable, monkeypatch,
+                                                         capsys):
+    from app import louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    assert louise.main(["hold", "records", "check", "gutenberg", "--root",
+                        str(root), "--json", "--origin",
+                        "--seed", SEED.hex()]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert [c["check"] for c in doc["checks"]] == \
+        ["roots", "records", "records-vs-origin", "origin-seal"]

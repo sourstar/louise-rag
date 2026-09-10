@@ -167,6 +167,7 @@ class Ctx:
     embed: Callable[[list[str]], list[list[float]]] | None = None
     vectors_for: Callable[[list[str]], dict[str, list]] | None = None
     reference: Any = None
+    origin_fetch: Callable[[str], bytes] | None = None
 
     @property
     def drag(self) -> Path:
@@ -409,6 +410,70 @@ def check_vectors_sample(ctx: Ctx) -> Outcome:
                    why=r.why)
 
 
+def check_records_vs_origin(ctx: Ctx) -> Outcome:
+    """"a seeded sample of shards, RE-FETCHED FROM THE ORIGIN by the
+    locator each record carries and re-parsed with the Codex's toolchain,
+    reproduces every record line of the shard byte for byte — the
+    decompressed lines in order, not merely the same `records_root`"
+    (03 §3.2).
+
+    THIS CHECK CANNOT RUN TODAY, and the reason is a defect rather than a
+    missing step: 09 §9.5 makes `origin` a required record field — "the
+    locator of this record's own origin bytes" — and
+    `app/pack/records.py::RECORD_KEYS` does not carry it, so no record
+    this platform has ever written says where its origin unit is. Half of
+    invariant 11 is implemented: every record carries `origin_hash`, and
+    nothing carries the locator that hash is of.
+
+    The consequence is precisely what invariant 11 exists to prevent. The
+    peer that BUILT a shard can still re-parse it, because its manifest
+    holds the paths; a peer who RECEIVED that shard cannot, ever, and 03
+    §3.4's whole argument — that a stranger's collection can be checked
+    against its origin — rests on this check. See
+    `docs/notes/records-origin-gap.md`; fixing it changes the record
+    bytes, so it is the operator's call and not mine.
+
+    Written now, and not deferred with the rest, so that it reports the
+    defect where a verifier meets it rather than in a note nobody reads.
+    """
+    shards = sampled_shards(ctx.codex, ctx.snapshot, "records-vs-origin",
+                            seed=ctx.seed, override=ctx.override)
+    ran, seen, missing = [], 0, 0
+    for s in shards:
+        try:
+            records = ctx.records_of(s)
+        except FileNotFoundError:
+            continue
+        ran.append(s)
+        for r in records:
+            seen += 1
+            if not r.get("origin"):
+                missing += 1
+    if not ran:
+        return Outcome("records-vs-origin", INCONCLUSIVE,
+                       why="this peer holds none of the sampled shards")
+    if missing:
+        return Outcome(
+            "records-vs-origin", INCONCLUSIVE,
+            {"records": seen, "failed": [], "origin": "unlocatable"},
+            ctx.seed, _shard_ids(ctx.codex, ran),
+            why=f"{missing} of {seen} sampled record(s) carry no `origin` "
+                f"locator, which 09 §9.5 requires of every record. There is "
+                f"nothing to re-fetch: this platform's record writer omits "
+                f"the field (docs/notes/records-origin-gap.md), so the check "
+                f"is inconclusive rather than passing on records nobody "
+                f"could ever verify against their source")
+    if ctx.origin_fetch is None:
+        return Outcome("records-vs-origin", INCONCLUSIVE,
+                       {"records": seen, "failed": [], "origin": "not given"},
+                       ctx.seed, _shard_ids(ctx.codex, ran),
+                       why="no origin to re-fetch from; `--origin` names one")
+    return Outcome("records-vs-origin", INCONCLUSIVE,
+                   {"records": seen, "failed": [], "origin": "reachable"},
+                   ctx.seed, _shard_ids(ctx.codex, ran),
+                   why="the re-parse is not built; the locators are there")
+
+
 def _not_yet(check: str, why: str):
     def run(_ctx: Ctx) -> Outcome:
         return Outcome(check, INCONCLUSIVE, why=why)
@@ -426,10 +491,7 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "signature": check_signature,
     "calibration": check_calibration,
     "vectors-sample": check_vectors_sample,
-    "records-vs-origin": _not_yet(
-        "records-vs-origin",
-        "needs the origin re-fetched and re-parsed with the Codex's "
-        "toolchain (migration plan step 5); not built"),
+    "records-vs-origin": lambda ctx: check_records_vs_origin(ctx),
     "centres": _not_yet(
         "centres", "needs `hold index build --vector` and the centres member "
                    "of 02 §2.4 (migration plan step 5); not built"),
