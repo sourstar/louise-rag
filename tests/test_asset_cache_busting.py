@@ -64,3 +64,24 @@ def test_the_licence_class_has_its_own_colour_rule():
     library = (Path(web.__file__).parent / "templates" / "library.html").read_text(
         encoding="utf-8")
     assert 'class="lic-{{ c.license.class }}"' in library
+
+
+def test_a_badge_wraps_instead_of_overflowing():
+    """An id has no spaces and no hyphens, so normal line-breaking has
+    nothing to break on and a long one runs off the panel at any window
+    width. It got longer when collections moved to their Codex: the legacy
+    space id was bare hex, 09 §9.3's carries a `sha256:` prefix — 71
+    characters on one unbreakable line.
+    """
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text(
+        encoding="utf-8")
+    badge = css[css.index(".badge{"):]
+    badge = badge[:badge.index("}")]
+    assert "overflow-wrap:anywhere" in badge, "a long id cannot break at all"
+    assert "max-width:100%" in badge, "nothing bounds it to its panel"
+    assert "vertical-align:top" in badge, \
+        "a wrapped badge would hang from its last baseline"
+
+    chip = css[css.index(".chip{"):]
+    chip = chip[:chip.index("}")]
+    assert "overflow-wrap:anywhere" in chip and "max-width:100%" in chip

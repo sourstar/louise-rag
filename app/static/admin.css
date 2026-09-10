@@ -57,8 +57,17 @@ table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;
   letter-spacing:.8px;padding:5px 8px;border-bottom:1px solid var(--line)}
 td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
+/* A badge wraps inside the panel rather than running off it. An id has no
+   spaces and no hyphens, so there is nothing for the normal line-breaking
+   rules to break on — `overflow-wrap:anywhere` is what lets a 71-character
+   `sha256:…` split at all. It got longer when collections moved to their
+   Codex: the legacy space id was bare hex, 09 §9.3's is prefixed.
+   `vertical-align:top` so a badge that wraps to two lines still lines up
+   with its neighbours instead of hanging from its last baseline, and the
+   bottom margin so two rows of badges do not touch. */
 .badge{display:inline-block;padding:1px 7px;border:1px solid var(--line);border-radius:10px;
-  font-size:10px;color:var(--muted);margin-right:5px}
+  font-size:10px;color:var(--muted);margin:0 5px 4px 0;
+  max-width:100%;overflow-wrap:anywhere;vertical-align:top}
 .badge.brass{color:var(--brass);border-color:var(--brass)}
 .badge.lapis{color:var(--lapis);border-color:var(--lapis)}
 .badge.ok{color:var(--ok);border-color:var(--ok)}
@@ -72,8 +81,10 @@ td{padding:6px 8px;border-bottom:1px solid #233240;vertical-align:top}
 .badge .lic-yellow{color:var(--amber)}
 .badge .lic-red{color:var(--err)}
 .badge .lic-unknown{color:var(--muted)}
+/* Same rule as `.badge`: a chip carrying an id must wrap, not overflow. */
 .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--line);
-  border-radius:14px;font-size:11px;color:var(--muted);margin:0 6px 6px 0}
+  border-radius:14px;font-size:11px;color:var(--muted);margin:0 6px 6px 0;
+  max-width:100%;overflow-wrap:anywhere}
 .chip.on{color:var(--brass);border-color:var(--brass)}
 .spine{height:14px;background:#233240;border-radius:2px;position:relative;overflow:hidden;display:flex}
 .spine span{height:100%}
