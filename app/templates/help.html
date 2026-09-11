@@ -111,6 +111,125 @@
 </div>
 
 <div class="panel" id="pipeline">
+  <h2>Reading the screens</h2>
+  <p class="note">The pages show numbers and state; the explanations live
+  here. If a reading is not obvious, it is described below rather than in
+  a tooltip.</p>
+
+  <h3 style="margin-top:14px">Node modes</h3>
+  <table>
+    <tr><th>mode</th><th>what runs</th></tr>
+    <tr><td><b>run everything</b></td><td>every stage.</td></tr>
+    <tr><td><b>download/seeding only</b></td>
+      <td>acquisition and discovery carry on and the node keeps serving
+      peers; the CPU-heavy stages (parse, index, embed) stand down. The
+      two halves cost very differently — moving bytes is nearly free,
+      while rdf/fts/embed run every core hot.</td></tr>
+    <tr><td><b>seeding only</b></td>
+      <td>also stops downloads and discovery: the node serves only what it
+      already holds (web UI, torrent seeding).</td></tr>
+    <tr><td><b>pause</b></td><td>stops everything.</td></tr>
+  </table>
+  <p class="note">One node-wide setting, not per-collection: per-collection
+  embed modes are untouched by all of these, so returning to <b>run
+  everything</b> restores exactly what each collection was doing.
+  <b>Rescan all collections</b> is greyed out in pause and seeding-only
+  because the worker returns at the pause gate before it services
+  discovery requests — a rescan would sit queued until the node runs.</p>
+
+  <h3 style="margin-top:14px">A collection's counters</h3>
+  <ul>
+    <li><b>Counts are cached for two minutes</b> and refreshed in the
+      background. Each is a full scan of that collection's
+      <code>documents</code> table — about 12&nbsp;s on pubmed's 24M rows —
+      so computing them per page load made the page a 20-second wait. A
+      backfill moves over days; a two-minute-old count does not mislead.</li>
+    <li><b>counting</b> means the first counter scan since a restart is
+      still running (~25&nbsp;s on the largest manifests). The bars read 0
+      until it lands.</li>
+    <li><b>The (…) beside a stage</b> is an ETA from the rate measured over
+      the last few minutes; its tooltip carries that rate as +N/h. It is
+      the proof a stage is moving when the bar barely shows it.</li>
+    <li><b>parsed (rdf) with no rate</b> is not stalled: parsing is ahead
+      of the lexical index, the worker gives the thread to indexing while a
+      full batch is ready, and parsing resumes when indexing catches up.</li>
+    <li><b>blocked</b> counts documents that failed a stage or exhausted
+      their retries. No stage picks them up again — which is why the bars
+      stop short — until <b>clear errors &amp; retry</b>.</li>
+    <li><b>not indexable</b> is a corpus fact, not a failure: the source
+      has no usable content for those documents (no text, or retracted
+      upstream). Retrying cannot change it, and the next scan re-applies
+      it, so they are counted separately.</li>
+    <li><b>embedding paused</b> means the backend gate stopped this
+      collection's encoder writes; the reason beside it names the
+      mismatch. See <i>Embedding safety</i> below.</li>
+    <li><b>Label colour</b> throughout: green = complete, turquoise =
+      running or in the scheduling pool, orange = on-demand only, grey =
+      off or paused.</li>
+  </ul>
+
+  <h3 style="margin-top:14px">Pre-embedded archives</h3>
+  <ul>
+    <li>The vector archive is its own download, separate from the corpus
+      and behind it — without the corpus the vectors are useless. Each file
+      applies as soon as it lands for the documents already indexed, is
+      revisited as more clear indexing, and is deleted once nothing in its
+      range still waits.</li>
+    <li><b>REJECTED</b> means the archive was not produced by this
+      collection's encoder. Correct the <code>[embed]</code> recipe, then
+      <code>genesis retry &lt;collection&gt;</code> puts it back in line.</li>
+    <li>Individual files can fail the same-function check while the rest
+      imports normally; those id ranges simply fall to the local
+      encoder.</li>
+    <li>A collection with <b>acquisition off</b> does not fetch its vector
+      archive either — the archive follows the same acquisition switch and
+      the same licence gate as the corpus.</li>
+    <li><b>pre-embedded (dense)</b> counts documents whose vectors came
+      from the archive — no GPU spent. A document the archive turns out not
+      to hold (no abstract, a chunk-shape mismatch) is released to the
+      local encoder once its archive file is complete.</li>
+  </ul>
+
+  <h3 style="margin-top:14px">Ask, and the reader</h3>
+  <ul>
+    <li><b>Pinned facts are not search results.</b> Entity lookups appear
+      as their own blocks above the ranked hits: they are never ranked,
+      never fused with passages, and carry no <b>[n]</b> citation.</li>
+    <li><b>Show results in …</b> translates with the node's own local
+      model, not an external service.</li>
+    <li><b>No hits</b> usually means the lexical index has not been built
+      for the languages currently in scope — check the collection's
+      <i>indexed (lexical)</i> stage and the scope languages before
+      suspecting the query.</li>
+    <li><b>The reader shows a header and nothing else</b> when a document
+      has not passed the fts stage: it renders only what the index stores
+      hold. It never falls back to the raw corpus file, because opening one
+      container to reach a single document costs ~15&nbsp;s on a PubMed
+      <code>xml.gz</code>.</li>
+  </ul>
+
+  <h3 style="margin-top:14px">Network</h3>
+  <ul>
+    <li><b>Traffic: both processes</b> means the worker is publishing
+      bandwidth samples. <b>web process only — worker silent</b> means no
+      worker sample arrived within the maximum sample age: the worker is
+      stopped, paused before its first loop, or cannot write the control
+      table.</li>
+    <li>A bandwidth override <b>expires on its own</b> and is never written
+      to <code>platform.toml</code>.</li>
+    <li><b>The collection magnet</b> is the only thing a peer needs to take
+      a whole collection — the member torrents hang off it.</li>
+    <li>Panels marked <b>not yet available</b> are placeholders until the
+      transfer manager and the bundle format plus coordinator land. They
+      show nothing rather than fabricated data.</li>
+  </ul>
+
+  <h3 style="margin-top:14px">System</h3>
+  <p class="note">An endpoint that pings <b>unreachable</b> does not break
+  search: dense retrieval degrades gracefully and lexical search is
+  unaffected. The health table is a liveness indicator only — no pipeline
+  decision consults it.</p>
+
   <h2>Ingestion pipeline</h2>
   <p class="note lead"><b>In short:</b> every document climbs four steps — found, described, searchable, embedded — and any step can be safely interrupted and re-run.</p>
   <p class="note">

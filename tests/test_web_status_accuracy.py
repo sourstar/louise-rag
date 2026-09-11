@@ -77,7 +77,7 @@ def test_card_names_blocked_documents(client):
     import re
     page = re.sub(r"\s+", " ", client.get("/admin/library").text)
     assert "2 blocked" in page
-    assert "exhausted their retries" in page
+    assert "exhausted retries" in page
     # and they are excluded from the embeddable backlog
     assert "3 documents awaiting the encoder" in page or "on-demand queue" in page
 

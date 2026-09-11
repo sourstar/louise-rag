@@ -328,7 +328,7 @@ def test_reader_falls_back_to_the_vector_store_and_says_when_nothing_is_indexed(
         "'C. Author',1,0,1,0)")
     doc = reader.document(c, 2)
     assert doc["chunks"] == [] and doc["header"]["text_from"] is None
-    assert "not indexed yet" in client.get(f"/read/{c.name}/2").text
+    assert "Not indexed yet" in client.get(f"/read/{c.name}/2").text
 
     # embedded (a bundle landed its vectors) but not indexed: Lance holds the text
     schema = pa.schema([

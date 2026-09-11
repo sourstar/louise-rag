@@ -96,4 +96,4 @@ def test_card_separates_retryable_failures_from_unindexable(client):
     page = client.get("/admin/library").text
     assert "2 blocked" in page          # the fts failure + the exhausted one
     assert "2 not indexable" in page    # the two corpus conditions
-    assert "Retrying cannot change that" in page
+    assert "failed a stage" in page      # and the retryable ones, named separately

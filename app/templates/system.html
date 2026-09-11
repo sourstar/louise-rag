@@ -5,11 +5,11 @@
 
 <div class="panel">
   <h2>Effective configuration</h2>
-  <div class="note">Tier 1 (env, identity — restart to change):</div>
+  <div class="note">Tier 1 — env (restart to change):</div>
   <table><tr><th>key</th><th>value</th></tr>
     {% for k,v in effective.tier1.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
-  <div class="note" style="margin-top:12px">Tier 2 (collections/*.toml, desired state — file value only):</div>
+  <div class="note" style="margin-top:12px">Tier 2 — collections/*.toml (file value):</div>
   <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th><th>embed recipe</th></tr>
     {% for c in effective.tier2 %}
     <tr><td>{{ c.collection }}</td><td>{{ c.plugin }}</td><td>{{ c.profile or '(default)' }}</td>
@@ -17,11 +17,11 @@
       <td>{{ c.embed_recipe }}</td></tr>
     {% endfor %}
   </table>
-  <div class="note" style="margin-top:12px">Tier 2 (platform.toml, node-level desired state):</div>
+  <div class="note" style="margin-top:12px">Tier 2 — platform.toml:</div>
   <table><tr><th>key</th><th>value</th></tr>
     {% for k,v in effective.tier2_platform.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
-  <div class="note" style="margin-top:12px">Tier 3 (control table, runtime override — does NOT survive restart):</div>
+  <div class="note" style="margin-top:12px">Tier 3 — control table (lost on restart):</div>
   <table><tr><th>key</th><th>value</th></tr>
     {% for k,v in effective.tier3.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
@@ -46,8 +46,7 @@
       <td><span class="badge {{ 'ok' if h.ok else 'err' }}">{{ 'up' if h.ok else 'unreachable' }}</span></td></tr>
     {% endfor %}
   </table>
-  <div class="note">best-effort, 1.5s timeout per endpoint — a failed ping here does not affect
-    search (dense search degrades gracefully; see retrieval.py).</div>
+  <div class="note">best-effort ping, 1.5s timeout per endpoint.</div>
 </div>
 
 <div class="panel">

@@ -6,7 +6,7 @@
 
 {% if result.facts %}
 <div class="panel">
-  <h2>Entity strip — pinned facts (never ranked, never cited with [n])</h2>
+  <h2>Entity strip — pinned facts</h2>
   {% for f in result.facts %}
   <div class="fact-card">
     <b>{{ f.label or f.entity_id }}</b> <span class="badge brass">{{ f.entity_id }}</span>
@@ -27,7 +27,7 @@
 {% for h in result.hits %}
 <div class="hit" data-collection="{{ h.source_collection or (h.chunk_id.split(':')[0]) }}" data-book="{{ h.book_id }}" data-cid="{{ h.chunk_id }}" data-title="{{ h.title or ('#' ~ h.book_id) }}">
   <div class="head">
-    <span><b title="open the document (the matched passage highlighted)">{{ h.title or ('#' ~ h.book_id) }}</b></span>
+    <span><b title="open the document">{{ h.title or ('#' ~ h.book_id) }}</b></span>
     <span class="badge">{{ h.authors or '' }}</span>
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
@@ -61,7 +61,7 @@
   </details>
 </div>
 {% else %}
-<div class="note">No hits. Is the lexical index built for the languages in scope?</div>
+<div class="note">No hits.</div>
 {% endfor %}
 </div>
 {% endif %}

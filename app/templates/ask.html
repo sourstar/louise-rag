@@ -2,8 +2,6 @@
 {% block title %}Ask — louise-rag{% endblock %}
 {% block content %}
 <h1>Ask</h1>
-<p class="note">Answers cite sources as [n]; pinned facts (entity lookups) are shown separately —
-they are never ranked and never compete with search hits (CLAUDE.md invariant 4).</p>
 
 <div class="panel">
   <label>Collection scope</label>
@@ -23,8 +21,7 @@ they are never ranked and never compete with search hits (CLAUDE.md invariant 4)
     {# "show results in": CONTENT only — snippets and the answer are
        translated / answered in this language; titles, authors, ids and
        the page itself never change (STATUS 5j) #}
-    <select id="lang" style="width:auto" onchange="applyLanguage()"
-            title="Show the results' content in this language: snippets and the answer. Titles, authors and ids stay as published; the interface does not change.">
+    <select id="lang" style="width:auto" onchange="applyLanguage()" title="content language of snippets and answer">
       <option value="original">results in their own language</option>
       {% for code, name in result_languages %}
       <option value="{{ code }}">show results in {{ name }}</option>
@@ -127,7 +124,7 @@ async function applyLanguage(){
         body:JSON.stringify({lang,items})}); d=await r.json();}catch(e){d=null}
   if(!d||d.failed){
     const note=document.createElement('div'); note.className='note translated-from';
-    note.textContent='translation unavailable right now — showing the originals';
+    note.textContent='translation unavailable — showing the originals';
     const hits=document.getElementById('hits'); if(hits)hits.prepend(note);
     return;
   }
@@ -136,7 +133,7 @@ async function applyLanguage(){
     s.textContent=t;
     const from=s.dataset.lang||'?';
     const b=document.createElement('span'); b.className='badge translated-from';
-    b.title='translated by the local model; the original is in the provenance drawer';
+    b.title='original in the provenance drawer';
     b.textContent='translated from '+from; s.parentElement.insertBefore(b,s.nextSibling);
   }
 }

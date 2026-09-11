@@ -3,11 +3,8 @@
 {% block content %}
 <div class="panel" style="max-width:420px;margin:40px auto">
   <h2>Librarian login</h2>
-  <p class="note">Librarian areas (Library / Network / System) require the node's admin token.
-    Ask stays open and read-only on the LAN regardless.</p>
   {% if not admin_token_configured %}
-  <p class="note" style="color:var(--err)">ADMIN_TOKEN is not set on this node — admin routes are
-    disabled until an operator sets it (Tier 1 env var).</p>
+  <p class="note" style="color:var(--err)">ADMIN_TOKEN is not set — admin routes are disabled until an operator sets it.</p>
   {% else %}
   <label>Admin token</label>
   <input id="token" type="password" autofocus>

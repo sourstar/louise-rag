@@ -20,7 +20,7 @@
     </div>
   </div>
   {% if not doc.chunks %}
-  <div class="note" style="margin-top:10px">This document is not indexed yet, so its text is not in the index stores — the reader shows what has been indexed, never the raw corpus file (a PubMed container takes 15 s to open).</div>
+  <div class="note" style="margin-top:10px">Not indexed yet — no text to show.</div>
   {% endif %}
   <div class="reader-body">
   {% set ns = namespace(chapter=None) %}

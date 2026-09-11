@@ -2,9 +2,6 @@
 {% block title %}Network — louise-rag{% endblock %}
 {% block content %}
 <h1>Network</h1>
-<p class="note">The trust/traffic room. Most of this lands with P0.7 (transfer manager) and
-  P1.1/P1.3 (bundle format + coordinator) — panels below are honest placeholders, not
-  fabricated data.</p>
 
 <div class="panel">
   <h2>Traffic <span class="badge" id="bw-scope">both processes</span></h2>
@@ -28,8 +25,7 @@
 
 <div class="panel">
   <h2>Boost bandwidth tonight</h2>
-  <div class="note">A Tier-3 runtime override: it expires on its own and is never written
-    to platform.toml, so the file always wins on restart (CLAUDE.md invariant 10).</div>
+  <div class="note">Expires on its own; never written to platform.toml.</div>
   <div class="row">
     <div><label>Rate (blank = clear)</label><input id="ov_rate" placeholder="e.g. 10Mbit"></div>
     <div><label>Hours</label><input id="ov_hours" type="number" value="12"></div>
@@ -40,16 +36,11 @@
 
 <div class="panel">
   <h2>Bundle ledger</h2>
-  <div class="note">not yet available — lands with P1.1 (bundle format: app/bundles/) and
-    P1.3 (coordinator, which owns the bundles/credit ledger in its own service DB).</div>
+  <div class="note">not yet available</div>
 </div>
 
 <div class="panel">
   <h2>Seeding <span class="badge" id="seed-scope">no torrents published</span></h2>
-  <div class="note">What this node serves to peers: every torrent published with
-    <code>torrent publish</code> is seeded by the worker while the node runs,
-    downloads/seeding only, or seeding only — paused stops it. Uploaded bytes
-    are what the <b>upload</b> figure above measures.</div>
   {# grouped per collection (STATUS 5l): one summary row per collection —
      with its TORRENT COLLECTION magnet to copy when the publisher made one
      — and the member torrents underneath, shown on demand #}
@@ -104,8 +95,7 @@ try{
         badge.textContent=w.reporting?'both processes':'web process only — worker silent';
         badge.title=w.reporting
           ? 'worker sample '+(w.age_seconds??'?')+'s old'
-          : 'no worker sample within '+(w.max_age_seconds??'?')+'s: it is stopped, '
-            +'paused before its first loop, or cannot write the control table';
+          : 'no worker sample within '+(w.max_age_seconds??'?')+'s';
       }
       const sd=d.seeding||{}, rows=sd.rows||[], tbl=document.getElementById('seed-table'),
             sb=document.getElementById('seed-scope');
@@ -129,7 +119,7 @@ try{
           const tr=document.createElement('tr'); tr.className='seed-row seed-group';
           tr.innerHTML=`<td><a href="#" data-coll="${esc(coll)}" class="seed-toggle" title="show the single torrents">${open?'▾':'▸'}</a></td>`
             +`<td><b>${esc(coll)}</b></td>`
-            +`<td>${members.length} torrent${members.length===1?'':'s'}${index?' · <button class="seed-copy" data-magnet="'+esc(magnet)+'" title="copy the torrent-collection magnet — the only thing a peer needs">copy collection magnet</button>':''}</td>`
+            +`<td>${members.length} torrent${members.length===1?'':'s'}${index?' · <button class="seed-copy" data-magnet="'+esc(magnet)+'" title="copy the torrent-collection magnet">copy collection magnet</button>':''}</td>`
             +`<td>${tot.f}</td><td>${bytes(tot.b)}</td><td>${bytes(tot.u)}</td><td>${tot.p}</td><td>${esc(states)}</td>`;
           tbl.appendChild(tr);
           if(open){

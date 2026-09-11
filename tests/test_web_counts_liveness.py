@@ -547,7 +547,7 @@ def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
     assert shelf["stage_etas"]["rdf"] == "after fts (1,000 ahead)"
     assert shelf["stage_etas"]["fts"] == "TBD", "fts itself has no history yet"
     html = _render_library(shelf)
-    assert "after fts (1,000 ahead)" in html and "waiting by design" in html
+    assert "after fts (1,000 ahead)" in html and "waiting for the lexical index" in html
     assert "+None" not in html
     # once fts catches up to within a batch, rdf is judged on its own rate again
     con.execute("UPDATE documents SET fts_done=1 WHERE CAST(native_id AS INTEGER) < 950")
