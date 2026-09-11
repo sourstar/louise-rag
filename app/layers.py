@@ -196,8 +196,21 @@ def _archive_credits(collection) -> list:
     layer. An entry with no `kind` at all predates the three kinds and is
     an archive entry, which is what every one of them was.
     """
+    # A LIVE collection has no `credits` attribute — `app.collections.
+    # Collection` never had one and nothing sets it. It carries its Codex
+    # instead, so the credits are one hop away, and without this hop the
+    # Codex path below was unreachable for every collection the node
+    # actually runs: `declared` was always falsy and control fell to the
+    # platform registry. That is precisely what 06 §6.3 forbids — "the rule
+    # is computable from the record and the Codex alone, and a platform
+    # build cannot move a document between layers" — and the tests passed
+    # only because their fixtures set `credits` by hand.
+    credits = getattr(collection, "credits", None)
+    if not credits:
+        codex = getattr(collection, "codex", None)
+        credits = getattr(codex, "credits", None)
     out = []
-    for credit in getattr(collection, "credits", None) or ():
+    for credit in credits or ():
         kind = (getattr(credit, "kind", None)
                 or (credit.get("kind") if isinstance(credit, dict) else None))
         if kind in (None, "archive"):
@@ -210,7 +223,10 @@ def _rule_matches(rule: str, collection, native_id: int, row=None) -> bool:
         return True
     if rule.startswith("archive:"):
         archive_id = rule[len("archive:"):]
-        declared = getattr(collection, "credits", None)
+        # Same hop as `_archive_credits`: a live collection declares its
+        # credits through its Codex, not through an attribute of its own.
+        declared = (getattr(collection, "credits", None)
+                    or getattr(getattr(collection, "codex", None), "credits", None))
         if declared:
             # A collection that declares credits AT ALL is authoritative
             # about every archive, including the ones it does not name: an

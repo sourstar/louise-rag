@@ -326,6 +326,8 @@ def local_collection(root, name: str, codex, *, corpus_dir=None):
 
     from app import collections as collections_mod
 
+    from app import layers as layers_mod
+
     _, state_dir, _ = _paths(root, name)
     return collections_mod.Collection(
         name=name, plugin=codex.plugin, profile=None, embed_mode_default=None,
@@ -335,6 +337,19 @@ def local_collection(root, name: str, codex, *, corpus_dir=None):
         lance_dir=Path(root) / name / "lance",
         acquire_enabled=False,
         license_ack=_ack_of(codex, state_dir),
+        # THE CODEX'S LAYERS, and the Codex itself — the worker's loader
+        # passes both (app/collections.py) and this did not, so every stage
+        # reaching a collection through here cut documents with the
+        # PLUGIN's implicit chunker instead of the declared layer list.
+        # For a one-layer collection whose plugin chunker happens to equal
+        # it — wikivec's `verbatim`, pubmed's `abstract` — that is
+        # accidentally right and silent. For a collection that declares
+        # layers the plugin does not have, it writes vectors under a
+        # `space_id` that promises a different cut: invariant 1's failure
+        # mode, and undetectable from outside because both halves are
+        # internally consistent.
+        layers=layers_mod.layers_for(codex),
+        codex=codex,
     )
 
 

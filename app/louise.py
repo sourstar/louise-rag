@@ -424,6 +424,16 @@ def cmd_collection_ack(a) -> int:
     return 0
 
 
+def archive_is_local(archive_id: str) -> bool:
+    """True when the archive's vectors live in the CORPUS rather than in
+    downloaded shards — `adapter="corpus-embedded"`, which is how the
+    Upstash Wikipedia set is carried. Such an archive is unreachable
+    without a corpus directory, and saying so beats finding nothing."""
+    from app.bundles import genesis
+    archive = genesis.ARCHIVES.get(archive_id)
+    return bool(archive is not None and getattr(archive, "local", False))
+
+
 def cmd_vectors_archive_import(a) -> int:
     """`hold vectors import <collection> --archive ID` — a published
     pre-embedded set, through the archive route.
@@ -450,7 +460,18 @@ def cmd_vectors_archive_import(a) -> int:
         template as tpl
 
     name, codex = col.resolve(a.root, a.collection)
-    local = rec.local_collection(a.root, name, codex)
+    # `corpus_dir` matters for a LOCAL archive — one whose vectors live in
+    # the corpus itself (`adapter="corpus-embedded"`, the Upstash set).
+    # `_local_shards` reads `collection.corpus_dir`, so without one this
+    # command could not reach such an archive at all: it resolved None and
+    # found nothing, silently. A fetched archive is unaffected, which is
+    # why it went unnoticed.
+    local = rec.local_collection(a.root, name, codex, corpus_dir=a.corpus)
+    if archive_is_local(a.archive) and not a.corpus:
+        raise CodexError(
+            f"archive {a.archive!r} keeps its vectors in the corpus itself, "
+            f"so --corpus DIR is required: there is nowhere else to read "
+            f"them from")
     licensing.require_ack(
         local, use="an archive's vectors are imported into this collection")
 
@@ -1328,6 +1349,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="a published pre-embedded set from the platform's "
                           "registry, e.g. medcpt-pubmed. Refused unless this "
                           "collection's `credits` names it (06 §6.6)")
+    p.add_argument("--corpus", metavar="DIR",
+                   help="with --archive: the corpus directory. REQUIRED when "
+                        "the archive keeps its vectors in the corpus itself "
+                        "(adapter corpus-embedded) — there is nowhere else "
+                        "to read them from")
     p.add_argument("--shards", nargs="*",
                    help="with --archive: only these shards (default: all)")
     p.add_argument("--snapshot",
