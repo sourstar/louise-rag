@@ -521,7 +521,8 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
     key = str(collection.manifest_path)
     if time.time() < _yield_until.get(key, 0.0):
         return None
-    for shard in _remote_drain_order(archive.shards, rows, now):
+    for shard in _remote_drain_order(archive.shards, rows, now, collection,
+                                     archive, con):
         try:
             result = import_shard(con, collection, archive, shard,
                                   fetch=_not_on_disk, revisit=True, stop=stop)
@@ -540,7 +541,25 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
 _yield_until: dict[str, float] = {}
 
 
-def _remote_drain_order(shards, rows, now: int) -> list[str]:
+#: per collection (manifest path): when a stalled archive may force one
+#: backed-off shard to be re-checked. See `_remote_drain_order`.
+_forced_revisit: dict[str, float] = {}
+
+
+def _cache_is_full(con, archive) -> bool:
+    """True when no further shard can be fetched until one goes final —
+    genesis_fetch's own condition, asked from this side."""
+    try:
+        from . import genesis_fetch
+        resident = genesis_fetch.resident_bytes(con, archive)
+        return bool(resident + (archive.shard_bytes or 0)
+                    > config.GENESIS_CACHE_BYTES)
+    except Exception:       # noqa: BLE001 — a stall check must never raise
+        return False
+
+
+def _remote_drain_order(shards, rows, now: int, collection=None,
+                        archive=None, con=None) -> list[str]:
     """Fetched-never-applied shards first, in declared order — the free
     vectors land as early as possible — then applied shards that still
     have documents waiting (`pending`), soonest revisit first. A shard's
@@ -557,7 +576,42 @@ def _remote_drain_order(shards, rows, now: int) -> list[str]:
            and (rows[s]["pending"] is None or rows[s]["pending"] > 0)
            and int(rows[s]["next_pass_at"] or 0) <= now]
     due.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
-    return fresh + due
+    if fresh or due or collection is None or archive is None or con is None:
+        return fresh + due
+
+    # THE STALL. Nothing is due, and if the cache is also full then nothing
+    # can be fetched either — so the round does nothing, and will keep
+    # doing nothing until a backoff expires. That backoff is up to
+    # GENESIS_PASS_BACKOFF_MAX_SEC (6 h) and it DOUBLED because earlier
+    # passes imported little; but they imported little because fts had not
+    # reached those documents yet, and fts has been advancing ever since.
+    # `pending` counts documents with fts_done=0, so the very condition the
+    # backoff is waiting on changes continuously while the backoff does
+    # not. Measured on pubmed 2026-09-11: eleven applied shards each
+    # carrying a 9,600 s backoff and a stale `pending`, every document in
+    # the ranges checked already indexed — so every one of them was
+    # finalisable, 37 GiB sat resident against a 24 GiB bound, and the
+    # import advanced in bursts hours apart instead of continuously.
+    #
+    # Revisiting is then the ONLY way forward, so the backoff is not
+    # merely useless, it is the thing holding the pipeline shut. Force the
+    # soonest-due shard, at most once per GENESIS_MAX_WAIT_SEC, which
+    # bounds the cost to one `pending` recount (~9.5 s on pubmed) per ten
+    # minutes and only while stalled.
+    if not _cache_is_full(con, archive):
+        return []
+    key = str(collection.manifest_path)
+    if now < _forced_revisit.get(key, 0.0):
+        return []
+    backed_off = [s for s in shards
+                  if rows.get(s) is not None
+                  and rows[s]["state"] in ("applied", "applying")
+                  and (rows[s]["pending"] is None or rows[s]["pending"] > 0)]
+    if not backed_off:
+        return []
+    backed_off.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
+    _forced_revisit[key] = now + config.GENESIS_MAX_WAIT_SEC
+    return backed_off[:1]
 
 
 def _drain_order(shards, rows, *, revisit: bool):

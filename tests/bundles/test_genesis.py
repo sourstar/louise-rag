@@ -995,3 +995,60 @@ def test_a_document_whose_text_will_not_load_is_skipped_by_the_batch(collection,
     assert r["docs"] == 9 and "fake:4" in r["residual_uids"]
     done = {x["uid"] for x in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
     assert "fake:4" not in done and len(done) == 9
+
+
+# ---- the stall ------------------------------------------------------------
+
+def test_a_full_cache_forces_one_backed_off_shard(monkeypatch):
+    """Measured on pubmed 2026-09-11: eleven applied shards each carrying a
+    9,600 s backoff and a stale `pending`, every document in the ranges
+    checked already indexed — so every one of them was finalisable, 37 GiB
+    sat resident against a 24 GiB bound, and the import advanced in bursts
+    hours apart instead of continuously.
+
+    The deadlock: forward progress needs a shard to go final; a shard goes
+    final only on a pass; the pass waits on a backoff that DOUBLED because
+    earlier passes imported little — and they imported little because fts
+    had not reached those documents yet. `pending` counts `fts_done=0`, so
+    the condition the backoff waits on changes continuously while the
+    backoff does not.
+    """
+    from app.bundles import genesis
+
+    rows = {"3": {"state": "applied", "pending": 400000, "next_pass_at": 9_999_999},
+            "4": {"state": "applied", "pending": 300000, "next_pass_at": 8_888_888}}
+    shards = ["3", "4"]
+
+    class _C:
+        manifest_path = "/tmp/x/manifest.sqlite"
+    class _A:
+        shard_bytes = 1
+        shards = ("3", "4")
+
+    genesis._forced_revisit.clear()
+    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: True)
+    # nothing is due — without the forcing this is an empty round, forever
+    got = genesis._remote_drain_order(shards, rows, 1000, _C(), _A(), object())
+    assert got == ["4"], "the soonest-due backed-off shard must be forced"
+
+    # and only once per GENESIS_MAX_WAIT_SEC, so the pending recount is bounded
+    assert genesis._remote_drain_order(shards, rows, 1001, _C(), _A(), object()) == []
+    genesis._forced_revisit.clear()
+
+
+def test_a_cache_with_room_still_respects_the_backoff(monkeypatch):
+    """The backoff is right in the normal case — a shard that genuinely has
+    nothing to do should cost less and less. Only a STALLED archive, where
+    revisiting is the one way forward, overrides it."""
+    from app.bundles import genesis
+
+    rows = {"3": {"state": "applied", "pending": 400000, "next_pass_at": 9_999_999}}
+    class _C:
+        manifest_path = "/tmp/y/manifest.sqlite"
+    class _A:
+        shard_bytes = 1
+        shards = ("3",)
+
+    genesis._forced_revisit.clear()
+    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: False)
+    assert genesis._remote_drain_order(["3"], rows, 1000, _C(), _A(), object()) == []
