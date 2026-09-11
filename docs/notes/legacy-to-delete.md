@@ -10,12 +10,53 @@ condition below is met: about 587 GB.**
 
 ---
 
-## 1. `gutenberg` — SWITCHED 2026-09-10, not yet confirmed
+## 1. `gutenberg` — SWITCHED 2026-09-10, on its Codex since 2026-09-11
 
-The collection now runs from its Codex
-(`sha256:dd528265706eddb1…`); `config/collections/gutenberg.toml` names
-it and the worker resolves the tree under
-`/data/collections/gutenberg/`.
+The collection runs from its Codex (`sha256:dd528265706eddb1…`);
+`config/collections/gutenberg.toml` names it in a `codex` key and the
+worker resolves the tree under `/data/collections/gutenberg/`.
+
+**That sentence was wrong when this note first said it, and the way it
+was wrong is worth keeping.** On 2026-09-10 the switch was made by
+repointing the legacy TOML's `[paths]` at the migrated tree — so the data
+was right, but the collection was still loaded down the legacy path, with
+its plugin and layers taken from the FILE. No TOML on the node had ever
+carried a `codex` key; the bridge in `app/collections.py` was built,
+tested and unused.
+
+The file declared its own layer:
+
+```toml
+[[layers]]
+chunker = "fixed"
+rule = "default"
+```
+
+with no `params`. `parse_layers` defaults params to `{}` and
+`chunk_fixed` refuses that by design — "there is no default; a layer that
+does not say is refused" (06 §6.3) — while the Codex says the window is
+`{tokens = 1000, overlap = 120}`. So the node chunked by one answer and
+named itself by another. **10,212 documents errored at the embed stage**
+(`embed: the `fixed` chunker takes `tokens` and `overlap` from its
+layer's params`), and because an error removes a document from every
+selection, they were out of the pipeline until a human intervened. The
+worker log shows the whole encoder budget going into it: `gutenberg: 100%
+in 3677 turns (733s, 10212 units, 71 overruns)`.
+
+This is exactly invariant 1's failure mode, and note that nothing
+detected it: both halves were internally consistent and the
+`collection_id` was computed honestly. Only the chunker's refusal to
+guess made it visible at all — had `fixed` carried a default window, the
+collection would have embedded 8.7M chunks under an id that promised a
+different cut, and the vectors would have been wrong-but-plausible.
+
+Fixed 2026-09-11 by rewriting the file as a Codex TOML: `codex = "…"`,
+no `plugin`, no `[[layers]]`, no `[paths]`, and the encoder recipe moved
+from `[embed]` to `[encoder]` because on a Codex TOML the bare `embed`
+key is the MODE. The 10,212 errors were then cleared with
+`db.apply_reset(con, "errors")`, which leaves the 1,454 unprefixed `no
+txt file` corpus facts alone. The previous file is kept at
+`config/collections/_replaced-2026-09-11/gutenberg.toml.paths-form`.
 
 | what | size | path |
 |---|---|---|
@@ -30,8 +71,9 @@ it and the worker resolves the tree under
 
 1. `/data/collections/gutenberg/index` holds the full text index —
    `SUM(fts_done)` in the migrated manifest reaches 77,866, matching what
-   the legacy manifest reached. **In progress**: the worker is
-   re-indexing now, ~178 documents / 20,018 chunks per 72 s commit.
+   the legacy manifest reached. **MET 2026-09-11**: 77,866 of 79,320, the
+   remaining 1,454 being the `no txt file` entries the origin ships no
+   text for.
 2. A search over gutenberg in the Library returns results, run by a
    person, not inferred from a row count.
 3. `hold check gutenberg --root /data/collections` still passes — it did
