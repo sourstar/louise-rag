@@ -338,3 +338,21 @@ def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     FTS_DIR.mkdir(parents=True, exist_ok=True)
     LANCE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def louise_root() -> Path:
+    """`<LOUISE_ROOT>` — the ONE directory of 07 §7.8, whose
+    `collections/<name>/` holds each Codex collection's drag, state, index
+    and vector table.
+
+    Here rather than in app/collections.py because app/louise.py needs the
+    same answer and importing that module would pull the whole plugin
+    registry onto the path of every CLI invocation. Read at CALL time: a
+    module-level constant freezes the environment at import, which is the
+    defect this replaces — `app/louise.py` treated $LOUISE_ROOT as the
+    collections directory ITSELF while app/collections.py treated it as the
+    PARENT, so the CLI listed a different directory from the one the worker
+    serves, in every configuration.
+    """
+    value = os.getenv("LOUISE_ROOT")
+    return Path(value) if value else DATA_DIR

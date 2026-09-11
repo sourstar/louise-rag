@@ -48,7 +48,12 @@ from pathlib import Path
 from app.hold import codex as cx, collection as col, template as tpl
 from app.hold.codex import CodexError, Defect, Origin, Update, Work
 
-DEFAULT_ROOT = Path(os.environ.get("LOUISE_ROOT", "collections"))
+def _default_root() -> Path:
+    """`<LOUISE_ROOT>/collections` — the directory app/collections.py
+    resolves a Codex collection under. Resolved per call, never at import:
+    tests set LOUISE_ROOT after importing this module."""
+    from app import config as _config
+    return _config.louise_root() / "collections"
 
 
 def _print(obj) -> None:
@@ -1134,7 +1139,7 @@ def build_parser() -> argparse.ArgumentParser:
     verbs = coll.add_subparsers(dest="verb", required=True)
 
     def root_arg(p):
-        p.add_argument("--root", type=Path, default=DEFAULT_ROOT,
+        p.add_argument("--root", type=Path, default=None,
                        help="where collections live (default: ./collections or $LOUISE_ROOT)")
 
     p = verbs.add_parser("create", help="write a Codex from a plugin and a recipe; print its id")
@@ -1466,6 +1471,17 @@ def main(argv=None) -> int:
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
     a = build_parser().parse_args(argv)
+    if getattr(a, "root", None) is None and hasattr(a, "root"):
+        a.root = _default_root()
+    root = getattr(a, "root", None)
+    if root is not None and not Path(root).is_dir():
+        # A missing root must not be reported as "no Codex collections
+        # held": `_held()` swallows a missing directory, so a mistyped or
+        # unset root printed an empty list and exited 0 — the same output
+        # as a node that genuinely holds none.
+        print(f"louise: {root} is not a directory; --root is "
+              f"<LOUISE_ROOT>/collections (07 §7.8)", file=sys.stderr)
+        return 2
     try:
         return a.fn(a)
     except CodexError as e:

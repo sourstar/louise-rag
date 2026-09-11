@@ -230,14 +230,30 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
         # it does. `collections` is the live list, so a collection whose
         # file was retired drops out here rather than seeding on until the
         # process exits.
-        dropped = seeder.retain({c.name for c in collections})
+        # Invariant 9 says a yellow/red collection without an ack is "not
+        # discovered, not imported, not exchanged". Acquisition, scan and
+        # archive were gated; the OUTBOUND path never consulted
+        # app/licensing.py at all, so this peer went on serving a corpus
+        # whose terms it had not accepted. Withheld collections are
+        # excluded from the live set, which both refuses to start them and
+        # — via retain — stops any handle already running.
+        from .. import licensing
+        allowed = set()
+        for c in collections:
+            try:
+                if licensing.state_for(c) != licensing.MISSING:
+                    allowed.add(c.name)
+            except Exception:   # noqa: BLE001 — a gate error withholds, never serves
+                continue
+        dropped = seeder.retain(allowed)
         if dropped:
             db.log_event(control_con, "info", "seeding",
                          f"stopped seeding {len(dropped)} torrent(s) whose "
-                         f"collection this node no longer holds")
+                         f"collection this node no longer holds or may not "
+                         f"exchange")
         for collection in collections:
             con = cons.get(collection.name)
-            if con is None:
+            if con is None or collection.name not in allowed:
                 continue
             for entry in read_published(con):
                 try:

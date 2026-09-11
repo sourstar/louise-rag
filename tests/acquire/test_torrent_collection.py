@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import collections as collections_mod, db
+from app import collections as collections_mod, db, licensing
 from app.acquire import engine, seeding, torrent_collection, torrent_publish
 from app.acquire import transport_torrent as tt
 from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter,
@@ -211,6 +211,9 @@ def test_collection_only_understands_records_written_before_the_kind_field(
     corpus, members = _publish_members(tmp_path)
     c = replace(collections_mod.default_collection(), name="wikivec", plugin="embedded",
                 corpus_dir=corpus, manifest_path=tmp_path / "m2" / "manifest.db")
+    # `embedded` is yellow: publishing a corpus to peers is an EXCHANGE, and
+    # invariant 9 gates that too — the outbound path had no gate at all.
+    c = replace(c, license_ack=licensing.make_ack(c))
     c.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     con = db.connect(c)
     for m in members:

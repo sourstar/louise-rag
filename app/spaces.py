@@ -280,7 +280,12 @@ def validate_chunking_config() -> None:
 def validate_boot(collections: list) -> None:
     """Raises BootValidationError on a confirmed space or dim mismatch for
     any collection. Call once at process startup, before serving traffic or
-    processing documents."""
+    processing documents.
+
+    Raising is right for ONE collection, which is how every caller that
+    wants an answer about a specific collection uses it. A NODE holding
+    several wants `refuse_boot` instead — see there.
+    """
     validate_chunking_config()
     for collection in collections:
         con = db.connect(collection)
@@ -288,6 +293,34 @@ def validate_boot(collections: list) -> None:
             _validate_one(con, collection)
         finally:
             con.close()
+
+
+def refuse_boot(collections: list) -> list[tuple]:
+    """The node's boot check: validate each collection, refuse the ones
+    that fail, and keep the rest.
+
+    Invariant 1 states this in so many words — "a vector table whose
+    dim/space mismatches the Codex is a REFUSE-TO-START error FOR THAT
+    COLLECTION ... the node keeps running its others, that one is not
+    served, shared or searched" — and `validate_boot` did the opposite,
+    raising on the first bad one and taking every other collection down
+    with it. A chunking-config error still raises: that one is node-wide
+    by construction and no per-collection answer exists.
+
+    Returns [(collection, reason)] so the caller can drop them from the
+    served set and NAME the reason, which the invariant also requires.
+    """
+    validate_chunking_config()
+    refused: list[tuple] = []
+    for collection in collections:
+        con = db.connect(collection)
+        try:
+            _validate_one(con, collection)
+        except BootValidationError as e:
+            refused.append((collection, str(e)))
+        finally:
+            con.close()
+    return refused
 
 
 def report_boot_status(collections: list) -> list[dict]:

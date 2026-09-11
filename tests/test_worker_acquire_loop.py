@@ -39,9 +39,10 @@ def test_a_no_op_fetch_requests_no_scan(isolated_config, tmp_path):
     assert worker._take_discovery_request("c") is None
 
 
-def test_a_fetch_that_landed_files_requests_a_SCAN_not_a_fetch(isolated_config):
+def test_a_fetch_that_landed_files_requests_a_SCAN_not_a_fetch(isolated_config,
+                                                              tmp_path):
     worker._acquire_done["c"] = True
-    worker._finish_completed_acquires({}, [], {}, pipeline=True)
+    worker._finish_completed_acquires({}, [_collection(tmp_path)], {}, pipeline=True)
     request = worker._take_discovery_request("c")
     assert request is not None
     reason, acquire = request
@@ -85,3 +86,16 @@ def test_startup_and_interval_still_acquire(isolated_config):
     for reason in ("startup", "interval", "config-changed", "added"):
         worker._request_discovery("c", reason)
         assert worker._take_discovery_request("c") == (reason, True)
+
+
+def test_a_fetch_that_finished_after_removal_requests_nothing(isolated_config,
+                                                              tmp_path):
+    """A background fetch can outlive its collection's retirement. Re-arming
+    a discovery request for a name the node no longer holds was not inert:
+    the retired collection's pipeline thread keeps polling until
+    `_sync_pipeline_threads` runs later in the round, so the request could be
+    taken and a scan started against a collection just taken out of service.
+    """
+    worker._acquire_done["c"] = True
+    worker._finish_completed_acquires({}, [], {}, pipeline=True)
+    assert worker._take_discovery_request("c") is None

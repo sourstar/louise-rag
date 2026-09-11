@@ -22,6 +22,7 @@ frequent. Three properties are pinned here:
 3. OFF-THREAD. The worker runs a scan on its own thread beside the pipeline
    thread, one per collection at most, and the pipeline keeps working.
 """
+import dataclasses
 import json
 import threading
 import time
@@ -32,7 +33,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from app import collections as collections_mod, db, discovery, worker
+from app import collections as collections_mod, db, discovery, licensing, worker
 from app.plugins import cursor
 from app.plugins.base import DiscoverState, DocRef
 from app.plugins.embedded.source import EmbeddedSource, split_locator
@@ -53,10 +54,14 @@ def _write_shard(path: Path, specs, rows_per_group: int | None = None):
 
 
 def _collection(tmp_path, name="wikivec"):
-    return collections_mod.Collection(
+    c = collections_mod.Collection(
         name=name, plugin="embedded", profile=None, embed_mode_default=None,
         corpus_dir=tmp_path / "corpus", manifest_path=tmp_path / name / "manifest.db",
         fts_dir=tmp_path / name / "fts", lance_dir=tmp_path / name / "lancedb")
+    # `embedded` is a YELLOW source, and EVERY scan path is now gated on the
+    # acknowledgement rather than only the acquiring one — invariant 9 binds
+    # the USE, however the data arrived.
+    return dataclasses.replace(c, license_ack=licensing.make_ack(c))
 
 
 def _docs(con):

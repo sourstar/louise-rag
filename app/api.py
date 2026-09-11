@@ -41,8 +41,13 @@ STATIC = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        spaces.validate_boot(collections_mod.load_all())
+        # PER-COLLECTION (invariant 1): one collection whose space does not
+        # match is not served, and the node keeps the rest. The web process
+        # exiting over it took every other collection offline too.
+        for collection, reason in spaces.refuse_boot(collections_mod.load_all()):
+            print(f"NOT SERVED: {collection.name}: {reason}", file=sys.stderr)
     except spaces.BootValidationError as e:
+        # chunking config — node-wide, no per-collection answer exists
         print(f"BOOT VALIDATION FAILED: {e}", file=sys.stderr)
         sys.exit(1)
     yield

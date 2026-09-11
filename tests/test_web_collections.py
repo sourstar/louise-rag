@@ -41,6 +41,13 @@ def create(client, name, plugin="pubmed", *, corpus=None, **body):
         folder = config.CORPUS_MOUNTS_DIR / safe
         folder.mkdir(parents=True, exist_ok=True)
         corpus = folder.as_posix()
+    # pubmed is YELLOW, and invariant 9 requires the acknowledgement before
+    # its data is USED "however the data arrived" — not only when this node
+    # acquires it. The gate used to key on `acquire_enabled`, so creating a
+    # yellow collection with acquisition off skipped it entirely; now it
+    # does not, and every test here that is about something ELSE has to
+    # acknowledge. The tests that are about the GATE pass it explicitly.
+    body.setdefault("acknowledge_terms", True)
     return client.post("/admin/library/new/create",
                        json={"name": name, "plugin": plugin,
                              "corpus_dir": corpus, **body})
@@ -78,7 +85,7 @@ def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
     chosen = (mounts_root / "pubmed").as_posix()
     r = client.post("/admin/library/new/create",
                     json={"name": "withdir", "plugin": "pubmed",
-                           "corpus_dir": chosen})
+                           "corpus_dir": chosen, "acknowledge_terms": True})
     assert r.status_code == 200
     assert r.json()["corpus_mounted"] is True
     assert collections_mod.by_name("withdir").corpus_dir.as_posix() == chosen
@@ -86,14 +93,15 @@ def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
     # one corpus, one collection: the claimed mount is refused for another
     r = client.post("/admin/library/new/create",
                     json={"name": "second", "plugin": "pubmed",
-                           "corpus_dir": chosen})
+                           "corpus_dir": chosen, "acknowledge_terms": True})
     assert r.status_code == 409
     assert "withdir" in r.json()["detail"]
 
     # arbitrary container paths are NOT accepted — mounts-root entries only
     for bad in ("/somewhere/else", "../etc", str(tmp_path / "outside")):
         r = client.post("/admin/library/new/create",
-                        json={"name": "bad", "plugin": "pubmed", "corpus_dir": bad})
+                        json={"name": "bad", "plugin": "pubmed", "corpus_dir": bad,
+                               "acknowledge_terms": True})
         assert r.status_code == 400, bad
         assert "available" in r.json()["detail"]
 
@@ -260,7 +268,8 @@ def test_grow_options_never_offer_a_rollback(client):
 def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
     # pubmed is yellow-class: create with acquisition but WITHOUT
     # acknowledgement must refuse with the retry marker
-    r = create(client, "pm", "pubmed", acquire_enabled=True)
+    r = create(client, "pm", "pubmed", acquire_enabled=True,
+               acknowledge_terms=False)
     assert r.status_code == 409
     assert r.json()["detail"].startswith("terms-acknowledgement-required")
 
@@ -279,8 +288,17 @@ def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
 
 
 def test_ack_endpoint_records_license_for_existing_collection(client):
-    # created WITHOUT acquisition: no ack recorded, card should offer it
+    # An unacknowledged yellow collection can no longer be CREATED through
+    # the UI — that is the point of the gate — but it can still exist: a
+    # hand-written TOML, a config restored from backup, one that predates
+    # the gate. That is the state this endpoint is for, so build it the way
+    # it actually arises rather than through a route that now refuses.
     create(client, "pm2", "pubmed")
+    path = collections_mod.config_toml_path("pm2")
+    path.write_text(
+        "\n".join(line for line in path.read_text().splitlines()
+                  if not line.startswith("license_ack")) + "\n",
+        encoding="utf-8")
     assert collections_mod.by_name("pm2").license_ack is None
 
     r = client.get("/admin/library/pm2/terms")

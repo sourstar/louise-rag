@@ -1463,9 +1463,15 @@ def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
     server-side from the shipped terms text, identical to
     `corpus add --ack-terms`."""
     spec = ACQUIRE_REGISTRY.get(plugin)
-    if not acquire_enabled or spec is None:
+    if spec is None:
         return None
-    if spec.license_class.value != "yellow":
+    # NOT keyed on `acquire_enabled`. Invariant 9 requires the ack before the
+    # data is USED, "however the data arrived", and names hand-populated
+    # folders as explicitly not a bypass — so a yellow source declared with
+    # acquisition off still needs one. Keying this on acquisition meant
+    # `acquire_source = "off"` created an unacknowledged yellow collection
+    # and the gate never ran.
+    if spec.license_class.value not in ("yellow", "red"):
         return None
     if spec.terms_text_path is None or not spec.terms_text_path.is_file():
         raise HTTPException(500, f"{plugin}: yellow-class source ships no terms text")

@@ -47,7 +47,12 @@ def test_acquire_runs_when_enabled_and_spec_registered(tmp_path, monkeypatch):
     assert profile == "demo"    # defaults to "demo" when Collection.profile is unset
     # P0.7: the worker's stop event must reach acquisition, or a SIGTERM
     # during a long fetch is invisible until the whole run finishes.
-    assert stop is worker._stop
+    # the composite of SIGTERM and this collection's removal signal, so a
+    # retired collection stops fetching without waiting for a process exit
+    assert stop.is_set() is False
+    worker._gone_event("test").set()
+    assert stop.is_set() is True
+    worker._gone.pop("test", None)
     # completion raised the flag the main loop turns into a discovery scan
     with worker._acquire_lock:
         assert collection.name in worker._acquire_done

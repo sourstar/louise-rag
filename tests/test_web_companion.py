@@ -45,7 +45,9 @@ def _mount(name):
 
 def _create(client, **body):
     payload = {"name": "wiki", "plugin": "wikipedia", "profile": "demo",
-               "corpus_dir": _mount("wiki")}
+               "corpus_dir": _mount("wiki"),
+               # wikipedia is yellow; the gate no longer keys on acquisition
+               "acknowledge_terms": True}
     payload.update(body)
     return client.post("/admin/library/new/create", json=payload)
 
@@ -94,7 +96,7 @@ def test_companion_refuses_shared_mount_and_foreign_plugins(client):
     r = client.post("/admin/library/new/create", json={
         "name": "pm", "plugin": "pubmed", "corpus_dir": _mount("pm"),
         "companion_corpus_dir": _mount("pmvec"),
-        "acknowledge_companion_terms": True})
+        "acknowledge_companion_terms": True, "acknowledge_terms": True})
     assert r.status_code == 400
     assert "wikipedia plugin only" in r.json()["detail"]
     assert collections_mod.by_name("pm") is None
@@ -127,7 +129,7 @@ def test_snapshot_pin_survives_ui_rewrites(client):
     irreproducibility the pin exists to prevent."""
     r = client.post("/admin/library/new/create", json={
         "name": "wp", "plugin": "wikipedia", "profile": "demo",
-        "corpus_dir": _mount("wp")})
+        "corpus_dir": _mount("wp"), "acknowledge_terms": True})
     assert r.status_code == 200
     toml_path = collections_mod.config_toml_path("wp")
     text = toml_path.read_text(encoding="utf-8")
@@ -148,7 +150,7 @@ def test_embed_mode_survives_the_ack_rewrite(client):
     r = client.post("/admin/library/new/create", json={
         "name": "wiki2", "plugin": "wikipedia", "profile": "demo",
         "corpus_dir": _mount("wiki2"), "companion_corpus_dir": comp,
-        "acknowledge_companion_terms": True})
+        "acknowledge_companion_terms": True, "acknowledge_terms": True})
     assert r.status_code == 200
 
     # wikipedia (yellow) had no acquisition at create; ack it now — the

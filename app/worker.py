@@ -743,6 +743,14 @@ def _ingest_pending(con) -> bool:
 
 
 def _next_book(con, scope, embed_allowed=True, collection=None):
+    # THE ROUND IS GATED, not only the scan. rdf/fts/embed ran over
+    # whatever was already in the manifest with no licence check, so a
+    # withheld collection still got indexed and embedded and "withheld"
+    # meant only "scan withheld, everything else proceeds". Invariant 9
+    # gates the USE. `_license_allows` keeps its own once-an-hour log, so
+    # asking every round does not become per-round spam.
+    if collection is not None and not _license_allows(con, collection, "indexing"):
+        return None, None
     # 1. priority embeds (lazy queue), regardless of backfill mode
     if embed_allowed and scope["embed_mode"] in ("lazy", "all"):
         r = con.execute(_QUEUE_ELIGIBLE,
@@ -995,6 +1003,17 @@ def _embed_parallel(con, collection, recipe) -> bool:
 # writes). Completion raises a flag the main loop turns into a discovery
 # scan, so newly fetched files enter the pipeline without waiting for the
 # next interval.
+#: Per-collection removal signal, independent of WORKER_PIPELINE_THREADS —
+#: `_sync_pipeline_threads` mints its own only in pipeline mode and runs
+#: LATER in the round than `_sync_collections`, so neither could serve the
+#: byte-moving threads. They stopped only on SIGTERM: a retired collection
+#: went on fetching from its origin and draining its archive.
+_gone: dict[str, threading.Event] = {}
+
+
+def _gone_event(name: str) -> threading.Event:
+    return _gone.setdefault(name, threading.Event())
+
 _acquire_threads: dict[str, threading.Thread] = {}
 _acquire_done: dict[str, bool] = {}      # collection -> did it fetch anything
 _acquire_lock = threading.Lock()
@@ -1004,8 +1023,9 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
     con = db.connect(collection)
     fetched_any = False
     try:
-        result = acquire_engine.run_acquisition(con, collection, spec, profile,
-                                                 stop=_stop)
+        result = acquire_engine.run_acquisition(
+            con, collection, spec, profile,
+            stop=_AnyStop(_stop, _gone_event(collection.name)))
         fetched_any = bool(result.get("fetched"))
         db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
     except (LicenseAckRequiredError, DiskPreflightError) as e:
@@ -1062,8 +1082,9 @@ def _archive_worker(collection, reason: str) -> None:
     con = db.connect(collection)
     try:
         state = _archive_log_state.setdefault(collection.name, {})
-        result = bundle_genesis_fetch.run_fetcher(con, collection, stop=_stop,
-                                                  log_state=state)
+        result = bundle_genesis_fetch.run_fetcher(
+            con, collection, stop=_AnyStop(_stop, _gone_event(collection.name)),
+            log_state=state)
         if result.get("fetched"):
             db.log_event(con, "info", "genesis",
                          f"archive fetch ({reason}): landed {len(result['fetched'])} "
@@ -1275,8 +1296,16 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
         done = dict(_acquire_done)
         _acquire_done.clear()
     if pipeline:
+        # Filtered on the live set, exactly as the non-pipeline branch below
+        # already does. A fetch that finished AFTER its collection was
+        # retired re-armed a discovery request for a dead name; the retired
+        # collection's pipeline thread is still polling until
+        # `_sync_pipeline_threads` runs later in the round, so the request
+        # could be taken and a scan started against a collection just taken
+        # out of service.
+        live = {c.name for c in all_collections}
         for name, fetched in done.items():
-            if fetched:   # nothing landed → nothing to rescan
+            if fetched and name in live:   # nothing landed → nothing to rescan
                 _request_discovery(name, "background fetch finished",
                                     acquire=False)
         return
@@ -1347,6 +1376,13 @@ def _drain_bundle_inbox(con, collection) -> int:
 
 def _scan_only(con, collection, reason: str, stop=None) -> None:
     """Scan WITHOUT starting a fetch — see _request_discovery(acquire=False)."""
+    # The same gate `_discover` has. This path had none, and it is reachable
+    # for any collection whose discovery request carried acquire=False — so
+    # a yellow source with no acknowledgement was scanned and indexed
+    # through it while the acquiring path correctly refused. Invariant 9
+    # binds the USE, not the route that reached it.
+    if not _license_allows(con, collection, "corpus scan"):
+        return
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
     stats = discovery.sync_collection(con, collection, stop=stop)
     if stats.get("added") or stats.get("changed"):
@@ -2101,6 +2137,11 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             last_discover[kept.name] = time.time()
 
     for added in [c for c in current if c.name not in known]:
+        # A re-added collection must not inherit a set stop event, or its
+        # acquire/archive threads return "stopped" instantly and silently
+        # forever — `_archive_worker` logs nothing on an empty fetch, so it
+        # would fail invisibly.
+        _gone.pop(added.name, None)
         try:
             spaces.validate_boot([added])
         except spaces.BootValidationError as e:
@@ -2138,6 +2179,21 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             value = db.get_control(cons[gone], key)
             if value is not None:
                 _orphaned_node_control.setdefault(key, value)
+        # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
+        # that runs later in the round and not at all in non-pipeline mode or
+        # while the node is paused. Waking the transfer manager is required
+        # too — a thread parked in the token bucket or on an endpoint slot
+        # checks the predicate only after its wait returns, so setting the
+        # event without the wake is inert for the whole wait cap.
+        _gone_event(gone).set()
+        try:
+            get_manager().wake_all()
+        except Exception:   # noqa: BLE001 — never let telemetry stop a removal
+            pass
+        for table in (_acquire_threads, _acquire_done, _archive_threads,
+                      _archive_log_state, _archive_last_kick, _sizing_names,
+                      _license_nagged, _pipeline_idle_log):
+            table.pop(gone, None)
         cons[gone].close()
         del cons[gone]
         last_discover.pop(gone, None)
@@ -2186,7 +2242,7 @@ def _sizing_label(key: str) -> str:
     return f"{stage} {name}".strip()
 
 
-def _log_shares(con) -> None:
+def _log_shares(con, live_paths=None) -> None:
     """Publish what each collection actually GOT from each contended
     resource. Without this the fair share is an assertion; with it, a
     scheduling change can be judged on the general picture instead of on
@@ -2215,6 +2271,17 @@ def _log_shares(con) -> None:
     # above are derived from (app/sizing.py). A batch that drifts away from
     # BATCH_TARGET_S is visible here before it is visible as unfairness.
     sizes = sizing.sizer().snapshot()
+    if live_paths is not None:
+        # Filter on READ. Neither the sizer nor the scheduler prunes on
+        # removal, so a retired collection kept printing `unit costs` and
+        # `windows` lines with frozen numbers for the life of the process.
+        # The keys are `{stage}:{manifest_path}` for rates and the BARE
+        # manifest path for windows, so match on the path component.
+        def _live(key):
+            return any(str(p) == key or key.endswith(":" + str(p))
+                       for p in live_paths)
+        sizes = {"rates": {k: v for k, v in sizes["rates"].items() if _live(k)},
+                 "windows": {k: v for k, v in sizes["windows"].items() if _live(k)}}
     if sizes["rates"]:
         db.log_event(con, "info", "sched", "unit costs — " + "; ".join(
             f"{_sizing_label(k)}: {v * 1000:.1f} ms/doc" if v < 1
@@ -2268,7 +2335,7 @@ def _stats_publisher() -> None:
                     seed_cons[c.name] = db.connect(c)
             seeding.tick(collections, seed_cons, con, db.worker_state(con))
             db.publish_worker_rates(con, get_manager().rates())
-            _log_shares(con)
+            _log_shares(con, [c.manifest_path for c in all_collections])
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
     for c_con in seed_cons.values():
@@ -2281,7 +2348,13 @@ def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
     all_collections = collections_mod.load_all()
-    spaces.validate_boot(all_collections)
+    # Invariant 1: a space mismatch refuses THAT collection, not the node.
+    refused = spaces.refuse_boot(all_collections)
+    if refused:
+        names = {c.name for c, _ in refused}
+        for c, reason in refused:
+            print(f"NOT SERVED: {c.name}: {reason}", file=sys.stderr)
+        all_collections = [c for c in all_collections if c.name not in names]
 
     cons = {c.name: db.connect(c) for c in all_collections}
 

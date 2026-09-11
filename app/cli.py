@@ -32,6 +32,25 @@ def _handle_sigterm(signum, frame):
         pass
 
 
+def _refuse_unacknowledged(collection, use: str) -> bool:
+    """True (and printed) when this collection may not be EXCHANGED.
+
+    Invariant 9's "not exchanged" had no code gate anywhere on the
+    outbound path: `torrent publish` hashed and published a corpus, and
+    `torrent seed` served one, without ever consulting app/licensing.py.
+    Both run without the worker, so gating `seeding.tick` alone left them
+    open.
+    """
+    from . import licensing
+    if licensing.state_for(collection) == licensing.MISSING:
+        print(f"REFUSED: {collection.name}: this source's license requires an "
+              f"acknowledgement before {use} (invariant 9). Record one with "
+              f"`corpus add --ack-terms` or the Library's accept dialog.",
+              file=sys.stderr)
+        return True
+    return False
+
+
 def _collection_by_name(name: str):
     for c in collections_mod.load_all():
         if c.name == name:
@@ -709,6 +728,8 @@ def cmd_torrent_publish(args) -> int:
     from .acquire.spec import TransportError
 
     collection = _collection_by_name(args.collection)
+    if _refuse_unacknowledged(collection, "a corpus is published as a torrent"):
+        return 1
     out = Path(args.out) if args.out else (
         collection.manifest_path.parent / f"{collection.name}.torrent")
     # POLICY (spec.extras): extra formats are a local convenience and are
@@ -884,6 +905,8 @@ def cmd_torrent_seed(args) -> int:
     from .acquire import torrent_publish, transport_torrent
 
     collection = _collection_by_name(args.collection)
+    if _refuse_unacknowledged(collection, "a corpus is seeded to peers"):
+        return 1
     torrent = Path(args.torrent) if args.torrent else (
         collection.manifest_path.parent / f"{collection.name}.torrent")
     if not torrent.is_file():

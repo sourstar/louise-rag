@@ -484,8 +484,11 @@ def drain_next_shard(con, collection, *, stop=None, eager: bool = True) -> dict 
                     and now - d.oldest < config.GENESIS_MAX_WAIT_SEC:
                 continue                # let the batch grow; rdf/fts run meanwhile
             try:
+                # `stop=stop` — the remote branch below always passed it and
+                # this one never did, so a LOCAL archive pass observed
+                # neither SIGTERM nor its collection being retired.
                 result = import_shard(con, collection, archive, d.shard, revisit=True,
-                                      wanted=d.locators)
+                                      wanted=d.locators, stop=stop)
             except GenesisUnavailable:
                 return None             # recorded as skipped; retried later
             except GenesisError:
@@ -1123,10 +1126,14 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 flush()
 
         for uid, vecs in rows_iter:
-            if budget is not None and (time.time() - t_start > budget
-                                       or (stop is not None and stop.is_set())):
+            # The interrupt is INDEPENDENT of the budget. Nested under
+            # `budget is not None`, a pass started without one — which is
+            # every local-archive pass — could not be stopped at all: not by
+            # SIGTERM, not by its collection being retired. wikivec drained
+            # for hours past both.
+            stopped = stop is not None and stop.is_set()
+            if stopped or (budget is not None and time.time() - t_start > budget):
                 partial = True
-                stopped = stop is not None and stop.is_set()
                 break
             row = con.execute(
                 "SELECT uid, native_id, path, lang FROM documents "
