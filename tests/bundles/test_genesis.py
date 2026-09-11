@@ -1027,6 +1027,7 @@ def test_a_full_cache_forces_one_backed_off_shard(monkeypatch):
 
     genesis._forced_revisit.clear()
     monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: True)
+    monkeypatch.setattr(genesis, "_on_disk", lambda c, a, s: True)
     # nothing is due — without the forcing this is an empty round, forever
     got = genesis._remote_drain_order(shards, rows, 1000, _C(), _A(), object())
     assert got == ["4"], "the soonest-due backed-off shard must be forced"
@@ -1051,4 +1052,53 @@ def test_a_cache_with_room_still_respects_the_backoff(monkeypatch):
 
     genesis._forced_revisit.clear()
     monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: False)
+    monkeypatch.setattr(genesis, "_on_disk", lambda c, a, s: True)
     assert genesis._remote_drain_order(["3"], rows, 1000, _C(), _A(), object()) == []
+
+
+def test_a_shard_whose_files_are_gone_is_never_walked(monkeypatch):
+    """`_remote_drain_order`'s docstring always said "a shard not on disk
+    ... is never walked here", and nothing checked — the walk read the
+    LEDGER only.
+
+    A shard whose files were deleted while its row still said `applied`
+    was therefore selected every round: `import_shard` raised
+    GenesisUnavailable, `drain_next_shard` caught it and returned None,
+    and the next round picked the same shard again. Silent, because
+    GenesisUnavailable is "recorded as skipped; retried later", and
+    permanent, because nothing about the shard ever changed.
+
+    Measured on pubmed 2026-09-11: shards 8-12 `applied` with their files
+    gone, the drain returning ['9','10','11','12','13'], 0 documents/s for
+    twenty minutes, one core spinning, not one log line — while 30M
+    documents waited for vectors the archive already held.
+    """
+    from app.bundles import genesis
+
+    rows = {"5": {"state": "applied", "pending": None, "next_pass_at": 0},
+            "6": {"state": "applied", "pending": None, "next_pass_at": 0}}
+    class _C:
+        manifest_path = "/tmp/z/manifest.sqlite"
+    class _A:
+        shard_bytes = 1
+        shards = ("5", "6")
+
+    genesis._forced_revisit.clear()
+    # 5's files are gone, 6's are here
+    monkeypatch.setattr(genesis, "_on_disk",
+                        lambda c, a, s: s == "6")
+    got = genesis._remote_drain_order(["5", "6"], rows, 1000, _C(), _A(), object())
+    assert got == ["6"], "a shard with no files on disk must not be walked"
+
+
+def test_an_unlocatable_shard_counts_as_absent(monkeypatch, tmp_path):
+    """Unknown means NOT on disk: guessing the other way is how the stall
+    started."""
+    from app.bundles import genesis
+
+    class _A:
+        adapter = "nope"
+        archive_id = "x"
+    class _C:
+        manifest_path = tmp_path / "m.db"
+    assert genesis._on_disk(_C(), _A(), "1") is False

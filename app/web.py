@@ -428,6 +428,20 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
 # number of unknown age would be.
 
 _COUNTS_TTL_S = 120.0
+#: A refresh may not cost more than this share of the time between
+#: refreshes. THE INSTRUMENT MUST NOT COST WHAT IT MEASURES: the scan is a
+#: full pass over `documents`, so its cost grows with the corpus while a
+#: constant TTL does not. Measured on the live node 2026-09-11 — pubmed,
+#: 40M rows: 56 s per scan against a 120 s TTL, so nearly half of every
+#: interval was spent counting, on the same disk and the same SQLite page
+#: cache the archive import was using. The interval now follows the
+#: measured cost (pubmed: ~9 minutes), which is CLAUDE.md's rule that a
+#: per-round cost scales with the work available and never with the size
+#: of the corpus.
+_COUNTS_MAX_DUTY = 0.1
+
+#: manifest path -> seconds the last scan took, for the rule above
+_counts_scan_secs: dict[str, float] = {}
 
 _counts_cache: dict[str, tuple[float, dict]] = {}
 _counts_lock = threading.Lock()
@@ -492,6 +506,18 @@ def _counts_key(collection) -> str:
     return str(collection.manifest_path)
 
 
+def _counts_ttl_for(name: str) -> float:
+    """How long this collection's counts stay fresh — never less than
+    `_COUNTS_TTL_S`, and never so short that scanning costs more than
+    `_COUNTS_MAX_DUTY` of the interval. A small manifest keeps the two
+    minutes it always had; a 40M-row one earns a longer one by being
+    expensive to count."""
+    took = _counts_scan_secs.get(name)
+    if not took:
+        return _COUNTS_TTL_S
+    return max(_COUNTS_TTL_S, took / _COUNTS_MAX_DUTY)
+
+
 def _document_counts(collection) -> tuple[dict | None, float]:
     """(counts, age_seconds). Serves a cached value immediately and refreshes
     behind it. A COLD cache no longer blocks for long: seven collections at
@@ -507,7 +533,7 @@ def _document_counts(collection) -> tuple[dict | None, float]:
         entry = _counts_cache.get(name)
     if entry is not None:
         at, counts = entry
-        if now - at > _COUNTS_TTL_S:
+        if now - at > _counts_ttl_for(name):
             _refresh_counts_async(collection)
         return counts, now - at
     _refresh_counts_async(collection)
@@ -537,8 +563,11 @@ def _refresh_counts_async(collection) -> None:
 
     def _run():
         try:
+            t0 = time.time()
             counts = _document_counts_query(collection)
+            took = time.time() - t0
             with _counts_lock:
+                _counts_scan_secs[name] = took
                 _counts_cache[name] = (time.time(), counts)
         except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
             # ...but never silently: a refresh that fails EVERY time froze

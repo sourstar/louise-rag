@@ -714,3 +714,30 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
     web.invalidate_counts()
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["embed"] is None and shelf["stage_etas"]["embed"] == "TBD"
+
+
+# ---- the instrument must not cost what it measures -------------------------
+
+def test_a_cheap_collection_keeps_the_two_minute_ttl():
+    from app import web
+    web._counts_scan_secs.clear()
+    assert web._counts_ttl_for("/x/small.db") == web._COUNTS_TTL_S
+    web._counts_scan_secs["/x/small.db"] = 0.4          # a small manifest
+    assert web._counts_ttl_for("/x/small.db") == web._COUNTS_TTL_S
+
+
+def test_an_expensive_collection_earns_a_longer_ttl():
+    """Measured on the live node 2026-09-11: pubmed's counts scan is a full
+    pass over 40M rows and took 56 s, against a 120 s TTL — so nearly half
+    of every interval was spent counting, on the same disk and the same
+    SQLite page cache the archive import was using. A constant TTL does not
+    grow with the corpus and the scan does, which is the shape CLAUDE.md
+    rules out: a per-round cost must scale with the work available, never
+    with the size of the corpus."""
+    from app import web
+    web._counts_scan_secs.clear()
+    web._counts_scan_secs["/x/pubmed.db"] = 56.0
+    ttl = web._counts_ttl_for("/x/pubmed.db")
+    assert ttl == 560.0
+    assert 56.0 / ttl <= web._COUNTS_MAX_DUTY
+    web._counts_scan_secs.clear()

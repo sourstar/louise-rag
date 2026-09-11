@@ -546,6 +546,38 @@ _yield_until: dict[str, float] = {}
 _forced_revisit: dict[str, float] = {}
 
 
+def _on_disk(collection, archive, shard: str) -> bool:
+    """Are this shard's files actually here?
+
+    `_remote_drain_order`'s docstring has always said "a shard not on disk
+    ... is never walked here", and nothing checked: the walk read the
+    LEDGER only. A shard whose files were deleted while its row still says
+    `applied` was therefore selected every single round — `import_shard`
+    raised GenesisUnavailable, `drain_next_shard` caught it and returned
+    None, and the next round picked the same shard again. Silent, because
+    GenesisUnavailable is "recorded as skipped; retried later", and
+    permanent, because nothing about the shard ever changed.
+
+    Measured on pubmed 2026-09-11: shards 8-12 `applied` with their files
+    gone, the drain order returning ['9','10','11','12','13'], the import
+    at 0 documents/s for twenty minutes with one core spinning and not one
+    log line. 30M documents were waiting for vectors the archive already
+    held.
+
+    Unknown means NOT on disk. A shard that cannot be located is one the
+    walk must skip, and guessing the other way is how this started.
+    """
+    if collection is None or archive is None:
+        return True                     # no way to ask: preserve old behaviour
+    try:
+        from . import genesis_fetch
+        cache = genesis_fetch.cache_dir(collection, archive)
+        files = genesis_fetch.shard_files(archive, cache, shard)
+        return bool(files) and all(p.is_file() for _, p in files)
+    except Exception:       # noqa: BLE001 — a probe must never break the walk
+        return False
+
+
 def _cache_is_full(con, archive) -> bool:
     """True when no further shard can be fetched until one goes final —
     genesis_fetch's own condition, asked from this side."""
@@ -574,7 +606,8 @@ def _remote_drain_order(shards, rows, now: int, collection=None,
     due = [s for s in shards
            if rows.get(s) is not None and rows[s]["state"] in ("applied", "applying")
            and (rows[s]["pending"] is None or rows[s]["pending"] > 0)
-           and int(rows[s]["next_pass_at"] or 0) <= now]
+           and int(rows[s]["next_pass_at"] or 0) <= now
+           and _on_disk(collection, archive, s)]
     due.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
     if fresh or due or collection is None or archive is None or con is None:
         return fresh + due
@@ -606,7 +639,8 @@ def _remote_drain_order(shards, rows, now: int, collection=None,
     backed_off = [s for s in shards
                   if rows.get(s) is not None
                   and rows[s]["state"] in ("applied", "applying")
-                  and (rows[s]["pending"] is None or rows[s]["pending"] > 0)]
+                  and (rows[s]["pending"] is None or rows[s]["pending"] > 0)
+                  and _on_disk(collection, archive, s)]
     if not backed_off:
         return []
     backed_off.sort(key=lambda s: int(rows[s]["next_pass_at"] or 0))
