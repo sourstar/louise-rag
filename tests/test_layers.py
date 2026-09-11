@@ -99,3 +99,63 @@ def test_toml_layers_are_loaded_into_the_collection(isolated_config, config_dir)
         encoding="utf-8")
     with pytest.raises(layers.LayerError):
         collections_mod.load_all()
+
+
+# ---- 06 §6.3's third rule form -------------------------------------------
+
+def test_a_field_rule_selects_by_the_record(tmp_path):
+    """06 §6.3: "field:<name>=<value>, the documents whose record field (a
+    top-level field, or `extra.<key>`) has that value".
+
+    It is the only rule form that can PARTITION the Upstash corpus. The
+    `archive:` rule cannot: that archive declares coverage "all", so it
+    matches every document and the default layer never fires — a two-layer
+    declaration silently becomes a one-layer one.
+    """
+    c = collections_mod.Collection(
+        name="wv", plugin="embedded", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance",
+        layers=layers.parse_layers(
+            [{"chunker": "verbatim", "rule": "field:origin=archive"},
+             {"chunker": "cdc", "rule": "default"}], where="t"))
+
+    assert layers.layer_index(c, 1, {"origin": "archive"}) == 0
+    assert layers.layer_index(c, 1, {"origin": "dump"}) == 1
+    assert layers.layer_index(c, 1, {}) == 1, "a row without the field is not a match"
+
+
+def test_a_field_rule_reads_extra(tmp_path):
+    c = collections_mod.Collection(
+        name="wv", plugin="embedded", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance",
+        layers=layers.parse_layers(
+            [{"chunker": "verbatim", "rule": "field:extra.lang=it"},
+             {"chunker": "cdc", "rule": "default"}], where="t"))
+    assert layers.layer_index(c, 1, {"extra": {"lang": "it"}}) == 0
+    assert layers.layer_index(c, 1, {"extra": {"lang": "en"}}) == 1
+
+
+def test_a_field_rule_without_a_row_refuses_rather_than_guesses(tmp_path):
+    """Falling through to the default layer would cut the document by the
+    wrong chunker and say nothing."""
+    c = collections_mod.Collection(
+        name="wv", plugin="embedded", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance",
+        layers=layers.parse_layers(
+            [{"chunker": "verbatim", "rule": "field:origin=archive"},
+             {"chunker": "cdc", "rule": "default"}], where="t"))
+    with pytest.raises(layers.LayerError, match="needs the document's record"):
+        layers.layer_index(c, 1)
+
+
+def test_an_unrecognised_rule_is_refused_at_parse(tmp_path):
+    """It used to validate and then put every document in the last layer."""
+    with pytest.raises(layers.LayerError, match="unknown rule"):
+        layers.parse_layers([{"chunker": "verbatim", "rule": "whatever:x"},
+                             {"chunker": "cdc", "rule": "default"}], where="t")
+    with pytest.raises(layers.LayerError, match="field:<name>=<value>"):
+        layers.parse_layers([{"chunker": "verbatim", "rule": "field:nope"},
+                             {"chunker": "cdc", "rule": "default"}], where="t")

@@ -21,6 +21,8 @@ Rules:
     archive:<id>       documents the named genesis archive declares it can
                        cover (a remote archive with declared id ranges); a
                        local archive (the corpus IS the archive) covers all
+    field:<name>=<value>  documents whose record field — a top-level field,
+                       or `extra.<key>` — has that value (06 §6.3)
 """
 from dataclasses import dataclass, field
 
@@ -53,6 +55,56 @@ class LayerError(ValueError):
     """A declaration the platform cannot honour."""
 
 
+#: 06 §6.3's rule vocabulary, in full.
+RULE_FORMS = ("default", "archive:<id>", "field:<name>=<value>")
+
+
+def check_rule(rule: str, *, where: str) -> None:
+    """Refuse a rule this platform cannot evaluate.
+
+    A rule that is merely UNRECOGNISED is the dangerous case, not an
+    obviously broken one: `_rule_matches` returns False for anything it
+    does not know and `layer_index` then falls through to the last layer,
+    so a Codex carrying a typo — or a rule from a newer platform — chunks
+    the whole collection by the default layer and says nothing. The layer
+    list is inside `space_id`, so that silence produces vectors under an
+    id that promises a different cut.
+    """
+    if rule == "default" or rule.startswith("archive:"):
+        return
+    if rule.startswith("field:"):
+        spec = rule[len("field:"):]
+        if "=" not in spec or not spec.split("=", 1)[0]:
+            raise LayerError(
+                f"{where}: rule {rule!r} must be field:<name>=<value> (06 §6.3)")
+        return
+    raise LayerError(f"{where}: unknown rule {rule!r} "
+                     f"(known: {', '.join(RULE_FORMS)})")
+
+
+def _field_value(row, name: str):
+    """A record field by 06 §6.3's name: a top-level field, or
+    `extra.<key>`. Returns None when the row cannot answer."""
+    if row is None:
+        return None
+    if name.startswith("extra."):
+        key = name[len("extra."):]
+        extra = _get(row, "extra")
+        if isinstance(extra, dict):
+            return extra.get(key)
+        return None
+    return _get(row, name)
+
+
+def _get(row, name: str):
+    """Rows reach here as sqlite3.Row, plain dicts and record dicts, and
+    only the dict answers `.get`."""
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
     """The TOML `[[layers]]` array -> layers, validated. None when absent."""
     if raw is None:
@@ -68,8 +120,7 @@ def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
             raise LayerError(f"{where}: layers[{i}]: unknown chunker {name!r} "
                              f"(known: {', '.join(sorted(chunking._CHUNKERS))})")
         rule = str(entry.get("rule", "default"))
-        if not (rule == "default" or rule.startswith("archive:")):
-            raise LayerError(f"{where}: layers[{i}]: unknown rule {rule!r}")
+        check_rule(rule, where=f"{where}: layers[{i}]")
         params = entry.get("params", {})
         if not isinstance(params, dict):
             raise LayerError(f"{where}: layers[{i}]: params is a table")
@@ -154,7 +205,7 @@ def _archive_credits(collection) -> list:
     return out
 
 
-def _rule_matches(rule: str, collection, native_id: int) -> bool:
+def _rule_matches(rule: str, collection, native_id: int, row=None) -> bool:
     if rule == "default":
         return True
     if rule.startswith("archive:"):
@@ -195,27 +246,40 @@ def _rule_matches(rule: str, collection, native_id: int) -> bool:
         if archive.local or not archive.ids_per_shard:
             return True             # the corpus IS the archive: it covers all
         return archive.shard_of_id(int(native_id)) is not None
+    if rule.startswith("field:"):
+        # 06 §6.3: "the documents whose record field (a top-level field, or
+        # `extra.<key>`) has that value". Computable from the record and the
+        # Codex alone, which is what stops a platform build from moving a
+        # document between layers.
+        name, _, want = rule[len("field:"):].partition("=")
+        if row is None:
+            raise LayerError(
+                f"layer rule {rule!r} needs the document's record and none "
+                f"was supplied — the caller must pass the row, or the layer "
+                f"cannot be decided without guessing")
+        got = _field_value(row, name)
+        return got is not None and str(got) == want
     return False
 
 
-def layer_index(collection, native_id) -> int:
+def layer_index(collection, native_id, row=None) -> int:
     layers = layers_for(collection)
     if len(layers) == 1:
         return 0
     for i, layer in enumerate(layers):
-        if _rule_matches(layer.rule, collection, int(native_id)):
+        if _rule_matches(layer.rule, collection, int(native_id), row):
             return i
     return len(layers) - 1
 
 
-def layer_of(collection, native_id) -> Layer:
-    return layers_for(collection)[layer_index(collection, native_id)]
+def layer_of(collection, native_id, row=None) -> Layer:
+    return layers_for(collection)[layer_index(collection, native_id, row)]
 
 
-def chunker_for_document(collection, native_id):
+def chunker_for_document(collection, native_id, row=None):
     """The chunker bound to this document's layer — the ONE way a stage
     should cut a document (worker, importer, genesis, contribute)."""
-    layer = layer_of(collection, native_id)
+    layer = layer_of(collection, native_id, row)
     fn = chunking._CHUNKERS[layer.chunker]
     version = layer.version
     params = layer.params
@@ -227,7 +291,8 @@ def chunker_for_document(collection, native_id):
 
 def chunks_for_document(collection, row, sections) -> list[dict]:
     native_id = int(row["native_id"])
-    return list(chunker_for_document(collection, native_id)(row["uid"], native_id, sections))
+    return list(chunker_for_document(collection, native_id, row)(
+        row["uid"], native_id, sections))
 
 
 def space_payload(collection) -> dict:

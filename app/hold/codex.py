@@ -682,6 +682,19 @@ def _validate_layers(codex: Codex) -> None:
     for i, l in enumerate(codex.layers[:-1]):
         if l.rule == "default":
             raise CodexError(f"layers[{i}]: only the last rule is \"default\"")
+    # THE RULE'S FORM, not just its position. A Codex carrying a rule this
+    # platform does not recognise used to validate, hash, and then put
+    # every document in the LAST layer — `layers._rule_matches` returns
+    # False for anything unknown and `layer_index` falls through. The layer
+    # list is inside `space_id`, so that silence produces vectors under an
+    # id promising a different cut, which is invariant 1's failure mode and
+    # undetectable from outside.
+    from ..layers import LayerError, check_rule
+    for i, l in enumerate(codex.layers):
+        try:
+            check_rule(l.rule, where=f"layers[{i}]")
+        except LayerError as e:
+            raise CodexError(str(e)) from None
     seen = [l.chunker.id for l in codex.layers]
     if len(set(seen)) != len(seen):
         raise CodexError("one chunker per layer: two layers name the same chunker")
