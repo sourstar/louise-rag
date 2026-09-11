@@ -6,6 +6,7 @@ slots). EMBED_CONCURRENCY sub-batches are kept in flight to saturate those
 slots; order is preserved. Vectors are stored float16 when EMBED_DTYPE=f16
 (half the disk, no practical retrieval-quality cost).
 """
+import hashlib
 import math
 import re
 import time
@@ -187,18 +188,33 @@ def _book_filter(book_id) -> str:
     """
     return f"book_id = {int(book_id)}"
 
-def _written_chunks(db, book_id: int) -> dict[str, str]:
-    """id -> text for the vectors this document already has. Reading the
-    TEXT back is what makes a resume exact: chunk ids are positional
-    (`{uid}:{seq}:{version}`, chunking.py), so an id alone cannot say
-    whether the vector behind it still belongs to the current text."""
+def chunk_text_hash(text: str) -> bytes:
+    """The chunk hash of 06 §6.3 — BLAKE2b-128 of the chunk's text.
+
+    The SAME digest `hold/records.chunks_root` folds into the snapshot, so
+    "the hashes of the chunks it already holds" means one thing on this
+    node whichever side asks.
+    """
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest()
+
+
+def _written_chunks(db, book_id: int) -> dict[str, dict]:
+    """id -> {"text", "vector"} for the vectors this document already has.
+
+    Reading the TEXT back is what makes a resume exact: chunk ids are
+    positional (`{uid}:{seq}:{version}`, chunking.py), so an id alone
+    cannot say whether the vector behind it still belongs to the current
+    text. Reading the VECTOR back is what makes 06 §6.3's carry-over
+    possible: a chunk whose text survived an edit keeps its vector under
+    whatever id it now has, and never reaches the encoder again.
+    """
     if TABLE not in db.table_names():
         return {}
     try:
         tbl = db.open_table(TABLE)
-        return {r["id"]: r["text"] for r in
+        return {r["id"]: {"text": r["text"], "vector": r["vector"]} for r in
                 tbl.search().where(_book_filter(book_id))
-                   .select(["id", "text"]).limit(_RESUME_SCAN_MAX).to_list()}
+                   .select(["id", "text", "vector"]).limit(_RESUME_SCAN_MAX).to_list()}
     except Exception:   # noqa: BLE001 — a resume is an optimisation
         return {}
 
@@ -309,11 +325,29 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
 
     have = _written_chunks(db, book_id)
     wanted = {c["id"]: c["text"] for c in chunks}
-    done = {i for i, text in have.items() if wanted.get(i) == text}
+    done = {i for i, r in have.items() if wanted.get(i) == r["text"]}
     # Anything stored that is not a byte-exact chunk of the CURRENT document
-    # means the document changed under us: rebuild it whole.
+    # means the document changed under us: the stored rows are positional and
+    # now stale, so they go. What does NOT have to go is the WORK behind
+    # them.
     rebuild = bool(set(have) - done)
+    carry: dict[bytes, object] = {}
     if rebuild:
+        # 06 §6.3: "its vectors are carried over BY CHUNK HASH, never by
+        # chunk id: the peer maps the hashes of the chunks it already holds
+        # for that record to their vectors, and every recut chunk whose
+        # hash is in that map keeps its vector under whatever id it now
+        # has." The map is local and rebuilt from what this peer holds, so
+        # nothing new travels.
+        #
+        # Matching by id could not work and the spec says why: `seq` is a
+        # position, so inserting one paragraph at the top of an article
+        # shifts the id of every chunk after it while changing the text of
+        # none of them. Measured on a 71-chunk article: an inserted
+        # paragraph left 70 texts byte-identical and 0 (id, text) pairs
+        # intact, so every chunk was re-embedded to learn what it already
+        # knew — 73 encoder calls where 3 were needed.
+        carry = {chunk_text_hash(r["text"]): r["vector"] for r in have.values()}
         done = set()
     todo = [c for c in chunks if c["id"] not in done]
     if not todo:
@@ -326,12 +360,19 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         # Embedding happens OUTSIDE the lock: it is the slow part, it touches
         # the network, and holding a cross-process write lock across it would
         # serialize every writer on the slowest endpoint call.
-        vectors = embed_texts([c["text"] for c in part], recipe=recipe)
+        # Only the chunks whose TEXT this peer does not already hold reach
+        # the encoder. The rest are carried at their new ids for free.
+        fresh = [c for c in part if chunk_text_hash(c["text"]) not in carry]
+        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
+        embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
         rows = [{
             "id": c["id"], "book_id": book_id, "lang": lang or "und",
             "seq": c["seq"], "chapter": c["chapter"] or "",
-            "text": c["text"], "vector": np.asarray(vectors[j], dtype=dtype),
-        } for j, c in enumerate(part)]
+            "text": c["text"],
+            "vector": np.asarray(
+                embedded[c["id"]] if c["id"] in embedded
+                else carry[chunk_text_hash(c["text"])], dtype=dtype),
+        } for c in part]
 
         with _write_lock(lock_con):
             # existence re-checked INSIDE the lock: the pre-lock check picked
