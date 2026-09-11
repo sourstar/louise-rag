@@ -460,10 +460,18 @@ verifier needs, so it is recorded here with its reason:
 | gutenberg | the per-book **`.txt`** (`pg_text.scan_dir`), hashed as it is read | plain text is the form the chunker actually consumes; epub/mobi/html are re-renderings of it. A title published *solely* as epub/mobi/html is recorded `no txt file` — declared unindexable, never silently dropped |
 | pubmed | the **baseline `*.xml.gz`** containers + `updatefiles` deltas | the archival form the origin itself versions and checksums (`.md5` sidecars), and the only one carrying `DeleteCitation` tombstones. The E-utilities API returns the same records without the versioning |
 | wikipedia | the **multistream `pages-articles.xml.bz2`** + its index | the index makes the dump seekable per page, so a record can be re-derived without re-reading the dump. Cirrus/HTML dumps are pre-rendered and lossy for our purposes |
+| wikipedia — **figures** | Commons' **pre-rendered PNG rendition** at a fixed width, not the `.svg` | operator decision 2026-09-11. The dump carries `[[File:…]]` references, not bytes, so figures are a separate acquisition against Commons either way. 08 §8.7 refuses SVG — "an SVG is a document, not an image: it carries script, external references and its own fetches" — and that refusal was costed against epubs, where SVG is 0.34 % of images. On Wikipedia it is neither rare nor incidental: the diagrams, maps, charts, chemical structures and coats of arms are overwhelmingly SVG, which is the load-bearing share of an encyclopaedia's illustration. MediaWiki already rasterises every SVG and serves it, so the PNG rendition is the ORIGIN's own bytes fetched from the origin, not a local derivation — it stays inside "a figure travels as the origin's own bytes" (01, promise 1) without touching the closed type list. What is left behind is resolution independence; the record's `origin` still locates the `.svg`, so the original is always one fetch away. The width must be named in the acquisition spec and fixed, or two peers fetch different bytes for one figure |
 
 The rule for a new plugin: prefer the form the ORIGIN versions and
 checksums, at the lowest level of processing we can consume, because that
 is the form a verifier can re-fetch and reproduce byte-for-byte.
+
+That rule and the figures row above pull in opposite directions, and the
+tension is worth naming rather than smoothing over: the `.svg` IS the form
+Commons versions, and the PNG is a rendering of it. The rule yields here
+because 08 §8.7's refusal is not about fidelity but about what a viewer
+executes, and no choice of origin form can make an SVG safe to render.
+Taking the rendition is the only way to carry those figures at all.
 - **Chunk ids** include the chunker and its version; **chunk hashes**
   come from the chunk text. A changed record re-embeds only the chunks
   whose hash changed — with content-defined chunking (Wikipedia's

@@ -155,6 +155,34 @@ wikivec spans eleven languages, so this blocks any wikipedia collection
 over that corpus — but it is a defect on its own terms, today, for
 anyone who mounts two dumps.
 
+## Settled by the operator, 2026-09-11
+
+1. **One collection, plugin `embedded`.** Not a preference — 09 §9.3 makes
+   `plugin` the uid prefix and a collection has exactly one, so keeping
+   `embedded:` is what holds all 91.2M chunk ids byte-identical.
+2. **Two layers**, decided at creation because `layers` is inside
+   `space_id`:
+   * layer 0 — `verbatim`, rule `field:extra.cut=archive`. Upstash's
+     paragraph cut; vectors reused as they are.
+   * layer 1 — `cdc`, rule `default`. Everything new, and everything
+     updated.
+   An updated article's record is rebuilt from the new source and no
+   longer carries the marker, so it falls to layer 1 and is cut by `cdc`
+   — which is exactly "new embeddings use cdc". `content_hash` covers
+   only title and sections (`app/pack/records.py:95`), so the marker
+   changes no hash and no chunk.
+3. **`record_line` 1 now, figures as a sister later.** `record_line` is
+   inside `collection_id` but NOT inside `space_id`
+   (`app/hold/codex.py:566-580`), and 02 §2.7's table gives a sister
+   "vectors inherited when `space_id` matches". So the figures sister
+   inherits every vector; `figures-in-the-corpus.md:269-277` reaches the
+   same conclusion independently — same space, vectors admissible, "the
+   work is a re-parse". Creating at `record_line` 2 is refused today
+   anyway (`RECORD_LINE_BUILT = 1`).
+4. **Figures take Commons' PNG rendition**, not the `.svg` — recorded
+   with its reason in `pack-format.md`'s origin-form table, as invariant
+   11 requires.
+
 ## The route, in order
 
 1. Fix the wikipedia multi-language uid collision (§6). Required
