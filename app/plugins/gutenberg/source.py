@@ -79,7 +79,7 @@ class GutenbergSource:
             # ~21,000 permanently errored rows on the live node that "clear
             # errors & retry" could never fix (the next scan re-applied the
             # error) and that held every progress bar short of 100%.
-            txt, is_stub = pg_text.scan_dir(entry, book_id)
+            txt, is_stub, other = pg_text.scan_dir(entry, book_id)
             # staged either way — AFTER its ref is yielded, so the cursor
             # can never remember a book whose row was lost with an
             # interrupted scan (cursor.Progress): a stub examined once should
@@ -94,8 +94,21 @@ class GutenbergSource:
                 # files present but no text: a real Gutenberg entry whose
                 # text we cannot index (metadata-only, or an unsupported
                 # format). That IS a document, and it keeps its error.
+                #
+                # NAME THE FORM when there is one. "no txt file" was true of
+                # all 1,454 of these on the node and MISLEADING about 422 —
+                # 255 carry an .epub, 159 a .mobi, 8 an .html — because the
+                # Library renders it as "the source has no usable content for
+                # them", which those titles flatly contradict. They are not
+                # unreadable; they are not readable AS .txt, and this
+                # collection's origin form is the .txt
+                # (docs/notes/pack-format.md). Saying which form is present
+                # is what lets an operator tell a dead entry from one the
+                # epub-based collection will pick up.
                 yield DocRef(source_id=self.source_id, native_id=str(book_id),
-                             locator=str(entry), error="no txt file")
+                             locator=str(entry),
+                             error=("no txt file" if other is None else
+                                    f"no txt file — published only as {other}"))
                 progress.stage(entry)
                 continue
             st = txt.stat()

@@ -19,8 +19,10 @@ _CHAPTER = re.compile(
     re.I | re.M,
 )
 
-def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool]:
-    """(text file or None, directory_is_empty) — at most ONE listing.
+def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool, str | None]:
+    """(text file or None, directory_is_empty, other_form) — at most ONE
+    listing. `other_form` names a readable edition present when there is no
+    .txt ("epub", "mobi", "html"), or None.
 
     The canonical names are probed by stat first, which is the overwhelming
     common case and lists nothing at all. Only when they all miss do we list
@@ -36,15 +38,27 @@ def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool]:
     for name in (f"pg{book_id}.txt.utf8", f"pg{book_id}.txt.utf-8", f"pg{book_id}.txt"):
         p = book_dir / name
         if p.is_file():
-            return p, False
+            return p, False, None
     entries = sorted(book_dir.iterdir())
     if not entries:
-        return None, True
+        return None, True, None
     # fall back to any .txt-ish file (the old glob("*.txt*"), same order)
     for p in entries:
         if ".txt" in p.name and "readme" not in p.name.lower() and p.is_file():
-            return p, False
-    return None, False
+            return p, False, None
+    # NO TEXT — but is there text in ANOTHER FORM? The listing is already in
+    # hand, so naming it costs nothing, and the difference matters to a
+    # person: "the source has no usable content" is TRUE of a title whose
+    # directory holds an .rdf and a cover, and FALSE of one published as an
+    # epub. Counted on the node 2026-09-11, gutenberg's 1,454 unindexable
+    # titles are 255 with an .epub, 159 with a .mobi, 8 with an .html, and
+    # ~1,199 with no text at all — so a sixth of them were being described
+    # as unreadable when they are merely not readable AS .txt, by this
+    # collection, whose origin form is the .txt (docs/notes/pack-format.md).
+    for suffix in (".epub", ".mobi", ".html", ".htm"):
+        if any(p.suffix.lower() == suffix and p.is_file() for p in entries):
+            return None, False, suffix.lstrip(".")
+    return None, False, None
 
 
 def find_txt(book_dir: Path, book_id: int) -> Path | None:
