@@ -266,16 +266,23 @@ def test_record_line_is_inside_the_identity(codex):
     assert replace(codex, record_line=2).collection_id != codex.collection_id
 
 
-def test_record_line_2_cannot_be_CREATED_yet(codex):
-    """The figures containers, the member kind and the plugin side of the
-    amendment are unbuilt. A Codex claiming plates it cannot write could
-    never be corrected — `record_line` is inside `collection_id` — only
-    replaced."""
+def test_record_line_2_is_now_writable_and_1_is_still_the_default(codex):
+    """`record_line` 2 was refused at create until 2026-09-11 because the
+    figures containers, the member kind and the plugin side were unbuilt.
+    They are built now (app/hold/figures.py, drag.MEMBER_KINDS, base.Figure,
+    pack/build._record_of, plugins/gutenberg/epub_source.py), so a recipe
+    may ASK for plates.
+
+    The DEFAULT stays 1, which is the separate question: "a figureless
+    collection created under a later format writes `version` 2 with
+    `record_line` 1" (09 §9.3). A collection gets plates by asking, never
+    by being created after the amendment landed."""
     from app.hold import template as tpl
     from tests.hold.test_template import recipe
-    with pytest.raises(tpl.TemplateError, match="figures containers"):
-        tpl._record_line(recipe(record_line=2))
+    assert tpl._record_line(recipe(record_line=2)) == 2
     assert tpl._record_line(recipe()) == 1
+    with pytest.raises(tpl.TemplateError, match="record_line is 1 or 2"):
+        tpl._record_line(recipe(record_line=3))
 
 
 # ---- the space block ------------------------------------------------------

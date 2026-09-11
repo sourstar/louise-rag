@@ -22,7 +22,10 @@ DRAG = "drag"
 
 #: The kinds are closed (02 §2.6); `--kinds` takes these names (07 §7.3).
 MEMBER_KINDS = ("records", "vectors", "buckets", "index", "relations",
-                "bundle", "centres", "calibration", "terms", "seals", "origin")
+                "bundle", "centres", "calibration", "terms", "seals", "origin",
+                # 09 §9.5: the plates of a `record_line` 2 collection, one
+                # container per slice, addressed by the record's sha256.
+                "figures")
 
 #: Leaves are SHA-256 of consecutive 16 KiB blocks of the file (09 §9.5).
 BLOCK = 16 * 1024

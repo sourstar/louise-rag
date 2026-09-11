@@ -41,7 +41,8 @@ def test_the_kinds_are_closed_and_are_what_kinds_takes():
     """02 §2.6: `--kinds` (07 §7.3) takes their names."""
     assert drag.MEMBER_KINDS == ("records", "vectors", "buckets", "index",
                                  "relations", "bundle", "centres",
-                                 "calibration", "terms", "seals", "origin")
+                                 "calibration", "terms", "seals", "origin",
+                                 "figures")
 
 
 def test_a_slice_may_not_be_shaped_like_a_space():

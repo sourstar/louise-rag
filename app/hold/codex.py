@@ -46,7 +46,17 @@ CODEX_VERSIONS = (1, 2)
 #: built (docs/notes/figures-amendment-plan.md). Refused at create with
 #: that reason rather than accepted and quietly written without plates.
 RECORD_LINES = (1, 2)
+#: The DEFAULT, and it stays 1: "a figureless collection created under a
+#: later format writes `version` 2 with `record_line` 1" (§9.3). A
+#: collection gets plates by asking for them, never by being created after
+#: the amendment landed.
 RECORD_LINE_BUILT = 1
+#: What the code can WRITE, which is the separate question. 2 since
+#: 2026-09-11: `base.Figure` and `CanonicalDoc.figures`,
+#: `drag.MEMBER_KINDS`'s `figures`, `app/hold/figures.py`'s containers, the
+#: `figures` key in `pack/build._record_of`, and a plugin that yields
+#: plates (`gutenberg-epub`).
+RECORD_LINES_WRITABLE = (1, 2)
 
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _KEY_RE = re.compile(r"^ed25519:[0-9a-f]{64}$")

@@ -152,6 +152,42 @@ class RawDoc:
 
 
 @dataclass(frozen=True)
+class Figure:
+    """One plate, as 09 §9.5 names it in a record line.
+
+    A figure is NOT text and NOT derived: it travels as the origin's own
+    bytes under `figures/<slice>/`, addressed by `sha256`, while its
+    CAPTION stays in `sections` and stays indexed. So `content_hash` —
+    which is over title and sections — never covers a figure, and a
+    collection that gains plates re-uses every text vector it had.
+
+    One entry per APPEARANCE, in reading order, so `figures[N]` is the Nth
+    marker in the text. A plate used twice is two entries with one hash:
+    the container stores the bytes once. Deduplicating would break the
+    alignment from the first repeat onward, and 39% of Gutenberg's
+    illustrated books repeat a plate.
+
+    `carried` False means the origin HAS the image and this collection may
+    not admit it — a media type outside 08 §8.7's closed list, SVG above
+    all. The entry is still written: a reader meeting a caption and no
+    picture must be able to tell "not here yet" from "not here ever".
+    """
+    href: str
+    media_type: str
+    sha256: str
+    bytes: int
+    caption: str
+    seq: int
+    carried: bool = True
+
+    def as_record(self) -> dict:
+        """The record line's shape (09 §9.5), keys in a fixed order."""
+        return {"seq": self.seq, "sha256": self.sha256,
+                "media_type": self.media_type, "bytes": self.bytes,
+                "carried": self.carried}
+
+
+@dataclass(frozen=True)
 class CanonicalDoc:
     """architecture-v2.md §2 — the source-agnostic document shape every
     plugin's parse() produces."""
@@ -165,6 +201,10 @@ class CanonicalDoc:
     extra: dict[str, Any]
     sections: list[tuple[str, str]]
     raw_hash: str
+    #: 09 §9.5's plates, for a `record_line` 2 collection. Empty for every
+    #: plugin that yields none, which is what keeps a figureless
+    #: collection's record line byte-identical to `record_line` 1.
+    figures: list[Figure] = field(default_factory=list)
 
 
 @dataclass

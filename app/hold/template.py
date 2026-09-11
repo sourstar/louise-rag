@@ -428,14 +428,12 @@ def _record_line(recipe: dict[str, Any]) -> int:
     want = int(recipe.get("record_line", codex_mod.RECORD_LINE_BUILT))
     if want not in codex_mod.RECORD_LINES:
         raise TemplateError(f"record_line is 1 or 2 (09 §9.3), got {want!r}")
-    if want != codex_mod.RECORD_LINE_BUILT:
+    if want not in codex_mod.RECORD_LINES_WRITABLE:
         raise TemplateError(
-            f"record_line {want} needs the figures containers of 09 §9.5, "
-            f"the `figures` member kind and the plugin side of the figures "
-            f"amendment, none of which is built "
-            f"(docs/notes/figures-amendment-plan.md). `record_line` is inside "
-            f"`collection_id`, so a collection created claiming plates it "
-            f"cannot write could never be corrected, only replaced")
+            f"record_line {want} is not writable by this build. "
+            f"`record_line` is inside `collection_id`, so a collection "
+            f"created claiming plates it cannot write could never be "
+            f"corrected, only replaced")
     return want
 
 

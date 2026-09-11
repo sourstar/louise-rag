@@ -190,6 +190,19 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes]:
         "content_hash": records.content_hash(doc.title or "", sections),
         "origin_hash": doc.raw_hash,
     }
+    # 09 §9.5's `figures`, iff the Codex says `record_line` 2. Written from
+    # the key's PRESENCE, never from emptiness: `record_line` 1 is defined
+    # as the line WITHOUT the key, so a figureless book in a plates
+    # collection carries `"figures": []` and a book in a text collection
+    # carries no key at all. `record_line` is inside `collection_id`, so
+    # the two shapes are two different collections and a line that guessed
+    # would put one collection's records under the other's id.
+    #
+    # After `content_hash`, and that is the whole design: a figure is not
+    # text, its caption already lives in `sections`, so gaining plates
+    # changes no content hash and re-uses every text vector (02 §2.3).
+    if getattr(getattr(collection, "codex", None), "record_line", 1) == 2:
+        record["figures"] = [f.as_record() for f in (doc.figures or [])]
     # NOTE: no validation here. This runs in a parse-pool child, where an
     # exception becomes one skipped row rather than a failed build — so a
     # fidelity defect raised here would quietly DROP documents from the

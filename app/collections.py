@@ -21,6 +21,10 @@ PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "embedded": embedded.SOURCE,
     "genome": genome.SOURCE,
     "gutenberg": gutenberg.SOURCE,
+    # The plates edition (2026-09-08). A separate plugin because `plugin`
+    # is the uid prefix and a collection has ONE parser and ONE
+    # cleaning_version — see app/plugins/gutenberg/epub_source.py.
+    "gutenberg-epub": gutenberg.EPUB_SOURCE,
     "packed": packed.SOURCE,        # placeholder; a collection gets its per-pack instance
     "pubmed": pubmed.SOURCE,
     "wikipedia": wikipedia.SOURCE,
