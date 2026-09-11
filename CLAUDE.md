@@ -173,6 +173,12 @@ are the ones that have drifted; prefer to add a test when you touch them.
   first benchmark. Read it before reading the code.
 
 ## Style
+- **Answer at one fifth the length that feels right.** MANDATORY, and it
+  binds explanations hardest — the finding, not the retelling. State the
+  outcome, anything that needs a decision, and stop. No recap of work the
+  user just watched, no restating a point in a second register, no
+  summary of a summary. Length that is genuinely owed goes in
+  docs/notes/ with a link, never in the reply.
 - Python 3.12, full type hints, dataclasses/Protocols as in the doc, pytest.
 - Small modules; follow naming and layout of existing app/ code.
 - Every task ships tests. New behavior without a test is unfinished.
