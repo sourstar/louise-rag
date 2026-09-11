@@ -107,7 +107,34 @@ class WikipediaSource:
         if not root.is_dir():
             return
         progress = cursor.Progress(state, self.source_id)
-        for dump in sorted(root.rglob(f"*{_DUMP_SUFFIX}")):
+        dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
+        # REFUSE A COLLISION AT DISCOVERY (06 §6.1) rather than trusting it.
+        #
+        # `native_id` is the page id and carries no language, while `lang`
+        # goes only into `DocRef.extra` — so two dumps share a uid for every
+        # page id they both use. `documents.uid` is the primary key, and the
+        # collision is not an error anywhere downstream: discovery finds the
+        # existing row, sees a different hash, and runs `UPDATE … rdf_done=0,
+        # fts_done=0, embed_done=0 WHERE uid=?`. The second language
+        # overwrites the first and resets its stages, and every scan
+        # flip-flops the two — silently, and for as long as both are mounted.
+        #
+        # Refusing here is the narrow fix. Making the id language-bearing is
+        # the other one, and it would rewrite every uid of an existing 19.4M
+        # document collection — not something to do as a side effect of a
+        # scan. See docs/notes/wikivec-homogeneous.md §6.
+        langs = {_lang_of(d.name): d.name for d in dumps}
+        if len(langs) > 1:
+            yield DocRef(
+                source_id=self.source_id, native_id="", locator=str(root),
+                scope="container",
+                error=(f"{len(langs)} Wikipedia dumps of different languages "
+                       f"under one corpus ({', '.join(sorted(langs))}): a page "
+                       f"id is unique per language, not across them, so these "
+                       f"would share uids and silently overwrite each other. "
+                       f"One language per collection (06 §6.1)"))
+            return
+        for dump in dumps:
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
                 yield DocRef(source_id=self.source_id, native_id=dump.name,

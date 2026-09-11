@@ -150,3 +150,42 @@ def test_wikitext_edge_cases():
     sections = to_sections("{{Infobox|a=b}}\nSome '''bold''' prose about {{convert|5|km}}.")
     assert sections and "bold" in sections[0][1]
     assert "{{" not in sections[0][1]
+
+
+def test_two_language_dumps_are_refused_not_merged(tmp_path):
+    """06 §6.1: a plugin "refuses a collision at discovery rather than
+    trusting it".
+
+    `native_id` is the page id and carries no language; `lang` reaches only
+    DocRef.extra. Two dumps therefore share a uid for every page id they
+    both use, and nothing downstream treats that as an error — discovery
+    finds the row, sees a different hash, and resets rdf/fts/embed. The
+    second language overwrites the first, and every scan flip-flops them.
+    """
+    from app.plugins.base import DiscoverState
+    from app.plugins.wikipedia.source import WikipediaSource
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    for lang in ("en", "it"):
+        (root / f"{lang}wiki-20260101-pages-articles-multistream.xml.bz2").write_bytes(b"x")
+        (root / f"{lang}wiki-20260101-pages-articles-multistream-index.txt.bz2").write_bytes(b"y")
+
+    refs = list(WikipediaSource().discover(DiscoverState(corpus_root=root)))
+    assert len(refs) == 1, "the refusal must stop the scan, not annotate it"
+    assert refs[0].scope == "container"
+    assert "overwrite" in refs[0].error and "one language" in refs[0].error.lower()
+
+
+def test_one_language_dump_still_scans(tmp_path):
+    """The refusal is narrow: a single-language corpus is untouched."""
+    from app.plugins.base import DiscoverState
+    from app.plugins.wikipedia.source import WikipediaSource
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "enwiki-20260101-pages-articles-multistream.xml.bz2").write_bytes(b"x")
+    refs = list(WikipediaSource().discover(DiscoverState(corpus_root=root)))
+    # no index file, so the container error is the INDEX one, not the
+    # collision one — what matters is that the collision guard let it past
+    assert all("overwrite" not in (r.error or "") for r in refs)
