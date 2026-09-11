@@ -179,3 +179,28 @@ def test_system_log_merges_every_collection(client, isolated_config, tmp_path):
     assert "shard REJECTED here" in fragment, \
         "events from every collection must reach the System log"
     assert "second" in fragment      # tagged with its collection
+
+def test_a_finished_stage_reads_as_finished(client):
+    """gutenberg, 2026-09-11: rdf and fts both complete — `docs_unindexed`
+    0, `blocked` 0 — and both bars read 77,866 / 79,320 = 98.2%, forever.
+
+    `in_scope` counts documents the ORIGIN has no text for. Discovery
+    records that once ("no txt file") and it is never retryable, so a
+    denominator built from `in_scope` can never be reached and a finished
+    stage is indistinguishable from a stalled one. The operator read it,
+    correctly, as stuck.
+
+    The unindexable are still named by their own badge — this measures
+    against what CAN complete, it does not hide what cannot.
+    """
+    collection = collections_mod.default_collection()
+    con = db.connect(collection)
+    _seed(con, n=10)
+    con.execute("UPDATE documents SET rdf_done=0, fts_done=0, error='no txt file' "
+                "WHERE uid IN ('gutenberg:9','gutenberg:10')")
+    con.commit()
+
+    page = client.get("/admin/library").text
+    assert "8 / 8" in page, "the indexable set is the denominator"
+    assert "2 not indexable" in page, "and the rest is still named"
+    assert "8 / 10" not in page, "a finished stage must not read 80%"

@@ -69,10 +69,17 @@
      scheduling pool, orange (--amber) = runs only on-demand, grey
      (--muted) = off/paused #}
   {% set stage_title = 'green = complete, turquoise = running or scheduled, orange = on-demand only, grey = off/paused' %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif c.in_scope and c.rdf_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.rdf and c.in_scope and c.rdf_done < c.in_scope %} <span style="color:var(--brass)" title="{% if c.stage_rates.rdf %}+{{ c.stage_rates.rdf|num }}/h{% else %}waiting for the lexical index to catch up{% endif %}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.rdf_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif c.in_scope and c.fts_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.fts and c.in_scope and c.fts_done < c.in_scope %} <span style="color:var(--brass)" title="+{{ c.stage_rates.fts|num }}/h">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.fts_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--brass)"></span></div></div>
+  {# The denominator is what CAN complete. `in_scope` includes documents the
+     ORIGIN has no text for ("no txt file"), recorded once by discovery and
+     never retryable, so measuring against it left a finished stage reading
+     98.2% forever — gutenberg: 77,866 of 79,320, with 1,454 that will never
+     arrive. A bar that cannot reach its end is not a progress bar. The
+     badge below still names the 1,454, so nothing is hidden. #}
+  {% set indexable = (c.in_scope - (c.unindexable or 0)) if c.in_scope else 0 %}
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.rdf_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ indexable|num }}{% if c.stage_etas.rdf and indexable and c.rdf_done < indexable %} <span style="color:var(--brass)" title="{% if c.stage_rates.rdf %}+{{ c.stage_rates.rdf|num }}/h{% else %}waiting for the lexical index to catch up{% endif %}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.rdf_done/indexable)|round(1) if indexable else 0 }}%;background:var(--brass)"></span></div></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.fts_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ indexable|num }}{% if c.stage_etas.fts and indexable and c.fts_done < indexable %} <span style="color:var(--brass)" title="+{{ c.stage_rates.fts|num }}/h">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.fts_done/indexable)|round(1) if indexable else 0 }}%;background:var(--brass)"></span></div></div>
   {# the dense row is part of the STANDARD ladder on EVERY card (operator:
      pubmed's main box read as truncated without it) — named for what it
      is: pre-embedded when the vectors arrive via an archive. The sub-box
