@@ -10,7 +10,51 @@ import time
 
 from . import db
 from .plugins.base import DiscoverState, DocRef
+from .plugins import cursor
 
+
+
+def _clear_cursor_if_manifest_is_new(con, collection) -> bool:
+    """Drop a scan cursor that has outlived its manifest.
+
+    The cursor and the manifest are two halves of one fact — "these
+    containers are already enumerated INTO THIS MANIFEST" — and nothing
+    tied them together. They live in the same directory, so a manifest
+    that is replaced while `state/` is kept leaves a cursor claiming work
+    the new manifest never did, and every container it names is skipped as
+    unchanged. Permanently: the skip writes no rows, so nothing ever
+    disagrees with the cursor again.
+
+    Found on the migrated pubmed collection, 2026-09-11: 150 containers of
+    30,000 documents each — 4,500,000 documents, an exact round number
+    because it is 150 whole files — were in the cursor and in neither the
+    manifest nor any error log. The records build then ran against the
+    short manifest and produced a drag that verified internally while
+    being 11% incomplete, which is precisely the artefact docs/01 promise 8
+    is about.
+
+    One `LIMIT 1` read: an EMPTY manifest with a non-empty cursor is the
+    signature, and it cannot be anything legitimate — a cursor is only
+    ever written after rows were committed to the manifest beside it.
+    """
+    state_dir = collection.manifest_path.parent
+    plugin = collection.plugin
+    path = state_dir / f"{plugin}_scan_cursor.json"
+    if not path.is_file():
+        return False
+    try:
+        if con.execute("SELECT 1 FROM documents LIMIT 1").fetchone() is not None:
+            return False
+    except Exception:       # noqa: BLE001 — no documents table yet is "new"
+        pass
+    if not cursor.load(state_dir, plugin):
+        return False
+    cursor.clear(state_dir, plugin)
+    db.log_event(con, "warn", "discover",
+                 f"scan cursor for {plugin!r} named containers this manifest "
+                 f"has no documents from — it outlived the manifest beside "
+                 f"it. Cleared; this scan re-enumerates the whole corpus")
+    return True
 
 
 def _clear_cursor_if_relocated(con, collection, root) -> bool:
@@ -83,6 +127,7 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     # locators, and the relocation branch below then updates them without
     # touching any stage flag (the bytes are the same bytes).
     _clear_cursor_if_relocated(con, collection, root)
+    _clear_cursor_if_manifest_is_new(con, collection)
 
     state = DiscoverState(corpus_root=root,
                            state_dir=collection.manifest_path.parent)

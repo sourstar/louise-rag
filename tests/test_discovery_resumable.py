@@ -409,3 +409,50 @@ def test_a_stop_request_ends_the_scan_with_progress_committed(corpus, tmp_path, 
     monkeypatch.setattr(EmbeddedSource, "discover", real_discover)
     discovery.sync_collection(con, c)
     assert set(_docs(con)) == {_uid(a) for a in EXPECTED}
+
+
+# --- 4. the cursor may never outlive its manifest ---------------------------
+
+def test_a_cursor_that_outlived_its_manifest_is_cleared(corpus, tmp_path):
+    """The cursor and the manifest are two halves of one fact: "these
+    containers are enumerated INTO THIS MANIFEST". Nothing tied them
+    together, and they live in the same directory — so a manifest replaced
+    while `state/` is kept leaves a cursor claiming work the new manifest
+    never did. Every container it names is then skipped as unchanged,
+    permanently, because a skip writes no rows and so nothing ever
+    disagrees with the cursor again.
+
+    Found live on the migrated pubmed collection: 150 containers of 30,000
+    documents each — 4,500,000 documents, a round number because it is 150
+    whole files — present in the cursor and in neither the manifest nor any
+    error log. The records build then produced a drag that verified
+    internally while being 11% short.
+    """
+    c = _collection(tmp_path)
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    assert len(_docs(con)) == len(EXPECTED)
+    assert set(_cursor(c)), "the scan must have written a cursor"
+
+    # the manifest is replaced; state/ (and the cursor) survives
+    con.execute("DELETE FROM documents")
+    con.commit()
+
+    again = discovery.sync_collection(con, c)
+    assert again["added"] == len(EXPECTED), \
+        "an empty manifest beside a full cursor must re-enumerate everything"
+    assert set(_docs(con)) == {_uid(a) for a in EXPECTED}
+
+
+def test_a_populated_manifest_keeps_its_cursor(corpus, tmp_path):
+    """The guard is narrow on purpose: EMPTY manifest + non-empty cursor is
+    the signature, and re-enumerating a full corpus on any weaker condition
+    would undo the whole point of an incremental cursor."""
+    c = _collection(tmp_path)
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    before = dict(_cursor(c))
+
+    third = discovery.sync_collection(con, c)
+    assert third["seen"] == 0, "a populated manifest must still be a stat pass"
+    assert _cursor(c) == before
