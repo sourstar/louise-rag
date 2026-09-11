@@ -12,9 +12,71 @@ from pathlib import Path
 
 from .. import cursor
 from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, Erasure,
+                    Figure,
                     LicenseClass, Modality, Mutability, PROTOCOL_VERSION,
                     PrivacyClass, RawDoc, UnindexableDocument)
 from . import pg_text, rdf
+
+
+#: The reading rule, in order (operator, 2026-09-11). ONE parser with a
+#: declared branch, not two parsers: a verifier applying this rule to the
+#: same book directory reaches the same form, so `records-vs-origin` can
+#: re-fetch and reproduce. That is what makes a mixed-form corpus legal
+#: under invariant 11 — the choice is recorded, and `extra.form` names it
+#: per record.
+FORMS = ("epub", "txt", "rdf")
+
+
+def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bool]:
+    """(form, path, is_stub) — which edition of this book to read.
+
+    EPUB first, because the plates are only there and because it is the
+    form the origin keeps most current. TXT next, which is what this
+    collection read until now. RDF last, and it carries no body text at
+    all: the record is then title, author and subjects with no `sections`,
+    which is a catalogue entry rather than a book. That is worth having —
+    ~1,199 Gutenberg entries have nothing else, and the alternative is an
+    error row that says the book does not exist.
+
+    `is_stub` is an EMPTY directory: rsync creates the tree and then copies
+    only what the filter matches, so a title the mirror skipped leaves one
+    behind. Minting a document for it produced ~21,000 permanently errored
+    rows on the live node.
+    """
+    from . import pg_epub
+
+    try:
+        entries = sorted(book_dir.iterdir())
+    except OSError:
+        return None, None, False
+    if not entries:
+        return None, None, True
+
+    epub = pg_epub.find_epub(book_dir, book_id)
+    if epub is None:
+        # `pg_epub.find_epub` takes the ILLUSTRATED edition only. A book
+        # published without one still reads better as an epub than as a
+        # hard-wrapped .txt, so the plain edition is the next candidate —
+        # shortest name first, which is stable and does not depend on
+        # directory order (invariant 3).
+        plain = sorted((p for p in entries
+                        if p.suffix.lower() == ".epub" and p.is_file()),
+                       key=lambda p: (len(p.name), p.name))
+        epub = plain[0] if plain else None
+    if epub is not None:
+        return "epub", epub, False
+
+    txt, _, _ = pg_text.scan_dir(book_dir, book_id)
+    if txt is not None:
+        return "txt", txt, False
+
+    meta = book_dir / f"pg{book_id}.rdf"
+    if meta.is_file():
+        return "rdf", meta, False
+    others = [p for p in entries if p.suffix.lower() == ".rdf" and p.is_file()]
+    if others:
+        return "rdf", others[0], False
+    return None, None, False
 
 
 class GutenbergSource:
@@ -33,7 +95,12 @@ class GutenbergSource:
     # already in it does not get edited.
     mutability = Mutability.IMMUTABLE
     protocol_version = PROTOCOL_VERSION
-    PARSER_VERSION = 3
+    #: 4 since 2026-09-11: the reading rule became EPUB, then TXT, then RDF
+    #: (metadata only). Every record this parser produces for a book with an
+    #: epub differs from what version 3 produced for it — measured, 0 of 60
+    #: books agreed on `content_hash` — so the version must move, and a
+    #: collection built with 3 is a different collection, not a stale one.
+    PARSER_VERSION = 4
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -79,7 +146,7 @@ class GutenbergSource:
             # ~21,000 permanently errored rows on the live node that "clear
             # errors & retry" could never fix (the next scan re-applied the
             # error) and that held every progress bar short of 100%.
-            txt, is_stub, other = pg_text.scan_dir(entry, book_id)
+            form, path, is_stub = pick_form(entry, book_id)
             # staged either way — AFTER its ref is yielded, so the cursor
             # can never remember a book whose row was lost with an
             # interrupted scan (cursor.Progress): a stub examined once should
@@ -90,28 +157,16 @@ class GutenbergSource:
                 stubs += 1
                 progress.stage(entry)
                 continue
-            if txt is None:
-                # files present but no text: a real Gutenberg entry whose
-                # text we cannot index (metadata-only, or an unsupported
-                # format). That IS a document, and it keeps its error.
-                #
-                # NAME THE FORM when there is one. "no txt file" was true of
-                # all 1,454 of these on the node and MISLEADING about 422 —
-                # 255 carry an .epub, 159 a .mobi, 8 an .html — because the
-                # Library renders it as "the source has no usable content for
-                # them", which those titles flatly contradict. They are not
-                # unreadable; they are not readable AS .txt, and this
-                # collection's origin form is the .txt
-                # (docs/notes/pack-format.md). Saying which form is present
-                # is what lets an operator tell a dead entry from one the
-                # epub-based collection will pick up.
+            if form is None:
+                # Nothing readable at all — not even an .rdf. After the
+                # three-way rule this is a genuinely empty entry rather
+                # than "we only take .txt", so the message says so.
                 yield DocRef(source_id=self.source_id, native_id=str(book_id),
                              locator=str(entry),
-                             error=("no txt file" if other is None else
-                                    f"no txt file — published only as {other}"))
+                             error="no epub, txt or rdf")
                 progress.stage(entry)
                 continue
-            st = txt.stat()
+            st = path.stat()
             # THE LANGUAGE, HERE, because `slicing.slice_hint` reads it from
             # the manifest and gutenberg slices by it. Without it the
             # planning pass of `records build` has no hint and parses every
@@ -126,7 +181,7 @@ class GutenbergSource:
             # book in a serial pass happens once per NEW book in the scan.
             yield DocRef(source_id=self.source_id, native_id=str(book_id),
                          locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
-                         extra={"txt_name": txt.name,
+                         extra={"txt_name": path.name, "form": form,
                                 "lang": rdf.parse(entry, book_id)["lang"]})
             progress.stage(entry)
         if stubs:
@@ -139,21 +194,45 @@ class GutenbergSource:
         progress.flush()
 
     def fetch(self, ref: DocRef) -> RawDoc:
-        txt = pg_text.find_txt(Path(ref.locator), int(ref.native_id))
-        if txt is None:
-            raise UnindexableDocument(f"no txt file for book {ref.native_id}")
+        # The rule is re-applied rather than trusting `ref.extra`: a ref can
+        # outlive the scan that made it (a queued document, a retry after a
+        # sync landed the epub), and the form must be whatever the corpus
+        # holds NOW — with `origin_hash` over the file actually read, which
+        # is invariant 11's half of the bargain.
+        form, path, _ = pick_form(Path(ref.locator), int(ref.native_id))
+        if form is None:
+            raise UnindexableDocument(
+                f"no epub, txt or rdf for book {ref.native_id}")
         h = hashlib.blake2b(digest_size=16)
-        with open(txt, "rb") as f:
+        with open(path, "rb") as f:
             for block in iter(lambda: f.read(1 << 20), b""):
                 h.update(block)
-        return RawDoc(ref=ref, raw_hash=h.hexdigest(), path=txt)
+        return RawDoc(ref=ref, raw_hash=h.hexdigest(), path=path)
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         native_id = int(raw.ref.native_id)
         book_dir = Path(raw.ref.locator)
+        from . import pg_epub
+
         meta = rdf.parse(book_dir, native_id)
-        text = pg_text.read_clean(raw.path)
-        sections = pg_text.split_chapters(text)
+        suffix = raw.path.suffix.lower()
+        plates: list = []
+        if suffix == ".epub":
+            sections = pg_text.split_chapters(pg_epub.read_clean(raw.path))
+            # The caption is already an `[Illustration: …]` marker inside
+            # `sections`, so it is indexed; only the BYTES are a member.
+            plates = [Figure(href=f.href, media_type=f.media_type,
+                             sha256=f.sha256, bytes=f.bytes, caption=f.caption,
+                             seq=f.seq, carried=f.carried)
+                      for f in pg_epub.figures(raw.path)]
+        elif suffix == ".rdf":
+            # Metadata only: a catalogue entry, not a book. `sections` is
+            # empty and stays empty — inventing a section from the title
+            # would put a chunk in the index that no page of the book
+            # contains.
+            sections = []
+        else:
+            sections = pg_text.split_chapters(pg_text.read_clean(raw.path))
         creators = [a.strip() for a in meta["authors"].split(";") if a.strip()]
         subjects = [s.strip() for s in meta["subjects"].split("|") if s.strip()]
         return CanonicalDoc(
@@ -166,6 +245,7 @@ class GutenbergSource:
             keys=[],
             extra={"bookshelves": meta["bookshelves"]},
             sections=sections,
+            figures=plates,
             raw_hash=raw.raw_hash,
         )
 
@@ -176,14 +256,36 @@ class GutenbergSource:
         return rdf.parse(book_dir, native_id)
 
     def read_text(self, book_dir: Path, native_id: int) -> str:
-        txt = pg_text.find_txt(book_dir, native_id)
-        if txt is None:
+        """THE SAME RULE `parse` uses, and it must stay that way.
+
+        This is the worker's lazy path — `read_chapters` below feeds the
+        fts and embed stages — while `parse` builds the record. If the two
+        chose different forms, the index and the records would describe
+        different text for one document, and every chunk id would name a
+        chunk whose content the record does not contain. Nothing downstream
+        could detect it: both halves would be internally consistent.
+        """
+        from . import pg_epub
+
+        form, path, _ = pick_form(book_dir, native_id)
+        if form is None:
             # the CORPUS fact, not a stage failure — see UnindexableDocument
-            raise UnindexableDocument(f"no txt file for book {native_id}")
-        return pg_text.read_clean(txt)
+            raise UnindexableDocument(
+                f"no epub, txt or rdf for book {native_id}")
+        if form == "epub":
+            return pg_epub.read_clean(path)
+        if form == "rdf":
+            return ""       # a catalogue entry has no body; `sections` is []
+        return pg_text.read_clean(path)
 
     def split_text(self, text: str) -> list[tuple[str, str]]:
         return pg_text.split_chapters(text)
 
     def read_chapters(self, book_dir: Path, native_id: int) -> list[tuple[str, str]]:
-        return self.split_text(self.read_text(book_dir, native_id))
+        text = self.read_text(book_dir, native_id)
+        # An rdf-only book has no body. `split_chapters` answers empty text
+        # with `[("Text", "")]` — one section holding nothing — which would
+        # index an empty chunk and put a hit with no content in every
+        # result set. `parse` returns `[]` for the same book, and these two
+        # must agree.
+        return self.split_text(text) if text.strip() else []

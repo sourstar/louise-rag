@@ -36,15 +36,34 @@ GUTENBERG_SPEC = AcquisitionSpec(
         Endpoint(transport=Transport.RSYNC, url="aleph.gutenberg.org::gutenberg-epub"),
     ),
     layout="one-dir-per-doc",
-    filters=("*.txt*", "*.rdf", "!*mbt-*", "!*.mobi", "!*.kf8*"),
+    # THE EPUB IS NOW PART OF THE CORPUS, not an optional extra beside it
+    # (operator, 2026-09-11). The plates are only in the epub, and the
+    # collection reads the epub where it exists — so a sync that fetched
+    # only `*.txt*` left 38% of the books, measured on the mirror, with no
+    # illustrated edition to read. The origin publishes one: all four
+    # txt-only books sampled had `pg<id>-images.epub` upstream.
+    #
+    # `-images` is the edition that carries plates, and the plain `.epub`
+    # is kept as the fallback for the handful published without one. The
+    # `.txt` and `.rdf` stay: the reading rule is epub, then txt, then rdf,
+    # so the later forms are not leftovers — they are what a book without
+    # an epub is read from.
+    #
+    # `.mobi`/`.kf8` remain excluded: they are re-renderings of the same
+    # text in formats nothing here reads.
+    filters=("*.txt*", "*.rdf", "*.epub", "!*mbt-*", "!*.mobi", "!*.kf8*"),
     checksums=ChecksumSource(kind="none"),   # PG publishes no sidecar; blake2 always applies
     delta=DeltaSpec(mode="full-resync"),
     # small, stable, and part of the official layout — the structure probe
     # and benchmark unit (app/acquire/mirrors.py)
     probe_file="1/pg1.rdf",
-    # optional extra formats, LOCAL-ONLY (spec.extras policy): someone may
-    # want the epubs beside the text — they never enter the p2p exchange
-    extras={"epub": Filter(include=("*.epub",), exclude=("*images*",))},
+    # No extras. `epub` was one — `include=("*.epub",),
+    # exclude=("*images*",)` — which excluded precisely the illustrated
+    # editions this collection now exists to read. That was right while the
+    # epub was a local convenience beside the text and wrong the moment it
+    # became the form the corpus is parsed from, so it moves into `filters`
+    # above rather than staying an opt-in that contradicts them.
+    extras={},
     profiles={
         "demo": Filter(include=("1/**", "2/**", "3/**"), max_files=3, max_bytes=5_000_000),
         "starter": Filter(max_files=500, max_bytes=2_000_000_000),

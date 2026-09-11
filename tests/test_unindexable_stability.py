@@ -32,7 +32,11 @@ def _collection(tmp_path):
     # one entry with files but NO text — the real shape of the 1,111
     nodir = corpus / "99999"
     nodir.mkdir()
-    (nodir / "pg99999.rdf").write_text("<rdf/>", encoding="utf-8")
+    # NOT an .rdf: since 2026-09-11 the reading rule falls back to the
+    # .rdf as a catalogue record, so a metadata-only book is readable. The
+    # corpus fact this test is about is a directory with files and nothing
+    # READABLE in any form — the 33 that hold only a converter log.
+    (nodir / "pg99999.converter.log").write_text("failed", encoding="utf-8")
     c = collections_mod.Collection(
         name="g", plugin="gutenberg", profile=None, embed_mode_default=None,
         corpus_dir=corpus, manifest_path=tmp_path / "g" / "manifest.db",
@@ -51,7 +55,7 @@ def _bucket(collection):
 def test_clear_errors_never_touches_corpus_facts(tmp_path, isolated_config):
     c, con = _collection(tmp_path)
     row = con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()
-    assert row["error"] == "no txt file"          # discovery's corpus fact
+    assert row["error"] == "no epub, txt or rdf"   # discovery corpus fact
     # and a genuine stage error beside it
     con.execute("UPDATE documents SET error='fts: boom', retries=1 "
                 "WHERE uid=(SELECT uid FROM documents WHERE error IS NULL LIMIT 1)")
@@ -60,7 +64,7 @@ def test_clear_errors_never_touches_corpus_facts(tmp_path, isolated_config):
     db.apply_reset(con, "errors", [])
     rows = {r["uid"]: r["error"] for r in con.execute(
         "SELECT uid, error FROM documents WHERE error IS NOT NULL")}
-    assert rows == {"gutenberg:99999": "no txt file"}, \
+    assert rows == {"gutenberg:99999": "no epub, txt or rdf"}, \
         "the corpus fact must survive; the stage error must clear"
     assert _bucket(c) == (0, 1)
 
@@ -71,7 +75,7 @@ def test_a_stage_records_a_corpus_fact_unprefixed(tmp_path, isolated_config):
     never re-block them."""
     c, con = _collection(tmp_path)
     # the mislabeled shape observed live: stage-prefixed, so 'blocked'
-    con.execute("UPDATE documents SET error='fts: no txt file for book 99999', "
+    con.execute("UPDATE documents SET error='fts: no epub, txt or rdf for book 99999', "
                 "retries=1, rdf_done=1 WHERE uid='gutenberg:99999'")
     assert _bucket(c) == (1, 0)
 
@@ -80,7 +84,7 @@ def test_a_stage_records_a_corpus_fact_unprefixed(tmp_path, isolated_config):
     assert worker._execute_step(con, c, "fts", row) is True
     row = con.execute("SELECT error, retries FROM documents "
                       "WHERE uid='gutenberg:99999'").fetchone()
-    assert row["error"] == "no txt file for book 99999", \
+    assert row["error"] == "no epub, txt or rdf for book 99999", \
         "the stage must record the corpus fact unprefixed"
     assert row["retries"] == 0, "a corpus fact burns no retries"
     assert _bucket(c) == (0, 1)
@@ -88,4 +92,4 @@ def test_a_stage_records_a_corpus_fact_unprefixed(tmp_path, isolated_config):
     # and the cycle is CLOSED: another clear+count leaves it where it is
     db.apply_reset(con, "errors", [])
     row = con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()
-    assert row["error"] == "no txt file for book 99999"
+    assert row["error"] == "no epub, txt or rdf for book 99999"

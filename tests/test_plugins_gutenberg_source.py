@@ -20,10 +20,18 @@ def test_discover_finds_all_fixture_books():
         assert r.extra["txt_name"].startswith("pg")
 
 
-def test_discover_reports_missing_txt(tmp_path):
-    """A book we HOLD (metadata is there) but cannot index stays a document
-    carrying its error. An empty directory is a transfer stub instead — see
-    test_corpus_stubs.py — so this one needs a file in it."""
+def test_an_rdf_only_book_is_read_as_a_catalogue_entry(tmp_path):
+    """The reading rule is EPUB, then TXT, then RDF (operator, 2026-09-11).
+
+    Before it, a book holding only its `.rdf` was an error row saying "no
+    txt file", which the Library renders as "the source has no usable
+    content" — and ~1,199 Gutenberg entries have nothing else. They are
+    now records: title, author and subjects with no `sections`. A
+    catalogue entry is not a book, and it is a great deal more than an
+    error that says the book does not exist.
+
+    An EMPTY directory is still a transfer stub, not a document — see
+    test_corpus_stubs.py."""
     book = tmp_path / "99999"
     book.mkdir()
     (book / "pg99999.rdf").write_text("<rdf/>", encoding="utf-8")
@@ -31,7 +39,8 @@ def test_discover_reports_missing_txt(tmp_path):
             if r.scope == "document"]
     assert len(refs) == 1
     assert refs[0].native_id == "99999"
-    assert refs[0].error == "no txt file"
+    assert refs[0].error is None
+    assert refs[0].extra["form"] == "rdf"
 
 
 def test_fetch_hashes_content_deterministically():

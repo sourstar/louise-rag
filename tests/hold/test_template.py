@@ -146,7 +146,7 @@ def test_a_plugin_and_two_blocks_make_a_collection():
     codex = from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
     assert isinstance(codex, Codex)
     assert codex.plugin == "gutenberg"
-    assert codex.parser.id == "gutenberg" and codex.parser.version == 3
+    assert codex.parser.id == "gutenberg" and codex.parser.version == 4
     assert codex.modality == "text"
     assert codex.erasure == "retractable"
     assert codex.privacy == "public"

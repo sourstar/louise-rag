@@ -40,8 +40,8 @@ def test_empty_directories_are_scan_reports_not_documents(tmp_path):
 
     assert {r.native_id for r in documents} == {"1", "2"}, \
         "empty directories must not become documents"
-    assert [r.error for r in documents if r.native_id == "2"] == ["no txt file"], \
-        "a metadata-only entry is still a document, and keeps its error"
+    assert [r.error for r in documents if r.native_id == "2"] == [None], \
+        "a metadata-only entry is now a catalogue record, not an error"
     assert len(reports) == 1 and "skipped 2 empty book directories" in reports[0].error
 
 
