@@ -12,6 +12,7 @@ leaves documents unmarked and they re-run over the same
 delete-then-insert keyed on book_id (invariant 2). Marking before the commit
 is the single ordering that loses data.
 """
+import re
 import shutil
 from pathlib import Path
 
@@ -37,7 +38,29 @@ def _discovered(tmp_path, name="alpha"):
 
 
 def _pending(con):
-    return con.execute("SELECT * FROM documents WHERE fts_done=0 LIMIT 1").fetchone()
+    """ORDER BY, because `LIMIT 1` without one returns whatever the storage
+    engine reaches first — and discovery inserts in directory-traversal
+    order, which is not the same on NTFS as on ext4. This file's tests then
+    silently ran against a DIFFERENT document on the node than on a
+    developer's machine (found 2026-09-11: the deploy gate went red on a
+    test that is green on Windows)."""
+    return con.execute(
+        "SELECT * FROM documents WHERE fts_done=0 "
+        "ORDER BY native_id LIMIT 1").fetchone()
+
+
+def _a_term_from(chunks) -> str:
+    """A word the document actually contains, taken from the text that was
+    just indexed. The fixture's three books are two English and one French,
+    so a hard-coded English term asserts nothing about the French one —
+    every "the" in it lives in the Project Gutenberg header and footer,
+    which cleaning strips before chunking. Longest token wins: short ones
+    risk being stopwords, and the query goes through the same analyzer as
+    the body, so a stemmed group still matches its own word."""
+    words = {w for c in chunks for w in re.findall(r"[^\W\d_]{6,}", c["text"],
+                                                   re.UNICODE)}
+    assert words, "the fixture document has no indexable word to search for"
+    return max(sorted(words), key=len)
 
 
 def test_one_step_indexes_several_documents_in_one_commit(tmp_path, monkeypatch):
@@ -103,13 +126,17 @@ def test_re_running_a_batch_does_not_duplicate(tmp_path):
     still keyed per book_id, so the second pass replaces rather than adds."""
     c, con = _discovered(tmp_path)
     row = _pending(con)
+    term = _a_term_from(worker._load_chunks(row, c))
     worker._execute_step(con, c, "fts", row)
-    first = fts.search(fts.group_for(row["lang"]), "the", limit=100, collection=c)
+    first = fts.search(fts.group_for(row["lang"]), term, limit=100, collection=c)
+    # Without this the whole test passes vacuously when the term matches
+    # nothing: 0 == 0 is not evidence that a re-run avoided duplicates.
+    assert first, f"first pass indexed nothing findable by {term!r}"
 
     con.execute("UPDATE documents SET fts_done=0")       # pretend the mark was lost
     con.commit()
     worker._execute_step(con, c, "fts", _pending(con))
-    second = fts.search(fts.group_for(row["lang"]), "the", limit=100, collection=c)
+    second = fts.search(fts.group_for(row["lang"]), term, limit=100, collection=c)
 
     assert len(second) == len(first), \
         f"re-running the batch duplicated rows: {len(first)} -> {len(second)}"
@@ -146,4 +173,6 @@ def test_index_book_still_works_for_single_document_callers(tmp_path):
     row = _pending(con)
     chunks = worker._load_chunks(row, c)
     fts.index_book(row["lang"], int(row["native_id"]), chunks, c)
-    assert fts.search(fts.group_for(row["lang"]), "the", limit=10, collection=c)
+    term = _a_term_from(chunks)
+    assert fts.search(fts.group_for(row["lang"]), term, limit=10,
+                      collection=c), f"indexed document is not findable by {term!r}"
