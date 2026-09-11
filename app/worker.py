@@ -493,6 +493,12 @@ _FTS_REINDEX_WINDOWED = (
     "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
     "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) LIMIT 1")
 # path -> (fts_version, entity_version, cursor rowid, max rowid, done)
+#: Node-level control values (worker_state, the bandwidth override) read
+#: out of a collection's control table as that collection leaves the node,
+#: so the next owner can adopt them even when every sibling left at once.
+#: Process-lived on purpose: it is a hand-off within one run, not state.
+_orphaned_node_control: dict[str, str] = {}
+
 _reindex_cursor: dict[str, tuple[int, int, int, int, bool]] = {}
 
 
@@ -2122,6 +2128,16 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     for gone in sorted(known - now_names):
         db.log_event(cons[gone], "info", "worker",
                      f"collection {gone!r} removed — ingestion stopped, data kept")
+        # Rescue the node's control state BEFORE the connection closes.
+        # worker_state lives in whichever collection sorts first, so when
+        # the collections ahead of the new owner all leave in one round the
+        # donor list `all_collections[1:]` is empty and the node drops to
+        # its 'paused' default with no log line. Reading the values out
+        # here is the only moment they are still reachable.
+        for key in db.NODE_CONTROL_KEYS:
+            value = db.get_control(cons[gone], key)
+            if value is not None:
+                _orphaned_node_control.setdefault(key, value)
         cons[gone].close()
         del cons[gone]
         last_discover.pop(gone, None)
@@ -2222,6 +2238,17 @@ def _stats_publisher() -> None:
     while not _stop.wait(STATS_PUBLISH_INTERVAL_S):
         try:
             collections = collections_mod.load_all()
+            # Evict BEFORE the empty guard: this thread keeps its own
+            # connection map, so a retired collection's write-capable
+            # handle (and its -wal/-shm) stayed open until the process
+            # exited — on a manifest the node had stopped touching and, on
+            # this deployment, was about to delete.
+            live = {c.name for c in collections}
+            for stale_name in [n for n in seed_cons if n not in live]:
+                try:
+                    seed_cons.pop(stale_name).close()
+                except Exception:   # noqa: BLE001 — one bad handle, not the beat
+                    seed_cons.pop(stale_name, None)
             if not collections:
                 continue
             control = collections[0]          # node control follows sort order
@@ -2328,11 +2355,24 @@ def run_forever():
             if control_name != last_control_name:
                 adopted = db.adopt_node_control(
                     control_con,
-                    [cons[c.name] for c in all_collections[1:] if c.name in cons])
+                    [cons[c.name] for c in all_collections[1:] if c.name in cons],
+                    fallback=_orphaned_node_control)
                 if adopted:
                     db.log_event(control_con, "info", "worker",
                                  f"node control state now owned by "
                                  f"{control_name!r}; adopted {sorted(adopted)}")
+                # A node that has never recorded a worker state defaults to
+                # 'paused' (db.worker_state), which stops every collection.
+                # That default is correct; being SILENT about it is not —
+                # it has twice read as "the node is broken, nothing logs".
+                # Say it once, at the moment ownership moves.
+                if db.get_control(control_con, db.WORKER_STATE_KEY) is None:
+                    db.log_event(
+                        control_con, "warn", "worker",
+                        f"{control_name!r} now holds the node's control state "
+                        f"and has no {db.WORKER_STATE_KEY}; the node is "
+                        f"PAUSED by default and will process nothing until "
+                        f"one is set (`node resume`, or the System page)")
                 last_control_name = control_name
             # Tier-3 "boost bandwidth tonight" reaches the byte-moving process
             # here: the web process writes it to the control table, the worker

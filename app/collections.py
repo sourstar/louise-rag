@@ -392,7 +392,60 @@ def config_toml_path(name: str) -> Path:
 
 
 def collections_dir() -> Path:
+    """`$CONFIG_DIR/collections` — the TOML files.
+
+    NOT `louise_root()/"collections"`, which is a DIFFERENT directory
+    holding each Codex collection's `drag/state/index/lance` tree. Both
+    are called "collections" and on this deployment they are `/config/
+    collections` and `/data/collections`. Retiring a file means moving it
+    out of THIS one.
+    """
     return _config_dir() / "collections"
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """A collection whose file is present and which is NOT served.
+
+    A refusal is never silent and never fatal: the node keeps its other
+    collections, and this record is what the log line and the System page
+    name so the operator can see WHY something they can see on disk is
+    not in the Library.
+    """
+    name: str
+    path: Path
+    reason: str
+
+
+_REFUSALS: tuple[Refusal, ...] = ()
+
+
+def refusals() -> tuple[Refusal, ...]:
+    """What the last `load_all()` refused to serve. Recomputed by every
+    `load_all()`, so it is as fresh as the listing beside it."""
+    return _REFUSALS
+
+
+def codex_only() -> bool:
+    """Node policy: serve ONLY collections that name a Codex.
+
+    Tier 2, because it is desired state rather than identity (07 §7.8):
+    `platform.toml`'s `[node] codex_only = true`. Default FALSE, so a node
+    that predates the migration is unaffected and every legacy deployment
+    keeps working until step 12 retires the old shape for good.
+
+    Read lazily rather than at import: `platform.toml` is a file an
+    operator edits, and a module-level constant would freeze it until the
+    process restarted — the same defect this module fixes elsewhere.
+    """
+    try:
+        from . import platform_config
+        return bool(getattr(platform_config.load(), "codex_only", False))
+    except Exception:
+        # A malformed platform.toml must not decide policy by accident.
+        # False is the safe default in both directions: it serves what the
+        # node already served, and it never hides a collection silently.
+        return False
 
 
 def load_all() -> list[Collection]:
@@ -411,7 +464,31 @@ def load_all() -> list[Collection]:
     cfg_dir = collections_dir()
     if not cfg_dir.is_dir():
         return [_default_gutenberg_collection()]
-    return [_load_one(p) for p in sorted(cfg_dir.glob("*.toml"))]
+    served: list[Collection] = []
+    refused: list[Refusal] = []
+    only_codex = codex_only()
+    for p in sorted(cfg_dir.glob("*.toml")):
+        name = p.stem
+        # A MALFORMED file still raises, and that is deliberate. "A typo
+        # must not silently become the default"
+        # (tests/test_config_tiers_embed_mode.py) — an operator who wrote
+        # `embed_mode = "always"` must be told, not quietly served a node
+        # missing a collection. Refusal below is a POLICY decision the
+        # operator asked for; a parse error is their mistake, and the two
+        # must not be reported the same way.
+        c = _load_one(p)
+        if only_codex and c.codex is None:
+            refused.append(Refusal(
+                name, p,
+                "not converted: the file declares no `codex`, and this node "
+                "serves only Codex collections (platform.toml [node] "
+                "codex_only). A collection is shown again once it has been "
+                "migrated and its file names its collection_id (07 §7.8)"))
+            continue
+        served.append(c)
+    global _REFUSALS
+    _REFUSALS = tuple(refused)
+    return served
 
 
 def is_synthesized(collection) -> bool:
@@ -427,7 +504,22 @@ def default_collection() -> Collection:
     default's path (DATA_DIR/manifest.db) so the node keeps running; that
     collection is NOT listed anywhere and no pipeline runs on it."""
     collections = load_all()
-    return collections[0] if collections else _default_gutenberg_collection()
+    if collections:
+        return collections[0]
+    if _REFUSALS:
+        # The fallback's paths are DATA_DIR/manifest.db, DATA_DIR/fts and
+        # DATA_DIR/lancedb — on this deployment the LEGACY gutenberg tree
+        # that docs/notes/legacy-to-delete.md lists for deletion. Handing
+        # that back because every file was refused would put the node's
+        # control state, and anything else `db.connect()` writes without a
+        # collection, into a tree nothing serves and someone is about to
+        # remove. A node holding only refusals is misconfigured, and
+        # saying so is the only safe answer.
+        raise ValueError(
+            "every collection file was refused, so this node has nothing to "
+            "run and no collection to hold its control state: "
+            + "; ".join(f"{r.name} ({r.reason})" for r in _REFUSALS))
+    return _default_gutenberg_collection()
 
 
 def by_name(name: str) -> Collection | None:

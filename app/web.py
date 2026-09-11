@@ -2075,7 +2075,14 @@ def _bandwidth_payload() -> dict:
         "up": round(sum(float(v or 0) for v in payload.get("up", {}).values()), 1),
     }
     downloads = []
+    # The sample is keyed on collection NAME and nothing prunes it, so a
+    # retired collection kept appearing on the Network page — named, with a
+    # frozen rate — after it had left the Library entirely. The listing has
+    # to agree with what the node actually holds.
+    live_names = {c.name for c in collections_mod.load_all()}
     for name, entry in worker_stats.items():
+        if name not in live_names:
+            continue
         try:
             fetch = stats_mod.rates(entry).get("fetch") or {}
         except Exception:   # noqa: BLE001 — a malformed sample must not break the page

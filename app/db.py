@@ -686,7 +686,7 @@ def set_worker_state(con, state: str):
 # genuinely per-collection and must never be adopted this way.
 NODE_CONTROL_KEYS = (WORKER_STATE_KEY, BANDWIDTH_OVERRIDE_KEY)
 
-def adopt_node_control(target_con, other_cons) -> dict[str, str]:
+def adopt_node_control(target_con, other_cons, fallback=None) -> dict[str, str]:
     """Carry node-level control state to the collection that now owns it.
 
     Observed live: wiping the derived data of the alphabetically-first
@@ -696,7 +696,16 @@ def adopt_node_control(target_con, other_cons) -> dict[str, str]:
     same fires when that collection is simply removed. Node state must
     follow the node, so a control collection missing a node key adopts it
     from a sibling; a key the control collection already has always wins
-    (an explicit pause is never overridden by a stale sibling value)."""
+    (an explicit pause is never overridden by a stale sibling value).
+
+    `fallback` is a plain {key: value} mapping tried after the siblings,
+    and it exists because the sibling list can be EMPTY exactly when it is
+    needed most. The donor list the worker passes is
+    `all_collections[1:]`, so when every other collection leaves at once —
+    retiring the unconverted ones, say — the new owner has no sibling to
+    adopt from and the node silently returns to 'paused'. The worker
+    rescues the departing values into that mapping before it closes their
+    connections."""
     adopted: dict[str, str] = {}
     for key in NODE_CONTROL_KEYS:
         if get_control(target_con, key) is not None:
@@ -707,6 +716,11 @@ def adopt_node_control(target_con, other_cons) -> dict[str, str]:
                 set_control(target_con, key, value)
                 adopted[key] = value
                 break
+        else:
+            value = (fallback or {}).get(key)
+            if value is not None:
+                set_control(target_con, key, value)
+                adopted[key] = value
     return adopted
 
 # ---------------- events ----------------

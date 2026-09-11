@@ -104,6 +104,43 @@ class Seeder:
                 handle.pause()
         return True
 
+    def retain(self, live_names: set) -> list[str]:
+        """Stop seeding anything belonging to a collection this node no
+        longer holds. Returns the names dropped.
+
+        REMOVING, not pausing. `set_paused` is a single node-wide flag that
+        resumes every handle the moment the worker state allows it, so a
+        paused-but-retained handle silently starts uploading again. And
+        deleting the `.torrent` is not a stop either: `ensure` consults the
+        file only for handles it has not started, so a handle already in
+        `_handles` keeps announcing regardless.
+
+        Without this, retiring a collection stopped its INGESTION while the
+        node went on announcing it on the DHT and serving its bytes for the
+        life of the process — including, for a yellow-class source, after
+        the acknowledgement that permitted it had gone with its file
+        (invariant 9: not discovered, not imported, NOT EXCHANGED).
+        """
+        with self._lock:
+            doomed = [k for k, m in self._meta.items()
+                      if m.get("collection") not in live_names]
+            handles = [(k, self._handles.get(k)) for k in doomed]
+            for k in doomed:
+                self._handles.pop(k, None)
+                self._meta.pop(k, None)
+                self._uploaded.pop(k, None)
+        dropped = []
+        for key, handle in handles:
+            if handle is None:
+                continue
+            try:
+                from .transport_torrent import get_session
+                get_session().remove_torrent(handle)
+            except Exception:   # noqa: BLE001 — a dead handle must not stop the others
+                pass
+            dropped.append(key)
+        return dropped
+
     def set_paused(self, paused: bool) -> None:
         with self._lock:
             if paused == self._paused:
@@ -189,6 +226,15 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
     seeder = get_seeder()
     try:
         seeder.set_paused(worker_state not in SEEDING_STATES)
+        # Stop serving what this node no longer holds, BEFORE starting what
+        # it does. `collections` is the live list, so a collection whose
+        # file was retired drops out here rather than seeding on until the
+        # process exits.
+        dropped = seeder.retain({c.name for c in collections})
+        if dropped:
+            db.log_event(control_con, "info", "seeding",
+                         f"stopped seeding {len(dropped)} torrent(s) whose "
+                         f"collection this node no longer holds")
         for collection in collections:
             con = cons.get(collection.name)
             if con is None:

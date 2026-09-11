@@ -152,6 +152,18 @@ def test_the_page_gets_totals_and_a_download_split_by_collection(isolated_config
     classes ("interactive 0, delta 0, backfill 0, seeding 0") stay in the
     payload but off the page: they told nobody which corpus was
     downloading how fast. All of it rides the one cheap reader."""
+    # The split is filtered against the collections this node actually
+    # holds: the stats blob is keyed on NAME and nothing prunes it, so a
+    # retired collection used to keep its row — named, at a frozen rate —
+    # after it had left the Library. So the two whose stats are published
+    # below have to be collections, not just names in a sample.
+    from app import collections as collections_mod
+    cfg = collections_mod.collections_dir()
+    cfg.mkdir(parents=True, exist_ok=True)
+    for name in ("gutenberg", "wikipedia"):
+        (cfg / f"{name}.toml").write_text(
+            f'plugin = "{name}"\n', encoding="utf-8")
+
     con = db.connect()
     db.publish_worker_rates(con, {"down": {"backfill": 40.0, "delta": 2.0},
                                   "up": {"seeding": 5.0}})

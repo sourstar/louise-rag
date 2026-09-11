@@ -97,6 +97,12 @@ class PlatformConfig:
     # and importing that module from this one would close an import cycle
     # (collections -> platform_config -> collections).
     embed_defaults: dict[str, dict] = field(default_factory=dict)
+    # [node] codex_only — serve ONLY collections whose file names a Codex.
+    # A node mid-migration holds both shapes; this is how an operator says
+    # "a collection appears in Louise once it is converted, and not
+    # before". Default False so nothing changes for a node that predates
+    # the migration. Read by app/collections.py:codex_only().
+    codex_only: bool = False
     source_path: Path | None = None          # None = defaults (no file on disk)
 
 
@@ -268,10 +274,20 @@ def _load_one(path: Path) -> PlatformConfig:
                                  defaults.queue_bytes),
     )
 
+    node_raw = raw.get("node", {}) or {}
+    codex_only_raw = node_raw.get("codex_only", False)
+    if not isinstance(codex_only_raw, bool):
+        # Refused rather than coerced: `codex_only = "false"` read as truthy
+        # would hide every unconverted collection on the node, which looks
+        # exactly like data loss to whoever opens the Library.
+        raise schedule_mod.ScheduleError(
+            f"node.codex_only must be true or false, got {codex_only_raw!r}")
+
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
                           embed_defaults={str(k): dict(v) for k, v in embed_raw.items()},
+                          codex_only=codex_only_raw,
                           source_path=path)
 
 
