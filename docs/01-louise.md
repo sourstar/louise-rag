@@ -103,6 +103,37 @@ holding exactly what everyone else holds.
    of the snapshot that carried it, which remains shareable and
    verifiable as that snapshot, and from the snapshot that tombstones it
    the record is excluded from search and from embedding (02 §2.2).
+8. **Nothing proceeds with a known defect. "Fix it after" is never, ever
+   an option.** Not for one more run, not for the batch already queued,
+   not for the deploy that is otherwise ready, not for the hour it would
+   take to do it properly. When a defect is found, everything stops and
+   it is fixed first — including work in flight and work unrelated to
+   it.
+
+   Promise 7 is why. Nothing published is deleted, so a wrong artefact
+   is never recalled, only superseded, and every peer that adopted it in
+   the meantime still holds it. Promise 5 is what makes it dangerous
+   rather than merely useless: trust here is reproduction, so the
+   artefact that matters is not the one that crashes — it is the one
+   that passes every check and is wrong. A collection whose vectors were
+   cut by a window its own `collection_id` does not describe is exactly
+   that: both halves internally consistent, both computed honestly,
+   nothing anywhere detecting the disagreement, and the error only
+   visible to someone who re-derives from the origin. That artefact is
+   indistinguishable from a correct one at every surface a peer can
+   check, which is precisely why it must never be produced at all.
+
+   A peer that is the only holder of a collection has no margin
+   whatsoever — no second peer to re-derive from, and no later version
+   that un-publishes the first. But the rule is not a property of being
+   alone. It is a property of publishing into a network that cannot
+   forget.
+
+   This binds whoever is doing the work, human or otherwise. Offering
+   the choice — proceed now, repair afterwards — is itself the error,
+   and it is not the operator's to weigh: by the time the artefact
+   exists the decision has already been made for everyone who fetches
+   it.
 
 ## Vocabulary
 
