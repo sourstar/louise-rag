@@ -1060,6 +1060,26 @@ def _acquire(con, collection, reason: str) -> None:
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
         return
+    if not collection.profile:
+        # `collection.profile or "demo"` used to stand below. A collection
+        # with acquisition ON and no profile declared is a configuration
+        # error, and answering it by fetching the DEMO slice is the wrong
+        # kind of answer: the operator asked for a corpus and silently got
+        # a sample, with the Library's "fetched N of M" counting against
+        # the sample's denominator so it even looked complete.
+        #
+        # Observed live 2026-09-11: gutenberg's `profile = "full"` was lost
+        # in a TOML rewrite and nothing said so — the card read
+        # "(hand-populated)" and a background fetch would have pulled demo.
+        now = time.time()
+        if now - _profile_nagged.get(collection.name, 0.0) > 3600:
+            _profile_nagged[collection.name] = now
+            db.log_event(con, "warn", "acquire",
+                         f"{collection.name}: acquisition is enabled but no "
+                         f"profile is declared, so there is nothing to fetch. "
+                         f"Set `profile` in collections/{collection.name}.toml "
+                         f"(offered: {', '.join(sorted(spec.profiles))})")
+        return
     with _acquire_lock:
         existing = _acquire_threads.get(collection.name)
         if existing is not None and existing.is_alive():
@@ -1392,6 +1412,8 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
 
 
 _license_nagged: dict[str, float] = {}
+#: last "no profile declared" warning per collection — see _acquire
+_profile_nagged: dict[str, float] = {}
 
 
 def _license_allows(con, collection, use: str) -> bool:
@@ -2192,7 +2214,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             pass
         for table in (_acquire_threads, _acquire_done, _archive_threads,
                       _archive_log_state, _archive_last_kick, _sizing_names,
-                      _license_nagged, _pipeline_idle_log):
+                      _license_nagged, _profile_nagged, _pipeline_idle_log):
             table.pop(gone, None)
         cons[gone].close()
         del cons[gone]

@@ -10,7 +10,7 @@ def _collection(tmp_path, acquire_enabled):
     d = tmp_path / "corpus"
     d.mkdir()
     return collections_mod.Collection(
-        name="test", plugin="gutenberg", profile=None, embed_mode_default=None,
+        name="test", plugin="gutenberg", profile="demo", embed_mode_default=None,
         corpus_dir=d, manifest_path=tmp_path / "manifest.db",
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lancedb",
         acquire_enabled=acquire_enabled, license_ack=None,
@@ -44,7 +44,7 @@ def test_acquire_runs_when_enabled_and_spec_registered(tmp_path, monkeypatch):
     worker._acquire(con, collection, "test")
     worker._acquire_threads[collection.name].join(timeout=10)   # async now
     profile, stop = called[0]
-    assert profile == "demo"    # defaults to "demo" when Collection.profile is unset
+    assert profile == "demo"    # the collection's declared profile, passed through
     # P0.7: the worker's stop event must reach acquisition, or a SIGTERM
     # during a long fetch is invisible until the whole run finishes.
     # the composite of SIGTERM and this collection's removal signal, so a

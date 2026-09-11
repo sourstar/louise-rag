@@ -99,3 +99,35 @@ def test_a_fetch_that_finished_after_removal_requests_nothing(isolated_config,
     worker._acquire_done["c"] = True
     worker._finish_completed_acquires({}, [], {}, pipeline=True)
     assert worker._take_discovery_request("c") is None
+
+
+def test_acquisition_with_no_profile_refuses_instead_of_fetching_demo(
+        isolated_config, tmp_path, monkeypatch):
+    """`collection.profile or "demo"` used to stand in _acquire.
+
+    A collection with acquisition ON and no profile is a configuration
+    error, and answering it by fetching the DEMO slice is the wrong kind of
+    answer: the operator asked for a corpus and silently got a sample —
+    with the Library's "fetched N of M" counting against the sample's
+    denominator, so it even looked complete. Observed live 2026-09-11,
+    gutenberg's `profile = "full"` lost in a TOML rewrite.
+    """
+    from dataclasses import replace as _replace
+    from app import db
+
+    c = _replace(_collection(tmp_path), profile=None)
+    con = db.connect(c)
+    started = []
+    monkeypatch.setattr(worker.threading, "Thread",
+                        lambda *a, **k: started.append(k.get("args")) or _Dummy())
+
+    worker._acquire(con, c, "test")
+    assert started == [], "no fetch may start without a declared profile"
+    rows = list(con.execute(
+        "SELECT message FROM events WHERE stage='acquire' AND level='warn'"))
+    assert rows and "no profile" in rows[-1]["message"]
+
+
+class _Dummy:
+    def is_alive(self): return False
+    def start(self): pass
