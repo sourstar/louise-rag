@@ -128,6 +128,17 @@ are the ones that have drifted; prefer to add a test when you touch them.
     test (tests/pack/test_origin_fidelity.py); the form choice by review.*
 
 ## Engineering rules (blocking in review; each one was paid for)
+- **"Fix it after" is NEVER an option** (docs/01, promise 8). A known
+  defect is fixed before anything else proceeds — before the feature it
+  blocks, before the run already queued, before the deploy that is
+  otherwise ready. Nothing published is deleted, so a wrong artefact is
+  never recalled, only superseded, and every peer that adopted it
+  meanwhile keeps it. The dangerous artefact is not the one that
+  crashes; it is the one that passes every check and is wrong, whose
+  halves are each internally consistent and honestly computed.
+  **Offering the choice is itself the error**: do not present "proceed
+  now, repair afterwards" as an option to the operator, and do not take
+  it alone. Stop, fix, verify, then continue.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
