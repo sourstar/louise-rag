@@ -49,7 +49,7 @@ def test_writer_round_trips_concurrency(isolated_config, config_dir, tmp_path):
         dim=8, query_url="http://cpu:2", concurrency=4)
     path = _declare(config_dir, "c", 'plugin = "gutenberg"\n')
     _write_collection_toml(
-        path, plugin="gutenberg", profile=None, acquire_enabled=False,
+        path, codex=None, plugin="gutenberg", profile=None, acquire_enabled=False,
         corpus_dir=tmp_path, manifest=tmp_path / "m.db", fts=tmp_path / "fts",
         lancedb=tmp_path / "lance", embed=recipe)
     loaded = [c for c in collections_mod.load_all() if c.name == "c"][0]

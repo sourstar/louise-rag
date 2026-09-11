@@ -1066,7 +1066,8 @@ def grow_run(name: str, body: GrowBody):
         raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
                                   f"default) — declare it before growing")
     _write_collection_toml(
-        toml_path, plugin=collection.plugin, profile=body.profile,
+        toml_path, codex=_codex_id(collection),
+        plugin=collection.plugin, profile=body.profile,
         acquire_enabled=True, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
@@ -1175,7 +1176,85 @@ def new_collection_preview(body: NewCollectionBody):
 _COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
-def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
+def _codex_id(collection) -> str | None:
+    """The `collection_id` a rewrite must carry through, or None for a
+    collection that predates the migration. One helper so no call site
+    has to remember the `.codex and .codex.collection_id` dance."""
+    cx = getattr(collection, "codex", None)
+    return None if cx is None else cx.collection_id
+
+
+def _toml_scalar(v) -> str:
+    """A layer param as TOML. Ints and floats bare, bools lowercase,
+    everything else quoted — the set `Chunker.params` actually holds."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return '"%s"' % str(v).replace('"', '\\"')
+
+
+#: 07 §7.8 spells the middle mode `on-demand`; the stored value is `lazy`
+#: (app/collections.py's `_EMBED_MODE_ALIASES`). A Codex file is written in
+#: the DOCUMENT's word — CLAUDE.md: the documents fix the vocabulary.
+_MODE_ON_DISK = {"lazy": "on-demand"}
+
+
+def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
+                       acquire_enabled: bool, corpus_dir: Path,
+                       genesis_archive: str | None, encoder,
+                       embed_mode: str | None, snapshot: str | None,
+                       extras: tuple[str, ...]) -> None:
+    """07 §7.8's shape: `codex`, the node-local desired state, `[encoder]`.
+
+    What is NOT written is the point. `plugin`, the chunker `[[layers]]`
+    and the `[paths]` tree are the CODEX's answers — all three are inside
+    `collection_id` or derived from `<LOUISE_ROOT>/collections/<name>/` —
+    and a file that repeated them could disagree with them. 07 §7.8: "A
+    file's `codex` is never edited: a name holds one collection for its
+    life, and another collection is another name." So this function
+    carries the id through every rewrite and never invents one.
+
+    `license_ack` is absent for the same reason: a Codex collection's
+    acknowledgement is `state/ack.json` (09 §9.13), read by
+    `collections._codex_ack`, not a line in this file.
+    """
+    lines = [f'codex = "{codex}"']
+    if embed_mode:
+        lines.append(f'embed = "{_MODE_ON_DISK.get(embed_mode, embed_mode)}"')
+    if snapshot:
+        lines.append(f'snapshot = "{snapshot}"')
+    if profile:
+        lines.append(f'profile = "{profile}"')
+    if acquire_enabled:
+        lines.append("acquire_enabled = true")
+    if genesis_archive:
+        lines.append(f'genesis_archive = "{genesis_archive}"')
+    if extras:
+        lines.append("extras = [%s]" % ", ".join(f'"{e}"' for e in extras))
+    lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
+    if encoder is not None:
+        # `[encoder]`, not `[embed]`: on a Codex file the bare `embed` key
+        # above is the MODE (07 §7.8), so the recipe cannot share its name.
+        lines += ["", "[encoder]", f'url = "{encoder.url}"',
+                  f'api = "{encoder.api}"', f'model = "{encoder.model}"',
+                  f'dtype = "{encoder.dtype}"', f"ctx = {encoder.ctx}"]
+        if encoder.dim is not None:
+            lines.append(f"dim = {encoder.dim}")
+        if encoder.query_url:
+            lines.append(f'query_url = "{encoder.query_url}"')
+        if getattr(encoder, "concurrency", 1) > 1:
+            lines.append(f"concurrency = {encoder.concurrency}")
+        if getattr(encoder, "device", None):
+            lines.append(f'device = "{encoder.device}"')
+    lines.append("")
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text("\n".join(lines), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _write_collection_toml(path: Path, *, codex: str | None,
+                            plugin: str, profile: str | None,
                             acquire_enabled: bool, corpus_dir: Path,
                             manifest: Path, fts: Path, lancedb: Path,
                             license_ack: str | None = None,
@@ -1185,6 +1264,29 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
                             extras: tuple[str, ...] = (),
                             peer_source: str | None = None,
                             layers=None) -> None:
+    """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
+    purpose: a call site that forgets it must fail loudly here, because
+    the failure it would otherwise cause is silent and unrepairable.
+
+    Observed live 2026-09-11 on the only peer in existence. gutenberg had
+    been migrated to a Codex; the operator changed its embed mode in the
+    Library; this writer — which had never heard of a Codex — re-emitted
+    the file in the legacy shape. That dropped nothing visible and did two
+    invisible things: it un-migrated the collection back to the legacy
+    load path, and it materialised the plugin's implicit layer as an
+    explicit `[[layers]] chunker = "fixed"` with no `params`, which
+    `chunk_fixed` refuses. 10,212 documents errored at the embed stage and
+    left every selection. Both halves stayed internally consistent, so
+    nothing detected it (invariant 1's failure mode); only the chunker's
+    refusal to guess a window made it visible at all.
+    """
+    if codex:
+        _write_codex_toml(
+            path, codex=codex, profile=profile,
+            acquire_enabled=acquire_enabled, corpus_dir=corpus_dir,
+            genesis_archive=genesis_archive, encoder=embed,
+            embed_mode=embed_mode, snapshot=snapshot, extras=extras)
+        return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
         # peer plane: fetch from this magnet/.torrent instead of the origin
@@ -1250,6 +1352,16 @@ def _write_collection_toml(path: Path, *, plugin: str, profile: str | None,
         for layer in layers:
             lines += ["", "[[layers]]", f'chunker = "{layer.chunker}"',
                       f'rule = "{layer.rule}"']
+            # `params` ARE the chunker's window and are inside space_id
+            # exactly as the chunker id is (09 §9.3). Omitting them was the
+            # same bug as omitting the layer, one level down: `fixed`
+            # refuses a params-less layer outright, and a chunker that
+            # defaulted instead would have cut a whole collection by a
+            # window its own id does not describe.
+            if layer.params:
+                lines.append("params = { %s }" % ", ".join(
+                    f"{k} = {_toml_scalar(v)}"
+                    for k, v in sorted(layer.params.items())))
     lines += [
         "",
         "[paths]",
@@ -1461,6 +1573,7 @@ def new_collection_create(body: CreateCollectionBody):
         for existing in legacy:
             _write_collection_toml(
                 collections_mod.config_toml_path(existing.name),
+                codex=_codex_id(existing),
                 plugin=existing.plugin, profile=existing.profile,
                 acquire_enabled=existing.acquire_enabled,
                 corpus_dir=existing.corpus_dir,
@@ -1527,7 +1640,8 @@ def new_collection_create(body: CreateCollectionBody):
 
     base = config.DATA_DIR / body.name
     _write_collection_toml(
-        toml_path, plugin=body.plugin, profile=body.profile,
+        toml_path, codex=None,
+        plugin=body.plugin, profile=body.profile,
         acquire_enabled=body.acquire_enabled,
         corpus_dir=corpus_dir,
         manifest=base / "manifest.db", fts=base / "fts",
@@ -1555,6 +1669,7 @@ def new_collection_create(body: CreateCollectionBody):
         companion_base = config.DATA_DIR / companion_name
         _write_collection_toml(
             collections_mod.config_toml_path(companion_name),
+            codex=None,
             plugin="embedded", profile="all", acquire_enabled=True,
             corpus_dir=companion_dir,
             manifest=companion_base / "manifest.db",
@@ -1679,6 +1794,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         for existing in collections_mod.load_all():
             _write_collection_toml(
                 collections_mod.config_toml_path(existing.name),
+                codex=_codex_id(existing),
                 plugin=existing.plugin, profile=existing.profile,
                 acquire_enabled=existing.acquire_enabled,
                 corpus_dir=existing.corpus_dir,
@@ -1691,7 +1807,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source)
     _write_collection_toml(
-        toml_path, plugin=collection.plugin, profile=collection.profile,
+        toml_path, codex=_codex_id(collection),
+        plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=collection.acquire_enabled,
         corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
@@ -1755,7 +1872,8 @@ def collection_ack(name: str):
     # from; a packed collection is fed by a folder or a torrent, not a spec
     acquire = True if ACQUIRE_REGISTRY.get(collection.plugin) else collection.acquire_enabled
     _write_collection_toml(
-        toml_path, plugin=collection.plugin, profile=collection.profile,
+        toml_path, codex=_codex_id(collection),
+        plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=acquire, corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=ack,

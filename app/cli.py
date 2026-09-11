@@ -123,9 +123,10 @@ def cmd_embed_materialize(args) -> int:
               f"corpus add)")
         return 1
     recipe = collections_mod.recipe_for(collection)
-    from .web import _write_collection_toml
+    from .web import _write_collection_toml, _codex_id
     _write_collection_toml(
-        toml_path, plugin=collection.plugin, profile=collection.profile,
+        toml_path, codex=_codex_id(collection),
+        plugin=collection.plugin, profile=collection.profile,
         acquire_enabled=collection.acquire_enabled,
         corpus_dir=collection.corpus_dir,
         manifest=collection.manifest_path, fts=collection.fts_dir,

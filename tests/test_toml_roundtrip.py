@@ -23,13 +23,13 @@ import dataclasses
 import pytest
 
 from app import collections as collections_mod
-from app.web import _write_collection_toml
+from app.web import _codex_id, _write_collection_toml
 
 
 def write(path, c):
     """Rewrite a collection exactly as the app's rewrite paths do."""
     _write_collection_toml(
-        path, plugin=c.plugin, profile=c.profile,
+        path, codex=_codex_id(c), plugin=c.plugin, profile=c.profile,
         acquire_enabled=c.acquire_enabled, corpus_dir=c.corpus_dir,
         manifest=c.manifest_path, fts=c.fts_dir, lancedb=c.lance_dir,
         license_ack=c.license_ack, genesis_archive=c.genesis_archive,
@@ -58,7 +58,11 @@ def loaded(tmp_path, isolated_config, monkeypatch):
         'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
         'dtype = "f16"\nctx = 1024\nconcurrency = 4\n'
         '\n[[layers]]\nchunker = "verbatim"\nrule = "archive:upstash-wikipedia-2024-06"\n'
+        # params carried on a layer: they are inside space_id exactly as the
+        # chunker id is, and the writer used to drop them. With both layers
+        # params-less the round-trip asserted nothing about them.
         '\n[[layers]]\nchunker = "cdc"\nrule = "default"\n'
+        'params = { tokens = 1000, overlap = 120 }\n'
         '\n[paths]\n'
         'manifest = "/data/w/manifest.db"\nfts = "/data/w/fts"\n'
         'lancedb = "/data/w/lancedb"\n', encoding="utf-8")
@@ -83,6 +87,10 @@ def test_layers_survive_a_rewrite(loaded):
     assert [l.chunker for l in after.layers] == ["verbatim", "cdc"]
     assert [l.rule for l in after.layers] == \
         ["archive:upstash-wikipedia-2024-06", "default"]
+    assert [l.params for l in after.layers] == \
+        [{}, {"tokens": 1000, "overlap": 120}], \
+        "layer params are inside space_id; a rewrite that drops them " \
+        "redefines the cut without changing the name"
 
 
 def test_the_layer_version_is_derived_not_written(loaded):
@@ -116,3 +124,117 @@ def test_every_collection_field_survives(loaded, field):
         f"{field!r} did not survive a TOML rewrite — add it to "
         f"_write_collection_toml and to every call site that rewrites an "
         f"existing collection")
+
+
+# ---- the Codex half -------------------------------------------------------
+#
+# Everything above used a legacy collection, so `codex` was None on both
+# sides of every assertion and the parametrized guard passed on it
+# vacuously. That is precisely how the live failure got through: the guard
+# existed, named the right field, and never exercised it.
+
+@pytest.fixture
+def codex_loaded(tmp_path, isolated_config, monkeypatch):
+    """A migrated collection and its 07 §7.8 file, loaded back."""
+    from app.hold import collection as col
+    from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
+    from tests.hold.test_template import recipe
+
+    root = tmp_path / "louise"
+    (root / "collections").mkdir(parents=True)
+    cx = col.create_from_recipe(
+        root / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
+        embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+
+    cfg = tmp_path / "config"
+    (cfg / "collections").mkdir(parents=True)
+    path = cfg / "collections" / "gutenberg.toml"
+    path.write_text(
+        f'codex = "{cx.collection_id}"\n'
+        'embed = "on-demand"\n'
+        'acquire_enabled = true\n'
+        'corpus_dir = "/corpus"\n'
+        '\n[encoder]\n'
+        'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
+        'dtype = "f16"\nctx = 8192\ndim = 2560\n', encoding="utf-8")
+
+    monkeypatch.setenv("LOUISE_ROOT", str(root))
+    monkeypatch.setenv("CONFIG_DIR", str(cfg))
+    monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)
+    return path, collections_mod._load_one(path), cx
+
+
+def test_a_codex_rewrite_changes_nothing(codex_loaded):
+    path, before, _ = codex_loaded
+    write(path, before)
+    assert collections_mod._load_one(path) == before
+
+
+def test_the_codex_id_survives_a_rewrite(codex_loaded):
+    """THE regression. An embed-mode change in the Library re-emitted the
+    file without this key, which silently moved the collection back to the
+    legacy load path — and took its layer params with it."""
+    path, before, cx = codex_loaded
+    write(path, before)
+    text = path.read_text(encoding="utf-8")
+    assert f'codex = "{cx.collection_id}"' in text
+    after = collections_mod._load_one(path)
+    assert after.codex is not None
+    assert after.codex.collection_id == cx.collection_id
+
+
+def test_a_rewrite_never_writes_a_second_answer(codex_loaded):
+    """07 §7.8: plugin, layers and the tree come from the Codex. A file
+    that also stated them could disagree with the id it carries, and both
+    halves would still be internally consistent — invariant 1's failure
+    mode, which is undetectable from the outside."""
+    path, before, _ = codex_loaded
+    write(path, before)
+    text = path.read_text(encoding="utf-8")
+    for forbidden in ("[[layers]]", "[paths]", "plugin =", "[embed]"):
+        assert forbidden not in text, \
+            f"{forbidden!r} restates what the Codex already fixes"
+
+
+def test_the_layer_window_still_comes_from_the_codex(codex_loaded):
+    """What the 10,212 errors were: a params-less `fixed` layer, which
+    `chunk_fixed` refuses rather than guessing a window."""
+    path, before, _ = codex_loaded
+    write(path, before)
+    after = collections_mod._load_one(path)
+    assert after.layers, "the rewrite left the collection with no layers"
+    for layer in after.layers:
+        if layer.chunker == "fixed":
+            assert layer.params.get("tokens") and layer.params.get("overlap"), \
+                "a `fixed` layer without params errors every document"
+
+
+def test_the_mode_is_written_in_the_documents_word(codex_loaded):
+    """07 §7.8 spells it `on-demand`; the stored value is `lazy`. The file
+    is the document's word, and it must load back to the stored one."""
+    path, before, _ = codex_loaded
+    assert before.embed_mode_default == "lazy"
+    write(path, before)
+    assert 'embed = "on-demand"' in path.read_text(encoding="utf-8")
+    assert collections_mod._load_one(path).embed_mode_default == "lazy"
+
+
+def test_codex_rewrites_are_idempotent(codex_loaded):
+    path, before, _ = codex_loaded
+    write(path, before)
+    once = path.read_text(encoding="utf-8")
+    write(path, collections_mod._load_one(path))
+    assert path.read_text(encoding="utf-8") == once
+
+
+@pytest.mark.parametrize("field", [
+    f.name for f in dataclasses.fields(collections_mod.Collection)
+    if f.name not in ("name",)
+])
+def test_every_field_survives_a_codex_rewrite(codex_loaded, field):
+    """The guard again, this time against a collection that HAS a Codex."""
+    path, before, _ = codex_loaded
+    write(path, before)
+    after = collections_mod._load_one(path)
+    assert getattr(after, field) == getattr(before, field), (
+        f"{field!r} did not survive a Codex TOML rewrite")

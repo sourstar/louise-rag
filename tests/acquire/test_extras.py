@@ -98,7 +98,7 @@ def test_collection_toml_round_trips_extras(tmp_path, monkeypatch):
     (tmp_path / "collections").mkdir()
     path = tmp_path / "collections" / "gut.toml"
     _write_collection_toml(
-        path, plugin="gutenberg", profile="full", acquire_enabled=True,
+        path, codex=None, plugin="gutenberg", profile="full", acquire_enabled=True,
         corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
         fts=tmp_path / "fts", lancedb=tmp_path / "lance",
         extras=("epub",))
@@ -107,7 +107,7 @@ def test_collection_toml_round_trips_extras(tmp_path, monkeypatch):
     # and a rewrite WITHOUT extras drops them — the writer carries desired
     # state explicitly, so every caller passes the collection's current value
     _write_collection_toml(
-        path, plugin="gutenberg", profile="full", acquire_enabled=True,
+        path, codex=None, plugin="gutenberg", profile="full", acquire_enabled=True,
         corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
         fts=tmp_path / "fts", lancedb=tmp_path / "lance")
     assert collections_mod._load_one(path).extras == ()

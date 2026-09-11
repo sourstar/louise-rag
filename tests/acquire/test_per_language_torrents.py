@@ -87,7 +87,7 @@ def test_a_toml_array_of_peer_sources_round_trips(isolated_config, tmp_path, mon
         else collections_mod.config_toml_path("wv")
     path = collections_mod.config_toml_path("wv")
     path.parent.mkdir(parents=True, exist_ok=True)
-    _write_collection_toml(path, plugin="embedded", profile="tr", acquire_enabled=True,
+    _write_collection_toml(path, codex=None, plugin="embedded", profile="tr", acquire_enabled=True,
                            corpus_dir=tmp_path / "wv", manifest=tmp_path / "m.db",
                            fts=tmp_path / "fts", lancedb=tmp_path / "lance", license_ack=None,
                            genesis_archive=None, embed=None,

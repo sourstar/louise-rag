@@ -62,7 +62,7 @@ def test_peer_source_round_trips_through_the_toml(tmp_path, monkeypatch):
     (tmp_path / "collections").mkdir()
     path = tmp_path / "collections" / "peer.toml"
     _write_collection_toml(
-        path, plugin="embedded", profile="tr", acquire_enabled=True,
+        path, codex=None, plugin="embedded", profile="tr", acquire_enabled=True,
         corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
         fts=tmp_path / "fts", lancedb=tmp_path / "lance",
         peer_source="magnet:?xt=urn:btih:abc")
