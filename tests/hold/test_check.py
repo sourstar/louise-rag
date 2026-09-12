@@ -619,3 +619,36 @@ def test_a_real_difference_still_fails_even_beside_unreadable_records(checkable)
     assert len(o.detail["failed"]) == 1
     assert o.detail["errored"] > 0
     assert "unreadable" in o.why
+
+
+def test_a_crashing_check_is_inconclusive_and_the_others_still_run(checkable,
+                                                                    monkeypatch):
+    """A checker that crashed proved NOTHING, so it is inconclusive with
+    its reason (03 §3.1) — never FAIL, because a defect in the checker is
+    not a defect in the collection, and this is the report an operator
+    decides to replace a collection on.
+
+    And never the whole run: an attestation is per check (09 §9.8), so one
+    unreadable file must not deny the other eight results. That is the
+    same mistake the worker's round loop made with a malformed TOML.
+    """
+    root, snapshot, codex = checkable
+
+    def boom(_ctx):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setitem(chk.CHECKS, "roots", boom)
+    report = _run(root, codex, snapshot, ["roots", "license"])
+    assert report.outcome("roots").result == chk.INCONCLUSIVE
+    assert "the check itself failed" in report.outcome("roots").why
+    assert "Input/output error" in report.outcome("roots").why
+    assert report.outcome("license").result == chk.PASS, \
+        "the rest of the plan still ran"
+
+
+def test_a_broken_plan_is_still_raised_not_reported_as_a_check(checkable):
+    """The distinction: a plan that names an unknown check is the
+    operator's error about the plan, not one check's verdict."""
+    root, snapshot, codex = checkable
+    with pytest.raises(CheckError, match="no such check"):
+        _run(root, codex, snapshot, ["vibes"])

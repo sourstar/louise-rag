@@ -688,7 +688,25 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
               vectors_for, reference, reparse)
     outcomes = []
     for c in want:
-        o = CHECKS[c](ctx)
+        try:
+            o = CHECKS[c](ctx)
+        except CheckError:
+            # the plan itself is wrong, which is not one check's verdict
+            raise
+        except Exception as e:                          # noqa: BLE001
+            # A CHECKER THAT CRASHED PROVED NOTHING — so inconclusive, with
+            # the reason, which is what 03 §3.1 asks for ("reported with
+            # its reason, and it is retried"). Never FAIL: a defect in the
+            # checker is not a defect in the collection, and this is the
+            # report an operator decides to replace a collection on.
+            #
+            # And never the whole run: an attestation is per check (09
+            # §9.8), so the other eight are independently worth having.
+            # One unreadable file denying every result is the same mistake
+            # the worker's round loop made with a malformed TOML.
+            o = Outcome(c, INCONCLUSIVE, {"error": f"{type(e).__name__}"},
+                        why=f"the check itself failed: {type(e).__name__}: "
+                            f"{e}"[:400])
         say(f"{o.result.upper():<13} {o.check:<18} {o.why}")
         outcomes.append(o)
     return Report(codex.collection_id, snapshot.snapshot_id, snapshot.hash,
