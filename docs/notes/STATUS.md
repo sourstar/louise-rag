@@ -377,7 +377,8 @@ Measured:
 | records | 39,994,988 |
 | embedded from `medcpt-pubmed` | 35,267,888 |
 | unembedded OUTSIDE the archive's range | 4,538,777 |
-| unembedded INSIDE it | 188,323 |
+| unembedded INSIDE it, before the fix below | 188,323 |
+| unembedded INSIDE it, after | 38,324 |
 
 The archive declares ids to **36,999,999** over 37 shards of 1M. The
 4.5M gap is PMIDs past that — post-snapshot documents the archive was
@@ -393,10 +394,32 @@ shard — last, after every shard never fetched — and the re-fetch keeps
 the `applied` state so the pass is a revisit rather than a re-import of
 a million documents.
 
-**What `hold check` still owes pubmed**: it has not been run against the
-current snapshot. It waits on the five shards finalising, so that
-`vectors-sample` measures the archive's delivered coverage rather than a
-moment inside it.
+**OUTCOME, the same day.** The five shards came back, applied, and went
+`final` within ten minutes of the fix landing:
+
+```
+medcpt-pubmed/9:  imported  29,999 vectors; FINAL
+medcpt-pubmed/8:  imported 120,000 vectors; FINAL
+medcpt-pubmed/10: imported       0 vectors; FINAL
+medcpt-pubmed/11: imported       0 vectors; FINAL
+medcpt-pubmed/12: imported       0 vectors; FINAL
+archive fetch (round): landed 5 shard(s), stopped: nothing pending
+```
+
+**All 37 shards are `final` and the archive import is COMPLETE** —
+35,417,887 embedded, of which 149,999 arrived because of the fix. The
+three that imported nothing reported 55, 33 and 19 chunk-shape
+mismatches: multi-chunk documents a single-vector-per-document archive
+cannot cover, skipped rather than half-embedded, which is the designed
+behaviour and has its own test.
+
+Worth recording about the transport. NCBI cut shard 8 at 2,194,943,575
+bytes of 3,046,960,256 — "peer closed connection without sending complete
+message body". It was DEFERRED, not errored onto a document, and the
+retry resumed from the `.part` by Range and finished the remaining
+700 MB in 59 seconds. That is invariant 2's byte-granular resume doing
+exactly what it exists for, against a server that will not serve a 3 GB
+file in one go.
 
 ### What is waiting on the operator
 
