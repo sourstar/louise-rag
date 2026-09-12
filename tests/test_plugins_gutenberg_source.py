@@ -247,3 +247,37 @@ def test_readable_asks_the_same_question_read_clean_will(tmp_path):
             if info.filename != "OEBPS/content.opf":
                 dst.writestr(info.filename, src.read(info.filename))
     assert pg_epub.readable(broken) is False
+
+
+# ---------------- §9.5's `title` is "cleaned" ----------------
+
+def test_marc_subfield_delimiters_leave_the_title():
+    """4,648 of 79,286 titles on the reference node (5.86%, measured
+    2026-09-12) carried a MARC subfield marker out of PG's RDF, almost all
+    the `… : $b subtitle` form. §9.5 says `title` is cleaned."""
+    from app.plugins.gutenberg.rdf import clean_title
+    assert clean_title("Ties mikä lie! : $b Nelinäytöksinen huvinäytelmä") == \
+        "Ties mikä lie! : Nelinäytöksinen huvinäytelmä", \
+        "the marker goes; the ISBD colon before a subtitle is style, not artefact"
+    assert clean_title("Autobiography of Friedrich Froebel $c translated by E. M.") == \
+        "Autobiography of Friedrich Froebel translated by E. M."
+    assert clean_title("Collected Works $v 3") == "Collected Works 3"
+
+
+def test_a_dollar_amount_in_a_title_is_not_a_subfield_marker():
+    """THE REASON THE PATTERN TAKES LETTERS AND NOT `[a-z0-9]`. `$1`, `$3`
+    and `$5` all occur in this corpus and are MONEY, in real titles. A
+    tidier pattern would mutilate Mark Twain to remove a delimiter."""
+    from app.plugins.gutenberg.rdf import clean_title
+    for title in ("The $100 Prize Essay on the Cultivation of the Potato",
+                  "The $30,000 Bequest, and Other Stories",
+                  "A $5 Note and What It Bought"):
+        assert clean_title(title) == title, title
+
+
+def test_clean_title_normalises_whitespace_and_leaves_prose_alone():
+    from app.plugins.gutenberg.rdf import clean_title
+    assert clean_title("  Moby   Dick \n or, The Whale  ") == "Moby Dick or, The Whale"
+    assert clean_title("Pride and Prejudice") == "Pride and Prejudice"
+    # a bare '$' that is not a marker survives
+    assert clean_title("Dollars $ and Sense") == "Dollars $ and Sense"

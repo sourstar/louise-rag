@@ -1,6 +1,26 @@
 """Parse the per-book pg{id}.rdf metadata file shipped in cache/epub/{id}/."""
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+# MARC SUBFIELD DELIMITERS LEAK INTO PG TITLES. 4,648 of 79,286 titles on
+# this node (5.86%, measured 2026-09-12) carry one, almost all of them the
+# `… : $b subtitle` form that 245$b marks — and 09 §9.5 says `title` is
+# "cleaned". The marker goes; the ISBD colon before a subtitle stays,
+# because that is bibliographic style and not an artefact.
+#
+# LETTERS ONLY, NEVER DIGITS. The observed codes are `b` (4,646), `c` (2)
+# and `v` (1), all genuine MARC. `$1`, `$3` and `$5` also occur and are
+# MONEY in real titles — "The $100 Prize Essay on the Cultivation of the
+# Potato", "The $30,000 Bequest, and Other Stories" — so a pattern that
+# took `\$[a-z0-9]` would mutilate Mark Twain to tidy a delimiter.
+_MARC_SUBFIELD = re.compile(r"\s*\$[a-z](?=\s)\s*")
+
+
+def clean_title(raw: str) -> str:
+    """§9.5's `title`: one line, no MARC subfield markers, no double
+    spaces, no leading or trailing space."""
+    return " ".join(_MARC_SUBFIELD.sub(" ", " ".join(raw.split())).split())
 
 NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -25,7 +45,7 @@ def parse(book_dir: Path, book_id: int) -> dict:
 
     t = ebook.find("dcterms:title", NS)
     if t is not None and t.text:
-        out["title"] = " ".join(t.text.split())[:500]
+        out["title"] = clean_title(t.text)[:500]
 
     # the PG release date ("YYYY-MM-DD"): what a dated snapshot of the
     # catalogue cuts on (pack build --until) — never the text's own date

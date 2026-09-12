@@ -120,7 +120,13 @@ class GutenbergSource:
     #: produce different `origin`, different `origin_hash` and different
     #: `content_hash`, so they are different records and a collection built
     #: with 4 is a different collection.
-    PARSER_VERSION = 5
+    #: 6 since 2026-09-12: titles lose the MARC subfield delimiters that
+    #: leaked out of PG's RDF (5.86% of them carried one), 09 §9.5 having
+    #: said "cleaned" all along. Invariant 3 — bumped explicitly. `title`
+    #: IS inside `content_hash`, so this moves one, which costs nothing
+    #: here: the v1.0 gutenberg root starts from zero vectors either way
+    #: (migration-plan.md step 8).
+    PARSER_VERSION = 6
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
