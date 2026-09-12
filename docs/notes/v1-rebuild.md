@@ -183,19 +183,34 @@ narrowed.
 
 ## Open for the operator
 
-- **Translated titles.** STATUS 5j says "never titles, authors or ids (a
-  bibliographic reference must read as published)", and the reason holds:
-  nobody finds an article by a translated title. The operator asked why
-  they are never translated (2026-09-12). Three ways: leave it; show the
-  published title with a translated one beneath it (satisfies reading
-  without breaking citability — the recommendation); or translate it
-  outright. The last two need 5j amended on `main` first.
-- **The switch costs 78 s** for a page of passages, one model call for
-  all of them. It now says so before the wait, which is what made it
-  look broken. Cutting the wall clock means smaller parallel batches.
 - **wikipedia/wikivec** are not configured collections on this node — a
   corpus and archive state on disk, no TOML — so their §9.5 audit is not
   done. `wikivec-merge-blocked.md` governs that pair when it comes up.
+
+### Settled 2026-09-12 (kept here because the reasoning cost something)
+
+- **Translated titles: YES**, and 5j amended on `main` (`e6a23f5`) before
+  the code. The old rule — "never titles ... a bibliographic reference
+  must read as published" — assumed the displayed title was the only copy
+  of it. The operator's argument is that it is not: "how am I supposed to
+  understand a title in Arabic or Hindi?", and the switch is REVERSIBLE,
+  so the published title is one selection back and sits in the tooltip
+  meanwhile. Authors and ids still do not change — a personal name is not
+  translated in any language, an id is not language.
+- **The 78 s switch.** Now 25 s for a page of 22 items, by batching per
+  SOURCE language and running the batches concurrently (four calls to
+  this node's Ollama: 6.85 s wall against 17.13 s summed, so the
+  concurrency is real). It also says what it is doing before the wait,
+  which is what had made it look broken.
+- **Short items came back verbatim** — the failure behind "the title is
+  never translated". Three predictions all measured no better: relaxing
+  the prompt's "keep names as they are" (no change), demanding every item
+  be translated (7 unchanged became 9 — worse), and the per-language
+  grouping above (fixed latency, not this). What works is a correction
+  loop: a value equal to its own input was already detected, and those
+  items go back once in threes, three being the batch size measured to
+  succeed where eleven failed. 20 of 22 on a cold cache, and the page
+  names the two it cannot save.
 
 ## Loose ends
 
