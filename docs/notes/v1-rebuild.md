@@ -94,6 +94,16 @@ of the three corrected fields touches. Chunk ids are
 `possession.json` verifies too, since `raw_hash` is over the origin XML
 bytes and parser 5 does not touch those. No download.
 
+**The admission rule is the module's own contract, not an inference.**
+`app/hold/admit.py`'s header says it in as many words — "Admissibility is
+`space_id` plus per-record `content_hash`. `collection` and
+`snapshot_id` are PROVENANCE ... and gate nothing ... A peer that gated
+on `collection` would refuse exactly the sharing the design exists for"
+— and `tests/hold/test_admit.py::test_a_bundle_whose_collection_differs_is_still_admitted`
+relabels a bundle's `collection` and asserts it still lands. So a bundle
+the development collection exports is admissible to a root with a
+different `collection_id`, and that is pinned rather than hoped for.
+
 **And it is not merely faster, it is more correct than copying Lance.**
 The Lance `chunks` table carries `lang` and `text` per row, so a
 directory copy would carry the stale `"en"` into ~3.8M rows —
