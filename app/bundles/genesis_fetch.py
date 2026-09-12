@@ -72,24 +72,61 @@ def resident_bytes(con, archive: GenesisArchive) -> int:
     return total
 
 
-def next_shard_to_fetch(con, archive: GenesisArchive, now: int | None = None) -> str | None:
+def next_shard_to_fetch(con, archive: GenesisArchive, now: int | None = None,
+                        collection=None) -> str | None:
     """The first declared shard not yet on disk: no row, an interrupted
-    fetch (resume), or a retryable skip past its backoff. None when a
-    shard was REJECTED — a systematically incompatible archive must not
-    burn 36 more downloads proving itself 36 more times."""
+    fetch (resume), a retryable skip past its backoff, or an APPLIED shard
+    that is due for a revisit and whose files are gone. None when a shard
+    was REJECTED — a systematically incompatible archive must not burn 36
+    more downloads proving itself 36 more times.
+
+    THE LAST CASE CLOSES A LOOP THAT WAS OPEN. `_remote_drain_order` walks
+    only shards that are on disk — the fix of 2026-09-11, after shards 8-12
+    were selected every round with their files gone and the import ran at
+    0 documents/s. That stopped the spin and left the shards stuck: the
+    drain would not walk them without files, and this function would not
+    re-fetch anything in state `applied`, so a remote shard whose files
+    disappeared could never be revisited and never reach `final`.
+
+    Measured on pubmed 2026-09-12: five shards `applied` with `pending`
+    unknown and due, 188,323 documents inside the archive's own id range
+    still unembedded, and no path by which the archive could deliver them.
+
+    Whatever removed the files — a cache sweep, an operator, a disk — the
+    ledger and the disk can disagree, and EVERY consumer of the pair has to
+    handle it. This was the one that did not.
+    """
     now = int(time.time()) if now is None else now
     rows = {r["shard"]: r for r in con.execute(
-        "SELECT shard, state, updated_at, proven_at, docs FROM genesis_imports "
-        "WHERE archive=?", (archive.archive_id,))}
+        "SELECT shard, state, updated_at, proven_at, docs, pending, next_pass_at "
+        "FROM genesis_imports WHERE archive=?", (archive.archive_id,))}
     if archive_stopped(rows.values()):
         return None
+    refetch: str | None = None
     for shard in archive.shards:
         row = rows.get(shard)
         if row is None or row["state"] == "fetching":
             return shard
         if row["state"] == "skipped" and now - int(row["updated_at"] or 0) >= RETRY_AFTER_S:
             return shard
-    return None
+        # AFTER the three above, never before: a shard that has never been
+        # fetched is free vectors, and one being re-fetched to be finalised
+        # is bookkeeping. Order follows the work.
+        if refetch is None and collection is not None \
+                and row["state"] in ("applied", "applying") \
+                and (row["pending"] is None or row["pending"] > 0) \
+                and int(row["next_pass_at"] or 0) <= now \
+                and not _files_present(collection, archive, shard):
+            refetch = shard
+    return refetch
+
+
+def _files_present(collection, archive: GenesisArchive, shard: str) -> bool:
+    """`genesis._on_disk`, imported here rather than duplicated: one answer
+    to "are this shard's files here", or the fetcher and the drain would
+    disagree about it exactly as they did before."""
+    from .genesis import _on_disk
+    return _on_disk(collection, archive, shard)
 
 
 class _PartSampler(threading.Thread):
@@ -190,8 +227,19 @@ def fetch_shard(con, collection, archive: GenesisArchive, shard: str, *,
     size = sum(p.stat().st_size for p in paths)
     digest = _digest_files(paths)
     id_range = archive.id_range_of(shard)
+    # A SHARD RE-FETCHED FOR A REVISIT KEEPS ITS STATE. `applied` says what
+    # this peer has already imported from it; overwriting that with
+    # `fetched` would put the shard in `_remote_drain_order`'s
+    # fetched-never-applied list and re-import the whole of it — correct,
+    # because the import is idempotent, and wasteful by the width of a
+    # shard (a million documents re-written to deliver the thousands that
+    # are actually new). `pending=NULL` and `next_pass_at=0` make it due
+    # either way, which is the whole point of bringing the files back.
     con.execute(
-        "UPDATE genesis_imports SET state='fetched', bytes=?, content_digest=?, "
+        "UPDATE genesis_imports SET "
+        "state=CASE WHEN state IN ('applied','applying') THEN state "
+        "ELSE 'fetched' END, "
+        "bytes=?, content_digest=?, "
         "id_min=?, id_max=?, pending=NULL, next_pass_at=0, detail=NULL, updated_at=? "
         "WHERE archive=? AND shard=?",
         (size, digest, id_range[0] if id_range else None,
@@ -218,7 +266,7 @@ def run_fetcher(con, collection, *, stop=None, fetch=None, log_state: dict | Non
     reason = "nothing pending"
     log_state = {} if log_state is None else log_state
     while stop is None or not stop.is_set():
-        shard = next_shard_to_fetch(con, archive)
+        shard = next_shard_to_fetch(con, archive, collection=collection)
         if shard is None:
             break
         resident = resident_bytes(con, archive)

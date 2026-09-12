@@ -1102,3 +1102,84 @@ def test_an_unlocatable_shard_counts_as_absent(monkeypatch, tmp_path):
     class _C:
         manifest_path = tmp_path / "m.db"
     assert genesis._on_disk(_C(), _A(), "1") is False
+
+
+def test_an_applied_shard_whose_files_vanished_is_re_fetched(collection, monkeypatch):
+    """THE LOOP THAT WAS OPEN, closed.
+
+    `_remote_drain_order` walks only shards that are ON DISK — the fix of
+    2026-09-11, after shards 8-12 were selected every round with their
+    files gone and the import ran at 0 documents/s for twenty minutes.
+    That stopped the spin and left the shards stuck: the drain would not
+    walk them without files, and the FETCHER would not re-fetch anything
+    in state `applied`. A remote shard whose files disappeared could never
+    be revisited and never reach `final`.
+
+    Measured on pubmed 2026-09-12: five shards `applied`, `pending`
+    unknown and due, 188,323 documents inside the archive's own id range
+    still unembedded, and no path by which the archive could deliver them.
+    """
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    archive = _declared_archive(["0"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) is None
+
+    # applied, still owing documents, due — and its files are gone
+    con.execute("UPDATE genesis_imports SET state='applied', pending=3, "
+                "next_pass_at=0 WHERE shard='0'")
+    files = list(genesis_fetch.shard_files(
+        archive, genesis_fetch.cache_dir(declared, archive), "0"))
+    for _, path in files:
+        path.unlink()
+    assert genesis._on_disk(declared, archive, "0") is False
+
+    # WITHOUT the collection there is nothing to check the disk against,
+    # so the old answer stands — the caller that can check, does
+    assert genesis_fetch.next_shard_to_fetch(con, archive) is None
+    assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) == "0"
+
+    genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+    for _, path in files:
+        assert path.is_file(), "the files come back"
+    row = con.execute("SELECT * FROM genesis_imports WHERE shard='0'").fetchone()
+    assert row["state"] == "applied", \
+        "a re-fetch for a REVISIT keeps what this peer already imported"
+    assert row["pending"] is None and row["next_pass_at"] == 0, "and it is due"
+
+
+def test_a_never_fetched_shard_is_still_taken_before_a_re_fetch(collection, monkeypatch):
+    """Order follows the work: a shard never fetched is free vectors, one
+    coming back to be finalised is bookkeeping."""
+    from dataclasses import replace
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    archive = _declared_archive(["0", "1"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+
+    # shard 0 applied with its files gone; shard 1 never fetched at all
+    con.execute(
+        "INSERT INTO genesis_imports(archive,shard,source_url,state,updated_at,"
+        "pending,next_pass_at) VALUES('test-arc','0','http://arc','applied',0,5,0)")
+    assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) == "1"
+
+
+def test_a_final_shard_is_never_re_fetched(collection, monkeypatch):
+    """Its files were deleted on purpose and it has nothing left to give."""
+    from dataclasses import replace
+    con = db.connect(collection)
+    archive = _declared_archive(["0"])
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    declared = replace(collection, genesis_archive="test-arc")
+    con.execute(
+        "INSERT INTO genesis_imports(archive,shard,source_url,state,updated_at,"
+        "pending,next_pass_at) VALUES('test-arc','0','http://arc','final',0,0,0)")
+    assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) is None
