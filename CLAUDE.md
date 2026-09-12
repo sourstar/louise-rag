@@ -110,9 +110,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
 11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
     a way that prevents verification against the original form, and
     **WE CANNOT END UP HOLDING LESS INFORMATION THAN THE ORIGIN GAVE US
-    ABOUT AN ENTITY** (operator, 2026-09-12, non-negotiable for ANY
-    collection). The only content that may be dropped is content that is
-    not about the entity:
+    ABOUT AN ENTITY** — docs/01 promise 9, docs/06 §6.4, and 09 §9.5's
+    `extra` row, non-negotiable for ANY collection. The only content that
+    may be dropped is content that is not about the entity:
       (a) wrapping and markup — XML tags, wikitext syntax;
       (b) common headers and boilerplate — the Project Gutenberg licence
           header, a dump's page chrome, a provider's banner;
