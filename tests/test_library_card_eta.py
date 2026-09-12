@@ -282,3 +282,57 @@ def test_the_fetch_rate_is_measured_in_the_unit_that_moves(isolated_config):
     assert shelf["stage_etas"]["fetch"] is not None, \
         "90 files still to come: the row has work"
     _assert_slot_invariant(shelf, _render(shelf))
+
+
+def test_a_re_baselined_stage_does_not_claim_to_be_stalled(isolated_config):
+    """The `_stalled` flag is persisted so a stall outlives the render that
+    noticed it — and it has to clear with the rest of the history. A stage
+    whose counter went BACKWARDS (a reset, a re-mint, a counter switching
+    unit) has not been observed standing still, and a sticky flag made it
+    say so.
+
+    Live: the fetch counter moved from documents to files in one deploy, so
+    the new value was far below the recorded one; the row re-baselined and
+    went on insisting "no progress in the last 30 minutes" about a fetch
+    running at full speed.
+    """
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _seed(con, [(1, 1, 1, 0, None)] * 10)
+    now = int(time.time())
+    web._stage_rate_memo[str(c.manifest_path)] = {
+        "rdf": 0, "fts": 0, "embed": 99999, "fetch": 0,
+        "embed_ph": None, "embed_n": 0, "embed_stalled": True,
+        "embed_pts": now - 4000, "embed_pc": 99999, "ts": now - 600}
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+
+    assert shelf["stage_etas"]["embed"] == web.ETA_UNKNOWN
+    assert "no rate yet" in shelf["stage_eta_why"]["embed"],         "re-baselined, so measuring again - not stalled"
+    _assert_slot_invariant(shelf, _render(shelf))
+
+
+def test_a_stage_the_node_was_told_not_to_run_says_nothing(isolated_config):
+    """With embedding off, the dense row reported "no progress in the last
+    30 minutes" - true, and read as a fault on a collection doing exactly
+    what it was configured to do. The row's label already carries the mode;
+    the estimate slot has no business guessing at a stage nobody asked to
+    run."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    _seed(con, [(1, 1, 1, 0, None)] * 10)
+    db.set_scope(con, {**db.get_scope(con), "embed_mode": "off"})
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+
+    assert shelf["embed_mode"] == "off"
+    assert shelf["stage_etas"]["embed"] is None,         "nothing at all, not a dash and not a stall"
+    _assert_slot_invariant(shelf, _render(shelf))
+
+    # turned on, the row has something to say again
+    db.set_scope(con, {**db.get_scope(con), "embed_mode": "all"})
+    web.invalidate_counts()
+    on = web._collection_shelf(c, {}, "running")
+    assert on["stage_etas"]["embed"] is not None
+    _assert_slot_invariant(on, _render(on))

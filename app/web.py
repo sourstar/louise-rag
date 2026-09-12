@@ -852,6 +852,15 @@ def _collection_shelf(collection: collections_mod.Collection,
         # landed — so the two now agree by construction.
         if fetched and fetched.get("complete"):
             workable["fetch"] = 0
+        # A STAGE THE NODE HAS BEEN TOLD NOT TO RUN HAS NOTHING TO SAY. With
+        # embedding off, the dense row reported "no progress in the last 30
+        # minutes" — true, and read as a fault on a collection doing exactly
+        # what it was configured to do. The row's own label already carries
+        # the mode; the estimate slot has no business guessing at a stage
+        # nobody asked to run. "Work it can take on its own" is the
+        # invariant's wording and this is part of what it means.
+        if db.get_scope(con)["embed_mode"] == "off":
+            workable["embed"] = 0
         memo_key = str(collection.manifest_path)
         rec_sr = _stage_rate_memo.get(memo_key)
         if rec_sr is None:
@@ -881,8 +890,12 @@ def _collection_shelf(collection: collections_mod.Collection,
             # two windows. Each stage's history is its own.
             for k in _RATE_FIELDS:
                 if cur[k] < int(rec_sr.get(k) or 0):
+                    # `_stalled` clears with the rest of it: a stage whose
+                    # history was just thrown away has not been observed
+                    # standing still, and a sticky flag made it claim so.
                     rec_sr = {**rec_sr, k: cur[k], k + "_ph": None,
-                              k + "_n": 0, k + "_pts": now_i, k + "_pc": cur[k]}
+                              k + "_n": 0, k + "_stalled": False,
+                              k + "_pts": now_i, k + "_pc": cur[k]}
             # LOW-PASS FILTERED rate: an exponential moving average over the
             # per-window rates (alpha 0.3 -> a new window carries 30 %), and
             # an ETA is shown only once TWO windows have contributed.
