@@ -802,19 +802,26 @@ def _collection_shelf(collection: collections_mod.Collection,
             "rdf": counts["rdf_done"] or 0,
             "fts": counts["fts_done"] or 0,
             "embed": counts["embed_done"] or 0,
-            # documents where the layout counts them, files otherwise —
-            # the same unit the fetched bar displays
-            "fetch": ((fetched.get("docs_done") if fetched
-                       and fetched.get("docs_done") is not None
-                       else (fetched or {}).get("done")) or 0),
+            # FILES, always — the unit that moves when bytes move, and the
+            # one `fetched["complete"]` is judged on, so the rate, the ETA,
+            # the stall and the green label finally agree about one thing.
+            #
+            # This counted DOCUMENTS for a one-dir-per-doc layout, and a
+            # document is a DIRECTORY: a pass that fills missing files into
+            # directories already present cannot move that counter at all.
+            # Live on gutenberg — 4,696 files and 1 GB landed into existing
+            # book directories — the card reported "no progress in the last
+            # 30 minutes" on a fetch running at full speed, which is worse
+            # than a dash: it asserts a stall that is not happening.
+            "fetch": ((fetched or {}).get("done") or 0),
         }
         indexable = max(0, (counts["in_scope"] or 0) - unindexable)
         stage_targets = {
             "rdf": indexable, "fts": indexable, "embed": indexable,
-            "fetch": (((fetched.get("docs_total")
-                        if fetched.get("docs_total") is not None
-                        else fetched.get("remote_total")) or 0)
-                      if fetched else 0),
+            # `remote_total` is the file count `complete` compares against:
+            # max(the origin's recorded listing, the ledger). Same unit as
+            # `cur["fetch"]` above, by construction.
+            "fetch": ((fetched.get("remote_total") or 0) if fetched else 0),
         }
         remaining = {k: max(0, stage_targets[k] - cur[k]) for k in _RATE_FIELDS}
         # WHAT A STAGE CAN STILL TAKE. A blocked document waits for a human

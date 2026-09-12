@@ -242,3 +242,43 @@ def test_a_stage_slower_than_one_document_an_hour_still_has_a_rate(isolated_conf
     assert shelf["stage_etas"]["embed"].startswith("~")
     assert shelf["stage_eta_why"]["embed"] == "+0.25/h"
     _assert_slot_invariant(shelf, _render(shelf))
+
+
+def test_the_fetch_rate_is_measured_in_the_unit_that_moves(isolated_config):
+    """A one-dir-per-doc fetch counted DOCUMENTS, and a document is a
+    DIRECTORY — so a pass filling missing files into directories already
+    present could not move the counter at all.
+
+    Live on gutenberg: 4,696 files and 1 GB landed into existing book
+    directories while the card said "no progress in the last 30 minutes"
+    about a fetch running at full speed. Worse than a dash: it asserted a
+    stall that was not happening. Files are the unit that moves when bytes
+    move, and the unit `fetched["complete"]` already used — so the rate,
+    the ETA, the stall and the green label now agree.
+    """
+    from dataclasses import replace
+    import json as _json
+    from app.acquire import engine as acquire_engine
+
+    c = replace(collections_mod.default_collection(), acquire_enabled=True)
+    con = db.connect(c)
+    # ten book directories, all discovered; the origin lists 130 files
+    _seed(con, [(1, 1, 1, 1, None)] * 10)
+    for i in range(40):
+        con.execute("INSERT INTO fetch_files(source_id,rel_path,fetch_done,"
+                    "bytes_fetched) VALUES('gutenberg',?,1,10)",
+                    (f"{i % 10}/f{i}.epub",))
+    con.execute("INSERT INTO control(key,value) VALUES(?,?)",
+                (acquire_engine.LISTING_KEY,
+                 _json.dumps({"files_total": 130, "bytes_total": 1,
+                              "profile": c.profile, "ts": int(time.time())})))
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+
+    assert shelf["stage_targets"]["fetch"] == 130, \
+        "the file count the green label is judged on, not a directory count"
+    # the directory count is 10 and would have read as complete-and-stalled
+    assert shelf["fetched"]["docs_done"] <= 10 < 130
+    assert shelf["stage_etas"]["fetch"] is not None, \
+        "90 files still to come: the row has work"
+    _assert_slot_invariant(shelf, _render(shelf))
