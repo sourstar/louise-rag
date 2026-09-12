@@ -167,6 +167,24 @@ current and only form of those collections. **Delete nothing.**
   procedure until the operator is satisfied with the new one. Delete when
   they are.
 
+* **the retired plain-text gutenberg, `data/collections/gutenberg.retired-2026-09-12`, 41 G**
+  — the step-8 collection (`sha256:dd528265…`): its manifest, its fts index
+  over 8.7 M chunks, and the 1,596 documents embedded on the CPU encoder.
+  The operator replaced it with the plates collection on 2026-09-12 and
+  asked for it to be deleted. THE CONDITION IS THE REPLACEMENT PASSING
+  `hold check`, which needs the epub fetch and a records build first — the
+  two collections are in different spaces (`cleaning_version` 1 against 2),
+  so nothing here is reusable by the new one, but it is also the only copy
+  of what step 8 produced and deleting it before the replacement is
+  verified would leave the node with neither.
+* **the first plates attempt, `data/collections/gutenberg.unchecked-figures-2026-09-12`, 11 G**
+  — `sha256:88075d0a…`, minted and then superseded the same morning
+  because its validation plan did not name the `figures` check. It holds
+  no drag records, only the manifest and fts index built from the txt
+  editions during the hour it ran. Nothing depends on it and nothing
+  can: no collection file names that id. Safe to delete as soon as the
+  operator says so.
+
 ---
 
 ## What "confirmed working" is not

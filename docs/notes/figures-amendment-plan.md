@@ -170,7 +170,12 @@ Reversible if one ever appears.
   row states something already false about bundles, `index-<slice>` and
   `origin-<slice>`.
 
-## What the code now owes
+## What the code now owes — PAID 2026-09-12
+
+*This section was written as a bill. It is kept as one, with what each
+item actually cost beside it, because three of the five turned out to be
+wrong in a way the bill did not anticipate — see "What the bill missed"
+below.*
 
 The documents are amended; **no code implements any of it.** What follows
 is what has to change before a plates collection can be built, and each
@@ -282,3 +287,74 @@ those edits: the four calls above settled differently from several of
 them, so the amendment was written against the settled shape with the
 closed-list table as its checklist. The drafts' value was the sweep and
 the anchors, both of which held up.
+
+## What the bill missed — written 2026-09-12, after paying it
+
+The five items above were all real and all done. Three more were not on
+the list, and each was the kind that passes every test it has.
+
+**`RECORD_KEYS` had no `figures`, and `canonical_line` writes exactly
+those keys.** `pack/build.py` set `record["figures"]` on 2026-09-11 and
+the writer DROPPED it. A `record_line` 2 Codex would have produced
+shape-1 lines under a collection_id that promises shape 2 — silently, and
+`hold check` would have passed them, because every `content_hash`
+verifies and every shard hashes. The bill said "write the `figures` key
+iff the Codex says `record_line` 2" and that is what the code did; it
+did not say the key had to survive the writer.
+
+**`Figure.as_record()` emitted `sha256` where §9.5 says `hash`**, in a
+different key order. §9.18 refuses an unknown key on read and on write,
+so this would have been refused by the first peer to read a shard — after
+publication.
+
+**The container was one file per plate.** The bill's own settled call 1
+says one container per record shard and gives the arithmetic; the code
+written against it stored `figures/<slice>/<sha256>`, flat. Nobody caught
+it because the path LOOKS like the format's, and the difference only
+shows up at §9.16, where every file of a member becomes its own torrent.
+
+And one placement error, found by the collection that provoked it. "A
+`record_line` 2 Codex must name the `figures` check" went into
+`codex.validate`, which `codex.loads` calls — so a Codex with that shape
+became unparseable rather than unserved. That is wrong for a PEER's
+collection, which is immutable and already published; and it is wrong
+locally, because `create` reads every held Codex to check the name it is
+taking, so the defective file made the next `create` fail with the
+previous one's error. It belongs on the create path, which is the only
+place its own sentence — "validation is inside collection_id, so this is
+the only moment it can be added" — is true.
+
+### The two open format choices, settled by measurement
+
+§9.5 fixes the container's layout and leaves two things to the
+implementer. Both are now decided and the reasons are in
+`app/hold/figures.py`:
+
+**zstd LEVEL 1, where a record shard uses 9.** Measured on 506 real
+plates from the live corpus (42.2 MB), 2026-09-12:
+
+| level | stored | of raw | throughput |
+|---|---|---|---|
+| 1 | 42.0 MB | 99.507 % | 1,190 MB/s |
+| 3 | 42.0 MB | 99.436 % | 1,132 MB/s |
+| 9 | 42.0 MB | 99.334 % | 487 MB/s |
+| 19 | 41.7 MB | 98.801 % | 24 MB/s |
+
+A JPEG is already compressed. The frame is there for the structure —
+per-figure addressing that standard zstd tooling can still walk — and not
+for the ratio. Over the projected 51 GB member, level 1 is 43 seconds and
+level 9 is 105, for 0.17 percentage points.
+
+**`length` is the size of the BYTES, not of the frame.** §9.5 says "the
+32-byte `hash` and the offset and length of its bytes", which is two
+numbers, and the raw size is the one the record line also carries. The
+compressed extent needs no field: frames are written in the index's
+order, so one runs to the next frame's offset and the last to the start
+of the index frame. A third number could disagree with the other two.
+
+### Where the numbers in §8.7 now stand
+
+Cap 3 is still CONTRADICTED and still unraised: eleven books exceed 1,024
+figures, the worst at 3,503, and the amendment's own recommendation is
+4,096. Nothing here changed it — the caps live in 08 §8.7 and admission,
+not in the container.

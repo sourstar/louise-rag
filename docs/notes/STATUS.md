@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-09-10.** What exists, what is designed but unbuilt,
+**Last updated: 2026-09-12.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **The specification moved.** `docs/README.md` and the nine numbered
@@ -138,7 +138,16 @@ neither CLI implements it, so this was done by hand. That is the command
 step 12 owes, and until it exists every cleanup is manual and unaudited.
 
 
-### Step 8 — `gutenberg` — DONE 2026-09-10
+### Step 8 — `gutenberg` — DONE 2026-09-10, REPLACED 2026-09-12
+
+**The collection recorded below is retired.** It reads the plain text and
+carries no plates, and the operator replaced it with one that reads the
+epub — see "Gutenberg with plates" below. Its TOML moved to
+`config/collections/_replaced-2026-09-12/` and its data to
+`data/collections/gutenberg.retired-2026-09-12/`; nothing is deleted
+until the replacement passes its own `hold check`. What follows stands
+because it is what step 8 proved, and because the replacement is measured
+against it.
 
 **DONE AND VERIFIED 2026-09-10.** The numbers, and the check that proves
 them:
@@ -265,6 +274,72 @@ The discovery lines do appear because they go through the app logger to
 stderr. Run detached builds with `-e PYTHONUNBUFFERED=1`; without it a
 working build is indistinguishable from a hung one, which cost twenty
 minutes of doubt here.
+
+### Gutenberg with plates — created 2026-09-12, corpus fetching
+
+The operator's decision: one Gutenberg collection, reading the epub where
+the origin publishes one, and the plain-text one deleted. Not two
+collections, not a sister — the plates edition recomputes its records from
+the origin with a different parser and a different cleaner, which makes it
+a collection created FROM A SOURCE and therefore at the root of its own
+lineage (02 §2.7: "a collection created from a source has none").
+
+| | |
+|---|---|
+| `collection_id` | `sha256:9a857d314694498329e69bb3ed99fcd234a5cbf3609a995b6195c3bece8fdb75` |
+| `cleaning_version` | 2 — `pg_epub.read_clean` reflows paragraphs where `pg_text.read_clean` keeps the .txt's hard wrap |
+| `record_line` | 2 — the line carries `figures` (09 §9.5) |
+| `parser` | gutenberg version 4 — the three-way reading rule |
+| layers | one, `fixed{tokens: 1000, overlap: 120}` version 1 — byte-identical to the retired collection's cut |
+| validation | `roots, records, chunks, records-vs-origin, figures, license, signature, calibration, vectors-sample` |
+
+**The reading rule, recorded as `origin.form` in the Codex (invariant
+11):** the epub where the origin publishes one, because the plates are
+only there and nowhere else; the plain text where it does not; the
+catalogue record where neither exists. One rule applied in that order, so
+a verifier reaching for the same book directory reaches the same form.
+`source.pick_form` is the single implementation, and `read_text` /
+`read_chapters` — the worker's lazy path for fts and embed — call it too:
+if `parse` and the lazy path chose different forms, the index and the
+records would describe different text for one document and every chunk id
+would name a chunk whose content the record does not contain.
+
+**What the corpus holds, measured 2026-09-12** over a random sample of
+2,000 of the 79,377 book directories on the node:
+
+| form available locally | share | books |
+|---|---|---|
+| `-images.epub` | 60.5 % | ~48,000 |
+| plain `.epub` only | 0.25 % | ~200 |
+| `.txt` but no epub | 37.1 % | ~29,400 |
+| `.rdf` only | 2.2 % | ~1,700 |
+| nothing readable | 0.05 % | ~40 |
+
+The 37 % is why the fetch matters: the local mirror was filled by a spec
+whose `extras` filter carried `exclude=("*images*",)` — it excluded
+precisely the illustrated editions this collection exists to read. The
+origin publishes `pg<id>-images.epub` for the txt-only books sampled, so
+those ~29,400 books are reading the wrong form until the fetch lands.
+`acquire/specs.py` now puts `*.epub` in `filters` and `extras` is empty.
+
+**The fetch, planned 2026-09-12:** 393,151 files, 303.6 GB upstream
+against 241 GB held, so roughly 60 GB genuinely missing. `full-resync`,
+mirrors benchmarked at fetch time (ibiblio 2.002 s against aleph 3.028 s
+on `1/pg1.rdf`).
+
+**Do not run `records build` until the fetch completes.** A book that has
+an epub upstream and only `.txt` here parses to a record a verifier
+cannot reproduce — `records-vs-origin` re-fetches and reaches for the
+epub. Discovery self-corrects when the epub lands (the chosen file's
+mtime and size move, so the change gate resets `rdf_done`, `fts_done`,
+`embed_done`), but a shard already built does not.
+
+**The id was minted twice.** `sha256:88075d0a…` came first and its
+validation plan did not name `figures` — 51 GB of plates and nothing that
+ever re-hashes one. `validation` is inside `collection_id`, so it was
+re-minted rather than amended, and `template._validation` now refuses a
+`record_line` 2 recipe that omits the check. Nothing had been built
+against the first id.
 
 ### What is waiting on the operator
 
