@@ -243,6 +243,7 @@ class GutenbergSource:
         meta = rdf.parse(book_dir, native_id)
         suffix = raw.path.suffix.lower()
         plates: list = []
+        text_header: dict[str, str] = {}
         if suffix == ".epub":
             # `pick_form` proved this file readable, and between then and
             # now a sync can have replaced it. A file that will not open is
@@ -275,6 +276,9 @@ class GutenbergSource:
         else:
             body_text = pg_text.read_clean(raw.path)
             sections = pg_text.split_chapters(body_text)
+            # the PG header's `Key: value` fields — Credits above all,
+            # which read_clean discards with the boilerplate around it
+            text_header = pg_text.header_fields(raw.path)
         # THE BOOK'S OWN CONTENTS PAGE, which `split_chapters` drops: its
         # lines each match the chapter pattern and leave no body behind,
         # so 415 headings over 400 sampled books went nowhere. In `extra`
@@ -334,6 +338,13 @@ class GutenbergSource:
                 "rights": meta["rights"],
                 "reading_ease": meta["reading_ease"],
                 "text_toc": text_toc,
+                # every pgterms:marcNNN by number — 508 is the production
+                # credit, 520 a PG-generated summary, 901 cover images.
+                # Captured by number so a datafield this code has never
+                # heard of survives.
+                "marc": meta["marc"],
+                # the text file's own header fields, Credits included
+                "text_header": text_header,
             }.items() if v not in ("", None, [], {})},
             sections=sections,
             figures=plates,

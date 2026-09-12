@@ -9,6 +9,11 @@ from pathlib import Path
 _START = re.compile(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*", re.I | re.S)
 _END = re.compile(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*", re.I | re.S)
 
+#: a PG header field line: "Credits: Produced by ...". Anchored and
+#: bounded so a colon inside prose ("Note: see below") in the body is not
+#: mistaken for one — the key is a short run of letters and spaces only.
+_HEADER_FIELD = re.compile(r"^([A-Za-z][A-Za-z ]{1,28}):\s*(.*)$")
+
 _CHAPTER = re.compile(
     r"^\s{0,6}("
     r"(chapter|chap\.?|capitolo|capítulo|capitulo|chapitre|kapitel|kapittel|hoofdstuk|"
@@ -63,6 +68,51 @@ def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool, str | Non
 
 def find_txt(book_dir: Path, book_id: int) -> Path | None:
     return scan_dir(book_dir, book_id)[0]
+
+def header_fields(path: Path) -> dict[str, str]:
+    """The `Key: value` lines of the PG header, before `*** START ***`.
+
+    `read_clean` throws that whole block away as promise 9(b)'s "common
+    header", and most of it is exactly that — "This eBook is for the use
+    of anyone anywhere at no cost…" is boilerplate repeated on every
+    text. But `Credits: Produced by David Widger` is IN there, and the
+    operator settled what that is (2026-09-12): "keep the PG production
+    credits, project louise respects the credits".
+
+    So the boilerplate PROSE still goes and the structured fields stay —
+    Title, Author, Release Date, Language, Credits, Editor, Illustrator,
+    Translator. Taking `Key: value` lines rather than a list of known
+    keys means a field this code has never seen survives too.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return {}
+    for enc in ("utf-8", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    m = _START.search(text)
+    head = text[: m.start()] if m else text[:4000]
+    out: dict[str, str] = {}
+    key = None
+    for line in head.splitlines():
+        got = _HEADER_FIELD.match(line)
+        if got:
+            key = got.group(1).strip()
+            out[key] = got.group(2).strip()
+        elif key and line.startswith((" ", "\t")) and line.strip():
+            # a continuation line: a long credit wraps, and half a credit
+            # is not a credit
+            out[key] = f"{out[key]} {line.strip()}".strip()
+        elif not line.strip():
+            key = None
+    return {k: v for k, v in out.items() if v}
+
 
 def read_clean(path: Path) -> str:
     raw = path.read_bytes()
@@ -122,7 +172,13 @@ def split_chapters(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, s
     if 1 <= len(matches) <= 400:
         parts = []
         first = matches[0]
-        if first.start() > 200:
+        # ANY front matter, not only more than 200 characters of it. The
+        # threshold dropped it on 17 of 400 sampled books, and what sits
+        # there is usually PG's production credit plus the title page —
+        # "Produced by David Widger and Pat Castevens". The operator
+        # settled it (2026-09-12): "keep the PG production credits,
+        # project louise respects the credits".
+        if first.start() and text[: first.start()].strip():
             parts.append(("Front matter", text[: first.start()].strip()))
         for i, m in enumerate(matches):
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)

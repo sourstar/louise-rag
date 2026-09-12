@@ -110,13 +110,13 @@ def test_an_agent_is_more_than_a_name_and_carries_its_role(meta):
     assert kemble["birth"] == "1861"
 
 
-def test_the_display_string_is_unchanged_by_the_role_work(meta):
-    """Deliberately every agent, in the origin's order. Filtering to
-    `creator` reads better and loses nothing -- the role is in
-    `creators_detail` either way -- but it reinterprets who counts as an
-    author and changes what every reader sees, which is not a side effect
-    a fidelity fix gets to have."""
+def test_every_credit_is_listed_not_only_the_author(meta):
+    """It looked like a bug that `documents.authors` reads "Twain, Mark;
+    Kemble, E. W." when Kemble illustrated. Operator, 2026-09-12:
+    "authors and illustrators are fundamental credits". They all stay;
+    `creators_detail` says which is which."""
     assert meta["authors"] == "Twain, Mark; Kemble, E. W."
+    assert {a["role"] for a in meta["creators_detail"]} == {"creator", "ill"}
 
 
 def test_nothing_is_silently_truncated(tmp_path):
@@ -206,3 +206,93 @@ def test_a_long_heading_keeps_its_tail():
     sections = pg_text.split_chapters(f"{head}\n\nThe body of the chapter.\n")
     assert sections, "the heading pattern still matches"
     assert len(sections[-1][0]) > 120 or head.strip().startswith(sections[-1][0][:20])
+
+
+# ---------------- the credits (operator, 2026-09-12) ----------------
+
+TEXT_WITH_HEADER = """The Project Gutenberg eBook of Huckleberry Finn, by Mark Twain
+
+This eBook is for the use of anyone anywhere in the United States and most
+other parts of the world at no cost and with almost no restrictions
+whatsoever.
+
+Title: Adventures of Huckleberry Finn
+
+Author: Mark Twain
+
+Illustrator: E. W. Kemble
+
+Release Date: June 29, 2004
+
+Credits: Produced by David Widger and Pat Castevens
+         with additional proofreading by volunteers
+
+Language: English
+
+*** START OF THE PROJECT GUTENBERG EBOOK HUCKLEBERRY FINN ***
+
+THE ADVENTURES OF HUCKLEBERRY FINN
+
+CHAPTER I.
+
+You don't know about me without you have read a book.
+"""
+
+
+def test_the_production_credit_is_kept(tmp_path):
+    """Operator, 2026-09-12: "keep the PG production credits, project
+    louise respects the credits". `read_clean` discards the whole header
+    as promise 9(b) boilerplate, and the Credits line is inside it."""
+    from app.plugins.gutenberg import pg_text
+    p = tmp_path / "pg76.txt"
+    p.write_text(TEXT_WITH_HEADER, encoding="utf-8")
+    head = pg_text.header_fields(p)
+    assert head["Credits"] == ("Produced by David Widger and Pat Castevens "
+                               "with additional proofreading by volunteers"), \
+        "a wrapped credit is one credit, not half of one"
+    assert head["Illustrator"] == "E. W. Kemble"
+    assert head["Release Date"] == "June 29, 2004"
+
+
+def test_the_boilerplate_prose_is_still_dropped(tmp_path):
+    """(b) still applies to the header's repeated prose: it is on every
+    text and asserts nothing about this book."""
+    from app.plugins.gutenberg import pg_text
+    p = tmp_path / "pg76.txt"
+    p.write_text(TEXT_WITH_HEADER, encoding="utf-8")
+    head = pg_text.header_fields(p)
+    assert not any("no cost and with almost no restrictions" in v
+                   for v in head.values())
+    assert "This eBook is for the use of anyone anywhere" not in pg_text.read_clean(p)
+
+
+def test_short_front_matter_is_kept(tmp_path):
+    """The `> 200` threshold dropped it on 17 of 400 sampled books, and
+    what sits there is usually the production credit plus the title
+    page."""
+    from app.plugins.gutenberg import pg_text
+    body = "Produced by David Widger\n\nCHAPTER I.\n\nIt was a dark night.\n"
+    assert len(body.split("CHAPTER")[0]) < 200
+    sections = pg_text.split_chapters(body)
+    assert sections[0][0] == "Front matter"
+    assert "David Widger" in sections[0][1]
+
+
+def test_every_marc_datafield_is_kept_by_number(tmp_path):
+    """The audit could not enumerate these from one machine — a twelve-book
+    sample shows 508, 520, 901 and 908, and 79,320 books certainly carry
+    more. Capturing the NUMBER as the key keeps a field this code has
+    never heard of, which is the only way to close an unauditable gap."""
+    extra_marc = ("<pgterms:marc508>Produced by David Widger</pgterms:marc508>"
+                  "<pgterms:marc520>An automatically generated summary.</pgterms:marc520>"
+                  "<pgterms:marc999>Something nobody has sampled.</pgterms:marc999>")
+    (tmp_path / "pg76.rdf").write_text(
+        RDF.replace("</pgterms:ebook>", extra_marc + "</pgterms:ebook>"),
+        encoding="utf-8")
+    marc = rdf.parse(tmp_path, 76)["marc"]
+    assert marc["508"] == ["Produced by David Widger"], "the production credit"
+    assert marc["520"] == ["An automatically generated summary."], \
+        "kept too: promise 9 asks whether the origin said it, not whether we trust it"
+    assert marc["999"] == ["Something nobody has sampled."], \
+        "a datafield this code has never heard of survives"
+    assert marc["908"], "and the one read by name is still in here"

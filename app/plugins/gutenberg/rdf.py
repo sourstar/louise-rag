@@ -102,7 +102,7 @@ def parse(book_dir: Path, book_id: int) -> dict:
     out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": "",
            "issued": None, "creators_detail": [], "languages": [],
            "subjects_by_scheme": {}, "alt_titles": [], "description": "",
-           "toc": "", "dcmi_type": "", "rights": "", "reading_ease": ""}
+           "toc": "", "dcmi_type": "", "rights": "", "reading_ease": "", "marc": {}}
     if not path.is_file():
         return out
     try:
@@ -131,18 +131,13 @@ def parse(book_dir: Path, book_id: int) -> dict:
     # promise 9 forbids.
     agents = _agents(ebook)
     out["creators_detail"] = agents
-    #: `authors` stays EVERY agent, in the origin's order — unchanged
-    #: behaviour, and the non-destructive reading of §9.5's `creators`
-    #: ("in the origin's order", with no statement about role).
-    #:
-    #: It is arguably wrong: PG names illustrators, translators and
-    #: editors as agents too, so `documents.authors` for Huckleberry Finn
-    #: reads "Twain, Mark; Kemble, E. W. (Edward Windsor)" as though both
-    #: wrote it. Filtering to `role == "creator"` would read better and
-    #: lose nothing — the role is in `creators_detail` either way, so
-    #: promise 9 is satisfied both ways — but it reinterprets who counts
-    #: as an author and changes what every reader currently sees, which
-    #: is the operator's call and not a side effect of a fidelity fix.
+    #: EVERY agent, in the origin's order, and that is now a decision
+    #: rather than an accident. It looked like a bug — PG names
+    #: illustrators, translators and editors as agents, so Huckleberry
+    #: Finn reads "Twain, Mark; Kemble, E. W. (Edward Windsor)" — and the
+    #: operator settled it (2026-09-12): "authors and illustrators are
+    #: fundamental credits". They are all credits and they all stay; the
+    #: ROLE that says which is which is in `creators_detail`.
     out["authors"] = "; ".join(dict.fromkeys(
         a["name"] for a in agents if a.get("name")))
 
@@ -186,6 +181,29 @@ def parse(book_dir: Path, book_id: int) -> dict:
     #: licence block says what WE may do, this says what the origin
     #: declared about this text, and they are not the same assertion.
     out["rights"] = (ebook.findtext("dcterms:rights", namespaces=NS) or "").strip()
-    #: marc908, the reading-ease score PG computes per text.
+    #: marc908, the reading-ease score PG computes per text. Also in
+    #: `marc` below; kept by name because the Library card shows it.
     out["reading_ease"] = (ebook.findtext("pgterms:marc908", namespaces=NS) or "").strip()
+
+    # EVERY pgterms:marcNNN, BY NUMBER, whatever it is. The audit could
+    # not enumerate these from one machine — a twelve-book sample shows
+    # 508, 520, 901 and 908, and the full 79,320-book corpus certainly
+    # carries more — so enumerating them would guarantee losing the ones
+    # nobody sampled. Capturing the datafield NUMBER as the key keeps a
+    # field this code has never heard of.
+    #
+    # 508 is the production credit ("Produced by David Widger and Pat
+    # Castevens"). The operator settled it, 2026-09-12: "keep the PG
+    # production credits, project louise respects the credits". 520 is a
+    # summary PG GENERATED — kept too, because promise 9's question is
+    # whether the origin said it, not whether we trust it; a consumer can
+    # tell from the number which is which.
+    marc: dict[str, list[str]] = {}
+    for child in ebook:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag.startswith("marc") and tag[4:].isdigit():
+            val = _value(child) or (child.get(f"{{{NS['rdf']}}}resource") or "").strip()
+            if val:
+                marc.setdefault(tag[4:], []).append(val)
+    out["marc"] = marc
     return out
