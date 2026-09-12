@@ -47,6 +47,40 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### v1.0 roots — the development collections are not the product (2026-09-12)
+
+Operator decision: the collections this development phase produces become
+**version 1.0 of the production phase**, built as ROOTS on a corpus or a
+pre-embedded corpus — not daughters, sisters or corrective sisters of the
+non-compliant development ones. The standing rule for getting there is
+"take the fastest route, keeping the final result compliant by the books;
+the final result compliancy is a non negotiable condition."
+
+Auditing the development collections against 09 §9.5 and §9.3 found, and
+the code now fixes:
+
+| where | gap | fixed in |
+|---|---|---|
+| record line | `layer` and `chunks` published, in neither §9.5's table nor 03 §3.2 | `app/pack/records.py` |
+| pubmed | `creators` always `[]` (origin has them on 99.0%) | parser 5 |
+| pubmed | `lang` hardcoded `"en"` — **9.6% of the corpus is not English** | parser 5 |
+| pubmed | `date` always `null` (origin has it on 100%) | parser 5 |
+| gutenberg | MARC subfield delimiters in **5.86%** of titles; §9.5 says "cleaned" | parser 6 |
+| **every collection** | `derivation` — a required §9.3 key the module never had | `app/hold/codex.py` |
+
+That last one is the big one: every `collection_id` this platform ever
+computed was taken over 34 of the spec's 35 keys. Adding it is a **flag
+day** — `_only` requires every field, so on deploy every existing
+`codex.json` becomes unloadable and each collection is refused until
+re-minted. It therefore waits for the gutenberg fetch, which the refusal
+would stop.
+
+[`v1-rebuild.md`](v1-rebuild.md) has the order, the two routes for
+pubmed's 35.3M vectors and the measurement that chooses between them
+(20.5 chunks/s on the CPU encoder = 23 days to re-embed, versus a bundle
+re-import that costs no download and re-derives the corrected `lang`),
+and the questions still open for the operator.
+
 ### The migration to the documented architecture (branch `louise`)
 
 | step | state |
