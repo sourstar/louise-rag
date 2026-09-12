@@ -94,7 +94,13 @@ class WikipediaSource:
     # the reason content-defined chunking exists in this codebase.
     mutability = Mutability.MUTABLE
     protocol_version = PROTOCOL_VERSION
-    PARSER_VERSION = 1
+    #: 2 since 2026-09-12: promise 9. Version 1 published the prose and
+    #: nothing else, so an article's categories, citations, infobox,
+    #: short description and apparatus were all discarded by
+    #: `strip_code`. Invariant 3 — bumped explicitly. Free to take: this
+    #: is not a configured collection on any node, so no records exist to
+    #: fork. See docs/notes/origin-fidelity-audit.md.
+    PARSER_VERSION = 2
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # pages are deleted; the tombstone stays
     native_id_order = "numeric"          # page_id, issued ascending
@@ -202,21 +208,52 @@ class WikipediaSource:
         title = page.findtext("title") or ""
         text = page.findtext("revision/text") or ""
         lang = raw.ref.extra.get("lang") or "en"
+        parsed: dict = {}
         if wikitext.is_redirect(text) or page.find("redirect") is not None:
             sections: list[tuple[str, str]] = []
         else:
-            sections = wikitext.to_sections(text)
+            # PROMISE 9. `to_sections` alone discarded most of what an
+            # article asserts — categories on 93% of enwiki pages,
+            # citations on 89.6%, infoboxes on 51.4% — because
+            # `strip_code` removes every template and tag, and none of
+            # that is wrapping, boilerplate, our corpus-add date or the
+            # provider's packaging.
+            parsed = wikitext.parse_all(text)
+            sections = parsed["sections"]
         return CanonicalDoc(
             uid=f"{self.source_id}:{raw.ref.native_id}",
             title=title,
             creators=[],
             language=lang,
             date=None,
-            subjects=[],
+            #: the article's own categories, verbatim and in the origin's
+            #: order (operator, 2026-09-12). The sortkey after a "|" is a
+            #: collation hint for the category page, not a second subject.
+            subjects=parsed.get("categories", []),
             keys=[],
-            # the revision's timestamp — informative in a dated snapshot (a
-            # dump IS the snapshot: pack build --until cuts on the dump date)
-            extra={"revised": (page.findtext("revision/timestamp") or "")[:10] or None},
+            # EVERYTHING ELSE THE PAGE SAYS. Kept, not embedded: a
+            # bibliography or an infobox chunked into the vector space
+            # would compete with the prose it annotates, and promise 9
+            # requires holding what the origin said, not chunking it.
+            extra={k: v for k, v in {
+                # the revision's timestamp — informative in a dated snapshot
+                # (a dump IS the snapshot: pack build --until cuts on it)
+                "revised": (page.findtext("revision/timestamp") or "")[:10] or None,
+                "revision": (page.findtext("revision/id") or "").strip(),
+                "redirect_to": (page.find("redirect").get("title")
+                                if page.find("redirect") is not None else ""),
+                "short_description": parsed.get("short_description", ""),
+                "infoboxes": parsed.get("infoboxes", []),
+                "references": parsed.get("references", []),
+                "external_links": parsed.get("external_links", []),
+                "coordinates": parsed.get("coordinates", []),
+                # References/External links/See also: out of the CHUNKS,
+                # where they are citation noise, but not out of the record
+                "apparatus": parsed.get("apparatus", {}),
+                # presence only: the identifiers live in Wikidata, and 573
+                # of 574 sampled templates carry no parameters at all
+                "has_authority_control": parsed.get("has_authority_control", False),
+            }.items() if v not in ("", None, [], {}, False)},
             sections=sections,
             raw_hash=raw.raw_hash,
         )
