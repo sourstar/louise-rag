@@ -198,6 +198,23 @@ narrowed.
   non-compliance; but `subjects` is fixed for the collection's life and
   the Codex's `facets` may want to declare one over it, so it is a
   decide-before-the-root.
+
+  Measured on this node's simplewiki dump, 4,000 pages: **76% carry
+  categories, 3.1 on average.** `parse()` already holds the whole
+  wikitext (`revision/text`), so extraction is one regex over a string
+  in memory — free now, a new `collection_id` and a records rebuild
+  later. Not a re-embed at least: `subjects` is outside `content_hash`,
+  so chunk ids and vectors would survive a fork.
+
+  AND THERE IS A SECOND HALF TO THE DECISION. Categories mix topics with
+  MAINTENANCE: the sample gives `Art` → `['Art', 'Non-verbal
+  communication', 'Basic English 850 words', 'Visual arts']`, and enwiki
+  adds `Articles with unsourced statements`, `CS1 errors`, `Use dmy
+  dates from …`. So: verbatim, or filtered by a known-prefix list?
+  Recommendation is VERBATIM — invariant 11's instinct is to keep what
+  the origin says, a hand-maintained exclusion list ages badly inside an
+  immutable record, and `facets` can hide noisy values at display time
+  without baking an editorial judgement into signed bytes.
 - **wikipedia/wikivec are not configured collections on this node** — a
   corpus and archive state on disk, no TOML — so nothing above is urgent.
   `wikivec-merge-blocked.md` governs that pair when it comes up.
