@@ -586,3 +586,39 @@ def test_nothing_recovered_is_a_whole_batch_failure_not_n_misses(monkeypatch):
     # an all-echo batch parses, so it is N honest misses, not a failure
     monkeypatch.setattr(llm, "chat", lambda messages, **kw: '{"1": "it", "2": "it"}')
     assert llm.translate_texts(["a", "b"], "it") == [None, None]
+
+
+def test_the_origins_page_layout_is_flattened_before_the_model_sees_it(monkeypatch):
+    """A Gutenberg snippet carries the book's typesetting — centred title
+    pages, indented verse, CRLF — and on that input qwen3:8b starts
+    reproducing the whitespace and emits newlines until it stops, losing
+    the batch. Measured on the node with the language NAMED either way:
+    raw 1.6 s / 92 B / 0 of 11; cleaned 56.5 s / 4569 B / 11 of 11.
+    """
+    from app import llm
+    seen = {}
+
+    def fake_chat(messages, **kw):
+        seen["prompt"] = messages[0]["content"]
+        seen["max_tokens"] = kw.get("max_tokens")
+        return '{"1": "il faro"}'
+    monkeypatch.setattr(llm, "chat", fake_chat)
+
+    messy = "滌語開路\r\n\r\n\r\n\r\n      民國四年   \r\n\r\n\r\n"
+    llm.translate_texts([messy], "it")
+    body = seen["prompt"]
+    assert "\r" not in body, "CRLF is the origin's, not the protocol's"
+    assert "\n\n\n" not in body, "three or more blank lines collapse to one"
+    assert "      " not in body, "runs of spaces collapse to one"
+    assert "滌語開路" in body and "民國四年" in body, \
+        "the WORDS travel untouched; only the layout goes"
+
+    # the budget is taken over the PRE-CLEAN length — the cap covers the
+    # output, and 3279 over the uncleaned batch is what the 11/11 run used
+    assert seen["max_tokens"] == max(600, 2 * len(messy) // 3 + 200)
+
+
+def test_flatten_whitespace_leaves_ordinary_prose_alone():
+    from app import llm
+    plain = "The lighthouse keeper woke.\n\nHe lit the lamp."
+    assert llm.flatten_whitespace(plain) == plain

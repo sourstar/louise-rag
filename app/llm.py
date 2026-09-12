@@ -92,6 +92,37 @@ def language_phrase(lang: str) -> str:
     return f"{name} (ISO code {lang!r})" if name else f"the language with ISO code {lang!r}"
 
 
+_WS_RUN = re.compile(r"[ \t ]+")
+_BLANK_RUN = re.compile(r"\n{3,}")
+
+
+def flatten_whitespace(text: str) -> str:
+    """Collapse the ORIGIN'S PAGE LAYOUT before handing a passage to the
+    model. Runs of spaces become one, CRLF becomes LF, three or more
+    newlines become two.
+
+    NECESSARY, not tidying. A Gutenberg snippet carries the book's
+    typesetting — centred title pages, indented verse, CRLF — and on that
+    input qwen3:8b degenerates: it starts reproducing the whitespace and
+    emits `\\n` until it stops, returning 92 bytes of truncated JSON and
+    losing the whole batch. Measured on the node, 2026-09-12, the same 11
+    passages with the language NAMED either way:
+
+        raw      1.6 s     92 B   0/11 translated
+        cleaned  56.5 s  4569 B  11/11
+
+    An earlier A/B appeared to clear cleaning of any role; it compared
+    raw-with-code against cleaned-with-name and never isolated
+    raw-with-name, which is the combination that fails.
+
+    Only what is SENT is flattened. The snippet on the page and the
+    original in the provenance drawer are untouched, and a translation is
+    still compared against the original the caller sent.
+    """
+    return _BLANK_RUN.sub("\n\n", _WS_RUN.sub(
+        " ", text.replace("\r\n", "\n").replace("\r", "\n"))).strip()
+
+
 def _parse_numbered(raw: str) -> dict[str, str]:
     """The model's numbered JSON, salvaging a truncated tail.
 
@@ -142,7 +173,7 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
     never collide again — a citation `[3]` inside a passage is content and
     must survive verbatim.
     """
-    items = [t for t in texts]
+    items = [flatten_whitespace(t) for t in texts]
     if not items or not lang:
         return []
     numbered = "\n\n".join(f"<<{i + 1}>> {t}" for i, t in enumerate(items))
@@ -156,7 +187,14 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
     )
     try:
         raw = chat([{"role": "user", "content": prompt}], temperature=0.0,
-                   max_tokens=max(600, 2 * sum(len(t) for t in items) // 3 + 200),
+                   # from the PRE-CLEAN lengths on purpose. The cap has to
+                   # cover the OUTPUT, whose length tracks what the passage
+                   # says and not how the origin laid it out, and 3279 —
+                   # this formula over the uncleaned batch — is the value
+                   # the 11/11 run was measured at. Deriving it from the
+                   # flattened text would quietly tighten a budget nobody
+                   # had re-measured.
+                   max_tokens=max(600, 2 * sum(len(t) for t in texts) // 3 + 200),
                    num_ctx=16384)
         raw = raw.strip()
         if raw.startswith("```"):
