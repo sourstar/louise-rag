@@ -688,9 +688,31 @@ gutenberg pack plan needs those vectors before the hand-over.
    (1) *Results in another language, interface untouched.* A "show
    results in" drop-down beside the mode selector (default *original*;
    options = the languages indexed in scope plus the operator's default).
-   Only CONTENT is translated — snippets, the drawer text and the RAG
-   answer — never titles, authors or ids (a bibliographic reference must
-   read as published) and never the page chrome. Snippets: one LLM call
+   Only CONTENT is translated — snippets, the drawer text, the RAG
+   answer **and the title** — never authors or ids, and never the page
+   chrome.
+
+   **AMENDED 2026-09-12: the title IS translated.** The original rule
+   said titles never change, for "a bibliographic reference must read as
+   published". The operator overruled it, and the argument is decisive:
+
+   > "the title must be translated when I ask to read the results in a
+   > language I know, then I can still convert the results back to their
+   > original language to copy the original title for reference. how am I
+   > supposed to understand a title in Arabic or Hindi?"
+
+   The old rule assumed the displayed title was the only copy. It is
+   not: the switch is REVERSIBLE, so the published title is always one
+   selection back, and the hit also keeps it as a hover tooltip. Against
+   that, an untranslated title defeats the feature's whole purpose —
+   "results in a language I know" that opens with a line the reader
+   cannot read is not a translation, and the corpus genuinely holds
+   Arabic, Hindi, Chinese, Japanese, Russian and Greek titles.
+
+   AUTHORS AND IDS STILL DO NOT CHANGE, and for a reason that survives
+   the amendment: a personal name is not translated in any language, and
+   an id is not language at all. Transliteration is a different
+   operation and is not offered. Snippets: one LLM call
    per result page (`POST /ask/translate {lang, items}` → JSON, batched
    like `llm.translate_query`), a small "translated from de" badge, the
    original kept in the provenance drawer, an in-memory LRU keyed on
