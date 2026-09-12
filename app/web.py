@@ -93,6 +93,20 @@ TEMPLATES.env.filters["num"] = (
     lambda n: "" if n is None else f"{int(n):,}".replace(",", "."))
 
 
+#: What the ETA slot shows when work REMAINS and there is no rate to stand
+#: behind. A dash, not "TBD" (operator, 2026-09-12): the card is read to
+#: see whether anything is moving, and a word the reader has to look up is
+#: worse than an honest blank. "TBD" also stood for four different states —
+#: no history yet, one window so far, stalled, and not scheduled — none of
+#: which it distinguished. The dash carries its reason in the tooltip.
+#:
+#: Nothing at all is shown once a stage is DONE. That half was already the
+#: intent (`_human_eta` returns None "so the card shows NOTHING rather than
+#: a placeholder") and it was unreachable on the dense row, which completed
+#: against a denominator no stage could ever reach — see `stage_targets`.
+ETA_UNKNOWN = "-"
+
+
 def _human_eta(seconds: float | None) -> str | None:
     """Compact ETA for the Library bars — None when it cannot be known
     (no rate, nothing left), so the card shows NOTHING rather than a
@@ -616,7 +630,8 @@ def _worker_stats() -> dict:
 
 
 def _collection_shelf(collection: collections_mod.Collection,
-                       measured: dict | None = None) -> dict:
+                       measured: dict | None = None,
+                       worker_state: str = "running") -> dict:
     con = db.connect(collection)
     # Counts come from the shared cache (see _document_counts): one scan per
     # collection, reused by the Stats page, refreshed behind the request
@@ -746,6 +761,23 @@ def _collection_shelf(collection: collections_mod.Collection,
     _RATE_FIELDS = ("fetch", "rdf", "fts", "embed")
     stage_rates = {k: None for k in _RATE_FIELDS}
     stage_etas = {k: None for k in _RATE_FIELDS}
+    #: Why the ETA slot says what it says, in words, for the tooltip. The
+    #: template used to build this itself and could only guess: it rendered
+    #: `title="+/h"` — a literal `+` and `/h` around nothing — on every row
+    #: whose rate was unknown, which is exactly the rows an operator asks
+    #: about.
+    stage_eta_why = {k: None for k in _RATE_FIELDS}
+    #: THE TARGET EACH STAGE IS MEASURED AGAINST, computed once here so the
+    #: bar, the "complete" colour and the ETA cannot disagree about what
+    #: done means. They did: the template derived `indexable = in_scope -
+    #: unindexable` for rdf and fts and used raw `in_scope` for the dense
+    #: row, while this function computed `remaining` from `in_scope` for
+    #: all three. On gutenberg — 79,320 in scope, 33 unindexable — that
+    #: made the dense row's target 33 documents no stage will ever finish,
+    #: so its ETA slot could never go quiet. "A bar that cannot reach its
+    #: end is not a progress bar" is the note already above the rdf row;
+    #: this is that note applied to the one row that was missing it.
+    stage_targets: dict[str, int] = {}
     if not counts_pending:
         now_i = int(time.time())
         cur = {
@@ -758,15 +790,23 @@ def _collection_shelf(collection: collections_mod.Collection,
                        and fetched.get("docs_done") is not None
                        else (fetched or {}).get("done")) or 0),
         }
-        remaining = {
-            "rdf": max(0, (counts["in_scope"] or 0) - cur["rdf"]),
-            "fts": max(0, (counts["in_scope"] or 0) - cur["fts"]),
-            "embed": max(0, (counts["in_scope"] or 0) - cur["embed"]),
-            "fetch": (max(0, ((fetched.get("docs_total")
-                               if fetched.get("docs_total") is not None
-                               else fetched.get("remote_total")) or 0)
-                          - cur["fetch"]) if fetched else 0),
+        indexable = max(0, (counts["in_scope"] or 0) - unindexable)
+        stage_targets = {
+            "rdf": indexable, "fts": indexable, "embed": indexable,
+            "fetch": (((fetched.get("docs_total")
+                        if fetched.get("docs_total") is not None
+                        else fetched.get("remote_total")) or 0)
+                      if fetched else 0),
         }
+        remaining = {k: max(0, stage_targets[k] - cur[k]) for k in _RATE_FIELDS}
+        # WHAT A STAGE CAN STILL TAKE. A blocked document waits for a human
+        # ("clear errors & retry"), so while the only thing left is blocked
+        # the stage is as finished as it can be on its own — and a dash
+        # that never resolves is the noise this change is removing. Unlike
+        # `unindexable` it is NOT taken out of the target: retrying can fix
+        # it, so the bar legitimately stops short and the badge says why.
+        workable = {k: max(0, remaining[k] - (blocked if k != "fetch" else 0))
+                    for k in _RATE_FIELDS}
         memo_key = str(collection.manifest_path)
         rec_sr = _stage_rate_memo.get(memo_key)
         if rec_sr is None:
@@ -777,17 +817,27 @@ def _collection_shelf(collection: collections_mod.Collection,
                     rec_sr = json.loads(raw_sr)
                 except (ValueError, TypeError):
                     rec_sr = None
-        if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS) \
-                or any(cur[k] < int(rec_sr.get(k) or 0) for k in _RATE_FIELDS):
-            # first sight, a pre-upgrade record, or a reset shrank a
-            # count: fresh baseline
+        if rec_sr is None or any(k not in rec_sr for k in _RATE_FIELDS):
+            # first sight or a pre-upgrade record: fresh baseline
             baseline = {**cur, "ts": now_i}
             _stage_rate_memo[memo_key] = baseline
             _sample_write(con, "stage_rate", json.dumps(baseline))
             for k in _RATE_FIELDS:
-                if remaining[k] > 0:
-                    stage_etas[k] = "TBD"        # work remains, no history yet
+                if workable[k] > 0:
+                    stage_etas[k] = ETA_UNKNOWN  # work remains, no history yet
+                    stage_eta_why[k] = "measuring — no rate yet"
         else:
+            # A COUNT THAT SHRANK RE-BASELINES ITS OWN STAGE, not all four.
+            # This used to be `any(cur[k] < rec_sr[k] ...)` over every
+            # field, so a single dip — a reset, a re-mint, a corpus whose
+            # fetch total was revised down — discarded the accumulated
+            # rate and sample count of the other three stages as well, and
+            # every one of them went back to a placeholder for the next
+            # two windows. Each stage's history is its own.
+            for k in _RATE_FIELDS:
+                if cur[k] < int(rec_sr.get(k) or 0):
+                    rec_sr = {**rec_sr, k: cur[k], k + "_ph": None,
+                              k + "_n": 0, k + "_pts": now_i, k + "_pc": cur[k]}
             # LOW-PASS FILTERED rate: an exponential moving average over the
             # per-window rates (alpha 0.3 -> a new window carries 30 %), and
             # an ETA is shown only once TWO windows have contributed.
@@ -839,22 +889,53 @@ def _collection_shelf(collection: collections_mod.Collection,
                 _stage_rate_memo[memo_key] = updated
                 _sample_write(con, "stage_rate", json.dumps(updated))
             for k in _RATE_FIELDS:
-                if remaining[k] <= 0:
+                if workable[k] <= 0:
                     continue
                 if stage_rates[k] and samples[k] >= _MIN_WINDOWS:
                     stage_etas[k] = _human_eta(remaining[k] * 3600.0 / stage_rates[k])
+                    stage_eta_why[k] = f"+{stage_rates[k]:,}/h".replace(",", ".")
                 else:
                     # work remains and the rate is not yet trustworthy:
-                    # say so, never a number that will be revised 10x
-                    stage_etas[k] = "TBD"
+                    # say so, never a number that will be revised 10x.
+                    # WHICH of the reasons it is goes in the tooltip — the
+                    # one token used to cover all of them.
+                    stage_etas[k] = ETA_UNKNOWN
+                    stage_eta_why[k] = (
+                        "no progress in the last 30 minutes"
+                        if not stage_rates[k] and samples[k] == 0
+                        and int(rec_sr.get(k + "_n") or 0) > 0
+                        else "measuring — one window so far, waiting for a second"
+                        if stage_rates[k]
+                        else "measuring — no rate yet")
         # rdf is not stalled when it is simply AHEAD: the worker gives the
         # thread to fts whenever a full batch is ready (_next_book), so a
         # stage whose output already outruns its consumer by a batch or
         # more waits by design — pubmed sat at rdf 12.1M / fts 7.9M and the
         # card said "TBD", which reads as "unknown". Say what it is.
+        #
+        # IN WORDS, and only when it is TRUE. "after fts (607 ahead)" named
+        # an internal stage, an unstated unit and an arithmetic the reader
+        # has no way to check (operator, 2026-09-12: "means nothing to the
+        # user"), and it was the one count in the whole interface formatted
+        # with comma grouping — the separator `num` exists to avoid,
+        # because an operator once read "+377,217/h" as 377 per hour.
+        #
+        # Three conditions, where there used to be one. It no longer claims
+        # a cause while the WORKER IS STOPPED — nothing is waiting for
+        # indexing then, it is waiting for the operator — and it no longer
+        # overwrites a real ETA: the assignment sat after the branch that
+        # computes one, so a measured rdf rate was discarded in favour of
+        # this sentence.
         ahead = cur["rdf"] - cur["fts"]
-        if remaining["rdf"] > 0 and ahead >= config.FTS_BATCH_DOCS:
-            stage_etas["rdf"] = f"after fts ({ahead:,} ahead)"
+        if (workable["rdf"] > 0 and ahead >= config.FTS_BATCH_DOCS
+                and stage_etas["rdf"] in (None, ETA_UNKNOWN)
+                and worker_state == "running"):
+            stage_etas["rdf"] = "waiting for the index"
+            stage_eta_why["rdf"] = (
+                f"parsing is {ahead:,}".replace(",", ".")
+                + " documents ahead of the index; the worker gives the thread "
+                  "to indexing while a full batch is ready, and parsing "
+                  "resumes when indexing catches up")
 
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
@@ -862,6 +943,12 @@ def _collection_shelf(collection: collections_mod.Collection,
         "plugin_label": _plugin_label(collection.plugin),
         "stage_rates": stage_rates,
         "stage_etas": stage_etas,
+        # the tooltip for the slot above, in words — built HERE because
+        # only this function knows which of the reasons applies
+        "stage_eta_why": stage_eta_why,
+        # what each stage counts up to: one answer for the bar, the colour
+        # and the ETA, so they cannot disagree about what done means
+        "stage_targets": stage_targets,
         "profile": collection.profile or "(hand-populated)",
         # the FULL id, never truncated: it names an embedding space uniquely,
         # and a prefix invites comparing prefixes — two spaces can share ten
@@ -1026,7 +1113,11 @@ def library_page(request: Request):
     collections = collections_mod.load_all()
     con = db.connect()   # worker_state is one global control-table toggle (see worker.py)
     measured = _worker_stats()
-    shelves = [_collection_shelf(c, measured) for c in collections]
+    # PASSED IN, not re-read per collection: it is one global toggle, and
+    # the shelf needs it to tell "waiting for the index" (true only while
+    # the worker runs) from "waiting for the operator".
+    worker_state = db.worker_state(con)
+    shelves = [_collection_shelf(c, measured, worker_state) for c in collections]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
         "shelves": shelves,
@@ -1042,7 +1133,7 @@ def library_page(request: Request):
                           for p in collections_mod.PLUGIN_REGISTRY},
         "corpus_mounts": _corpus_mounts(),
         "corpus_mounts_dir": str(config.CORPUS_MOUNTS_DIR),
-        "worker_state": db.worker_state(con),
+        "worker_state": worker_state,
     })
 
 

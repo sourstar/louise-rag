@@ -56,7 +56,7 @@
   {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
   {% set fetch_title = ('file count is archives, not documents. ' if c.fetched.containers else '') + 'green = complete, turquoise = running or scheduled, orange = on-demand only, grey = off/paused' %}
   <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif worker_state != 'paused' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
-      <span{% if c.fetched.docs_total %} title="documents (files)"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="extra formats — local only">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="+{{ c.stage_rates.fetch|num }}/h">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
+      <span{% if c.fetched.docs_total %} title="documents (files)"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="extra formats — local only">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fetch }}">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
   <div class="note">fetch stage: n/a (hand-populated corpus, acquisition not enabled)</div>
@@ -76,9 +76,9 @@
      arrive. A bar that cannot reach its end is not a progress bar. The
      badge below still names the 1,454, so nothing is hidden. #}
   {% set indexable = (c.in_scope - (c.unindexable or 0)) if c.in_scope else 0 %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.rdf_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ indexable|num }}{% if c.stage_etas.rdf and indexable and c.rdf_done < indexable %} <span style="color:var(--brass)" title="{% if c.stage_rates.rdf %}+{{ c.stage_rates.rdf|num }}/h{% else %}waiting for the lexical index to catch up{% endif %}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.rdf_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ indexable|num }}{% if c.stage_etas.rdf %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.rdf }}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/indexable)|round(1) if indexable else 0 }}%;background:var(--brass)"></span></div></div>
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.fts_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ indexable|num }}{% if c.stage_etas.fts and indexable and c.fts_done < indexable %} <span style="color:var(--brass)" title="+{{ c.stage_rates.fts|num }}/h">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.fts_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ indexable|num }}{% if c.stage_etas.fts %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fts }}">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.fts_done/indexable)|round(1) if indexable else 0 }}%;background:var(--brass)"></span></div></div>
   {# the dense row is part of the STANDARD ladder on EVERY card (operator:
      pubmed's main box read as truncated without it) — named for what it
@@ -94,13 +94,13 @@
      mode) -> turquoise; otherwise the mode speaks: off -> grey,
      on-demand -> orange, all -> turquoise while the worker runs #}
   {% if c.counts_pending %}{% set dense_color = 'inherit' %}
-  {% elif c.in_scope and c.embed_done >= c.in_scope %}{% set dense_color = 'var(--ok)' %}
+  {% elif indexable and c.embed_done >= indexable %}{% set dense_color = 'var(--ok)' %}
   {% elif c.genesis %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}
   {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
   {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
   {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ c.in_scope|num }}{% if c.stage_etas.embed and c.in_scope and c.embed_done < c.in_scope %} <span style="color:var(--brass)" title="+{{ c.stage_rates.embed|num }}/h">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.embed_done/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ indexable|num }}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.embed_done/indexable)|round(1) if indexable else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
     {% if c.embed_mode == 'all' %}

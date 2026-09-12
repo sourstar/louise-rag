@@ -435,20 +435,34 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     # the card shows a compact ETA, dot-grouped, never a bare rate:
     # 200 remaining at 540/h = ~22 min
     assert shelf["stage_etas"]["rdf"] == "~22min"
-    assert shelf["stage_etas"]["fts"] == "TBD", "work remains, no trustworthy rate: say so"
+    assert shelf["stage_etas"]["fts"] == web.ETA_UNKNOWN, \
+        "work remains, no trustworthy rate: a dash, and the reason in the tooltip"
+    assert "no rate yet" in shelf["stage_eta_why"]["fts"]
     html = _render_library(shelf)
     assert "(~22min)" in html
-    assert "no rate" not in html, "an unknown ETA shows NOTHING"
+    # An unknown ETA shows a DASH, and the reason is in its tooltip
+    # (operator, 2026-09-12). It used to show "TBD" and a tooltip reading
+    # literally "+/h" — a plus and a per-hour around nothing.
+    assert "(-)" in html and "measuring — no rate yet" in html
+    assert "TBD" not in html and "+/h" not in html
 
-    # a reset that shrinks a count starts a fresh baseline
+    # A COUNT THAT SHRANK RE-BASELINES ITS OWN STAGE, NOT ALL FOUR. This
+    # used to be one `any(...)` over every field, so a single dip — a
+    # reset, a re-mint, a fetch total revised down — discarded the rate
+    # and sample count of the other three stages too, and every one of
+    # them fell back to a placeholder for the next two windows.
     web._stage_rate_memo[str(c.manifest_path)] = {
         "rdf": 99999, "fts": 0, "embed": 0, "fetch": 0,
+        "rdf_ph": 540, "rdf_n": 2, "embed_ph": 1200, "embed_n": 2,
         "ts": int(time.time()) - 600}
     web.invalidate_counts()
     shelf = web._collection_shelf(c, {})
-    assert all(v is None for v in shelf["stage_rates"].values())
     rec = web._stage_rate_memo[str(c.manifest_path)]
-    assert rec["rdf"] == 100 and "rdf_ph" not in rec
+    assert rec["rdf"] == 100 and rec["rdf_ph"] is None and rec["rdf_n"] == 0, \
+        "the stage whose count went backwards starts over"
+    assert rec["embed_ph"] == 1200 and rec["embed_n"] == 2, \
+        "and the stages that did not are left alone"
+    assert shelf["stage_rates"]["rdf"] is None
 
     # a pre-upgrade record (rdf/fts only) in the CONTROL table (a restart's
     # warm start) re-baselines instead of minting a bogus rate from a
@@ -534,7 +548,13 @@ def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
     """Operator report: pubmed's parsed (rdf) ETA read "TBD" for hours. It
     was not stalled — rdf led fts by 4.2M documents, and the worker gives
     the thread to fts while a full batch is ready (_next_book), so rdf
-    waits by design. The card says so, with the lead, instead of TBD."""
+    waits by design. The card says so instead of TBD.
+
+    IN WORDS since 2026-09-12. "after fts (607 ahead)" named an internal
+    stage, an unstated unit and an arithmetic the reader cannot check
+    (operator: "means nothing to the user"), and it was the one count in
+    the interface with comma grouping — the separator the `num` filter
+    exists to avoid. The lead moves to the tooltip."""
     c = collections_mod.default_collection()
     con = db.connect(c)
     for i in range(2000):
@@ -543,17 +563,26 @@ def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
                     (f"g:{i}", str(i), f"/x{i}", 1 if i < 1000 else 0))
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     web.invalidate_counts()
-    shelf = web._collection_shelf(c, {})
-    assert shelf["stage_etas"]["rdf"] == "after fts (1,000 ahead)"
-    assert shelf["stage_etas"]["fts"] == "TBD", "fts itself has no history yet"
+    shelf = web._collection_shelf(c, {}, "running")
+    assert shelf["stage_etas"]["rdf"] == "waiting for the index"
+    assert "1.000 documents ahead" in shelf["stage_eta_why"]["rdf"]
+    assert shelf["stage_etas"]["fts"] == web.ETA_UNKNOWN,         "fts itself has no history yet"
     html = _render_library(shelf)
-    assert "after fts (1,000 ahead)" in html and "waiting for the lexical index" in html
-    assert "+None" not in html
+    assert "waiting for the index" in html
+    assert "1.000 documents ahead" in html
+    assert "after fts" not in html, "the internal stage name is gone"
+    assert "+None" not in html and "+/h" not in html
+
+    # NOT while the worker is stopped: nothing is waiting for indexing
+    # then, it is waiting for the operator
+    stopped = web._collection_shelf(c, {}, "paused")
+    assert stopped["stage_etas"]["rdf"] == web.ETA_UNKNOWN
+
     # once fts catches up to within a batch, rdf is judged on its own rate again
     con.execute("UPDATE documents SET fts_done=1 WHERE CAST(native_id AS INTEGER) < 950")
     web.invalidate_counts()
-    shelf = web._collection_shelf(c, {})
-    assert shelf["stage_etas"]["rdf"] == "TBD"
+    shelf = web._collection_shelf(c, {}, "running")
+    assert shelf["stage_etas"]["rdf"] == web.ETA_UNKNOWN
 
 
 def test_embed_mode_persists_even_when_the_manifest_is_locked(isolated_config, monkeypatch, tmp_path):
@@ -675,7 +704,7 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
     """Louise2's gutenberg embeds a 1,000-chunk book every ~6 minutes: most
     5-minute windows see NO commit. A quiet window is not evidence of a
     zero rate — the window stretches until the stage moves again — and
-    only a stall of _STALL_S (30 min) drops the ETA to TBD."""
+    only a stall of _STALL_S (30 min) drops the ETA to a dash."""
     import json as _json
     c = collections_mod.default_collection()
     con = db.connect(c)
@@ -713,7 +742,10 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
         "embed_ph": 48, "embed_n": 3, "embed_pts": now - 1801, "embed_pc": 24}
     web.invalidate_counts()
     shelf = web._collection_shelf(c, {})
-    assert shelf["stage_rates"]["embed"] is None and shelf["stage_etas"]["embed"] == "TBD"
+    assert shelf["stage_rates"]["embed"] is None
+    assert shelf["stage_etas"]["embed"] == web.ETA_UNKNOWN
+    assert "30 minutes" in shelf["stage_eta_why"]["embed"], \
+        "a stall says which of the four reasons it is"
 
 
 # ---- the instrument must not cost what it measures -------------------------
@@ -741,3 +773,76 @@ def test_an_expensive_collection_earns_a_longer_ttl():
     assert ttl == 560.0
     assert 56.0 / ttl <= web._COUNTS_MAX_DUTY
     web._counts_scan_secs.clear()
+
+
+def test_a_finished_stage_prints_nothing_at_all(isolated_config):
+    """"print nothing when the operation is completed, it is nicer to see"
+    (operator, 2026-09-12).
+
+    Half of it already worked and half was UNREACHABLE. `remaining` was
+    computed from raw `in_scope` for all three document stages, while the
+    template derived `indexable = in_scope - unindexable` for parsed and
+    indexed and used raw `in_scope` for the dense row. So on any
+    collection with an unindexable document the dense row's target was
+    documents no stage will ever finish, and its slot could never go
+    quiet. Live: gutenberg, 79,320 in scope, 33 unindexable.
+
+    One target per stage, computed once, is the fix — "a bar that cannot
+    reach its end is not a progress bar" was already the note above the
+    parsed row.
+    """
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(10):
+        # eight finishable documents and two the source cannot give us
+        bad = i >= 8
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks,error) "
+                    "VALUES(?,'g',?,?,1,?,?,?,1,?)",
+                    (f"g:{i}", str(i), f"/x{i}",
+                     0 if bad else 1, 0 if bad else 1, 0 if bad else 1,
+                     "no txt file" if bad else None))
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+
+    assert shelf["unindexable"] == 2
+    assert shelf["stage_targets"]["rdf"] == 8, "the two are out of the target"
+    assert shelf["stage_targets"]["embed"] == 8, \
+        "the dense row counts to the same place as the others"
+    for stage in ("rdf", "fts", "embed"):
+        assert shelf["stage_etas"][stage] is None, \
+            f"{stage} is done: nothing at all, not even a dash"
+
+    html = _render_library(shelf)
+    assert "(-)" not in html and "TBD" not in html
+    assert "8 / 8" in html, "and it reads as complete"
+
+
+def test_only_blocked_work_left_prints_nothing_either(isolated_config):
+    """A blocked document waits for a human, so while the only thing left
+    is blocked the stage is as finished as it can be on its own — and a
+    dash that never resolves is the noise this change removes. Unlike
+    `unindexable` the blocked ones stay IN the target: retrying can fix
+    them, so the bar legitimately stops short and the badge says why."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    for i in range(10):
+        stuck = i >= 8
+        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
+                    "rdf_done,fts_done,embed_done,chunks,error) "
+                    "VALUES(?,'g',?,?,1,?,?,?,1,?)",
+                    (f"g:{i}", str(i), f"/x{i}",
+                     0 if stuck else 1, 0 if stuck else 1, 0 if stuck else 1,
+                     "fts: tantivy exploded" if stuck else None))
+    web._stage_rate_memo.pop(str(c.manifest_path), None)
+    web.invalidate_counts()
+    shelf = web._collection_shelf(c, {}, "running")
+
+    assert shelf["blocked"] == 2
+    assert shelf["stage_targets"]["fts"] == 10, \
+        "blocked documents stay in the target — retrying can fix them"
+    assert shelf["stage_etas"]["fts"] is None, \
+        "but there is no work the stage can take, so no placeholder"
+    html = _render_library(shelf)
+    assert "(-)" not in html

@@ -147,12 +147,28 @@
     <li><b>counting</b> means the first counter scan since a restart is
       still running (~25&nbsp;s on the largest manifests). The bars read 0
       until it lands.</li>
-    <li><b>The (…) beside a stage</b> is an ETA from the rate measured over
-      the last few minutes; its tooltip carries that rate as +N/h. It is
-      the proof a stage is moving when the bar barely shows it.</li>
-    <li><b>parsed (rdf) with no rate</b> is not stalled: parsing is ahead
-      of the lexical index, the worker gives the thread to indexing while a
-      full batch is ready, and parsing resumes when indexing catches up.</li>
+    <li><b>The (…) beside a stage</b> is how long the rest will take, from
+      the rate measured over the last few minutes. It is the proof a stage
+      is moving when the bar barely shows it. <b>Hover it</b> — the tooltip
+      always says where the figure came from, or why there isn't one.</li>
+    <li><b>(-)</b> means work remains and there is no rate worth quoting
+      yet. Three things it can be, and the tooltip says which: <i>no rate
+      yet</i> (nothing measured since this collection last changed),
+      <i>one window so far</i> (measured once, waiting for a second before
+      showing a number that might be revised tenfold), or <i>no progress in
+      the last 30 minutes</i>. It is never an error.</li>
+    <li><b>Nothing at all beside a stage</b> means there is nothing left
+      for it to do — either it is finished, or the only documents left are
+      <b>blocked</b> and waiting for you.</li>
+    <li><b>waiting for the index</b> on the parsed row is not a stall:
+      parsing has run ahead, the worker gives the thread to indexing while
+      a full batch is ready, and parsing resumes when indexing catches up.
+      The tooltip says how far ahead it is.</li>
+    <li><b>An estimate takes a few minutes to appear</b>, and the clock
+      only runs while this page is open: the rate is sampled when the
+      Library is rendered, so two views at least five minutes apart are
+      needed before the first figure — and a restart, or anything that
+      resets a counter, starts that stage over.</li>
     <li><b>blocked</b> counts documents that failed a stage or exhausted
       their retries. No stage picks them up again — which is why the bars
       stop short — until <b>clear errors &amp; retry</b>.</li>
