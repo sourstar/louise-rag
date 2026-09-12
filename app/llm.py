@@ -67,6 +67,56 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
         return {}
 
 
+# NAME THE LANGUAGE, NEVER JUST THE CODE. Asked to translate "into the
+# language with ISO code 'it'", qwen3:8b answers {"1": "it", "2": "it", …}
+# — it reads the code as the thing to emit. That parses as valid JSON with
+# one non-empty string per passage, so the Ask page painted the literal
+# text "it" over every snippet: the failure that passes every check and is
+# wrong. With the name ("Italian (ISO code 'it')") the same 11 passages
+# come back translated. Measured on the node, 2026-09-12: code → 5.0 s,
+# 147 bytes, 11 × "it"; name → 56.1 s, 4569 bytes, 11 real translations.
+# A code with no entry here degrades to the bare code, so
+# tests/test_result_languages.py pins this table against the picker's.
+LANGUAGE_NAMES = {
+    "en": "English", "de": "German", "fr": "French", "it": "Italian",
+    "es": "Spanish", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
+    "ru": "Russian", "ja": "Japanese", "zh": "Chinese", "tr": "Turkish",
+    "fa": "Persian",
+}
+
+
+def language_phrase(lang: str) -> str:
+    """How a prompt should name `lang` — the name plus the code, or the
+    bare code when we have no name for it."""
+    name = LANGUAGE_NAMES.get(lang.lower())
+    return f"{name} (ISO code {lang!r})" if name else f"the language with ISO code {lang!r}"
+
+
+def _parse_numbered(raw: str) -> dict[str, str]:
+    """The model's numbered JSON, salvaging a truncated tail.
+
+    `json.loads` on the whole object is the fast path. When it raises —
+    the model ran out of tokens mid-value, or degenerated — every
+    COMPLETE `"n": "…"` pair is still recoverable, and losing only the
+    tail beats losing the batch: a single bad passage used to take all
+    eleven with it (`failed=True`, nothing translated, observed live).
+    """
+    body = raw[raw.find("{"): raw.rfind("}") + 1]
+    try:
+        obj = json.loads(body)
+        if isinstance(obj, dict):
+            return {str(k): v for k, v in obj.items() if isinstance(v, str)}
+    except Exception:
+        pass
+    out: dict[str, str] = {}
+    for m in re.finditer(r'"(\d+)"\s*:\s*"((?:[^"\\]|\\.)*)"', raw):
+        try:
+            out[m.group(1)] = json.loads('"' + m.group(2) + '"')
+        except Exception:
+            continue
+    return out
+
+
 def translate_texts(texts: list[str], lang: str) -> list[str | None]:
     """Translate several passages into ISO language `lang` in ONE prompt
     (STATUS 5j: the Ask page's "show results in"). Returns one entry per
@@ -97,8 +147,8 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
         return []
     numbered = "\n\n".join(f"<<{i + 1}>> {t}" for i, t in enumerate(items))
     prompt = (
-        f"Translate each numbered passage below into the language with ISO code "
-        f"'{lang}'. Each passage starts with a fence like <<2>> which is NOT part "
+        f"Translate each numbered passage below into {language_phrase(lang)}. "
+        f"Each passage starts with a fence like <<2>> which is NOT part "
         f"of the text. Keep numbers, names, citations like [3] and formatting as "
         f"they are; do not summarise, do not add commentary.\n\n{numbered}\n\n"
         'Reply with ONLY a JSON object mapping each fence number to its '
@@ -112,11 +162,24 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
         if raw.startswith("```"):
             raw = raw.strip("`")
             raw = raw[raw.find("{"):]
-        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        obj = _parse_numbered(raw)
     except Exception:
         return []
+    # NOTHING recovered is a whole-batch failure, not N misses: the page
+    # says "translation into it unavailable — showing the originals",
+    # which is the true account. A PARTIAL batch keeps the distinction —
+    # those are misses, and the page names how many.
+    if not obj:
+        return []
+    # An answer that is only the language's code or name is the echo
+    # described above, not a translation. Belt and braces behind
+    # `language_phrase`: it must surface as a MISS, never as content.
+    echo = {lang.strip().lower(), (LANGUAGE_NAMES.get(lang.lower()) or "").lower()}
+    echo.discard("")
     out: list[str | None] = []
     for i, _original in enumerate(items):
         value = obj.get(str(i + 1))
-        out.append(value if isinstance(value, str) and value.strip() else None)
+        ok = (isinstance(value, str) and value.strip()
+              and value.strip().lower() not in echo)
+        out.append(value if ok else None)
     return out

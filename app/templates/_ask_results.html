@@ -1,10 +1,28 @@
 {% if result %}
+{# WITHHELD COLLECTIONS, FIRST AND UNMISSABLE. `query_service.withheld_from`
+   computes this "so the answer can say it is incomplete rather than quietly
+   being so" (its own docstring) and nothing rendered it — so a licence gate
+   that withheld a collection left no word on screen, which is precisely the
+   silence invariant 9 exists to prevent. And when EVERY collection was
+   withheld, `run_search` returns {hits, withheld} with no `timings`, so the
+   badge row below raised UndefinedError and /ask/query answered 500: the
+   gate's own message replaced by a crash. Both fixed here. #}
+{% if result.withheld %}
+<div class="panel">
+  <b>Some collections were left out of this search.</b>
+  {% for w in result.withheld %}
+  <div class="note"><span class="badge err">{{ w.collection }}</span> {{ w.reason }}</div>
+  {% endfor %}
+  {% if not result.hits %}<div class="note">Nothing was searched, so nothing
+    matched — this is not an empty result.</div>{% endif %}
+</div>
+{% endif %}
 <div class="note">
-  {% for k,v in result.timings.items() if k != 'per_collection' %}<span class="badge">{{ k }} {{ v }} ms</span>{% endfor %}
+  {% for k,v in (result.timings or {}).items() if k != 'per_collection' %}<span class="badge">{{ k }} {{ v }} ms</span>{% endfor %}
   {% if result.translations %}<span class="badge lapis">fan-out: {{ result.translations.keys()|join(', ') }}</span>{% endif %}
 </div>
 
-{% if result.facts %}
+{% if result.facts is defined and result.facts %}
 <div class="panel">
   <h2>Entity strip — pinned facts</h2>
   {% for f in result.facts %}
@@ -19,7 +37,7 @@
 </div>
 {% endif %}
 
-{% if result.catalog %}
+{% if result.catalog is defined and result.catalog %}
 <div class="note">catalog matches: {% for c in result.catalog[:5] %}{{ c.title }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
 {% endif %}
 

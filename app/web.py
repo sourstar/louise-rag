@@ -333,7 +333,11 @@ def ask_query(request: Request, body: AskQueryBody):
         if not h.get("source_collection"):
             h["source_collection"] = by_plugin.get(str(h.get("chunk_id", "")).split(":", 1)[0])
     con = db.connect()   # query_log lives in the default collection's manifest regardless
-    db.log_query(con, "ask", body.query, body.mode, 12, result["timings"],
+    # .get, not [...]: when every collection is withheld `run_search`
+    # returns {hits, withheld} with no `timings` at all, and a KeyError
+    # here answered the whole query with a 500 — the licence gate's own
+    # message replaced by a crash (invariant 9's silence, again).
+    db.log_query(con, "ask", body.query, body.mode, 12, result.get("timings") or {},
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))
     return TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
 

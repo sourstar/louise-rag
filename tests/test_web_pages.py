@@ -468,3 +468,121 @@ def test_the_rank_marker_is_outside_the_translated_snippet(client):
     assert '<span class="rank">[1]</span>' in r.text
     snip = r.text.split('class="snip"', 1)[1]
     assert not snip.lstrip('"> ').startswith("[1]"), "the marker is not in the unit"
+
+
+def test_withheld_collections_are_named_and_do_not_crash_the_page():
+    """Invariant 9's whole point is that a withholding is VISIBLE.
+
+    `query_service.withheld_from` computes the list "so the answer can say
+    it is incomplete rather than quietly being so" — its own docstring —
+    and nothing rendered it, so a licence gate that withheld a collection
+    left no word on screen. Worse: when EVERY collection was withheld,
+    `run_search` returns {hits, withheld} with no `timings` key, and
+    `_ask_results.html` did `result.timings.items()` — UndefinedError, so
+    /ask/query answered 500. The gate's message replaced by a crash, on
+    the default all-collections scope.
+    """
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    # exactly what run_search returns when nothing may be searched
+    result = {"hits": [], "withheld": [
+        {"collection": "pubmed", "reason": "licence not acknowledged"}]}
+    html = tpl.render(result=result)
+    assert "pubmed" in html and "licence not acknowledged" in html
+    assert "left out of this search" in html
+    assert "this is not an empty result" in html,         "an empty page reads as 'nothing matched', which is a different claim"
+
+    # and a withholding BESIDE real hits is still named
+    partial = {"hits": [], "timings": {"fts": 3}, "facts": [], "catalog": [],
+               "withheld": [{"collection": "wikivec", "reason": "no ack"}]}
+    html = tpl.render(result=partial)
+    assert "wikivec" in html and "fts 3 ms" in html
+
+    # the ordinary case is unchanged and mentions nothing
+    plain = {"hits": [], "timings": {"fts": 3}, "facts": [], "catalog": []}
+    html = tpl.render(result=plain)
+    assert "left out of this search" not in html
+
+
+def test_the_target_language_is_named_in_the_prompt_not_only_coded(monkeypatch):
+    """Asked to translate "into the language with ISO code 'it'", qwen3:8b
+    answers {"1": "it", "2": "it", …} — it reads the code as the thing to
+    emit. Measured on the node 2026-09-12: the code form returned 147
+    bytes of 11 x "it" in 5.0 s; naming the language returned 4569 bytes
+    of 11 real translations in 56.1 s.
+
+    That is the dangerous shape, not a crash: eleven non-empty strings
+    parse cleanly, so `/ask/translate` cached them and the Ask page
+    painted the literal text "it" over every snippet.
+    """
+    from app import llm
+    seen = {}
+
+    def fake_chat(messages, **kw):
+        seen["prompt"] = messages[0]["content"]
+        return '{"1": "il faro"}'
+    monkeypatch.setattr(llm, "chat", fake_chat)
+
+    llm.translate_texts(["the lighthouse"], "it")
+    assert "Italian" in seen["prompt"], "the NAME is what the model acts on"
+    assert "'it'" in seen["prompt"], "the code stays, to disambiguate the name"
+
+    # a code we have no name for degrades to the code rather than inventing one
+    llm.translate_texts(["the lighthouse"], "qq")
+    assert "ISO code 'qq'" in seen["prompt"]
+
+
+def test_a_language_code_echoed_back_is_never_content(monkeypatch):
+    """Belt and braces behind the naming: if the echo happens anyway it
+    must surface as a MISS — the page then shows the original and says
+    so — never as the passage's new text."""
+    from app import llm
+
+    monkeypatch.setattr(llm, "chat",
+                        lambda messages, **kw: '{"1": "it", "2": "Italian", "3": "il faro"}')
+    out = llm.translate_texts(["a", "b", "the lighthouse"], "it")
+    assert out == [None, None, "il faro"], "the code and the name are not translations"
+
+
+def test_every_picker_language_has_a_name_for_the_prompt():
+    """The picker's table and the prompt's table are separate, so a
+    language added to one silently regresses to the bare-code failure in
+    the other. This is the pin that stops it."""
+    from app import llm
+    missing = [code for code, _endonym, _phrase in web.RESULT_LANGUAGES
+               if code not in llm.LANGUAGE_NAMES]
+    assert not missing, f"no prompt name for {missing} — they would echo their code"
+
+
+def test_a_truncated_batch_keeps_the_passages_that_did_arrive(monkeypatch):
+    """One bad passage used to take the whole batch with it: the model
+    ran out mid-value, `json.loads` raised, `translate_texts` returned []
+    and `/ask/translate` answered failed=True with nothing translated —
+    observed live, 11 passages lost to the first one. Losing only the
+    tail is strictly better."""
+    from app import llm
+
+    # valid pairs, then a value cut off mid-string
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw:
+                        '{"1": "il faro", "2": "il guardiano", "3": "la temp')
+    out = llm.translate_texts(["a", "b", "c"], "it")
+    assert out == ["il faro", "il guardiano", None]
+
+    # an escaped quote inside a value is content, not the end of the value
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw:
+                        r'{"1": "dice \"ciao\" e parte", "2": "la temp')
+    out = llm.translate_texts(["a", "b"], "it")
+    assert out == ['dice "ciao" e parte', None]
+
+
+def test_nothing_recovered_is_a_whole_batch_failure_not_n_misses(monkeypatch):
+    """The two notes on the page say different things — "translation
+    unavailable, showing the originals" vs "2 passage(s) could not be
+    translated". Keep them truthful: nothing recovered is the first, a
+    partial batch is the second."""
+    from app import llm
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: "I cannot do that.")
+    assert llm.translate_texts(["a", "b"], "it") == [], "whole-batch failure"
+
+    # an all-echo batch parses, so it is N honest misses, not a failure
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: '{"1": "it", "2": "it"}')
+    assert llm.translate_texts(["a", "b"], "it") == [None, None]
