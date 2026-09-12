@@ -149,6 +149,21 @@ def parse_article(elem: ET.Element) -> dict:
 
     article = citation.find("Article") if citation is not None else None
     title = _text(article.find("ArticleTitle")) if article is not None else ""
+    if not title and article is not None:
+        # `<ArticleTitle />` EMPTY AND `<VernacularTitle>` FULL — the origin
+        # names the article in its own language and NLM supplied no English
+        # rendering. 771,527 documents (1.9% of the corpus) had no title at
+        # all because of this, and no authors either, so they read as blank
+        # rows in the Library and carried an empty "Title" chunk into the
+        # vectors. PMID 10506388 is the shape: `<ArticleTitle />`,
+        # `<VernacularTitle>Mitteilungen der Bundesarbeitsgemeinschaft
+        # Klinisch-Geriatrischer Einrichtungen e.V.</VernacularTitle>`.
+        #
+        # This is not a guess or a derivation — it is a title element, and
+        # it is the only one the record has. `vernacular_title` stays in
+        # `extra` whether or not it is used here, so which element the
+        # title came from is still recoverable (promise 9).
+        title = _text(article.find("VernacularTitle"))
 
     abstract_parts = []
     if article is not None:

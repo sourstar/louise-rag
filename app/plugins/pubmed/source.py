@@ -99,7 +99,15 @@ class PubmedSource:
     #: Folded into one bump because nothing is built from 5 — there are no
     #: v1.0 records yet, so there is no artefact for 5 and 6 to be
     #: distinguished in. Invariant 3: bumped explicitly either way.
-    PARSER_VERSION = 6
+    #:
+    #: 7: the VERNACULAR TITLE fallback. 771,527 documents (1.9%) had an
+    #: empty `<ArticleTitle />` and a full `<VernacularTitle>`, so they
+    #: carried no title, no authors, and an EMPTY "Title" chunk into the
+    #: vectors — blank rows in the Library over a title the origin states
+    #: outright. Unlike 5 and 6 this one DOES move `content_hash`, because
+    #: §9.5 hashes [title, sections] and the title is a section here;
+    #: it is free for the same reason, no v1.0 records exist yet.
+    PARSER_VERSION = 7
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # a retraction notice is a fact of the corpus
     native_id_order = "numeric"          # PMIDs, issued ascending

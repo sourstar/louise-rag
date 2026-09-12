@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS documents (
   -- that scales with the CORPUS, which is the engineering rule this
   -- project keeps paying for.
   content_hash TEXT,
+  -- What WORK this document is an edition of, as JSON:
+  -- {"author": <agent id>, "subjects": [...], "translated": bool}.
+  -- What retrieval needs to tell one work from its translations
+  -- (app/work_dedup.py). Derived by the plugin's parser, NULL for a
+  -- plugin that does not say — and a NULL never groups, so it never
+  -- suppresses anything. Local state: in no record, moving no hash.
+  work TEXT,
   in_scope INTEGER DEFAULT 1,
   rdf_done INTEGER DEFAULT 0,
   fts_done INTEGER DEFAULT 0,
