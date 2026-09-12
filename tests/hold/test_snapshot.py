@@ -252,3 +252,49 @@ def test_a_uid_resolves_to_the_shard_whose_range_contains_it():
     assert s.shard_of("250").n == 18
     assert s.shard_of("350").slice == "year=1980"
     assert s.shard_of("999") is None
+
+
+def test_a_snapshot_already_written_keeps_its_own_version(tmp_path):
+    """09 §9.4: "snapshots already written stay 1, and a chain links by
+    `previous` hash rather than by version, so nothing is re-issued".
+
+    A snapshot is CONTENT-ADDRESSED — its hash is over `canonical()` — so
+    re-serialising a loaded v1 document at the current version gives it a
+    hash its own file does not have. That invalidates every signature over
+    it and breaks every `previous` link to it.
+
+    Caught on pubmed the day `louise-snapshot` moved to 2: the sidecar
+    covered sha256:3bfe1d1d… — the file's real bytes, version 1, no
+    `figures` key — and the loaded object hashed to sha256:47df84a7…. The
+    `signature` check was right; the loader was wrong.
+    """
+    import json
+    v2 = sn.Snapshot(
+        collection_id="sha256:" + "ab" * 32, snapshot_id="2026-08",
+        previous=None, shards=(), delta=sn.Delta((), (), ()), files={})
+    assert v2.version == sn.SNAPSHOT_VERSION == 2
+    assert "figures" in json.loads(v2.canonical())
+
+    # the same object as a version 1 document: no `figures` key at all
+    doc = json.loads(v2.canonical())
+    doc["version"] = 1
+    del doc["figures"]
+    raw = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
+    v1 = sn._load(raw)
+    assert v1.version == 1
+    assert "figures" not in json.loads(v1.canonical())
+    assert v1.canonical() == raw, "the bytes it was written with, exactly"
+    assert v1.hash != v2.hash, "and they are two different snapshots"
+
+
+def test_a_version_1_snapshot_may_not_carry_figures():
+    """There is no third shape: v1 omits the key, v2 carries the list."""
+    from app.hold.codex import CodexError
+    bad = sn.Snapshot(
+        collection_id="sha256:" + "ab" * 32, snapshot_id="2026-08",
+        previous=None, shards=(), delta=sn.Delta((), (), ()), files={},
+        figures=(sn.FiguresShard(slice="lang=en", n=1, root="sha256:x",
+                                 figures=1, bytes=10),),
+        version=1)
+    with pytest.raises(CodexError, match="version 1 snapshot carries no"):
+        bad.to_dict()

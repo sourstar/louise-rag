@@ -143,10 +143,23 @@ class Snapshot:
     relations: tuple[RelationShard, ...] = ()
     figures: tuple[FiguresShard, ...] = ()
     files: dict[str, Any] = field(default_factory=dict)
+    #: THE VERSION THIS SNAPSHOT WAS WRITTEN AT, not the one this build
+    #: writes. 09 §9.4: "snapshots already written stay 1, and a chain
+    #: links by `previous` hash rather than by version, so nothing is
+    #: re-issued". A Snapshot is content-addressed — `hash` is over
+    #: `canonical()` — so re-serialising a loaded v1 document at v2 gives
+    #: it a hash its own file does not have, which invalidates every
+    #: signature over it and breaks every `previous` link to it.
+    #:
+    #: Caught on pubmed the day the version moved: the sidecar covered
+    #: sha256:3bfe1d1d… (the file's real bytes, version 1, no `figures`
+    #: key) and the loaded object hashed to sha256:47df84a7…. The
+    #: `signature` check was right and the loader was wrong.
+    version: int = SNAPSHOT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": SNAPSHOT_KIND, "version": SNAPSHOT_VERSION,
+        out = {
+            "kind": SNAPSHOT_KIND, "version": self.version,
             "collection_id": self.collection_id,
             "snapshot_id": self.snapshot_id,
             "previous": self.previous,
@@ -154,11 +167,21 @@ class Snapshot:
                        sorted(self.shards, key=lambda s: (s.slice.encode(), s.n))],
             "relations": [r.to_dict() for r in
                           sorted(self.relations, key=lambda r: (r.slice.encode(), r.n))],
-            "figures": [f.to_dict() for f in
-                        sorted(self.figures, key=lambda f: (f.slice.encode(), f.n))],
             "files": self.files,
             "delta": self.delta.to_dict(),
         }
+        if self.version >= 2:
+            # "version 1 is this object WITHOUT `figures`" — so v1 omits the
+            # key entirely rather than writing an empty list, which would be
+            # a third shape the format does not have.
+            out["figures"] = [f.to_dict() for f in
+                              sorted(self.figures,
+                                     key=lambda f: (f.slice.encode(), f.n))]
+        elif self.figures:
+            raise CodexError(
+                f"{self.snapshot_id}: a version 1 snapshot carries no "
+                f"`figures` and this one names {len(self.figures)} (09 §9.4)")
+        return out
 
     def canonical(self) -> bytes:
         return canonical_json(self.to_dict())
@@ -539,7 +562,8 @@ def _load(raw: bytes) -> Snapshot:
         # absent in version 1, which IS version 1 — never null, never a
         # missing key to be guessed at
         figures=tuple(FiguresShard(**f) for f in d.get("figures") or ()),
-        files=d["files"])
+        files=d["files"],
+        version=int(d["version"]))
 
 
 def load(path) -> Snapshot:
