@@ -297,3 +297,30 @@ def test_a_book_is_opened_once_for_all_of_its_plates(plates_corpus, monkeypatch)
     assert set(got) == set(figures)
     assert len([o for o in opens if o.endswith(".epub")]) <= 2, \
         f"one open to choose the form and one to read, got {opens}"
+
+
+def test_records_vs_origin_compares_the_codexs_shape_on_both_sides(plates_drag):
+    """`canonical_line` defaults to `record_line` 1, which drops the
+    `figures` key. The check re-canonicalised the shard's own record at
+    that default and compared it against a shape-2 re-parse, so EVERY
+    record of a plates collection differed — and the difference was the
+    check, not the records.
+
+    Caught on a six-book trial over real illustrated epubs before the
+    48,000-book build: `figures` passed, `records-vs-origin` failed 6 of 6,
+    and the re-parse was byte-identical to the shard all along.
+    """
+    from app.louise import _reparse_from
+    root, snapshot, codex = plates_drag
+    corpus = None
+    for p in (root.parent / "plates-corpus",):
+        if p.is_dir():
+            corpus = p
+    assert corpus is not None
+
+    ctx = chk.Ctx(root=root, name="plates", codex=codex, snapshot=snapshot,
+                  seed=SEED, reparse=_reparse_from(codex, "plates", corpus))
+    out = chk.check_records_vs_origin(ctx)
+    assert out.result == chk.PASS, out.why
+    assert out.detail["failed"] == []
+    assert out.detail["records"] >= 2

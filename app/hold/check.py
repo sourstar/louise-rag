@@ -454,7 +454,20 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                 missing += 1
                 continue
             from app.pack import records as pack_records
-            lines.append((r["uid"], r["origin"], pack_records.canonical_line(r)))
+            # THE CODEX'S SHAPE, on both sides. `canonical_line` defaults to
+            # `record_line` 1, which drops the `figures` key — so on a
+            # plates collection this re-canonicalised a shape-2 record as
+            # shape 1 and compared it against a shape-2 re-parse. Every
+            # record differed, and the difference was this line.
+            #
+            # Caught on a six-book trial over real illustrated epubs before
+            # the 48,000-book build: `figures` PASSED, `records-vs-origin`
+            # failed 6 of 6, and the re-parse was byte-identical to the
+            # shard all along.
+            lines.append((r["uid"], r["origin"],
+                          pack_records.canonical_line(
+                              r, record_line=int(getattr(ctx.codex,
+                                                          "record_line", 1) or 1))))
     if not ran:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
