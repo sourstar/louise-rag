@@ -1156,7 +1156,7 @@ gutenberg pack plan needs those vectors before the hand-over.
    `tests/acquire/test_torrent_collection.py` (index round-trip, profile
    → members, an end-to-end resolve over a local swarm, seeding rows).
    **Live on the NAS 2026-08-26:** `torrent publish wikivec
-   --collection-only --peer-hint 192.168.178.10:6881` built the index
+   --collection-only --peer-hint <node>:6881` built the index
    from the eleven recorded members without re-hashing (and upgraded
    those pre-`kind` records in place); the seeding table shows one
    `wikivec-collection` row (2.4 MB, seeding, hint attached — "copy
@@ -1171,7 +1171,7 @@ gutenberg pack plan needs those vectors before the hand-over.
    (1) the create dialog's default `[embed]` is the NODE's encoder — for
    a pre-embedded corpus the recipe must be the ARCHIVE's function, or
    the genesis proof rejects every shard; Louise2's wikivec now points
-   at the NAS's BGE-M3 endpoint (`192.168.178.10:30442`, byte-equal
+   at the NAS's BGE-M3 endpoint (`<node>:30442`, byte-equal
    recipe ⇒ the same space id `ed34b4b0…` as the NAS's wikivec), and a
    wrong pin was dropped with `space repin`. To do: the create dialog
    should offer the archive's recipe for a plugin with a declared

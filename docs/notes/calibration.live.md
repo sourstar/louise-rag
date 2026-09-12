@@ -1,6 +1,6 @@
 # Tolerance calibration (F2)
 
-Reference backend: `http://192.168.178.10:30436` — 512 chunks, dim 4096.
+Reference backend: `http://<node>:30436` — 512 chunks, dim 4096.
 
 ## Recommended tolerance
 
