@@ -337,6 +337,59 @@ against 241 GB held, so roughly 60 GB genuinely missing. `full-resync`,
 mirrors benchmarked at fetch time (ibiblio 2.002 s against aleph 3.028 s
 on `1/pg1.rdf`).
 
+**THE CORPUS WAS MOUNTED READ-ONLY, and the fetch reported progress all
+day anyway.** This cost most of an afternoon and it is the most useful
+thing in this section.
+
+`/corpus` was `:ro` for both services — correct for years, while the
+mirror was populated from outside Louise and the app only ever read it.
+The operator's instruction of 2026-09-12 makes acquisition a writer, and
+nobody changed the mount.
+
+What made it expensive is that the failure is shaped exactly like success.
+`is_adoptable` only reads and hashes, so every file already on disk was
+adopted normally: 6,270 of them, 1.41 GB, and the card's fetched counter
+climbed steadily for hours. Every file that had to be DOWNLOADED failed
+at the instant it was promoted out of staging —
+`OSError: [Errno 30] Read-only file system` — 8,238 times, onto rows
+nothing surfaced. A fetch at 6,000 files and climbing that had delivered
+not one new byte.
+
+Three of the day's diagnoses were wrong because of it, and each wrong
+answer was reached honestly from a real measurement:
+
+* "the fetch is at 60 files an hour, 273 days" — the rate was real and it
+  was the rate of ADOPTION, throttled by hashing 241 GB behind a busy
+  pool, not by any network.
+* "ibiblio accepted the connection and went silent" — true, and a
+  side-show: those transfers were going to fail at promotion regardless.
+  The `--timeout` fix is right on its own merits and fixed nothing here.
+* "no files landed in 90 minutes" — CORRECT, and I talked myself out of
+  it, because rsync preserves origin mtimes so `find -newermt` cannot see
+  a landed file. The instrument was wrong and the conclusion it gave was
+  right; I trusted the instrument.
+
+The discriminator that settled it is one column: `endpoint_url` is
+`(adopted from disk)` for an adoption and the mirror's address for a
+download. Grouping completed rows by it took one query and would have
+answered the question at any point that afternoon. `bytes_fetched` does
+NOT discriminate — an adoption records the file's full size, which is
+what sent me down the "it is re-downloading everything we have" path for
+ten minutes.
+
+The worker now mounts the corpus read-write; the web service stays
+read-only, because acquisition is the worker's job and least privilege on
+the operator's own book library is worth the extra line. The 8,238
+read-only errors were cleared with their retry counts — an environment
+fault should never have written an error to a row at all ("deferral is
+not failure"), and a file that burned three attempts against a read-only
+mount would otherwise stay out of every future pass.
+
+**Remaining, on the mirrors:** ~1,500 files fail with rsync exit 12
+against `aleph.gutenberg.org` (protocol data stream — the PG master
+refusing us) while ibiblio serves normally. They retry, and the endpoint
+list exists for exactly this.
+
 **An unreadable origin file is a CORPUS FACT, not a stage failure.**
 `BadZipFile` escaped as `fts: …`, and a stage-prefixed error is what the
 Library counts as BLOCKED and what burns a retry — the oscillation
