@@ -77,7 +77,13 @@ WORKED_EXAMPLE = {
     "publication": "open", "certifier": None, "embedding": "open",
     "succession": "frozen", "content": None,
     "continues": None, "continues_through": None, "origin_reachable_until": None,
-    "derived_from": None, "space_from": None, "replaces": None,
+    # `derivation` is 09 §9.3's, required and null where there is none. It
+    # was MISSING from the module entirely until 2026-09-12, so every Codex
+    # this platform had written carried 34 keys where the spec lists 35 —
+    # and since every key but `descriptive` is inside the hash, every
+    # collection_id it computed was over the wrong bytes.
+    "derived_from": None, "space_from": None, "derivation": None,
+    "replaces": None,
     "facets": [],
     # 02 §2.7's three kinds. Two of them are on every collection: the
     # corpus provider, because the text came from someone, and the
@@ -652,3 +658,67 @@ def test_a_bad_seed_is_refused_before_the_universe_is_touched():
     with pytest.raises(CodexError, match="not negative"):
         cx.sample(b"\x01" * 32, -1, universe())
     assert not touched
+
+
+def test_derivation_is_a_required_field_and_null_where_there_is_none():
+    """09 §9.3 lists `derivation` as required ("object or null | yes"), and
+    the module did not know the field at all until 2026-09-12 — so every
+    Codex written before then has 34 of the spec's 35 keys, and `_only`
+    refuses such a file now: "every field is present, a field not in use
+    is null". That refusal is deliberate; it is what makes this a flag day
+    rather than a silent divergence."""
+    assert "derivation" in cx._TOP
+    assert "derivation" in cx._TOP_V1, "§9.3: version 1 is this object without record_line"
+    d = dict(WORKED_EXAMPLE)
+    del d["derivation"]
+    with pytest.raises(CodexError, match="missing field"):
+        cx.loads(cx.canonical_json(d))
+
+
+def test_a_derivation_names_the_other_spaces_space_id(codex):
+    """`from` is a `space_id` and NEVER a `collection_id` (§9.3). The two
+    are the same shape, so what code can settle is that it is not this
+    object's own id: a space that is a pure function of itself is not a
+    derivation."""
+    base = codex
+
+    ok = replace(base, derivation=cx.Derivation(
+        "sha256:" + "a" * 64, cx.TRUNCATE, {"dim": 256}))
+    cx.validate(ok)
+    assert ok.to_dict()["derivation"] == {
+        "from": "sha256:" + "a" * 64, "kind": "truncate", "params": {"dim": 256}}, \
+        "`from` on the wire, not the Python-keyword-dodging `from_`"
+
+    for bad, match in (
+            (cx.Derivation("not-a-digest", cx.TRUNCATE, {}), "space_id"),
+            (cx.Derivation(base.space_id, cx.TRUNCATE, {}), "own space_id")):
+        with pytest.raises(CodexError, match=match):
+            cx.validate(replace(base, derivation=bad))
+
+    # NOT checkable against `collection_id`, and the attempt is a trap:
+    # `derivation` is inside the identity, so an object's own
+    # collection_id already accounts for the derivation it holds and can
+    # never equal the `from` inside it. `space_id` excludes `derivation`
+    # (02 §2.4), which is what makes it stable enough to compare against.
+    naming_mothers_collection = replace(
+        base, derivation=cx.Derivation(base.collection_id, cx.QUANTISE, {}))
+    cx.validate(naming_mothers_collection)
+    assert naming_mothers_collection.derivation.from_ != \
+        naming_mothers_collection.collection_id
+
+    with pytest.raises(CodexError, match="derivation.kind"):
+        cx.loads(cx.canonical_json(dict(WORKED_EXAMPLE, derivation={
+            "from": "sha256:" + "a" * 64, "kind": "reroll", "params": {}})))
+
+
+def test_derivation_is_inside_collection_id_but_not_space_id(codex):
+    """02 §2.4 calls this load-bearing: two creators applying the same
+    function to the same source produce the SAME NUMBERS, so if the
+    derivation entered `space_id` they would land in different spaces and
+    could not share one bundle — which is the whole point of allowing it.
+    It is still inside `collection_id`, like every key but `descriptive`."""
+    base = codex
+    derived = replace(base, derivation=cx.Derivation(
+        "sha256:" + "b" * 64, cx.QUANTISE, {"bits": 8}))
+    assert derived.space_id == base.space_id, "NOT part of space_id"
+    assert derived.collection_id != base.collection_id, "but inside the identity"

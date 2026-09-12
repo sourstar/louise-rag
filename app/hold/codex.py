@@ -353,6 +353,27 @@ class Replaces:
         return {"codex": self.codex, "defect": self.defect.to_dict()}
 
 
+#: §9.3's two admitted derivations. Both are pure functions of another
+#: space's vectors, which is what lets two creators produce the same
+#: numbers from the same source.
+TRUNCATE, QUANTISE = "truncate", "quantise"
+DERIVATION_KINDS = (TRUNCATE, QUANTISE)
+
+
+@dataclass(frozen=True)
+class Derivation:
+    """§9.3's `derivation`: a ROUTE TO a space's vectors, never a property
+    of them (02 §2.4). `from_` is a `space_id`; naming a `collection_id`
+    there is refused, because a collection is not a function."""
+    from_: str
+    kind: str                         # "truncate" | "quantise"
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        # `from` on the wire — it is a Python keyword, hence `from_` here
+        return {"from": self.from_, "kind": self.kind, "params": self.params}
+
+
 @dataclass(frozen=True)
 class Facet:
     """Structure only: the values live in the records (05 §5.7)."""
@@ -468,6 +489,17 @@ class Codex:
     origin_reachable_until: str | None = None
     derived_from: str | None = None              # sister: the mother's id
     space_from: str | None = None                # sister: whose space was copied
+    #: §9.3: "how this space's vectors may be obtained WITHOUT an encoder,
+    #: when it is a pure function of another space's:
+    #: `{from: <space_id>, kind: "truncate" | "quantise", params: {…}}`".
+    #: `from` is a `space_id` and NEVER a `collection_id`.
+    #:
+    #: Deliberately NOT in `space_id`, and 02 §2.4 calls that load-bearing:
+    #: two creators applying the same function to the same source produce
+    #: the same numbers, so if the derivation entered `space_id` they would
+    #: land in different spaces and could not share a bundle — which is the
+    #: whole point of allowing it. It IS in `collection_id`.
+    derivation: Derivation | None = None         # a derived space's route
     replaces: Replaces | None = None             # corrective sister
     facets: tuple[Facet, ...] = ()
     credits: tuple[Credit, ...] = ()
@@ -539,6 +571,7 @@ class Codex:
             "origin_reachable_until": self.origin_reachable_until,
             "derived_from": self.derived_from,
             "space_from": self.space_from,
+            "derivation": None if self.derivation is None else self.derivation.to_dict(),
             "replaces": None if self.replaces is None else self.replaces.to_dict(),
             "facets": [f.to_dict() for f in self.facets],
             "credits": [c.to_dict() for c in self.credits],
@@ -944,6 +977,26 @@ def _validate_lineage(codex: Codex) -> None:
     if codex.space_from is not None and codex.derived_from is None:
         raise CodexError("space_from belongs to a sister")
 
+    if codex.derivation is not None:
+        if not _DIGEST_RE.match(codex.derivation.from_ or ""):
+            raise CodexError("derivation.from is a space_id (09 §9.3), "
+                             "sha256:<64 hex>")
+        # "`from` being a `space_id` and never a `collection_id`" — the two
+        # are the same shape, so no check can tell that a digest is some
+        # OTHER collection's id. What IS checkable is self-reference: a
+        # space that is a pure function of itself is not a derivation.
+        #
+        # Against `space_id` only, NOT `collection_id`: `derivation` is
+        # inside the identity, so by the time this object exists its own
+        # `collection_id` already accounts for the derivation and could
+        # never equal the `from` it contains. `space_id` excludes
+        # `derivation` (02 §2.4), which is exactly what makes it stable
+        # enough to compare against.
+        if codex.derivation.from_ == codex.space_id:
+            raise CodexError("derivation.from names this collection's own "
+                             "space_id; it is the OTHER space's space_id that "
+                             "the vectors are a function of (09 §9.3)")
+
     if codex.replaces is not None:
         d = codex.replaces.defect
         if not d.witnesses:
@@ -1075,8 +1128,8 @@ _TOP = ("kind", "version", "descriptive", "plugin", "origin", "toolchain",
         "space", "work", "modality", "erasure", "validation", "license",
         "privacy", "update", "publication", "certifier", "embedding",
         "succession", "content", "continues", "continues_through",
-        "origin_reachable_until", "derived_from", "space_from", "replaces",
-        "facets", "credits", "profile")
+        "origin_reachable_until", "derived_from", "space_from", "derivation",
+        "replaces", "facets", "credits", "profile")
 
 #: 09 §9.3: "Version 1 is this object without `record_line`."
 _TOP_V1 = tuple(k for k in _TOP if k != "record_line")
@@ -1151,6 +1204,7 @@ def from_dict(d: dict[str, Any]) -> Codex:
         origin_reachable_until=d["origin_reachable_until"],
         derived_from=d["derived_from"],
         space_from=d["space_from"],
+        derivation=_derivation(d["derivation"]),
         replaces=_replaces(d["replaces"]),
         facets=tuple(_facet(f, i) for i, f in enumerate(d["facets"])),
         credits=tuple(_credit(c, i) for i, c in enumerate(d["credits"])),
@@ -1202,6 +1256,19 @@ def _replaces(r: dict[str, Any] | None) -> Replaces | None:
     return Replaces(r["codex"], Defect(d["check"], d["toolchain"],
                                        tuple(d["witnesses"]), d["expected"],
                                        d["observed"], d["rationale"]))
+
+
+def _derivation(v: dict[str, Any] | None) -> Derivation | None:
+    if v is None:
+        return None
+    v = _only(v, ("from", "kind", "params"), "derivation")
+    if v["kind"] not in DERIVATION_KINDS:
+        raise CodexError(f"derivation.kind is one of "
+                         f"{', '.join(DERIVATION_KINDS)} (09 §9.3), "
+                         f"got {v['kind']!r}")
+    if not isinstance(v["params"], dict):
+        raise CodexError("derivation.params is an object")
+    return Derivation(v["from"], v["kind"], v["params"])
 
 
 def _facet(f: dict[str, Any], i: int) -> Facet:
