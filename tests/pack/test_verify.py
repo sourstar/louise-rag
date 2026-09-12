@@ -36,13 +36,17 @@ def test_tampering_is_named_by_the_check_that_sees_it(isolated_config, tmp_path,
     shard = pack_dir / m["shards"][0]["path"]
     # rewrite the shard with a changed record: roots fails (bytes), records fails (hash)
     recs = list(records.iter_records(shard))
-    recs[0]["sections"][0][1] = "tampered text"
-    recs[0]["chunks"] = 99
+    # long enough that the chunker yields a DIFFERENT NUMBER of chunks, which
+    # is what the chunks check can still see. It used to be caught by setting
+    # the record's own `chunks` to 99, but a record asserting its own count
+    # was checking the writer against itself; §9.5 points the check at the
+    # count the SHARD publishes, so the tamper has to move the real count.
+    recs[0]["sections"][0][1] = "tampered text " * 4000
     records.write_shard(shard, recs)
     by = {r["check"]: r for r in verify.run(pack_dir, sample=1.0)}
     assert not by["roots"]["ok"] and "sha256 mismatch" in by["roots"]["detail"]
     assert not by["records"]["ok"] and "content_hash" in by["records"]["detail"]
-    assert not by["chunks"]["ok"] and "record says 99" in by["chunks"]["detail"]
+    assert not by["chunks"]["ok"] and "shard says" in by["chunks"]["detail"]
     assert by["license"]["ok"], "green: no terms to check"
     # a subset of checks, from the plan file
     (pack_dir / "validation.json").write_text(json.dumps({"checks": ["license"], "sample": 1.0}))

@@ -202,5 +202,10 @@ def test_reader_fields_come_from_the_pack(tmp_path):
     fields = pack.record_fields(container, ref.extra["record_index"])
     doc = SOURCE.parse(SOURCE.fetch(ref))
     assert fields["pmid"] == ref.native_id and fields["title"] == doc.title
-    assert fields["journal"] == doc.extra["journal"] and fields["date"] == doc.extra["date"]
+    assert fields["journal"] == doc.extra["journal"]
+    # THE PACK KEEPS ITS OWN DATE SHAPE. `date` here is the pack's planner
+    # column — internal, never published — so it stays "2023-Jan" while the
+    # RECORD carries §9.5's "2023-01". Normalising the column would bump
+    # PACK_VERSION and rebuild all 1,334 containers' packs for no gain.
+    assert fields["date"] == "2023-Jan" and doc.date == "2023-01"
     assert set(fields) == {"pmid", "title", "abstract", "journal", "date", "authors"}

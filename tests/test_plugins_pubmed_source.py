@@ -159,7 +159,12 @@ def test_parse_mesh_and_journal_date():
     doc, _ = _fetch_parse("30000001", "pubmed25n0001.xml")
     assert doc.subjects == ["Widgets", "Calibration"]
     assert doc.extra["journal"] == "J Widget Res"
-    assert doc.extra["date"] == "2023-Jan"
+    # §9.5's `date` is `YYYY`, `YYYY-MM` or `YYYY-MM-DD` and lives at the top
+    # level. It used to be null there while `extra["date"]` held "2023-Jan",
+    # which is in none of those forms; holding it twice, in two shapes, was
+    # two answers to one question in a published artefact.
+    assert doc.date == "2023-01"
+    assert "date" not in doc.extra
 
 
 def test_revision_replaces_content():

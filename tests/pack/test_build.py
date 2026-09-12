@@ -87,7 +87,15 @@ def test_gutenberg_pack_round_trips_uids_chunks_and_possession(isolated_config, 
     assert _raw_hashes(packed) == _raw_hashes(origin), "possession hashes agree with the origin"
     # a packed record is readable as JSON, keys in the fixed order
     rec = records.read_record(pack_dir / m["shards"][0]["path"], "gutenberg:10001")
-    assert list(rec) == list(records.RECORD_KEYS) and rec["chunks"] >= 1 and rec["layer"] == 0
+    assert list(rec) == list(records.RECORD_KEYS)
+    # §9.5 admits "exactly these keys": `layer` and `chunks` were carried for
+    # the legacy verifier and are in neither §9.5's table nor 03 §3.2, which
+    # derives the layer "from the Codex's rules, never reading it from the
+    # record, which carries none". The shard still publishes its chunk COUNT
+    # (the snapshot's per-shard field) — a record just no longer asserts
+    # its own.
+    assert "layer" not in rec and "chunks" not in rec
+    assert m["shards"][0]["chunks"] >= 1, "the count is published per shard"
 
 
 def test_pubmed_pack_slices_by_year_and_keeps_the_abstract_chunker(isolated_config, tmp_path):

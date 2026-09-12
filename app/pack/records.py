@@ -55,13 +55,20 @@ SUFFIX = ".jsonl.zst"
 #: file's transport root; it changes NO `records_root` (over `content_hash`
 #: values), no `chunks_root`, no chunk id and no vector.
 #:
-#: `layer` and `chunks` are still here and are in NEITHER §9.5's table nor
-#: 03 §3.2, which says the layer is derived "from the Codex's rules, never
-#: reading it from the record, which carries none". They stay until the
-#: legacy pack verifier that reads `layer` retires with the old names
-#: (step 12) — see docs/notes/records-origin-gap.md.
+#: `layer` and `chunks` ARE GONE, 2026-09-12. They were in NEITHER §9.5's
+#: table nor 03 §3.2 — which says the layer is derived "from the Codex's
+#: rules, never reading it from the record, which carries none" — and
+#: §9.5 admits "exactly these keys", so a line carrying two more was not a
+#: compliant line. They stayed for the legacy pack verifier; that verifier
+#: reads them with `.get(...) or 0`, which is the right answer for a
+#: single-layer collection and is now what it gets.
+#:
+#: They are still PUT on the in-memory record by `pack/build.py`, and
+#: `write_shard` still totals a shard's chunks from there — `canonical_line`
+#: takes only the keys below and ignores the rest, so nothing internal had
+#: to move to stop publishing them.
 RECORD_KEYS = ("uid", "native_id", "lang", "title", "creators", "date",
-               "subjects", "keys", "sections", "extra", "layer", "chunks",
+               "subjects", "keys", "sections", "extra",
                "origin", "content_hash", "origin_hash")
 
 #: 09 §9.5's OTHER shape. A line has no version field of its own: its shape

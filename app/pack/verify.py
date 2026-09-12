@@ -94,11 +94,21 @@ def run(pack_dir: Path, *, checks=None, sample: float | None = None, seed: int =
         bad_records: list[str] = []
         bad_chunks: list[str] = []
         n_records = 0
+        # A MULTI-LAYER MANIFEST CANNOT BE CHECKED HERE any more. The
+        # record used to carry its own `layer`; §9.5 does not admit that
+        # key and 03 §3.2 says the layer comes "from the Codex's rules,
+        # never reading it from the record". This verifier has a legacy
+        # manifest, not a Codex, so it can only honour the single-layer
+        # case — and says so instead of guessing layer 0.
+        if "chunks" in checks and len(manifest.get("layers") or []) > 1:
+            bad_chunks.append("multi-layer manifest: the layer is derived from "
+                              "the Codex (03 §3.2), which this verifier has not")
         for s in picked:
             p = pack_dir / s["path"]
             if not p.is_file():
                 bad_records.append(f"{s['path']}: missing")
                 continue
+            shard_chunks = 0
             for rec in records.iter_records(p):
                 n_records += 1
                 sections = [[a, b] for a, b in rec.get("sections") or []]
@@ -115,9 +125,15 @@ def run(pack_dir: Path, *, checks=None, sample: float | None = None, seed: int =
                         bad_records.append(f"{rec['uid']}: no origin_hash "
                                            f"(unverifiable against the origin)")
                 if "chunks" in checks:
-                    chunker = _chunker_of(manifest, int(rec.get("layer") or 0))
+                    # THE LAYER IS DERIVED, NEVER READ FROM THE RECORD
+                    # (03 §3.2, and §9.5 no longer admits a `layer` key).
+                    # Every pack this verifier serves declares ONE layer, so
+                    # that layer IS the document's; a multi-layer manifest
+                    # needs the Codex's rules and is refused below rather
+                    # than silently verified against layer 0.
+                    chunker = _chunker_of(manifest, 0)
                     if chunker is None:
-                        bad_chunks.append(f"{rec['uid']}: unknown chunker for layer {rec.get('layer')}")
+                        bad_chunks.append(f"{rec['uid']}: no chunker declared")
                         continue
                     try:
                         n = sum(1 for _ in chunker(rec["uid"], int(rec["native_id"]),
@@ -125,8 +141,17 @@ def run(pack_dir: Path, *, checks=None, sample: float | None = None, seed: int =
                     except Exception as e:   # noqa: BLE001
                         bad_chunks.append(f"{rec['uid']}: {type(e).__name__}")
                         continue
-                    if n != int(rec.get("chunks") or 0):
-                        bad_chunks.append(f"{rec['uid']}: {n} chunks, record says {rec.get('chunks')}")
+                    shard_chunks += n
+            # PER SHARD, against the count the shard entry PUBLISHES —
+            # which is what §9.5 points the chunks check at ("the snapshot
+            # carries, per shard, the count and the `chunks_root` it
+            # reproduces against"). The per-record claim it replaces was
+            # the weaker reference: a record asserting its own count is
+            # checking the writer against itself.
+            if "chunks" in checks and s.get("chunks") is not None:
+                if shard_chunks != int(s["chunks"]):
+                    bad_chunks.append(f"{s['path']}: {shard_chunks} chunks, "
+                                      f"shard says {s['chunks']}")
         if "records" in checks:
             report.append({"check": "records", "ok": not bad_records,
                            "detail": "; ".join(bad_records[:5]) if bad_records

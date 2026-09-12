@@ -90,7 +90,11 @@ class PubmedSource:
     # edit to shift, so content-defined chunking would buy nothing.
     mutability = Mutability.IMMUTABLE
     protocol_version = PROTOCOL_VERSION
-    PARSER_VERSION = 4
+    #: 5 since 2026-09-12: `creators`, `lang` and `date` corrected against
+    #: 09 §9.5 (see parse()). Invariant 3 — bumped explicitly, and the bump
+    #: is what makes the corrected collection a different collection, the
+    #: Codex's `parser.version` being inside `collection_id`.
+    PARSER_VERSION = 5
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # a retraction notice is a fact of the corpus
     native_id_order = "numeric"          # PMIDs, issued ascending
@@ -196,56 +200,30 @@ class PubmedSource:
         return CanonicalDoc(
             uid=f"{self.source_id}:{meta['pmid']}",
             title=meta["title"],
-            creators=[],
-            language="en",
-            date=None,
+            # PARSER VERSION 5. Three §9.5 fields were wrong or absent in
+            # version 4, and the origin carried all three all along:
+            #
+            #   creators  was always []          — AuthorList, on 99.0%
+            #   language  was hardcoded "en"     — <Language>, on 100%,
+            #                                      and 9.6% of this corpus
+            #                                      is NOT English
+            #   date      was always None        — PubDate, on 100%
+            #
+            # None of them is in `content_hash` (BLAKE2b-128 over
+            # [title, sections] alone, §9.5), so correcting them moves no
+            # chunk id, no chunks_root and no vector.
+            creators=medline.authors(elem),
+            language=medline.language(elem),
+            date=medline.publication_date(elem),
             subjects=meta["mesh"],
             keys=[],
-            extra={"journal": meta["journal"], "date": meta["date"],
-                   "revised": meta.get("revised")},
+            # `date` is GONE from extra: the top-level field now carries it
+            # in §9.5's own form, and holding it twice — once as
+            # "1953-11" and once as the pack's "1953-Nov" — is two answers
+            # to one question in a published artefact. `revised` stays
+            # because the cutoff (`--until`) is denominated in it, and
+            # `journal` because a reader is shown it.
+            extra={"journal": meta["journal"], "revised": meta.get("revised")},
             sections=sections,
             raw_hash=raw.raw_hash,
         )
-
-    def read_metadata(self, path: Path, native_id: int) -> dict:
-        """The MANIFEST's view of a record — what the Library and the Ask
-        page display. `plugin_io.metadata` prefers this hook and falls
-        back to `canonical_doc()` when a plugin has none.
-
-        THIS EXISTS ONLY BECAUSE `parse()` DROPS THE AUTHORS. `parse()`
-        sets `creators=[]` (it has since the first commit), so the
-        fallback computed `authors=""` and all 39,994,988 pubmed
-        documents displayed no author while the origin XML carried them
-        all along — `pack.authors_of` has been extracting them into the
-        pack the whole time.
-
-        It is a DISPLAY hook and nothing else. `parse()` is untouched, so
-        the records keep their bytes, `content_hash` its value and the
-        Codex's `parser.version` its truth: `hold records build` reads
-        `plugin_io.canonical_doc`, never this. Correcting `creators`
-        itself would bump PARSER_VERSION into `collection_id` and fork
-        the collection, which is a different decision (operator,
-        2026-09-12).
-
-        Cost-neutral: the fallback already read this record's XML through
-        the same pack and the same `medline.parse_article`. Every field
-        below is byte-identical to what the fallback returned — lang is
-        the same hardcoded "en", subjects the same mesh list — except
-        `authors`, which stops being empty.
-        """
-        container, index = split_locator(str(path))
-        if index is None:
-            # a container-level ref (discover() yields one per file); it
-            # has no record to read and never had metadata
-            return {"title": "", "authors": "", "lang": "en",
-                    "subjects": "", "bookshelves": ""}
-        # the fallback reached this record through fetch(), which verifies
-        # the container's md5 sidecar first; a display hook that skipped
-        # that would be a quietly WEAKER path to the same bytes. Cached
-        # per (path, mtime), so it costs a stat after the first record.
-        _verify_md5_sidecar(container)
-        elem = ET.fromstring(pack.record_xml(container, index).decode("utf-8"))
-        meta = medline.parse_article(elem)
-        return {"title": meta["title"], "authors": pack.authors_of(elem),
-                "lang": "en", "subjects": "|".join(meta["mesh"]),
-                "bookshelves": ""}

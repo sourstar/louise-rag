@@ -11,6 +11,135 @@ def _text(elem: ET.Element | None) -> str:
     return "".join(elem.itertext()).strip() if elem is not None else ""
 
 
+# MEDLINE writes ISO 639-2/B (BIBLIOGRAPHIC) three-letter codes, and 09 §9.5
+# wants "ISO 639-1 (639-3 where no two-letter code exists); "und" when
+# unknown". The two are not the same alphabet and the difference is not
+# cosmetic: 639-2/B is `ger`/`fre`/`chi`/`dut`/`cze`/`rum`, where 639-2/T and
+# 639-3 are `deu`/`fra`/`zho`/`nld`/`ces`/`ron`. So the raw code cannot be
+# passed through as a "639-3 fallback" — it would emit codes that are in
+# neither alphabet.
+#
+# 36 distinct codes over a 360,000-article sample of this corpus
+# (2026-09-12); the table is deliberately wider than that sample, because a
+# code we have no entry for degrades to "und" and silently loses a real
+# language. tests pin every observed code.
+_LANG_2 = {
+    "afr": "af", "alb": "sq", "ara": "ar", "arm": "hy", "aze": "az",
+    "ben": "bn", "bos": "bs", "bul": "bg", "cat": "ca", "chi": "zh",
+    "cze": "cs", "dan": "da", "dut": "nl", "eng": "en", "epo": "eo",
+    "est": "et", "fin": "fi", "fre": "fr", "geo": "ka", "ger": "de",
+    "glg": "gl", "gre": "el", "heb": "he", "hin": "hi", "hrv": "hr",
+    "hun": "hu", "ice": "is", "ind": "id", "ita": "it", "jpn": "ja",
+    "kor": "ko", "lat": "la", "lav": "lv", "lit": "lt", "mac": "mk",
+    "mal": "ml", "mao": "mi", "may": "ms", "mlt": "mt", "nor": "no",
+    "per": "fa", "pol": "pl", "por": "pt", "pus": "ps", "rum": "ro",
+    "rus": "ru", "san": "sa", "slo": "sk", "slv": "sl", "spa": "es",
+    "srp": "sr", "swe": "sv", "tha": "th", "tur": "tr", "ukr": "uk",
+    "urd": "ur", "vie": "vi", "wel": "cy",
+}
+#: no two-letter code exists, so §9.5's 639-3 branch applies and the code
+#: travels as it is: `mul` (several languages) and `und` (undetermined,
+#: which MEDLINE itself writes).
+_LANG_AS_IS = {"mul", "und"}
+
+
+def language(elem: ET.Element) -> str:
+    """§9.5's `lang` for a <PubmedArticle>: ISO 639-1, else 639-3, else
+    `"und"`.
+
+    THE FIRST <Language> WINS. 0.37% of this corpus carries more than one
+    and `lang` is a single string; MEDLINE lists the primary language
+    first, so the first element is the article's own language and the
+    rest are what it is also available in.
+    """
+    for el in elem.findall("MedlineCitation/Article/Language"):
+        code = (el.text or "").strip().lower()
+        if not code:
+            continue
+        if code in _LANG_AS_IS:
+            return code
+        return _LANG_2.get(code, "und")
+    return "und"
+
+
+def authors(elem: ET.Element) -> list[str]:
+    """§9.5's `creators`, IN THE ORIGIN'S ORDER — "Last Initials", or the
+    collective name for a consortium byline, which is the author for a
+    good part of the corpus. `[]` when the origin names none (99.0% of
+    articles do name at least one)."""
+    out = []
+    for a in elem.findall("MedlineCitation/Article/AuthorList/Author"):
+        last = (a.findtext("LastName") or "").strip()
+        initials = (a.findtext("Initials") or "").strip()
+        coll = (a.findtext("CollectiveName") or "").strip()
+        name = f"{last} {initials}".strip() or coll
+        if name:
+            out.append(name)
+    return out
+
+
+_MONTHS = {m: f"{i:02d}" for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+
+
+def _ymd(year: str, month: str, day: str) -> str | None:
+    """`YYYY`, `YYYY-MM` or `YYYY-MM-DD` — 09 §9.5's three admitted forms
+    and nothing else. A month may arrive as "Nov" or as "11"; a range
+    like "Nov-Dec" or a season like "Spring" resolves to the year alone
+    rather than to an invented month."""
+    year = (year or "").strip()
+    if not (len(year) == 4 and year.isdigit()):
+        return None
+    month = (month or "").strip().lower()
+    # `isalpha`, not `month[:3]`: "nov-dec" starts with "nov" and a range is
+    # NOT November. Inventing a month from a range would put a precision in
+    # the record that the origin never claimed.
+    if month.isdigit():
+        mm = f"{int(month):02d}" if 1 <= int(month) <= 12 else None
+    elif month.isalpha():
+        mm = _MONTHS.get(month[:3])
+    else:
+        mm = None
+    if mm is None:
+        return year
+    day = (day or "").strip()
+    if day.isdigit() and 1 <= int(day) <= 31:
+        return f"{year}-{mm}-{int(day):02d}"
+    return f"{year}-{mm}"
+
+
+def publication_date(elem: ET.Element) -> str | None:
+    """§9.5's `date` for a <PubmedArticle>, or None when the origin gives
+    no usable year.
+
+    The JOURNAL's publication date (`Journal/JournalIssue/PubDate`) is the
+    document's date and is what a reader is shown; `ArticleDate` — the
+    electronic-publication date, present on 80.8% of this corpus — is the
+    fallback, and `MedlineDate` ("1953 Nov-Dec", "1998 Spring") the last
+    resort, from which only the year is trustworthy.
+
+    Distinct from `parse_article`'s `date`, which is the PACK's planner
+    column and keeps its own "1953-Nov" shape on purpose: that column is
+    internal, its format is not published, and changing it would bump
+    PACK_VERSION and rebuild all 1,334 packs for no gain.
+    """
+    pub = elem.find("MedlineCitation/Article/Journal/JournalIssue/PubDate")
+    if pub is not None:
+        got = _ymd(pub.findtext("Year") or "", pub.findtext("Month") or "",
+                   pub.findtext("Day") or "")
+        if got:
+            return got
+        medline_date = (pub.findtext("MedlineDate") or "").strip()
+        if medline_date[:4].isdigit():
+            return medline_date[:4]
+    art = elem.find("MedlineCitation/Article/ArticleDate")
+    if art is not None:
+        return _ymd(art.findtext("Year") or "", art.findtext("Month") or "",
+                    art.findtext("Day") or "")
+    return None
+
+
 def parse_article(elem: ET.Element) -> dict:
     """elem is a <PubmedArticle> element. Returns pmid, title, abstract,
     mesh[], journal, date."""
