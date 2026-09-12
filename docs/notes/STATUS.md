@@ -385,10 +385,39 @@ fault should never have written an error to a row at all ("deferral is
 not failure"), and a file that burned three attempts against a read-only
 mount would otherwise stay out of every future pass.
 
-**Remaining, on the mirrors:** ~1,500 files fail with rsync exit 12
-against `aleph.gutenberg.org` (protocol data stream — the PG master
-refusing us) while ibiblio serves normally. They retry, and the endpoint
-list exists for exactly this.
+**On the mirrors: BOTH refuse us intermittently, and it is not aleph.**
+The first read of this was wrong — "exit 12 against aleph while ibiblio
+serves normally" — because it sampled the error table and the error table
+was full of pre-fix rows. Split by timestamp, since the mount fix:
+
+| endpoint | downloaded | failed |
+|---|---|---|
+| ftp.ibiblio.org | 798 | 412 |
+| aleph.gutenberg.org | 289 | 83 |
+
+ibiblio fails MORE in absolute terms and both fail about a third of
+attempts. What they say, in full:
+
+```
+exit 10: failed to connect to ftp.ibiblio.org (152.19.134.42):
+         No route to host (113)
+         ...(2606:f640:...): Connection refused (111)
+exit 12: [receiver] read error: Connection reset by peer (104)
+```
+
+A refusal at connect time on one and a reset mid-transfer on the other —
+both consistent with a public mirror throttling a single client, and both
+intermittent rather than a block: two thirds of attempts succeed.
+
+`[transfer] per_endpoint` is already 4 and `workers` 8, the conservative
+defaults, and nothing on this node overrides them. (`docker top` shows
+~14 rsync processes, which reads as a violation and is not: rsync forks a
+receiver child, so that is ~7 transfers against a cap of 8.) Lowering
+per_endpoint to 2 might trade some parallelism for fewer refusals and
+come out ahead — it might equally halve the rate — and that is an A/B
+worth one measurement rather than a guess, on a fetch that is currently
+healthy at **3.67 GB/h measured over 180 s, ~16 h for the ~60 GB
+missing**. Not taken while the pass is running.
 
 **An unreadable origin file is a CORPUS FACT, not a stage failure.**
 `BadZipFile` escaped as `fts: …`, and a stage-prefixed error is what the
