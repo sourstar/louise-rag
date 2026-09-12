@@ -802,19 +802,6 @@ def _validate_validation(codex: Codex) -> None:
             raise CodexError(f"validation.required: {c!r} is not in the plan")
     if codex.publication != "certified" and v.required:
         raise CodexError("validation.required is [] on an open collection")
-    # A COLLECTION THAT CARRIES PLATES CHECKS THEM. `record_line` 2 is the
-    # whole of what makes a collection a plates collection (09 §9.5), and a
-    # plan that does not name `figures` would publish 51 GB of images that
-    # nothing ever re-hashes — the figure hash on the record line being the
-    # only thing that can. Refused here rather than left to a reviewer,
-    # because `validation` is inside `collection_id`: the moment to fix it
-    # is before the id exists, and there is no other moment.
-    if codex.record_line == 2 and "figures" not in v.checks:
-        raise CodexError(
-            "record_line = 2 carries plates, so validation.checks must name "
-            "`figures` (09 §9.8). Nothing else re-hashes a plate against the "
-            "record that names it, and validation is inside collection_id — "
-            "this is the only moment it can be added")
 
 
 def _validate_publication(codex: Codex) -> None:

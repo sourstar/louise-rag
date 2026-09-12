@@ -416,14 +416,14 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
 def _record_line(recipe: dict[str, Any]) -> int:
     """09 §9.5's record shape, declared once and for the collection's life.
 
-    Defaults to 1, and 2 is REFUSED rather than accepted: `record_line` 2
-    needs the figures containers, the `figures` member kind, the snapshot's
-    `figures` list and the plugin side of the amendment, none of which is
-    built (docs/notes/figures-amendment-plan.md). Writing 2 into a Codex
-    and then producing record lines without a `figures` key would be a
-    collection whose own identity says what its shards are not — and
-    `record_line` is inside `collection_id`, so it could never be
-    corrected, only replaced.
+    Defaults to 1. 2 became writable on 2026-09-12, when the figures
+    containers, the `figures` member kind, the snapshot's `figures` list
+    and the plugin side of the amendment all landed
+    (docs/notes/figures-amendment-plan.md); `RECORD_LINES_WRITABLE` is the
+    one place that says so. Writing 2 into a Codex and then producing
+    record lines without a `figures` key would be a collection whose own
+    identity says what its shards are not — and `record_line` is inside
+    `collection_id`, so it could never be corrected, only replaced.
     """
     want = int(recipe.get("record_line", codex_mod.RECORD_LINE_BUILT))
     if want not in codex_mod.RECORD_LINES:
@@ -453,12 +453,31 @@ def _origin(source, recipe: dict[str, Any]) -> Origin:
 
 
 def _validation(recipe: dict[str, Any]) -> Validation:
-    if "validation" in recipe:
-        v = recipe["validation"]
-        return Validation(tuple(v["checks"]), v.get("sample", {}),
-                          tuple(v.get("required", ())))
-    raise TemplateError("recipe: validation is required — a collection that "
-                        "declares no plan cannot be checked (03 §3.2)")
+    if "validation" not in recipe:
+        raise TemplateError("recipe: validation is required — a collection that "
+                            "declares no plan cannot be checked (03 §3.2)")
+    v = recipe["validation"]
+    checks = tuple(v["checks"])
+    # A COLLECTION THAT CARRIES PLATES CHECKS THEM. `record_line` 2 is the
+    # whole of what makes a collection a plates collection (09 §9.5), and a
+    # plan that does not name `figures` publishes tens of gigabytes of
+    # images that nothing ever re-hashes — the figure hash on the record
+    # line being the only thing that can.
+    #
+    # HERE, ON THE CREATE PATH, and deliberately not in `codex.validate`:
+    # `validation` is inside `collection_id`, so before the id exists is
+    # the only moment this can be fixed — and a Codex that already exists
+    # with this shape, anywhere, must still PARSE. Refusing it at `loads`
+    # would make a peer's collection unreadable rather than unserved, and
+    # would have made this node's own previous attempt unloadable too,
+    # which is how the placement was found.
+    if _record_line(recipe) == 2 and "figures" not in checks:
+        raise TemplateError(
+            "recipe: record_line = 2 carries plates, so validation.checks "
+            "must name `figures` (09 §9.8). Nothing else re-hashes a plate "
+            "against the record that names it, and validation is inside "
+            "collection_id — this is the only moment it can be added")
+    return Validation(checks, v.get("sample", {}), tuple(v.get("required", ())))
 
 
 def _license(source, recipe: dict[str, Any]) -> License:

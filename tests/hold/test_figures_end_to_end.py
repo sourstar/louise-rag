@@ -237,3 +237,27 @@ def test_a_plates_collection_must_plan_the_figures_check(isolated_config, tmp_pa
         col.create_from_recipe(tmp_path / "c", "gutenberg", bad,
                                platform_image=PLATFORM, embed=fake_embed,
                                name="nope", key=KEY, now=NOW)
+
+
+def test_such_a_codex_still_PARSES_wherever_it_already_exists(plates_drag):
+    """The refusal is on the CREATE path and must stay there. A Codex with
+    this shape may already exist — this node made one before the rule did —
+    and refusing it at `loads` makes a peer's collection unreadable rather
+    than unserved, and makes the local one impossible to even move aside.
+
+    Found the hard way: the rule sat in `codex.validate`, and `create`
+    reads every held Codex to check the name it is about to take — so the
+    previous attempt's file made the next `create` fail with the previous
+    attempt's error, about a collection nobody had asked about.
+    """
+    from dataclasses import replace
+    _root, _snapshot, codex = plates_drag
+    weaker = replace(codex, validation=replace(
+        codex.validation,
+        checks=tuple(c for c in codex.validation.checks if c != "figures"),
+        sample={k: v for k, v in codex.validation.sample.items()
+                if k != "figures"}))
+    raw = cx.dumps(weaker)
+    again = cx.loads(raw)
+    assert again.record_line == 2
+    assert "figures" not in again.validation.checks
