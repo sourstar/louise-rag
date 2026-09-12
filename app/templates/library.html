@@ -74,8 +74,16 @@
      never retryable, so measuring against it left a finished stage reading
      98.2% forever — gutenberg: 77,866 of 79,320, with 1,454 that will never
      arrive. A bar that cannot reach its end is not a progress bar. The
-     badge below still names the 1,454, so nothing is hidden. #}
-  {% set indexable = (c.in_scope - (c.unindexable or 0)) if c.in_scope else 0 %}
+     badge below still names the 1,454, so nothing is hidden.
+
+     READ FROM THE SHELF, not recomputed here. This was
+     `c.in_scope - c.unindexable` in the template AND `c.in_scope` in
+     web.py's `remaining`, and the dense row below used raw `c.in_scope`
+     for its number, its bar and its colour — three answers to one
+     question, which is why a finished dense row could never stop showing
+     an estimate. One target per stage, computed once (web.py
+     `stage_targets`). #}
+  {% set indexable = c.stage_targets.rdf or 0 %}
   <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.rdf_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>parsed (rdf)</span><span>{{ c.rdf_done|num }} / {{ indexable|num }}{% if c.stage_etas.rdf %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.rdf }}">({{ c.stage_etas.rdf }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.rdf_done/indexable)|round(1) if indexable else 0 }}%;background:var(--brass)"></span></div></div>
   <div class="stage"><div class="lbl"><span title="{{ stage_title }}"{% if c.counts_pending %}{% elif indexable and c.fts_done >= indexable %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>indexed (lexical)</span><span>{{ c.fts_done|num }} / {{ indexable|num }}{% if c.stage_etas.fts %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fts }}">({{ c.stage_etas.fts }})</span>{% endif %}</span></div>

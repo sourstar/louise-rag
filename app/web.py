@@ -777,7 +777,10 @@ def _collection_shelf(collection: collections_mod.Collection,
     #: so its ETA slot could never go quiet. "A bar that cannot reach its
     #: end is not a progress bar" is the note already above the rdf row;
     #: this is that note applied to the one row that was missing it.
-    stage_targets: dict[str, int] = {}
+    #: Always present, zeros while the counts are still being scanned, so
+    #: the template can read it unconditionally instead of keeping its own
+    #: copy of the arithmetic — which is how the two came to disagree.
+    stage_targets: dict[str, int] = {k: 0 for k in _RATE_FIELDS}
     if not counts_pending:
         now_i = int(time.time())
         cur = {
