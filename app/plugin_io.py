@@ -10,6 +10,7 @@ CanonicalDoc) for everyone else. The DocRef is reconstructed from the
 manifest row; §2 makes the locator plugin-opaque, so whatever addressing the
 plugin encoded at discovery (e.g. pubmed's container::index) round-trips.
 """
+import json
 from pathlib import Path
 
 from .plugins.base import CanonicalDoc, DocRef
@@ -72,6 +73,24 @@ def metadata(plugin, row) -> dict:
     return {"title": doc.title, "authors": "; ".join(doc.creators),
             "lang": doc.language, "subjects": "|".join(doc.subjects),
             "bookshelves": str(doc.extra.get("bookshelves", ""))}
+
+
+def work_identity(meta: dict) -> str:
+    """`documents.work` for one document: what work it is an edition of,
+    as JSON, or "" when its plugin does not say.
+
+    A plugin that knows (gutenberg, from the MARC relator roles) returns
+    `work_author`, `work_subjects` and `translated` in its metadata; every
+    other plugin returns none of them and gets "", which never groups and
+    so never suppresses anything (app/work_dedup.py). One place, so a new
+    plugin opts in by naming the three keys and nothing else changes.
+    """
+    author = str(meta.get("work_author") or "")
+    subjects = [str(s) for s in (meta.get("work_subjects") or ()) if s]
+    if not author or not subjects:
+        return ""
+    return json.dumps({"author": author, "subjects": subjects,
+                       "translated": bool(meta.get("translated"))})
 
 
 def sections(plugin, row) -> list[tuple[str, str]]:

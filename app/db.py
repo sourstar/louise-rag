@@ -282,7 +282,20 @@ def connect(collection=None) -> sqlite3.Connection:
     for statement in (
             "ALTER TABLE documents ADD COLUMN entity_version INTEGER DEFAULT 0",
             # NULL on every pre-existing row until its shard is rebuilt
-            "ALTER TABLE documents ADD COLUMN content_hash TEXT"):
+            "ALTER TABLE documents ADD COLUMN content_hash TEXT",
+            # WHAT WORK THIS DOCUMENT IS AN EDITION OF, as JSON:
+            # {"author": <agent id>, "subjects": [...], "translated": bool}.
+            # What retrieval needs to tell "Madame Bovary" from its
+            # fourteen translations (app/work_dedup.py) — the author AGENT
+            # id, not the name, because a translation's display authors
+            # carry the translator too. Derived by the plugin's parser, so
+            # a re-scan with `rdf_done=0` fills it; NULL until then, and a
+            # NULL never groups and so never suppresses anything.
+            #
+            # Local manifest state (invariant 6): it never travels, it is
+            # not in any record, and it moves no hash. Adding it is an
+            # ALTER plus an rdf re-derive, not a rebuild.
+            "ALTER TABLE documents ADD COLUMN work TEXT"):
         try:
             con.execute(statement)
         except sqlite3.OperationalError:

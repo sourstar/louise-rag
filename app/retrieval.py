@@ -20,12 +20,14 @@ federation is P0.5's job. Search hits keep their pre-refactor int `book_id`
 shape (native_id) — chunk/document identity internally is `uid`-keyed, but the
 public API surface is unchanged.
 """
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import httpx
-from . import collections as collections_mod, config, db, embeddings, fts, llm, refs
+from . import (collections as collections_mod, config, db, embeddings, fts, llm,
+               refs, work_dedup)
 from .bundles import verify_on_use
 
 RRF_K = 60
@@ -214,6 +216,46 @@ def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
         _enqueue_lazy_embed(con, ids[:10], collection)
 
 
+def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[dict]:
+    """Give each hit what `work_dedup` needs, then drop the translations
+    that compete with something better.
+
+    BEFORE THE RERANK, deliberately. Dedup after the top-k cut would
+    return a short page — twelve hits asked for, seven delivered, and the
+    five slots spent on suppressed translations rather than refilled. Run
+    here, the reranker draws its k from the survivors and the page is
+    full of distinct works.
+
+    Cost is one indexed lookup over the candidate set's ids (≤ 4k, so ≤
+    48 by default) against the `(source, native_id)` key — the same query
+    shape `_attach_metadata_and_enqueue` already runs on the final set.
+    A hit whose document has no `work` row is passed through untouched: a
+    guess about what a book IS must never cost a reader the book.
+    """
+    ids = list({h["book_id"] for h in hits})
+    if not ids:
+        return hits
+    marks = ",".join("?" for _ in ids)
+    works: dict[int, dict] = {}
+    for r in con.execute(
+            f"SELECT native_id, lang, work FROM documents "
+            f"WHERE source=? AND native_id IN ({marks})",
+            [collection.plugin] + [str(i) for i in ids]):
+        try:
+            parsed = json.loads(r["work"]) if r["work"] else None
+        except (TypeError, ValueError):
+            parsed = None           # unreadable is no key, never a broken page
+        if parsed:
+            works[int(r["native_id"])] = {
+                "work_author": parsed.get("author", ""),
+                "work_subjects": tuple(parsed.get("subjects") or ()),
+                "translated": bool(parsed.get("translated")),
+                "lang": r["lang"]}
+    for h in hits:
+        h.update(works.get(h["book_id"], {}))
+    return work_dedup.prefer_originals(hits, query=query)
+
+
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
@@ -236,7 +278,9 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     timings = partial["timings"]
 
     t0 = time.time()
-    final = _rerank(query, partial["merged"][: max(k * 4, 40)], top_n=k)
+    candidates = _attach_work_fields(
+        con, collection, partial["merged"][: max(k * 4, 40)], query)
+    final = _rerank(query, candidates, top_n=k)
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
     _attach_metadata_and_enqueue(con, collection, final)
@@ -335,7 +379,28 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     fused = _merge_rrf_federated(per_collection_lists)
 
     t0 = time.time()
-    final = _rerank(query, fused[: max(k * 4, 40)], top_n=k)
+    # Same as search(): dedup the CANDIDATES, so the reranker fills k from
+    # the survivors. Grouped by collection because `book_id` alone is
+    # ambiguous across them, and because `work` lives in each collection's
+    # own manifest — a work is only ever deduplicated against itself.
+    candidates = fused[: max(k * 4, 40)]
+    collection_by_name = {c.name: c for c in collections}
+    grouped: dict[str, list[dict]] = {}
+    for h in candidates:
+        grouped.setdefault(h["source_collection"], []).append(h)
+    kept: set[int] = set()
+    for name, hits in grouped.items():
+        target = collection_by_name.get(name)
+        if target is None:
+            kept.update(id(h) for h in hits)
+            continue
+        try:
+            kept.update(id(h) for h in _attach_work_fields(
+                db.connect(target), target, hits, query))
+        except Exception:   # noqa: BLE001 — a dedup that cannot run returns
+            kept.update(id(h) for h in hits)        # every hit, never none
+    candidates = [h for h in candidates if id(h) in kept]
+    final = _rerank(query, candidates, top_n=k)
     rerank_ms = round((time.time() - t0) * 1000, 1)
 
     # metadata attach + lazy-embed enqueue, grouped by source_collection
@@ -343,7 +408,6 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     by_collection: dict[str, list[dict]] = {}
     for h in final:
         by_collection.setdefault(h["source_collection"], []).append(h)
-    collection_by_name = {c.name: c for c in collections}
     for name, hits in by_collection.items():
         collection = collection_by_name[name]
         con = db.connect(collection)

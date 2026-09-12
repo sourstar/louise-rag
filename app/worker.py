@@ -90,9 +90,9 @@ def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -
         meta = plugin_io.metadata(plugin, row)
     con.execute(
         "UPDATE documents SET title=?,authors=?,lang=?,subjects=?,bookshelves=?,"
-        "rdf_done=1,updated_at=? WHERE uid=?",
+        "work=?,rdf_done=1,updated_at=? WHERE uid=?",
         (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
-         meta["bookshelves"], now, row["uid"]))
+         meta["bookshelves"], plugin_io.work_identity(meta), now, row["uid"]))
     # Keyed on the document's rowid, REPLACE instead of delete-then-insert:
     # `uid UNINDEXED` means a DELETE ... WHERE uid=? scans the whole shadow
     # table — 14.02 of rdf's 14.25 ms/doc at just 36k catalog rows, growing

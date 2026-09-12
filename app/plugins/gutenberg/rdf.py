@@ -186,6 +186,25 @@ def parse(book_dir: Path, book_id: int) -> dict:
     out["subjects"] = " | ".join(dict.fromkeys(
         v for vals in by_scheme.values() for v in vals))
 
+    # WHAT WORK THIS EDITION IS OF (app/work_dedup.py). The author AGENT
+    # id, never the name: PG gives one agent a stable `rdf:about` across
+    # every edition and translation, while the display `authors` string
+    # carries the translator too — so grouping on the name would put
+    # "Flaubert, Gustave; Aveling, Eleanor Marx" in a different group from
+    # "Flaubert, Gustave", which is the one case this has to get right.
+    #
+    # LCSH ALONE for the heading set: LCC class codes are far coarser (a
+    # whole "PQ" would collapse unrelated works into one), and `unknown`
+    # is not a vocabulary. Missing either half yields no key, and a
+    # document with no key is never grouped and so never suppressed.
+    authors = [a for a in agents if a.get("role") in ("creator", "")]
+    out["work_author"] = next((a["agent_id"] for a in authors if a.get("agent_id")), "")
+    out["work_subjects"] = list(out["subjects_by_scheme"].get("LCSH", ()))
+    #: the ORIGIN's own word for it — `marcrel:trl` on an agent — never a
+    #: guess from the title or the language. Only an origin-marked
+    #: translation is ever a candidate for suppression.
+    out["translated"] = any(a.get("role") == "trl" for a in agents)
+
     shelves = [_value(s) for s in ebook.findall(".//pgterms:bookshelf", NS)]
     out["bookshelves"] = " | ".join(dict.fromkeys(x for x in shelves if x))
 
