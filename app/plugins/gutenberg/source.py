@@ -305,8 +305,25 @@ class GutenbergSource:
             # snapshot cutoff (`--until`) is denominated in it. It simply
             # is not the work's date, which rdf.py's own comment has said
             # all along ("never the text's own date").
-            extra={"bookshelves": meta["bookshelves"],
-                   "issued": meta.get("issued")},
+            # PROMISE 9: everything else the RDF says about this book.
+            # Empty values are omitted so a sparse record stays small.
+            # `creators_detail` is separate from `creators` because §9.5
+            # makes the latter a list of STRINGS — an agent's birth and
+            # death years, aliases, PG agent id and ROLE need objects,
+            # and an illustrator is not an author.
+            extra={k: v for k, v in {
+                "bookshelves": meta["bookshelves"],
+                "issued": meta.get("issued"),
+                "creators_detail": meta["creators_detail"],
+                "languages": meta["languages"],
+                "subjects_by_scheme": meta["subjects_by_scheme"],
+                "alt_titles": meta["alt_titles"],
+                "description": meta["description"],
+                "toc": meta["toc"],
+                "dcmi_type": meta["dcmi_type"],
+                "rights": meta["rights"],
+                "reading_ease": meta["reading_ease"],
+            }.items() if v not in ("", None, [], {})},
             sections=sections,
             figures=plates,
             raw_hash=raw.raw_hash,

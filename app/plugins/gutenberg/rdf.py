@@ -26,12 +26,83 @@ NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "dcterms": "http://purl.org/dc/terms/",
     "pgterms": "http://www.gutenberg.org/2009/pgterms/",
+    #: `dcam:memberOf` names a subject's VOCABULARY, and without it LCSH
+    #: headings and LCC class codes land in one flat list where "Science
+    #: fiction" and "PZ" are indistinguishable (promise 9).
+    "dcam": "http://purl.org/dc/dcam/",
+    #: MARC relator roles — `marcrel:ill` illustrator, `trl` translator,
+    #: `edt` editor, `ctb` contributor, `aui` author of introduction. The
+    #: role is the ELEMENT that wraps the agent, so an agent's
+    #: contribution is only knowable from its parent's tag.
+    "marcrel": "http://id.loc.gov/vocabulary/relators/",
 }
+
+#: the vocabulary a `dcam:memberOf` resource names, by its last segment
+_SCHEME_OF = re.compile(r"([A-Za-z]+)$")
+
+
+def _value(el: ET.Element) -> str:
+    """An RDF node's text, whether it is written inline or as rdf:value."""
+    v = el.find(".//rdf:value", NS)
+    if v is not None and v.text:
+        return v.text.strip()
+    return (el.text or "").strip()
+
+
+def _scheme(el: ET.Element) -> str:
+    """Which vocabulary this subject belongs to: LCSH, LCC, … or ""."""
+    m = el.find(".//dcam:memberOf", NS)
+    if m is None:
+        return ""
+    res = m.get(f"{{{NS['rdf']}}}resource") or ""
+    got = _SCHEME_OF.search(res.rstrip("/"))
+    return got.group(1) if got else ""
+
+
+def _agents(ebook: ET.Element) -> list[dict]:
+    """Every agent the RDF names, WITH ITS ROLE and everything it says
+    about them — the PG agent id, birth and death years, aliases and
+    webpages. Promise 9 admits no category for dropping any of it: they
+    are the origin asserting who this person is.
+
+    The role comes from the WRAPPING element (`dcterms:creator`,
+    `marcrel:ill`, `marcrel:trl`, …), so it has to be read by walking the
+    ebook's children rather than with a `.//pgterms:agent` sweep — which
+    is what the old code did, flattening illustrators and translators
+    into the same anonymous author list.
+    """
+    out = []
+    for child in ebook:
+        agent = child.find("pgterms:agent", NS)
+        if agent is None:
+            continue
+        role = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        entry = {
+            "name": (agent.findtext("pgterms:name", namespaces=NS) or "").strip(),
+            "role": role,
+            "agent_id": (agent.get(f"{{{NS['rdf']}}}about") or "").strip(),
+            "birth": (agent.findtext("pgterms:birthdate", namespaces=NS) or "").strip(),
+            "death": (agent.findtext("pgterms:deathdate", namespaces=NS) or "").strip(),
+            "aliases": [a.text.strip() for a in agent.findall("pgterms:alias", NS)
+                        if a.text and a.text.strip()],
+            "webpages": [w.get(f"{{{NS['rdf']}}}resource", "").strip()
+                         for w in agent.findall("pgterms:webpage", NS)
+                         if w.get(f"{{{NS['rdf']}}}resource")],
+        }
+        if entry["name"] or entry["agent_id"]:
+            out.append({k: v for k, v in entry.items() if v})
+    return out
 
 def parse(book_dir: Path, book_id: int) -> dict:
     path = book_dir / f"pg{book_id}.rdf"
+    # EVERY key on every return path. `parse` returns early three ways —
+    # no file, unparseable XML, no <pgterms:ebook> — and a caller reading
+    # a key that only the happy path sets gets a KeyError on exactly the
+    # books whose metadata is already broken.
     out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": "",
-           "issued": None}
+           "issued": None, "creators_detail": [], "languages": [],
+           "subjects_by_scheme": {}, "alt_titles": [], "description": "",
+           "toc": "", "dcmi_type": "", "rights": "", "reading_ease": ""}
     if not path.is_file():
         return out
     try:
@@ -45,7 +116,7 @@ def parse(book_dir: Path, book_id: int) -> dict:
 
     t = ebook.find("dcterms:title", NS)
     if t is not None and t.text:
-        out["title"] = clean_title(t.text)[:500]
+        out["title"] = clean_title(t.text)
 
     # the PG release date ("YYYY-MM-DD"): what a dated snapshot of the
     # catalogue cuts on (pack build --until) — never the text's own date
@@ -53,34 +124,68 @@ def parse(book_dir: Path, book_id: int) -> dict:
     if issued is not None and issued.text and issued.text.strip():
         out["issued"] = issued.text.strip()[:10]
 
-    authors = []
-    for agent in ebook.findall(".//pgterms:agent", NS):
-        name = agent.find("pgterms:name", NS)
-        if name is not None and name.text:
-            authors.append(name.text.strip())
-    out["authors"] = "; ".join(dict.fromkeys(authors))[:500]
+    # THE CAPS ARE GONE. `[:500]` on title and authors, `[:2000]` on
+    # subjects, `[:1000]` on bookshelves: measured on the live manifest,
+    # 25 titles and 7 author lists sat exactly at 500, so their tails
+    # were cut and nothing said so. A silent truncation is the shape
+    # promise 9 forbids.
+    agents = _agents(ebook)
+    out["creators_detail"] = agents
+    #: `authors` stays EVERY agent, in the origin's order — unchanged
+    #: behaviour, and the non-destructive reading of §9.5's `creators`
+    #: ("in the origin's order", with no statement about role).
+    #:
+    #: It is arguably wrong: PG names illustrators, translators and
+    #: editors as agents too, so `documents.authors` for Huckleberry Finn
+    #: reads "Twain, Mark; Kemble, E. W. (Edward Windsor)" as though both
+    #: wrote it. Filtering to `role == "creator"` would read better and
+    #: lose nothing — the role is in `creators_detail` either way, so
+    #: promise 9 is satisfied both ways — but it reinterprets who counts
+    #: as an author and changes what every reader currently sees, which
+    #: is the operator's call and not a side effect of a fidelity fix.
+    out["authors"] = "; ".join(dict.fromkeys(
+        a["name"] for a in agents if a.get("name")))
 
-    langs = []
-    for lang in ebook.findall("dcterms:language", NS):
-        v = lang.find(".//rdf:value", NS)
-        if v is not None and v.text:
-            langs.append(v.text.strip().lower())
-        elif lang.text and lang.text.strip():
-            langs.append(lang.text.strip().lower())
+    langs = [_value(lang).lower() for lang in ebook.findall("dcterms:language", NS)]
+    langs = [x for x in dict.fromkeys(langs) if x]
     if langs:
         out["lang"] = langs[0]
+    #: EVERY language, in the origin's order. §9.5's `lang` is one string,
+    #: and a bilingual edition says so in the RDF.
+    out["languages"] = langs
 
-    subjects = []
+    # SUBJECTS CARRY THEIR VOCABULARY. Each dcterms:subject names its
+    # scheme in dcam:memberOf — this corpus uses LCSH and LCC — and
+    # joining all the values into one string made "Science fiction" (a
+    # heading) and "PZ" (a class code) the same kind of thing.
+    by_scheme: dict[str, list[str]] = {}
     for sub in ebook.findall("dcterms:subject", NS):
-        v = sub.find(".//rdf:value", NS)
-        if v is not None and v.text:
-            subjects.append(v.text.strip())
-    out["subjects"] = " | ".join(dict.fromkeys(subjects))[:2000]
+        val = _value(sub)
+        if val:
+            by_scheme.setdefault(_scheme(sub) or "unknown", []).append(val)
+    out["subjects_by_scheme"] = {k: list(dict.fromkeys(v))
+                                 for k, v in by_scheme.items()}
+    #: the display string keeps every subject, whatever its scheme, so
+    #: nothing disappears from the Library card; the record gets them
+    #: separated.
+    out["subjects"] = " | ".join(dict.fromkeys(
+        v for vals in by_scheme.values() for v in vals))
 
-    shelves = []
-    for shelf in ebook.findall(".//pgterms:bookshelf", NS):
-        v = shelf.find(".//rdf:value", NS)
-        if v is not None and v.text:
-            shelves.append(v.text.strip())
-    out["bookshelves"] = " | ".join(dict.fromkeys(shelves))[:1000]
+    shelves = [_value(s) for s in ebook.findall(".//pgterms:bookshelf", NS)]
+    out["bookshelves"] = " | ".join(dict.fromkeys(x for x in shelves if x))
+
+    out["alt_titles"] = [_value(a) for a in ebook.findall("dcterms:alternative", NS)
+                         if _value(a)]
+    out["description"] = "\n\n".join(
+        _value(d) for d in ebook.findall("dcterms:description", NS) if _value(d))
+    out["toc"] = "\n".join(_value(t) for t in ebook.findall("dcterms:tableOfContents", NS)
+                           if _value(t))
+    out["dcmi_type"] = _value(ebook.find("dcterms:type", NS)) \
+        if ebook.find("dcterms:type", NS) is not None else ""
+    #: PG's rights statement. Kept rather than assumed: the collection's
+    #: licence block says what WE may do, this says what the origin
+    #: declared about this text, and they are not the same assertion.
+    out["rights"] = (ebook.findtext("dcterms:rights", namespaces=NS) or "").strip()
+    #: marc908, the reading-ease score PG computes per text.
+    out["reading_ease"] = (ebook.findtext("pgterms:marc908", namespaces=NS) or "").strip()
     return out
