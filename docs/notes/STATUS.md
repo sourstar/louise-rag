@@ -522,6 +522,10 @@ medcpt-pubmed/12: imported       0 vectors; FINAL
 archive fetch (round): landed 5 shard(s), stopped: nothing pending
 ```
 
+**Amended 2026-09-13: the 38,324 were stuck too, for a second reason,
+and "COMPLETE" below was wrong.** See *A final shard that fts overtakes*
+further down. The rest of this section stands.
+
 **All 37 shards are `final` and the archive import is COMPLETE** —
 35,417,887 embedded, of which 149,999 arrived because of the fix. The
 three that imported nothing reported 55, 33 and 19 chunk-shape
@@ -580,6 +584,77 @@ node could say so. A day's lesson in one collection: the check that
 reports a catastrophe is as likely to be broken as the thing it reports
 on, and under promise 8 a false catastrophe is an argument for replacing
 a collection that was never wrong.
+
+### A final shard that fts overtakes — found and fixed 2026-09-13
+
+The 38,324 documents left "unembedded INSIDE the archive's range" above
+were not residue. They were a second stall with the same shape as the
+first: two correct halves with no path between them.
+
+`final` is decided by `pending_in_range_sql`, which counts documents
+still **upstream** of fts, and it is evaluated at the END of a pass that
+walked the shard's ids **before** it. A document that crosses fts in
+between is counted as "not waiting" — it is past fts — while never
+having been offered the shard's vector. A final shard is never walked
+again, so that vector could never arrive.
+
+The distribution is the proof. The stranded documents sit exactly where
+fts was working as the archive drained:
+
+| shard | stranded | | shard | stranded |
+|---|---|---|---|---|
+| 36 | 5,784 | | 27 | 1,263 |
+| 28 | 5,240 | | 23 | 404 |
+| 33 | 4,423 | | 26 | 327 |
+| 32 | 4,162 | | 25 | 249 |
+| 29 | 3,495 | | 21 | 176 |
+| 34 | 3,145 | | 20 | 160 |
+
+Shard 20, which fts had long left behind, lost 160. Shard 36, which fts
+was inside, lost 5,784.
+
+**Why an event and not a poll.** Recounting each final shard per round
+costs a range count per shard and cannot converge: a document the archive
+genuinely does not contain is unserved forever, so the shard would reopen
+forever while `_covered_ranges` keeps the local encoder out of its range
+— a livelock in place of a gap. `genesis.reopen_finals_for_range` fires
+from `stage_fts` only when fts actually crosses the range, which is the
+only way new demand can appear. The re-pass imports what it can and
+finalises again; a document the archive lacks generates no further event.
+Cost on the fts path is one read of a 37-row table with a primary key,
+pinned by a cost test.
+
+`louise genesis recheck <collection>` is the one-shot repair for shards
+finalised before the hook existed — no event will ever fire for those.
+
+**The general lesson, and it is the third time.** Both pubmed stalls were
+a state machine whose terminal state was decided from a condition that
+keeps changing after the decision. `applied` + files-gone had no path
+forward; `final` + fts-still-arriving had no path forward. Neither showed
+as an error, because in both cases every component was doing exactly what
+it was told. **When a stage can declare itself done, ask what can still
+become true afterwards — and make the thing that becomes true say so.**
+
+### `embed = "off"` is not "stuck", and the log now says which
+
+Three "pubmed is stuck" reports in two days were the same line:
+
+```
+[pubmed info:worker] idle — pipeline is caught up
+```
+
+4,577,101 documents indexed and waiting for a vector, and the worker
+called itself caught up — because a disabled stage and a finished one
+look identical from the selection query. Both return no row. The
+difference is the entire question the operator is asking.
+`_waiting_because_off` now names the work and where the switch is. One
+indexed count, and only on the five-minute idle line.
+
+The genesis import is **not** gated on `embed_mode` and never was —
+`_serve_one` drains the archive before it looks at embed at all, so
+published vectors are imported however the encoder is configured. That
+was worth confirming rather than assuming: it is the operator's own
+principle and the code already held it.
 
 ### What is waiting on the operator
 
