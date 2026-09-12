@@ -46,11 +46,17 @@
 <div class="hit" data-collection="{{ h.source_collection or (h.chunk_id.split(':')[0]) }}" data-book="{{ h.book_id }}" data-cid="{{ h.chunk_id }}" data-title="{{ h.title or ('#' ~ h.book_id) }}">
   <div class="head">
     <span><b title="open the document">{{ h.title or ('#' ~ h.book_id) }}</b></span>
-    <span class="badge">{{ h.authors or '' }}</span>
+    {# A BADGE WITH NOTHING IN IT IS STILL A BADGE. These two rendered
+       unconditionally, so every hit drew an empty pill for `authors` and
+       another for `chapter` — and `chapter` is empty for EVERY pubmed
+       hit, an abstract having no chapter. The operator read the blank one
+       after fts:en as a fix still landing (2026-09-12). Nothing to
+       say, nothing drawn. #}
+    {% if h.authors %}<span class="badge">{{ h.authors }}</span>{% endif %}
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
-    <span class="badge">{{ h.chapter or '' }}</span>
+    {% if h.chapter %}<span class="badge">{{ h.chapter }}</span>{% endif %}
   </div>
   {# content, translatable (data-cid keys the translation cache; the
      original text stays in data-orig on the client and in the drawer).

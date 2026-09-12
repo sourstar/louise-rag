@@ -622,3 +622,22 @@ def test_flatten_whitespace_leaves_ordinary_prose_alone():
     from app import llm
     plain = "The lighthouse keeper woke.\n\nHe lit the lamp."
     assert llm.flatten_whitespace(plain) == plain
+
+
+def test_an_empty_badge_is_not_drawn(client):
+    """`authors` and `chapter` rendered unconditionally, so every hit drew
+    an empty pill for each. `chapter` is empty for EVERY pubmed hit — an
+    abstract has no chapter — and the operator read that blank badge after
+    `fts:en` as a fix still landing."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    hit = {"chunk_id": "pubmed:1:0:1", "book_id": 1, "title": "A study",
+           "authors": "", "lang": "en", "chapter": "", "text": "x",
+           "sources": ["fts:en"], "source_collection": "pubmed"}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    assert '<span class="badge"></span>' not in html, "no empty pills"
+    assert 'fts:en' in html and 'pubmed' in html, "the real badges still show"
+
+    # and when they DO have something to say, they are drawn
+    full = dict(hit, authors="Curie M", chapter="Chapter I")
+    html = tpl.render(result={"hits": [full], "timings": {"fts": 1}})
+    assert "Curie M" in html and "Chapter I" in html
