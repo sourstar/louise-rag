@@ -206,3 +206,46 @@ class PubmedSource:
             sections=sections,
             raw_hash=raw.raw_hash,
         )
+
+    def read_metadata(self, path: Path, native_id: int) -> dict:
+        """The MANIFEST's view of a record — what the Library and the Ask
+        page display. `plugin_io.metadata` prefers this hook and falls
+        back to `canonical_doc()` when a plugin has none.
+
+        THIS EXISTS ONLY BECAUSE `parse()` DROPS THE AUTHORS. `parse()`
+        sets `creators=[]` (it has since the first commit), so the
+        fallback computed `authors=""` and all 39,994,988 pubmed
+        documents displayed no author while the origin XML carried them
+        all along — `pack.authors_of` has been extracting them into the
+        pack the whole time.
+
+        It is a DISPLAY hook and nothing else. `parse()` is untouched, so
+        the records keep their bytes, `content_hash` its value and the
+        Codex's `parser.version` its truth: `hold records build` reads
+        `plugin_io.canonical_doc`, never this. Correcting `creators`
+        itself would bump PARSER_VERSION into `collection_id` and fork
+        the collection, which is a different decision (operator,
+        2026-09-12).
+
+        Cost-neutral: the fallback already read this record's XML through
+        the same pack and the same `medline.parse_article`. Every field
+        below is byte-identical to what the fallback returned — lang is
+        the same hardcoded "en", subjects the same mesh list — except
+        `authors`, which stops being empty.
+        """
+        container, index = split_locator(str(path))
+        if index is None:
+            # a container-level ref (discover() yields one per file); it
+            # has no record to read and never had metadata
+            return {"title": "", "authors": "", "lang": "en",
+                    "subjects": "", "bookshelves": ""}
+        # the fallback reached this record through fetch(), which verifies
+        # the container's md5 sidecar first; a display hook that skipped
+        # that would be a quietly WEAKER path to the same bytes. Cached
+        # per (path, mtime), so it costs a stat after the first record.
+        _verify_md5_sidecar(container)
+        elem = ET.fromstring(pack.record_xml(container, index).decode("utf-8"))
+        meta = medline.parse_article(elem)
+        return {"title": meta["title"], "authors": pack.authors_of(elem),
+                "lang": "en", "subjects": "|".join(meta["mesh"]),
+                "bookshelves": ""}

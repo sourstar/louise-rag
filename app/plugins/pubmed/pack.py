@@ -131,7 +131,7 @@ def build(container: Path, dest: Path) -> int:
                 meta = medline.parse_article(elem)
                 row.update(pmid=meta["pmid"] or None, title=meta["title"],
                            abstract=meta["abstract"], journal=meta["journal"],
-                           date=meta["date"], authors=_authors(elem))
+                           date=meta["date"], authors=authors_of(elem))
             elif elem.tag == "DeleteCitation":
                 row["delete_pmids"] = json.dumps(medline.parse_delete_pmids(elem))
             rows.append(row)
@@ -176,7 +176,10 @@ def build(container: Path, dest: Path) -> int:
     return n
 
 
-def _authors(elem: ET.Element) -> str:
+def authors_of(elem: ET.Element) -> str:
+    """"Last Initials" per author, "; "-joined, collective names kept.
+    Public because `source.read_metadata` needs exactly the string the
+    pack stores, so the manifest and the pack can never disagree."""
     out = []
     for a in elem.findall("MedlineCitation/Article/AuthorList/Author"):
         last = (a.findtext("LastName") or "").strip()
@@ -327,6 +330,32 @@ def record_dates(container: Path) -> dict[int, str | None]:
         _dates.move_to_end(key)
         while len(_dates) > _MAX_DATES:
             _dates.popitem(last=False)
+    return out
+
+
+def record_authors(container: Path) -> dict[str, str]:
+    """pmid -> author list for every ARTICLE of the container, as two
+    small columns read once.
+
+    Keyed on pmid, not on the record index, because that is what the
+    manifest can look up: `documents` has a UNIQUE index on
+    (source, native_id) and none at all on `path`, so a backfill that
+    matched on the `<container>::<index>` locator would scan 40M rows per
+    record. Deletions carry no pmid and are skipped, as are articles the
+    origin gives no author (editorials, errata, much of the pre-1975
+    baseline) — a blank is not written over, so a caller can tell "no
+    authors recorded upstream" from "not looked at yet".
+
+    Not cached: the one caller walks 1,334 containers once and never
+    comes back, and a 30k-entry dict per container is not worth a slot
+    that `record_dates` needs for the pack planner.
+    """
+    table = _open(ensure(container)).read(columns=["pmid", "authors"])
+    out: dict[str, str] = {}
+    for pmid, authors in zip(table.column("pmid").to_pylist(),
+                             table.column("authors").to_pylist()):
+        if pmid and authors:
+            out[str(pmid)] = authors
     return out
 
 
