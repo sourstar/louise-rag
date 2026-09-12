@@ -1,4 +1,4 @@
-# PubMed v1.0 — the compliant root, and the flag day it waits behind
+# v1.0 roots — pubmed and gutenberg, and the flag day they wait behind
 
 Measured and decided 2026-09-12. Operator decision that frames all of it:
 
@@ -127,6 +127,33 @@ new embedding work is created by the rebuild.
 articles into different objects, a uid carrying its plugin's name, two
 different Wikipedia snapshots — and none of it applies here. Pubmed's
 corpus, chunker and uids are unchanged by parser 5.
+
+## Gutenberg, checked the same way
+
+Its v1.0 root is built by the same code, so it got the same audit. It is
+in far better shape: `lang` is real ISO 639-1, `creators` is populated in
+the origin's order, `date` is a well-formed `YYYY-MM-DD`, `extra` carries
+`bookshelves`. One violation, now fixed (parser 6):
+
+**MARC subfield delimiters in titles** — 4,648 of 79,286 (5.86%),
+almost all `… : $b subtitle`. §9.5 says `title` is "cleaned". The
+pattern takes **letters only**: `$1`, `$3` and `$5` also occur and are
+money in real titles ("The $100 Prize Essay on the Cultivation of the
+Potato", "The $30,000 Bequest, and Other Stories"), so `\$[a-z0-9]`
+would have mutilated Mark Twain to tidy a delimiter. `title` is inside
+`content_hash`, which costs nothing here because this root starts from
+zero vectors anyway (step 8).
+
+**Noted, not fixed — for the operator.** `date` is Project Gutenberg's
+RELEASE date, not the work's: `gutenberg:17832` is Verne's *Une ville
+flottante* (1871) carrying `2006-02-22`. `rdf.py`'s own comment says the
+issued date is "never the text's own date", and it is nonetheless what
+reaches §9.5's `date`. Arguments for leaving it: §9.5 fixes only the
+format, the PG edition genuinely is the document this record describes,
+and the work's own date is usually absent from the RDF. Argument against:
+a reader sees 2006 for an 1871 novel. Decide before the root is built —
+`date` is not in `content_hash`, but it is in the record line, so
+changing it later is another root.
 
 ## Loose ends
 
