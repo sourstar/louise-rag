@@ -255,6 +255,17 @@ def test_system_log_fragment_renders(client):
 
 # ---------------- STATUS 5j: translated results and the reader ----------------
 
+
+@pytest.fixture(autouse=True)
+def _fresh_translation_cache():
+    """`web._translation_cache` is process-global and keyed (id, lang), so
+    one test's translation is served to the next for the same pair. Found
+    by a test that passed alone and failed in the file — the same coupling
+    a long-running node has, one test apart."""
+    web._translation_cache.clear()
+    yield
+    web._translation_cache.clear()
+
 def test_show_results_in_translates_content_only(client, monkeypatch):
     """The drop-down translates snippets and the answer — never titles,
     authors, ids or the page. One model call per page of results, cached
@@ -278,11 +289,18 @@ def test_show_results_in_translates_content_only(client, monkeypatch):
     assert d["failed"] is True and d["items"] == {}
 
     r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
-    assert 'class="snip" data-cid="gutenberg:1:0:1"' in r.text, "snippets carry the translation key"
+    assert 'data-cid="gutenberg:1:0:1"' in r.text, "snippets carry the translation key"
     assert 'data-collection="gutenberg"' in r.text and 'data-book="1"' in r.text, "hits name their collection"
     page = client.get("/ask").text
-    assert 'id="lang"' in page and "show results in Deutsch" in page
-    assert "results in their own language" in page
+    assert 'id="lang"' in page
+    # EACH OPTION IN THE LANGUAGE IT SELECTS (operator, 2026-09-12): the
+    # label used to read the English "show results in Deutsch" whatever it
+    # switched to, which is a control an operator who reads only German
+    # cannot use.
+    assert "Ergebnisse auf Deutsch" in page
+    assert "risultati in italiano" in page and "نتایج به فارسی" in page
+    assert "show results in" not in page, "no English prefix survives"
+    assert "results in their own language" in page, "the off switch stays in the chrome language"
 
 
 def test_the_answer_is_asked_in_the_chosen_language_not_translated_after():
@@ -364,3 +382,89 @@ def test_reader_serves_a_document_mid_reindex_from_the_entries_still_in_the_inde
     doc = reader.document(c, 1)
     assert doc["chunks"] and doc["header"]["text_from"] == "lexical index"
     assert "lighthouse keeper lit the lamp" in client.get(f"/read/{c.name}/1").text
+
+
+def test_a_dropped_passage_is_never_cached_as_its_own_translation(client, monkeypatch):
+    """THE DEFECT THAT DEFEATED "re-applying the switch must work".
+
+    `llm.translate_texts` used to substitute the ORIGINAL for a passage the
+    model dropped, and `/ask/translate` stored that as the translation for
+    (chunk_id, lang). The client hides an unchanged passage, so nothing
+    showed — and every later switch to that language was served from the
+    cache, so the passage could never be translated again for the life of
+    the process. Selecting the language a second time is exactly the
+    repair the operator asked for.
+    """
+    _seed_one_book()
+    attempts = []
+
+    def drops_the_first(texts, lang):
+        attempts.append(tuple(texts))
+        # the model answered for the second passage only
+        return [None, f"<{lang}> {texts[1]}"] if len(texts) > 1 else [None]
+    monkeypatch.setattr(web.llm, "translate_texts", drops_the_first)
+    body = {"lang": "de", "items": [{"id": "a", "text": "one"},
+                                     {"id": "b", "text": "two"}]}
+    d = client.post("/ask/translate", json=body).json()
+    assert d["failed"] is False, "a partial result is not a failed call"
+    assert d["items"] == {"b": "<de> two"}, "only what really came back"
+    assert d["missed"] == ["a"], "and the page is told which did not"
+
+    # the repair: a second pass reaches the model again for the missed one
+    monkeypatch.setattr(web.llm, "translate_texts",
+                        lambda texts, lang: [f"<{lang}> {t}" for t in texts])
+    d = client.post("/ask/translate", json=body).json()
+    assert d["items"]["a"] == "<de> one", "re-applying the switch repairs it"
+    assert d["items"]["b"] == "<de> two", "and the one that worked is still cached"
+    assert d["missed"] == []
+
+
+def test_a_translation_equal_to_its_input_is_not_cached_either(client, monkeypatch):
+    """Same permanent-miss shape by a different route: a model that echoes
+    its input would otherwise pin that echo as the translation."""
+    _seed_one_book()
+    monkeypatch.setattr(web.llm, "translate_texts", lambda texts, lang: list(texts))
+    body = {"lang": "de", "items": [{"id": "a", "text": "unchanged"}]}
+    d = client.post("/ask/translate", json=body).json()
+    assert d["items"] == {} and d["missed"] == ["a"]
+
+    monkeypatch.setattr(web.llm, "translate_texts",
+                        lambda texts, lang: [f"<{lang}> {t}" for t in texts])
+    assert client.post("/ask/translate", json=body).json()["items"]["a"] == "<de> unchanged"
+
+
+def test_the_translator_fence_cannot_collide_with_a_citation(monkeypatch):
+    """`translate_texts` numbered its own batch `[1] …` while the Ask
+    page's snippets began with their own rank marker `[1] `, so the model
+    was handed "[1] [1] the lighthouse…" and had to guess which bracket
+    was protocol. A passage lost that way came back as a silent drop,
+    which the caching above then made permanent.
+
+    The fence is `<<n>>` now, and a citation `[3]` inside a passage is
+    content that must survive verbatim.
+    """
+    from app import llm
+    seen = {}
+
+    def fake_chat(messages, **kw):
+        seen["prompt"] = messages[0]["content"]
+        return '{"1": "erste", "2": "zweite"}'
+    monkeypatch.setattr(llm, "chat", fake_chat)
+
+    out = llm.translate_texts(["[1] the lighthouse", "see [3] for more"], "de")
+    assert out == ["erste", "zweite"]
+    prompt = seen["prompt"]
+    assert "<<1>>" in prompt and "<<2>>" in prompt, "the fence is unambiguous"
+    assert "[1] the lighthouse" in prompt, "the passage travels verbatim"
+    assert "see [3] for more" in prompt, "an inline citation is content"
+
+
+def test_the_rank_marker_is_outside_the_translated_snippet(client):
+    """It rode inside `.snip`, so the server cache — keyed (chunk_id,
+    lang) — replayed a stale bracket number for the same chunk at a new
+    rank, and it collided with the translator's own fence."""
+    _seed_one_book()
+    r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
+    assert '<span class="rank">[1]</span>' in r.text
+    snip = r.text.split('class="snip"', 1)[1]
+    assert not snip.lstrip('"> ').startswith("[1]"), "the marker is not in the unit"

@@ -186,14 +186,37 @@ class AskQueryBody(BaseModel):
     mode: str = "hybrid"
 
 
-# "show results in" — the CONTENT languages the Ask page offers (the page
-# chrome never changes language). The pre-embedded corpus's eleven plus the
-# common European ones; the model translates into any ISO code, so an
-# operator can type another into the TOML later without a code change.
+# "show results in" — the CONTENT languages the Ask page offers. The
+# pre-embedded corpus's eleven plus the common European ones; the model
+# translates into any ISO code, so an operator can type another into the
+# TOML later without a code change.
+#
+# THE THIRD COLUMN IS THE OPTION'S OWN LABEL, WRITTEN IN THE LANGUAGE IT
+# SELECTS (operator, 2026-09-12). The page chrome stays in one stable
+# language — nav, headings, buttons, badges, drawer labels — and this is
+# the one carve-out, for the reason every operating system's language
+# picker makes the same one: a label you cannot read is not a control.
+# Someone looking for Persian finds "نتایج به فارسی", not a row of English
+# they must first learn to parse.
+#
+# STATIC, never a model call: the picker has to render instantly and with
+# the encoder down, and a phrase that arrived by translation could not be
+# trusted to name its own language. A code added to the TOML later with no
+# phrase falls back to its endonym alone, which is still readable.
 RESULT_LANGUAGES = (
-    ("en", "English"), ("de", "Deutsch"), ("fr", "Français"), ("it", "Italiano"),
-    ("es", "Español"), ("pt", "Português"), ("nl", "Nederlands"), ("pl", "Polski"),
-    ("ru", "Русский"), ("ja", "日本語"), ("zh", "中文"), ("tr", "Türkçe"), ("fa", "فارسی"),
+    ("en", "English", "results in English"),
+    ("de", "Deutsch", "Ergebnisse auf Deutsch"),
+    ("fr", "Français", "résultats en français"),
+    ("it", "Italiano", "risultati in italiano"),
+    ("es", "Español", "resultados en español"),
+    ("pt", "Português", "resultados em português"),
+    ("nl", "Nederlands", "resultaten in het Nederlands"),
+    ("pl", "Polski", "wyniki po polsku"),
+    ("ru", "Русский", "результаты на русском"),
+    ("ja", "日本語", "日本語で表示"),
+    ("zh", "中文", "以中文显示"),
+    ("tr", "Türkçe", "sonuçları Türkçe göster"),
+    ("fa", "فارسی", "نتایج به فارسی"),
 )
 
 
@@ -237,17 +260,36 @@ def ask_translate(body: TranslateBody):
         else:
             pending.append((key[0], text))
     failed = False
+    missed: list[str] = []
     if pending:
         translated = llm.translate_texts([t for _, t in pending], lang)
         if len(translated) != len(pending):
-            failed = True
+            failed = True                      # the whole call failed
         else:
-            for (cid, _), value in zip(pending, translated):
+            for (cid, original), value in zip(pending, translated):
+                # A DROPPED PASSAGE IS NEVER CACHED, and never reported as
+                # a translation. `translate_texts` returns None for one,
+                # and it used to return the original — which this then
+                # stored as the translation for (cid, lang), so the
+                # passage could never be translated again for the life of
+                # the process. Re-selecting the language could not repair
+                # it, which is exactly what the switch is supposed to be
+                # able to do. A value equal to its own input is refused
+                # too: the same permanent-miss shape, arriving by a
+                # different route.
+                if value is None or value == original:
+                    missed.append(cid)
+                    continue
                 out[cid] = value
                 if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
                     _translation_cache.clear()
                 _translation_cache[(cid, lang)] = value
-    return {"lang": lang, "items": out, "failed": failed}
+    # `failed` stays a BOOL: it means "nothing came back", which is what
+    # the page says "translation unavailable" about. `missed` is the
+    # partial case — some passages translated, some did not — and the page
+    # shows what it got and names the rest rather than discarding good
+    # content for the sake of a uniform screen.
+    return {"lang": lang, "items": out, "failed": failed, "missed": missed}
 
 
 @ask_router.get("/read/{collection}/{book_id}", response_class=HTMLResponse)

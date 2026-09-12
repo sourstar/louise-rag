@@ -67,22 +67,42 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
         return {}
 
 
-def translate_texts(texts: list[str], lang: str) -> list[str]:
+def translate_texts(texts: list[str], lang: str) -> list[str | None]:
     """Translate several passages into ISO language `lang` in ONE prompt
-    (STATUS 5j: the Ask page's "show results in"). Returns one string per
-    input, or [] when the model failed — the caller then shows the
-    originals. Numbered JSON in and out keeps passages from bleeding into
-    each other; a passage the model dropped comes back as its original."""
+    (STATUS 5j: the Ask page's "show results in"). Returns one entry per
+    input — the translation, or **None** for a passage the model dropped —
+    or [] when the whole call failed. Numbered JSON in and out keeps
+    passages from bleeding into each other.
+
+    NONE, NOT THE ORIGINAL, for a drop. This used to return the original
+    text, which is indistinguishable from a translation that happens to
+    match — so `/ask/translate` cached it as the translation for
+    `(chunk_id, lang)` and that passage could never be translated again
+    for the life of the process. Re-selecting the language could not
+    repair it, which is precisely what the operator asked the switch to
+    be able to do.
+
+    THE FENCE IS `<<n>>`, not `[n]`. The batch used to be numbered `[1]`,
+    `[2]` … and the Ask page's snippets already begin with their own rank
+    marker `[1] `, so the model was handed `[1] [1] the lighthouse…` and
+    had to guess which bracket was the protocol. A passage lost that way
+    came back as a silent drop, which the caching above then made
+    permanent. The marker has also left the snippet (see
+    `_ask_results.html`), but the fence stays distinct so the two can
+    never collide again — a citation `[3]` inside a passage is content and
+    must survive verbatim.
+    """
     items = [t for t in texts]
     if not items or not lang:
         return []
-    numbered = "\n\n".join(f"[{i + 1}] {t}" for i, t in enumerate(items))
+    numbered = "\n\n".join(f"<<{i + 1}>> {t}" for i, t in enumerate(items))
     prompt = (
         f"Translate each numbered passage below into the language with ISO code "
-        f"'{lang}'. Keep numbers, names, citations like [3] and formatting as they "
-        f"are; do not summarise, do not add commentary.\n\n{numbered}\n\n"
-        'Reply with ONLY a JSON object mapping each number to its translation, '
-        'e.g. {"1": "...", "2": "..."}.'
+        f"'{lang}'. Each passage starts with a fence like <<2>> which is NOT part "
+        f"of the text. Keep numbers, names, citations like [3] and formatting as "
+        f"they are; do not summarise, do not add commentary.\n\n{numbered}\n\n"
+        'Reply with ONLY a JSON object mapping each fence number to its '
+        'translation, e.g. {"1": "...", "2": "..."}.'
     )
     try:
         raw = chat([{"role": "user", "content": prompt}], temperature=0.0,
@@ -95,8 +115,8 @@ def translate_texts(texts: list[str], lang: str) -> list[str]:
         obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
     except Exception:
         return []
-    out = []
-    for i, original in enumerate(items):
+    out: list[str | None] = []
+    for i, _original in enumerate(items):
         value = obj.get(str(i + 1))
-        out.append(value if isinstance(value, str) and value.strip() else original)
+        out.append(value if isinstance(value, str) and value.strip() else None)
     return out

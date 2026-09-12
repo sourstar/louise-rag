@@ -35,8 +35,19 @@
     <span class="badge">{{ h.chapter or '' }}</span>
   </div>
   {# content, translatable (data-cid keys the translation cache; the
-     original text stays in data-orig on the client and in the drawer) #}
-  <div class="snip" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" title="open the document at this passage">[{{ loop.index }}] {{ h.text[:420] }}…</div>
+     original text stays in data-orig on the client and in the drawer).
+
+     THE [n] RANK MARKER SITS OUTSIDE .snip. It used to be the first
+     characters of the translated unit, which cost twice: the server
+     caches on (chunk_id, lang), so the same chunk at a new rank replayed
+     a stale bracket number; and `llm.translate_texts` fenced its own
+     batch with the same brackets, so the model was handed "[1] [1] the
+     lighthouse…" and had to guess which one was protocol. A citation
+     [3] INSIDE a passage is content and still travels with it.
+
+     dir="auto" because fa is in the picker: an RTL translation in an LTR
+     block renders its punctuation in the wrong place without it. #}
+  <div class="sniprow"><span class="rank">[{{ loop.index }}]</span><div class="snip" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" dir="auto" title="open the document at this passage">{{ h.text[:420] }}…</div></div>
   <details class="drawer">
     <summary>provenance</summary>
     <div>uid: {{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}</div>
@@ -57,7 +68,13 @@
         <span class="badge ok">local ✓</span>
       {% endif %}
     </div>
-    <div style="margin-top:6px;white-space:pre-wrap">{{ h.text[:1200] }}</div>
+    {# THE ORIGINAL, always. The snippet above may be a translation and
+       the "translated from" badge promises the original is in here, so
+       this copy is never translated — it is what a reader checks a
+       translation against. STATUS 5j says both things in one paragraph;
+       this is the side the badge's own tooltip already committed to. #}
+    <div>original text ({{ h.lang or '?' }}):</div>
+    <div style="margin-top:6px;white-space:pre-wrap" dir="auto">{{ h.text[:1200] }}</div>
   </details>
 </div>
 {% else %}

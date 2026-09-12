@@ -19,12 +19,20 @@
       <option value="dense">dense only</option><option value="catalog">catalog only</option>
     </select>
     {# "show results in": CONTENT only — snippets and the answer are
-       translated / answered in this language; titles, authors, ids and
-       the page itself never change (STATUS 5j) #}
+       translated into this language; titles, authors, chapters, ids and
+       the page itself never change (STATUS 5j).
+
+       EACH OPTION IS WRITTEN IN THE LANGUAGE IT SELECTS (operator,
+       2026-09-12) — the one carve-out from "the chrome never changes
+       language", for the reason every OS language picker makes the same
+       one: a label you cannot read is not a control. The endonym is the
+       fallback for a code added to the TOML with no phrase, and
+       dir="auto" is what keeps the Persian row from rendering backwards
+       inside an LTR select. #}
     <select id="lang" style="width:auto" onchange="applyLanguage()" title="content language of snippets and answer">
       <option value="original">results in their own language</option>
-      {% for code, name in result_languages %}
-      <option value="{{ code }}">show results in {{ name }}</option>
+      {% for lang in result_languages %}
+      <option value="{{ lang[0] }}" dir="auto">{{ lang[2] if lang|length > 2 else lang[1] }}</option>
       {% endfor %}
     </select>
     <button class="primary" onclick="search()">Search</button>
@@ -82,6 +90,13 @@ function scopeCollections(){
 function selectedLang(){const v=document.getElementById('lang').value;return v==='original'?null:v}
 async function search(){
   const q=document.getElementById('q').value.trim(); if(!q)return;
+  // A NEW HIT SET INVALIDATES THE OLD ANSWER. Search alone used to leave
+  // the previous answer above fresh hits, and linkCitations() then wired
+  // its [n] to the NEW hits by position - a link that looks right and
+  // opens the wrong document.
+  answerRaw=''; answerLang=null;
+  document.getElementById('answer-pane').style.display='none';
+  document.getElementById('answer').textContent='';
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value})});
@@ -98,6 +113,7 @@ async function ask(){
     body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
                          answer_lang:selectedLang()})});
   const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
+  answerLang=selectedLang();
   for(;;){const {done,value}=await reader.read(); if(done)break;
     buf+=dec.decode(value,{stream:true});
     let i; while((i=buf.indexOf('\n\n'))>=0){
@@ -106,36 +122,97 @@ async function ask(){
       const data=line.slice(5).trim(); if(data==='[DONE]')continue;
       try{const j=JSON.parse(data); a.textContent+=j.choices[0].delta.content||''}catch(e){}
     }}
+  // the answer AS GENERATED, so a later switch has something to translate
+  // and switching back to "original" restores it byte for byte
+  answerRaw=a.textContent;
   linkCitations();
 }
-// ---- translated content (snippets only; titles/ids/interface untouched) ----
+// ---- translated content -------------------------------------------------
+//
+// The switch reaches BOTH the hit snippets and the answer, and it reaches
+// what is ALREADY on screen, not only the next query (operator,
+// 2026-09-12). Titles, authors, chapters, ids, the drawer original and
+// the page chrome never change (STATUS 5j).
+//
+// The answer is POST-TRANSLATED here rather than re-asked. A re-ask
+// returns a different answer, and the request was to read the SAME
+// result in another language; `answer_lang` still produces the first
+// answer natively at ask time, which costs no extra call and is the
+// better text. `build_answer_messages` warned that post-translation can
+// disturb the [n] citations, so the markers are counted before and after
+// and a translation that lost or invented one is refused.
+let answerRaw='', answerLang=null, langToken=0;
+const ANSWER_ID='__answer__';
+
+function markers(t){const m=t.match(/\[\d+\]/g)||[];return m.slice().sort().join(',')}
+
+function langNote(text){
+  // ONE note, in its own container. It used to be prepended to #hits
+  // while the cleanup looked for it inside each .hit, so it was never
+  // removed and stacked one line per failed switch.
+  let n=document.getElementById('lang-note');
+  if(!text){if(n)n.remove();return}
+  if(!n){n=document.createElement('div');n.id='lang-note';n.className='note';
+    const hits=document.getElementById('hits');
+    if(hits)hits.prepend(n); else return}
+  n.textContent=text;
+}
+
 async function applyLanguage(){
   const lang=selectedLang();
+  const mine=++langToken;                 // only the newest switch may paint
   const snips=[...document.querySelectorAll('#hits .snip[data-cid]')];
+  const a=document.getElementById('answer');
+  const haveAnswer=answerRaw && document.getElementById('answer-pane').style.display!=='none';
+
   for(const s of snips){
     if(s.dataset.orig===undefined)s.dataset.orig=s.textContent;
     const badge=s.parentElement.querySelector('.translated-from'); if(badge)badge.remove();
     if(!lang)s.textContent=s.dataset.orig;
   }
-  if(!lang||!snips.length)return;
-  const items=snips.map(s=>({id:s.dataset.cid,text:s.dataset.orig}));
+  if(!lang){
+    langNote('');
+    // back to the answer as generated, byte for byte
+    if(haveAnswer){a.textContent=answerRaw;linkCitations()}
+    return;
+  }
+  // A hit already IN the target language is not sent to the model: it
+  // would pay for a no-op and earn a "translated from it" badge on text
+  // that was always Italian.
+  const items=snips.filter(s=>(s.dataset.lang||'?')!==lang)
+                   .map(s=>({id:s.dataset.cid,text:s.dataset.orig}));
+  if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw});
+  if(!items.length){langNote('');return}
+
   let d=null;
   try{const r=await fetch('/ask/translate',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({lang,items})}); d=await r.json();}catch(e){d=null}
+  if(mine!==langToken)return;             // a later switch already won
   if(!d||d.failed){
-    const note=document.createElement('div'); note.className='note translated-from';
-    note.textContent='translation unavailable — showing the originals';
-    const hits=document.getElementById('hits'); if(hits)hits.prepend(note);
+    langNote('translation into '+lang+' unavailable — showing the originals');
     return;
   }
   for(const s of snips){
     const t=d.items[s.dataset.cid]; if(!t||t===s.dataset.orig)continue;
     s.textContent=t;
-    const from=s.dataset.lang||'?';
     const b=document.createElement('span'); b.className='badge translated-from';
     b.title='original in the provenance drawer';
-    b.textContent='translated from '+from; s.parentElement.insertBefore(b,s.nextSibling);
+    b.textContent='translated from '+(s.dataset.lang||'?');
+    s.parentElement.insertBefore(b,s.nextSibling);
   }
+  if(haveAnswer){
+    const t=d.items[ANSWER_ID];
+    if(answerLang===lang){ /* generated in this language: leave it */ }
+    else if(t && markers(t)===markers(answerRaw)){a.textContent=t;linkCitations()}
+    else if(t){
+      // the citations moved: the answer is worth less than its links
+      a.textContent=answerRaw;linkCitations();
+      langNote('the answer kept its original language — translating it '
+               +'would have broken its [n] citations');
+    }
+  }
+  const missed=(d.missed||[]).filter(id=>id!==ANSWER_ID).length;
+  langNote(missed?missed+' passage(s) could not be translated — showing those originals':'');
 }
 // ---- reader panel ----
 function wireHits(){
