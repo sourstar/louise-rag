@@ -45,7 +45,17 @@
 {% for h in result.hits %}
 <div class="hit" data-collection="{{ h.source_collection or (h.chunk_id.split(':')[0]) }}" data-book="{{ h.book_id }}" data-cid="{{ h.chunk_id }}" data-title="{{ h.title or ('#' ~ h.book_id) }}">
   <div class="head">
-    <span><b title="open the document">{{ h.title or ('#' ~ h.book_id) }}</b></span>
+    {# THE TITLE IS TRANSLATED (STATUS 5j, amended 2026-09-12: "how am I
+       supposed to understand a title in Arabic or Hindi?"). `data-tid`
+       keys the translation cache on the DOCUMENT, not the chunk — several
+       hits can be different passages of one book, and they must not pay
+       for the same title N times or disagree about it. `data-orig` holds
+       the published title: switching back to "original" restores it, and
+       the tooltip carries it meanwhile so it can be copied for a
+       reference without switching at all. #}
+    <span><b class="doc-title" data-tid="title:{{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}"
+       data-lang="{{ h.lang or '?' }}"
+       title="open the document">{{ h.title or ('#' ~ h.book_id) }}</b></span>
     {# A BADGE WITH NOTHING IN IT IS STILL A BADGE. These two rendered
        unconditionally, so every hit drew an empty pill for `authors` and
        another for `chapter` — and `chapter` is empty for EVERY pubmed

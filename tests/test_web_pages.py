@@ -678,3 +678,51 @@ def test_the_language_switch_says_it_is_working_before_the_wait(client):
     note = js.index("langNote('translating ")
     fetch = js.index("/ask/translate")
     assert note < fetch, "the note must be painted BEFORE the model call, not after"
+
+
+def test_the_title_is_translatable_and_keyed_on_the_document(client):
+    """STATUS 5j, amended 2026-09-12 — "how am I supposed to understand a
+    title in Arabic or Hindi?" The key is the DOCUMENT, not the chunk: two
+    passages of one book share its title and must not be translated twice
+    or come back disagreeing."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    hits = [{"chunk_id": "gutenberg:76511:0:1", "book_id": 76511, "lang": "fi",
+             "title": "Ties mikä lie!", "authors": "Malinen, Vilho", "chapter": "",
+             "text": "a", "origin_url": None},
+            {"chunk_id": "gutenberg:76511:7:1", "book_id": 76511, "lang": "fi",
+             "title": "Ties mikä lie!", "authors": "Malinen, Vilho", "chapter": "",
+             "text": "b", "origin_url": None}]
+    html = tpl.render(result={"hits": hits, "timings": {"fts": 1}})
+    assert html.count('data-tid="title:gutenberg:76511"') == 2, \
+        "both passages carry the SAME document key"
+    assert 'class="doc-title"' in html
+    assert 'data-lang="fi"' in html, "so a title already in the target is not sent"
+
+
+def test_authors_and_ids_are_not_given_a_translation_hook(client):
+    """The amendment kept this half: a personal name is not translated in
+    any language, and an id is not language at all."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    hit = {"chunk_id": "pubmed:1:0:1", "book_id": 1, "lang": "en", "title": "T",
+           "authors": "Curie M", "chapter": "", "text": "x", "origin_url": None}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    authors_span = html.split("Curie M")[0].rsplit("<span", 1)[-1]
+    assert "data-tid" not in authors_span and "data-cid" not in authors_span
+
+
+def test_the_switch_sends_titles_in_the_same_call_as_the_snippets(client):
+    """One model call for the page. A separate call per title would
+    multiply a 78 s wait by the number of hits."""
+    js = client.get("/ask").text
+    collect_snips = js.index("snips.filter(s=>(s.dataset.lang||'?')!==lang)")
+    collect_titles = js.index("items.push({id:t.dataset.tid")
+    the_call = js.index("/ask/translate")
+    assert collect_snips < the_call and collect_titles < the_call, \
+        "both are gathered BEFORE the single fetch"
+    assert "seenTid" in js, "and titles are deduplicated per document"
+
+
+def test_original_restores_the_published_title(client):
+    js = client.get("/ask").text
+    assert "t.textContent=t.dataset.orig" in js, "switching back restores it exactly"
+    assert "published as: " in js, "and the tooltip carries it while translated"

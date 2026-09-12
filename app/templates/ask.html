@@ -162,6 +162,7 @@ async function applyLanguage(){
   const lang=selectedLang();
   const mine=++langToken;                 // only the newest switch may paint
   const snips=[...document.querySelectorAll('#hits .snip[data-cid]')];
+  const titles=[...document.querySelectorAll('#hits .doc-title[data-tid]')];
   const a=document.getElementById('answer');
   const haveAnswer=answerRaw && document.getElementById('answer-pane').style.display!=='none';
 
@@ -169,6 +170,13 @@ async function applyLanguage(){
     if(s.dataset.orig===undefined)s.dataset.orig=s.textContent;
     const badge=s.parentElement.querySelector('.translated-from'); if(badge)badge.remove();
     if(!lang)s.textContent=s.dataset.orig;
+  }
+  // THE TITLE TOO (5j as amended). The published title stays in
+  // `data-orig` and in the tooltip, so "original" restores it exactly
+  // and it can be copied for a reference without switching back at all.
+  for(const t of titles){
+    if(t.dataset.orig===undefined)t.dataset.orig=t.textContent;
+    if(!lang){t.textContent=t.dataset.orig; t.title='open the document'}
   }
   if(!lang){
     langNote('');
@@ -181,6 +189,16 @@ async function applyLanguage(){
   // that was always Italian.
   const items=snips.filter(s=>(s.dataset.lang||'?')!==lang)
                    .map(s=>({id:s.dataset.cid,text:s.dataset.orig}));
+  // Titles ride the SAME call as the snippets, so translating them costs
+  // no extra round trip — and deduplicated by `data-tid`, because two
+  // passages of one book share its title and must not pay twice or come
+  // back disagreeing.
+  const seenTid=new Set();
+  for(const t of titles){
+    if((t.dataset.lang||'?')===lang || seenTid.has(t.dataset.tid))continue;
+    seenTid.add(t.dataset.tid);
+    items.push({id:t.dataset.tid,text:t.dataset.orig});
+  }
   if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw});
   if(!items.length){langNote('');return}
 
@@ -190,7 +208,7 @@ async function applyLanguage(){
   // doing nothing at all, which is what the operator reported (twice).
   // The note is the only thing that can distinguish "working" from
   // "broken" here, and it has to arrive first.
-  langNote('translating ' + items.length + ' passage(s) into ' + lang
+  langNote('translating ' + items.length + ' item(s) into ' + lang
            + '… this takes a while');
 
   let d=null;
@@ -208,6 +226,15 @@ async function applyLanguage(){
     b.title='original in the provenance drawer';
     b.textContent='translated from '+(s.dataset.lang||'?');
     s.parentElement.insertBefore(b,s.nextSibling);
+  }
+  // One translation paints every hit that shares the document, since the
+  // key is the document. The tooltip becomes the PUBLISHED title — the
+  // operator's "copy the original title for reference", without having to
+  // switch the whole page back to do it.
+  for(const t of titles){
+    const got=d.items[t.dataset.tid]; if(!got||got===t.dataset.orig)continue;
+    t.textContent=got;
+    t.title='published as: '+t.dataset.orig+' — click to open the document';
   }
   if(haveAnswer){
     const t=d.items[ANSWER_ID];
