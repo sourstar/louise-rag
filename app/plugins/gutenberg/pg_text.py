@@ -82,6 +82,35 @@ def read_clean(path: Path) -> str:
         text = text[: m.start()]
     return text.strip()
 
+def headings_without_body(text: str) -> list[str]:
+    """The headings `split_chapters` cannot place, in the order they
+    appear — a heading immediately followed by another, with nothing
+    between them.
+
+    `split_chapters` drops these (its `if body:`), and they are NOT
+    noise: measured over 400 real books, 415 of them, and they are
+    mostly the book's own TABLE OF CONTENTS, whose lines each match the
+    chapter pattern and so leave no body behind. Dropping them meant a
+    record held no trace of the book's contents page, which promise 9
+    does not allow.
+
+    They go to `extra`, not to `sections`. Promise 9 requires keeping
+    what the origin said; it does not require EMBEDDING it, and a
+    contents page cut into chunks is retrieval noise competing with the
+    prose it indexes. Keeping them out of `sections` also keeps them out
+    of `content_hash`, so restoring them moves no chunk id.
+    """
+    matches = list(_CHAPTER.finditer(text))
+    if not 1 <= len(matches) <= 400:
+        return []
+    out = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        if not text[m.end(): end].strip():
+            out.append(m.group(0).strip())
+    return out
+
+
 def split_chapters(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, str]]:
     """Return [(chapter_title, chapter_text)].
 
@@ -99,7 +128,11 @@ def split_chapters(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, s
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
             body = text[m.end(): end].strip()
             if body:
-                parts.append((m.group(0).strip()[:120], body))
+                # THE HEADING IS NOT TRUNCATED. `[:120]` cut the tail off
+                # a long one silently. It fires on none of 400 sampled
+                # books, so this costs nothing and removes a cap that
+                # would have lost text the day it did fire (promise 9).
+                parts.append((m.group(0).strip(), body))
         if parts:
             return parts
     # fallback: flat slicing on paragraph boundaries

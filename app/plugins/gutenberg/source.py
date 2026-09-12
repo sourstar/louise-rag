@@ -258,6 +258,7 @@ class GutenbergSource:
                     f"{raw.path.name} is not a readable epub for book "
                     f"{native_id} ({type(e).__name__})") from e
             sections = pg_text.split_chapters(text)
+            body_text = text
             # The caption is already an `[Illustration: …]` marker inside
             # `sections`, so it is indexed; only the BYTES are a member.
             plates = [Figure(href=f.href, media_type=f.media_type,
@@ -270,8 +271,17 @@ class GutenbergSource:
             # would put a chunk in the index that no page of the book
             # contains.
             sections = []
+            body_text = ""
         else:
-            sections = pg_text.split_chapters(pg_text.read_clean(raw.path))
+            body_text = pg_text.read_clean(raw.path)
+            sections = pg_text.split_chapters(body_text)
+        # THE BOOK'S OWN CONTENTS PAGE, which `split_chapters` drops: its
+        # lines each match the chapter pattern and leave no body behind,
+        # so 415 headings over 400 sampled books went nowhere. In `extra`
+        # rather than `sections` on purpose — promise 9 requires keeping
+        # what the origin said, not embedding it, and a contents page cut
+        # into chunks competes with the prose it indexes.
+        text_toc = pg_text.headings_without_body(body_text) if body_text else []
         creators = [a.strip() for a in meta["authors"].split(";") if a.strip()]
         subjects = [s.strip() for s in meta["subjects"].split("|") if s.strip()]
         return CanonicalDoc(
@@ -323,6 +333,7 @@ class GutenbergSource:
                 "dcmi_type": meta["dcmi_type"],
                 "rights": meta["rights"],
                 "reading_ease": meta["reading_ease"],
+                "text_toc": text_toc,
             }.items() if v not in ("", None, [], {})},
             sections=sections,
             figures=plates,

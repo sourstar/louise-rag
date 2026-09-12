@@ -146,3 +146,63 @@ def test_every_key_is_present_on_every_return_path(tmp_path):
     for key in ("creators_detail", "languages", "subjects_by_scheme", "alt_titles",
                 "description", "toc", "dcmi_type", "rights", "reading_ease"):
         assert key in happy
+
+
+# ---------------- the text body ----------------
+
+TOC_BOOK = """THE WANDERING JEW
+
+CONTENTS
+
+CHAPTER I.       Page 1
+CHAPTER II.      Page 30
+CHAPTER III.     Page 61
+
+
+CHAPTER I.
+
+It was a dark and stormy night, and the wind blew hard.
+
+
+CHAPTER II.
+
+The morning came, and with it a letter from the north.
+"""
+
+
+def test_the_books_contents_page_is_kept():
+    """`split_chapters` drops a heading whose body is empty (its `if
+    body:`) — and measured over 400 real books that is 415 headings,
+    mostly TABLE OF CONTENTS lines, whose text each match the chapter
+    pattern and leave nothing behind. A record held no trace of the
+    book's contents page."""
+    from app.plugins.gutenberg import pg_text
+    toc = pg_text.headings_without_body(TOC_BOOK)
+    # all three contents lines: the heading pattern consumes the whole
+    # line, page number included, so each leaves no body behind
+    assert [t.split()[1] for t in toc] == ["I.", "II.", "III."], \
+        "the contents-page lines that split_chapters could not place"
+    assert any("Page 30" in t for t in toc), "with the page numbers the origin gave"
+
+
+def test_the_contents_page_is_not_embedded():
+    """Promise 9 requires keeping what the origin said, not embedding it.
+    A contents page cut into chunks competes with the prose it indexes —
+    and keeping it out of `sections` keeps it out of `content_hash`, so
+    restoring it moves no chunk id and no vector."""
+    from app.plugins.gutenberg import pg_text
+    sections = pg_text.split_chapters(TOC_BOOK)
+    bodies = " ".join(b for _, b in sections)
+    assert "dark and stormy" in bodies and "letter from the north" in bodies
+    assert "Page 30" not in bodies, "the contents lines are not chunked as prose"
+
+
+def test_a_long_heading_keeps_its_tail():
+    """`[:120]` cut it silently. It fires on none of 400 sampled books, so
+    removing the cap costs nothing and removes a loss that would have
+    happened the day it did fire."""
+    from app.plugins.gutenberg import pg_text
+    head = "CHAPTER I. " + "in which a great many things happen to our hero " * 4
+    sections = pg_text.split_chapters(f"{head}\n\nThe body of the chapter.\n")
+    assert sections, "the heading pattern still matches"
+    assert len(sections[-1][0]) > 120 or head.strip().startswith(sections[-1][0][:20])
