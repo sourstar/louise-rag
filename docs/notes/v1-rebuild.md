@@ -71,6 +71,25 @@ every existing `codex.json` fails to load and `collections.py:270`
 refuses the collection — "not served, shared or searched until they
 agree". That includes gutenberg, whose fetch is running.
 
+## A manifest refresh is NOT a rebuild
+
+This got answered wrongly once (2026-09-12, about the translation-dedup
+fields) and the distinction is worth stating flatly, because the two look
+alike and cost three orders of magnitude apart.
+
+| | what it is | what it costs | does `collection_id` move? |
+|---|---|---|---|
+| **manifest refresh** | re-run a stage (`rdf_done=0`, and the worker re-reads) so `documents` picks up new parser output | parsing local files — minutes for gutenberg's 79,320 RDFs | **no** |
+| **schema addition** | a column on `documents` | one `ALTER TABLE`, applied at connect (db.py already does this for `entity_version` and `content_hash`) | **no** |
+| **records rebuild** | `hold records build` writes new shards | re-reads the origin; 16.1 GiB for pubmed | **no**, on its own |
+| **re-mint** | the Codex changes — parser version, `record_line`, any hashed field | a new collection beside the old one | **yes** |
+
+`documents` is DERIVED from the parser and can be re-derived at will. The
+RECORD is what freezes into the collection's identity. A field that is in
+the parser is therefore already available to search after a re-scan — it
+is only its appearance in the PUBLISHED records, which is what a peer
+fetches, that waits for the build.
+
 ## Order, and why it cannot be shuffled
 
 1. **Gutenberg fetch completes.** Non-negotiable: the fetch is driven by
