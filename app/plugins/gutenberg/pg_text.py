@@ -94,21 +94,23 @@ def producers(credit: str) -> list[str]:
     """
     if not credit or not credit.strip():
         return []
+    # PEOPLE ONLY, and the notes are NOT lost by leaving them out: the
+    # whole credit string is kept verbatim in `extra.marc["508"]` and
+    # `extra.text_header["Credits"]`. Turning a note into an entry of the
+    # credits list does not preserve more, it just invents a person —
+    # book 17832's marc508 is "Produced by Ebooks Libres et Gratuits;
+    # this text is also available in multiple formats at …", and the
+    # first draft of this credited all of that as one contributor.
     body = _PRODUCED_BY.sub("", credit.strip())
-    # a "from …"/"with …" tail describes the SOURCE of the images or the
-    # process; splitting it on "and" would mint people who do not exist
-    tail = ""
+    body = body.split(";")[0]                       # a trailing remark
     for sep in (" from page images", " from images", " with additional",
-                " using scans", " from scans"):
+                " using scans", " from scans", " at http", " at www"):
         cut = body.lower().find(sep)
         if cut != -1:
-            body, tail = body[:cut], body[cut:].strip()
+            body = body[:cut]
             break
     names = [n.strip(" .") for n in _NAME_SPLIT.split(body)]
-    out = [n for n in names if len(n) > 1]
-    if tail:
-        out.append(tail)
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(n for n in names if len(n) > 1))
 
 
 def header_fields(path: Path) -> dict[str, str]:

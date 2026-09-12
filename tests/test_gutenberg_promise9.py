@@ -355,13 +355,17 @@ def test_a_producer_credit_is_split_into_people_not_fragments():
     assert pg_text.producers(
         "Produced by the Online Distributed Proofreading Team") == [
         "the Online Distributed Proofreading Team"]
-    # a tail describing HOW is not a person, and is not chopped on "and"
-    got = pg_text.producers(
+    # A NOTE IS NOT A PERSON. Leaving it out loses nothing — the whole
+    # credit is kept verbatim in extra.marc["508"] and
+    # extra.text_header["Credits"] — while putting it in the credits list
+    # invents a contributor. Both real, from the live corpus.
+    assert pg_text.producers(
         "Produced by Jane Doe from page images generously made available "
-        "by the Internet Archive and the Library of Congress")
-    assert got[0] == "Jane Doe"
-    assert len(got) == 2 and got[1].startswith("from page images"), \
-        "the provenance note stays whole rather than minting people"
+        "by the Internet Archive and the Library of Congress") == ["Jane Doe"]
+    assert pg_text.producers(
+        "Produced by Ebooks Libres et Gratuits; this text is also available "
+        "in multiple formats at www.ebooksgratuits.com") == [
+        "Ebooks Libres et Gratuits"]
     assert pg_text.producers("") == []
 
 
