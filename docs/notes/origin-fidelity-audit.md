@@ -6,13 +6,19 @@ ONE entity, then justify each drop against promise 9's four categories
 (wrapping, boilerplate, our corpus-add date, provider packaging). Every
 claimed drop got an adversarial second read; six were overturned.
 
-| plugin | keeps today | origin fields | must-keep | unsure |
-|---|---|---|---|---|
-| pubmed | 16 | 103 | **72** | 8 |
-| gutenberg | 12 | 62 | 18 | 6 |
-| wikipedia | 8 | 56 | 23 | 13 |
-| embedded | 11 | 20 | 4 | 1 |
-| genome | 12 | 29 | 10 | 2 |
+| plugin | kept at audit | origin fields | must-keep | unsure | state |
+|---|---|---|---|---|---|
+| pubmed | 16 | 103 | 72 | 8 | **done** (`cb12102`, parser 6) |
+| gutenberg | 12 | 62 | 18 | 6 | **metadata done** (`1c8c9ec`), text body 2 of 3 (`05078ad`) |
+| wikipedia | 8 | 56 | 23 | 13 | not started — needs a wikitext template parser |
+| embedded | 11 | 20 | 4 | 1 | not started |
+| genome | 12 | 29 | 10 | 2 | not started; migration-plan keeps genome on the old format for now |
+
+**What is left, and what it is blocked on.** Gutenberg's last text-body
+item — front matter under 200 characters, 17 of 400 sampled books — waits
+on the question below about PG's production credit, because that region
+is usually where the credit sits. Wikipedia is the large one and is not
+blocked by anything except its own 13 unsure fields.
 
 ## Verified by hand, not taken on trust
 
@@ -82,8 +88,24 @@ records-only.
 
 ## Open for the operator
 
+- **Is Project Gutenberg's production credit entity information, or the
+  provider's record of its own transcription?** "Produced by David
+  Widger and Pat Castevens", `pgterms:marc508`, and the text file's
+  `Credits:` header are the same question three times, and it decides
+  gutenberg's last text-body item. It reads as promise 9(d) — the
+  provider's bookkeeping about its own process — but it names the humans
+  who made this edition, which is the only authorship a PG digital text
+  has. Promise 9 says ask rather than guess.
+- **Should `documents.authors` keep listing illustrators and translators
+  as authors?** The old `.//pgterms:agent` sweep could not tell roles
+  apart, so it does today — Huckleberry Finn reads "Twain, Mark; Kemble,
+  E. W.". The role is now in `extra.creators_detail` either way, so
+  promise 9 is satisfied whichever way this goes; it is a display
+  semantics call, and changing it changes what every reader sees.
 - the 30 "unsure" fields listed per plugin in the appendix
-- pubmed's `OtherAbstract`: `sections` (re-embeds) or `extra` (does not)
+- pubmed's `OtherAbstract`: `sections` (re-embeds) or `extra` (does not).
+  Currently `extra.other_abstracts`, which does not re-embed — the
+  reversible choice.
 - whether `PubMedPubDate@PubStatus` dates — when the record entered
   *PubMed's* index, not ours — fall under promise 9(c). Keeping the
   `History` block verbatim resolves it safely and costs almost nothing,
