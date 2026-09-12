@@ -183,9 +183,32 @@ narrowed.
 
 ## Open for the operator
 
-- **wikipedia/wikivec** are not configured collections on this node — a
-  corpus and archive state on disk, no TOML — so their §9.5 audit is not
-  done. `wikivec-merge-blocked.md` governs that pair when it comes up.
+- **wikipedia's `date`.** Audited 2026-09-12. `parse()` sets `date=None`
+  while `extra.revised` holds the revision timestamp the dump asserts —
+  the same shape as pubmed's gap, data available and the §9.5 field
+  empty. For a continuously revised article, is the "work publication
+  date" the timestamp of the revision we hold? I would say yes: that
+  revision IS the work in hand, and it is the only date the dump gives.
+  Needs the operator, like gutenberg's did, and `date` is in the record
+  line so changing it later is another root.
+- **wikipedia's `subjects`** are `[]`, though the wikitext carries
+  `[[Category:…]]`. (The `Category` string in `wikipedia/source.py:26`
+  is a NAMESPACE FILTER — it skips `Category:` pages — not extraction.)
+  Invariant 11 permits dropping what we do not use, so this is not
+  non-compliance; but `subjects` is fixed for the collection's life and
+  the Codex's `facets` may want to declare one over it, so it is a
+  decide-before-the-root.
+- **wikipedia/wikivec are not configured collections on this node** — a
+  corpus and archive state on disk, no TOML — so nothing above is urgent.
+  `wikivec-merge-blocked.md` governs that pair when it comes up.
+
+Audited and NOT a gap, so nobody re-opens them: `creators=[]` on both
+wiki plugins (an article has no single author; citation practice names
+"Wikipedia contributors", which is not something the origin asserts
+per-article), `date=None` on `embedded` (the archive carries no date at
+all, so null is the honest answer as it is for gutenberg), and
+`embedded`'s `keys=["wikipedia:<lang>:<article>"]`, which is the
+cross-reference to the wikipedia collection.
 
 ### Settled 2026-09-12 (kept here because the reasoning cost something)
 
