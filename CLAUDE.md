@@ -108,9 +108,30 @@ are the ones that have drifted; prefer to add a test when you touch them.
     the worker uses (`collections.recipe_for`, `db.apply_desired_embed_mode`).
     *Enforced: test.*
 11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
-    a way that prevents verification against the original form. Dropping
-    what we do not use (epubs, XML markup, dump indexes) is fine; losing
-    the ability to re-fetch the origin and reproduce what we kept is not.
+    a way that prevents verification against the original form, and
+    **WE CANNOT END UP HOLDING LESS INFORMATION THAN THE ORIGIN GAVE US
+    ABOUT AN ENTITY** (operator, 2026-09-12, non-negotiable for ANY
+    collection). The only content that may be dropped is content that is
+    not about the entity:
+      (a) wrapping and markup — XML tags, wikitext syntax;
+      (b) common headers and boilerplate — the Project Gutenberg licence
+          header, a dump's page chrome, a provider's banner;
+      (c) the date the entity entered OUR corpus (a date ABOUT the entity
+          is entity information and stays);
+      (d) what the PROVIDER wrapped around the entity and is not the
+          entity — the file formats it offers, download counts, mirror
+          bookkeeping.
+    Everything else the origin asserts about the entity is KEPT: its ids,
+    its dates, its authors and their identifiers, its subjects,
+    categories and keywords, its classification, its publication
+    details, its language, its structure. A §9.5 top-level key where
+    there is a natural home, `extra.<name>` otherwise. "We do not use it
+    yet" is NOT a reason to drop it — `extra`'s keys are fixed for a
+    collection's life, so a field left out now costs a whole new
+    collection to add later. If you cannot decide whether something is
+    (d) or entity information, ASK; do not guess it away.
+    Losing the ability to re-fetch the origin and reproduce what we kept
+    is equally forbidden.
     Concretely: every record carries `origin_hash` — the hash of the origin
     unit it was parsed from — and `origin` locates that unit, while the
     Codex names the acquisition spec and parser version that produced it
