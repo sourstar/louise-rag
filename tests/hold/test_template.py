@@ -12,6 +12,7 @@ import pytest
 from app.hold import codex as cx, collection as col, template
 from app.hold.codex import Codex, CodexError
 from app.hold.template import TemplateError
+from app.plugins.gutenberg import SOURCE
 from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE, KEY, NOW,
                                  PLATFORM, PUBMED_SAMPLE, Q_ENCODER,
                                  Q_WEIGHTS, TERMS, WEIGHTS, a_credit,
@@ -146,7 +147,11 @@ def test_a_plugin_and_two_blocks_make_a_collection():
     codex = from_recipe("gutenberg", recipe(), platform_image=PLATFORM)
     assert isinstance(codex, Codex)
     assert codex.plugin == "gutenberg"
-    assert codex.parser.id == "gutenberg" and codex.parser.version == 4
+    assert codex.parser.id == "gutenberg"
+    # READ FROM THE PLUGIN, never pinned here: what this asserts is that
+    # the template takes the parser version from the source, and a literal
+    # would turn every legitimate parser bump into a test edit.
+    assert codex.parser.version == SOURCE.PARSER_VERSION
     assert codex.modality == "text"
     assert codex.erasure == "retractable"
     assert codex.privacy == "public"

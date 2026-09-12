@@ -412,6 +412,41 @@ def read_bytes(path: Path, href: str) -> bytes:
         return z.read(href)
 
 
+def readable(path: Path) -> bool:
+    """Can this file be read as an epub at all?
+
+    A CORPUS FACT, and cheap: the zip's end-of-central-directory and one
+    small member. It exists because Project Gutenberg publishes files that
+    are named like epubs and are not — nine books in the live mirror carry
+    a ZERO-BYTE `pg<id>-images.epub` beside a perfectly good plain one,
+    dated 2009, and `pg2215` blew up `fts` with `BadZipFile` when the
+    reading rule reached for it.
+
+    So the rule is "the first form that can be READ", never "the first
+    file that exists". It is a pure function of the bytes on disk, so a
+    verifier applying it to the same directory reaches the same form —
+    which is what invariant 11 needs of the choice.
+
+    It asks the same question `read_clean` will ask — the zip opens, the
+    container names a rootfile, and the package document parses into a
+    manifest and a spine — so "readable" and "read_clean succeeds" cannot
+    diverge on the STRUCTURE. If they could, a book would be chosen as an
+    epub and then fail to be read as one, which is the bug this exists to
+    remove rather than to move. It reads two small members and no
+    document; the text is not touched here.
+
+    NOT a validity check on the content: an epub whose spine resolves and
+    whose documents are junk is a different failure, and it belongs where
+    it is discovered.
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            _manifest_and_spine(z)
+    except Exception:                       # noqa: BLE001 — any failure is "no"
+        return False
+    return True
+
+
 def find_epub(book_dir: Path, book_id: int) -> Path | None:
     """The ILLUSTRATED edition, or None.
 

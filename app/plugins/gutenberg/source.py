@@ -8,6 +8,7 @@ I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
 """
 import hashlib
+import zipfile
 from pathlib import Path
 
 from .. import cursor
@@ -52,30 +53,39 @@ def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bo
     if not entries:
         return None, None, True
 
-    epub = pg_epub.find_epub(book_dir, book_id)
-    if epub is None:
-        # `pg_epub.find_epub` takes the ILLUSTRATED edition only. A book
-        # published without one still reads better as an epub than as a
-        # hard-wrapped .txt, so the plain edition is the next candidate —
-        # shortest name first, which is stable and does not depend on
-        # directory order (invariant 3).
-        plain = sorted((p for p in entries
-                        if p.suffix.lower() == ".epub" and p.is_file()),
-                       key=lambda p: (len(p.name), p.name))
-        epub = plain[0] if plain else None
-    if epub is not None:
-        return "epub", epub, False
+    # THE FIRST FORM THAT CAN BE READ, never the first file that exists.
+    # Project Gutenberg publishes files that are named like epubs and are
+    # not: nine books in the live mirror carry a ZERO-BYTE
+    # `pg<id>-images.epub` beside a perfectly good plain one, dated 2009,
+    # and `pg2215` blew up `fts` with `BadZipFile` the first time the rule
+    # reached for one. `pg_epub.readable` is a pure function of the bytes
+    # on disk, so a verifier applying this rule to the same directory
+    # reaches the same form — which is what invariant 11 needs of it.
+    #
+    # `find_epub` takes the ILLUSTRATED edition only. A book published
+    # without one still reads better as an epub than as a hard-wrapped
+    # .txt, so the plain edition is the next candidate — shortest name
+    # first, which is stable and does not depend on directory order
+    # (invariant 3).
+    illustrated = pg_epub.find_epub(book_dir, book_id)
+    plain = sorted((p for p in entries
+                    if p.suffix.lower() == ".epub" and p.is_file()
+                    and p != illustrated),
+                   key=lambda p: (len(p.name), p.name))
+    for candidate in ([illustrated] if illustrated is not None else []) + plain:
+        if pg_epub.readable(candidate):
+            return "epub", candidate, False
 
     txt, _, _ = pg_text.scan_dir(book_dir, book_id)
-    if txt is not None:
+    if txt is not None and txt.stat().st_size > 0:
         return "txt", txt, False
 
-    meta = book_dir / f"pg{book_id}.rdf"
-    if meta.is_file():
-        return "rdf", meta, False
-    others = [p for p in entries if p.suffix.lower() == ".rdf" and p.is_file()]
-    if others:
-        return "rdf", others[0], False
+    # An empty .rdf is no more a catalogue record than an empty file is an
+    # epub. Same rule, same reason.
+    for meta in ([book_dir / f"pg{book_id}.rdf"]
+                 + [p for p in entries if p.suffix.lower() == ".rdf"]):
+        if meta.is_file() and meta.stat().st_size > 0:
+            return "rdf", meta, False
     return None, None, False
 
 
@@ -100,7 +110,17 @@ class GutenbergSource:
     #: epub differs from what version 3 produced for it — measured, 0 of 60
     #: books agreed on `content_hash` — so the version must move, and a
     #: collection built with 3 is a different collection, not a stale one.
-    PARSER_VERSION = 4
+    #:
+    #: 5 since 2026-09-12: the rule takes the first form that can be READ,
+    #: where 4 took the first that existed. Project Gutenberg publishes
+    #: zero-byte `pg<id>-images.epub` files — nine in the live mirror, each
+    #: beside a good plain epub — and version 4 chose them, which is a
+    #: record parsed from bytes that are not a book. The version moves for
+    #: the same reason as last time: for those nine books the two versions
+    #: produce different `origin`, different `origin_hash` and different
+    #: `content_hash`, so they are different records and a collection built
+    #: with 4 is a different collection.
+    PARSER_VERSION = 5
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -218,13 +238,26 @@ class GutenbergSource:
         suffix = raw.path.suffix.lower()
         plates: list = []
         if suffix == ".epub":
-            sections = pg_text.split_chapters(pg_epub.read_clean(raw.path))
+            # `pick_form` proved this file readable, and between then and
+            # now a sync can have replaced it. A file that will not open is
+            # a CORPUS FACT — retrying reads the same bytes — so it is
+            # raised unprefixed rather than escaping as a stage error,
+            # which the Library counts as blocked and which burns a retry
+            # (tests/test_unindexable_stability.py).
+            try:
+                text = pg_epub.read_clean(raw.path)
+                found = pg_epub.figures(raw.path)
+            except (zipfile.BadZipFile, pg_epub.EpubError, OSError) as e:
+                raise UnindexableDocument(
+                    f"{raw.path.name} is not a readable epub for book "
+                    f"{native_id} ({type(e).__name__})") from e
+            sections = pg_text.split_chapters(text)
             # The caption is already an `[Illustration: …]` marker inside
             # `sections`, so it is indexed; only the BYTES are a member.
             plates = [Figure(href=f.href, media_type=f.media_type,
                              sha256=f.sha256, bytes=f.bytes, caption=f.caption,
                              seq=f.seq, carried=f.carried)
-                      for f in pg_epub.figures(raw.path)]
+                      for f in found]
         elif suffix == ".rdf":
             # Metadata only: a catalogue entry, not a book. `sections` is
             # empty and stays empty — inventing a section from the title
@@ -273,7 +306,14 @@ class GutenbergSource:
             raise UnindexableDocument(
                 f"no epub, txt or rdf for book {native_id}")
         if form == "epub":
-            return pg_epub.read_clean(path)
+            # As in `parse`: a file that will not open is a corpus fact,
+            # raised unprefixed, never a stage error that burns a retry.
+            try:
+                return pg_epub.read_clean(path)
+            except (zipfile.BadZipFile, pg_epub.EpubError, OSError) as e:
+                raise UnindexableDocument(
+                    f"{path.name} is not a readable epub for book "
+                    f"{native_id} ({type(e).__name__})") from e
         if form == "rdf":
             return ""       # a catalogue entry has no body; `sections` is []
         return pg_text.read_clean(path)
