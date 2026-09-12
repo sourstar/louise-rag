@@ -157,6 +157,17 @@ current and only form of those collections. **Delete nothing.**
   pubmed's `records build` cheap: rebuilding costs ~17 s × ~1,200
   containers. Deleting it is legitimate housekeeping AFTER pubmed is
   migrated and no further build is planned, and pointless before.
+* **`<pubmed corpus>/.pack`, ~49 G when full** — the SAME cache, built
+  beside the corpus rather than under `data/`, which is where a re-parse
+  from the origin puts it. `records-vs-origin` re-parses every record of
+  its sampled shards, so a run over pubmed's 0.05 of 1,358 shards touches
+  ~2.01 M records spread across most of the 1,334 containers and rebuilds
+  a cache for each: measured 2026-09-12 at ~20 s and ~37 MB per
+  container, so ~7 hours and ~49 G for a full run. The pool has 7.3 T
+  free, so the size is not the constraint — the RUNTIME is, and it is why
+  a pubmed `hold check` is an afternoon rather than the 500 s gutenberg
+  takes. The cache persists, so a second run is cheap; that is the point
+  of it. Same condition as the row above.
 * **the archive pool’s `louise-packs/*`, 17 G total** — pre-Codex packs
   (`gutenberg` 7.0 G, `gutenberg-2026-06` 7.9 G, `pubmed` 729 M,
   `wikipedia` 1.4 G). `gutenberg-2026-06` is the intermediate product the
