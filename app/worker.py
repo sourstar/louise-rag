@@ -126,6 +126,31 @@ def batch_docs(collection, stage: str, default: int) -> int:
         default=default, lo=1, hi=max(default, 1) * 20)
 
 
+def _waiting_because_off(con, collection) -> str:
+    """"4,577,101 documents waiting: embed is off", or "" when the
+    pipeline really has finished.
+
+    A DISABLED STAGE AND A FINISHED ONE LOOK IDENTICAL from the selection
+    query — both return no row — and the difference is the whole
+    question an operator is asking when they look at the log. One is
+    "done", the other is "will never start". Cheap: one indexed count,
+    and only on the five-minute idle line.
+    """
+    try:
+        if str(db.get_scope(con).get("embed_mode") or "").lower() != "off":
+            return ""
+        waiting = con.execute(
+            "SELECT COUNT(*) FROM documents WHERE in_scope=1 AND fts_done=1 "
+            "AND embed_done=0 AND error IS NULL").fetchone()[0]
+    except Exception:      # noqa: BLE001 — the idle line must never raise
+        return ""
+    if not waiting:
+        return ""
+    return (f"{waiting:,} document(s) indexed and waiting to be embedded; "
+            f"embed is OFF for this collection — nothing will start until "
+            f"it is set in config/collections/{collection.name}.toml")
+
+
 def stage_rdf(con, row, collection) -> None:
     """Extract metadata for `row`, and for as many other rdf-pending
     documents as RDF_BATCH_DOCS allows, inside the ONE transaction the
@@ -367,6 +392,22 @@ def stage_fts(con, row, collection) -> None:
             _mark_indexed(con, peer, peer_chunks, now)
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row
+    # A document that clears fts inside a FINAL shard's id range is a
+    # document the archive holds a published vector for and can no longer
+    # deliver — `final` is decided from documents still UPSTREAM of fts, so
+    # one that crosses fts during the pass is counted as "not waiting"
+    # while never having been offered the shard. Reopening the shard is a
+    # ledger write inside this same transaction, so it lands with the marks
+    # that caused it or not at all (invariant 2). See
+    # genesis.reopen_finals_for_range — measured 38,324 documents stranded
+    # this way on pubmed.
+    reopened = bundle_genesis.reopen_finals_for_range(
+        con, collection, (r["native_id"] for r, _ in batch))
+    if reopened:
+        db.log_event(con, "info", "genesis",
+                     f"fts crossed the range of final shard(s) "
+                     f"{', '.join(reopened)}: reopened for one more pass, so "
+                     f"their published vectors are imported rather than recomputed")
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
     if len(batch) > 1:
@@ -1733,7 +1774,17 @@ def _run_one_step(con, collection, last_idle_log: dict,
         now = time.time()
         if not pipeline_active and \
                 now - last_idle_log.get(collection.name, 0.0) > 300:
-            db.log_event(con, "info", "worker", "idle — pipeline is caught up")
+            # "CAUGHT UP" IS A CLAIM, AND IT WAS FALSE. A stage that is
+            # switched OFF selects no row, exactly like a stage with
+            # nothing left to do — so the worker announced a finished
+            # pipeline every five minutes while 4,577,101 pubmed
+            # documents sat unembedded and the node ran at 0.16 load.
+            # The operator read the machine as stuck, which it was; the
+            # log said the opposite (2026-09-12).
+            waiting = _waiting_because_off(con, collection)
+            db.log_event(con, "info", "worker",
+                         f"idle — {waiting}" if waiting
+                         else "idle — pipeline is caught up")
             last_idle_log[collection.name] = now
         return False
     # an ATTEMPTED (even failed) step counts as work this round; a DEFERRED

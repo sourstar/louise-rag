@@ -496,6 +496,27 @@ def cmd_genesis_retry(args) -> int:
     return 0
 
 
+def cmd_genesis_recheck(args) -> int:
+    """Reopen FINAL shards that still have documents the archive could
+    serve — the one-shot repair for shards finalised before the fts hook
+    existed (genesis.reopen_finals_for_range). Costs one indexed range
+    count per final shard, which is why it is a command and not a round."""
+    from .bundles import genesis
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    con.execute("BEGIN IMMEDIATE")
+    found = genesis.reopen_finals_with_unserved(con, collection)
+    con.commit()
+    if not found:
+        print("every final shard has served every document in its range")
+        return 0
+    for shard, n in sorted(found.items(), key=lambda kv: -kv[1]):
+        print(f"shard {shard}: {n:,} unserved -> reopened")
+    print(f"{len(found)} shard(s) reopened, {sum(found.values()):,} documents; "
+          f"the fetcher re-fetches them and the worker imports their vectors")
+    return 0
+
+
 def cmd_pack_build(args) -> int:
     """A collection's documents -> a pack (docs/notes/pack-format.md): sliced
     record shards + signed manifest, resumable."""
@@ -1169,6 +1190,11 @@ def main(argv=None) -> int:
     g_retry.add_argument("collection")
     g_retry.add_argument("--shard", help="one shard (default: every rejected shard)")
     g_retry.set_defaults(func=cmd_genesis_retry)
+
+    g_recheck = genesis_sub.add_parser(
+        "recheck", help="reopen final shards that still have unserved documents")
+    g_recheck.add_argument("collection")
+    g_recheck.set_defaults(func=cmd_genesis_recheck)
 
     pack_parser = top.add_parser("pack", help="the pack: build, verify, inspect (docs/notes/pack-format.md)")
     pack_sub = pack_parser.add_subparsers(dest="verb", required=True)

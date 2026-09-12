@@ -288,6 +288,20 @@ def pending_in_range_sql(con) -> str:
             f"AND in_scope=1 AND error IS NULL AND fts_done=0")
 
 
+def unserved_in_range_sql(con) -> str:
+    """How many documents of a shard's id range are PAST fts and still
+    without a vector — documents the archive could serve right now.
+
+    The companion of `pending_in_range_sql`: that one counts demand that
+    has not arrived yet, this one counts demand that arrived and was
+    missed. `final` is decided by the first alone, which is the gap
+    `reopen_finals_for_range` closes.
+    """
+    return (f"SELECT COUNT(*) FROM documents{_hint(con)} "
+            f"WHERE CAST(native_id AS INTEGER) BETWEEN ? AND ? "
+            f"AND in_scope=1 AND error IS NULL AND fts_done=1 AND embed_done=0")
+
+
 def coverage_epoch() -> int:
     return _coverage_epoch
 
@@ -1399,3 +1413,108 @@ def import_archive(con, collection, archive: GenesisArchive, *,
     return {"shards": results,
             "docs": sum(r.get("docs", 0) for r in results),
             "chunks": sum(r.get("chunks", 0) for r in results)}
+
+
+def reopen_finals_for_range(con, collection, native_ids) -> list[str]:
+    """A FINAL shard whose id range just took a document through fts is
+    due again. Returns the shards reopened.
+
+    THE GAP THIS CLOSES. `final` means `_pending_for_shard` read zero —
+    no document in the shard's range was still upstream of fts at that
+    instant. It is set at the END of a pass, and the pass walked the
+    shard's ids BEFORE it. A document that clears fts between the walk
+    and the count is therefore counted as "not waiting" (it is past fts)
+    while never having been offered the shard's vector — and a final
+    shard is never walked again, so the vector the archive holds for it
+    can never arrive. It falls to the local encoder instead, which is
+    precisely the trade genesis exists to avoid, and under `embed = off`
+    it gets nothing at all.
+
+    Measured on pubmed 2026-09-13: all 37 shards final, 38,324 documents
+    inside the archive's own id range unembedded, concentrated in the
+    shards fts was working through as the archive drained (5,784 in shard
+    36, 5,240 in 28, 4,423 in 33; 160 in shard 20, which fts had long
+    left behind). No path existed by which any of them could be served.
+
+    WHY AN EVENT AND NOT A POLL. The poll — recount each final shard's
+    range and reopen the ones with unserved documents — costs a range
+    count per shard per round and, worse, cannot converge: a document the
+    archive genuinely does not contain is unserved forever, so the shard
+    reopens forever while `_covered_ranges` keeps the local encoder out of
+    its range. The event has neither problem. It fires only when fts
+    actually crosses the range, which is the only way new demand can
+    appear; the re-pass then imports what it can and finalises again, and
+    a document the archive lacks generates no further event. Cost on the
+    fts path is one read of a ≤ shard-count table with a primary key.
+
+    Reopening is a ledger write only: `applied` with `pending` unknown is
+    exactly the state the drain treats as due and the fetcher re-fetches
+    when the files are gone (finalising deletes them), so both halves of
+    amendment 38 pick it up with no other change. The coverage epoch is
+    bumped because the range belongs to the archive again and the
+    encoder's backfill cursors must re-reserve it.
+    """
+    archive = ARCHIVES.get(getattr(collection, "genesis_archive", "") or "")
+    if archive is None or archive.local or not archive.ids_per_shard:
+        return []
+    ids = []
+    for native in native_ids:
+        try:
+            ids.append(int(native))
+        except (TypeError, ValueError):
+            continue            # a non-numeric id belongs to no declared range
+    if not ids:
+        return []
+    lo, hi = min(ids), max(ids)
+    finals = [r["shard"] for r in con.execute(
+        "SELECT shard FROM genesis_imports WHERE archive=? AND state='final'",
+        (archive.archive_id,))]
+    hit = []
+    for shard in finals:
+        rng = archive.id_range_of(shard)
+        if rng is None or rng[1] < lo or hi < rng[0]:
+            continue            # ranges cannot overlap this batch at all
+        if any(rng[0] <= i <= rng[1] for i in ids):
+            hit.append(shard)
+    if not hit:
+        return []
+    con.execute(
+        "UPDATE genesis_imports SET state='applied', pending=NULL, "
+        "next_pass_at=0, updated_at=? WHERE archive=? AND state='final' "
+        f"AND shard IN ({','.join('?' * len(hit))})",
+        (int(time.time()), archive.archive_id, *hit))
+    _bump_coverage_epoch()
+    return hit
+
+
+def reopen_finals_with_unserved(con, collection) -> dict[str, int]:
+    """One-shot repair for shards that finalised BEFORE
+    `reopen_finals_for_range` existed: count each final shard's unserved
+    documents and reopen the ones with any. Returns {shard: count}.
+
+    Deliberately NOT on any round's path — it pays one indexed range count
+    per final shard, which is the cost the event above exists to avoid.
+    `louise dev genesis-recheck` runs it once.
+    """
+    archive = ARCHIVES.get(getattr(collection, "genesis_archive", "") or "")
+    if archive is None or archive.local or not archive.ids_per_shard:
+        return {}
+    finals = [r["shard"] for r in con.execute(
+        "SELECT shard FROM genesis_imports WHERE archive=? AND state='final'",
+        (archive.archive_id,))]
+    found: dict[str, int] = {}
+    for shard in finals:
+        rng = archive.id_range_of(shard)
+        if rng is None:
+            continue
+        n = int(con.execute(unserved_in_range_sql(con), rng).fetchone()[0])
+        if n:
+            found[shard] = n
+    if found:
+        con.execute(
+            "UPDATE genesis_imports SET state='applied', pending=NULL, "
+            "next_pass_at=0, updated_at=? WHERE archive=? AND state='final' "
+            f"AND shard IN ({','.join('?' * len(found))})",
+            (int(time.time()), archive.archive_id, *found))
+        _bump_coverage_epoch()
+    return found
