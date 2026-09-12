@@ -726,3 +726,64 @@ def test_original_restores_the_published_title(client):
     js = client.get("/ask").text
     assert "t.textContent=t.dataset.orig" in js, "switching back restores it exactly"
     assert "published as: " in js, "and the tooltip carries it while translated"
+
+
+def test_translate_batches_by_source_language(client, monkeypatch):
+    """A mixed batch of SHORT items comes back with some copied through
+    untranslated — 11 titles across Chinese, Greek, French and English
+    returned 7 unchanged on the node, while the same English titles in an
+    English-only batch translated 3 of 3. Grouping removes the comparison
+    that invites it."""
+    from app import llm
+    calls = []
+
+    def fake(texts, lang):
+        calls.append(list(texts))
+        return [f"{lang}:{t}" for t in texts]
+    monkeypatch.setattr(llm, "translate_texts", fake)
+
+    r = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "one", "src": "en"},
+        {"id": "b", "text": "two", "src": "en"},
+        {"id": "c", "text": "three", "src": "el"},
+        {"id": "d", "text": "four", "src": "zh"}]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["items"] == {"a": "it:one", "b": "it:two",
+                             "c": "it:three", "d": "it:four"}
+    assert sorted(len(c) for c in calls) == [1, 1, 2], \
+        "one call per source language, the two English items together"
+
+
+def test_one_source_language_failing_is_not_everyones_failure(client, monkeypatch):
+    """`failed` means "nothing came back". If Greek fails and English does
+    not, the page shows the English and names the Greek — it does not
+    discard good content for a uniform screen."""
+    from app import llm
+
+    def fake(texts, lang):
+        return [] if texts == ["three"] else [f"{lang}:{t}" for t in texts]
+    monkeypatch.setattr(llm, "translate_texts", fake)
+
+    body = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "one", "src": "en"},
+        {"id": "c", "text": "three", "src": "el"}]}).json()
+    assert body["items"] == {"a": "it:one"}
+    assert body["missed"] == ["c"]
+    assert body["failed"] is False, "English came back; that is not a failure"
+
+
+def test_every_source_language_failing_is_a_failure(client, monkeypatch):
+    from app import llm
+    monkeypatch.setattr(llm, "translate_texts", lambda texts, lang: [])
+    body = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "one", "src": "en"},
+        {"id": "c", "text": "three", "src": "el"}]}).json()
+    assert body["items"] == {} and body["failed"] is True
+
+
+def test_the_client_sends_each_items_source_language(client):
+    js = client.get("/ask").text
+    assert "src:s.dataset.lang" in js, "snippets"
+    assert "src:t.dataset.lang" in js, "titles"
+    assert "src:answerLang" in js, "and the answer"

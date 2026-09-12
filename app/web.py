@@ -29,6 +29,7 @@ import shutil
 import tarfile
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import traceback
 from dataclasses import asdict
@@ -248,7 +249,7 @@ def ask_translate(body: TranslateBody):
     if not lang or lang == "original":
         return {"lang": lang, "items": {}, "failed": False}
     out: dict[str, str] = {}
-    pending: list[tuple[str, str]] = []
+    groups: dict[str, list[tuple[str, str]]] = {}
     for item in body.items:
         key = (str(item.get("id", "")), lang)
         text = str(item.get("text", ""))
@@ -258,14 +259,51 @@ def ask_translate(body: TranslateBody):
         if hit is not None:
             out[key[0]] = hit
         else:
-            pending.append((key[0], text))
+            # ONE BATCH PER SOURCE LANGUAGE. A mixed batch of SHORT items
+            # comes back with some of them copied through untranslated —
+            # measured on the node 2026-09-12: 11 titles in Chinese,
+            # Greek, French, English and more returned 7 unchanged, while
+            # the same English titles in an English-only batch translated
+            # 3 of 3. Long passages do not show it (the mixed snippet
+            # batch translates English fine), so the discriminator is
+            # length, not language: a short phrase that already reads
+            # well is "close enough" to leave, and grouping removes the
+            # comparison that invites it.
+            #
+            # Two other fixes were tried first and MEASURED WORSE or
+            # neutral: relaxing the prompt's "keep names as they are"
+            # (which reads as covering titles) changed nothing, and
+            # telling the model every item must come back translated took
+            # unchanged from 7 to 9.
+            groups.setdefault(str(item.get("src", "") or "?").lower(),
+                              []).append((key[0], text))
     failed = False
     missed: list[str] = []
-    if pending:
-        translated = llm.translate_texts([t for _, t in pending], lang)
-        if len(translated) != len(pending):
-            failed = True                      # the whole call failed
-        else:
+    if groups:
+        # CONCURRENTLY: measured, not assumed — four calls to this node's
+        # Ollama took 6.85 s of wall clock against 17.13 s of summed
+        # parts. So grouping buys correctness AND cuts the wait that made
+        # the switch look broken; serialising the groups would have paid
+        # for the first with the second.
+        def _one(batch: list[tuple[str, str]]) -> list[str | None]:
+            return llm.translate_texts([t for _, t in batch], lang)
+
+        order = list(groups.values())
+        with ThreadPoolExecutor(max_workers=min(6, len(order))) as pool:
+            results = list(pool.map(_one, order))
+
+        pending: list[tuple[str, str]] = []
+        translated: list[str | None] = []
+        for batch, got in zip(order, results):
+            if len(got) != len(batch):
+                # this SOURCE LANGUAGE failed; the others may not have,
+                # so its items are misses rather than everyone's failure
+                missed.extend(cid for cid, _ in batch)
+                continue
+            pending.extend(batch)
+            translated.extend(got)
+        failed = not pending and bool(missed)
+        if pending:
             for (cid, original), value in zip(pending, translated):
                 # A DROPPED PASSAGE IS NEVER CACHED, and never reported as
                 # a translation. `translate_texts` returns None for one,

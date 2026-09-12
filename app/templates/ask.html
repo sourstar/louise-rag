@@ -18,9 +18,12 @@
       <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
       <option value="dense">dense only</option><option value="catalog">catalog only</option>
     </select>
-    {# "show results in": CONTENT only — snippets and the answer are
-       translated into this language; titles, authors, chapters, ids and
-       the page itself never change (STATUS 5j).
+    {# "show results in": CONTENT only — snippets, the TITLE and the
+       answer are translated into this language; authors, chapters, ids
+       and the page itself never change (STATUS 5j, amended 2026-09-12:
+       "how am I supposed to understand a title in Arabic or Hindi?" —
+       the switch is reversible, so the published title is always one
+       selection back, and it stays in the hit's tooltip meanwhile).
 
        EACH OPTION IS WRITTEN IN THE LANGUAGE IT SELECTS (operator,
        2026-09-12) — the one carve-out from "the chrome never changes
@@ -129,10 +132,15 @@ async function ask(){
 }
 // ---- translated content -------------------------------------------------
 //
-// The switch reaches BOTH the hit snippets and the answer, and it reaches
-// what is ALREADY on screen, not only the next query (operator,
-// 2026-09-12). Titles, authors, chapters, ids, the drawer original and
-// the page chrome never change (STATUS 5j).
+// The switch reaches the hit snippets, the TITLES and the answer, and it
+// reaches what is ALREADY on screen, not only the next query (operator,
+// 2026-09-12). Authors, chapters, ids, the drawer original and the page
+// chrome never change (STATUS 5j as amended: a personal name is not
+// translated in any language and an id is not language at all).
+//
+// Every item carries its SOURCE language, because the server batches by
+// it: a mixed batch of short items comes back with some copied through
+// untranslated, and grouping removes the comparison that invites it.
 //
 // The answer is POST-TRANSLATED here rather than re-asked. A re-ask
 // returns a different answer, and the request was to read the SAME
@@ -188,7 +196,7 @@ async function applyLanguage(){
   // would pay for a no-op and earn a "translated from it" badge on text
   // that was always Italian.
   const items=snips.filter(s=>(s.dataset.lang||'?')!==lang)
-                   .map(s=>({id:s.dataset.cid,text:s.dataset.orig}));
+                   .map(s=>({id:s.dataset.cid,text:s.dataset.orig,src:s.dataset.lang||'?'}));
   // Titles ride the SAME call as the snippets, so translating them costs
   // no extra round trip — and deduplicated by `data-tid`, because two
   // passages of one book share its title and must not pay twice or come
@@ -197,9 +205,9 @@ async function applyLanguage(){
   for(const t of titles){
     if((t.dataset.lang||'?')===lang || seenTid.has(t.dataset.tid))continue;
     seenTid.add(t.dataset.tid);
-    items.push({id:t.dataset.tid,text:t.dataset.orig});
+    items.push({id:t.dataset.tid,text:t.dataset.orig,src:t.dataset.lang||'?'});
   }
-  if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw});
+  if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw,src:answerLang||'?'});
   if(!items.length){langNote('');return}
 
   // SAY SO BEFORE THE WAIT, NOT AFTER IT. One model call for a page of
