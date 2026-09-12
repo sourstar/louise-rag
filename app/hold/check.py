@@ -319,11 +319,18 @@ def check_license(ctx: Ctx) -> Outcome:
         return Outcome("license", FAIL, {},
                        why=f"the Codex pins terms {want[:16]}… and the drag "
                            f"carries no LICENSE-TERMS")
-    got = hashlib.sha256(p.read_bytes()).hexdigest()
+    # 09 §9.2's id form, which is what the Codex stores and what
+    # `collection.write_terms` compares against — `"sha256:" + hexdigest`.
+    # This computed a BARE digest and compared it to the prefixed one, so
+    # the check could never pass on any yellow or red collection. It
+    # failed pubmed with the two halves of one identical hash side by side
+    # in its own message: "hashes to 77d605f1c9080f8b… and the Codex pins
+    # sha256:77d605f1c…". Invariant 9's check, unable to succeed.
+    got = "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest()
     if got != want:
         return Outcome("license", FAIL, {},
-                       why=f"LICENSE-TERMS hashes to {got[:16]}… and the "
-                           f"Codex pins {want[:16]}…. Terms are byte-exact "
+                       why=f"LICENSE-TERMS hashes to {got[:23]}… and the "
+                           f"Codex pins {want[:23]}…. Terms are byte-exact "
                            f"and never converted — a CRLF checkout would "
                            f"silently invalidate every recorded ack")
     return Outcome("license", PASS, {}, why="the terms are the Codex's")

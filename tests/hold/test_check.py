@@ -543,3 +543,34 @@ def test_records_check_origin_adds_the_two_origin_checks(checkable, monkeypatch,
     by = {c["check"]: c for c in doc["checks"]}
     assert by["records-vs-origin"]["result"] == "pass", \
         "the origin was given, so the re-parse ran"
+
+
+def test_license_passes_when_the_terms_are_the_codexs(checkable):
+    """THE YELLOW PATH, which nothing covered — and which could not pass.
+
+    The Codex stores 09 §9.2's id form, `"sha256:" + hexdigest`, and that
+    is what `collection.write_terms` compares against when it writes the
+    member. This check computed a BARE digest, so `got != want` for every
+    yellow and red collection there has ever been: invariant 9's check,
+    structurally unable to succeed.
+
+    Live on pubmed 2026-09-12, with the two halves of one identical hash
+    side by side in its own failure message: "LICENSE-TERMS hashes to
+    77d605f1c9080f8b… and the Codex pins sha256:77d605f1c…".
+    """
+    import hashlib
+    from dataclasses import replace
+    root, snapshot, codex = checkable
+    body = b"The terms of the origin, byte for byte.\n"
+    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(body)
+    yellow = replace(codex, license=replace(
+        codex.license, cls="yellow",
+        terms_sha256="sha256:" + hashlib.sha256(body).hexdigest()))
+
+    o = _run(root, yellow, snapshot, ["license"]).outcome("license")
+    assert o.result == chk.PASS, o.why
+
+    # and a byte that moved is still caught
+    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(body + b" ")
+    o = _run(root, yellow, snapshot, ["license"]).outcome("license")
+    assert o.result == chk.FAIL and "byte-exact" in o.why
