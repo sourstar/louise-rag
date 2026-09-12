@@ -107,14 +107,22 @@ def run(con, col, *, dry_run: bool = False, start_at: str | None = None,
             last = container.name
             continue
         if not dry_run:
+            # `authors` AND NOTHING ELSE — deliberately not `updated_at`.
+            # On this table updated_at tracks PIPELINE progress, and
+            # genesis's candidate scan feeds it into
+            # `ShardDemand.oldest`, which orders which archive shard is
+            # fetched next (app/bundles/genesis.py:389). Bumping 40M rows
+            # would perturb that ordering to fill a display column. It
+            # would be harmless today — pubmed's 37 shards are all final
+            # — but "harmless because nothing is running" is not a
+            # property worth depending on.
             guard = "" if force else " AND (authors IS NULL OR authors='')"
-            now = int(time.time())
             con.execute("BEGIN IMMEDIATE")
             try:
                 cur = con.executemany(
-                    f"UPDATE documents SET authors=?, updated_at=? "
+                    f"UPDATE documents SET authors=? "
                     f"WHERE source=? AND native_id=?{guard}",
-                    [(a, now, source, pmid) for pmid, a in pairs.items()])
+                    [(a, source, pmid) for pmid, a in pairs.items()])
                 updated += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 con.execute("COMMIT")
             except BaseException:

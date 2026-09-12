@@ -249,3 +249,24 @@ def test_the_skip_probe_does_not_mistake_an_absent_row_for_done(tmp_path):
     assert backfill.already_done(con, "pubmed", ["40000001"]) is False
     con.execute("UPDATE documents SET authors='X' WHERE native_id='40000001'")
     assert backfill.already_done(con, "pubmed", ["40000001"]) is True
+
+
+def test_the_backfill_touches_only_authors(tmp_path):
+    """`updated_at` on this table tracks PIPELINE progress, and genesis's
+    candidate scan feeds it into ShardDemand.oldest, which orders which
+    archive shard is fetched next. A display backfill has no business
+    moving that for 40M rows."""
+    container = _container(tmp_path)
+    col = _collection(tmp_path, container.parent)
+    con = db.connect(collection=col)
+    con.execute(
+        "INSERT INTO documents (uid, source, native_id, path, authors, title, "
+        "updated_at, embed_done, fts_done) VALUES (?,?,?,?,?,?,?,?,?)",
+        ("pubmed:40000001", "pubmed", "40000001", "/c/x.xml::0", "", "t", 1234, 1, 1))
+
+    backfill.run(con, col)
+    row = con.execute("SELECT authors, updated_at, embed_done, fts_done "
+                      "FROM documents").fetchone()
+    assert row["authors"] == "Curie M; Meitner L; The Widget Study Group"
+    assert row["updated_at"] == 1234, "updated_at is a pipeline signal, not ours"
+    assert (row["embed_done"], row["fts_done"]) == (1, 1), "no stage is re-armed"
