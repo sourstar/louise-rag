@@ -578,6 +578,9 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
 # number of unknown age would be.
 
 _COUNTS_TTL_S = 120.0
+#: control key holding the last counts, so a restarted process can show
+#: what was true instead of zeros while it re-scans (see _stored_counts)
+_COUNTS_CONTROL_KEY = "document_counts"
 #: A refresh may not cost more than this share of the time between
 #: refreshes. THE INSTRUMENT MUST NOT COST WHAT IT MEASURES: the scan is a
 #: full pass over `documents`, so its cost grows with the corpus while a
@@ -709,7 +712,76 @@ def _document_counts(collection) -> tuple[dict | None, float]:
         if entry is not None:
             return entry[1], 0.0
         time.sleep(0.05)
+    # THE LAST KNOWN COUNTS, rather than nothing. `_counts_cache` lives in
+    # THIS PROCESS, so every web restart empties it — and pubmed's scan
+    # takes 55 s, so for the next 55 seconds its card read
+    # "total 0, in_scope 0, rdf_done 0" and the collection looked EMPTY.
+    # Six restarts in one afternoon made that the normal view, and it is
+    # indistinguishable from a stuck pipeline, which is exactly what it
+    # was reported as (operator, 2026-09-12).
+    #
+    # The numbers survive in the manifest's own `control` row, so a cold
+    # process can say what was true a few minutes ago and label it.
+    # Stale-and-labelled beats zero-and-confident.
+    stored = _stored_counts(collection)
+    if stored is not None:
+        counts, at = stored
+        return counts, max(0.0, time.time() - at)
     return None, 0.0
+
+
+def _stored_counts(collection) -> tuple[dict, float] | None:
+    """The last counts this collection wrote to its manifest, with when.
+
+    Written by every successful refresh (below), so it outlives the
+    process. Read-only and cheap: one indexed row, never a scan — the
+    point is to answer instantly when the scan cannot.
+    """
+    try:
+        con = db.connect(collection)
+        raw = db.get_control(con, _COUNTS_CONTROL_KEY)
+        if not raw:
+            return None
+        got = json.loads(raw)
+        counts, at = got.get("counts"), float(got.get("at") or 0)
+    except Exception:      # noqa: BLE001 — a missing or malformed row is
+        return None        # simply no answer, never a broken page
+    if not isinstance(counts, dict) or not at:
+        return None
+    return {k: int(v or 0) for k, v in counts.items()}, at
+
+
+def _persist_counts(collection, counts: dict) -> bool:
+    """Write the counts to the manifest so the NEXT process can show them.
+
+    BEGIN IMMEDIATE, and that is the whole point (CLAUDE.md): `db.connect`
+    READS — schema checks, pragmas — before this writes, and under WAL a
+    deferred transaction that has read fails its upgrade INSTANTLY if
+    anyone committed meanwhile. The 30 s busy timeout never runs, so the
+    write lost every race against a worker mid-batch. Taking the write
+    lock up front is what makes the timeout mean anything.
+
+    And it is logged, not swallowed. "Persistence is a courtesy" was true
+    of any single write and false of all of them: a write that fails
+    EVERY time restores the empty-collection-after-restart bug this
+    exists to fix, silently and permanently. One line in `docker logs`
+    is the difference between a bug and a mystery.
+    """
+    payload = json.dumps({"at": time.time(), "counts": counts})
+    try:
+        con = db.connect(collection)
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            db.set_control(con, _COUNTS_CONTROL_KEY, payload)
+            con.commit()
+        finally:
+            con.close()
+        return True
+    except Exception:   # noqa: BLE001 — never this refresh's job to fail
+        print(f"counts could not be persisted for {_counts_key(collection)} "
+              f"(the next cold process will re-count):\n"
+              f"{traceback.format_exc()[:800]}", flush=True)
+        return False
 
 
 def _refresh_counts_async(collection) -> None:
@@ -734,6 +806,16 @@ def _refresh_counts_async(collection) -> None:
             with _counts_lock:
                 _counts_scan_secs[name] = took
                 _counts_cache[name] = (time.time(), counts)
+            # …and to the manifest, so the NEXT process does not have to
+            # show an empty collection while it re-counts (see
+            # `_stored_counts`). A telemetry write from render code, so it
+            # goes through _sample_write and never blocks a stage.
+            # `db.set_control`, NOT `_sample_write`: that one SAMPLES, and
+            # a dropped sample here means the next cold process shows an
+            # empty collection again. This write happens at most once per
+            # TTL — eighteen minutes for pubmed — so there is nothing to
+            # sample away. Caught by its own test.
+            _persist_counts(collection, counts)
         except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
             # ...but never silently: a refresh that fails EVERY time froze
             # the Library's counters at an ever-growing age with nothing in
