@@ -366,6 +366,38 @@ them before the build: `record_line`, `validation` and `parser` are all
 inside `collection_id`, and none of them can be corrected afterwards —
 only replaced, by a collection every peer would have to adopt again.
 
+### PubMed — where the archive's coverage ends, measured 2026-09-12
+
+The question "is the genesis import finished" had no answer anyone could
+give from the log, because a fetcher that downloads nothing is silent.
+Measured:
+
+| | |
+|---|---|
+| records | 39,994,988 |
+| embedded from `medcpt-pubmed` | 35,267,888 |
+| unembedded OUTSIDE the archive's range | 4,538,777 |
+| unembedded INSIDE it | 188,323 |
+
+The archive declares ids to **36,999,999** over 37 shards of 1M. The
+4.5M gap is PMIDs past that — post-snapshot documents the archive was
+never going to cover, and the local encoder's work whenever the operator
+spends it (`embed = "off"` today). It is not a stall and never was.
+
+The 188,323 inside the range WERE stuck, and that was a defect: five
+shards sat `applied` with their files gone, the drain would not walk a
+shard that is not on disk (the 2026-09-11 fix) and the fetcher would not
+re-fetch anything in state `applied`. Neither half was wrong alone;
+together they had no path forward. `next_shard_to_fetch` now takes such a
+shard — last, after every shard never fetched — and the re-fetch keeps
+the `applied` state so the pass is a revisit rather than a re-import of
+a million documents.
+
+**What `hold check` still owes pubmed**: it has not been run against the
+current snapshot. It waits on the five shards finalising, so that
+`vectors-sample` measures the archive's delivered coverage rather than a
+moment inside it.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
