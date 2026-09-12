@@ -20,15 +20,33 @@ def test_normalise_and_rules():
     assert cutoff.check_until("2026-06-30") == "2026-06-30"
     with pytest.raises(ValueError):
         cutoff.check_until("June 2026")
-    g = {"date": "2026-07-01", "extra": {}}
+    # gutenberg's cutoff key is `extra.issued` — PG's release date for its
+    # own edition. NOT §9.5's `date`, which is the WORK's publication date
+    # and is null here because PG does not carry it.
+    g = {"date": None, "extra": {"issued": "2026-07-01"}}
     assert cutoff.excluded("gutenberg", g, "2026-06-30").startswith("after cutoff")
-    assert cutoff.excluded("gutenberg", {"date": "2026-06-30", "extra": {}}, "2026-06-30") is None
-    assert "no cutoff date" in cutoff.excluded("gutenberg", {"date": None, "extra": {}}, "2026-06-30")
-    p = {"date": "1999", "extra": {"revised": "2026-08-01", "date": "1999"}}
+    assert cutoff.excluded("gutenberg", {"date": None, "extra": {"issued": "2026-06-30"}},
+                           "2026-06-30") is None
+    assert "no cutoff date" in cutoff.excluded("gutenberg", {"date": None, "extra": {}},
+                                               "2026-06-30")
+    p = {"date": "1999-05", "extra": {"revised": "2026-08-01"}}
     assert cutoff.excluded("pubmed", p, "2026-06-30").startswith("after cutoff")
-    assert cutoff.excluded("pubmed", {"extra": {"date": "1999"}}, "2026-06-30") is None, "fallback: publication date"
+    assert cutoff.excluded("pubmed", {"date": "1999", "extra": {}},
+                           "2026-06-30") is None, "fallback: the publication date"
     assert cutoff.excluded("wikipedia", {"extra": {"revised": "2030-01-01"}}, "2026-06-30") is None
     assert cutoff.excluded("gutenberg", g, None) is None
+
+
+def test_a_null_publication_date_does_not_exclude_the_whole_corpus():
+    """THE TRAP THIS NEARLY WALKED INTO. `date` became the work's
+    publication date, which PG does not have, so it is null for every
+    gutenberg record. `record_key` used to read `date` — so a dated
+    snapshot would have found "no cutoff date" on all 79,320 of them and
+    excluded the entire corpus. The key reads `extra.issued` now."""
+    rec = {"date": None, "extra": {"issued": "2006-02-22", "bookshelves": ""}}
+    assert cutoff.record_key("gutenberg", rec) == "2006-02-22"
+    assert cutoff.excluded("gutenberg", rec, "2026-06-30") is None, \
+        "a 2006 release is inside a 2026 snapshot, null `date` notwithstanding"
 
 
 def test_medline_parses_the_revised_date():

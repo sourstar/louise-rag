@@ -279,10 +279,34 @@ class GutenbergSource:
             title=meta["title"],
             creators=creators,
             language=meta["lang"],
-            date=meta.get("issued"),        # the PG release date: the snapshot cutoff key
+            # §9.5's `date` IS THE WORK'S PUBLICATION DATE — the operator's
+            # rule of 2026-09-12, and the same rule for every collection
+            # (pubmed writes the journal's PubDate for it).
+            #
+            # Project Gutenberg does not have it. Its RDF carries
+            # `dcterms:issued`, which is the date PG published its OWN
+            # digital edition, and nothing else date-like: checked across
+            # twelve major books, the only MARC datafields PG keeps are
+            # 508 (production note), 520 (an automatically generated
+            # summary), 901 (cover image URLs) and 908 (reading ease).
+            # There is no 260$c or 264$c. `marc520`'s prose sometimes says
+            # "published in 1871", but it is generated text, not the
+            # origin asserting a date, and mining a year out of it would
+            # put a claim in a signed record that nobody made.
+            #
+            # So: null. §9.5 admits "string or null", and an absent date
+            # is honest where a release date would be wrong by 135 years
+            # — gutenberg:17832 is Verne's "Une ville flottante" of 1871,
+            # released by PG in 2006.
+            date=None,
             subjects=subjects,
             keys=[],
-            extra={"bookshelves": meta["bookshelves"]},
+            # `issued` moves here because it is still LOAD-BEARING: the
+            # snapshot cutoff (`--until`) is denominated in it. It simply
+            # is not the work's date, which rdf.py's own comment has said
+            # all along ("never the text's own date").
+            extra={"bookshelves": meta["bookshelves"],
+                   "issued": meta.get("issued")},
             sections=sections,
             figures=plates,
             raw_hash=raw.raw_hash,

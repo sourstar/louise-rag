@@ -45,12 +45,29 @@ def normalise(value) -> str | None:
 
 
 def record_key(plugin: str, record: dict) -> str | None:
-    """The record's cutoff date, from the pack record (not the document)."""
+    """The record's cutoff date, from the pack record (not the document).
+
+    NEITHER PLUGIN'S CUTOFF IS §9.5's `date` any more, and that is the
+    point: `date` is the WORK's publication date (operator, 2026-09-12),
+    while a cutoff asks "when did this record enter or change in the
+    origin" — a different question with a different answer.
+
+      gutenberg   `extra.issued`  — PG's release date for its own digital
+                  edition. It used to be read from `date`, where it did
+                  not belong: PG has no publication date for the work, so
+                  `date` is null there now, and reading it here would
+                  have excluded EVERY record from a dated snapshot.
+      pubmed      `extra.revised` — DateRevised/DateCompleted, falling
+                  back to the publication date. The fallback used to be
+                  `extra.date`, which parser 5 removed as a duplicate of
+                  the top-level field; it points at that field now, so
+                  the behaviour is unchanged.
+    """
     if plugin == "gutenberg":
-        return normalise(record.get("date"))
+        return normalise((record.get("extra") or {}).get("issued"))
     if plugin == "pubmed":
         extra = record.get("extra") or {}
-        return normalise(extra.get("revised") or extra.get("date"))
+        return normalise(extra.get("revised") or record.get("date"))
     return None
 
 
