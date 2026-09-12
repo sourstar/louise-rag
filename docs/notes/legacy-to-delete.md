@@ -177,6 +177,11 @@ current and only form of those collections. **Delete nothing.**
   so nothing here is reusable by the new one, but it is also the only copy
   of what step 8 produced and deleting it before the replacement is
   verified would leave the node with neither.
+* **the parser-4 plates attempt, `data/collections/gutenberg.parser4-2026-09-12`**
+  — `sha256:9a857d31…`, replaced within the hour when the reading rule
+  moved to parser version 5. Manifest and part of an fts index, no drag
+  records. Nothing names that id. Safe to delete as soon as the operator
+  says so.
 * **the first plates attempt, `data/collections/gutenberg.unchecked-figures-2026-09-12`, 11 G**
   — `sha256:88075d0a…`, minted and then superseded the same morning
   because its validation plan did not name the `figures` check. It holds

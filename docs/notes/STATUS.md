@@ -286,10 +286,10 @@ lineage (02 §2.7: "a collection created from a source has none").
 
 | | |
 |---|---|
-| `collection_id` | `sha256:9a857d314694498329e69bb3ed99fcd234a5cbf3609a995b6195c3bece8fdb75` |
+| `collection_id` | `sha256:e395a9cd1e21d1da54d4fa3329fdd5cd4e31193117c255dd057793fb49de6954` |
 | `cleaning_version` | 2 — `pg_epub.read_clean` reflows paragraphs where `pg_text.read_clean` keeps the .txt's hard wrap |
 | `record_line` | 2 — the line carries `figures` (09 §9.5) |
-| `parser` | gutenberg version 4 — the three-way reading rule |
+| `parser` | gutenberg version 5 — the three-way reading rule, first form that can be READ |
 | layers | one, `fixed{tokens: 1000, overlap: 120}` version 1 — byte-identical to the retired collection's cut |
 | validation | `roots, records, chunks, records-vs-origin, figures, license, signature, calibration, vectors-sample` |
 
@@ -298,6 +298,16 @@ lineage (02 §2.7: "a collection created from a source has none").
 only there and nowhere else; the plain text where it does not; the
 catalogue record where neither exists. One rule applied in that order, so
 a verifier reaching for the same book directory reaches the same form.
+
+THE FIRST FORM THAT CAN BE READ, never the first that exists — parser
+version 5, after nine books turned out to carry a ZERO-BYTE
+`pg<id>-images.epub` dated 2009 beside a good plain one, and `fts` died
+on three of them with `BadZipFile` within the hour of switching the
+collection on. `pg_epub.readable` asks the same question `read_clean`
+will — the zip opens, the container names a rootfile, the package
+document parses into a manifest and a spine — so a book cannot be chosen
+as an epub and then fail to be read as one. An empty `.txt` and an empty
+`.rdf` are refused for the same reason.
 `source.pick_form` is the single implementation, and `read_text` /
 `read_chapters` — the worker's lazy path for fts and embed — call it too:
 if `parse` and the lazy path chose different forms, the index and the
@@ -327,6 +337,14 @@ against 241 GB held, so roughly 60 GB genuinely missing. `full-resync`,
 mirrors benchmarked at fetch time (ibiblio 2.002 s against aleph 3.028 s
 on `1/pg1.rdf`).
 
+**An unreadable origin file is a CORPUS FACT, not a stage failure.**
+`BadZipFile` escaped as `fts: …`, and a stage-prefixed error is what the
+Library counts as BLOCKED and what burns a retry — the oscillation
+`tests/test_unindexable_stability.py` exists to prevent. `parse` and
+`read_text` raise `UnindexableDocument` unprefixed now. In practice the
+rule self-heals first: a file that stops being an epub stops being the
+form, and the next one is chosen.
+
 **Do not run `records build` until the fetch completes.** A book that has
 an epub upstream and only `.txt` here parses to a record a verifier
 cannot reproduce — `records-vs-origin` re-fetches and reaches for the
@@ -334,12 +352,19 @@ epub. Discovery self-corrects when the epub lands (the chosen file's
 mtime and size move, so the change gate resets `rdf_done`, `fts_done`,
 `embed_done`), but a shard already built does not.
 
-**The id was minted twice.** `sha256:88075d0a…` came first and its
-validation plan did not name `figures` — 51 GB of plates and nothing that
-ever re-hashes one. `validation` is inside `collection_id`, so it was
-re-minted rather than amended, and `template._validation` now refuses a
-`record_line` 2 recipe that omits the check. Nothing had been built
-against the first id.
+**The id was minted three times, and each mint was a defect caught before
+a single record existed.**
+
+| id | why it was replaced |
+|---|---|
+| `sha256:88075d0a…` | its `validation` plan did not name `figures` — 51 GB of plates and nothing that ever re-hashes one. `validation` is inside `collection_id`, so it was re-minted rather than amended; `template._validation` now refuses a `record_line` 2 recipe that omits the check |
+| `sha256:9a857d31…` | parser version 4 took the first form that EXISTED, and Project Gutenberg publishes zero-byte `pg<id>-images.epub` files — nine here. `fts` died on gutenberg:2215, :2202, :2208 with `BadZipFile` within the hour. The rule takes the first form that can be READ, which is parser version 5 |
+| `sha256:e395a9cd…` | current |
+
+That the cost of each was one `create` is the whole argument for finding
+them before the build: `record_line`, `validation` and `parser` are all
+inside `collection_id`, and none of them can be corrected afterwards —
+only replaced, by a collection every peer would have to adopt again.
 
 ### What is waiting on the operator
 
