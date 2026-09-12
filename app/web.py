@@ -495,6 +495,21 @@ def _document_counts_query(collection) -> dict:
           SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
           SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
                    THEN 1 ELSE 0 END) blocked,
+          -- PER STAGE, because "blocked" is collection-wide and says
+          -- nothing about WHICH stage a document is stuck at. A document
+          -- blocked at fts has already passed rdf, so counting it against
+          -- rdf's remaining work makes a stage that is actively running
+          -- look like it has nothing left to do. Three more SUMs on a scan
+          -- that is already walking every row.
+          SUM(CASE WHEN in_scope=1 AND rdf_done=0
+                        AND ({stage_error} OR retries>=:max)
+                   THEN 1 ELSE 0 END) blocked_rdf,
+          SUM(CASE WHEN in_scope=1 AND fts_done=0
+                        AND ({stage_error} OR retries>=:max)
+                   THEN 1 ELSE 0 END) blocked_fts,
+          SUM(CASE WHEN in_scope=1 AND embed_done=0
+                        AND ({stage_error} OR retries>=:max)
+                   THEN 1 ELSE 0 END) blocked_embed,
           SUM(CASE WHEN in_scope=1 AND error IS NOT NULL
                         AND NOT {stage_error} AND retries<:max
                    THEN 1 ELSE 0 END) unindexable,
@@ -808,8 +823,28 @@ def _collection_shelf(collection: collections_mod.Collection,
         # that never resolves is the noise this change is removing. Unlike
         # `unindexable` it is NOT taken out of the target: retrying can fix
         # it, so the bar legitimately stops short and the badge says why.
-        workable = {k: max(0, remaining[k] - (blocked if k != "fetch" else 0))
+        #
+        # PER STAGE. This subtracted the COLLECTION-WIDE `blocked` from all
+        # three document stages, and `blocked` counts a document stuck at
+        # ANY stage. A document blocked at fts has already passed rdf — so
+        # two of them were enough to make rdf's slot go silent while the
+        # worker was actively parsing two other documents. Counted against
+        # the stage it is actually stuck at, which is what `blocked_<stage>`
+        # is for.
+        workable = {k: max(0, remaining[k]
+                           - int(counts.get("blocked_" + k) or 0))
                     for k in _RATE_FIELDS}
+        # THE FETCH ROW IS JUDGED THE WAY ITS OWN LABEL IS. Its counter is
+        # in DOCUMENTS (`docs_done`) and its target came from the origin
+        # listing's `docs_total`, which counts directories the origin
+        # publishes including the ones holding nothing readable — so the
+        # counter tops out below the target and the slot never went quiet.
+        # Live on gutenberg: 79,287 against 79,389, an eternal dash on a
+        # finished fetch. `fetched["complete"]` is the same test the row's
+        # green label already uses — no pass running and every listed file
+        # landed — so the two now agree by construction.
+        if fetched and fetched.get("complete"):
+            workable["fetch"] = 0
         memo_key = str(collection.manifest_path)
         rec_sr = _stage_rate_memo.get(memo_key)
         if rec_sr is None:
@@ -860,6 +895,7 @@ def _collection_shelf(collection: collections_mod.Collection,
             # stall longer than _STALL_S drops the rate to TBD.
             _STALL_S = 1800
             samples = {k: int(rec_sr.get(k + "_n") or 0) for k in _RATE_FIELDS}
+            stalled = {k: bool(rec_sr.get(k + "_stalled")) for k in _RATE_FIELDS}
             for k in _RATE_FIELDS:
                 stage_rates[k] = rec_sr.get(k + "_ph")
             elapsed = now_i - int(rec_sr.get("ts") or now_i)
@@ -877,16 +913,32 @@ def _collection_shelf(collection: collections_mod.Collection,
                     if delta > 0:
                         raw = delta * 3600.0 / span
                         ema = raw if not prev else _EMA_ALPHA * raw + (1 - _EMA_ALPHA) * prev
-                        stage_rates[k] = round(ema)
+                        # A STAGE SLOWER THAN ONE DOCUMENT AN HOUR still has
+                        # a rate. `round(ema)` gave 0 for anything under
+                        # 0.5/h, and 0 is falsy — so the slot said
+                        # "measuring — no rate yet" forever on a stage that
+                        # was demonstrably moving, and could never reach the
+                        # stall reason either (that needs a prior window).
+                        stage_rates[k] = round(ema) if ema >= 1 else round(ema, 2)
                         samples[k] += 1
+                        stalled[k] = False
                         p_ts, p_count = now_i, cur[k]
                     elif span >= _STALL_S:
                         stage_rates[k] = None       # stalled: no number to stand behind
                         samples[k] = 0
+                        stalled[k] = True
                     progress_ts[k], progress_count[k] = p_ts, p_count
                 updated = {**cur, "ts": now_i,
                            **{k + "_ph": stage_rates[k] for k in _RATE_FIELDS},
                            **{k + "_n": samples[k] for k in _RATE_FIELDS},
+                           # PERSISTED, because the stall has to outlive the
+                           # render that noticed it. The reason used to be
+                           # inferred from the PREVIOUS record's sample count
+                           # being non-zero — true on the detecting render and
+                           # false on every one after it, since the stall
+                           # itself writes that count to zero. So a stage dead
+                           # for hours said "measuring — no rate yet".
+                           **{k + "_stalled": stalled[k] for k in _RATE_FIELDS},
                            **{k + "_pts": progress_ts[k] for k in _RATE_FIELDS},
                            **{k + "_pc": progress_count[k] for k in _RATE_FIELDS}}
                 _stage_rate_memo[memo_key] = updated
@@ -905,8 +957,7 @@ def _collection_shelf(collection: collections_mod.Collection,
                     stage_etas[k] = ETA_UNKNOWN
                     stage_eta_why[k] = (
                         "no progress in the last 30 minutes"
-                        if not stage_rates[k] and samples[k] == 0
-                        and int(rec_sr.get(k + "_n") or 0) > 0
+                        if stalled[k]
                         else "measuring — one window so far, waiting for a second"
                         if stage_rates[k]
                         else "measuring — no rate yet")
