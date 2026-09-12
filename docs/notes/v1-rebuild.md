@@ -144,16 +144,48 @@ would have mutilated Mark Twain to tidy a delimiter. `title` is inside
 `content_hash`, which costs nothing here because this root starts from
 zero vectors anyway (step 8).
 
-**Noted, not fixed — for the operator.** `date` is Project Gutenberg's
-RELEASE date, not the work's: `gutenberg:17832` is Verne's *Une ville
-flottante* (1871) carrying `2006-02-22`. `rdf.py`'s own comment says the
-issued date is "never the text's own date", and it is nonetheless what
-reaches §9.5's `date`. Arguments for leaving it: §9.5 fixes only the
-format, the PG edition genuinely is the document this record describes,
-and the work's own date is usually absent from the RDF. Argument against:
-a reader sees 2006 for an 1871 novel. Decide before the root is built —
-`date` is not in `content_hash`, but it is in the record line, so
-changing it later is another root.
+**`date` is the work's publication date — decided, every collection.**
+Operator, 2026-09-12: "Work publication date!!! Same decision for any
+collection!!!" pubmed already satisfies it (parser 5 writes the
+journal's `PubDate`).
+
+Gutenberg **cannot**, so its `date` is `null`. PG's RDF carries
+`dcterms:issued` — the date PG released its own digital edition — and
+nothing else date-like. Checked across twelve major books: the only MARC
+datafields PG keeps are 508 (production note), 520 (an automatically
+generated summary), 901 (cover image URLs) and 908 (reading ease). No
+260$c, no 264$c. `marc520`'s prose does sometimes say "published in
+1871", but it announces itself as generated text, and mining a year out
+of it would put a claim in a signed record that nobody made. §9.5 admits
+"string or null", and null beats being wrong by 135 years —
+`gutenberg:17832` is Verne's *Une ville flottante* of 1871, released by
+PG in 2006.
+
+**And the cutoff moved with it.** `cutoff.record_key("gutenberg", …)`
+read the record's `date`, so nulling it would have returned "no cutoff
+date" for all 79,320 records and excluded the whole corpus from any
+dated snapshot. `issued` lives in `extra` now — `pack build --until` is
+still denominated in it — and the cutoff reads it there, which is the
+shape pubmed always had. The same change exposed that pubmed's cutoff
+fell back to `extra.date`, which parser 5 had removed as a duplicate;
+it falls back to the top-level publication date instead, so nothing
+narrowed.
+
+## Open for the operator
+
+- **Translated titles.** STATUS 5j says "never titles, authors or ids (a
+  bibliographic reference must read as published)", and the reason holds:
+  nobody finds an article by a translated title. The operator asked why
+  they are never translated (2026-09-12). Three ways: leave it; show the
+  published title with a translated one beneath it (satisfies reading
+  without breaking citability — the recommendation); or translate it
+  outright. The last two need 5j amended on `main` first.
+- **The switch costs 78 s** for a page of passages, one model call for
+  all of them. It now says so before the wait, which is what made it
+  look broken. Cutting the wall clock means smaller parallel batches.
+- **wikipedia/wikivec** are not configured collections on this node — a
+  corpus and archive state on disk, no TOML — so their §9.5 audit is not
+  done. `wikivec-merge-blocked.md` governs that pair when it comes up.
 
 ## Loose ends
 
