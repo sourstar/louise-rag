@@ -498,7 +498,20 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            "that passed without one would certify the copy "
                            "against itself")
 
-    failed, unreachable = [], 0
+    # "DIFFERS FROM ITS ORIGIN" AND "COULD NOT BE RE-PARSED" ARE NOT THE
+    # SAME FINDING, and conflating them produces the most damaging kind of
+    # wrong answer this check can give. A record that differs is a fidelity
+    # failure and names the record; a re-parse that could not run proves
+    # nothing at all, and 03 §3.1 has a word for that — inconclusive.
+    #
+    # Live 2026-09-12: a check run with the origin mounted READ-ONLY
+    # reported "2,028,614 record(s) re-parsed from the origin, 1,640,709
+    # differing". Not one of them differed. The pubmed plugin writes a
+    # parse cache beside the origin, the mount refused it with errno 30,
+    # and every OSError went onto the `failed` list. An operator reading
+    # that had every reason to believe 1.6M records had drifted from
+    # PubMed, and the collection's own records were perfect.
+    failed, errored, unreachable = [], [], 0
     for uid, locator, line in lines:
         try:
             got = ctx.reparse(uid, locator)
@@ -506,13 +519,22 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             unreachable += 1
             continue
         except Exception as e:                          # noqa: BLE001
-            failed.append(f"{uid}: {e}")
+            errored.append(f"{uid}: {type(e).__name__}: {e}"[:200])
             continue
         if got != line:
             # The FIRST differing record, named — §9.8's detail asks for
             # exactly that, because a list of every difference between two
             # parsers is a diff and not a finding.
             failed.append(uid)
+    if errored and not failed:
+        return Outcome(
+            "records-vs-origin", INCONCLUSIVE,
+            {"records": seen, "failed": [], "errored": len(errored),
+             "origin": "unreadable"},
+            ctx.seed, _shard_ids(ctx.codex, ran),
+            why=f"{len(errored)} of {len(lines)} sampled record(s) could not "
+                f"be re-parsed from the origin, and none of the rest differed "
+                f"— so nothing was proved either way. First: {errored[0]}")
     if unreachable == len(lines):
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        {"records": seen, "failed": [],
@@ -522,11 +544,15 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            f"be re-fetched from the origin given")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
                    {"records": seen, "failed": sorted(failed)[:64],
-                    "origin": "reachable"},
+                    "errored": len(errored), "origin": "reachable"},
                    ctx.seed, _shard_ids(ctx.codex, ran),
-                   why=f"{len(lines) - unreachable} record(s) re-parsed from "
-                       f"the origin, {len(failed)} differing"
-                       + (f", {unreachable} not there" if unreachable else ""))
+                   why=f"{len(lines) - unreachable - len(errored)} record(s) "
+                       f"re-parsed from the origin, {len(failed)} differing"
+                       + (f", {unreachable} not there" if unreachable else "")
+                       # named, never folded into the count above: a record
+                       # that could not be read is not a record that agreed
+                       + (f", {len(errored)} unreadable ({errored[0]})"
+                          if errored else ""))
 
 
 def check_figures(ctx: Ctx) -> Outcome:

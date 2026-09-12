@@ -574,3 +574,48 @@ def test_license_passes_when_the_terms_are_the_codexs(checkable):
     (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(body + b" ")
     o = _run(root, yellow, snapshot, ["license"]).outcome("license")
     assert o.result == chk.FAIL and "byte-exact" in o.why
+
+
+def test_an_unreadable_origin_is_inconclusive_not_a_fidelity_failure(checkable):
+    """"Differs from its origin" and "could not be re-parsed" are not the
+    same finding, and conflating them is the most damaging wrong answer
+    this check can give.
+
+    Live 2026-09-12: a run with the origin mounted READ-ONLY reported
+    "2,028,614 record(s) re-parsed from the origin, 1,640,709 differing".
+    Not one of them differed — the pubmed plugin writes a parse cache
+    beside the origin, the mount refused it with errno 30, and every
+    OSError went onto the `failed` list. An operator reading that had every
+    reason to believe 1.6M records had drifted from PubMed, and the
+    records were perfect.
+    """
+    root, snapshot, codex = checkable
+
+    def read_only(uid, locator):
+        raise OSError(30, "Read-only file system")
+
+    o = _run(root, codex, snapshot, ["records-vs-origin"],
+             reparse=read_only).outcome("records-vs-origin")
+    assert o.result == chk.INCONCLUSIVE, o.why
+    assert o.detail["failed"] == [] and o.detail["errored"] > 0
+    assert "nothing was proved" in o.why and "Read-only" in o.why
+
+
+def test_a_real_difference_still_fails_even_beside_unreadable_records(checkable):
+    """The distinction cuts one way only: an unreadable record must not
+    mask a record that genuinely drifted."""
+    root, snapshot, codex = checkable
+    calls = {"n": 0}
+
+    def one_bad(uid, locator):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return b'{"uid":"not the line that was written"}\n'
+        raise OSError(30, "Read-only file system")
+
+    o = _run(root, codex, snapshot, ["records-vs-origin"],
+             reparse=one_bad).outcome("records-vs-origin")
+    assert o.result == chk.FAIL, o.why
+    assert len(o.detail["failed"]) == 1
+    assert o.detail["errored"] > 0
+    assert "unreadable" in o.why
