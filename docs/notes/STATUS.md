@@ -503,6 +503,41 @@ retry resumed from the `.part` by Range and finished the remaining
 exactly what it exists for, against a server that will not serve a 3 GB
 file in one go.
 
+**`hold check` — SEVEN OF EIGHT PASS, 2026-09-12.** The first clean run,
+against snapshot `2026-08` (`sha256:3bfe1d1d…`):
+
+```
+PASS  roots              1358 shard(s) held, 0 whose bytes are not the root
+PASS  records            2010881 record(s) over 68 sampled shard(s), 0 failing
+PASS  chunks             2010881 record(s) re-cut, 0 failing
+PASS  records-vs-origin  2010881 record(s) re-parsed from the origin, 0 differing
+PASS  license            the terms are the Codex's
+PASS  signature          1 signature(s) over this snapshot's hash
+PASS  calibration        16/16 reached 0.95, median 1.0000
+```
+
+`vectors-sample` was still running when this was written — the first run
+with any vectors to sample (35.4 M of them), where every earlier attempt
+was INCONCLUSIVE for want of a single one.
+
+**`records-vs-origin` at 2,010,881 records with zero differing is
+invariant 11 proven at two-million scale**: every sampled record
+re-fetched from the PubMed baseline and re-parsed to the same bytes.
+
+AND ALL THREE OF THAT MORNING'S FAILURES WERE THE CHECKS, NOT THE
+COLLECTION. `license` compared a bare digest against 09 §9.2's prefixed
+id form and so could never pass on a yellow collection. `signature`
+failed because the `louise-snapshot` version bump had made the LOADER
+re-serialise an existing v1 document as v2, giving it a hash its own
+bytes do not produce. `records-vs-origin` called 1,640,709 records
+"differing" when the origin was mounted read-only and every OSError
+landed on the failed list. Pubmed's records, terms, vectors and signature
+were sound throughout; it took three fixes to the INSTRUMENTS before the
+node could say so. A day's lesson in one collection: the check that
+reports a catastrophe is as likely to be broken as the thing it reports
+on, and under promise 8 a false catastrophe is an argument for replacing
+a collection that was never wrong.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
