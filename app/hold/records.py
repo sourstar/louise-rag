@@ -371,20 +371,37 @@ def _ack_of(codex, state_dir):
     return f"{ack['time']}/{ack['terms_sha256'].replace('sha256:', '')}"
 
 
+#: What a build produces that belongs in the drag: the directory and the
+#: suffix its files carry. `figures` joined it with the plates amendment —
+#: a container is written beside its shard by `pack build` and is useless
+#: in staging, where nothing serves or checks it. The two are promoted in
+#: ONE pass and containers first, so a crash between them leaves a
+#: container with no shard (inert: nothing names it) rather than a shard
+#: whose plates are still in staging (published records naming plates the
+#: drag does not hold).
+_PROMOTED = (("figures", "*.fig.zst"), ("records", "*.jsonl.zst"))
+
+
 def _promote_records(staging, drag_dir) -> int:
-    """Move the built record shards into the drag, atomically per file."""
+    """Move what the build produced into the drag, atomically per file.
+
+    Returns the RECORD shards promoted — the number the log reports — not
+    the containers beside them.
+    """
     import os
     from pathlib import Path
-    src = Path(staging) / "records"
-    if not src.is_dir():
-        return 0
-    dst = Path(drag_dir) / "records"
     n = 0
-    for f in sorted(src.rglob("*.jsonl.zst")):
-        target = dst / f.relative_to(src)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(f, target)
-        n += 1
+    for kind, suffix in _PROMOTED:
+        src = Path(staging) / kind
+        if not src.is_dir():
+            continue
+        dst = Path(drag_dir) / kind
+        for f in sorted(src.rglob(suffix)):
+            target = dst / f.relative_to(src)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(f, target)
+            if kind == "records":
+                n += 1
     return n
 
 

@@ -64,6 +64,20 @@ RECORD_KEYS = ("uid", "native_id", "lang", "title", "creators", "date",
                "subjects", "keys", "sections", "extra", "layer", "chunks",
                "origin", "content_hash", "origin_hash")
 
+#: 09 §9.5's OTHER shape. A line has no version field of its own: its shape
+#: is its Codex's `record_line`, 1 without `figures` and 2 with it, and the
+#: key sits between `sections` and `extra` because that is where the table
+#: puts it. A collection whose records gain plates is a NEW collection (02
+#: §2.7) — `record_line` is inside `collection_id` — so a shard never
+#: mixes the two, and the writer takes the line as an argument rather than
+#: sniffing a record for a `figures` key: a record_line-2 book with no
+#: plates carries `"figures": []` and must still be written as shape 2.
+RECORD_KEYS_2 = tuple(
+    k for key in RECORD_KEYS
+    for k in ((key, "figures") if key == "sections" else (key,)))
+
+RECORD_KEYS_BY_LINE = {1: RECORD_KEYS, 2: RECORD_KEYS_2}
+
 
 class ShardFormatError(RuntimeError):
     """The file is not a record shard this reader understands."""
@@ -86,9 +100,28 @@ def _codec(level: int | None = None):
     return pa.Codec("zstd", compression_level=level) if level else pa.Codec("zstd")
 
 
-def canonical_line(record: dict) -> bytes:
-    """The record as one JSON line: RECORD_KEYS order, compact, UTF-8."""
-    ordered = {k: record.get(k) for k in RECORD_KEYS}
+def keys_for_line(record_line: int) -> tuple[str, ...]:
+    try:
+        return RECORD_KEYS_BY_LINE[int(record_line)]
+    except (KeyError, TypeError, ValueError):
+        raise ShardFormatError(
+            f"record_line is 1 or 2 (09 §9.5), got {record_line!r}") from None
+
+
+def canonical_line(record: dict, *, record_line: int = 1) -> bytes:
+    """The record as one JSON line: the shape's key order, compact, UTF-8.
+
+    `record_line` defaults to 1 — the shape every collection that predates
+    the figures amendment writes, and the one a caller that has no Codex to
+    hand (a test fixture, `dev migrate pack`) means.
+    """
+    keys = keys_for_line(record_line)
+    ordered = {k: record.get(k) for k in keys}
+    if record_line == 2 and ordered["figures"] is None:
+        # `[]` when it has none, never null: §9.5 makes the key required in
+        # shape 2, and a reader distinguishing "no plates" from "the writer
+        # forgot" is a distinction the format does not offer.
+        ordered["figures"] = []
     return json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
 
 
@@ -102,9 +135,16 @@ def content_hash(title: str, sections: list) -> str:
 
 
 def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
-                frame_records: int = FRAME_RECORDS) -> ShardInfo:
+                frame_records: int = FRAME_RECORDS,
+                record_line: int = 1) -> ShardInfo:
     """Write `records` (dicts with RECORD_KEYS) as one shard, atomically
-    (tmp + rename). Records are written in the order given."""
+    (tmp + rename). Records are written in the order given.
+
+    `record_line` comes from the collection's Codex and is 1 or 2 (09
+    §9.5); it is the SHARD's, not the record's, so every line in a file is
+    the same shape.
+    """
+    keys_for_line(record_line)          # refuse a bad line before any bytes
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -139,7 +179,7 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 if not buf:
                     first_in_frame[0] = uid
                 uids[uid] = [len(frames), len(buf)]
-                buf.append(canonical_line(record))
+                buf.append(canonical_line(record, record_line=record_line))
                 n_records += 1
                 n_chunks += int(record.get("chunks") or 0)
                 first_uid = first_uid or uid

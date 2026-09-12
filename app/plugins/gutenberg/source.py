@@ -289,3 +289,22 @@ class GutenbergSource:
         # result set. `parse` returns `[]` for the same book, and these two
         # must agree.
         return self.split_text(text) if text.strip() else []
+
+    def read_figure(self, book_dir: Path, native_id: int, href: str) -> bytes:
+        """One plate, by the href `figures` gave it — the container pass
+        (09 §9.5), which re-opens the book rather than carrying 50 GB of
+        image bytes back out of the parse pool.
+
+        `pick_form` again, and not the epub directly: only an epub-form
+        book has plates at all, so a book whose form has changed since the
+        record was computed refuses here instead of silently reading an
+        href out of a different edition.
+        """
+        from . import pg_epub
+
+        form, path, _ = pick_form(book_dir, native_id)
+        if form != "epub" or path is None:
+            raise UnindexableDocument(
+                f"book {native_id} is read as {form or 'nothing'} and carries "
+                f"no plates; {href!r} cannot be read from it")
+        return pg_epub.read_bytes(path, href)

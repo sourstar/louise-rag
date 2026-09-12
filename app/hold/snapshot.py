@@ -19,7 +19,13 @@ from typing import Any, Iterable
 from .codex import canonical_json, digest, CodexError
 
 SNAPSHOT_KIND = "louise-snapshot"
-SNAPSHOT_VERSION = 1
+#: 09 §9.4: "version 1 is this object without `figures`. A platform writing
+#: this document's format writes 2 for every collection, with `figures: []`
+#: where there are none; snapshots already written stay 1, and a chain
+#: links by `previous` hash rather than by version, so nothing is
+#: re-issued." So: 2 is written, 1 and 2 are both read.
+SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSIONS_READ = (1, 2)
 SIG_KIND = "louise-snapshot-sig"
 
 
@@ -72,6 +78,32 @@ class RelationShard:
 
 
 @dataclass(frozen=True)
+class FiguresShard:
+    """One figures container (09 §9.4, §9.5): `slice`, `n`, `root`,
+    `figures`, `bytes`. It sits beside the record shard of the same slice
+    and number and holds every plate that shard's records name.
+
+    NO digest over the figure hashes. They are on the record lines, whose
+    shard `root` this same snapshot fixes and a certifier already signs; a
+    second digest over them would be a second answer to a question that
+    has one.
+    """
+    slice: str
+    n: int
+    root: str
+    figures: int               # DISTINCT plates stored, not appearances
+    bytes: int
+
+    @property
+    def path(self) -> str:
+        return f"figures/{self.slice}/{self.n:05d}.fig.zst"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"slice": self.slice, "n": self.n, "root": self.root,
+                "figures": self.figures, "bytes": self.bytes}
+
+
+@dataclass(frozen=True)
 class Tombstone:
     """A uid no longer present, with the reason (09 §9.4). `"retracted"` —
     the origin says the record should not have existed; `"withdrawn"` — the
@@ -109,6 +141,7 @@ class Snapshot:
     shards: tuple[Shard, ...]
     delta: Delta
     relations: tuple[RelationShard, ...] = ()
+    figures: tuple[FiguresShard, ...] = ()
     files: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -121,6 +154,8 @@ class Snapshot:
                        sorted(self.shards, key=lambda s: (s.slice.encode(), s.n))],
             "relations": [r.to_dict() for r in
                           sorted(self.relations, key=lambda r: (r.slice.encode(), r.n))],
+            "figures": [f.to_dict() for f in
+                        sorted(self.figures, key=lambda f: (f.slice.encode(), f.n))],
             "files": self.files,
             "delta": self.delta.to_dict(),
         }
@@ -349,6 +384,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         shards=shards,
         delta=compute_delta(prev_hashes, current),
         relations=_relation_shards(drag_dir, shards),
+        figures=_figures_shards(drag_dir, codex, shards),
         files=_files(drag_dir, codex, snapshot_id),
     )
 
@@ -491,7 +527,7 @@ def _load(raw: bytes) -> Snapshot:
     d = json.loads(raw)
     if d.get("kind") != SNAPSHOT_KIND:
         raise CodexError(f"not a snapshot: kind={d.get('kind')!r}")
-    if d.get("version") != SNAPSHOT_VERSION:
+    if d.get("version") not in SNAPSHOT_VERSIONS_READ:
         raise CodexError(f"unsupported snapshot version {d.get('version')!r}")
     return Snapshot(
         collection_id=d["collection_id"], snapshot_id=d["snapshot_id"],
@@ -500,6 +536,9 @@ def _load(raw: bytes) -> Snapshot:
         delta=Delta(tuple(d["delta"]["added"]), tuple(d["delta"]["changed"]),
                     tuple(Tombstone(**t) for t in d["delta"]["tombstoned"])),
         relations=tuple(RelationShard(**r) for r in d["relations"]),
+        # absent in version 1, which IS version 1 — never null, never a
+        # missing key to be guessed at
+        figures=tuple(FiguresShard(**f) for f in d.get("figures") or ()),
         files=d["files"])
 
 
@@ -542,6 +581,53 @@ def _relation_shards(drag_dir, shards) -> tuple[RelationShard, ...]:
 def _count_edges(path) -> int:
     from app.pack import records as pack_records
     return sum(1 for _ in pack_records.iter_records(path))
+
+
+def _figures_shards(drag_dir, codex, shards) -> tuple[FiguresShard, ...]:
+    """One beside each record shard of the same slice and number (09 §9.5).
+    `()` for a `record_line` 1 collection, which has no plates by
+    definition and must not be made to look as though it might.
+
+    A MISSING container is refused, not skipped. The build writes shard and
+    container together, so a shard whose records name plates and whose
+    container is absent means the two came apart — and a snapshot that
+    quietly omitted it would publish records naming plates no peer could
+    ever fetch, which is exactly what §9.4's "a file no snapshot lists is
+    not served" makes unrecoverable.
+    """
+    from pathlib import Path
+    from . import drag as drag_mod, figures as figures_mod
+
+    if int(getattr(codex, "record_line", 1) or 1) != 2:
+        return ()
+    out = []
+    for s in shards:
+        p = Path(drag_dir) / drag_mod.figures_path(s.slice, s.n)
+        if not p.is_file():
+            # A shard whose every record has `figures: []` — a slice of
+            # books published without plates — writes no container, and
+            # that is the one absence that is not a fault.
+            if _names_no_figures(Path(drag_dir) / s.path):
+                continue
+            raise CodexError(
+                f"{s.slice}/{s.n:05d}: the shard's records name plates and "
+                f"{drag_mod.figures_path(s.slice, s.n)} is missing. A "
+                f"container is written with its shard (09 §9.5); rebuild "
+                f"rather than publish records naming plates nothing holds")
+        raw = p.read_bytes()
+        out.append(FiguresShard(slice=s.slice, n=s.n,
+                                root=drag_mod.pieces_root(raw),
+                                figures=len(figures_mod.read_index(p)),
+                                bytes=len(raw)))
+    return tuple(out)
+
+
+def _names_no_figures(shard_path) -> bool:
+    from pathlib import Path
+    from app.pack import records as pack_records
+    if not Path(shard_path).is_file():
+        return True
+    return all(not r.get("figures") for r in pack_records.iter_records(shard_path))
 
 
 def _files(drag_dir, codex, snapshot_id: str | None = None) -> dict:

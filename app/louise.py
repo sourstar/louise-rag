@@ -922,15 +922,22 @@ def _reparse_from(codex, name: str, origin_dir):
         return None
     from pathlib import Path
 
-    from app import collections as collections_mod, plugin_io
+    from app import collections as collections_mod, layers as layers_mod, plugin_io
     from app.pack import build as pack_build, records as pack_records
 
     base = Path(origin_dir)
+    # THE CODEX COMES WITH IT. 03 §3.2 asks for the origin "re-parsed with
+    # the Codex's toolchain", and two of the things that decides are in the
+    # Codex and nowhere else: the layer rules (invariant 1) and
+    # `record_line` — a shape-2 collection writes `figures` on every line,
+    # so a re-parse that produced shape 1 would differ from every record it
+    # was checking and report the whole sample as failing.
     collection = collections_mod.Collection(
         name=name, plugin=codex.plugin, profile=None,
         embed_mode_default=None, corpus_dir=base,
         manifest_path=base / "manifest.sqlite", fts_dir=base,
-        lance_dir=base, acquire_enabled=False, license_ack=None)
+        lance_dir=base, acquire_enabled=False, license_ack=None,
+        layers=layers_mod.layers_for(codex), codex=codex)
     plugin = collection.plugin_instance()
     sep = getattr(plugin, "LOCATOR_SEP", None) or plugin_io.DEFAULT_MEMBER_SEP
 
@@ -940,8 +947,10 @@ def _reparse_from(codex, name: str, origin_dir):
             raise FileNotFoundError(str(base / path))
         row = {"uid": uid, "native_id": uid.rsplit(":", 1)[-1],
                "path": str(base / path) + (f"{sep}{member}" if member else "")}
-        record, _layer, _blob = pack_build._record_of(collection, plugin, row)
-        return pack_records.canonical_line(record)
+        record, _layer, _blob, _plates = pack_build._record_of(
+            collection, plugin, row)
+        return pack_records.canonical_line(
+            record, record_line=int(getattr(codex, "record_line", 1) or 1))
 
     return reparse
 

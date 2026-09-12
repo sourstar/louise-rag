@@ -162,6 +162,15 @@ def relations_path(slice_: str, n: int) -> str:
     return f"relations/{slice_}/{n:05d}.jsonl.zst"
 
 
+def figures_path(slice_: str, n: int) -> str:
+    """One figures container beside each record shard of the same slice and
+    number (09 §9.5). Named for the SHARD, never for a figure: a figure is
+    addressed by hash INSIDE the container, so §9.1's "path segments from
+    digests" rule never reaches one."""
+    check_slice(slice_)
+    return f"figures/{slice_}/{n:05d}.fig.zst"
+
+
 def index_path(slice_: str, n: int) -> str:
     check_slice(slice_)
     return f"index/{slice_}/{n:05d}"

@@ -417,9 +417,12 @@ def find_epub(book_dir: Path, book_id: int) -> Path | None:
 
     Gutenberg publishes `pg<id>.epub` without plates and
     `pg<id>-images.epub` (and sometimes `-images-3.epub`, epub3) with them.
-    Only the illustrated edition is of any use to this collection, so the
-    plain one is not a fallback — a book without plates is a book that
-    belongs to the other collection.
+    This function answers ONLY "is there an illustrated edition", which is
+    the question the plates are in; choosing what to read from is
+    `source.pick_form`, and it falls back to the plain epub, then the txt,
+    then the rdf. Keeping the two apart is deliberate: the preference
+    order is one rule in one place, and `figures` calls this one to know
+    whether to look for plates at all.
     """
     for name in (f"pg{book_id}-images-3.epub", f"pg{book_id}-images.epub"):
         p = book_dir / name

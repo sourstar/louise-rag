@@ -181,10 +181,19 @@ class Figure:
     carried: bool = True
 
     def as_record(self) -> dict:
-        """The record line's shape (09 §9.5), keys in a fixed order."""
-        return {"seq": self.seq, "sha256": self.sha256,
-                "media_type": self.media_type, "bytes": self.bytes,
-                "carried": self.carried}
+        """The record line's shape: 09 §9.5's "exactly these keys in this
+        order" — `hash`, `media_type`, `bytes`, `seq`, `carried`.
+
+        `hash` there, `sha256` here. The record line mixes two functions on
+        one line — `content_hash` and `origin_hash` are BLAKE2b-128, a
+        figure's hash is SHA-256 — so the Python field says WHICH, where
+        the wire format has a table beside it that does. `href` and
+        `caption` are ours alone: the first locates the bytes inside the
+        origin unit for the container pass, the second is already in
+        `sections`, and §9.18 refuses an unknown key on write.
+        """
+        return {"hash": self.sha256, "media_type": self.media_type,
+                "bytes": self.bytes, "seq": self.seq, "carried": self.carried}
 
 
 @dataclass(frozen=True)

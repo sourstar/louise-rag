@@ -509,6 +509,75 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        + (f", {unreachable} not there" if unreachable else ""))
 
 
+def check_figures(ctx: Ctx) -> Outcome:
+    """Every plate the sampled shards' records name and this peer HOLDS
+    hashes to the name the record gave it (03 §3.2, 09 §9.8).
+
+    `named - held` IS NOT A FAILURE, and that is the whole shape of this
+    check. The figures containers are a member like any other: a peer may
+    hold the records of a shard and not its plates — 04 §4.4 lets it ask
+    to be spared them, and 51 GB is a reason someone would. What would be
+    a failure is a plate whose bytes disagree with the record, because
+    that is the one thing the hash on the record line exists to catch.
+
+    A `carried: false` entry names a plate the ORIGIN has and this
+    collection does not admit (a media type outside 08 §8.7, a figure over
+    a cap). It is not counted as named: there is nothing to hold and never
+    will be, and counting it would make `named - held` grow with every
+    refused SVG.
+    """
+    from . import figures as figures_mod
+
+    shards = sampled_shards(ctx.codex, ctx.snapshot, "figures", seed=ctx.seed,
+                            override=ctx.override)
+    if int(getattr(ctx.codex, "record_line", 1) or 1) != 2:
+        return Outcome("figures", INCONCLUSIVE, {"shards": 0, "named": 0,
+                                                 "held": 0, "failed": []},
+                       why="this collection's `record_line` is 1, so its "
+                           "records carry no `figures` key and there are no "
+                           "plates to check (09 §9.5)")
+    named = held = 0
+    failed, ran = [], []
+    for s in shards:
+        try:
+            records = ctx.records_of(s)
+        except FileNotFoundError:
+            continue
+        ran.append(s)
+        want: set[str] = set()
+        for r in records:
+            for f in r.get("figures") or []:
+                if f.get("carried") is False:
+                    continue
+                want.add(figures_mod.bare(f["hash"]))
+        named += len(want)
+        container = ctx.drag / drag_mod.figures_path(s.slice, s.n)
+        if not container.is_file():
+            continue
+        try:
+            stored = set(figures_mod.read_index(container))
+            read, bad = figures_mod.verify(container)
+        except figures_mod.FigureError as e:
+            # the container itself, not one plate in it
+            failed.append(f"{s.slice}/{s.n:05d}: {e}")
+            continue
+        held += read
+        failed += sorted(bad)
+        # a plate in the container that no record names: the container is
+        # the shard's, so this is the two coming apart in the other
+        # direction, and it is as much a fault as a missing one
+        failed += [f"{h}:unnamed" for h in sorted(stored - want)]
+    if not ran:
+        return Outcome("figures", INCONCLUSIVE,
+                       why="this peer holds none of the sampled shards")
+    return Outcome("figures", FAIL if failed else PASS,
+                   {"shards": len(ran), "named": named, "held": held,
+                    "failed": sorted(failed)[:64]},
+                   ctx.seed, _shard_ids(ctx.codex, ran),
+                   why=f"{named} plate(s) named over {len(ran)} sampled "
+                       f"shard(s), {held} held, {len(failed)} failing")
+
+
 def _not_yet(check: str, why: str):
     def run(_ctx: Ctx) -> Outcome:
         return Outcome(check, INCONCLUSIVE, why=why)
@@ -533,8 +602,7 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "labels": _not_yet(
         "labels", "needs the published centres this collection has none of "
                   "(02 §2.4); not built"),
-    "figures": _not_yet(
-        "figures", "needs the figures containers of 09 §9.5; not built"),
+    "figures": check_figures,
     "anchor": _not_yet("anchor", "a certifier's external anchor (03 §3.7) — "
                                  "migration plan step 10"),
     "origin-seal": _not_yet("origin-seal", "the origin's own seal (03 §3.7) — "

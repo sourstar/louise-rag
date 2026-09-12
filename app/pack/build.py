@@ -156,7 +156,7 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     return planned
 
 
-def _record_of(collection, plugin, row) -> tuple[dict, int, bytes]:
+def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
     doc = plugin_io.canonical_doc(plugin, row)
     native_id = int(row["native_id"])
     sections = [[name or "", body or ""] for name, body in doc.sections]
@@ -201,14 +201,65 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes]:
     # After `content_hash`, and that is the whole design: a figure is not
     # text, its caption already lives in `sections`, so gaining plates
     # changes no content hash and re-uses every text vector (02 §2.3).
+    plates: dict[str, str] = {}
     if getattr(getattr(collection, "codex", None), "record_line", 1) == 2:
         record["figures"] = [f.as_record() for f in (doc.figures or [])]
+        # WHERE THE BYTES ARE, for the container pass — {hash: href}, and
+        # never the bytes themselves. The child has the epub open and could
+        # hand them over for free, but the corpus holds ~51 GB of plates
+        # and every one of them would be pickled back through the pool.
+        # An href is a few dozen bytes and the parent re-opens the book,
+        # which is still in the page cache.
+        #
+        # DISTINCT plates, where `figures` above lists APPEARANCES: the
+        # container stores each once (09 §9.5), and a book repeating one
+        # plate 703 times would otherwise read it 703 times. `carried`
+        # False is absent on purpose — the entry says the origin has the
+        # image and this collection does not admit it, so there are no
+        # bytes to fetch and the container must not hold any.
+        plates = {f.sha256: f.href for f in (doc.figures or []) if f.carried}
     # NOTE: no validation here. This runs in a parse-pool child, where an
     # exception becomes one skipped row rather than a failed build — so a
     # fidelity defect raised here would quietly DROP documents from the
     # pack, which is worse than what it was meant to prevent. The check
     # belongs in pack_slices, in the process that can abort.
-    return record, layer, bytes(chunk_blob)
+    return record, layer, bytes(chunk_blob), plates
+
+
+def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
+                   plates: dict, log) -> None:
+    """The shard's figures container (09 §9.5), read back from the origin.
+
+    THE SECOND PASS the format asks for. Every plate the shard's records
+    name is read from the book it came from and stored once, ordered by
+    hash; `figures.write_container` verifies each against the name the
+    record gave it before anything lands.
+
+    A plate that CANNOT be read aborts the build, like `origin_hash` above
+    and for the same reason: a record line naming a plate the container
+    does not hold fails `hold check`'s `figures` row on every peer that
+    receives it, and no peer can repair it. Dropping the entry instead is
+    not available either — `figures[N]` is the Nth `[Illustration…]`
+    marker in the text, so removing one silently re-aims every marker
+    after it at the wrong picture.
+    """
+    from ..hold import figures as figures_mod
+
+    data: dict[str, bytes] = {}
+    for figure_hash, (row, href) in plates.items():
+        try:
+            data[figure_hash] = plugin_io.figure_bytes(plugin, row, href)
+        except Exception as e:
+            raise ValueError(
+                f"{row['uid']}: the record names figure {figure_hash[:19]}… "
+                f"at {href!r} and it could not be read ({type(e).__name__}: "
+                f"{e}). A record line may not name a plate its container "
+                f"cannot carry (09 §9.5); fix the plugin, do not pack."
+            ) from e
+    path = figures_mod.path_for(pack_dir, slice_name, shard_n)
+    info = figures_mod.write_container(path, data)
+    log(f"[pack build] {slice_name}: shard {shard_n} carries {info.figures} "
+        f"plate(s), {info.bytes / 1e6:.1f} MB")
 
 
 def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
@@ -219,6 +270,11 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     full and the result is a pure function of (manifest, cutoff)."""
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
+    # THE SHARD'S SHAPE, from the Codex and never from a record (09 §9.5):
+    # `record_line` 2 writes the `figures` key on every line, `[]` included,
+    # and it is inside `collection_id`, so it cannot vary within a build.
+    record_line = int(getattr(getattr(collection, "codex", None),
+                              "record_line", 1) or 1)
     # How this source's ids sort within a slice (09 §9.3's `slicing.order`).
     # A plugin that has not declared it yet sorts by bytes, which is what
     # `slicing.SCHEMES` has always done for a slice with no numeric key.
@@ -254,14 +310,27 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         buf: list[dict] = []
         layer_counts: dict[int, int] = {}
         chunk_blobs: list[bytes] = []
+        # {hash: (manifest row, href)} for the shard being filled — the
+        # plates its records name, each listed once however often it
+        # appears. The row travels with the href because reading a plate
+        # means re-opening the book it came from.
+        shard_plates: dict[str, tuple[dict, str]] = {}
         t0 = time.monotonic()
 
         def close_shard(last_row) -> None:
-            nonlocal buf, layer_counts, chunk_blobs, written, n_records, n_chunks, next_n
+            nonlocal buf, layer_counts, chunk_blobs, shard_plates
+            nonlocal written, n_records, n_chunks, next_n
             if not buf:
                 return
             rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{records.SUFFIX}"
-            info = records.write_shard(pack_dir / rel, buf)
+            info = records.write_shard(pack_dir / rel, buf, record_line=record_line)
+            # 09 §9.5's figures container, `figures/<slice>/<NNNNN>.fig.zst`,
+            # BEFORE the shard is recorded: the two are re-issued together
+            # because a plate arriving rewrites a record line and so moves
+            # the shard's own root, and a shard recorded without its
+            # container would be served naming plates nothing holds.
+            if record_line == 2 and shard_plates:
+                _write_figures(plugin, pack_dir, slice_name, next_n, shard_plates, log)
             # 09 §9.4's shard entry. Three roots, and each answers a
             # different question: `root` is what the transport and the
             # `roots` check compare (it depends on the compressor, which the
@@ -309,7 +378,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             n_records += info.records
             n_chunks += info.chunks
             next_n += 1
-            buf, layer_counts, chunk_blobs = [], {}, []
+            buf, layer_counts, chunk_blobs, shard_plates = [], {}, [], {}
 
         last_row = None
         done_rows = 0
@@ -341,7 +410,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
                     continue
-                record, layer, chunk_blob = value
+                record, layer, chunk_blob, plates = value
                 if not record.get("origin_hash"):
                     # CORPUS FIDELITY (invariant 11). `origin_hash` is the
                     # only link between a packed record and the origin bytes
@@ -385,6 +454,8 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     order, slice_=slice_name, n=next_n)
                 buf.append(record)
                 chunk_blobs.append(chunk_blob)
+                for figure_hash, href in plates.items():
+                    shard_plates.setdefault(figure_hash, (src, href))
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
                 last_row = prow
                 if len(buf) >= records_per_shard:

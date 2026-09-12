@@ -106,3 +106,30 @@ def prepare_key(plugin, row) -> str | None:
     if hasattr(plugin, "prepare_key"):
         return plugin.prepare_key(row)
     return str(row.get("path") or "") or None
+
+
+class FiguresUnsupported(RuntimeError):
+    """A plugin yielded figures and cannot hand over their bytes.
+
+    Not a skip and not a warning. A record line naming a plate the
+    container does not hold is a record that fails `hold check`'s `figures`
+    row on every peer that receives it, and the peer cannot repair it — so
+    the build stops here, where the plugin author can be named.
+    """
+
+
+def figure_bytes(plugin, row, href: str) -> bytes:
+    """One plate's bytes, as the origin ships them.
+
+    `href` is whatever the plugin put in `Figure.href` — the path inside
+    the epub for gutenberg, and opaque to everyone else, exactly as the
+    locator is (06 §6.1). The record line does not carry it: a verifier
+    checks a plate by its hash against the container, and never goes back
+    to the origin unit for it.
+    """
+    if hasattr(plugin, "read_figure"):
+        return plugin.read_figure(Path(row["path"]), int(row["native_id"]), href)
+    raise FiguresUnsupported(
+        f"the {plugin.source_id!r} plugin yields figures but implements no "
+        f"read_figure(book_dir, native_id, href) — a record cannot name a "
+        f"plate this node is unable to carry (09 §9.5)")
