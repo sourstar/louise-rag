@@ -90,11 +90,16 @@ class PubmedSource:
     # edit to shift, so content-defined chunking would buy nothing.
     mutability = Mutability.IMMUTABLE
     protocol_version = PROTOCOL_VERSION
-    #: 5 since 2026-09-12: `creators`, `lang` and `date` corrected against
-    #: 09 §9.5 (see parse()). Invariant 3 — bumped explicitly, and the bump
-    #: is what makes the corrected collection a different collection, the
-    #: Codex's `parser.version` being inside `collection_id`.
-    PARSER_VERSION = 5
+    #: 6 since 2026-09-12. 5 corrected `creators`, `lang` and `date`
+    #: against 09 §9.5; 6 satisfies PROMISE 9 — parser 5 still published
+    #: 16 of the ~103 things a <PubmedArticle> asserts about its article,
+    #: and the other 87 were not wrapping, not boilerplate, not our
+    #: corpus-add date and not the provider's packaging. See
+    #: docs/notes/origin-fidelity-audit.md for the field-by-field list.
+    #: Folded into one bump because nothing is built from 5 — there are no
+    #: v1.0 records yet, so there is no artefact for 5 and 6 to be
+    #: distinguished in. Invariant 3: bumped explicitly either way.
+    PARSER_VERSION = 6
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # a retraction notice is a fact of the corpus
     native_id_order = "numeric"          # PMIDs, issued ascending
@@ -193,7 +198,7 @@ class PubmedSource:
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         elem = ET.fromstring(raw.data.decode("utf-8"))
-        meta = medline.parse_article(elem)
+        meta = medline.parse_full(elem)
         sections = [("Title", meta["title"])]
         if meta["abstract"]:
             sections.append(("Abstract", meta["abstract"]))
@@ -215,15 +220,31 @@ class PubmedSource:
             creators=medline.authors(elem),
             language=medline.language(elem),
             date=medline.publication_date(elem),
-            subjects=meta["mesh"],
-            keys=[],
+            # WITH THE QUALIFIER. "Neoplasms/genetics", not "Neoplasms" —
+            # §9.5's own pubmed example writes it that way and this
+            # plugin declares `subjects` a tree facet with separator "/",
+            # which until now had nothing to split.
+            subjects=meta["subjects"],
+            # §6.5 canonical ids for WHAT THE DOCUMENT IS ABOUT: its MeSH
+            # descriptors, by UI, sorted by bytes as §9.5 requires. The
+            # article's OWN identifiers (doi, pmc, pii) are not what it is
+            # about and live in extra.ids.
+            keys=sorted({f"mesh:{m['ui']}" for m in meta["extra"].get("mesh", [])
+                         if m.get("ui")}),
             # `date` is GONE from extra: the top-level field now carries it
             # in §9.5's own form, and holding it twice — once as
             # "1953-11" and once as the pack's "1953-Nov" — is two answers
             # to one question in a published artefact. `revised` stays
             # because the cutoff (`--until`) is denominated in it, and
             # `journal` because a reader is shown it.
-            extra={"journal": meta["journal"], "revised": meta.get("revised")},
+            # EVERYTHING ELSE THE ORIGIN SAYS (promise 9). Parser 5 put
+            # two keys here and published 16 of the ~103 things a
+            # <PubmedArticle> asserts; `parse_full` collects the rest and
+            # empty values are omitted, so a sparse record stays small.
+            # `authors_full` is separate from `creators` because §9.5
+            # makes `creators` a list of STRINGS — an ORCID and an
+            # affiliation need objects, and neither is droppable.
+            extra={**meta["extra"], "authors": meta["authors_full"]},
             sections=sections,
             raw_hash=raw.raw_hash,
         )
