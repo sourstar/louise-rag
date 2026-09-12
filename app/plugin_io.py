@@ -118,18 +118,25 @@ class FiguresUnsupported(RuntimeError):
     """
 
 
-def figure_bytes(plugin, row, href: str) -> bytes:
-    """One plate's bytes, as the origin ships them.
+def figure_bytes(plugin, row, hrefs: dict[str, str]) -> dict[str, bytes]:
+    """`{hash: href}` for ONE record -> `{hash: bytes}`, as the origin
+    ships them.
 
-    `href` is whatever the plugin put in `Figure.href` — the path inside
+    PLURAL, and that is the point: the origin unit is opened once for all
+    of a record's plates. Gutenberg's corpus holds ~700,000 images over
+    ~48,000 books, so a per-plate call would re-open the same zip once per
+    picture — a per-item cost scaling with the corpus.
+
+    An `href` is whatever the plugin put in `Figure.href` — the path inside
     the epub for gutenberg, and opaque to everyone else, exactly as the
     locator is (06 §6.1). The record line does not carry it: a verifier
-    checks a plate by its hash against the container, and never goes back
+    checks a plate by its hash against the container and never goes back
     to the origin unit for it.
     """
-    if hasattr(plugin, "read_figure"):
-        return plugin.read_figure(Path(row["path"]), int(row["native_id"]), href)
+    if hasattr(plugin, "read_figures"):
+        return plugin.read_figures(Path(row["path"]), int(row["native_id"]),
+                                   dict(hrefs))
     raise FiguresUnsupported(
         f"the {plugin.source_id!r} plugin yields figures but implements no "
-        f"read_figure(book_dir, native_id, href) — a record cannot name a "
-        f"plate this node is unable to carry (09 §9.5)")
+        f"read_figures(book_dir, native_id, {{hash: href}}) — a record "
+        f"cannot name a plate this node is unable to carry (09 §9.5)")

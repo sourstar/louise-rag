@@ -405,9 +405,14 @@ def figures(path: Path) -> list[Figure]:
 
 
 def read_bytes(path: Path, href: str) -> bytes:
-    """One plate's bytes, for writing the member. Kept separate from
-    `figures` so a caller can list the plates cheaply and fetch only the
-    ones it is going to store."""
+    """One plate's bytes. Kept separate from `figures` so a caller can
+    list the plates cheaply and fetch only the ones it wants.
+
+    The BUILD does not use this — `source.read_figures` takes a whole
+    record's plates through one open, because a book with 3,503 images
+    would otherwise open its zip 3,503 times. This is the shape a reader
+    serving one picture wants.
+    """
     with zipfile.ZipFile(path) as z:
         return z.read(href)
 

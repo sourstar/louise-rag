@@ -245,17 +245,37 @@ def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
     """
     from ..hold import figures as figures_mod
 
-    data: dict[str, bytes] = {}
+    # ONE OPEN PER BOOK, not one per plate. The plates are grouped by the
+    # record that names them before anything is read: gutenberg's corpus
+    # holds ~700,000 images over ~48,000 illustrated books, and a book with
+    # 100 plates read one at a time is 100 re-opens of the same zip plus
+    # 100 re-applications of the reading rule. That is a per-item cost
+    # scaling with the corpus, which is a bug however fast it looks on a
+    # three-book fixture.
+    by_record: dict[str, tuple[dict, dict[str, str]]] = {}
     for figure_hash, (row, href) in plates.items():
+        by_record.setdefault(row["uid"], (row, {}))[1][figure_hash] = href
+
+    data: dict[str, bytes] = {}
+    for uid, (row, wanted) in by_record.items():
         try:
-            data[figure_hash] = plugin_io.figure_bytes(plugin, row, href)
+            data.update(plugin_io.figure_bytes(plugin, row, wanted))
         except Exception as e:
             raise ValueError(
-                f"{row['uid']}: the record names figure {figure_hash[:19]}… "
-                f"at {href!r} and it could not be read ({type(e).__name__}: "
-                f"{e}). A record line may not name a plate its container "
-                f"cannot carry (09 §9.5); fix the plugin, do not pack."
+                f"{uid}: the record names {len(wanted)} plate(s) and they "
+                f"could not be read ({type(e).__name__}: {e}). A record line "
+                f"may not name a plate its container cannot carry (09 §9.5); "
+                f"fix the plugin, do not pack."
             ) from e
+    missing = sorted(set(plates) - set(data))
+    if missing:
+        # The plugin answered without raising and came back short. Named
+        # here rather than discovered by `write_container`, whose error
+        # would be about a hash it was never given.
+        raise ValueError(
+            f"{plates[missing[0]][0]['uid']}: the {plugin.source_id!r} plugin "
+            f"returned no bytes for {len(missing)} named plate(s), first "
+            f"{missing[0][:19]}… (09 §9.5)")
     path = figures_mod.path_for(pack_dir, slice_name, shard_n)
     info = figures_mod.write_container(path, data)
     log(f"[pack build] {slice_name}: shard {shard_n} carries {info.figures} "

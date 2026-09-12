@@ -330,21 +330,28 @@ class GutenbergSource:
         # must agree.
         return self.split_text(text) if text.strip() else []
 
-    def read_figure(self, book_dir: Path, native_id: int, href: str) -> bytes:
-        """One plate, by the href `figures` gave it — the container pass
-        (09 §9.5), which re-opens the book rather than carrying 50 GB of
-        image bytes back out of the parse pool.
+    def read_figures(self, book_dir: Path, native_id: int,
+                     hrefs: dict[str, str]) -> dict[str, bytes]:
+        """`{hash: href}` -> `{hash: bytes}` — the container pass (09 §9.5),
+        which re-opens the book rather than carrying 50 GB of image bytes
+        back out of the parse pool.
+
+        ONE open and ONE application of the reading rule for all of a
+        book's plates: the most illustrated book in this corpus carries
+        3,503 images, and doing it per plate would re-open that zip 3,503
+        times.
 
         `pick_form` again, and not the epub directly: only an epub-form
         book has plates at all, so a book whose form has changed since the
         record was computed refuses here instead of silently reading an
         href out of a different edition.
         """
-        from . import pg_epub
+        import zipfile as _zip
 
         form, path, _ = pick_form(book_dir, native_id)
         if form != "epub" or path is None:
             raise UnindexableDocument(
                 f"book {native_id} is read as {form or 'nothing'} and carries "
-                f"no plates; {href!r} cannot be read from it")
-        return pg_epub.read_bytes(path, href)
+                f"no plates; {len(hrefs)} named plate(s) cannot be read from it")
+        with _zip.ZipFile(path) as z:
+            return {h: z.read(href) for h, href in hrefs.items()}

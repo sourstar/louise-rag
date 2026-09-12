@@ -261,3 +261,39 @@ def test_such_a_codex_still_PARSES_wherever_it_already_exists(plates_drag):
     again = cx.loads(raw)
     assert again.record_line == 2
     assert "figures" not in again.validation.checks
+
+
+def test_a_book_is_opened_once_for_all_of_its_plates(plates_corpus, monkeypatch):
+    """A per-item cost that scales with the corpus is a bug however fast
+    it looks on a three-book fixture. ~700,000 images over ~48,000 books,
+    and the most illustrated book here carries 3,503 — read one at a time
+    that is 3,503 re-opens of one zip, plus 3,503 re-applications of the
+    reading rule.
+    """
+    import zipfile
+
+    from app import plugin_io
+    from app.plugins.gutenberg import SOURCE
+
+    opens = []
+    real = zipfile.ZipFile
+
+    class Counting(zipfile.ZipFile):
+        def __init__(self, file, *a, **kw):
+            opens.append(str(file))
+            super().__init__(file, *a, **kw)
+
+    book = plates_corpus / "20002"          # one plate, three appearances
+    figures = {f.sha256: f.href
+               for f in __import__("app.plugins.gutenberg.pg_epub",
+                                    fromlist=["x"]).figures(
+                   next(book.glob("*-images.epub")))}
+    assert len(figures) == 1, "three appearances, one distinct plate"
+
+    monkeypatch.setattr(zipfile, "ZipFile", Counting)
+    got = plugin_io.figure_bytes(
+        SOURCE, {"path": str(book), "native_id": "20002",
+                 "uid": "gutenberg:20002"}, figures)
+    assert set(got) == set(figures)
+    assert len([o for o in opens if o.endswith(".epub")]) <= 2, \
+        f"one open to choose the form and one to read, got {opens}"
