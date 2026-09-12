@@ -42,9 +42,49 @@ _LISTING_RE = re.compile(
 _POLL_SECONDS = 1.0
 _DEFAULT_TIMEOUT = 300
 
+#: rsync's OWN I/O timeout, in seconds: it exits 30 ("Timeout in data
+#: send/receive") when no data has moved for this long. `_DEFAULT_TIMEOUT`
+#: above bounds a transfer's TOTAL duration, which is a different thing
+#: and does not catch the case that matters.
+#:
+#: Observed live on gutenberg 2026-09-12. Ten rsync processes against
+#: ftp.ibiblio.org, every one of them ESTABLISHED with empty queues in
+#: both directions, each frozen at exactly 786,432 bytes: the mirror had
+#: accepted the connection, sent 768 KiB and gone silent. A fresh
+#: connection made by hand at the same moment pulled a 1.2 MB file
+#: instantly, so the mirror was serving — it had simply abandoned ours.
+#: Each dead session then held a worker slot for the full 300 s, and with
+#: most sessions dead the fetch ran at SIXTY FILES AN HOUR against a
+#: measured 1.2 MB/s per healthy connection. 393,151 files at that rate is
+#: 273 days.
+#:
+#: 60 s of total silence is already ten to sixty times the whole-file time
+#: for this corpus (1-6 MB files at 1.2 MB/s). The flag measures
+#: INACTIVITY, not rate, so a genuinely slow but progressing transfer is
+#: never killed — and a clean rsync exit is a TransportError the caller
+#: already retries, against the other mirror.
+_IO_TIMEOUT = 60
+_CONNECT_TIMEOUT = 30
+
 
 def _with_trailing_slash(url: str) -> str:
     return url if url.endswith("/") else url + "/"
+
+
+def _timeout_args(url: str, io: int = _IO_TIMEOUT) -> list[str]:
+    """The idleness bounds, for a REMOTE endpoint only.
+
+    `--contimeout` is refused outright on a local transfer ("--contimeout
+    cannot be used with local transfers", exit 1), and neither flag means
+    anything there: a local copy has no connection to time out and no
+    server to go quiet on it. A plain path is local; `host::module`,
+    `host:path` and `rsync://` are not.
+    """
+    remote = url.startswith("rsync://") or "::" in url or (
+        ":" in url.split("/", 1)[0])
+    if not remote:
+        return []
+    return [f"--timeout={io}", f"--contimeout={_CONNECT_TIMEOUT}"]
 
 
 _LISTING_TIMEOUT = 1800
@@ -60,7 +100,13 @@ class RsyncTransport:
         # amendment 33) demands the origin's COMPLETE listing; recursive is
         # the only complete one. The timeout matches: a full recursive
         # listing of ~800k entries takes minutes, not the old 60 s.
-        argv = ["rsync", "-r", "--list-only"]
+        # `--timeout` here too, and for the same reason: a listing that
+        # stalls silently is the same failure as a transfer that does, and
+        # it holds the whole pass rather than one worker slot. The window
+        # is wider because a recursive listing of ~800k entries has long
+        # legitimate pauses while the server walks its tree.
+        argv = ["rsync", "-r", "--list-only"] + _timeout_args(
+            endpoint.url, io=_IO_TIMEOUT * 5)
         if endpoint.ssh_key_path is not None:
             argv += ["-e", f"ssh -i {endpoint.ssh_key_path}"]
         argv.append(_with_trailing_slash(endpoint.url))
@@ -86,7 +132,7 @@ class RsyncTransport:
         part = dest.with_name(dest.name + ".part")
         stop = _current_stop()
 
-        argv = ["rsync", "-a", "--partial", "--inplace"]
+        argv = ["rsync", "-a", "--partial", "--inplace"] + _timeout_args(endpoint.url)
         if endpoint.ssh_key_path is not None:
             argv += ["-e", f"ssh -i {endpoint.ssh_key_path}"]
 

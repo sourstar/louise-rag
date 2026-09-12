@@ -50,3 +50,63 @@ def test_listing_is_recursive_and_parses_comma_grouped_sizes(monkeypatch):
         "comma-grouped sizes must parse — files over 1 KB were silently dropped"
     assert by_path["1/pg1.rdf"].size == 18_114
     assert by_path["README"].size == 209
+
+
+def test_every_rsync_invocation_bounds_its_own_idleness(monkeypatch, tmp_path):
+    """A transfer that stalls SILENTLY is the failure that matters, and
+    `_DEFAULT_TIMEOUT` does not catch it: that bounds a transfer's total
+    duration, which a dead connection happily sits inside.
+
+    Live on gutenberg 2026-09-12: ten rsync processes against
+    ftp.ibiblio.org, all ESTABLISHED with empty queues both ways, every one
+    frozen at exactly 786,432 bytes. The mirror had accepted the
+    connection, sent 768 KiB and gone quiet — a fresh connection made by
+    hand at the same moment pulled a 1.2 MB file instantly. Each dead
+    session held a worker slot for the full 300 s, and the fetch ran at
+    SIXTY FILES AN HOUR: 273 days for the corpus.
+
+    rsync's own `--timeout` exits 30 after N seconds of no I/O, which the
+    caller already treats as a retryable TransportError against the other
+    mirror. It measures inactivity, not rate, so a slow-but-moving
+    transfer is never killed.
+    """
+    from app.acquire import transport_rsync as tr
+    seen = []
+
+    class _Proc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+    def fake_popen(argv, **kw):
+        seen.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(tr.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(tr.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(
+                            a[0] if a else [], 0, _REAL_SHAPE, ""))
+
+    from app.acquire.spec import Endpoint, RemoteFile, Transport
+    endpoint = Endpoint(transport=Transport.RSYNC, url="host::mod")
+    dest = tmp_path / "1" / "pg1.txt"
+    dest.parent.mkdir(parents=True)
+    (dest.parent / "pg1.txt.part").write_bytes(b"x")
+    tr.RsyncTransport().fetch_one(endpoint, RemoteFile(rel_path="1/pg1.txt"), dest, 0)
+
+    argv = seen[-1]
+    assert any(a.startswith("--timeout=") for a in argv), argv
+    assert any(a.startswith("--contimeout=") for a in argv), argv
+    io = int(next(a for a in argv if a.startswith("--timeout=")).split("=")[1])
+    assert 0 < io < tr._DEFAULT_TIMEOUT, \
+        "an idleness bound looser than the total-duration bound catches nothing"
+
+    # the LISTING too: one that stalls holds the whole pass, not one slot
+    listed = []
+    monkeypatch.setattr(tr.subprocess, "run",
+                        lambda *a, **k: listed.append(a[0]) or
+                        subprocess.CompletedProcess(a[0], 0, _REAL_SHAPE, ""))
+    list(tr.RsyncTransport().list_files(endpoint, _spec()))
+    assert any(a.startswith("--timeout=") for a in listed[-1]), listed[-1]
+    assert any(a.startswith("--contimeout=") for a in listed[-1]), listed[-1]
