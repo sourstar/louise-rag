@@ -450,7 +450,7 @@ def codex_only() -> bool:
         return False
 
 
-def load_all() -> list[Collection]:
+def load_all(*, skip_unreadable: bool = False):
     """The collections this node has. TWO modes, decided by whether the
     `collections/` directory EXISTS:
 
@@ -462,12 +462,20 @@ def load_all() -> list[Collection]:
                  moment the last TOML was removed (Louise2, 2026-08-26 —
                  "cannot delete all collections") and could not be removed
                  again from the UI, because it has no file to retire.
+
+    `skip_unreadable` is THE WORKER'S round loop and nothing else: it
+    returns `(served, [(name, reason)…])` instead of raising, so one bad
+    TOML refuses its own collection rather than every collection's round
+    (invariant 1's rule, applied to the other way a collection can be
+    unrunnable). Every other caller wants the raise — see below.
     """
     cfg_dir = collections_dir()
     if not cfg_dir.is_dir():
-        return [_default_gutenberg_collection()]
+        default = [_default_gutenberg_collection()]
+        return (default, []) if skip_unreadable else default
     served: list[Collection] = []
     refused: list[Refusal] = []
+    unreadable: list[tuple[str, str]] = []
     only_codex = codex_only()
     for p in sorted(cfg_dir.glob("*.toml")):
         name = p.stem
@@ -478,7 +486,13 @@ def load_all() -> list[Collection]:
         # missing a collection. Refusal below is a POLICY decision the
         # operator asked for; a parse error is their mistake, and the two
         # must not be reported the same way.
-        c = _load_one(p)
+        try:
+            c = _load_one(p)
+        except Exception as e:                          # noqa: BLE001
+            if not skip_unreadable:
+                raise
+            unreadable.append((name, f"{type(e).__name__}: {e}"))
+            continue
         if only_codex and c.codex is None:
             refused.append(Refusal(
                 name, p,
@@ -490,7 +504,7 @@ def load_all() -> list[Collection]:
         served.append(c)
     global _REFUSALS
     _REFUSALS = tuple(refused)
-    return served
+    return (served, unreadable) if skip_unreadable else served
 
 
 def is_synthesized(collection) -> bool:

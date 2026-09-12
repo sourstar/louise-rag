@@ -1412,6 +1412,10 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
 
 
 _license_nagged: dict[str, float] = {}
+#: last "collection is not served" reason per collection, so a broken TOML
+#: is reported once and not every five seconds — see _sync_collections
+_bad_toml_nagged: dict[str, str] = {}
+
 #: last "no profile declared" warning per collection — see _acquire
 _profile_nagged: dict[str, float] = {}
 
@@ -2177,7 +2181,32 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     apply immediately); renaming a collection's data PATHS mid-run is the
     one thing that still needs a restart.
     """
-    current = collections_mod.load_all()
+    # A MALFORMED FILE REFUSES ITS OWN COLLECTION, NEVER THE NODE. This is
+    # invariant 1's rule ("the node keeps running its others") applied to
+    # the other way a collection can be unrunnable. `load_all` RAISES on a
+    # malformed file on purpose — a typo must not silently become the
+    # default — and it is right to raise; what was wrong was this loop
+    # letting the raise reach the round, where one collection's bad TOML
+    # stopped every collection, pubmed's archive import included.
+    #
+    # Observed live 2026-09-12, while re-minting gutenberg: its file named
+    # a Codex whose drag had been moved aside for the re-mint, and the
+    # round loop logged a traceback every five seconds and served nothing.
+    try:
+        current = collections_mod.load_all()
+    except Exception as e:                              # noqa: BLE001
+        current, bad = collections_mod.load_all(skip_unreadable=True)
+        for name, reason in bad:
+            if _bad_toml_nagged.get(name) != reason:
+                _bad_toml_nagged[name] = reason
+                con = cons.get(name) or (next(iter(cons.values())) if cons else None)
+                if con is not None:
+                    db.log_event(con, "error", "worker",
+                                 f"collection {name!r} is not served: {reason}"[:500])
+        if not current and not bad:
+            raise e
+    else:
+        _bad_toml_nagged.clear()
     known = {c.name for c in all_collections}
     now_names = {c.name for c in current}
     previous_by_name = {c.name: c for c in all_collections}

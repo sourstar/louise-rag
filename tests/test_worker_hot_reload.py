@@ -202,3 +202,58 @@ def test_repointed_paths_still_need_a_restart(isolated_config, config_dir,
 
     assert worker._live_collection(held) is held, \
         "a repointed manifest is refused, not half-applied"
+
+
+def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
+        isolated_config, config_dir, quiet_discover, monkeypatch):
+    """Invariant 1's rule — "the node keeps running its others" — applied
+    to the other way a collection can be unrunnable.
+
+    Observed live 2026-09-12 while re-minting gutenberg: its TOML named a
+    Codex whose drag had been moved aside for the re-mint, `load_all`
+    raised (correctly — a typo must not silently become the default), and
+    the round loop logged a traceback every five seconds and served
+    NOTHING. pubmed's archive import stopped with it.
+    """
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    _write_toml(config_dir, "fine")
+    _write_toml(config_dir, "broken")
+    start = worker._sync_collections([], {}, {})
+    assert {c.name for c in start} == {"fine", "broken"}
+    cons = {c.name: db.connect(c) for c in start}
+
+    (config_dir / "collections" / "broken.toml").write_text(
+        'plugin = "gutenberg"\nembed_mode = "always"\n', encoding="utf-8")
+    with pytest.raises(Exception):
+        collections_mod.load_all()          # the raise is still the default
+
+    result = worker._sync_collections(start, cons, {c.name: 0.0 for c in start})
+    assert [c.name for c in result] == ["fine"], \
+        "the good collection keeps running"
+
+    messages = [r["message"] for c in cons.values()
+                for r in c.execute("SELECT message FROM events WHERE stage='worker'")]
+    assert any("'broken' is not served" in m for m in messages), \
+        "and the operator is told which file, and why"
+
+
+def test_the_broken_file_is_reported_once_not_every_round(
+        isolated_config, config_dir, quiet_discover, monkeypatch):
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    _write_toml(config_dir, "fine")
+    _write_toml(config_dir, "broken")
+    start = worker._sync_collections([], {}, {})
+    cons = {c.name: db.connect(c) for c in start}
+    (config_dir / "collections" / "broken.toml").write_text(
+        'plugin = "gutenberg"\nembed_mode = "always"\n', encoding="utf-8")
+
+    def rounds():
+        return sum(1 for c in cons.values()
+                   for r in c.execute("SELECT message FROM events "
+                                       "WHERE stage='worker'")
+                   if "not served" in r["message"])
+
+    kept = start
+    for _ in range(4):
+        kept = worker._sync_collections(kept, cons, {c.name: 0.0 for c in kept})
+    assert rounds() == 1, "a round loop that logs every five seconds is noise"
