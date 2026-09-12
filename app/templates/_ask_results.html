@@ -57,6 +57,13 @@
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
     {% if h.chapter %}<span class="badge">{{ h.chapter }}</span>{% endif %}
+    {# The link to the REAL THING — pubmed.ncbi.nlm.nih.gov for an article,
+       gutenberg.org for a book. The title opens this node's reader (which
+       is the point of the reader: the passage highlighted in context);
+       this goes to the origin, which is what a reader clicking an article
+       expected and did not get. #}
+    {% if h.origin_url %}<a class="badge" href="{{ h.origin_url }}" target="_blank"
+       rel="noopener" title="open at the source">source ↗</a>{% endif %}
   </div>
   {# content, translatable (data-cid keys the translation cache; the
      original text stays in data-orig on the client and in the drawer).

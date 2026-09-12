@@ -184,6 +184,15 @@ async function applyLanguage(){
   if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw});
   if(!items.length){langNote('');return}
 
+  // SAY SO BEFORE THE WAIT, NOT AFTER IT. One model call for a page of
+  // passages measured 78 s on this node, and every word on screen stayed
+  // exactly as it was for the whole of it — so switching language read as
+  // doing nothing at all, which is what the operator reported (twice).
+  // The note is the only thing that can distinguish "working" from
+  // "broken" here, and it has to arrive first.
+  langNote('translating ' + items.length + ' passage(s) into ' + lang
+           + '… this takes a while');
+
   let d=null;
   try{const r=await fetch('/ask/translate',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({lang,items})}); d=await r.json();}catch(e){d=null}

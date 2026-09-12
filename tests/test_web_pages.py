@@ -641,3 +641,40 @@ def test_an_empty_badge_is_not_drawn(client):
     full = dict(hit, authors="Curie M", chapter="Chapter I")
     html = tpl.render(result={"hits": [full], "timings": {"fts": 1}})
     assert "Curie M" in html and "Chapter I" in html
+
+
+def test_a_hit_links_to_the_origin_not_to_this_node(client):
+    """`reader.html` has offered "open at the source" all along, but the Ask
+    page's reader panel loads the FRAGMENT, which has no header — so the
+    only link on an Ask result was `/read/<collection>/<book>`, this
+    node's own path. Clicking a PubMed article took the reader to us."""
+    _seed_one_book()
+    r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
+    assert "https://www.gutenberg.org/ebooks/1" in r.text
+    assert "source ↗" in r.text
+
+
+def test_the_origin_link_is_per_plugin_and_absent_when_unknown():
+    from app import reader as reader_mod
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+
+    assert reader_mod.ORIGIN["pubmed"]({"native_id": "35114297"}) == \
+        "https://pubmed.ncbi.nlm.nih.gov/35114297/"
+
+    # a plugin with no origin page draws no link at all, rather than one
+    # pointing nowhere
+    hit = {"chunk_id": "genome:1:0:1", "book_id": 1, "title": "chr1", "lang": "en",
+           "text": "ACGT", "authors": "", "chapter": "", "origin_url": None}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    assert "source ↗" not in html
+
+
+def test_the_language_switch_says_it_is_working_before_the_wait(client):
+    """One model call for a page of passages measured 78 s, and nothing on
+    screen changed for the whole of it — so the switch read as doing
+    nothing, reported twice by the operator."""
+    r = client.get("/ask")
+    js = r.text
+    note = js.index("langNote('translating ")
+    fetch = js.index("/ask/translate")
+    assert note < fetch, "the note must be painted BEFORE the model call, not after"

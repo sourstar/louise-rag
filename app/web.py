@@ -42,7 +42,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import (auth, collections as collections_mod, config, db, discovery, llm,
-                platform_config, query_service, spaces)
+                platform_config, query_service, reader, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import claim
@@ -330,8 +330,24 @@ def ask_query(request: Request, body: AskQueryBody):
     for c in collections_mod.load_all():
         by_plugin.setdefault(c.plugin, c.name)
     for h in result.get("hits", []):
+        plugin = str(h.get("chunk_id", "")).split(":", 1)[0]
         if not h.get("source_collection"):
-            h["source_collection"] = by_plugin.get(str(h.get("chunk_id", "")).split(":", 1)[0])
+            h["source_collection"] = by_plugin.get(plugin)
+        # THE LINK TO THE REAL THING. `reader.html` has offered "open at
+        # the source" all along, but the Ask page's reader panel loads the
+        # FRAGMENT, which carries no header — so in the Ask flow the only
+        # link was `/read/<collection>/<book>`, this node's own path.
+        # Clicking an article took the reader to us instead of to PubMed
+        # (operator, 2026-09-12).
+        if not h.get("origin_url"):
+            make = reader.ORIGIN.get(plugin)
+            if make is not None:
+                try:
+                    h["origin_url"] = make({"native_id": h.get("book_id"),
+                                            "lang": h.get("lang"),
+                                            "title": h.get("title")})
+                except Exception:      # noqa: BLE001 — a missing field is not a 500
+                    h["origin_url"] = None
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     # .get, not [...]: when every collection is withheld `run_search`
     # returns {hits, withheld} with no `timings` at all, and a KeyError
