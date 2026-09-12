@@ -412,9 +412,35 @@ it is valid for either mutability.
 
 ## 6.4 Fidelity to the origin
 
-A plugin may **prune** — drop the ePub when the plain text is kept, drop
-markup, drop dump indexes — but never alter a record in a way that
-prevents reproducing it from the origin. Concretely: every record's
+**A PLUGIN KEEPS EVERYTHING THE ORIGIN SAYS ABOUT ITS ENTITY** (01,
+promise 9). What it may prune is content that is not about the entity,
+and that is a closed list of four:
+
+  (a) wrapping and markup — XML tags, wikitext syntax;
+  (b) common headers and boilerplate — a licence header on every text,
+      a dump's page chrome, a provider's banner;
+  (c) the date the entity entered our corpus — a date about the ENTITY
+      is the entity's own and stays;
+  (d) what the provider wrapped around the entity — the formats it
+      offers for download, download counts, mirror bookkeeping.
+
+Everything else goes into the record: ids, dates, authors and their
+identifiers, subjects and categories and keywords, classifications,
+publication details, language, structure. A §9.5 top-level key where
+there is a natural home, `extra` otherwise.
+
+So "we have no use for it" does not license a drop, and `extra` is where
+a plugin puts what §9.5 has no key for. `extra`'s keys are fixed for the
+collection's life, so the question "should this field be in the record?"
+is answered ONCE, before `hold collection create`, and answering it
+wrongly costs a new collection rather than a patch. A field whose
+category is genuinely unclear — (d) or the entity's own — goes to the
+operator; §6.1's plugin note is where the answer is recorded, beside the
+FORM choice.
+
+Beyond that a plugin may **prune** — drop the ePub when the plain text
+is kept, drop markup, drop dump indexes — but never alter a record in a
+way that prevents reproducing it from the origin. Concretely: every record's
 `origin_hash` is the hash of the bytes it was parsed from, and the Codex
 names the acquisition spec and parser version that produced it, so a
 verifier can re-fetch a sample and re-parse it (§3.2). A record with no

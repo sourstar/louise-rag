@@ -134,6 +134,46 @@ holding exactly what everyone else holds.
    and it is not the operator's to weigh: by the time the artefact
    exists the decision has already been made for everyone who fetches
    it.
+9. **Nothing the origin said about an entity is lost.** A record holds
+   everything the origin asserts about the thing it describes. Four
+   kinds of content may be dropped, and no others:
+
+   (a) **wrapping and markup** — XML tags, wikitext syntax, the
+       scaffolding a format needs to carry its content;
+   (b) **common headers and boilerplate** — a licence header repeated on
+       every text, a dump's page chrome, a provider's banner;
+   (c) **the date the entity entered OUR corpus** — a date ABOUT the
+       entity is the entity's own and stays;
+   (d) **what the provider wrapped around the entity** and is not the
+       entity — the file formats it offers for download, download
+       counts, mirror bookkeeping.
+
+   Everything else is kept: ids, dates, authors and their identifiers,
+   subjects, categories, keywords, classifications, publication
+   details, language, structure. 09 §9.5's top-level keys where there is
+   a natural home for it, `extra` otherwise.
+
+   **"We do not use it yet" is not a reason.** It is the argument that
+   sounds most responsible and costs the most: `extra`'s keys are fixed
+   for a collection's LIFE (09 §9.5, 02 §2.7), so a field left out is
+   not deferred, it is refused until somebody builds a whole new
+   collection to carry it. A parser that keeps a field nobody reads
+   costs bytes; a parser that drops one costs a re-mint.
+
+   This is not the same promise as 1. Promise 1 is about what TRAVELS —
+   markup and executables and origin files stay off the wire. This is
+   about what a record CONTAINS before anything travels at all. A
+   collection can satisfy 1 perfectly and still be a lossy copy of its
+   origin, and that collection is a worse artefact than a missing one:
+   every peer that adopts it inherits the loss, promise 7 means it is
+   never un-published, and promise 5 cannot detect it, because records
+   reproduced faithfully from a parser that discarded a field verify
+   exactly as well as complete ones.
+
+   Where it is genuinely unclear whether something is (d) or the
+   entity's own, that is a question for the operator and not a judgement
+   to make quietly. The failure mode is not a wrong answer; it is a
+   field nobody ever mentions again.
 
 ## Vocabulary
 
