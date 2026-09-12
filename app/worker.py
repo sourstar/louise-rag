@@ -1766,6 +1766,49 @@ _acquire_only = threading.Event()
 # collection and nobody else.
 _discover_requests: dict[str, tuple[str, bool]] = {}   # name -> (reason, acquire)
 _discover_req_lock = threading.Lock()
+
+#: The CURRENT Collection object per name, republished by `_sync_collections`
+#: every round. A pipeline thread is started once and lives for the life of
+#: the worker, so the object it was handed at start is frozen — and every
+#: Tier-2 field the thread reads froze with it: `profile`, `acquire_enabled`,
+#: `license_ack`, `extras`, `peer_source`, the `[encoder]` recipe. Hot reload
+#: then worked only for the main loop's own list, while `_sync_collections`
+#: promised in its own docstring that "profile/acquire toggles apply
+#: immediately".
+#:
+#: Observed live 2026-09-12: gutenberg's `profile = "full"` was added to its
+#: TOML, the main loop SAW the change and requested a discovery — and the
+#: pipeline thread ran that discovery against its startup object, whose
+#: profile was still None, so `_acquire` returned early and the fetch never
+#: started. Nothing said so: the "no profile declared" warning is rate
+#: limited to once an hour and had already been spent.
+_live_collections: dict[str, object] = {}
+_live_lock = threading.Lock()
+
+
+def _publish_collections(collections) -> None:
+    with _live_lock:
+        _live_collections.clear()
+        _live_collections.update({c.name: c for c in collections})
+
+
+def _live_collection(collection):
+    """The current object for this collection, or the one given.
+
+    PATHS ARE NOT HOT-RELOADED. A thread holds an open connection to the
+    manifest it was started against, so a TOML that repointed the data
+    directories mid-run would leave the thread writing to one database and
+    the main loop to another. That case still needs a restart — it always
+    did, and `_sync_collections` says so — and it is refused here rather
+    than half-applied.
+    """
+    with _live_lock:
+        fresh = _live_collections.get(collection.name)
+    if fresh is None:
+        return collection
+    if fresh.manifest_path != collection.manifest_path:
+        return collection
+    return fresh
 # When each collection was last scanned; module-level because both the
 # main loop (interval trigger) and the pipeline threads (completion) write
 # it. run_forever passes this same object to _sync_collections.
@@ -1981,6 +2024,10 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
             if _paused.is_set():
                 time.sleep(2)
                 continue
+            # Tier-2 is DESIRED STATE (invariant 10) and this thread outlives
+            # every edit to it, so the object is re-read each round rather
+            # than held from thread start — see `_live_collection`.
+            collection = _live_collection(collection)
             try:
                 # this collection's scans are REQUESTED here (acquisition
                 # kickoff, startup scan, interval rescans, post-fetch
@@ -2134,6 +2181,10 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     known = {c.name for c in all_collections}
     now_names = {c.name for c in current}
     previous_by_name = {c.name: c for c in all_collections}
+    # BEFORE the change detection below, so the discovery it requests is
+    # run by the pipeline thread against the NEW object and not the one
+    # that thread was started with.
+    _publish_collections(current)
 
     # A config change that alters what the worker should DO with a
     # collection (license acknowledged, acquisition toggled, profile grown)
@@ -2378,6 +2429,7 @@ def run_forever():
             print(f"NOT SERVED: {c.name}: {reason}", file=sys.stderr)
         all_collections = [c for c in all_collections if c.name not in names]
 
+    _publish_collections(all_collections)
     cons = {c.name: db.connect(c) for c in all_collections}
 
     for c in all_collections:

@@ -146,3 +146,59 @@ def test_invalid_new_collection_is_skipped_not_fatal(isolated_config, config_dir
     events = cons["good"].execute(
         "SELECT message FROM events WHERE level='error'").fetchall()
     assert any("broken" in e["message"] for e in events)
+
+
+def test_a_pipeline_thread_sees_the_edit_and_not_its_startup_object(
+        isolated_config, config_dir, quiet_discover, monkeypatch):
+    """A Tier-2 edit reaches the PIPELINE THREAD, not only the main loop.
+
+    Observed live 2026-09-12: gutenberg's `profile = "full"` was added to
+    its TOML; `_sync_collections` saw the change and requested a discovery;
+    the pipeline thread ran that discovery against the object it was handed
+    at startup, whose profile was still None — so `_acquire` returned early
+    and a 60 GB fetch never started. Nothing said so: the "no profile
+    declared" warning is rate limited to once an hour and had been spent
+    on the startup pass.
+
+    A thread is started once and lives for the life of the worker, so every
+    Tier-2 field it reads froze with it. The object is republished each
+    round and re-read at the top of the loop instead.
+    """
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
+    start = worker._sync_collections([], {}, {})
+    stale = next(c for c in start if c.name == "growing")
+    assert stale.profile == "demo"
+
+    # what a running pipeline thread holds is `stale`; the TOML moves on
+    _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
+    (config_dir / "collections" / "growing.toml").write_text(
+        'plugin = "gutenberg"\nprofile = "full"\nacquire_enabled = true\n',
+        encoding="utf-8")
+    worker._sync_collections(start, {c.name: db.connect(c) for c in start},
+                             {c.name: 0.0 for c in start})
+
+    assert worker._live_collection(stale).profile == "full", \
+        "the thread must run the edit, not the object it was started with"
+
+
+def test_repointed_paths_still_need_a_restart(isolated_config, config_dir,
+                                              quiet_discover, monkeypatch):
+    """The one thing hot reload must NOT do. A thread holds an open
+    connection to the manifest it was started against; swapping the object
+    under it would leave the thread writing one database and the main loop
+    another."""
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    _write_toml(config_dir, "moving")
+    start = worker._sync_collections([], {}, {})
+    held = next(c for c in start if c.name == "moving")
+
+    moved = collections_mod.Collection(
+        name="moving", plugin="gutenberg", profile="full",
+        embed_mode_default=None, corpus_dir=held.corpus_dir,
+        manifest_path=held.manifest_path.parent / "elsewhere.db",
+        fts_dir=held.fts_dir, lance_dir=held.lance_dir)
+    worker._publish_collections([moved])
+
+    assert worker._live_collection(held) is held, \
+        "a repointed manifest is refused, not half-applied"
