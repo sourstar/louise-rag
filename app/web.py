@@ -237,6 +237,9 @@ class TranslateBody(BaseModel):
 # must not pay the model twice; bounded so a long session cannot grow it.
 _translation_cache: dict = {}
 _TRANSLATION_CACHE_MAX = 4000
+#: retry batch size for items the model returned verbatim. Three, because
+#: three is the size measured to work where eleven did not.
+_RETRY_BATCH = 3
 
 
 @ask_router.post("/ask/translate")
@@ -279,6 +282,7 @@ def ask_translate(body: TranslateBody):
                               []).append((key[0], text))
     failed = False
     missed: list[str] = []
+    retry: list[tuple[str, str]] = []
     if groups:
         # CONCURRENTLY: measured, not assumed — four calls to this node's
         # Ollama took 6.85 s of wall clock against 17.13 s of summed
@@ -317,8 +321,40 @@ def ask_translate(body: TranslateBody):
                 # different route.
                 if value is None or value == original:
                     missed.append(cid)
+                    retry.append((cid, original))
                     continue
                 out[cid] = value
+                if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
+                    _translation_cache.clear()
+                _translation_cache[(cid, lang)] = value
+
+    # ONE RETRY, IN SMALL BATCHES — the correction loop, not a fourth
+    # guess about the model. A batch that comes back with short items
+    # copied through verbatim is the failure this endpoint keeps hitting,
+    # and three attempts to predict it all missed: relaxing the prompt's
+    # "keep names as they are" changed nothing, telling the model every
+    # item must be translated made it WORSE (7 unchanged became 9), and
+    # grouping by source language fixed the latency but not this.
+    #
+    # What IS established by measurement is that a SMALL batch works —
+    # three English titles alone translated three of three, the same
+    # three that a batch of eleven returned verbatim. So the copy-through
+    # is detected (a value equal to its input already counts as a miss)
+    # and just those items go back in threes. Whatever is still unchanged
+    # after that is an honest miss and the page says so.
+    if retry:
+        chunks = [retry[i:i + _RETRY_BATCH] for i in range(0, len(retry), _RETRY_BATCH)]
+        with ThreadPoolExecutor(max_workers=min(6, len(chunks))) as pool:
+            second = list(pool.map(
+                lambda b: llm.translate_texts([t for _, t in b], lang), chunks))
+        for batch, got in zip(chunks, second):
+            if len(got) != len(batch):
+                continue
+            for (cid, original), value in zip(batch, got):
+                if value is None or value == original:
+                    continue
+                out[cid] = value
+                missed = [m for m in missed if m != cid]
                 if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
                     _translation_cache.clear()
                 _translation_cache[(cid, lang)] = value

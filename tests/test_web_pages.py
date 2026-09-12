@@ -787,3 +787,44 @@ def test_the_client_sends_each_items_source_language(client):
     assert "src:s.dataset.lang" in js, "snippets"
     assert "src:t.dataset.lang" in js, "titles"
     assert "src:answerLang" in js, "and the answer"
+
+
+def test_an_item_returned_verbatim_is_retried_in_a_small_batch(client, monkeypatch):
+    """The copy-through this endpoint keeps hitting: a batch comes back
+    with short items identical to their input. Three attempts to predict
+    it all missed (the prompt's "names" clause: no change; "every item
+    must be translated": 7 unchanged became 9; grouping by source
+    language: fixed latency, not this). A small batch IS measured to work
+    — three English titles alone translated 3/3 where eleven returned
+    them verbatim — so the detected misses go back in threes."""
+    from app import llm
+    seen = []
+
+    def fake(texts, lang):
+        seen.append(list(texts))
+        # first pass: the long one translates, the short ones come back as
+        # they went in. second pass (small): everything translates.
+        if len(texts) > 2:
+            return [f"{lang}:{t}" if len(t) > 8 else t for t in texts]
+        return [f"{lang}:{t}" for t in texts]
+    monkeypatch.setattr(llm, "translate_texts", fake)
+
+    body = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "long", "text": "a passage long enough to be rewritten", "src": "en"},
+        {"id": "s1", "text": "short a", "src": "en"},
+        {"id": "s2", "text": "short b", "src": "en"}]}).json()
+
+    assert body["items"] == {"long": "it:a passage long enough to be rewritten",
+                             "s1": "it:short a", "s2": "it:short b"}
+    assert body["missed"] == [], "the retry cleared them, so nothing is reported missed"
+    assert len(seen) == 2, "one first pass, one retry — not a loop"
+    assert len(seen[1]) <= 3, "and the retry is small, which is the whole point"
+
+
+def test_what_the_retry_cannot_save_is_still_an_honest_miss(client, monkeypatch):
+    from app import llm
+    monkeypatch.setattr(llm, "translate_texts", lambda texts, lang: list(texts))
+    body = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "stubborn", "src": "en"}]}).json()
+    assert body["items"] == {} and body["missed"] == ["a"]
+    assert body["failed"] is False, "the model answered; it just did not translate"
