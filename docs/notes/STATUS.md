@@ -503,8 +503,9 @@ retry resumed from the `.part` by Range and finished the remaining
 exactly what it exists for, against a server that will not serve a 3 GB
 file in one go.
 
-**`hold check` — SEVEN OF EIGHT PASS, 2026-09-12.** The first clean run,
-against snapshot `2026-08` (`sha256:3bfe1d1d…`):
+**`hold check` — ALL EIGHT PASS, 2026-09-12. Pubmed is verified.** The
+first complete run, against snapshot `2026-08` (`sha256:3bfe1d1d…`), seed
+`313fc965…`, with eight signed attestations:
 
 ```
 PASS  roots              1358 shard(s) held, 0 whose bytes are not the root
@@ -514,11 +515,19 @@ PASS  records-vs-origin  2010881 record(s) re-parsed from the origin, 0 differin
 PASS  license            the terms are the Codex's
 PASS  signature          1 signature(s) over this snapshot's hash
 PASS  calibration        16/16 reached 0.95, median 1.0000
+PASS  vectors-sample     960 chunk(s) over 68 sampled shard(s) reproduce at 0.95
+PASS  pubmed  snapshot 2026-08
 ```
 
-`vectors-sample` was still running when this was written — the first run
-with any vectors to sample (35.4 M of them), where every earlier attempt
-was INCONCLUSIVE for want of a single one.
+**`vectors-sample` is the one that had never run.** Every earlier attempt
+was INCONCLUSIVE for want of a single vector to sample; this one
+re-embedded 960 chunks on the MedCPT encoder and reproduced the archive's
+own imported vectors at tolerance 0.95. That is the trust question for
+pre-embedded data answered on this node's own hardware: the 35.4 M
+vectors that arrived from `medcpt-pubmed` are the vectors they claim to
+be.
+
+THIS IS THE FIRST COLLECTION IN THE CODEX FORMAT TO PASS ITS WHOLE PLAN.
 
 **`records-vs-origin` at 2,010,881 records with zero differing is
 invariant 11 proven at two-million scale**: every sampled record
