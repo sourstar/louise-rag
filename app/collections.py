@@ -104,7 +104,9 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
 
 def default_recipe_for_plugin(plugin: str) -> EmbedRecipe | None:
     """The node's default recipe for a PLUGIN, from platform.toml's
-    [embed_defaults.<plugin>] — or None when the node declares none.
+    [encoder_defaults.<plugin>] — or None when the node declares none.
+    (`[embed_defaults.<plugin>]` is the deprecated alias for the same
+    table; platform_config reads both and the spec name wins.)
 
     Why per plugin: a genome collection embedded with the node's text
     encoder is not a worse choice, it is a wrong one — DNA is not a
@@ -115,7 +117,7 @@ def default_recipe_for_plugin(plugin: str) -> EmbedRecipe | None:
     Tier-2 file, not env and not the DB: it is desired state (invariant 10)."""
     from . import platform_config
     raw = platform_config.load().embed_defaults.get(plugin)
-    return parse_recipe(raw, where=f"platform.toml [embed_defaults.{plugin}]")
+    return parse_recipe(raw, where=f"platform.toml [encoder_defaults.{plugin}]")
 
 
 def recipe_for(collection) -> EmbedRecipe:

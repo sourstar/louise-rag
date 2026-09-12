@@ -10,7 +10,10 @@ is what this resolution order exists to prevent.
 Order, each step a FALLBACK for the one before it and never an override
 (CLAUDE.md invariant 10 — env is identity, TOML is desired state):
 
-    collection [embed]  ->  platform.toml [embed_defaults.<plugin>]  ->  env
+    collection [encoder]  ->  platform.toml [encoder_defaults.<plugin>]  ->  env
+
+(`[embed_defaults.<plugin>]` and a collection's `[embed]` are the older
+spellings of the same two tables, still read, deprecated.)
 """
 import pytest
 
@@ -133,3 +136,35 @@ def test_creating_a_genome_collection_writes_the_dna_recipe(
     assert "DNABERT-2-117M" in text
     assert "ctx = 1024" in text
     assert collections_mod.by_name("genome-dm6").embed.dim == 768
+
+
+def test_the_spec_spelling_is_encoder_defaults(platform_toml, tmp_path):
+    """07 §7.8 spells it `[encoder_defaults.<plugin>]`, matching the
+    `[encoder]` block a collection file carries. The code shipped
+    `embed_defaults`, which reads as the MODE key (`embed = "on-demand"`)
+    sitting beside it. Both are read; the documents win on the name."""
+    platform_toml(DNA.replace("embed_defaults", "encoder_defaults"))
+    recipe = collections_mod.default_recipe_for_plugin("genome")
+    assert recipe is not None and recipe.model == "zhihan1996/DNABERT-2-117M"
+
+    # the deprecated alias still resolves, so no node breaks on upgrade
+    platform_toml(DNA)
+    assert collections_mod.default_recipe_for_plugin("genome") == recipe
+
+    # and where a file carries both, the spec name is the one that lands
+    platform_toml(DNA + '\n[encoder_defaults.genome]\n'
+                  'url = "http://spec.example:9/"\nmodel = "spec"\n')
+    won = collections_mod.default_recipe_for_plugin("genome")
+    assert (won.model, won.url) == ("spec", "http://spec.example:9")
+
+
+def test_a_malformed_encoder_defaults_block_is_named_by_its_own_word(platform_toml):
+    """An operator editing `encoder_defaults` must not be told about
+    `embed_defaults`: the error has to name the line they wrote."""
+    platform_toml('encoder_defaults = 3\n')
+    with pytest.raises(Exception, match="encoder_defaults must be a table"):
+        platform_config.load()
+
+    platform_toml('[encoder_defaults]\ngenome = "dnabert"\n')
+    with pytest.raises(Exception, match="encoder_defaults.genome"):
+        platform_config.load()

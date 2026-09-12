@@ -92,10 +92,16 @@ class PlatformConfig:
     transfer: TransferConfig = TransferConfig()
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
-    # [embed_defaults.<plugin>] -> the raw [embed]-shaped table. Kept RAW
-    # here on purpose: app/collections.py owns EmbedRecipe and parses it,
-    # and importing that module from this one would close an import cycle
-    # (collections -> platform_config -> collections).
+    # [encoder_defaults.<plugin>] -> the raw [encoder]-shaped table. Kept
+    # RAW here on purpose: app/collections.py owns EmbedRecipe and parses
+    # it, and importing that module from this one would close an import
+    # cycle (collections -> platform_config -> collections).
+    #
+    # The SPELLING is `encoder_defaults` (07 §7.8), matching the
+    # `[encoder]` block a collection file carries. This code shipped it as
+    # `embed_defaults`, which is the older word and reads as the MODE key
+    # (`embed = "on-demand"`) sitting beside it. Both are read; the spec
+    # name wins where a file declares both, and the alias is deprecated.
     embed_defaults: dict[str, dict] = field(default_factory=dict)
     # [node] codex_only — serve ONLY collections whose file names a Codex.
     # A node mid-migration holds both shapes; this is how an operator says
@@ -238,18 +244,24 @@ def _load_one(path: Path) -> PlatformConfig:
         per_endpoint=_positive_int(tr_raw, "per_endpoint", DEFAULT_PER_ENDPOINT),
         segments_per_file=segments,
     )
-    # [embed_defaults.<plugin>] — validated as "a table per plugin" only;
+    # [encoder_defaults.<plugin>] — validated as "a table per plugin" only;
     # the field-level parse belongs to collections.parse_recipe, which owns
     # EmbedRecipe and reports errors in the same words for both files.
-    embed_raw = raw.get("embed_defaults", {}) or {}
-    if not isinstance(embed_raw, dict):
-        raise schedule_mod.ScheduleError(
-            "embed_defaults must be a table of per-plugin [embed] blocks, "
-            "e.g. [embed_defaults.genome]")
-    for plugin, table in embed_raw.items():
-        if not isinstance(table, dict):
+    # `embed_defaults` is the deprecated alias: read, merged UNDER the spec
+    # name, and named by its own word in any error so the operator is told
+    # which line of which file is wrong.
+    embed_raw: dict = {}
+    for key in ("embed_defaults", "encoder_defaults"):
+        table_raw = raw.get(key, {}) or {}
+        if not isinstance(table_raw, dict):
             raise schedule_mod.ScheduleError(
-                f"embed_defaults.{plugin} must be a table, got {type(table).__name__}")
+                f"{key} must be a table of per-plugin [encoder] blocks, "
+                f"e.g. [{key}.genome]")
+        for plugin, table in table_raw.items():
+            if not isinstance(table, dict):
+                raise schedule_mod.ScheduleError(
+                    f"{key}.{plugin} must be a table, got {type(table).__name__}")
+        embed_raw.update({str(k): dict(v) for k, v in table_raw.items()})
 
     adm_raw = raw.get("admission", {}) or {}
     if not isinstance(adm_raw, dict):
@@ -286,7 +298,7 @@ def _load_one(path: Path) -> PlatformConfig:
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
-                          embed_defaults={str(k): dict(v) for k, v in embed_raw.items()},
+                          embed_defaults=embed_raw,
                           codex_only=codex_only_raw,
                           source_path=path)
 

@@ -91,7 +91,7 @@ services:
       # ── model endpoints (unchanged from the legacy app) ──
       OLLAMA_URL: http://192.168.178.10:30068
       CHAT_MODEL: qwen3:8b
-      EMBED_URL: http://192.168.178.10:30436
+      EMBED_URL: http://192.168.178.10:30437
       EMBED_API: openai
       EMBED_MODEL: embed
       EMBED_CTX: '8192'

@@ -13,7 +13,7 @@ server's prompt cache cannot serve reheated results.
 
 Usage (from the repo, no GPU imports — plain HTTP):
   docker run --rm louise-rag:local python -m tools.profile_embed \
-      --url http://192.168.178.10:30436 --texts 24 --chars 4000 \
+      --url http://192.168.178.10:30437 --texts 24 --chars 4000 \
       --concurrency 1,2,3,4
 """
 import argparse
