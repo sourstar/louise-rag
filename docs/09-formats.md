@@ -346,7 +346,7 @@ a `<space>` segment and `index-<slice>` would then be a member name
 |---|---|---|---|
 | `encoder` | object | yes | `{image: "sha256:…", weights: "sha256:…", label: string}` — the encoder container's digest, the digest of the weights file it serves, and a readable label without guarantee. The encoder image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
-| `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by `derivation` below rather than by an encoder, because few encoders emit integers |
+| `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by the top-level `derivation` above rather than by an encoder, because few encoders emit integers |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
 | `pooling` | string | yes | `"cls"`, `"mean"`, `"last"` — the pooling the encoder is run with |
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
