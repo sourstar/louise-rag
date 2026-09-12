@@ -286,7 +286,36 @@ class GutenbergSource:
         # what the origin said, not embedding it, and a contents page cut
         # into chunks competes with the prose it indexes.
         text_toc = pg_text.headings_without_body(body_text) if body_text else []
-        creators = [a.strip() for a in meta["authors"].split(";") if a.strip()]
+        # AUTHORS ALONE (operator, 2026-09-12: "authors are the only
+        # authors. illustrators and translators must be credited but as
+        # illustrators and translators"). Built from the ROLES, never by
+        # splitting the display string — that string now carries "Kemble,
+        # E. W. (illustrator)", and §9.5's `creators` is the work's
+        # authors, not a rendering of a credits line.
+        #
+        # Nobody is dropped: every agent is in `extra.creators_detail`
+        # with their role, and the display string credits them all.
+        creators = list(dict.fromkeys(meta["author_names"]))
+
+        # PG PRODUCERS ARE CREDITED AS PG PRODUCERS (operator,
+        # 2026-09-12). One credits list, and every entry in it says what
+        # its person did: `creator` for the author, `ill`/`trl`/`edt` for
+        # the illustrator, translator and editor, `producer` for the
+        # volunteers who transcribed and proofread THIS edition. They are
+        # the reason the digital text exists, and leaving them as an
+        # unparsed sentence in a header blob credited them less precisely
+        # than everyone else in the same record.
+        #
+        # From both places PG writes them: the text file's `Credits:`
+        # field and the RDF's marc508.
+        produced = []
+        for credit in ([text_header.get("Credits", "")]
+                       + list(meta["marc"].get("508", []))):
+            produced.extend(pg_text.producers(credit))
+        named = {a.get("name") for a in meta["creators_detail"]}
+        credits_detail = list(meta["creators_detail"]) + [
+            {"name": n, "role": "producer"}
+            for n in dict.fromkeys(produced) if n not in named]
         subjects = [s.strip() for s in meta["subjects"].split("|") if s.strip()]
         return CanonicalDoc(
             uid=f"{self.source_id}:{native_id}",
@@ -327,8 +356,13 @@ class GutenbergSource:
             # and an illustrator is not an author.
             extra={k: v for k, v in {
                 "bookshelves": meta["bookshelves"],
+                # THE DATE THE BOOK ENTERED PG, kept and asked for
+                # (operator, 2026-09-12). Promise 9(c) lets us drop the
+                # date an entity entered OUR corpus; this is the date it
+                # entered THEIRS, which is a fact about this edition and
+                # the key `pack build --until` cuts on.
                 "issued": meta.get("issued"),
-                "creators_detail": meta["creators_detail"],
+                "creators_detail": credits_detail,
                 "languages": meta["languages"],
                 "subjects_by_scheme": meta["subjects_by_scheme"],
                 "alt_titles": meta["alt_titles"],

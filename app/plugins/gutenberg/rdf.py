@@ -40,6 +40,19 @@ NS = {
 #: the vocabulary a `dcam:memberOf` resource names, by its last segment
 _SCHEME_OF = re.compile(r"([A-Za-z]+)$")
 
+#: MARC relator codes in readable words, for the display credit. An
+#: unknown code is shown AS the code rather than guessed at or hidden —
+#: a credit nobody can read is still a credit, and a wrong one is not.
+_ROLE_LABEL = {
+    "ill": "illustrator", "trl": "translator", "edt": "editor",
+    "ctb": "contributor", "aui": "author of introduction", "com": "compiler",
+    "ann": "annotator", "aft": "author of afterword", "prf": "performer",
+    "nrt": "narrator", "clb": "collaborator", "art": "artist",
+    "egr": "engraver", "pht": "photographer", "adp": "adapter",
+    "arr": "arranger", "cmp": "composer", "lyr": "lyricist",
+    "aus": "screenwriter", "dub": "dubious author", "oth": "other",
+}
+
 
 def _value(el: ET.Element) -> str:
     """An RDF node's text, whether it is written inline or as rdf:value."""
@@ -100,7 +113,7 @@ def parse(book_dir: Path, book_id: int) -> dict:
     # a key that only the happy path sets gets a KeyError on exactly the
     # books whose metadata is already broken.
     out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": "",
-           "issued": None, "creators_detail": [], "languages": [],
+           "issued": None, "creators_detail": [], "author_names": [], "languages": [],
            "subjects_by_scheme": {}, "alt_titles": [], "description": "",
            "toc": "", "dcmi_type": "", "rights": "", "reading_ease": "", "marc": {}}
     if not path.is_file():
@@ -131,15 +144,22 @@ def parse(book_dir: Path, book_id: int) -> dict:
     # promise 9 forbids.
     agents = _agents(ebook)
     out["creators_detail"] = agents
-    #: EVERY agent, in the origin's order, and that is now a decision
-    #: rather than an accident. It looked like a bug — PG names
-    #: illustrators, translators and editors as agents, so Huckleberry
-    #: Finn reads "Twain, Mark; Kemble, E. W. (Edward Windsor)" — and the
-    #: operator settled it (2026-09-12): "authors and illustrators are
-    #: fundamental credits". They are all credits and they all stay; the
-    #: ROLE that says which is which is in `creators_detail`.
-    out["authors"] = "; ".join(dict.fromkeys(
-        a["name"] for a in agents if a.get("name")))
+    # AUTHORS ARE THE ONLY AUTHORS, and everyone else is credited AS WHAT
+    # THEY DID (operator, 2026-09-12). PG names illustrators, translators
+    # and editors as agents beside the author, and the old sweep put them
+    # all in one list, so Huckleberry Finn read "Twain, Mark; Kemble, E.
+    # W." as though Kemble wrote it. Dropping him would be worse — he is
+    # a credit — so he is named with his role instead.
+    #
+    # `out["authors"]` is the DISPLAY string the worker writes into
+    # `documents.authors`; the record's `creators` is built from
+    # `creators_detail` and holds authors ALONE (see source.parse).
+    out["author_names"] = [a["name"] for a in agents
+                           if a.get("name") and a.get("role") in ("creator", "")]
+    others = [f"{a['name']} ({_ROLE_LABEL.get(a['role'], a['role'])})"
+              for a in agents
+              if a.get("name") and a.get("role") not in ("creator", "")]
+    out["authors"] = "; ".join(dict.fromkeys(out["author_names"] + others))
 
     langs = [_value(lang).lower() for lang in ebook.findall("dcterms:language", NS)]
     langs = [x for x in dict.fromkeys(langs) if x]

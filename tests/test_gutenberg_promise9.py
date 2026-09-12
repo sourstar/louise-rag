@@ -110,13 +110,41 @@ def test_an_agent_is_more_than_a_name_and_carries_its_role(meta):
     assert kemble["birth"] == "1861"
 
 
-def test_every_credit_is_listed_not_only_the_author(meta):
-    """It looked like a bug that `documents.authors` reads "Twain, Mark;
-    Kemble, E. W." when Kemble illustrated. Operator, 2026-09-12:
-    "authors and illustrators are fundamental credits". They all stay;
-    `creators_detail` says which is which."""
-    assert meta["authors"] == "Twain, Mark; Kemble, E. W."
+def test_an_illustrator_is_credited_as_an_illustrator(meta):
+    """Operator, 2026-09-12: "authors are the only authors. illustrators
+    and translators must be credited but as illustrators and
+    translators". Two failures to avoid, not one: calling Kemble an
+    author, and dropping him."""
+    assert meta["authors"] == "Twain, Mark; Kemble, E. W. (illustrator)"
+    assert meta["author_names"] == ["Twain, Mark"], "authors alone"
     assert {a["role"] for a in meta["creators_detail"]} == {"creator", "ill"}
+
+
+def test_an_unknown_relator_is_shown_as_its_code(tmp_path):
+    """A credit nobody can read is still a credit; a wrong one is not, so
+    an unmapped MARC relator is printed rather than guessed at."""
+    (tmp_path / "pg76.rdf").write_text(
+        RDF.replace("marcrel:ill", "marcrel:zzz"), encoding="utf-8")
+    got = rdf.parse(tmp_path, 76)
+    assert "Kemble, E. W. (zzz)" in got["authors"]
+    assert got["author_names"] == ["Twain, Mark"]
+
+
+def test_the_records_creators_are_authors_alone(tmp_path):
+    """§9.5's `creators` is the work's authors, not a rendering of a
+    credits line — and it must never be built by splitting the display
+    string, which now carries "(illustrator)"."""
+    from app.plugins.gutenberg import SOURCE
+    from app.plugins.base import RawDoc, DocRef
+    (tmp_path / "pg76.rdf").write_text(RDF, encoding="utf-8")
+    (tmp_path / "pg76.txt").write_text(
+        "*** START OF THE PROJECT GUTENBERG EBOOK X ***\n\n"
+        "CHAPTER I.\n\nA body of text.\n", encoding="utf-8")
+    ref = DocRef(source_id="gutenberg", native_id="76", locator=str(tmp_path))
+    doc = SOURCE.parse(SOURCE.fetch(ref))
+    assert doc.creators == ["Twain, Mark"], "no illustrator among the authors"
+    roles = {a["name"]: a["role"] for a in doc.extra["creators_detail"]}
+    assert roles["Kemble, E. W."] == "ill", "and he is still credited, as what he did"
 
 
 def test_nothing_is_silently_truncated(tmp_path):
@@ -296,3 +324,57 @@ def test_every_marc_datafield_is_kept_by_number(tmp_path):
     assert marc["999"] == ["Something nobody has sampled."], \
         "a datafield this code has never heard of survives"
     assert marc["908"], "and the one read by name is still in here"
+
+
+def test_pg_producers_are_credited_as_pg_producers(tmp_path):
+    """Operator, 2026-09-12: "PG producers are credited as PG producers".
+    One credits list, every entry saying what its person did — leaving
+    them as an unparsed sentence in a header blob credited them less
+    precisely than everyone else in the same record."""
+    from app.plugins.gutenberg import SOURCE, pg_text
+    from app.plugins.base import DocRef
+    (tmp_path / "pg76.rdf").write_text(RDF, encoding="utf-8")
+    (tmp_path / "pg76.txt").write_text(TEXT_WITH_HEADER, encoding="utf-8")
+    doc = SOURCE.parse(SOURCE.fetch(DocRef(source_id="gutenberg", native_id="76",
+                                           locator=str(tmp_path))))
+    by_role = {}
+    for c in doc.extra["creators_detail"]:
+        by_role.setdefault(c["role"], []).append(c["name"])
+    assert by_role["creator"] == ["Twain, Mark"]
+    assert by_role["ill"] == ["Kemble, E. W."]
+    assert "David Widger" in by_role["producer"]
+    assert "Pat Castevens" in by_role["producer"]
+
+
+def test_a_producer_credit_is_split_into_people_not_fragments():
+    from app.plugins.gutenberg import pg_text
+    assert pg_text.producers("Produced by David Widger and Pat Castevens") == [
+        "David Widger", "Pat Castevens"]
+    assert pg_text.producers("Produced by Al, Bo, and Cy") == ["Al", "Bo", "Cy"]
+    # a collective is ONE credit, not four people
+    assert pg_text.producers(
+        "Produced by the Online Distributed Proofreading Team") == [
+        "the Online Distributed Proofreading Team"]
+    # a tail describing HOW is not a person, and is not chopped on "and"
+    got = pg_text.producers(
+        "Produced by Jane Doe from page images generously made available "
+        "by the Internet Archive and the Library of Congress")
+    assert got[0] == "Jane Doe"
+    assert len(got) == 2 and got[1].startswith("from page images"), \
+        "the provenance note stays whole rather than minting people"
+    assert pg_text.producers("") == []
+
+
+def test_the_date_the_book_entered_pg_is_kept(tmp_path):
+    """Promise 9(c) lets us drop the date an entity entered OUR corpus.
+    This is the date it entered THEIRS — a fact about the edition, and
+    the key `pack build --until` cuts on. Asked for explicitly
+    (operator, 2026-09-12)."""
+    from app.plugins.gutenberg import SOURCE
+    from app.plugins.base import DocRef
+    (tmp_path / "pg76.rdf").write_text(RDF, encoding="utf-8")
+    (tmp_path / "pg76.txt").write_text(TEXT_WITH_HEADER, encoding="utf-8")
+    doc = SOURCE.parse(SOURCE.fetch(DocRef(source_id="gutenberg", native_id="76",
+                                           locator=str(tmp_path))))
+    assert doc.extra["issued"] == "1993-01-01"
+    assert doc.date is None, "and it is NOT passed off as the work's date"

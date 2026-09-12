@@ -69,6 +69,48 @@ def scan_dir(book_dir: Path, book_id: int) -> tuple[Path | None, bool, str | Non
 def find_txt(book_dir: Path, book_id: int) -> Path | None:
     return scan_dir(book_dir, book_id)[0]
 
+#: "Produced by A, B and C" / "Transcribed by …" / "Updated by …" — the
+#: lead-in PG writes before the people who made the edition.
+_PRODUCED_BY = re.compile(
+    r"^\s*(?:produced|prepared|transcribed|updated|proofread|created|e-?text prepared)"
+    r"\s+by\s+", re.I)
+#: names separated by commas and "and", but NOT inside a collective name
+#: ("the Online Distributed Proofreading Team" is one credit, not four).
+_NAME_SPLIT = re.compile(r",\s*and\s+|,\s*|\s+and\s+", re.I)
+
+
+def producers(credit: str) -> list[str]:
+    """The people named in a PG production credit, one per name.
+
+    Operator, 2026-09-12: "PG producers are credited as PG producers". So
+    they are parsed into names like any other credit rather than kept as
+    one opaque sentence, and `source.parse` gives them the role
+    `producer` beside the author and the illustrator.
+
+    The lead-in ("Produced by") goes; a trailing note about HOW the work
+    was done ("with additional proofreading by volunteers", "from page
+    images generously made available by …") is not a name and is kept
+    whole as its own credit rather than chopped into fragments.
+    """
+    if not credit or not credit.strip():
+        return []
+    body = _PRODUCED_BY.sub("", credit.strip())
+    # a "from …"/"with …" tail describes the SOURCE of the images or the
+    # process; splitting it on "and" would mint people who do not exist
+    tail = ""
+    for sep in (" from page images", " from images", " with additional",
+                " using scans", " from scans"):
+        cut = body.lower().find(sep)
+        if cut != -1:
+            body, tail = body[:cut], body[cut:].strip()
+            break
+    names = [n.strip(" .") for n in _NAME_SPLIT.split(body)]
+    out = [n for n in names if len(n) > 1]
+    if tail:
+        out.append(tail)
+    return list(dict.fromkeys(out))
+
+
 def header_fields(path: Path) -> dict[str, str]:
     """The `Key: value` lines of the PG header, before `*** START ***`.
 
