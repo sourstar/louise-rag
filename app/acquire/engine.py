@@ -335,8 +335,61 @@ def _upsert_fetched(con, source_id: str, f: RemoteFile, endpoint_url: str, local
          blake2, config.FETCH_VERSION, profile, int(f.extra), int(time.time())))
 
 
+#: A transport that dropped mid-stream said nothing about the FILE. Both
+#: of these are the mirror going away, verbatim from rsync.
+_TRANSIENT = ("connection reset by peer", "connection unexpectedly closed",
+              "error in socket io", "error in rsync protocol data stream",
+              "connection timed out", "connection refused",
+              "temporary failure in name resolution", "broken pipe")
+
+#: How many times one file may be dropped on the floor before the
+#: deferral is reported as an error. Low, because a file that cannot
+#: cross after this many mirror attempts is no longer "the mirror is
+#: flaky", it is something an operator should see.
+DEFER_ATTEMPTS = 4
+
+
+def transient(error: str) -> bool:
+    """Is this the endpoint going away, rather than the file being bad?"""
+    low = (error or "").lower()
+    return any(marker in low for marker in _TRANSIENT)
+
+
 def _upsert_failed(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,
                     profile: str, error: str) -> None:
+    """Record a failed fetch — as a DEFERRAL while it is only the mirror.
+
+    CLAUDE.md: "Deferral is not failure: an unreachable endpoint ... never
+    writes an error to a document." A dropped rsync connection is the
+    definition of an unreachable endpoint, and every one of them was
+    being written to `error`.
+
+    Measured on gutenberg 2026-09-13, mid-fetch: 9,480 of 91,863 rows
+    errored, and every single one was
+
+        rsync ... exit 12: read error: Connection reset by peer (104)
+
+    from a mirror that rotates under us (`ftp.ibiblio.org` recorded,
+    `aleph.gutenberg.org` in the message). Nothing was lost — `_is_pending`
+    gates on `fetch_done`/size/mtime and has never looked at `error` or
+    `retries`, so each one is picked up again on the next pass — but the
+    operator's only summary of fetch health counted mirror flakiness as
+    failure. It read as "errors=9,469 and climbing", and it cost an
+    investigation to find out that it meant nothing.
+
+    So this is a REPORTING change and deliberately nothing more: retry
+    behaviour is identical either way, because no selection has ever
+    consulted either column. `retries` still counts every attempt, which
+    is what bounds the quiet: after DEFER_ATTEMPTS the deferral is
+    reported as an error, so a file that genuinely cannot cross still
+    reaches a human instead of retrying in silence forever.
+    """
+    previous = con.execute(
+        "SELECT retries FROM fetch_files WHERE source_id=? AND rel_path=?",
+        (source_id, f.rel_path)).fetchone()
+    attempts = int(previous["retries"] if previous else 0) + 1
+    quiet = transient(error) and attempts < DEFER_ATTEMPTS
+    stored = None if quiet else error[:500]
     con.execute(
         "INSERT INTO fetch_files(source_id,rel_path,endpoint_url,remote_size,remote_mtime,"
         "bytes_fetched,fetch_done,profile,error,retries,extra,updated_at) "
@@ -345,7 +398,7 @@ def _upsert_failed(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_
         "bytes_fetched=excluded.bytes_fetched,error=excluded.error,retries=retries+1,"
         "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, bytes_fetched, profile,
-         error[:500], int(f.extra), int(time.time())))
+         stored, int(f.extra), int(time.time())))
 
 
 def _upsert_aborted(con, source_id: str, f: RemoteFile, endpoint_url: str, bytes_fetched: int,

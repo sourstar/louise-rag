@@ -733,16 +733,34 @@ histogram says the same thing: 9,228 at `retries=1`, 245 at 2, 7 at 3 —
 the overwhelming majority have failed once and have not come round yet,
 because the first pass is still running.
 
-**What IS wrong is the recording.** CLAUDE.md: "Deferral is not failure:
-an unreachable endpoint ... never writes an error." A connection reset is
-the definition of an unreachable endpoint, and writing it to `error`
-means the operator's only summary of fetch health counts transient mirror
-flakiness alongside real failures — which is exactly how it read from
-the outside ("errors=9469 and climbing") and why it cost an investigation
-to dismiss. The fix is `_upsert_deferred` beside `_upsert_aborted`:
-truthful partial progress, no `error`, `retries` left alone for genuine
-failures. NOT done — it is a reporting fix, it ships no wrong artefact,
-and it was found with a deploy already staged and blocked.
+**What IS wrong is the recording, and it is fixed.** CLAUDE.md:
+"Deferral is not failure: an unreachable endpoint ... never writes an
+error." A connection reset is the definition of an unreachable endpoint,
+and writing it to `error` means the operator's only summary of fetch
+health counts transient mirror flakiness alongside real failures — which
+is exactly how it read from outside ("errors=9469 and climbing") and why
+it cost an investigation to dismiss.
+
+`_upsert_failed` now classifies: a dropped transport (`transient()` —
+connection reset, unexpectedly closed, socket IO, protocol stream,
+timeout, refused, DNS, broken pipe) writes no `error` while it is only
+the mirror. `exit 23`, a sidecar mismatch, a full disk and a permission
+are untouched and still reported at once.
+
+**What makes the quiet safe is that it is bounded.** `retries` still
+counts every attempt, and after `DEFER_ATTEMPTS` (4) the deferral IS
+reported — a file that cannot cross after four mirror drops is no longer
+flakiness, it is something a human must see. A deferral that skipped
+`retries` would have been an infinite silent retry, which is the bug
+this fix could have introduced and the reason a test pins it.
+
+**And why it was safe to make at all**, having first argued for deferring
+it: retry behaviour is identical either way. `_is_pending` gates on
+`fetch_done`/size/mtime and has never consulted `error` or `retries`, so
+a deferred file and an errored one are selected the same. The livelock I
+was worried about was already the status quo. A test asserts
+`_is_pending` still reads neither column, so the day that changes, this
+fix gets re-examined instead of silently becoming wrong.
 
 ### What is waiting on the operator
 
