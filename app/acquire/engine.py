@@ -133,10 +133,35 @@ def _select_extras(all_files: list[RemoteFile], spec: AcquisitionSpec,
     return sorted(chosen.values(), key=lambda f: f.rel_path)
 
 
+def _listing_bound(stop, priority: Priority):
+    """The pass's stop, bound around a listing so the transport can read it
+    (`_current_stop()`). A bind is only the handle — no bucket draw, no
+    lease (transfer/manager.py) — so listing traffic stays unmetered as it
+    was (STATUS.md). Without a stop nothing is bound: a dry-run plan lists
+    exactly as before."""
+    if stop is None:
+        from contextlib import nullcontext
+        return nullcontext()
+    return get_manager().bind(priority, Direction.DOWN, stop=stop)
+
+
+def _stop_check(stop, what: str) -> None:
+    if stop is not None and stop.is_set():
+        raise TransferAborted(f"stopped {what}")
+
+
 def _list_and_filter(spec: AcquisitionSpec, profile: str,
                       snapshot: str | None = None,
                       endpoints: list | None = None,
-                      extras_selected: tuple[str, ...] = ()) -> list[RemoteFile]:
+                      extras_selected: tuple[str, ...] = (),
+                      stop=None,
+                      priority: Priority = Priority.BACKFILL) -> list[RemoteFile]:
+    # A STOP ENDS THE LISTING, not only the transfer after it. The listing
+    # used to run with no stop at all — gutenberg's rsync listing is ~12
+    # minutes — so a pause or SIGTERM arriving during it was seen only when
+    # the pool started. Every listing now runs under `_listing_bound`, and
+    # an abort RAISES TransferAborted; run_acquisition turns that into a
+    # "stopped" result, never an error.
     # resolve_profile also understands a COMBINED profile ("tr,it") on an
     # additive source, where it is the union of those slices
     profile_filter = resolve_profile(spec, profile)
@@ -158,9 +183,16 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
         candidates = []
         last_error: Exception | None = None
         for endpoint in (endpoints if endpoints is not None else spec.endpoints):
+            _stop_check(stop, f"before listing {endpoint.url}")
             try:
-                candidates = list(transport.list_files(endpoint, spec))
+                with _listing_bound(stop, priority):
+                    candidates = list(transport.list_files(endpoint, spec))
                 break
+            except TransferAborted:
+                # the STOP, not the mirror. TransferAborted IS a
+                # TransportError: caught below, it marked this mirror down
+                # for DOWN_S and listed the next one in full
+                raise
             except TransportError as e:
                 last_error = e
                 mirrors.mark_down(endpoint.url)
@@ -169,7 +201,9 @@ def _list_and_filter(spec: AcquisitionSpec, profile: str,
     else:
         candidates = []
         for endpoint in spec.endpoints:
-            candidates.extend(transport.list_files(endpoint, spec))
+            _stop_check(stop, f"before listing {endpoint.url}")
+            with _listing_bound(stop, priority):
+                candidates.extend(transport.list_files(endpoint, spec))
     for f in candidates:
         if f.rel_path not in seen:
             seen.add(f.rel_path)
@@ -239,7 +273,7 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
 
 
 def effective_spec(collection, spec: AcquisitionSpec,
-                   profile: str | None = None) -> AcquisitionSpec:
+                   profile: str | None = None, stop=None) -> AcquisitionSpec:
     """The spec a collection ACTUALLY fetches by.
 
     `peer_source` (TOML; a magnet or .torrent path) redirects the whole
@@ -261,7 +295,7 @@ def effective_spec(collection, spec: AcquisitionSpec,
     profile = profile or collection.profile or ""
     urls: list[str] = []
     for source in peers:
-        index = _index_for(collection, source)
+        index = _index_for(collection, source, stop)
         if index is None:
             urls.append(source)
             continue
@@ -282,17 +316,23 @@ def effective_spec(collection, spec: AcquisitionSpec,
                    probe_file=None, snapshot_files=None, snapshot_index=None)
 
 
-def _index_for(collection, source: str) -> dict | None:
+def _index_for(collection, source: str, stop=None) -> dict | None:
     """The torrent-collection index behind `source`, resolving it on first
     sight (a few hundred KB from the swarm); None for a plain torrent or
     when it cannot be reached yet (the source then stands as itself and
-    the transport reports the outage per file, never a crash here)."""
+    the transport reports the outage per file, never a crash here).
+
+    A STOP is not "unreachable": it propagates. Swallowed, a pause during
+    the resolve would read as "plain torrent for now" and the pass would
+    carry on listing the index torrent itself as the corpus."""
     from . import torrent_collection
     cached = torrent_collection.cached_index(collection, source)
     if cached is not None:
         return cached
     try:
-        return torrent_collection.resolve(collection, source)
+        return torrent_collection.resolve(collection, source, stop=stop)
+    except TransferAborted:
+        raise
     except Exception:   # noqa: BLE001 — unresolved is "plain torrent for now"
         return None
 
@@ -733,7 +773,27 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     write (and every db.log_event) happens here, on the caller's thread.
     """
     _require_license_ack(spec, collection)
+    try:
+        return _run_acquisition(con, collection, spec, profile, stop, priority)
+    except TransferAborted as e:
+        # A STOP BEFORE THE POOL — in the listing, the benchmark, the index
+        # resolve or the planning — is a stop, not a failure: it returns
+        # what a stop inside the pool returns, a result with nothing
+        # fetched, so the worker logs the pass it was (never an ERROR) and
+        # `corpus add` exits cleanly. The caller's stop says why.
+        return {**_no_counts(), "stopped": str(e)}
 
+
+def _no_counts() -> dict:
+    """Every counter a pass reports, at zero: the one shape every result
+    has. A stopped multi-torrent pass once returned `{"stopped": ...}`
+    alone, and `corpus add` died on `result['fetched']` (review, 2026-09-13)."""
+    return {"fetched": 0, "skipped": 0, "failed": 0, "aborted": 0,
+            "adopted": 0, "total": 0}
+
+
+def _run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
+                     stop, priority) -> dict:
     # The CLAIM covers the WHOLE pass, enumeration included, with a
     # keepalive so it cannot go stale under a long listing. It used to be
     # taken only around the transfer loop — so during gutenberg's first
@@ -741,7 +801,12 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
     # a bare "fetched 0/0" with no fetching… badge (the badge reads the
     # claim) and a concurrent `corpus add` could have started a second
     # listing against the same origin.
-    spec = effective_spec(collection, spec, profile)   # peer plane, when the TOML says so
+    #
+    # Bound: resolving a torrent-collection index downloads it from the
+    # swarm (torrent_collection.resolve), and that wait must see the stop.
+    with _listing_bound(stop, priority):
+        spec = effective_spec(collection, spec, profile,   # peer plane, when the TOML says so
+                              stop=stop)
     with claim_mod.acquisition_claim(con, spec.source_id):
         keepalive = _ClaimKeepalive(collection, spec.source_id)
         keepalive.start()
@@ -751,13 +816,19 @@ def run_acquisition(con, collection, spec: AcquisitionSpec, profile: str,
                 # ONE AT A TIME, in the listed order, so the first is
                 # complete — and being processed — before the next starts
                 from dataclasses import replace
-                total: dict = {}
+                total: dict = _no_counts()
                 for endpoint in spec.endpoints:
                     if stop is not None and stop.is_set():
                         break
-                    part = _run_acquisition_claimed(
-                        con, collection, replace(spec, endpoints=(endpoint,)),
-                        profile, stop, priority)
+                    try:
+                        part = _run_acquisition_claimed(
+                            con, collection, replace(spec, endpoints=(endpoint,)),
+                            profile, stop, priority)
+                    except TransferAborted as e:
+                        # keep what the torrents before this one landed: the
+                        # worker's post-fetch rescan keys on "fetched"
+                        total["stopped"] = str(e)
+                        break
                     for k, v in part.items():
                         total[k] = total.get(k, 0) + v if isinstance(v, (int, float)) else v
                 return total
@@ -805,7 +876,11 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
     endpoints = list(spec.endpoints)
     if spec.probe_file and len(endpoints) > 1:
         try:
-            mirrors.benchmark(con, spec)
+            # bound, so the probe's own fetch sees the stop (mirrors._probe_once)
+            with _listing_bound(stop, priority):
+                mirrors.benchmark(con, spec, stop=stop)
+        except TransferAborted:
+            raise                   # the stop, not a broken benchmark
         except Exception as e:   # noqa: BLE001 — a broken benchmark must not stop a fetch
             db.log_event(con, "warn", "acquire",
                          f"mirror benchmark failed ({e}); using last known order")
@@ -813,8 +888,14 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
 
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None),
                              endpoints=endpoints,
-                             extras_selected=getattr(collection, "extras", ()))
+                             extras_selected=getattr(collection, "extras", ()),
+                             stop=stop, priority=priority)
+    _stop_check(stop, "after listing")
     plan = _plan_from_files(con, collection, spec, files)
+    # the per-file planning passes scale with the listing and are not
+    # measured; a stop that arrived during them is honoured here, before
+    # anything is recorded
+    _stop_check(stop, "after planning")
     # The SOURCE's own file count, recorded the moment it is known. The
     # fetch loop below streams — fetch_files rows appear per file as each
     # is processed — so during a long pass done==total at every instant and

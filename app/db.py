@@ -700,48 +700,14 @@ def set_worker_state(con, state: str):
     assert state in WORKER_STATES
     set_control(con, WORKER_STATE_KEY, state)
 
-# Control keys that describe the NODE, not a collection. They live in the
-# control table of whichever collection the worker resolves FIRST, which is
-# an accident of sort order — `scope` (embed_mode) and `embed_gate` are
-# genuinely per-collection and must never be adopted this way.
+# Control keys that describe the NODE, not a collection. They live in
+# `state/node.sqlite` (app/node_state.py, 07 §7.8); they used to live in
+# the control table of whichever collection sorted first — an accident of
+# sort order that paused the whole node when that collection was wiped or
+# removed, and split the web from the worker when it was refused at boot.
+# `scope` (embed_mode) and `embed_gate` are genuinely per-collection and
+# stay in their manifests.
 NODE_CONTROL_KEYS = (WORKER_STATE_KEY, BANDWIDTH_OVERRIDE_KEY)
-
-def adopt_node_control(target_con, other_cons, fallback=None) -> dict[str, str]:
-    """Carry node-level control state to the collection that now owns it.
-
-    Observed live: wiping the derived data of the alphabetically-first
-    collection (a genome repair) emptied its control table, so
-    worker_state fell back to its default 'paused' and the WHOLE node
-    stopped — five collections, no log line, nothing obviously wrong. The
-    same fires when that collection is simply removed. Node state must
-    follow the node, so a control collection missing a node key adopts it
-    from a sibling; a key the control collection already has always wins
-    (an explicit pause is never overridden by a stale sibling value).
-
-    `fallback` is a plain {key: value} mapping tried after the siblings,
-    and it exists because the sibling list can be EMPTY exactly when it is
-    needed most. The donor list the worker passes is
-    `all_collections[1:]`, so when every other collection leaves at once —
-    retiring the unconverted ones, say — the new owner has no sibling to
-    adopt from and the node silently returns to 'paused'. The worker
-    rescues the departing values into that mapping before it closes their
-    connections."""
-    adopted: dict[str, str] = {}
-    for key in NODE_CONTROL_KEYS:
-        if get_control(target_con, key) is not None:
-            continue
-        for con in other_cons:
-            value = get_control(con, key)
-            if value is not None:
-                set_control(target_con, key, value)
-                adopted[key] = value
-                break
-        else:
-            value = (fallback or {}).get(key)
-            if value is not None:
-                set_control(target_con, key, value)
-                adopted[key] = value
-    return adopted
 
 # ---------------- events ----------------
 

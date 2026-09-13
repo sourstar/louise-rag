@@ -2,7 +2,7 @@
 default so an existing hand-populated deployment sees zero behavior change
 and no surprise outbound network access on restart.
 """
-from app import collections as collections_mod, db, worker
+from app import collections as collections_mod, db, node_state, worker
 from app.acquire.spec import AcquisitionSpec, Filter, Transport
 
 
@@ -137,7 +137,7 @@ def _forget(collection):
         worker._acquire_done.pop(collection.name, None)
         worker._paused_aborts.discard(collection.name)
     worker._take_discovery_request(collection.name)
-    worker._set_control_name(None)
+    worker._main_loop_live.clear()
 
 
 def test_the_fetch_stop_includes_the_pause(tmp_path, monkeypatch):
@@ -494,33 +494,32 @@ def test_a_resume_during_the_threads_closing_write_does_not_lose_the_restart(
         _forget(collection)
 
 
-def test_the_beat_reads_the_main_loops_control_collection(tmp_path):
+def test_the_beat_reads_the_node_state_not_any_collection(isolated_config, tmp_path):
     """Reproduced by the second review: the beat read `load_all()[0]`, the
     main loop its FILTERED `all_collections[0]`. A collection with no
     worker_state reads 'paused' — so when the two differed (add one whose
     name sorts first) the beat set `_paused` every 10 s and the main loop
     cleared it and re-armed every round: a fetch stopped and restarted per
-    beat. The loop acquire=False exists to prevent."""
-    ctrl, first = _named(tmp_path, "ctrl"), _named(tmp_path, "aaa-new")
-    cons = {c.name: db.connect(c) for c in (ctrl, first)}
-    db.set_worker_state(cons["ctrl"], "running")
-    assert db.worker_state(cons["aaa-new"]) == "paused", "no key reads as paused"
+    beat. The node state now lives in state/node.sqlite, which both read;
+    a first-sorting collection with no key changes nothing."""
+    first = _named(tmp_path, "aaa-new")
+    assert db.worker_state(db.connect(first)) == "paused", "no key reads as paused"
+    node_state.set_worker_state("running")
     try:
-        worker._set_control_name("ctrl")
-        assert worker._control_state_for_beat(cons) == "running", \
-            "the collection the main loop controls from, not the first-sorting one"
+        worker._main_loop_live.set()
+        assert worker._control_state_for_beat(node_state.connect()) == "running", \
+            "the node's state, not the first-sorting collection's"
     finally:
-        worker._set_control_name(None)
+        worker._main_loop_live.clear()
 
 
-def test_the_beat_does_nothing_without_a_main_loop(tmp_path):
+def test_the_beat_does_nothing_without_a_main_loop(isolated_config, tmp_path):
     """Why five pipeline tests failed in the full suite: `test_stats.py`
     runs a real `_stats_publisher` with no main loop, against a fresh
     config whose state defaults to 'paused'. The beat set `_paused`,
     nothing ever cleared it, and every pipeline thread afterwards idled."""
-    c = _named(tmp_path, "solo")
-    worker._set_control_name(None)
-    assert worker._control_state_for_beat({"solo": db.connect(c)}) is None
+    worker._main_loop_live.clear()
+    assert worker._control_state_for_beat(node_state.connect()) is None
 
 
 def test_a_rearmed_fetch_is_not_also_treated_as_a_normal_completion(tmp_path, monkeypatch):

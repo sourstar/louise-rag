@@ -23,6 +23,15 @@ drwxrwsr-x          4,096 2025/09/02 14:00:09 1
 """
 
 
+class _ListProc:
+    """A finished `rsync --list-only`: the listing reads its stdout through
+    communicate(), as the real Popen loop does."""
+    returncode = 0
+
+    def communicate(self, timeout=None):
+        return _REAL_SHAPE, ""
+
+
 def _spec():
     return AcquisitionSpec(
         source_id="g", transport=Transport.RSYNC,
@@ -35,10 +44,10 @@ def _spec():
 def test_listing_is_recursive_and_parses_comma_grouped_sizes(monkeypatch):
     seen_argv = {}
 
-    def fake_run(argv, **kw):
+    def fake_popen(argv, **kw):
         seen_argv["argv"] = argv
-        return subprocess.CompletedProcess(argv, 0, stdout=_REAL_SHAPE, stderr="")
-    monkeypatch.setattr(subprocess, "run", fake_run)
+        return _ListProc()
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     files = list(RsyncTransport().list_files(_spec().endpoints[0], _spec()))
     assert "-r" in seen_argv["argv"], \
@@ -104,9 +113,8 @@ def test_every_rsync_invocation_bounds_its_own_idleness(monkeypatch, tmp_path):
 
     # the LISTING too: one that stalls holds the whole pass, not one slot
     listed = []
-    monkeypatch.setattr(tr.subprocess, "run",
-                        lambda *a, **k: listed.append(a[0]) or
-                        subprocess.CompletedProcess(a[0], 0, _REAL_SHAPE, ""))
+    monkeypatch.setattr(tr.subprocess, "Popen",
+                        lambda argv, **k: listed.append(argv) or _ListProc())
     list(tr.RsyncTransport().list_files(endpoint, _spec()))
     assert any(a.startswith("--timeout=") for a in listed[-1]), listed[-1]
     assert any(a.startswith("--contimeout=") for a in listed[-1]), listed[-1]

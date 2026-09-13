@@ -21,6 +21,10 @@ configured collection was silently, permanently never touched.
 import errno
 import signal
 import sqlite3
+# run_forever's boot-refusal branch prints to sys.stderr, and this module
+# never imported it: a collection refused at boot (invariant 1: refuse THAT
+# collection, not the node) raised NameError and crash-looped the worker.
+import sys
 import threading
 import time
 import traceback
@@ -29,7 +33,8 @@ from pathlib import Path
 import httpx
 
 from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                embeddings, entities, fts, plugin_io, refs, sched, sizing, spaces, stats)
+                embeddings, entities, fts, node_state, plugin_io, refs, sched, sizing,
+                spaces, stats)
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -534,12 +539,6 @@ _FTS_REINDEX_WINDOWED = (
     "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 "
     "AND error IS NULL AND retries<? AND (fts_version<? OR entity_version<?) LIMIT 1")
 # path -> (fts_version, entity_version, cursor rowid, max rowid, done)
-#: Node-level control values (worker_state, the bandwidth override) read
-#: out of a collection's control table as that collection leaves the node,
-#: so the next owner can adopt them even when every sibling left at once.
-#: Process-lived on purpose: it is a hand-off within one run, not state.
-_orphaned_node_control: dict[str, str] = {}
-
 _reindex_cursor: dict[str, tuple[int, int, int, int, bool]] = {}
 
 
@@ -1338,12 +1337,7 @@ def _index_maintainer() -> None:
             collections = collections_mod.load_all()
             if not collections:
                 continue
-            control = db.connect(collections[0])
-            try:
-                state = db.worker_state(control)
-            finally:
-                control.close()
-            if state in ("paused", "seed-only"):
+            if node_state.worker_state() in ("paused", "seed-only"):
                 continue
             # Served by the SAME fair-share rotation as the encoder
             # (app/sched.py), not in list order. One collection at a time is
@@ -2377,6 +2371,17 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
         scans = list(_scan_threads.values())
     for thread in scans:
         thread.join(timeout=max(0.0, deadline - time.time()))
+    # Corpus and archive fetches too. They were never joined: a SIGTERM
+    # abandoned them as daemon threads mid-pass — a listing unstoppable
+    # anyway, a claim row left behind for the next boot to wait out. Their
+    # stops include `_stop` and every phase of a pass now honours it, the
+    # listing included, so each ends at its unit (a truthful `.part`, the
+    # claim released) inside this same deadline.
+    with _acquire_lock:
+        fetches = list(_acquire_threads.values())
+    fetches += list(_archive_threads.values())
+    for thread in fetches:
+        thread.join(timeout=max(0.0, deadline - time.time()))
 
 
 def _apply_tier2_embed_mode(con, collection, reason: str) -> None:
@@ -2498,16 +2503,6 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     for gone in sorted(known - now_names):
         db.log_event(cons[gone], "info", "worker",
                      f"collection {gone!r} removed — ingestion stopped, data kept")
-        # Rescue the node's control state BEFORE the connection closes.
-        # worker_state lives in whichever collection sorts first, so when
-        # the collections ahead of the new owner all leave in one round the
-        # donor list `all_collections[1:]` is empty and the node drops to
-        # its 'paused' default with no log line. Reading the values out
-        # here is the only moment they are still reachable.
-        for key in db.NODE_CONTROL_KEYS:
-            value = db.get_control(cons[gone], key)
-            if value is not None:
-                _orphaned_node_control.setdefault(key, value)
         # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
         # that runs later in the round and not at all in non-pipeline mode or
         # while the node is paused. Waking the transfer manager is required
@@ -2626,42 +2621,34 @@ def _log_shares(con, live_paths=None) -> None:
             for k, v in sorted(sizes["windows"].items())))
 
 
-#: the collection the MAIN LOOP reads the node's state from, published each
-#: round. None until a main loop has run — and the stats beat then touches
-#: nothing, which is what a thread with no main loop behind it must do.
-_control_name: str | None = None
+#: set while run_forever's loop runs. The stats beat acts on the node state
+#: only then: a beat with no main loop behind it has nobody to clear what it
+#: sets (`_note_pause_from_state` never clears).
+_main_loop_live = threading.Event()
 
 
-def _set_control_name(name: str | None) -> None:
-    global _control_name
-    _control_name = name
+def _control_state_for_beat(node_con) -> str | None:
+    """The node state the stats beat may act on — from state/node.sqlite,
+    where the main loop reads it too (app/node_state.py) — or None when
+    there is no main loop to agree with.
 
-
-def _control_state_for_beat(seed_cons) -> str | None:
-    """The node state the stats beat may act on: the MAIN LOOP's control
-    collection's, or None when there is no main loop to agree with.
-
-    ONE SOURCE, NOT TWO. The beat used to read `load_all()[0]`, while the
-    main loop reads its FILTERED `all_collections[0]` — boot refusals and
-    unadopted additions removed. When they differed, the beat's collection
-    could have no `worker_state` at all, which reads 'paused' (db.py), so
-    the beat set `_paused` every 10 s while the main loop cleared it and
+    ONE SOURCE, NOT TWO. The beat once read `load_all()[0]` while the main
+    loop read its FILTERED `all_collections[0]`. When they differed, the
+    beat's collection had no worker_state, which reads 'paused', so the
+    beat set `_paused` every 10 s while the main loop cleared it and
     re-armed the fetch every round: a fetch stopped and restarted per beat,
-    each with a full listing — the acquire<->discover loop that
-    `acquire=False` exists to prevent. Reproduced by the second review, and
-    reachable in ordinary operation: add a collection whose name sorts
-    first.
+    each with a full listing (the second review, 2026-09-13). The node
+    store removed the choice of collection altogether.
 
     None without a main loop is not only defensive: `test_stats.py` runs a
     real `_stats_publisher` with no main loop against a fresh config, whose
     state defaults to 'paused'. The beat set `_paused`, nothing cleared it,
     and five pipeline-thread tests later in the suite idled until timeout.
     """
-    name = _control_name
-    if not name or name not in seed_cons:
+    if not _main_loop_live.is_set():
         return None
     try:
-        return db.worker_state(seed_cons[name])
+        return node_state.worker_state(node_con)
     except Exception:   # noqa: BLE001 — telemetry must never decide by raising
         return None
 
@@ -2679,6 +2666,7 @@ def _stats_publisher() -> None:
     from .acquire import seeding
     con = None
     owner = None
+    node_con = None     # state/node.sqlite — this thread's own (SQLite is thread-affine)
     seed_cons: dict[str, object] = {}
     while not _stop.wait(STATS_PUBLISH_INTERVAL_S):
         try:
@@ -2711,6 +2699,8 @@ def _stats_publisher() -> None:
             for c in collections:
                 if c.name not in seed_cons:
                     seed_cons[c.name] = db.connect(c)
+            if node_con is None:
+                node_con = node_state.connect()
             # A PAUSE IS SEEN WITHIN ONE BEAT, not one main-loop round. The
             # main loop sets `_paused` once per round, and nothing inside a
             # round checks it — an embed stream runs 120 s, a bundle inbox
@@ -2724,27 +2714,92 @@ def _stats_publisher() -> None:
             # fetches a pause aborted — and this thread only makes the stop
             # prompt. It can never make the node do work it was told not to.
             #
-            # And from the MAIN LOOP's control collection, never this
-            # thread's own `collections[0]` — see `_control_state_for_beat`.
-            # Seeding keeps its original source below, untouched.
-            beat_state = _control_state_for_beat(seed_cons)
+            # From state/node.sqlite, where the main loop reads it too
+            # (`_control_state_for_beat`) — and so does the seeder's gate
+            # below, which used to read `load_all()[0]`'s manifest and so
+            # obeyed the Library while the main loop, reading its filtered
+            # first collection, did not.
+            beat_state = _control_state_for_beat(node_con)
             if beat_state is not None:
                 _note_pause_from_state(beat_state)
-            seeding.tick(collections, seed_cons, con, db.worker_state(con))
+            seeding.tick(collections, seed_cons, con,
+                         node_state.worker_state(node_con))
             db.publish_worker_rates(con, get_manager().rates())
-            _log_shares(con, [c.manifest_path for c in all_collections])
+            # `collections`, not `all_collections`: that name is not bound
+            # here, so this raised NameError every beat, the except below
+            # swallowed it, and the fair-share lines never reached the log
+            _log_shares(con, [c.manifest_path for c in collections])
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
     for c_con in seed_cons.values():
         c_con.close()
     if con is not None:
         con.close()
+    if node_con is not None:
+        node_con.close()
+
+
+def _move_node_control(node_con, loaded) -> None:
+    """Boot: carry the node's control state out of the collection manifests
+    into state/node.sqlite (app/node_state.py). A no-op once moved.
+
+    The manifests are offered in the order the WEB wrote to — `loaded`
+    unfiltered, boot refusals included, because the web never knew about
+    them — so what moves is the operator's last click. With no collection
+    at all the web wrote to the fallback manifest, offered alone. Each is
+    opened on its own, and one that cannot be opened is never the boot's
+    end — but it is KEPT in the order as a gap (`None`), because its place
+    is what tells `adopt_legacy` that a later sibling's copy must not win
+    (fail closed)."""
+    legacy: list = []
+    for c in (loaded or [None]):
+        try:
+            legacy.append(db.connect(c))
+        except Exception as e:   # noqa: BLE001 — see the docstring
+            print(f"node control: cannot open {getattr(c, 'name', 'the default manifest')} "
+                  f"to move from ({type(e).__name__}: {e})", flush=True)
+            legacy.append(None)
+    try:
+        move = node_state.adopt_legacy(node_con, legacy)
+        log = next((con for con in legacy if con is not None), None)
+
+        def _say(level: str, message: str) -> None:
+            if log is not None:
+                db.log_event(log, level, "worker", message)
+            else:
+                print(f"[{level}:worker] {message}", flush=True)
+
+        if move.adopted:
+            _say("info", "node control moved to state/node.sqlite (07 §7.8): "
+                 + ", ".join(f"{k}={v!r}" if k == db.WORKER_STATE_KEY else k
+                             for k, v in sorted(move.adopted.items())))
+        if move.blocked:
+            _say("warn", f"node control NOT moved for {', '.join(move.blocked)}: a "
+                 f"manifest ahead of every copy could not be read, and it may hold "
+                 f"the operator's last setting. Nothing was deleted; the next boot "
+                 f"tries again, and a click in the Library settles it now")
+        # A node that has never recorded a state defaults to 'paused'
+        # (db.worker_state), which stops every collection. The default is
+        # right; being SILENT about it is not — it has twice read as "the
+        # node is broken, nothing logs".
+        if db.get_control(node_con, db.WORKER_STATE_KEY) is None:
+            _say("warn", f"the node has no {db.WORKER_STATE_KEY} in "
+                 f"state/node.sqlite, so it is PAUSED by default and will "
+                 f"process nothing until one is set (the Library's mode buttons)")
+    finally:
+        for con in legacy:
+            if con is not None:     # a gap: never opened
+                con.close()
 
 
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
     all_collections = collections_mod.load_all()
+    # Before anything reads it: the node state leaves the manifests for
+    # state/node.sqlite, from the UNFILTERED list the web wrote to.
+    node_con = node_state.connect()
+    _move_node_control(node_con, all_collections)
     # Invariant 1: a space mismatch refuses THAT collection, not the node.
     refused = spaces.refuse_boot(all_collections)
     if refused:
@@ -2801,11 +2856,11 @@ def run_forever():
     last_discover.update({c.name: time.time() for c in all_collections})
     last_idle_log: dict[str, float] = {}
     # zero collections (an empty collections/ directory): the node idles on
-    # the fallback control manifest until a TOML appears (hot-reloaded)
+    # the fallback control manifest until a TOML appears (hot-reloaded).
+    # That manifest carries only telemetry and this loop's event log now —
+    # the node's STATE is in state/node.sqlite (`node_con`).
     control_con = cons[all_collections[0].name] if all_collections else db.connect()
-    # None, not the current name: the first round must run the adoption
-    # (this startup may be the one that follows the wipe)
-    last_control_name: str | None = None
+    _main_loop_live.set()
 
     while not _stop.is_set():
         try:
@@ -2816,43 +2871,15 @@ def run_forever():
             if not all_collections:
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue
-            # re-resolved each round: the previous control collection may
-            # have been removed mid-run. Whoever owns it now inherits the
-            # node's control state, so pause/bandwidth survive a wiped or
-            # removed first collection instead of silently defaulting to
-            # 'paused' and stopping every collection.
-            control_name = all_collections[0].name
-            control_con = cons[control_name]
-            # published so the stats beat reads the node state from the SAME
-            # collection this loop does (`_control_state_for_beat`)
-            _set_control_name(control_name)
-            if control_name != last_control_name:
-                adopted = db.adopt_node_control(
-                    control_con,
-                    [cons[c.name] for c in all_collections[1:] if c.name in cons],
-                    fallback=_orphaned_node_control)
-                if adopted:
-                    db.log_event(control_con, "info", "worker",
-                                 f"node control state now owned by "
-                                 f"{control_name!r}; adopted {sorted(adopted)}")
-                # A node that has never recorded a worker state defaults to
-                # 'paused' (db.worker_state), which stops every collection.
-                # That default is correct; being SILENT about it is not —
-                # it has twice read as "the node is broken, nothing logs".
-                # Say it once, at the moment ownership moves.
-                if db.get_control(control_con, db.WORKER_STATE_KEY) is None:
-                    db.log_event(
-                        control_con, "warn", "worker",
-                        f"{control_name!r} now holds the node's control state "
-                        f"and has no {db.WORKER_STATE_KEY}; the node is "
-                        f"PAUSED by default and will process nothing until "
-                        f"one is set (`node resume`, or the System page)")
-                last_control_name = control_name
+            # re-resolved each round: the previous first collection may have
+            # been removed mid-run. Telemetry and the log only — nothing a
+            # new first collection has to inherit.
+            control_con = cons[all_collections[0].name]
             # Tier-3 "boost bandwidth tonight" reaches the byte-moving process
-            # here: the web process writes it to the control table, the worker
+            # here: the web process writes it to state/node.sqlite, the worker
             # applies it. Re-read each round so it takes effect within one
             # document and expires on its own.
-            get_manager().set_override(db.get_bandwidth_override(control_con))
+            get_manager().set_override(node_state.bandwidth_override(node_con))
             # ...and the same channel carries the measurement back the other
             # way: acquisition and seeding move their bytes HERE, so without
             # this the Network page's graph is a flat zero beside a saturated
@@ -2863,7 +2890,7 @@ def run_forever():
             # recorder lives in this process because this is where the work
             # happens; publishing is how the web process sees it.
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
-            state = db.worker_state(control_con)
+            state = node_state.worker_state(node_con)
             if state in ("paused", "seed-only"):
                 # seed-only: downloads and processing stand down exactly
                 # like pause; what stays alive — serving peers (the web
@@ -2942,10 +2969,21 @@ def run_forever():
                 # loop must survive even when its logger is gone
                 print(traceback.format_exc()[:1500], flush=True)
             time.sleep(5)
+    _main_loop_live.clear()         # the beat stands down with the loop
     _join_pipeline_threads()
     parallel.shutdown()             # the parse pool's children go with the worker
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
+    node_con.close()
+
+
+def main() -> int:
+    """`python -m app.worker`. docs/07 §7.7: the node "stops every
+    collection at its unit and exits 130 on a signal" — invariant 2 says
+    the same — and it exited 0. `_stop` is set only by the signal handler."""
+    run_forever()
+    return 130 if _stop.is_set() else 0
+
 
 if __name__ == "__main__":
-    run_forever()
+    sys.exit(main())

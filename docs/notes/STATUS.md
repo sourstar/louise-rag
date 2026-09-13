@@ -1043,28 +1043,15 @@ reviewers' own scenarios and by the full suite — not by a fourth review.
   control collection, and does nothing without a main loop.
 - Without pipeline threads, the re-arm runs `_discover` itself.
 
-**Two known gaps, recorded rather than claimed:**
-
-- *The listing phase.* A pause that arrives DURING a listing — `rsync
-  --list-only`, 12 minutes measured on gutenberg; mirror benchmarks;
-  torrent metadata, up to 120 s — is not seen until the transfer pool
-  starts, because the listing runs with no stop. No corpus file moves in
-  that time; the listing's own traffic does.
-- *The control split.* The operator's pause is WRITTEN by `/api/control`
-  to `db.connect()` = `load_all()[0]`, unfiltered; the web UI and the
-  index maintainer read the same collection. The main loop READS its
-  filtered `all_collections[0]`, boot refusals removed — and since review
-  2, so does the stats beat. When the first-sorting collection is refused
-  at boot, the UI says seed-only while the node keeps downloading.
-  Pre-existing: the main loop never saw that pause either, so the fix is
-  no worse than the original code; and it cannot happen on this node
-  today, where both collections load and gutenberg sorts first. It cannot
-  be fixed inside the worker, because the web process has no way to know
-  which collections the worker refused at boot. The real fix is ONE
-  resolution function for the control collection, shared by the API, the
-  web, the main loop, the beat and the index maintainer — invariant 10's
-  own rule for effective values — and that is a web/worker design change,
-  so it is the operator's decision.
+**Two known gaps, recorded rather than claimed — both closed the same
+day** (next entry): a pause arriving during a *listing* (`rsync
+--list-only`, 12 minutes on gutenberg; mirror benchmarks; torrent
+metadata) was not seen until the transfer pool started; and the *control
+split* — `/api/control` wrote the pause to the unfiltered `load_all()[0]`
+while the main loop read its filtered `all_collections[0]`, so with the
+first-sorting collection refused at boot the UI said seed-only while the
+node downloaded. The operator chose one resolution function for web and
+worker; it became `state/node.sqlite`.
 
 **The shape worth keeping.** Every defect here was the same one wearing
 different clothes: a decision taken from one source while the thing it
@@ -1083,6 +1070,147 @@ buttons writing `worker_state`. So "pause one collection" is unbuilt
 rather than broken; recorded here because the fix above cites docs/07's
 definition of pause, and the next reader deserves to know the command
 that definition belongs to does not exist yet.
+
+### The control split and the listing gap — closed 2026-09-13
+
+The two gaps the entry above recorded "rather than claimed". The operator
+chose "one function for web and workers" for the first and asked how to
+close the second.
+
+**The control split: `state/node.sqlite`.** A read-only map of every site
+that decides where node control lives found not two resolutions but FOUR:
+
+| who | read from |
+|---|---|
+| `/api/control`, Library, System, bandwidth POST | `load_all()[0]`, unfiltered |
+| main loop — the state gate, the bandwidth apply | its filtered `all_collections[0]`, boot refusals removed |
+| stats beat — seeding gate, seeding table, telemetry | `load_all()[0]` (its pause detection followed the main loop since review 2) |
+| index maintainer | `load_all()[0]` |
+
+With the first-sorting collection refused at boot, the index maintainer
+and the seeder obeyed the Library while the main loop did not, and the
+bandwidth boost never reached the worker at all. Adoption ran only in the
+worker, only on an ownership change, check-then-write with no
+`BEGIN IMMEDIATE` while the web could write concurrently.
+
+The one function turned out not to need a collection. docs/07 §7.8
+already puts runtime overrides in `<LOUISE_ROOT>/state/node.sqlite` ("the
+catalogue, coverage maps, peers seen, runtime overrides"), and the file
+already existed — hold's admission ledger opens it. `app/node_state.py`
+is now the one store for `db.NODE_CONTROL_KEYS`; the API, the Library and
+System pages, the bandwidth POST, the main loop, the stats beat (pause
+detection AND seeding gate), and the index maintainer all read it. Gone:
+`adopt_node_control`, `_orphaned_node_control` and the removal-time
+rescue, `_control_name`. The beat acts only while `_main_loop_live` is
+set — the reason it needed a main loop behind it is unchanged.
+
+*Migration.* At boot the worker copies each key the node file lacks from
+the manifests, in the order the web wrote to (unfiltered first collection
+first, so it is the operator's last click that moves), under `BEGIN
+IMMEDIATE`, then deletes the keys from every manifest: one home. It fails
+CLOSED: a manifest ahead of every copy that cannot be opened or read
+blocks that key, nothing is deleted anywhere, and the node reads 'paused'
+until a boot sees every manifest or the operator clicks a mode, which
+writes the node file and wins. Rollback to an older image reads no mode
+and starts paused — the safe direction, and the runbook says so.
+
+*Kept where it was, on purpose:* telemetry (worker rates and stats, the
+seeding table) stays on the first collection's manifest. It is not an
+override; the web reads the beat's copy, which already follows the web's
+own resolution.
+
+*Not done — a divergence from §7.8 and invariant 10, recorded here for
+the operator:* runtime overrides "expire at restart", and `worker_state`
+does not; it survives a restart, as it always has. Making it expire
+changes what every restart does — a deploy would turn `acquire-only` into
+`running` and start the encoder — so it is the operator's decision, not a
+side effect of this change.
+
+**The listing gap.** Every phase before the transfer pool ran with no
+stop. Now:
+
+| phase | worst case before | now |
+|---|---|---|
+| rsync `--list-only` | ~12 min measured on gutenberg; 30 min cap per mirror, then the next mirror | a Popen poll loop: terminated within `_POLL_SECONDS` of the stop; a partial listing is never returned |
+| torrent metadata | 120 s per magnet | the bound stop reaches `_await_metadata` |
+| torrent-collection index resolve | 120 s + an unbounded download | bound, and a 300 s deadline; `_index_for` re-raises the stop instead of calling it "plain torrent for now" |
+| mirror benchmark | 20 s per mirror; a stopped probe recorded as FAILED for 6 h | checked per mirror; the probe thread gets the context; a stopped benchmark records nothing |
+| ftp / hf listings | unbounded by pages | checked per entry / per page; ftp `close()`s, never `quit()`s, on an abort |
+| planning passes | unmeasured, scale with the listing | checked after listing and after planning, before anything is recorded |
+
+How an abort leaves matters as much as that it leaves. `TransferAborted`
+IS a `TransportError`, so the mirrored listing used to mark the mirror
+down for 15 minutes and list the next one in full; it now re-raises.
+`run_acquisition` turns a pre-pool abort into a result with `"stopped"`
+and every counter at zero — what a stop inside the pool already returned
+— so the worker logs the pass it was, never an ERROR, the pause re-arm
+(`stop.fired`) works unchanged, and `corpus add` says it was interrupted
+and exits 130.
+
+*SIGTERM.* `_join_pipeline_threads` never joined the acquire or archive
+threads: a shutdown abandoned them as daemons, mid-listing, with the claim
+row left for the next boot to wait out. They are joined now, inside the
+same 90 s deadline — possible only because every phase honours the stop.
+
+*Found on the way, and fixed — each pre-existing, each with a test:*
+
+- **A collection refused at boot crashed the worker.** `run_forever`'s
+  refusal branch prints to `sys.stderr`, and `app/worker.py` never
+  imported `sys`: the first space refusal raised NameError at boot and
+  crash-looped the worker under `restart: unless-stopped` — the exact
+  opposite of invariant 1's "refuse THAT collection, not the node". Latent
+  on the node only because both collections load today. The test boots the
+  real loop with the first collection refused, and also proves the state
+  the web wrote into that refused manifest still moves — the control
+  split's own scenario. A mutation run with `sys` removed makes it fail.
+- **A signal exited 0**, from the worker and from `corpus add`. docs/07
+  §7.7: "exits 130 on a signal"; invariant 2 says the same. Both return
+  130 now.
+- **The torrent-collection index download had no deadline.** fetch_one's
+  loop has none of its own, and the Library's grow plan resolves the index
+  inside a WEB REQUEST with no stop, so a swarm announcing the index but
+  serving none of it held the request forever. Now `INDEX_FETCH_TIMEOUT_S`
+  (300 s): out of time is "unreachable", a TransportError; the caller's
+  stop stays a stop.
+- `_stats_publisher` passed `all_collections`, a name not bound there, to
+  `_log_shares` — a NameError every beat, swallowed, so the fair-share
+  lines never reached the log.
+
+**The review** — four lenses, every finding put to a skeptic; eight
+confirmed, two refuted — found my work wrong again, in smaller ways:
+
+- *The migration could hand the move to a stale sibling.* A manifest
+  that failed to open once at boot was skipped and the next sibling's old
+  copy moved instead — the old adoption copied values into every new
+  owner and never deleted them — and on the next boot the operator's value
+  was deleted. Reproduced. Hence failing closed, above.
+- *A stopped multi-torrent pass returned no counters*, and `corpus add`
+  died on `result['fetched']`: a regression the stop-aware metadata wait
+  opened. Every result now has one shape (`_no_counts`).
+- *The worker threads' reads were untested.* Reverting the seeding gate,
+  the beat's pause read, the `_log_shares` fix and the index maintainer's
+  read — all four — left the suite green, because every test called the
+  helper by hand. The entry above records exactly that lesson, and I
+  repeated it. The real threads are driven now
+  (tests/test_worker_threads_node_state.py).
+- *Two tests wrote `worker_state=running` into the real
+  `/data/state/node.sqlite`* — on a node's volume, the live mode. They are
+  isolated, and a conftest guard fails any test that touches the real
+  store.
+- *`corpus add` said nothing when stopped in the listing* — `total=0`
+  read as an empty origin.
+- *The listing tests fired their stop on a 0.1 s timer*, so on a loaded
+  host the stop could land before the listing and the test pass without
+  exercising the bind. The fakes set the stop themselves now, from inside.
+- *This entry did not exist* while the code and codex-only-node.md
+  pointed at it.
+
+Refuted, and worth keeping: that copy-if-absent is backwards after the
+move. A manifest found at boot is not always newer than the node file — a
+collection retired before the move and restored after carries an OLDER
+value — so the node file winning is right.
+
+Full suite: 2,433 passed.
 
 ### What is waiting on the operator
 

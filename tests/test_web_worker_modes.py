@@ -11,7 +11,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, db, spaces, web
+from app import config, db, node_state, spaces, web
 from app.api import app
 
 MODES = {"running": "run everything", "acquire-only": "download/seeding only",
@@ -39,7 +39,7 @@ def _button(page: str, label: str) -> str:
 @pytest.mark.parametrize("state", sorted(MODES))
 def test_the_current_mode_is_the_selected_one_and_the_others_are_clickable(
         client, state):
-    db.set_worker_state(db.connect(), state)
+    node_state.set_worker_state(state)
     page = client.get("/admin/library").text
 
     for mode, label in MODES.items():
@@ -60,7 +60,7 @@ def test_the_current_mode_is_the_selected_one_and_the_others_are_clickable(
 
 def test_exactly_one_button_is_ever_selected(client):
     for state in MODES:
-        db.set_worker_state(db.connect(), state)
+        node_state.set_worker_state(state)
         page = client.get("/admin/library").text
         assert page.count('class="mode selected"') == 1, state
 
@@ -71,13 +71,13 @@ def test_rescan_is_grey_only_while_paused(client):
     rescan sits queued until the node runs again. A button that silently
     queues is worse than one that says it can't."""
     for state in ("paused", "seed-only"):
-        db.set_worker_state(db.connect(), state)
+        node_state.set_worker_state(state)
         btn = _button(client.get("/admin/library").text, "rescan all collections")
         assert "disabled" in btn, state
         assert "discovery does not run" in btn    # the title says why
 
     for state in ("running", "acquire-only"):
-        db.set_worker_state(db.connect(), state)
+        node_state.set_worker_state(state)
         btn = _button(client.get("/admin/library").text, "rescan all collections")
         assert "disabled" not in btn, state
 

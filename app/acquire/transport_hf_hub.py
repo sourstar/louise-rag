@@ -13,7 +13,7 @@ from typing import Iterator
 
 import httpx
 
-from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransportError
+from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransferAborted, TransportError
 from .transport_https import HttpsTransport, _USER_AGENT
 
 _HF_BASE = "https://huggingface.co"
@@ -39,9 +39,17 @@ class HfHubTransport:
         if endpoint.auth_token_path is not None:
             token = endpoint.auth_token_path.read_text().strip()
             headers["Authorization"] = f"Bearer {token}"
+        # the stop bound around the listing (engine._list_and_filter),
+        # checked before each page: a paginated tree has no bound on pages
+        from ..transfer.manager import current_handle
+        handle = current_handle()
+        stop = handle.stop if handle is not None else None
         try:
             with httpx.Client(timeout=60, headers=headers) as client:
                 while url:
+                    if stop is not None and stop.is_set():
+                        raise TransferAborted(
+                            f"hf listing aborted by stop event: {endpoint.url}")
                     r = client.get(url)
                     r.raise_for_status()
                     for entry in r.json():

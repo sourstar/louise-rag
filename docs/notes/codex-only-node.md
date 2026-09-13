@@ -137,6 +137,15 @@ current placement is described in the code itself as "an accident of sort
 order", and it is the root of the blocking failure above rather than a
 neighbour of it.
 
+**Taken 2026-09-13.** `worker_state` and the bandwidth override live in
+`state/node.sqlite` now (app/node_state.py), and every reader and writer —
+the API, the Library and System pages, the main loop, the stats beat, the
+seeder, the index maintainer — opens that one file. `adopt_node_control`,
+the removal-time rescue and the cold-order step (§4, step 1) are gone:
+there is no control collection left to hand the state to. The worker
+moves the old keys out of the manifests once, at boot, and deletes them.
+The account is in STATUS.md.
+
 ---
 
 ## 4. The move, in order

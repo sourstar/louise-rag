@@ -405,7 +405,10 @@ class TorrentTransport:
         adoption and reported a 983 MB assembly as 0 bytes. A torrent always
         knows how big its files are.
         """
-        info = torrent_info(endpoint)
+        # the stop bound around the listing (engine._list_and_filter): a
+        # magnet waits up to METADATA_TIMEOUT_S for metadata, and a pause
+        # or SIGTERM inside that wait must end it
+        info = torrent_info(endpoint, stop=_current_stop())
         for name, size in _paths_and_sizes(info):
             yield RemoteFile(rel_path=name, size=size)
 

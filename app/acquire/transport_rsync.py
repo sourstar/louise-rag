@@ -110,12 +110,7 @@ class RsyncTransport:
         if endpoint.ssh_key_path is not None:
             argv += ["-e", f"ssh -i {endpoint.ssh_key_path}"]
         argv.append(_with_trailing_slash(endpoint.url))
-        try:
-            result = subprocess.run(argv, capture_output=True, text=True,
-                                    timeout=_LISTING_TIMEOUT, check=True)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
-            raise TransportError(f"rsync --list-only {endpoint.url}: {e}") from e
-        for line in result.stdout.splitlines():
+        for line in self._list(argv, endpoint).splitlines():
             m = _LISTING_RE.match(line)
             if not m or m.group("name") in (".", ".."):
                 continue
@@ -125,6 +120,55 @@ class RsyncTransport:
                 f"{m.group('date')} {m.group('time')}", "%Y/%m/%d %H:%M:%S")))
             yield RemoteFile(rel_path=m.group("name"),
                              size=int(m.group("size").replace(",", "")), mtime=mtime)
+
+    def _list(self, argv: list[str], endpoint: Endpoint) -> str:
+        """The listing's stdout, polled like `_run` so a STOP ends it.
+
+        It was one `subprocess.run`, which blocks its thread absolutely: a
+        pause, seed-only or SIGTERM arriving during gutenberg's listing
+        (~12 min measured, capped at `_LISTING_TIMEOUT` per mirror) was not
+        seen until the transfer pool started. A `communicate(timeout=)`
+        retried after TimeoutExpired loses no output (Python docs), so the
+        listing reads exactly as before. On a stop the child is terminated
+        as a transfer's is, and the abort RAISES — a partial listing is
+        never returned, because the recorded listing and the delta gate
+        take it as complete (the listing contract, spec.py).
+
+        The stop is the one engine._list_and_filter binds; this runs at the
+        generator's first next(), inside that bind.
+        """
+        stop = _current_stop()
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+        except FileNotFoundError as e:
+            raise TransportError(f"rsync --list-only {endpoint.url}: {e}") from e
+        deadline = time.monotonic() + _LISTING_TIMEOUT
+        while True:
+            if stop is not None and stop.is_set():
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                raise TransferAborted(
+                    f"rsync --list-only aborted by stop event: {endpoint.url}")
+            try:
+                stdout, stderr = proc.communicate(timeout=_POLL_SECONDS)
+            except subprocess.TimeoutExpired:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    proc.communicate()
+                    raise TransportError(
+                        f"rsync --list-only {endpoint.url}: timed out after "
+                        f"{_LISTING_TIMEOUT}s")
+                continue
+            if proc.returncode != 0:
+                raise TransportError(
+                    f"rsync --list-only {endpoint.url}: exit {proc.returncode}: "
+                    f"{(stderr or '').strip()[:300]}")
+            return stdout or ""
 
     def fetch_one(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
                   resume_from: int) -> int:

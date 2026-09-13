@@ -43,7 +43,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import (auth, collections as collections_mod, config, db, discovery, llm,
-                platform_config, query_service, reader, spaces)
+                node_state, platform_config, query_service, reader, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import claim
@@ -1403,12 +1403,12 @@ def _license_state(collection: collections_mod.Collection) -> dict:
 @admin_router.get("/library", response_class=HTMLResponse)
 def library_page(request: Request):
     collections = collections_mod.load_all()
-    con = db.connect()   # worker_state is one global control-table toggle (see worker.py)
     measured = _worker_stats()
-    # PASSED IN, not re-read per collection: it is one global toggle, and
-    # the shelf needs it to tell "waiting for the index" (true only while
-    # the worker runs) from "waiting for the operator".
-    worker_state = db.worker_state(con)
+    # PASSED IN, not re-read per collection: it is one node-wide state (in
+    # state/node.sqlite, app/node_state.py), and the shelf needs it to tell
+    # "waiting for the index" (true only while the worker runs) from
+    # "waiting for the operator".
+    worker_state = node_state.worker_state()
     shelves = [_collection_shelf(c, measured, worker_state) for c in collections]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
@@ -2536,13 +2536,16 @@ def set_bandwidth_override(body: BandwidthOverrideBody):
         rate_bps = transfer_schedule.parse_rate(body.rate)
     except transfer_schedule.ScheduleError as e:
         raise HTTPException(400, str(e))
-    con = db.connect()
-    db.set_bandwidth_override(con, rate_bps, ttl_seconds=max(1, body.hours) * 3600)
+    # node.sqlite: the worker reads it from the same place (app/node_state.py)
+    node_state.set_bandwidth_override(rate_bps, ttl_seconds=max(1, body.hours) * 3600)
     # apply to this process too, so its own SSE feed reflects the change at once
     transfer_manager.get_manager().set_override(rate_bps)
-    db.log_event(con, "info", "control",
-                 f"bandwidth override {'cleared' if rate_bps is None else body.rate} "
-                 f"({body.hours}h)")
+    message = (f"bandwidth override {'cleared' if rate_bps is None else body.rate} "
+               f"({body.hours}h)")
+    try:
+        db.log_event(db.connect(), "info", "control", message)
+    except Exception:   # noqa: BLE001 — the override is set; the event is a courtesy
+        print(f"[info:control] {message}", flush=True)
     return {"ok": True, "rate_bps": rate_bps, "hours": body.hours}
 
 
@@ -2586,11 +2589,12 @@ def _effective_config() -> dict:
         "transfer.segments_per_file": pc.transfer.segments_per_file,
     }
 
-    con = db.connect()
-    override = db.get_bandwidth_override(con)
-    tier3 = {"worker_state (control table)": db.worker_state(con),
-             "scope (control table)": db.get_scope(con),
-             "bandwidth override (control table, expires)":
+    # the node's overrides from THE resolution the worker uses
+    # (app/node_state.py); scope is per-collection and stays in its manifest
+    override = node_state.bandwidth_override()
+    tier3 = {"worker_state (state/node.sqlite)": node_state.worker_state(),
+             "scope (control table)": db.get_scope(db.connect()),
+             "bandwidth override (state/node.sqlite, expires)":
                  _rate(override) if override else "(none)"}
     return {"tier1": tier1, "tier2": tier2, "tier2_platform": tier2_platform, "tier3": tier3}
 
@@ -2659,13 +2663,12 @@ def _recent_events_all(limit: int = 60) -> list[dict]:
 @admin_router.get("/system", response_class=HTMLResponse)
 def system_page(request: Request):
     collections = collections_mod.load_all()
-    con = db.connect()
     return TEMPLATES.TemplateResponse(request, "system.html", {
         "active": "system",
         "effective": _effective_config(),
         "boot_report": spaces.report_boot_status(collections),
         "health": _health_pings(),
-        "worker_state": db.worker_state(con),
+        "worker_state": node_state.worker_state(),
     })
 
 

@@ -99,12 +99,61 @@ def resolve(collection, source: str, *, stop=None, force: bool = False) -> dict 
     dest_root = collection.manifest_path.parent / "peer-index" / _hash_of(info)
     dest = dest_root / rel
     if not dest.is_file():
-        TorrentTransport().fetch_one(endpoint, RemoteFile(rel_path=rel), dest, 0)
+        _fetch_index(endpoint, rel, dest, stop)
     index = json.loads(dest.read_text(encoding="utf-8"))
     if index.get("kind") != KIND:
         raise TransportError(f"{source}: {INDEX_FILE} is not a louise torrent collection")
     _remember(con, source, index)
     return index
+
+
+#: The index is a few hundred KB. fetch_one's download loop has no deadline
+#: of its own, and the Library's grow plan resolves inside a WEB REQUEST with
+#: no stop — so a swarm that announced the index but served none of it held
+#: that request, or a whole pass, forever.
+INDEX_FETCH_TIMEOUT_S = 300.0
+
+
+class _Deadline:
+    """A stop that fires when the caller's does, or when time runs out.
+    Duck-typed like the worker's `_AnyStop`: only `is_set()` is called."""
+
+    def __init__(self, stop, seconds: float) -> None:
+        self._stop = stop
+        self._until = time.monotonic() + seconds
+
+    def caller_stopped(self) -> bool:
+        return self._stop is not None and self._stop.is_set()
+
+    def is_set(self) -> bool:
+        return self.caller_stopped() or time.monotonic() > self._until
+
+
+def _fetch_index(endpoint: Endpoint, rel: str, dest: Path, stop) -> None:
+    """The index content, bounded by INDEX_FETCH_TIMEOUT_S as well as by the
+    caller's stop. Running out of time is "unreachable" — a TransportError,
+    which `engine._index_for` reads as "plain torrent for now" and retries
+    next pass, remembering nothing — while the caller's stop stays a stop.
+    Real bytes, so bound at the caller's priority (BACKFILL for a dry-run
+    plan, where nothing is bound)."""
+    from ..transfer.bucket import Priority
+    from ..transfer.manager import Direction, current_handle, get_manager
+    from .spec import TransferAborted
+    from .transport_torrent import TorrentTransport
+    outer = current_handle()
+    if stop is None and outer is not None:
+        stop = outer.stop
+    deadline = _Deadline(stop, INDEX_FETCH_TIMEOUT_S)
+    priority = outer.priority if outer is not None else Priority.BACKFILL
+    try:
+        with get_manager().bind(priority, Direction.DOWN, stop=deadline):
+            TorrentTransport().fetch_one(endpoint, RemoteFile(rel_path=rel), dest, 0)
+    except TransferAborted:
+        if deadline.caller_stopped():
+            raise
+        raise TransportError(
+            f"{endpoint.url}: {INDEX_FILE} not served within "
+            f"{INDEX_FETCH_TIMEOUT_S:.0f}s") from None
 
 
 def cached_index(collection, source: str) -> dict | None:

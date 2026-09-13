@@ -109,10 +109,18 @@ def cmd_add(args) -> int:
         # finish in seconds deserves to know why
         print(f"  ({adopted} of them already on disk: verified and recorded, "
               f"not downloaded)")
-    if aborted:
+    if result.get("stopped"):
+        # stopped before any transfer — most often inside the listing, which
+        # is ~12 minutes on gutenberg. Said outright: "total=0" alone reads
+        # as an origin with no files.
+        print(f"interrupted before any transfer ({result['stopped']}) — nothing "
+              f"was recorded; re-run to resume")
+    elif aborted:
         print("interrupted — partial downloads were checkpointed; re-run to resume")
-    # A clean shutdown exits 0 (CLAUDE.md invariant 2). Only genuine failures
-    # are a nonzero exit.
+    # docs/07 §7.7 and CLAUDE.md invariant 2: a signal finishes the unit,
+    # commits, and exits 130. Only genuine failures are 1.
+    if _stop.is_set():
+        return 130
     return 1 if result["failed"] else 0
 
 

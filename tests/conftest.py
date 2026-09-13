@@ -30,7 +30,37 @@ def fresh_worker_state():
     parallel.forget_prefetched()
     parallel.forget_users()
     parallel.reset_failures()
+    # the beat reaches `_log_shares` now; its 600 s throttle must not carry
+    # one test's log into the next
+    worker._last_shares_log = 0.0
     yield
+
+
+@pytest.fixture(autouse=True)
+def the_real_node_store_is_never_touched():
+    """app/node_state.py resolves `<LOUISE_ROOT or DATA_DIR>/state/node.sqlite`
+    — on a node's volume, that node's LIVE mode. Two tests without
+    `isolated_config` once wrote `worker_state=running` there (review,
+    2026-09-13): run with a node's /data mounted, the suite would resume a
+    paused node. Any test that creates or changes the real store fails."""
+    import os
+    real = Path(os.getenv("LOUISE_ROOT") or os.getenv("DATA_DIR", "/data")) \
+        / "state" / "node.sqlite"
+
+    def _stamp():
+        out = []
+        for p in (real, real.with_name(real.name + "-wal")):
+            try:
+                st = p.stat()
+                out.append((st.st_size, st.st_mtime_ns))
+            except OSError:
+                out.append(None)
+        return out
+
+    before = _stamp()
+    yield
+    assert _stamp() == before, \
+        f"this test touched the real node store {real} — give it isolated_config"
 
 
 @pytest.fixture(autouse=True)

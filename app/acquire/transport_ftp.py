@@ -8,7 +8,7 @@ from typing import Iterator
 from urllib.parse import urlparse
 
 from . import budget
-from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransportError
+from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransferAborted, TransportError
 
 
 def _connect(endpoint: Endpoint) -> ftplib.FTP:
@@ -30,12 +30,34 @@ def _parse_mlsd_modify(value: str | None) -> int | None:
         return None
 
 
+def _current_stop():
+    """The stop bound around the listing (engine._list_and_filter), if any —
+    the same mechanism the rsync and torrent transports read."""
+    from ..transfer.manager import current_handle
+    handle = current_handle()
+    return handle.stop if handle is not None else None
+
+
+def _check_stop(stop, endpoint: Endpoint) -> None:
+    if stop is not None and stop.is_set():
+        raise TransferAborted(f"ftp listing aborted by stop event: {endpoint.url}")
+
+
 class FtpTransport:
     def list_files(self, endpoint: Endpoint, spec: AcquisitionSpec) -> Iterator[RemoteFile]:
+        """The stop is checked before connecting and per entry. MLSD and
+        NLST read the WHOLE directory before the first entry comes back
+        (ftplib buffers the data channel), so that read itself is bounded
+        only by the 30 s socket timeout per operation — seconds, for
+        pubmed's ~1,300-entry baseline."""
+        stop = _current_stop()
+        _check_stop(stop, endpoint)
         ftp = _connect(endpoint)
+        clean_exit = False
         try:
             try:
                 for name, facts in ftp.mlsd():
+                    _check_stop(stop, endpoint)
                     if facts.get("type") != "file":
                         continue
                     size = int(facts["size"]) if "size" in facts else None
@@ -43,9 +65,20 @@ class FtpTransport:
                                       mtime=_parse_mlsd_modify(facts.get("modify")))
             except ftplib.error_perm:
                 for name in ftp.nlst():
+                    _check_stop(stop, endpoint)
                     yield RemoteFile(rel_path=name)
+            clean_exit = True
         finally:
-            ftp.quit()
+            # quit() only after a clean listing, as in fetch_one: on an abort
+            # it can block for the socket timeout or raise an ftplib error
+            # that REPLACES the TransferAborted
+            if clean_exit:
+                try:
+                    ftp.quit()
+                except ftplib.all_errors:
+                    ftp.close()
+            else:
+                ftp.close()
 
     def fetch_one(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
                   resume_from: int) -> int:

@@ -29,6 +29,7 @@ immediately (engine._make_worker); a down mirror re-enters through the
 next benchmark. Down-state is process-local on purpose: it describes THIS
 process's view of the network right now.
 """
+import contextvars
 import json
 import tempfile
 import threading
@@ -36,7 +37,7 @@ import time
 from pathlib import Path
 
 from .. import db
-from .spec import AcquisitionSpec, Endpoint, TransportError
+from .spec import AcquisitionSpec, Endpoint, TransferAborted, TransportError
 
 BENCH_KEY = "mirror_bench"
 BENCH_TTL_S = 6 * 3600          # re-benchmark at most once per interval cycle
@@ -64,11 +65,23 @@ def reset_down_state() -> None:
         _down.clear()
 
 
-def benchmark(con, spec: AcquisitionSpec, *, force: bool = False) -> list[dict]:
+def _check_stop(stop, endpoint: Endpoint | None) -> None:
+    if stop is not None and stop.is_set():
+        where = f" before probing {endpoint.url}" if endpoint is not None else ""
+        raise TransferAborted(f"mirror benchmark stopped{where}")
+
+
+def benchmark(con, spec: AcquisitionSpec, *, force: bool = False,
+              stop=None) -> list[dict]:
     """One small timed fetch per endpoint; ranking recorded in the control
     table. Returns the recorded entries (fastest first, failures last).
     Skipped (returning the stored record) while the stored one is younger
-    than BENCH_TTL_S, so frequent passes stay cheap."""
+    than BENCH_TTL_S, so frequent passes stay cheap.
+
+    A STOP (pause, seed-only, SIGTERM, removal) raises TransferAborted and
+    records NOTHING: a probe the stop cut short says nothing about the
+    mirror, and recording it as FAILED would rank every mirror dead for
+    BENCH_TTL_S."""
     if not spec.probe_file or len(spec.endpoints) < 2:
         return []
     stored = read_bench(con)
@@ -78,6 +91,7 @@ def benchmark(con, spec: AcquisitionSpec, *, force: bool = False) -> list[dict]:
     from .spec import RemoteFile
     results = []
     for endpoint in spec.endpoints:
+        _check_stop(stop, endpoint)
         transport = REGISTRY[endpoint.transport]
         entry = {"url": endpoint.url, "seconds": None, "error": None}
         started = time.time()
@@ -85,9 +99,14 @@ def benchmark(con, spec: AcquisitionSpec, *, force: bool = False) -> list[dict]:
             with tempfile.TemporaryDirectory() as tmp:
                 _probe_once(transport, endpoint, spec.probe_file, Path(tmp))
             entry["seconds"] = round(time.time() - started, 3)
+        except TransferAborted:
+            raise
         except Exception as e:   # noqa: BLE001 — any failure = this mirror loses
             entry["error"] = f"{type(e).__name__}: {e}"[:200]
         results.append(entry)
+    # a probe that outlived its deadline while the stop fired reads as a
+    # timeout above — the stop, not the mirror, decides that one too
+    _check_stop(stop, None)
     results.sort(key=lambda r: (r["seconds"] is None, r["seconds"] or 0.0))
     db.set_control(con, BENCH_KEY, json.dumps({"ts": int(time.time()),
                                                "probe": spec.probe_file,
@@ -116,13 +135,20 @@ def _probe_once(transport, endpoint: Endpoint, rel_path: str, tmp: Path) -> None
         except BaseException as e:   # noqa: BLE001 — carried to the caller
             result["error"] = e
 
-    t = threading.Thread(target=_run, daemon=True)
+    # The caller's bind — its stop — reaches fetch_one only through the
+    # context, and a new thread starts with an EMPTY one: without
+    # copy_context a stopped pass's probe ran on unseen, holding its rsync
+    # child and lease for up to the transport's own timeout (300 s).
+    t = threading.Thread(target=contextvars.copy_context().run, args=(_run,),
+                         daemon=True)
     t.start()
     t.join(PROBE_TIMEOUT_S)
     if t.is_alive():
         raise TransportError(f"probe of {endpoint.url}/{rel_path} exceeded "
                              f"{PROBE_TIMEOUT_S:.0f}s")
     if "error" in result:
+        if isinstance(result["error"], TransferAborted):
+            raise result["error"]   # the stop, never a verdict on the mirror
         raise TransportError(str(result["error"])[:300])
     dest = tmp / "probe"
     if not dest.is_file() or dest.stat().st_size == 0:

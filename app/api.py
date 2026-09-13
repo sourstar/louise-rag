@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import auth, collections as collections_mod, query_service, web
 from . import config, db, discovery, retrieval, llm, summarize, embeddings, fts, spaces
+from . import node_state
 
 STATIC = Path(__file__).parent / "static"
 
@@ -135,7 +136,7 @@ def status():
         FROM documents""").fetchone()
     queue = con.execute("SELECT COUNT(*) c FROM embed_queue").fetchone()["c"]
     return {
-        "worker_state": db.worker_state(con),
+        "worker_state": node_state.worker_state(),
         "scope": scope,
         "counts": {k: counts[k] or 0 for k in counts.keys()},
         "embed_queue": queue,
@@ -203,9 +204,13 @@ class ControlBody(BaseModel):
 def control(body: ControlBody):
     if body.state not in db.WORKER_STATES:
         raise HTTPException(400, f"state must be {'|'.join(db.WORKER_STATES)}")
-    con = _con()
-    db.set_worker_state(con, body.state)
-    db.log_event(con, "info", "control", f"worker set to {body.state}")
+    # node.sqlite, not the first collection's manifest: the ONE place every
+    # process reads the node state from (app/node_state.py)
+    node_state.set_worker_state(body.state)
+    try:
+        db.log_event(_con(), "info", "control", f"worker set to {body.state}")
+    except Exception:   # noqa: BLE001 — the state is set; the event is a courtesy
+        print(f"[info:control] worker set to {body.state}", flush=True)
     return {"worker_state": body.state}
 
 class ScopeBody(BaseModel):

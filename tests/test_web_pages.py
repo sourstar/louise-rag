@@ -211,15 +211,16 @@ def test_bandwidth_override_is_tier3_and_expires(client):
     assert r.status_code == 200
     assert r.json()["rate_bps"] == 1_250_000
 
-    con = db.connect()
-    assert db.get_bandwidth_override(con) == 1_250_000
+    # in state/node.sqlite, where the worker reads it (app/node_state.py)
+    from app import node_state
+    assert node_state.bandwidth_override() == 1_250_000
     # never written to platform.toml — the file always wins on restart
     assert not (Path(os.environ["CONFIG_DIR"]) / "platform.toml").exists()
 
     r = client.post("/admin/network/bandwidth/override", json={"rate": None},
                      headers={"X-Admin-Token": "sekrit"})
     assert r.status_code == 200
-    assert db.get_bandwidth_override(db.connect()) is None
+    assert node_state.bandwidth_override() is None
 
 
 def test_bandwidth_override_rejects_a_malformed_rate(client):
