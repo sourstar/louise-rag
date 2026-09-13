@@ -451,3 +451,20 @@ def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
     assert reports[0].stages[0].state == health.BLOCKED
     assert any("fails the boot check" in b and "model-a" in b for b in blocking), blocking
     assert snapshot() == before, "a check writes nothing"
+
+
+def test_a_held_row_says_held_once(con, monkeypatch, archived):
+    """The staged check against the live node printed `held — held — the
+    node is acquire-only…`: the state word, then a reason that began with
+    it again. The reason says why, the state says what."""
+    _docs(con, 3, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    rdf = next(s for s in health.inspect(con, Collection(), mode="acquire-only").stages
+               if s.name == "rdf")
+    assert rdf.state == health.HELD and "acquire-only" in rdf.reason
+    assert "held" not in rdf.reason
+    _shard(archived, "1", "fetched")
+    _docs(archived, 3, start=1_500_000)
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"),
+                             mode="acquire-only")
+    assert got.state == health.HELD and "held" not in got.reason, got

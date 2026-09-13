@@ -94,7 +94,9 @@ _HELD_BY_MODE = {
 
 def _held_reason(mode: str | None, stage: str) -> str:
     if mode and stage in _HELD_BY_MODE.get(mode, ()):
-        return (f"held — the node is {mode}; this runs when the Library's "
+        # no "held" here: a HELD row prints its state word first, and the
+        # live report read "held — held — the node is…" (staged check)
+        return (f"the node is {mode}; this runs when the Library's "
                 f"mode is set to running")
     return ""
 
@@ -348,7 +350,7 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
             # the open part follows the node's mode like any other: acquire-
             # only fetches those shards and imports nothing (verification pass)
             parts.append(f"{owed['open']:,} more under open shard(s), "
-                         + (held or "being served"))
+                         + (f"held — {held}" if held else "being served"))
         return Stage("archive", total, BLOCKED,
                      "document(s) inside the archive's range have no vector: "
                      + "; ".join(parts))
