@@ -124,7 +124,7 @@ louise node
   start [--acquire-only]                                               the daemon; runs until stopped
   stop                                                                 finish the current units, commit, exit
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
-  pause [<collection>] [--acquire-only]                                a runtime override: no work, or acquisition only, until resume or restart
+  pause [<collection>] [--acquire-only]                                a runtime override: no work, or acquisition only, until resume; it survives a restart (§7.8)
   resume [<collection>]
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
@@ -318,7 +318,7 @@ reader needs at the command line:
   why (§7.8). `--acquire-only` fetches and builds and spends nothing on
   an encoder. `stop` ends the daemon at its units (§7.7), exit 0.
   `pause` and `resume` are runtime overrides: they live in the state
-  database and expire at restart (§7.8).
+  database and survive a restart until `resume` (§7.8).
 - **`dev migrate schema`.** Creating the schema of a new state database
   is not a migration and happens on first open. Changing an existing
   schema happens here only; a process that finds a schema other than its
@@ -600,11 +600,15 @@ one home.
 |---|---|---|
 | **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `EMBED_URL`, `RERANK_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
-| **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` or restart | the commands; expire at restart |
+| **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
 never survives the node applying the files — at start, at `hold config
-apply`, and when a file changes. What `hold config show` prints comes
+apply`, and when a file changes. The one exception is the node's mode —
+`pause` and `--acquire-only` — which no file sets, so there is nothing to
+apply over it: it survives a restart until `resume`. An expiry would turn
+a node the operator holds at acquire-only back into a running one, encoder
+and all, on every restart (operator decision, 2026-09-13). What `hold config show` prints comes
 from the same resolution the node uses, each value labelled with its
 tier; a value shown anywhere else comes from that resolution too.
 

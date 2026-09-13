@@ -106,6 +106,12 @@ are the ones that have drifted; prefer to add a test when you touch them.
     reset when the worker applies the files (boot, add, TOML edit), and the
     effective value shown anywhere comes from the same resolution function
     the worker uses (`collections.recipe_for`, `db.apply_desired_embed_mode`).
+    ONE EXCEPTION, by operator decision (2026-09-13): the node's MODE
+    (`worker_state` — paused / acquire-only / seed-only / running, in
+    `state/node.sqlite`, app/node_state.py) SURVIVES a restart until it is
+    changed. No file sets it, so there is nothing to reset it to, and an
+    expiry would turn acquire-only back into running — starting the
+    encoder — on every deploy. docs/07 §7.8 says the same. Do not "fix" it.
     *Enforced: test.*
 11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
     a way that prevents verification against the original form, and
