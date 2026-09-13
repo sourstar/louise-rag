@@ -696,10 +696,10 @@ and the object gained a field. The space does not, because §2.4 excludes
 
 **The second landmine, found by following the first.** `_held()` called
 `cx.loads` on every `<name>/drag/codex.json` under the root and let the
-exception out. The node holds FOUR Codexes — the two above plus the
-retired `gutenberg.parser4-2026-09-12` and
-`gutenberg.retired-2026-09-12` — and none of the four carries
-`derivation`. Migrating only the two the worker serves would have left
+exception out. The node holds FIVE Codexes — the two above plus the
+retired `gutenberg.parser4-2026-09-12`, `gutenberg.retired-2026-09-12`
+and `gutenberg.unchecked-figures-2026-09-12` — and none of the five
+carries `derivation`. Migrating only the two the worker serves would have left
 `hold collection list`, `show`, `resolve` and `create` all still raising
 on a retired directory nothing reads and nobody would think to look at.
 
