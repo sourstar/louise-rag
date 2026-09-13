@@ -24,7 +24,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 CODEX_KIND = "louise-codex"
 

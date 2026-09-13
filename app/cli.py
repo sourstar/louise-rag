@@ -5,6 +5,7 @@ so this is the concrete realization of the doc's "app corpus add|status|grow"
 shorthand.
 """
 import argparse
+import json
 import os
 import signal
 import sys
@@ -611,6 +612,13 @@ def cmd_pack_adopt(args) -> int:
     return 0
 
 
+# `pack verify`, `pack cat` and `pack dump` are NOT license-gated, by
+# operator decision (2026-09-13): reading a pack by path on local disk is
+# inspection, not use. They take a path, not a collection, encode nothing
+# and write nothing to the node; its data enters the node only through
+# discovery, import or adopt, which ask `licensing` (invariant 9). `verify`
+# is also the check a pack gets BEFORE anyone acknowledges its terms.
+# Do not "fix" them into the gate.
 def cmd_pack_verify(args) -> int:
     from .pack import verify as pack_verify
     checks = args.checks.split(",") if args.checks else None
@@ -722,7 +730,7 @@ def cmd_vindex_prune(args) -> int:
 
 
 def cmd_vindex_status(args) -> int:
-    from . import vector_index
+    from . import config, vector_index
     collection = _collection_by_name(args.collection)
     st = vector_index.stats(collection)
     if st is None:

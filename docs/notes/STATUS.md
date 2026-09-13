@@ -1356,12 +1356,19 @@ Three structural fixes rather than doors:
 Every gate has a test whose control proves the same call is otherwise
 made, so a refusal is the gate's and not an ineligible input.
 
-**Waiting on the operator:** `pack verify`, `pack cat` and `pack dump`
-take a pack PATH, not a collection, and print its records. Is reading a
-pack on local disk by hand a "use"? If yes, they need a path-based
-resolution in `licensing` (a configured collection over that directory
-decides, otherwise the pack manifest's class) — a new function, so the
-question comes first.
+**Decided by the operator, 2026-09-13: reading a pack is not a "use".**
+`pack verify`, `pack cat` and `pack dump` take a pack PATH, not a
+collection, and print its records; they stay ungated. They encode
+nothing and write nothing to the node, the data enters it only through
+discovery, import or adopt (all gated), and `verify` is the check a pack
+gets before anyone acknowledges it. The comment above `cmd_pack_verify`
+says so, so a later audit does not gate them.
+
+The test that pins it (tests/pack/test_pack_read_ungated.py) was the
+first ever to run `pack cat`, which crashed: cli.py used `json` without
+importing it. An undefined-name sweep then found `index vector status`
+raising NameError on `config` for every collection with no vector index
+yet. Both fixed and tested; the sweep of app/ and tools/ is clean.
 
 ### What is waiting on the operator
 
