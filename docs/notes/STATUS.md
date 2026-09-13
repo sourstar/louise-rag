@@ -710,6 +710,40 @@ writes them is current. **A green suite says the code is consistent with
 itself; only the live config says it is consistent with what is already
 on disk.**
 
+### Gutenberg's fetch "errors" are mirror resets, and they are retried
+
+Measured 2026-09-13, mid-fetch: 9,480 of 91,863 `fetch_files` rows carry
+an error, and the count climbs as the fetch advances. Every one of them
+is the same shape —
+
+```
+TransportError: rsync aleph.gutenberg.org::gutenberg-epub/10/pg10-images.epub:
+exit 12: rsync: [receiver] read error: Connection reset by peer (104)
+```
+
+— a mirror dropping the connection, not a missing file. Note the host:
+the endpoint recorded is `ftp.ibiblio.org::gutenberg-epub` and the reset
+comes from `aleph.gutenberg.org`, so the name rotates across mirrors
+under us.
+
+**No data is lost.** `_is_pending` gates on `fetch_done`, `remote_size`
+and `remote_mtime` and does NOT look at `error` or `retries`, so an
+errored file is simply picked up again on the next pass. The retry
+histogram says the same thing: 9,228 at `retries=1`, 245 at 2, 7 at 3 —
+the overwhelming majority have failed once and have not come round yet,
+because the first pass is still running.
+
+**What IS wrong is the recording.** CLAUDE.md: "Deferral is not failure:
+an unreachable endpoint ... never writes an error." A connection reset is
+the definition of an unreachable endpoint, and writing it to `error`
+means the operator's only summary of fetch health counts transient mirror
+flakiness alongside real failures — which is exactly how it read from
+the outside ("errors=9469 and climbing") and why it cost an investigation
+to dismiss. The fix is `_upsert_deferred` beside `_upsert_aborted`:
+truthful partial progress, no `error`, `retries` left alone for genuine
+failures. NOT done — it is a reporting fix, it ships no wrong artefact,
+and it was found with a deploy already staged and blocked.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
