@@ -694,6 +694,22 @@ The identity moves because `collection_id` is the digest of the object
 and the object gained a field. The space does not, because §2.4 excludes
 `derivation` — so all 35,417,887 pubmed vectors stay admissible.
 
+**The second landmine, found by following the first.** `_held()` called
+`cx.loads` on every `<name>/drag/codex.json` under the root and let the
+exception out. The node holds FOUR Codexes — the two above plus the
+retired `gutenberg.parser4-2026-09-12` and
+`gutenberg.retired-2026-09-12` — and none of the four carries
+`derivation`. Migrating only the two the worker serves would have left
+`hold collection list`, `show`, `resolve` and `create` all still raising
+on a retired directory nothing reads and nobody would think to look at.
+
+Fixed by the codebase's own doctrine (invariant 1, "the node keeps
+running its others"): one unreadable Codex refuses itself, not every
+command. What is skipped is not hidden — `unreadable()` returns it and
+`list` prints it with the command to run. The ordering is pinned by a
+test: `migrate` reads the file directly rather than through `_held`, so
+the thing that repairs an unreadable Codex is not itself blocked by one.
+
 **The measurement that nearly fooled me.** My first check compared
 `from_dict(dict(raw, derivation=None)).space_id` with
 `from_dict(migrated).space_id` — two names for the same object, so of

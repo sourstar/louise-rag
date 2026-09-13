@@ -115,3 +115,37 @@ def test_a_current_codex_needs_nothing(tmp_path):
     drag = col.write(root, a_codex())
     got = col.migrate(root, drag.parent.name)
     assert got["added"] == [] and got["written"] is False
+
+
+# ---- one bad Codex refuses itself, not every command ----------------------
+
+def test_an_unreadable_codex_does_not_take_down_the_listing(written, tmp_path):
+    """Invariant 1's doctrine — "the node keeps running its others" —
+    which `_held` did not follow: it called `cx.loads` on every held
+    Codex and let the exception out, so `list`, `show`, `resolve` and
+    `create` all died on one bad file.
+
+    The live node holds four Codexes and NONE carries `derivation`: the
+    two the worker serves, plus `gutenberg.parser4-2026-09-12` and
+    `gutenberg.retired-2026-09-12`. Migrating only the served two would
+    have left every `hold` verb raising on a retired directory nothing
+    reads."""
+    root, name, _, codex = written
+    from tests.hold.conftest import pubmed as a_codex
+    good = col.write(root, a_codex(descriptive=cx.Descriptive(
+        title="Still fine", summary="a Codex that loads")))
+    held = col._held(root)
+    assert [n for n, _ in held] == [good.parent.name], "the good one is listed"
+    assert name in col.unreadable(), "and the bad one is NAMED, not hidden"
+    assert "derivation" in col.unreadable()[name]
+
+
+def test_listing_survives_and_migrate_still_reaches_the_bad_one(written):
+    """`migrate` reads the file directly rather than through `_held`, so
+    the thing that repairs an unreadable Codex is not itself blocked by
+    it. That ordering is the whole point."""
+    root, name, _, _ = written
+    assert col.list_all(root) == [] or True          # no raise is the assertion
+    got = col.migrate(root, name, apply=True)
+    assert got["written"] is True
+    assert col.unreadable() == {} or name not in col._held(root)

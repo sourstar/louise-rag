@@ -237,10 +237,19 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
         return hits
     marks = ",".join("?" for _ in ids)
     works: dict[int, dict] = {}
-    for r in con.execute(
+    try:
+        rows = con.execute(
             f"SELECT native_id, lang, work FROM documents "
             f"WHERE source=? AND native_id IN ({marks})",
-            [collection.plugin] + [str(i) for i in ids]):
+            [collection.plugin] + [str(i) for i in ids]).fetchall()
+    except Exception:   # noqa: BLE001 — A DEDUP THAT CANNOT RUN RETURNS EVERY
+        return hits     # HIT, NEVER NONE. `work` is added by an ALTER in
+        # `db.connect`, so a manifest opened some other way — an older
+        # process still running mid-deploy, a hand-opened connection — has
+        # no such column, and this is on the path of EVERY query. Losing
+        # the dedup costs a reader some duplicate translations; raising
+        # here costs them the search.
+    for r in rows:
         try:
             parsed = json.loads(r["work"]) if r["work"] else None
         except (TypeError, ValueError):

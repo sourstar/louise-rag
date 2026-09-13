@@ -262,6 +262,13 @@ def cmd_list(a) -> int:
         elif c.continues:
             line += f"  continues={c.continues} through={c.continues_through}"
         print(line)
+    # SKIPPED, NOT HIDDEN. `_held` refuses an unreadable Codex on its own
+    # behalf rather than failing the command, which is invariant 1's rule
+    # — but a collection that silently stops being listed is how one gets
+    # forgotten. Named here, with what to run.
+    for name, reason in sorted(col.unreadable().items()):
+        print(f"  !! {name}: not listed — {reason}", file=sys.stderr)
+        print(f"     try: louise hold collection migrate {name}", file=sys.stderr)
     return 0
 
 

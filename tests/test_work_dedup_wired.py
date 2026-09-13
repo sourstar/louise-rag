@@ -145,3 +145,17 @@ def test_a_plugin_that_says_nothing_gets_no_key():
     assert plugin_io.work_identity(
         {"title": "t", "authors": "a", "lang": "en", "subjects": "s",
          "bookshelves": ""}) == ""
+
+
+def test_a_manifest_without_the_work_column_still_searches(con):
+    """`work` is added by an ALTER in `db.connect`, so a manifest opened
+    some other way — an older process still running mid-deploy — has no
+    such column. This is on the path of EVERY query: losing the dedup
+    costs a reader some duplicate translations, raising costs them the
+    search."""
+    con.execute("DROP TABLE documents")
+    con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY, source TEXT, "
+                "native_id TEXT, lang TEXT)")          # the pre-migration shape
+    got = retrieval._attach_work_fields(con, FakeCollection(),
+                                        _hits(2413, 2414), "madame bovary")
+    assert [h["book_id"] for h in got] == [2413, 2414], "every hit, never none"

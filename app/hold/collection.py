@@ -103,13 +103,53 @@ def _normalise(cid: str) -> str:
     return cid if cid.startswith("sha256:") else "sha256:" + cid
 
 
+#: {name: reason} for every held directory whose Codex would not load,
+#: filled by the last `_held` call. Module-level for the same reason
+#: `collections._REFUSALS` is: the enumeration returns what it CAN serve,
+#: and the caller that wants to report the rest asks afterwards.
+_UNREADABLE: dict[str, str] = {}
+
+
 def _held(root: Path) -> list[tuple[str, Codex]]:
+    """Every Codex held here that can be READ.
+
+    ONE UNREADABLE CODEX REFUSES ITSELF, NOT EVERY COMMAND — invariant
+    1's doctrine ("the node keeps running its others"), which this
+    function did not follow. It called `cx.loads` on every
+    `<name>/drag/codex.json` under the root and let the exception out, so
+    a single bad file took down `list`, `show`, `resolve` and `create`
+    alike.
+
+    Found 2026-09-13, and not hypothetically: the live node holds four
+    Codexes — `gutenberg`, `pubmed`, and the retired
+    `gutenberg.parser4-2026-09-12` and `gutenberg.retired-2026-09-12` —
+    and NONE of them carries §9.3's `derivation`. Migrating the two the
+    worker serves would have left every `hold` verb still raising on a
+    retired directory that nothing reads and nobody would think to look
+    at.
+
+    What is skipped is not hidden: `unreadable()` returns it, and `list`
+    prints it. The one caller that loses something real is `write`'s
+    idempotence check, which cannot match an id it cannot read — and
+    refusing every create because one retired directory is stale is the
+    worse failure of the two, with the name collision below still caught.
+    """
     out = []
+    _UNREADABLE.clear()
     for d in sorted(root.iterdir()) if root.exists() else []:
         p = d / DRAG / CODEX_FILE
-        if p.is_file():
+        if not p.is_file():
+            continue
+        try:
             out.append((d.name, cx.loads(p.read_bytes())))
+        except Exception as e:          # noqa: BLE001 — its own refusal
+            _UNREADABLE[d.name] = f"{type(e).__name__}: {e}"
     return out
+
+
+def unreadable() -> dict[str, str]:
+    """What the last `_held` could not load, {name: reason}."""
+    return dict(_UNREADABLE)
 
 
 def resolve(root: Path, ref: str) -> tuple[str, Codex]:
