@@ -23,6 +23,9 @@ class Collection:
     def __init__(self, name="pubmed", archive=None):
         self.name = name
         self.genesis_archive = archive
+        # green: a stand-in licensing cannot judge now reads as WITHHELD
+        # (health fails closed); the license verdicts have their own tests
+        self.plugin = "gutenberg"
 
 
 @pytest.fixture
@@ -380,7 +383,7 @@ def test_a_collection_refused_at_boot_is_reported_as_the_refusal(con, monkeypatc
     reports, blocking = health.check([Collection()], connect=lambda collection: con)
     assert [s.name for s in reports[0].stages] == ["boot"]
     assert reports[0].stages[0].state == health.BLOCKED
-    assert any("refused at boot" in b and "space_id mismatch" in b for b in blocking)
+    assert any("fails the boot check" in b and "space_id mismatch" in b for b in blocking)
 
 
 # ---- the verification pass of those fixes, 2026-09-13 --------------------
@@ -446,5 +449,5 @@ def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
     reports, blocking = health.check([c])
     assert [s.name for s in reports[0].stages] == ["boot"]
     assert reports[0].stages[0].state == health.BLOCKED
-    assert any("refused at boot" in b and "model-a" in b for b in blocking), blocking
+    assert any("fails the boot check" in b and "model-a" in b for b in blocking), blocking
     assert snapshot() == before, "a check writes nothing"

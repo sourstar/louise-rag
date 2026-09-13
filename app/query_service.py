@@ -23,8 +23,13 @@ def withheld_reason(collection) -> str | None:
         if licensing.state_for(collection) == licensing.MISSING:
             return ("license not acknowledged: this source's terms require "
                     "an acknowledgement before its data is used (invariant 9)")
-    except Exception:       # noqa: BLE001 — never fail a search on the gate's own error
-        return None
+    except Exception as e:  # noqa: BLE001
+        # FAIL CLOSED (audit, 2026-09-13). This returned None — searchable —
+        # when the gate itself raised, so every search, chat and verify
+        # opened on an error. A collection whose license cannot be judged
+        # is withheld until it can.
+        return (f"license state cannot be judged ({type(e).__name__}: {e}); "
+                f"withheld until it can (invariant 9)")
     return None
 
 

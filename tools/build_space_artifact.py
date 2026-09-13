@@ -381,6 +381,8 @@ def main(argv=None) -> int:
     collection = collections_mod.by_name(args.collection)
     if collection is None:
         raise SystemExit(f"no such collection: {args.collection!r}")
+    from app import licensing        # invariant 9: a signed, publishable artifact (audit)
+    licensing.require_ack_or_exit(collection, use="its vectors are published as an artifact")
     signing_key = None
     if args.key:
         from app.bundles.keys import load_signing_key

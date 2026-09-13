@@ -88,3 +88,65 @@ def test_a_bundle_in_the_inbox_waits_for_the_acknowledgement(isolated_config, mo
     _free(monkeypatch)
     assert worker._drain_bundle_inbox(con, c) == 1
     assert imported == ["b1"], "control: the gate is what held it"
+
+
+def test_the_cli_bundle_doors_refuse_an_unacknowledged_collection(isolated_config,
+                                                                   monkeypatch, capsys):
+    """`bundle import` wrote vectors the worker's gated inbox would have
+    held; `bundle export` shipped them as a signed, shareable bundle."""
+    from app.bundles import export as bundle_export, importer as bundle_importer
+    called = []
+    monkeypatch.setattr(bundle_importer, "import_bundle",
+                        lambda *a, **k: called.append("import") or {"ok": True})
+    monkeypatch.setattr(bundle_export, "export_bundle",
+                        lambda *a, **k: called.append("export") or {})
+    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
+    name = collections_mod.load_all()[0].name
+    imp = argparse.Namespace(collection=name, path="/nowhere", no_first_use=False)
+    exp = argparse.Namespace(collection=name, uids=["g:1"], limit=1, dest="/nowhere")
+
+    _withheld(monkeypatch)
+    assert cli.cmd_bundle_import(imp) == 1
+    assert cli.cmd_bundle_export(exp) == 1
+    assert called == []
+    assert capsys.readouterr().err.count("REFUSED") == 2
+
+    _free(monkeypatch)
+    cli.cmd_bundle_import(imp)
+    try:
+        cli.cmd_bundle_export(exp)
+    except Exception:       # noqa: BLE001 — the fake's empty result; the call is what counts
+        pass
+    assert called == ["import", "export"], "control: the gate is what refused"
+
+
+def test_pack_adopt_refuses_when_either_side_is_unacknowledged(isolated_config,
+                                                                monkeypatch, capsys):
+    """Vectors and the text index cross between the two collections."""
+    import types
+
+    from app.pack import adopt as pack_adopt
+    called = []
+    monkeypatch.setattr(pack_adopt, "adopt", lambda *a, **k: called.append(1) or {})
+    # two DISTINCT sides, each withheld in turn: with one collection on both
+    # sides the test could not tell whether both were checked (verification)
+    sides = {n: types.SimpleNamespace(name=n, plugin="gutenberg", license_ack=None)
+             for n in ("orig", "twin")}
+    monkeypatch.setattr(cli, "_collection_by_name", lambda n: sides[n])
+    args = argparse.Namespace(origin="orig", packed="twin", yes=True, fts=False)
+
+    for withheld in ("orig", "twin"):
+        monkeypatch.setattr(
+            licensing, "state_for",
+            lambda c, spec=None, w=withheld:
+            licensing.MISSING if c.name == w else licensing.NOT_REQUIRED)
+        assert cli.cmd_pack_adopt(args) == 1, f"{withheld} withheld"
+        assert called == []
+    assert "REFUSED" in capsys.readouterr().err
+
+    _free(monkeypatch)
+    try:
+        cli.cmd_pack_adopt(args)
+    except Exception:       # noqa: BLE001 — the fake's empty result; the call is what counts
+        pass
+    assert called == [1], "control: the gate is what refused"

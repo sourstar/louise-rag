@@ -166,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
     if col is None:
         raise SystemExit(f"no such collection: {args.collection!r} "
                          f"(have {[c.name for c in cols]})")
+    from app import licensing        # invariant 9: the corpus is parsed (audit)
+    licensing.require_ack_or_exit(col, use="its corpus is parsed")
     run(db.connect(collection=col), col, dry_run=args.dry_run,
         start_at=args.start_at, limit=args.limit, force=args.force,
         quiet=args.quiet)

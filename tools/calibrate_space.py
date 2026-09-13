@@ -126,6 +126,8 @@ def record_live(urls: list[str], collection_name: str, out_dir: Path) -> dict:
     collection = collections_mod.by_name(collection_name)
     if collection is None:
         raise SystemExit(f"no such collection: {collection_name!r}")
+    from app import licensing        # invariant 9: stored text is embedded (audit)
+    licensing.require_ack_or_exit(collection, use="its stored text is embedded")
     con = db.connect(collection)
     rows = con.execute(
         "SELECT uid FROM documents WHERE embed_done=1 LIMIT 64").fetchall()

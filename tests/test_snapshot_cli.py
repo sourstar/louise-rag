@@ -11,18 +11,29 @@ import pytest
 from app import cli, collections as collections_mod, db, snapshots
 
 
-@pytest.fixture
-def wiki(isolated_config, tmp_path, monkeypatch):
-    """A pinned collection with three documents."""
+def _write_wiki(tmp_path, ack: str | None):
     path = collections_mod.config_toml_path("wp")
     path.parent.mkdir(parents=True, exist_ok=True)
+    top = 'plugin = "wikipedia"\nprofile = "demo"\nsnapshot = "20260701"\n'
+    if ack:
+        top += f'license_ack = "{ack}"\n'     # top level: above [paths], or TOML files it there
     path.write_text(
-        'plugin = "wikipedia"\nprofile = "demo"\nsnapshot = "20260701"\n'
-        f'[paths]\nmanifest = "{(tmp_path / "wp.db").as_posix()}"\n'
+        top
+        + f'[paths]\nmanifest = "{(tmp_path / "wp.db").as_posix()}"\n'
         f'fts = "{(tmp_path / "wpfts").as_posix()}"\n'
         f'lancedb = "{(tmp_path / "wplance").as_posix()}"\n',
         encoding="utf-8")
-    collection = collections_mod.by_name("wp")
+    return collections_mod.by_name("wp")
+
+
+@pytest.fixture
+def wiki(isolated_config, tmp_path, monkeypatch):
+    """A pinned collection with three documents. Wikipedia is yellow-class,
+    so its terms are ACKNOWLEDGED here: shipping its vectors without that
+    is refused (invariant 9) — the last test below."""
+    from app import licensing
+    collection = _write_wiki(tmp_path, None)
+    collection = _write_wiki(tmp_path, licensing.make_ack(collection))
     con = db.connect(collection)
     for i, h in ((1, "aa"), (2, "bb"), (3, "cc")):
         con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
@@ -33,6 +44,18 @@ def wiki(isolated_config, tmp_path, monkeypatch):
 
 def _run(*argv) -> int:
     return cli.main(list(argv))
+
+
+def test_the_vectors_of_an_unacknowledged_collection_are_not_shipped(isolated_config,
+                                                                     tmp_path, capsys):
+    """Invariant 9, "not exchanged": a vector delta is an ordinary signed,
+    shareable bundle, and `snapshot vectors` never asked the gate
+    (verification pass, 2026-09-13)."""
+    _write_wiki(tmp_path, None)
+    assert _run("snapshot", "vectors", "wp", "--delta",
+                str(tmp_path / "none.delta.jsonl")) == 1
+    err = capsys.readouterr().err
+    assert "REFUSED" in err and "invariant 9" in err
 
 
 def test_record_then_diff_reports_only_what_changed(wiki, capsys):

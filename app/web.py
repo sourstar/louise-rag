@@ -377,6 +377,9 @@ def read_document(request: Request, collection: str, book_id: int,
     c = reader.collection_by_name(collection)
     if c is None:
         raise HTTPException(404, f"no such collection: {collection}")
+    # invariant 9: the whole text, to anyone who can reach Ask — the most
+    # exposed door of all, and it never asked (audit, 2026-09-13)
+    _refuse_withheld(c, "its text is read")
     doc = reader.document(c, book_id)
     if doc is None:
         raise HTTPException(404, f"{collection} does not hold #{book_id}")
@@ -1400,6 +1403,19 @@ def _license_state(collection: collections_mod.Collection) -> dict:
     }
 
 
+def _refuse_withheld(collection, use: str) -> None:
+    """Invariant 9 at the web's doors, from THE resolution
+    (`licensing.require_ack`): a 403 that names what is missing and how to
+    record it — never a silent success. The worker, the CLI and `hold` all
+    asked; the Library's rescan and bundle-export buttons did not
+    (verification pass, 2026-09-13)."""
+    from . import licensing
+    try:
+        licensing.require_ack(collection, use=use)
+    except LicenseAckRequiredError as e:
+        raise HTTPException(403, str(e)) from None
+
+
 @admin_router.get("/library", response_class=HTMLResponse)
 def library_page(request: Request):
     collections = collections_mod.load_all()
@@ -1533,6 +1549,8 @@ def library_discover(name: str):
     the button would re-run the same cheap stat pass and appear to do
     nothing, which is exactly when an operator reaches for it."""
     collection = _collection_or_404(name)
+    # invariant 9, "not discovered": the worker's scan asks; this button did not
+    _refuse_withheld(collection, "its corpus is discovered")
     con = db.connect(collection)
     from .plugins import cursor as scan_cursor
     cleared = scan_cursor.clear(collection.manifest_path.parent, collection.plugin)
@@ -2279,6 +2297,16 @@ def collection_ack(name: str):
     license_ack and acquire_enabled=true; the worker hot-reloads it."""
     from . import licensing
     collection = _collection_or_404(name)
+    if getattr(collection, "codex", None) is not None:
+        # A Codex collection's acknowledgement is state/ack.json, recorded
+        # by `louise hold collection ack` after it checks the terms against
+        # the Codex's pin (09 §9.13). This wrote `license_ack` into a TOML
+        # the Codex loader never reads and answered "ok" — the gate stayed
+        # shut while the page said it was open (verification pass).
+        raise HTTPException(
+            400, f"{name} is run from its Codex: record the acknowledgement with "
+                 f"`louise hold collection ack {name}` — it checks the terms "
+                 f"against the Codex's pin first")
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file to record the ack in")
@@ -2324,6 +2352,8 @@ def collection_bundle_export(name: str, body: BundleExportBody):
     after the response streams out."""
     from .bundles import export as bundle_export
     collection = _collection_or_404(name)
+    # invariant 9, "not exchanged": the download is a signed, shareable bundle
+    _refuse_withheld(collection, "its vectors are exported as a bundle")
     con = db.connect(collection)
     uids = body.uids or [r["uid"] for r in con.execute(
         "SELECT uid FROM documents WHERE in_scope=1 AND embed_done=1 "

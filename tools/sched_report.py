@@ -112,6 +112,8 @@ def phases(name: str) -> None:
     col = c_mod.by_name(name)
     if col is None or not col.genesis_archive:
         print(f"{name}: no genesis archive"); return
+    from app import licensing        # invariant 9: documents' text is parsed (audit)
+    licensing.require_ack_or_exit(col, use="its documents are parsed")
     con = db.connect(col)
     row = con.execute(
         "SELECT shard FROM genesis_imports WHERE archive=? AND state IN ('applied','final') "

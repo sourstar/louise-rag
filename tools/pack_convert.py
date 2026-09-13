@@ -54,6 +54,10 @@ def main(argv=None) -> int:
         name=args.name or args.plugin, plugin=args.plugin, profile=None, embed_mode_default=None,
         corpus_dir=Path(args.corpus), manifest_path=state / "manifest.db",
         fts_dir=state / "fts", lance_dir=state / "lancedb")
+    # invariant 9 BEFORE the scan: pack build refused yellow and red, but
+    # only after the whole corpus had been discovered and parsed (audit)
+    from app import licensing
+    licensing.require_ack_or_exit(collection, use="its corpus is converted")
     signal.signal(signal.SIGTERM, _sigterm)
     signal.signal(signal.SIGINT, _sigterm)
 

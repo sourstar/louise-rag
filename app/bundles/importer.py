@@ -309,6 +309,11 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
     header = None
     bundle_id = None
     producer = None
+    # invariant 9, "not imported": the backstop for every caller. The doors
+    # — the worker's inbox, `bundle import` — refuse first, in their own
+    # words; this makes a door that forgets impossible (audit, 2026-09-13)
+    from .. import licensing
+    licensing.require_ack(collection, use="vectors are imported into it")
     try:
         return _import_checked(con, collection, bundle_dir, embed_fn=embed_fn,
                                allow_first_use=allow_first_use, stop=stop)

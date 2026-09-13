@@ -128,6 +128,10 @@ def export_bundle(con, collection, uids: list[str], dest: Path, *,
     The signing key is loaded lazily and only here — a consumer-role node never
     needs it in the process at all.
     """
+    # invariant 9, "not exchanged": the backstop for every caller — CLI,
+    # the Library, `snapshot vectors`, contribute (audit, 2026-09-13)
+    from .. import licensing
+    licensing.require_ack(collection, use="its vectors are exported as a bundle")
     uids = sorted(set(uids))
     if not uids:
         raise ExportError("no uids requested")

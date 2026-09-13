@@ -81,26 +81,19 @@ def _apply_filters(files: list[RemoteFile], spec_filters: tuple[str, ...],
 
 
 def _license_state(spec: AcquisitionSpec, collection) -> str:
-    if spec.license_class == LicenseClass.GREEN:
-        return "not_required"
-    if not collection.license_ack or "/" not in collection.license_ack:
-        return "missing"
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
-        return "missing"
-    _, _, acked_hash = collection.license_ack.partition("/")
-    current_hash = hashlib.sha256(spec.terms_text_path.read_bytes()).hexdigest()
-    return "acknowledged" if acked_hash == current_hash else "missing"
+    """THE resolution (app/licensing.py), for the spec this pass fetches by.
+    This was a private copy of the check — CLAUDE.md invariant 9: "never
+    re-implement the check" — that agreed with licensing only as long as
+    nobody changed one of them (audit, 2026-09-13)."""
+    from .. import licensing
+    return licensing.state_for(collection, spec)
 
 
 def _require_license_ack(spec: AcquisitionSpec, collection) -> None:
     """Raised before any listing or transport call — CLAUDE.md invariant 9:
     "before the first byte moves"."""
-    if _license_state(spec, collection) == "missing":
-        raise LicenseAckRequiredError(
-            f"{spec.source_id}: license_class={spec.license_class.value} requires an "
-            f"acknowledgement (timestamp + sha256 of {spec.terms_text_path}) recorded in "
-            f"collections/{collection.name}.toml before any byte moves. "
-            f"Run: python -m app.cli corpus add {collection.name} --ack-terms <path>")
+    from .. import licensing
+    licensing.require_ack(collection, spec=spec, use="any byte moves from the origin")
 
 
 def make_ack(terms_text_path: Path) -> str:
@@ -354,6 +347,13 @@ def plan_acquisition(con, collection, spec: AcquisitionSpec, profile: str) -> Ac
     """Read-only: list, filter, gate-check (but never refuse) — the
     --dry-run / status half. Never raises on a missing license ack; reports
     license_state instead so an operator can see what's blocking them."""
+    if _license_state(spec, collection) == "missing":
+        # invariant 9, "before the first byte moves": a dry run LISTS the
+        # origin, and for a peer source resolves an index torrent from the
+        # swarm — it did both for a collection whose terms were never
+        # acknowledged (audit, 2026-09-13). The plan names what blocks it
+        # and lists nothing.
+        return _plan_from_files(con, collection, spec, [])
     spec = effective_spec(collection, spec, profile)
     files = _list_and_filter(spec, profile, getattr(collection, "snapshot", None))
     return _plan_from_files(con, collection, spec, files)

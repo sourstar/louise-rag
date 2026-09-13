@@ -223,6 +223,8 @@ def main(argv=None) -> int:
     if collection is None:
         print(f"no such collection: {args.collection}", file=sys.stderr)
         return 2
+    from app import licensing        # invariant 9: stored text is embedded (audit)
+    licensing.require_ack_or_exit(collection, use="its stored text is embedded")
 
     if args.repeat:
         report = check_repeat(collection, repeats=args.repeat, tau=args.tau,

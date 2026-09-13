@@ -60,7 +60,10 @@ def _import(root, dest, *extra):
 
 def _stored(root, codex):
     from app.hold import records as rec
-    local = rec.local_collection(root, "gutenberg", codex)
+    # INSPECTION, not use: the ungated builder. `local_collection` is the
+    # invariant-9 gate now, and this helper checks what a refused
+    # collection holds — it must be able to look (audit, 2026-09-13)
+    local = rec._local_collection(root, "gutenberg", codex)
     db = embeddings._conn(local)
     if embeddings.TABLE not in db.table_names():
         return {}

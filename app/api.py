@@ -230,8 +230,11 @@ def set_scope(body: ScopeBody):
 
 @app.post("/api/discover", dependencies=[Depends(auth.require_admin)])
 def discover():
+    collection = _collection()
+    # invariant 9, "not discovered" (verification pass, 2026-09-13)
+    web._refuse_withheld(collection, "its corpus is discovered")
     con = _con()
-    return discovery.sync_collection(con, _collection())
+    return discovery.sync_collection(con, collection)
 
 class ResetBody(BaseModel):
     stage: str  # rdf | fts | embed | errors
@@ -251,6 +254,8 @@ def reset(body: ResetBody):
 
 @app.get("/api/books")
 def books(status: str = "", lang: str = "", q: str = "", page: int = 0, size: int = 50):
+    # invariant 9: the catalogue is the collection's data (audit, 2026-09-13)
+    web._refuse_withheld(_collection(), "its catalogue is served")
     con = _con()
     where, params = ["1=1"], []
     if status == "errors":
@@ -273,6 +278,8 @@ def books(status: str = "", lang: str = "", q: str = "", page: int = 0, size: in
 
 @app.get("/api/books/{book_id}")
 def book_detail(book_id: int):
+    # invariant 9: a document's record is the collection's data (audit)
+    web._refuse_withheld(_collection(), "its catalogue is served")
     con = _con()
     row = con.execute("SELECT * FROM documents WHERE uid=?", (_uid(book_id),)).fetchone()
     if not row:
@@ -308,6 +315,8 @@ def _run_summary(book_id: int, force: bool):
 
 @app.post("/api/books/{book_id}/summary", dependencies=[Depends(auth.require_admin)])
 def make_summary(book_id: int, force: bool = False):
+    # invariant 9: a summary sends the book's text to the LLM — use
+    web._refuse_withheld(_collection(), "its text is sent to the LLM for a summary")
     con = _con()
     if not force:
         cached = summarize.get_cached(con, book_id)
@@ -323,6 +332,8 @@ def make_summary(book_id: int, force: bool = False):
 
 @app.get("/api/books/{book_id}/summary")
 def summary_status(book_id: int):
+    # invariant 9: a cached summary is text derived from the corpus (audit)
+    web._refuse_withheld(_collection(), "its summaries are served")
     con = _con()
     cached = summarize.get_cached(con, book_id)
     with _summary_lock:

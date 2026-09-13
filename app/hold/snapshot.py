@@ -360,6 +360,10 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     from . import collection as col, drag as drag_mod, records as rec
 
     name, codex = col.resolve(Path(root), ref)
+    # invariant 9: a snapshot is signed and published with the DRAG. Its
+    # input exists only after a gated build, but the terms can change in
+    # between — built through the gate like every other stage (audit)
+    rec.local_collection(Path(root), name, codex)
     base = Path(root) / name
     drag_dir, staging = base / "drag", base / rec.STATE / rec.BUILD
 

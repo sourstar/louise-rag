@@ -295,6 +295,10 @@ def cmd_bundle_keygen(args) -> int:
 def cmd_bundle_export(args) -> int:
     from .bundles import export as bundle_export
     collection = _collection_by_name(args.collection)
+    # invariant 9, "not exchanged": a bundle is a signed, shareable copy of
+    # the collection's vectors (verification pass, 2026-09-13)
+    if _refuse_unacknowledged(collection, "its vectors are exported as a bundle"):
+        return 1
     con = db.connect(collection)
     if args.uids:
         uids = args.uids
@@ -319,6 +323,9 @@ def cmd_bundle_export(args) -> int:
 def cmd_bundle_import(args) -> int:
     from .bundles import importer as bundle_importer
     collection = _collection_by_name(args.collection)
+    # invariant 9, "not imported": the worker's inbox asks; this door did not
+    if _refuse_unacknowledged(collection, "vectors are imported into it"):
+        return 1
     con = db.connect(collection)
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -583,6 +590,11 @@ def cmd_pack_adopt(args) -> int:
     from .pack import adopt as pack_adopt
     origin = _collection_by_name(args.origin)
     packed = _collection_by_name(args.packed)
+    # invariant 9: vectors (and the text index) cross between the two —
+    # neither side may be a collection whose terms were never acknowledged
+    for side in (origin, packed):
+        if _refuse_unacknowledged(side, "vectors are copied between it and another collection"):
+            return 1
     if not args.yes:
         print(f"This copies {origin.name}'s vector table into {packed.name}'s and marks the "
               f"documents embedded{' (+ the text index)' if args.fts else ''}. Stop the worker "
@@ -1043,6 +1055,9 @@ def cmd_snapshot_delta(args) -> int:
     from . import config, snapshots
 
     collection = _collection_by_name(args.collection)
+    # invariant 9, "not exchanged": the delta is written to be shared
+    if _refuse_unacknowledged(collection, "a shareable delta of it is written"):
+        return 1
     parent = snapshots.manifest_path_for(collection, args.from_snapshot)
     child = snapshots.manifest_path_for(collection, args.to_snapshot)
     for path, name in ((parent, args.from_snapshot), (child, args.to_snapshot)):
@@ -1091,6 +1106,9 @@ def cmd_snapshot_vectors(args) -> int:
     from .bundles.keys import NodeKeyError
 
     collection = _collection_by_name(args.collection)
+    # invariant 9, "not exchanged": the vector delta is an ordinary bundle
+    if _refuse_unacknowledged(collection, "its vectors are exported as a bundle"):
+        return 1
     delta = Path(args.delta)
     if not delta.is_file():
         raise SystemExit(f"no such delta: {delta}")

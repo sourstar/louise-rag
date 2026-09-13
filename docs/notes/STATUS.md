@@ -1308,6 +1308,61 @@ probes the encoder, so `louise health` takes up to 10 s per such
 collection when the encoder is unreachable. This node's collections are
 both Codex collections, which never probe.
 
+### Invariant 9 at every door — the audit, 2026-09-13
+
+The verification pass kept finding one more door that never asked the
+license gate, so the question was put whole: an audit mapped every path
+that uses, imports or exchanges a collection's data — 129 of them, from
+three independent angles (entry points, the library functions that move
+data, egress), deduplicated and checked by a critic. Every one found was
+pre-existing, and none was reachable on this node (gutenberg green,
+pubmed acknowledged; checked live). Closed:
+
+| kind | doors |
+|---|---|
+| serve | `/read/{collection}/{id}` — the whole text, reachable from Ask with no admin token; `GET /api/books`, `/api/books/{id}`, `/api/books/{id}/summary` |
+| import | CLI `bundle import`; the worker's bundle inbox; `importer.import_bundle` as the backstop |
+| export | CLI `bundle export`, `snapshot vectors`, `snapshot delta`, the Library's export button, `hold vectors export`, `tools/build_space_artifact`; `export.export_bundle` as the backstop |
+| discover | the Library's Rescan, `POST /api/discover`, the worker's inline rescan after a fetch, `hold records build`'s pre-scan, `tools/pack_convert`; a dry-run `plan_acquisition` LISTED the origin before any check and now lists nothing |
+| embed / llm | the worker's embed selectors, `hold vectors check`, `hold check`, `bundle resweep`, `louise contribute`, the summary endpoint, the calibration and sweep tools |
+| copy | `pack adopt`, both sides |
+
+Three structural fixes rather than doors:
+
+- **`hold records.local_collection` is the one gate for `hold`.** Every
+  stage that uses a Codex collection's data builds its local side there,
+  and the only check it had asked whether an acknowledgement FILE
+  existed — a file whose hash no longer matched the terms passed.
+- **THE resolution reads the Codex.** `licensing` read only the plugin's
+  registry class, so a Codex that tightens green gutenberg to yellow
+  (04 §4.4 allows it) was judged green by every gate but that presence
+  check. The Codex's class decides now — 02 §2.1 makes it authoritative —
+  against the terms the Codex pins. ("The stricter wins", tried first,
+  left a green Codex over a yellow plugin withheld for good, since
+  nothing records an ack for a green Codex; the verification pass caught
+  it.) A Codex collection's refusal names `louise hold collection ack`,
+  the one command that records its acknowledgement, and the Library's
+  button no longer answers "ok" for one while writing a TOML line its
+  loader never reads. Checked live before shipping: both collections
+  resolve exactly as before.
+- **One answer to one fault.** When licensing itself fails, search,
+  health and the worker all withhold — search failed closed, health
+  said fine, and the worker raised into its round.
+- **One check, not two.** The acquisition engine kept a private copy of
+  the license check, which invariant 9 forbids; it delegates now. And
+  search's gate failed OPEN when licensing itself raised — every search,
+  chat and verify — and fails closed.
+
+Every gate has a test whose control proves the same call is otherwise
+made, so a refusal is the gate's and not an ineligible input.
+
+**Waiting on the operator:** `pack verify`, `pack cat` and `pack dump`
+take a pack PATH, not a collection, and print its records. Is reading a
+pack on local disk by hand a "use"? If yes, they need a path-based
+resolution in `licensing` (a configured collection over that directory
+decides, otherwise the pack manifest's class) — a new function, so the
+question comes first.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

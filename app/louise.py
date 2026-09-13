@@ -367,6 +367,10 @@ def cmd_vectors_export(a) -> int:
     # The local side of the collection — manifest, index, vector table —
     # built the one way every stage builds it (07 §7.8, records.local_collection).
     local = rec.local_collection(a.root, name, codex)
+    # Invariant 9, "not exchanged": the one `hold vectors` command that never
+    # asked — import and build do (verification pass, 2026-09-13)
+    from app import licensing
+    licensing.require_ack(local, use="its vectors are exported as a bundle")
     try:
         recipe = _recipe_for(codex, name)
     except emb.GateDeferred as e:
@@ -814,6 +818,10 @@ def cmd_vectors_check(a) -> int:
 
     name, codex = col.resolve(a.root, a.collection)
     local = rec.local_collection(a.root, name, codex)
+    # Invariant 9: the sample's text is embedded (and --drop deletes
+    # vectors) — use of the corpus, as `bundle resweep` is
+    from app import licensing
+    licensing.require_ack(local, use="its text is embedded to check its vectors")
     snapshot = _latest_snapshot(a.root, name, a.snapshot)
 
     embed = None
@@ -897,6 +905,10 @@ def cmd_check(a) -> int:
 
     name, codex = col.resolve(a.root, a.collection)
     local = rec.local_collection(a.root, name, codex)
+    # Invariant 9: the plan embeds sampled text, and its attestations are
+    # made to be exchanged — use of the corpus either way
+    from app import licensing
+    licensing.require_ack(local, use="its text is embedded to check it")
     snapshot = _latest_snapshot(a.root, name, a.snapshot)
     seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
 

@@ -103,16 +103,19 @@ def _withheld(collection) -> str:
     """Invariant 9, from THE resolution (app/licensing.py): a yellow or red
     collection with no valid acknowledgement is not scanned, indexed,
     embedded or imported, in any mode (worker `_license_allows`). "" when
-    nothing is withheld — including for anything licensing cannot judge."""
+    nothing is withheld. A collection licensing cannot judge is WITHHELD —
+    search and the worker fail closed too, and three answers to one fault
+    was the disagreement this module exists to end (verification pass)."""
     try:
         from . import licensing
         if licensing.state_for(collection) != licensing.MISSING:
             return ""
         cls = licensing.license_class_for(collection)
-    except Exception:       # noqa: BLE001 — a health check never raises
-        return ""
+    except Exception as e:  # noqa: BLE001 — a health check never raises
+        return (f"withheld: its license state cannot be judged "
+                f"({type(e).__name__}: {e}) — invariant 9")
     return (f"withheld: license_class={cls} needs an acknowledgement of the "
-            f"terms (Library → acknowledge license…) — invariant 9")
+            f"terms — invariant 9")
 
 
 @dataclass
@@ -395,10 +398,14 @@ def check(collections, connect=db.connect, *, errors: bool = False,
     for collection in collections:
         if collection.name in refused:
             report = Report(collection=collection.name, mode=mode)
+            # "FAILS the boot check", not "was refused": the worker checks at
+            # boot and when a collection is added, so one that changed
+            # under a running worker (the encoder repointed) is still being
+            # served — and is refused at its next boot (verification pass)
             report.stages.append(Stage(
                 "boot", 0, BLOCKED,
-                f"refused at boot — {refused[collection.name]}; it is not "
-                f"served, shared or searched (invariant 1)"))
+                f"fails the boot check — {refused[collection.name]}; the next "
+                f"boot refuses it: not served, shared or searched (invariant 1)"))
             reports.append(report)
             blocking += [f"{collection.name}/{s.name}: {s.reason}" for s in report.stages]
             continue

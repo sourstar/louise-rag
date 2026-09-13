@@ -1448,6 +1448,11 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
         return
     for collection in all_collections:
         if done.get(collection.name) and collection.name in cons:
+            # invariant 9, "not discovered": the fetch that raised this flag
+            # passed the gate when it STARTED; the terms can change before
+            # it ends (audit, 2026-09-13)
+            if not _license_allows(cons[collection.name], collection, "corpus scan"):
+                continue
             db.log_event(cons[collection.name], "info", "discover",
                          "background fetch finished — scanning")
             stats = discovery.sync_collection(cons[collection.name], collection)
@@ -1641,15 +1646,22 @@ def _license_allows(con, collection, use: str) -> bool:
     (the origin's, or the pack's byte-exact copy) is not scanned and its
     archive is not applied. Logged once an hour per collection."""
     from . import licensing
-    if licensing.state_for(collection) != licensing.MISSING:
-        return True
+    try:
+        if licensing.state_for(collection) != licensing.MISSING:
+            return True
+        why = (f"license_class={licensing.license_class_for(collection)} needs an "
+               f"acknowledgement of the terms")
+    except Exception as e:   # noqa: BLE001 — FAIL CLOSED, as search and health do
+        # this raised into the round, while search withheld the collection
+        # and health called it fine: three answers to one fault
+        # (verification pass, 2026-09-13)
+        why = f"its license state cannot be judged ({type(e).__name__}: {e})"
     now = time.time()
     if now - _license_nagged.get(collection.name, 0.0) > 3600:
         _license_nagged[collection.name] = now
         db.log_event(con, "warn", "control",
-                     f"{use} withheld: license_class={licensing.license_class_for(collection)} "
-                     f"needs an acknowledgement of the terms (Library → acknowledge license…) "
-                     f"— a hand-populated or packed folder is not a bypass (invariant 9)")
+                     f"{use} withheld: {why} — a hand-populated or packed folder "
+                     f"is not a bypass (invariant 9)")
     return False
 
 

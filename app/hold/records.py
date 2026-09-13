@@ -309,6 +309,22 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
 
 
 def local_collection(root, name: str, codex, *, corpus_dir=None):
+    """This peer's local side of a Codex collection, for a stage that USES
+    its data — so it is gated here, once, for every such stage (invariant
+    9): records build before its scan, vectors export/import/build/check,
+    archive import, check, snapshot create.
+
+    `_ack_of` below only asks whether an acknowledgement FILE exists; a
+    file whose hash no longer matches the terms passed it. THE resolution
+    (`licensing.require_ack`) compares the hash (audit, 2026-09-13).
+    """
+    local = _local_collection(root, name, codex, corpus_dir=corpus_dir)
+    from app import licensing
+    licensing.require_ack(local, use="its data is used here")
+    return local
+
+
+def _local_collection(root, name: str, codex, *, corpus_dir=None):
     """This peer's LOCAL side of a Codex collection, as 07 §7.8 lays it out.
 
     A Codex says what a collection IS; the manifest, the text index and the

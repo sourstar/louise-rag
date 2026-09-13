@@ -270,6 +270,8 @@ def main(argv=None) -> int:
     if collection is None:
         print(f"no such collection: {args.collection}", file=sys.stderr)
         return 2
+    from app import licensing        # invariant 9: stored text is re-embedded (audit)
+    licensing.require_ack_or_exit(collection, use="its stored text is re-embedded")
 
     sw = Sweeper(collection, tau=args.tau, max_chunks=args.max_chunks,
                  stride=args.stride, delete=args.delete,
