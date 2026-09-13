@@ -680,3 +680,40 @@ def show(root: Path, ref: str) -> dict[str, Any]:
         "refused": None,
         "codex": json.loads(codex.canonical()),
     }
+
+
+def migrate(root: Path, name: str, *, apply: bool = False) -> dict:
+    """Bring a Codex written before a §9.3 field existed up to the schema.
+
+    Adds every nullable §9.3 field the file predates (today:
+    `derivation`), rewrites `codex.json` with the canonical bytes, and
+    reports the identity change. `apply=False` is a dry run and writes
+    nothing.
+
+    The caller must then update the collection's TOML `codex = "…"` line,
+    which is the `collection_id` and is refused on mismatch
+    (`collections.py`). This does NOT do it, because the TOML is the
+    operator's desired state (invariant 10) and a tool that edits it is a
+    tool that edits config behind their back.
+
+    Untouched: `space_id` (§2.4 excludes `derivation`), so every vector
+    already computed stays admissible; records, chunks and snapshots,
+    which are keyed on their own hashes and not on the collection's.
+    """
+    path = drag_of(root, name) / CODEX_FILE
+    raw = json.loads(path.read_bytes())
+    before = cx.digest(cx.canonical_json(
+        {k: v for k, v in raw.items() if k != "descriptive"}))
+    migrated, added = cx.migrate_missing_nulls(raw)
+    if not added:
+        return {"name": name, "added": [], "before": before, "after": before,
+                "written": False}
+    codex = cx.from_dict(migrated)          # refuses if it is still not valid
+    cx.validate(codex)
+    result = {"name": name, "added": added, "before": before,
+              "after": codex.collection_id, "written": False,
+              "path": str(path)}
+    if apply:
+        path.write_bytes(codex.canonical())
+        result["written"] = True
+    return result

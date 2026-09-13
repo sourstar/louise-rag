@@ -270,6 +270,23 @@ def cmd_show(a) -> int:
     return 0
 
 
+def cmd_collection_migrate(a) -> int:
+    got = col.migrate(a.root, a.name, apply=a.apply)
+    if not got["added"]:
+        print(f"{got['name']}: already carries every §9.3 field")
+        return 0
+    print(f"{got['name']}: adding {', '.join(got['added'])} as null")
+    print(f"  collection_id  {got['before']}")
+    print(f"              -> {got['after']}")
+    if not got["written"]:
+        print("  (dry run — re-run with --apply to write it)")
+        return 0
+    print(f"  written: {got['path']}")
+    print(f"\nNow set this in the collection's TOML, or it is refused:\n"
+          f'  codex = "{got["after"]}"')
+    return 0
+
+
 def cmd_records_build(a) -> int:
     from app.hold import records as rec
     rec.build(a.root, a.collection, corpus_dir=a.corpus,
@@ -1224,6 +1241,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = verbs.add_parser("show", help="a Codex and the ids derived from it")
     args_show(p); p.set_defaults(fn=cmd_show)
+
+    p = verbs.add_parser(
+        "migrate", help="add the §9.3 fields a Codex predates, each as null")
+    root_arg(p); p.add_argument("name")
+    p.add_argument("--apply", action="store_true",
+                   help="write it; without this the change is only printed")
+    p.set_defaults(fn=cmd_collection_migrate)
 
     p = verbs.add_parser("ack",
                          help="record the licence acknowledgement a yellow- "

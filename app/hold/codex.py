@@ -1373,3 +1373,59 @@ def sample_size(fraction: str, universe_size: int) -> int:
         raise CodexError(f"a sample fraction is in (0, 1], got {fraction!r}")
     from math import ceil
     return max(1, ceil(f * universe_size))
+
+
+#: §9.3 fields whose spec value may be `null`, so an older Codex that
+#: predates one can be brought up to the schema WITHOUT inventing a
+#: claim: absent and "not in use" mean the same thing for exactly these.
+#: A field not here (`space`, `credits`, `facets`…) carries real content
+#: and a Codex missing one is not migratable — it is broken.
+NULLABLE_TOP = ("certifier", "content", "continues", "continues_through",
+                "origin_reachable_until", "derived_from", "space_from",
+                "derivation", "replaces", "profile")
+
+
+def migrate_missing_nulls(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Add the §9.3 fields this Codex predates, each as `null`.
+
+    WHY THIS EXISTS. `derivation` was added to §9.3 after the node's
+    collections were minted, and `_only` refuses a MISSING field as
+    firmly as an unknown one — deliberately, because a peer that ignored
+    one would hash the same collection differently (§9.18). So every
+    Codex written before the field fails to load outright: measured
+    2026-09-13, the live node's gutenberg and pubmed both refused with
+    "codex: missing field(s) derivation", which is zero collections and
+    a `default_collection()` that raises.
+
+    ONLY NULLABLE FIELDS, and that is the whole safety of it. Setting
+    `derivation` to null asserts what was already true — this space is
+    not a derivation of another — so the migrated Codex says exactly
+    what the original meant and nothing more. A missing `space` or
+    `credits` is not a schema gap, it is a broken Codex, and this
+    refuses to guess at one.
+
+    THE IDENTITY MOVES, and it must. `collection_id` is the digest of
+    the object without `descriptive`, so a field added to the object is
+    a field added to the id; §9.3 says as much about `version` and the
+    reasoning is the same. What does NOT move is `space_id`, which
+    excludes `derivation` by §2.4 — so every vector already computed
+    stays admissible (a bundle is admitted on `space_id` plus per-record
+    `content_hash`, and `collection` is provenance that gates nothing).
+    Records, chunks and snapshots are untouched.
+
+    Returns the migrated object and the field names added.
+    """
+    out = dict(raw)
+    version = out.get("version")
+    allowed = _TOP if isinstance(version, int) and version >= 2 else _TOP_V1
+    added = [k for k in allowed if k not in out and k in NULLABLE_TOP]
+    for key in added:
+        out[key] = None
+    missing = sorted(set(allowed) - set(out))
+    if missing:
+        raise CodexError(
+            f"this Codex is missing {', '.join(missing)}, which §9.3 does not "
+            f"admit as null. That is not a schema gap this can close — a "
+            f"value would have to be invented, and it would be hashed into "
+            f"`collection_id` as though the creator had written it")
+    return out, added
