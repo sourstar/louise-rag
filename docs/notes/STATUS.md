@@ -1119,12 +1119,13 @@ seeding table) stays on the first collection's manifest. It is not an
 override; the web reads the beat's copy, which already follows the web's
 own resolution.
 
-*Not done — a divergence from §7.8 and invariant 10, recorded here for
-the operator:* runtime overrides "expire at restart", and `worker_state`
-does not; it survives a restart, as it always has. Making it expire
-changes what every restart does — a deploy would turn `acquire-only` into
-`running` and start the encoder — so it is the operator's decision, not a
-side effect of this change.
+*Decided by the operator the same evening: the mode survives a restart.*
+§7.8 said runtime overrides "expire at restart" and invariant 10 that
+they do not survive one; `worker_state` never did expire. Making it expire
+would turn `acquire-only` into `running` on every deploy and start the
+encoder. The operator: "don't reset node mode at restart". docs/07 and
+CLAUDE.md invariant 10 now name it as the one exception (`c26af9a`), and
+a test pins it (`test_the_mode_survives_a_restart`).
 
 **The listing gap.** Every phase before the transfer pool ran with no
 stop. Now:
@@ -1211,6 +1212,101 @@ collection retired before the move and restored after carries an OLDER
 value — so the node file winning is right.
 
 Full suite: 2,433 passed.
+
+### Deployed — 2026-09-13, evening
+
+The operator said "deploy". The runbook (deploy/reference/DEPLOY-NOW.md)
+ran as written, with one change: its promote step ended in `rmdir
+src.new`, which the leftover top-level files would have failed, so the
+listed directories were moved and the rest left behind. Every step was
+checked before the next:
+
+| step | result |
+|---|---|
+| promote + build | `src/` is `d5e6b51`; `louise-rag:local` = `d70e28d` |
+| Codex migration + TOMLs | gutenberg `sha256:4a825805…`, pubmed `sha256:c4e3bd74…` — the runbook's predicted ids; TOMLs and codex.json backed up first (codex backups in `state/`, never `drag/`, which a stray file would make share refuse) |
+| prove it loads | `LOADED: ['gutenberg', 'pubmed']`, `UNREADABLE: []` |
+| recreate both | web and worker on the SAME image for the first time in two days |
+| the mode moved | `node control moved to state/node.sqlite (07 §7.8): worker_state='acquire-only'`; node.sqlite holds it; the gutenberg and pubmed copies are gone |
+| seed-only, live | rsync 2 -> 0 in **5.0 s** (gutenberg was mid-pass), still 0 five seconds on; mode restored; rsync back in 3.0 s |
+| genesis recheck | 30 shards reopened, 38,324 documents |
+
+Held back on purpose: the rdf re-derive (runbook step 7). The node is
+acquire-only, where rdf stands down, so queueing it would have shown
+gutenberg as "parsed 0" until the mode changes. And the 38,324 documents'
+vectors are re-fetched in acquire-only but IMPORTED only when the node
+runs — no encoder needed, embed stays off.
+
+**`louise health` then told the truth wrong, twice.** `rdf 24,012
+running` on a node where rdf stands down — it never read the node's mode
+— and "run `louise genesis recheck pubmed`" for 38,324 documents whose
+shards that command had reopened a minute earlier: it counted every
+shard's range and blamed them all on FINAL. Both are the "idle — caught
+up" failure's family: a report that reads as an instruction and is
+wrong. Fixed:
+
+- HELD, a fourth state: work the node's mode holds, named with the mode,
+  never exit 1 — resuming is the answer, nothing is wrong. A block that
+  resuming would not clear (embed off in the TOML) stays BLOCKED.
+- The archive line splits by shard state: documents under FINAL shards
+  are blocked and told to recheck; under REJECTED shards, blocked and
+  pointed at `genesis status`; under open shards, being served — or held.
+- The mode is read with `node_state.peek_worker_state()`, read-only: a
+  check creates nothing.
+
+**Its review** (two lenses, every finding put to a skeptic; six
+confirmed, five distinct, all fixed) found the rule this module had to
+learn: every verdict must be the WORKER's own, or it is a second answer
+to the same question, and four times the second answer was "running"
+where the worker's was "nothing runs":
+
+- a STOPPED archive — a shard rejected before any shard proved it — was
+  "being served"; the worker fetches and imports nothing for it. Now
+  decided by `genesis.archive_stopped`, pointing at `genesis retry`;
+- a collection without its license acknowledgement, and one refused at
+  boot, read as running. Now `licensing.state_for` and
+  `spaces.report_boot_status` (read-only) decide;
+- the read-only peek made `-wal`/`-shm` beside a closed store (`mode=ro`
+  alone does that), cut its URI at `#` or `?` and created a stray
+  database, and read an admission-only `node.sqlite` as 'unknown'.
+  `db.read_only_connect` had the same URI fault.
+
+**And an invariant-9 hole in the worker itself, found on the way.**
+`_next_book` gates its round on the license acknowledgement, but the main
+loop embeds through `_next_embed` and `_embed_candidates` whenever
+pipeline threads own rdf/fts — the deployed configuration — and neither
+asked. A yellow or red collection without an acknowledgement still had
+its documents embedded once past fts: use of the corpus, which invariant
+9 forbids however the data arrived. Not reachable on this node (gutenberg
+is green, pubmed acknowledged — checked live). Gated, with a test whose
+control proves the row is otherwise selected
+(tests/test_license_gate_embed.py).
+
+**The verification pass of those fixes found the next layer** — and one
+defect I had introduced:
+
+- *`louise health` wrote to the node.* It borrowed the System page's boot
+  report, which promised READ-ONLY and still filled in a NULL pinned
+  width and logged an event for an unconfirmable hash — every System page
+  view, and now every check. Both writes are boot-only now
+  (`pin_if_missing`), and one manifest that cannot be opened no longer
+  makes the report raise and hide a real refusal beside it.
+- *Three more invariant-9 paths never asked the gate*: the worker's
+  bundle-inbox drain (a bundle landed in an unacknowledged collection,
+  reproduced), `louise contribute` (embeds the corpus and uploads the
+  vectors) and `bundle resweep` (re-embeds its text). All gated, each test
+  with a control proving the call is otherwise made
+  (tests/test_license_gate_exchange.py).
+- The health report: a declared shard with no ledger row yet is the
+  archive's debt, not the encoder's; open shards beside a rejected one
+  follow the node's mode; the stopped-archive test now uses the ledger's
+  real proof columns (it passed with the old `SELECT` too); a symlinked
+  store's sidecars are looked for beside its target.
+
+Known and accepted: for a LEGACY (non-Codex) collection the boot check
+probes the encoder, so `louise health` takes up to 10 s per such
+collection when the encoder is unreachable. This node's collections are
+both Codex collections, which never probe.
 
 ### What is waiting on the operator
 

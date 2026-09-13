@@ -495,8 +495,10 @@ def read_only_connect(collection=None) -> sqlite3.Connection | None:
         collection = collections_mod.default_collection()
     if not collection.manifest_path.exists():
         return None
-    con = sqlite3.connect(f"file:{collection.manifest_path}?mode=ro", uri=True,
-                          timeout=5, check_same_thread=False)
+    # as_uri(), not f"file:{path}": a `#` or `?` in the path cut a raw URI
+    # short, dropped mode=ro, and opened (creating) a different file
+    con = sqlite3.connect(collection.manifest_path.resolve().as_uri() + "?mode=ro",
+                          uri=True, timeout=5, check_same_thread=False)
     con.row_factory = sqlite3.Row
     return con
 

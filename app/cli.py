@@ -364,6 +364,9 @@ def cmd_bundle_resweep(args) -> int:
     the embed endpoint was down (T3 skipped) or the local space unconfirmed."""
     from .bundles import verify_on_use
     collection = _collection_by_name(args.collection)
+    # invariant 9: re-verifying re-embeds corpus text — use of the corpus
+    if _refuse_unacknowledged(collection, "its text is re-embedded to verify bundles"):
+        return 1
     con = db.connect(collection)
     result = verify_on_use.resweep(con, collection)
     print(f"swept {result['swept']} bundle(s): {result['promoted']} promoted to "
@@ -399,6 +402,10 @@ def cmd_contribute(args) -> int:
     """One lease -> embed -> pack -> upload round against a coordinator."""
     from . import contribute
     collection = _collection_by_name(args.collection)
+    # invariant 9: a contribution embeds the corpus and uploads the vectors —
+    # use AND exchange (verification pass, 2026-09-13)
+    if _refuse_unacknowledged(collection, "vectors are computed from it and uploaded"):
+        return 1
     con = db.connect(collection)
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)

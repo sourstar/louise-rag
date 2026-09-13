@@ -53,6 +53,16 @@ def _scope(monkeypatch, embed_mode):
     monkeypatch.setattr(health.db, "get_scope", lambda con: {"embed_mode": embed_mode})
 
 
+@pytest.fixture(autouse=True)
+def _judged_against_a_running_node(request, monkeypatch):
+    """check() reads the REAL node's mode when none is given, and four of
+    these tests once peeked /data/state/node.sqlite that way (review,
+    2026-09-13). A test that uses isolated_config reads its own tmp store;
+    every other one is judged against a running node, which holds nothing."""
+    if "isolated_config" not in request.fixturenames:
+        monkeypatch.setattr(health, "_node_mode", lambda: "running")
+
+
 def test_work_waiting_on_a_switched_off_stage_is_BLOCKED(con, monkeypatch):
     """The 4,577,101 case. This is the whole point: the worker called
     itself caught up while millions of documents waited for a stage that
@@ -232,3 +242,209 @@ def test_a_stage_that_cannot_be_counted_is_reported_not_skipped():
     assert all(s.state == health.BLOCKED for s in got.stages)
     assert all("cannot be counted" in s.reason for s in got.stages)
     assert got.blocked(), "and it exits non-zero rather than looking clear"
+
+
+# ---- the node's mode: HELD is the operator's choice, not a fault ---------
+#
+# Live, 2026-09-13, minutes after the deploy: `rdf 24,012 running` on a node
+# the Library held at acquire-only, where rdf stands down; and `run louise
+# genesis recheck pubmed` for 38,324 documents whose 30 shards that very
+# command had just reopened.
+
+def test_acquire_only_holds_parsing_instead_of_calling_it_running(con, monkeypatch):
+    _docs(con, 4, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="acquire-only")
+    rdf = next(s for s in got.stages if s.name == "rdf")
+    assert rdf.state == health.HELD and "acquire-only" in rdf.reason
+    assert not got.blocked(), "held is the operator's choice: never exit 1 for it"
+
+
+def test_a_config_block_stays_blocked_whatever_the_mode(con, monkeypatch):
+    """Resuming the node would not start an embed the TOML switched off."""
+    _docs(con, 5)
+    _scope(monkeypatch, "off")
+    got = health.inspect(con, Collection(), mode="paused")
+    embed = next(s for s in got.stages if s.name == "embed")
+    assert embed.state == health.BLOCKED and "embed is OFF" in embed.reason
+
+
+def test_a_running_node_holds_nothing(con, monkeypatch):
+    _docs(con, 4, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="running")
+    assert next(s for s in got.stages if s.name == "rdf").state == health.RUNNING
+
+
+def test_an_unknown_mode_invents_no_reason(con, monkeypatch):
+    _docs(con, 4, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="unknown")
+    assert next(s for s in got.stages if s.name == "rdf").state == health.RUNNING
+
+
+def _shard(con, shard, state):
+    con.execute("INSERT OR REPLACE INTO genesis_imports VALUES ('medcpt-pubmed',?,?)",
+                (shard, state))
+
+
+def test_documents_under_a_REOPENED_shard_are_not_told_to_recheck(archived):
+    _shard(archived, "1", "applied")        # what `genesis recheck` leaves
+    _docs(archived, 3, start=1_500_000)
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"), mode="running")
+    assert got.state == health.RUNNING and got.waiting == 3
+    assert "recheck" not in got.reason and "open shard" in got.reason
+
+
+def test_open_shards_on_an_acquire_only_node_are_held(archived):
+    """acquire-only fetches the shards and does not import them."""
+    _shard(archived, "1", "applied")
+    _docs(archived, 3, start=1_500_000)
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"),
+                             mode="acquire-only")
+    assert got.state == health.HELD and "acquire-only" in got.reason
+
+
+def test_a_rejected_shard_is_blocked_for_its_own_reason(archived):
+    _shard(archived, "1", "rejected")
+    _docs(archived, 2, start=1_500_000)
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"))
+    assert got.state == health.BLOCKED and "REJECTED" in got.reason
+    assert "recheck" not in got.reason
+
+
+def test_final_and_open_together_block_and_name_both(archived):
+    _shard(archived, "1", "applied")
+    _docs(archived, 2, start=500_000)       # under final shard 0
+    _docs(archived, 3, start=1_500_000)     # under open shard 1
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"), mode="running")
+    assert got.state == health.BLOCKED and got.waiting == 5
+    assert "2 under FINAL" in got.reason and "recheck pubmed" in got.reason
+    assert "3 more under open" in got.reason
+
+
+def test_check_reads_the_nodes_mode_and_creates_nothing(isolated_config, con, monkeypatch):
+    from app import node_state
+    _docs(con, 4, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    reports, _ = health.check([Collection()], connect=lambda collection: con)
+    assert not node_state.path().exists(), "a check creates nothing"
+    assert reports[0].mode == "paused", "an absent store reads as the worker reads it"
+
+    node_state.set_worker_state("acquire-only")
+    reports, blocking = health.check([Collection()], connect=lambda collection: con)
+    assert reports[0].mode == "acquire-only"
+    assert next(s for s in reports[0].stages if s.name == "rdf").state == health.HELD
+    assert blocking == []
+    text = health.render(reports)
+    assert text.startswith("node mode: acquire-only") and ".." in text
+
+
+# ---- every gate is the worker's own (review of this module, 2026-09-13) ---
+
+def test_a_stopped_archive_is_blocked_and_never_called_served(archived):
+    """A shard rejected before any shard proved the archive stops it WHOLE:
+    the worker fetches and imports nothing more (`genesis.archive_stopped`)
+    and hands the ranges to the local encoder. "Being served", "running"
+    and "held until you resume" were all false."""
+    _shard(archived, "0", "rejected")
+    _shard(archived, "1", "fetched")
+    _docs(archived, 3, start=1_500_000)          # under the open shard only
+    for mode in ("running", "acquire-only"):
+        got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"), mode=mode)
+        assert got.state == health.BLOCKED, (mode, got)
+        assert "STOPPED" in got.reason and "genesis retry pubmed" in got.reason
+        assert "being served" not in got.reason and "held" not in got.reason
+
+
+def test_an_unacknowledged_collection_is_withheld_not_running(con, monkeypatch):
+    """Invariant 9: the worker indexes, embeds and imports nothing for a
+    yellow or red collection without an acknowledgement, in any mode."""
+    from app import licensing
+    monkeypatch.setattr(licensing, "state_for", lambda c: licensing.MISSING)
+    monkeypatch.setattr(licensing, "license_class_for", lambda c: "yellow")
+    _docs(con, 3, rdf=0, fts=0)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="running")
+    rdf = next(s for s in got.stages if s.name == "rdf")
+    assert rdf.state == health.BLOCKED and "acknowledgement" in rdf.reason
+    assert got.blocked()
+
+
+def test_a_collection_refused_at_boot_is_reported_as_the_refusal(con, monkeypatch):
+    """Invariant 1: a refused collection is not served — its backlog would
+    only read as work in progress. Named, and exit 1."""
+    monkeypatch.setattr(health, "_boot_refusals",
+                        lambda cols: {"pubmed": "space_id mismatch (test)"})
+    _docs(con, 3, rdf=0, fts=0)
+    reports, blocking = health.check([Collection()], connect=lambda collection: con)
+    assert [s.name for s in reports[0].stages] == ["boot"]
+    assert reports[0].stages[0].state == health.BLOCKED
+    assert any("refused at boot" in b and "space_id mismatch" in b for b in blocking)
+
+
+# ---- the verification pass of those fixes, 2026-09-13 --------------------
+
+def test_the_stop_is_judged_on_the_ledgers_proof_columns(con, monkeypatch):
+    """The fixture ledger above has no `proven_at`/`docs`, so the stopped-
+    archive test passed with the old `SELECT shard, state` too. On the real
+    schema a FINAL shard that imported nothing proves nothing; read without
+    those columns it looks proven, and the stopped archive looks served."""
+    from app.bundles import genesis
+    monkeypatch.setitem(genesis.ARCHIVES, "medcpt-pubmed", FakeArchive())
+    con.execute("CREATE TABLE genesis_imports (archive TEXT, shard TEXT, state TEXT, "
+                "docs INTEGER DEFAULT 0, proven_at INTEGER, PRIMARY KEY (archive, shard))")
+    for shard, state in (("0", "final"), ("1", "rejected"), ("2", "fetched")):
+        con.execute("INSERT INTO genesis_imports VALUES ('medcpt-pubmed',?,?,0,NULL)",
+                    (shard, state))
+    _docs(con, 3, start=2_500_000)
+    got = health.archive_gap(con, Collection(archive="medcpt-pubmed"), mode="running")
+    assert got.state == health.BLOCKED and "STOPPED" in got.reason
+
+
+def test_open_shards_beside_a_rejected_one_are_held_not_served_on_a_held_node(archived):
+    _shard(archived, "1", "rejected")       # shard 0 is final: the archive is proven
+    _shard(archived, "2", "fetched")
+    _docs(archived, 2, start=1_500_000)     # under the rejected shard
+    _docs(archived, 3, start=2_500_000)     # under the open one
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"),
+                             mode="acquire-only")
+    assert got.state == health.BLOCKED and "REJECTED" in got.reason
+    assert "being served" not in got.reason and "held" in got.reason
+
+
+def test_a_declared_shard_not_fetched_yet_is_the_archives_debt(archived):
+    """The worker keeps the encoder out of every declared shard's range
+    until the archive delivers it; a document under a shard with no ledger
+    row yet was reported as ordinary encoder backlog."""
+    from app.bundles import genesis
+    genesis.ARCHIVES["medcpt-pubmed"].shards = ["0", "1", "2"]
+    _docs(archived, 3, start=2_500_000)
+    got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"), mode="running")
+    assert got.state == health.RUNNING and got.waiting == 3 and "open shard" in got.reason
+
+
+def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
+        isolated_config, monkeypatch):
+    """The refusal test above stubs `_boot_refusals`; this drives the real
+    wiring — spaces' own check, read-only — and proves the check changes
+    nothing on the way (the report used to fill in the pinned width and log
+    events)."""
+    from app import collections as collections_mod, db, spaces
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("model-a", False))
+    c = collections_mod.default_collection()
+    spaces.validate_boot([c])                   # the worker's boot pins model-a
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("model-b", False))
+    monkeypatch.setattr(spaces, "known_lance_dim", lambda d: 768)
+    con = db.connect(c)
+
+    def snapshot():
+        return (tuple(con.execute("SELECT space_id, dim FROM space").fetchone()),
+                con.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+
+    before = snapshot()
+    reports, blocking = health.check([c])
+    assert [s.name for s in reports[0].stages] == ["boot"]
+    assert reports[0].stages[0].state == health.BLOCKED
+    assert any("refused at boot" in b and "model-a" in b for b in blocking), blocking
+    assert snapshot() == before, "a check writes nothing"

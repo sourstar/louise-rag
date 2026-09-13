@@ -335,16 +335,28 @@ def report_boot_status(collections: list) -> list[dict]:
     boot refused. Unpinned is a reportable state, not a repair opportunity."""
     report = []
     for collection in collections:
-        con = db.connect(collection)
+        con = None
         try:
+            con = db.connect(collection)
             pinned = _validate_one(con, collection, pin_if_missing=False)
             report.append({"collection": collection.name, "ok": True,
                             "message": "space pinned & consistent" if pinned
                             else "space unpinned — pins at next worker boot"})
         except BootValidationError as e:
             report.append({"collection": collection.name, "ok": False, "message": str(e)})
+        except Exception as e:   # noqa: BLE001 — one collection, never the report
+            # PER COLLECTION. `db.connect` sat outside the try, so one
+            # manifest that could not be opened made the whole report raise,
+            # and a real refusal beside it vanished from `louise health`
+            # (verification pass, 2026-09-13)
+            # `checked: False` — not a verdict of the boot check, and a
+            # reader must not take it for one (`louise health` reports an
+            # unopenable manifest through its own connect, as "cannot open")
+            report.append({"collection": collection.name, "ok": False, "checked": False,
+                            "message": f"cannot be checked: {type(e).__name__}: {e}"})
         finally:
-            con.close()
+            if con is not None:
+                con.close()
     return report
 
 
@@ -471,7 +483,9 @@ def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
                     f"be mixed silently (CLAUDE.md invariant 1). Either restore the "
                     f"previous EMBED_MODEL, or wipe {collection.lance_dir} and "
                     f"re-embed to adopt the new space.")
-            else:
+            elif pin_if_missing:
+                # the boot says it; the read-only report never writes, not
+                # even an event
                 db.log_event(con, "warn", "spaces",
                          f"collection '{collection.name}': embed model hash appears "
                          f"changed but could not be confirmed (weak hash — e.g. embed "
@@ -483,6 +497,10 @@ def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
             raise BootValidationError(
                 f"collection '{collection.name}': vector table dim {observed_dim} != "
                 f"pinned dim {pinned_dim}. REFUSE TO BOOT (CLAUDE.md invariant 1).")
-        if pinned_dim is None:
+        # the pin's width is filled in AT BOOT only. report_boot_status
+        # promises READ-ONLY and still wrote it — from every System page
+        # view and, once `louise health` used it, from every check
+        # (verification pass, 2026-09-13: dim NULL -> 768 after one check)
+        if pinned_dim is None and pin_if_missing:
             con.execute("UPDATE space SET dim=? WHERE id=1", (observed_dim,))
     return True

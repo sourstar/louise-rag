@@ -863,6 +863,13 @@ def _next_embed(con, scope, collection=None):
     its fts commit, and a pipeline thread never touches it again after that."""
     if scope["embed_mode"] not in ("lazy", "all"):
         return None, None
+    # INVARIANT 9 GATES EMBEDDING TOO — it is use of the corpus. _next_book
+    # gates its round; this selector, which the main loop uses whenever
+    # pipeline threads own rdf/fts, did not, so an unacknowledged yellow or
+    # red collection's documents past fts were still embedded (found by the
+    # review of `louise health`, 2026-09-13).
+    if collection is not None and not _license_allows(con, collection, "embedding"):
+        return None, None
     r = con.execute(_QUEUE_ELIGIBLE,
                     (config.MAX_RETRIES, config.EMBED_VERSION, 1)).fetchone()
     if r:
@@ -880,6 +887,9 @@ STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
 def _embed_candidates(con, scope, limit: int, collection=None):
     """Up to `limit` embed-stage candidates, queue priority first — the same
     two selections _next_book makes, widened for the parallel path."""
+    # invariant 9, as in _next_embed: embedding is use of the corpus
+    if collection is not None and not _license_allows(con, collection, "embedding"):
+        return []
     rows = []
     if scope["embed_mode"] in ("lazy", "all"):
         rows += con.execute(
@@ -1556,6 +1566,13 @@ def _drain_bundle_inbox(con, collection) -> int:
     """
     inbox = bundle_importer.inbox_dir(collection)
     if not inbox.is_dir():
+        return 0
+    # INVARIANT 9, "not imported": a bundle is vectors OF the corpus, use
+    # like any other. Every other way data arrives asked the gate; this one
+    # did not, and a bundle landed in an unacknowledged collection
+    # (verification pass, 2026-09-13, reproduced). Left in the inbox, so it
+    # imports once the terms are acknowledged.
+    if not _license_allows(con, collection, "bundle import"):
         return 0
     processed = 0
     for entry in sorted(inbox.iterdir()):

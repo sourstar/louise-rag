@@ -28,9 +28,11 @@ manifest control table's shape, so `db.worker_state` and
 `db.get_bandwidth_override` decode them unchanged. hold's admission ledger
 keeps its own tables in the same file (app/hold/admission.py).
 
-NOT YET §7.8's "expire at restart": worker_state persists across
-restarts, as it always has. Changing that changes what a restart does to
-a running node, so it is recorded (STATUS.md) rather than done here.
+The mode SURVIVES a restart — the one runtime override that does, by
+operator decision (2026-09-13; docs/07 §7.8, CLAUDE.md invariant 10). No
+file sets it, so there is nothing to reset it to, and an expiry would turn
+a node held at acquire-only back into a running one, encoder and all, on
+every deploy. Do not "fix" it.
 """
 import sqlite3
 from contextlib import closing
@@ -73,6 +75,42 @@ def worker_state(con: sqlite3.Connection | None = None) -> str:
 def set_worker_state(state: str) -> None:
     with closing(connect()) as c:
         db.set_worker_state(c, state)
+
+
+def peek_worker_state() -> str:
+    """THE node state, for a reader that must create NOTHING — `louise
+    health` is a check, and a check that made the directory, the file or
+    the table would change what it reports on. Read-only; an absent file
+    reads as the worker reads it ('paused', db.worker_state's default),
+    and a file that cannot be read says 'unknown' rather than guessing.
+
+    NOT EVEN SQLITE'S SIDECARS (review, 2026-09-13, reproduced): `mode=ro`
+    alone still creates `-wal` and `-shm` beside a closed WAL database, so
+    a store with neither is opened `immutable=1` — there is no WAL content
+    to miss (a write racing the check can be missed, and the next look sees
+    it). The URI comes from `as_uri()`: a raw path with `#` or `?` in it
+    cut the URI short, dropped `mode=ro`, and CREATED a stray database. And
+    a file hold's admission ledger made before any worker booted has no
+    `control` table yet — it reads 'paused', as the worker would read it,
+    not 'unknown'."""
+    p = path()
+    if not p.is_file():
+        return "paused"
+    # beside the file SQLite actually opens: a symlinked store keeps its
+    # sidecars next to the TARGET, and checking beside the link opened a
+    # live WAL immutable and read a stale mode (verification pass, reproduced)
+    real = p.resolve()
+    closed = not any(real.with_name(real.name + s).exists() for s in ("-wal", "-shm"))
+    uri = real.as_uri() + ("?mode=ro&immutable=1" if closed else "?mode=ro")
+    try:
+        with closing(sqlite3.connect(uri, uri=True)) as c:
+            c.row_factory = sqlite3.Row
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                         "AND name='control'").fetchone() is None:
+                return "paused"
+            return db.worker_state(c)
+    except sqlite3.Error:
+        return "unknown"
 
 
 def bandwidth_override(con: sqlite3.Connection | None = None) -> float | None:

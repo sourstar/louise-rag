@@ -214,6 +214,88 @@ def test_a_node_with_no_state_says_it_is_paused(isolated_config, tmp_path):
     assert any("PAUSED by default" in m for m in _events(a)), _events(a)
 
 
+def test_a_reader_that_must_create_nothing_can_peek(isolated_config):
+    """`louise health` is a check: it reads the mode and creates nothing."""
+    assert node_state.peek_worker_state() == "paused", "absent reads as the worker reads it"
+    assert not node_state.path().exists()
+    node_state.set_worker_state("seed-only")
+    assert node_state.peek_worker_state() == "seed-only"
+
+
+def test_the_mode_survives_a_restart(isolated_config, tmp_path):
+    """Operator decision, 2026-09-13 (docs/07 §7.8, invariant 10): the
+    node's mode is the one runtime override a restart keeps. The boot move
+    runs on every start, and must never reset it — whatever stale copy a
+    manifest still holds."""
+    a = _collection(tmp_path, "aaa")
+    node_state.set_worker_state("acquire-only")
+    db.set_worker_state(db.connect(a), "running")      # a stale manifest copy
+    for _ in range(2):                                  # two restarts
+        worker._move_node_control(node_state.connect(), [a])
+        assert node_state.worker_state() == "acquire-only"
+
+
+def _listing(d):
+    return sorted(p.name for p in d.iterdir())
+
+
+def test_peeking_a_closed_store_creates_not_even_its_sidecars(isolated_config):
+    """Review, reproduced: `mode=ro` alone made `-wal` and `-shm` beside a
+    closed WAL database — the state after every deploy and every click."""
+    node_state.set_worker_state("acquire-only")          # closes: no sidecars
+    before = _listing(node_state.path().parent)
+    assert node_state.peek_worker_state() == "acquire-only"
+    assert _listing(node_state.path().parent) == before
+
+
+def test_a_store_only_the_admission_ledger_made_reads_paused(isolated_config):
+    """hold's admission ledger opens the same file with only its own
+    tables. The worker reads that as 'paused' (it creates `control` and
+    finds no key); a peek that said 'unknown' held nothing, and health
+    reported a node that runs nothing as running."""
+    from app.hold import admission
+    admission.connect(config.louise_root() / "collections").close()
+    assert node_state.peek_worker_state() == "paused"
+
+
+def test_a_root_with_uri_characters_is_read_not_cut_short(isolated_config, tmp_path,
+                                                          monkeypatch):
+    """A raw `file:{path}` URI cut at `#` or `?`, dropped mode=ro, and
+    CREATED a stray database beside the real one."""
+    for odd in ("a#b", "c?d", "e%20f"):
+        home = tmp_path / "roots"
+        home.mkdir(exist_ok=True)
+        monkeypatch.setenv("LOUISE_ROOT", str(home / odd))
+        node_state.set_worker_state("seed-only")
+        before = _listing(home)
+        assert node_state.peek_worker_state() == "seed-only", odd
+        assert _listing(home) == before, odd
+        # and the other branch: a worker holding the store open, sidecars
+        # present, so the peek reads through the live WAL with mode=ro
+        held = node_state.connect()
+        try:
+            db.set_worker_state(held, "running")
+            before = _listing(home)
+            assert node_state.peek_worker_state() == "running", odd
+            assert _listing(home) == before, odd
+        finally:
+            held.close()
+
+
+def test_the_read_only_manifest_reader_is_not_cut_short_either(isolated_config, tmp_path):
+    c = _collection(tmp_path / "x#y", "odd")
+    db.set_worker_state(db.connect(c), "running")
+    before = _listing(tmp_path)
+    ro = db.read_only_connect(c)
+    assert db.worker_state(ro) == "running"
+    ro.close()
+    # the raw URI was cut at '#', so its stray database landed at tmp/x —
+    # beside the directory, not inside it (the verification pass caught an
+    # assertion that listed the wrong one)
+    assert not (tmp_path / "x").exists(), "no stray database where the URI was cut"
+    assert _listing(tmp_path) == before
+
+
 def test_the_api_writes_the_row_the_worker_reads(isolated_config, monkeypatch):
     """The control split, closed: whatever collection sorts first — or is
     refused — the API and the worker's beat read and write one row."""
