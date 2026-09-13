@@ -152,8 +152,22 @@ def archive_gap(con, collection) -> Stage | None:
 
     This is the one that hid twice, because it is invisible from the
     stage counts: those documents ARE waiting for embed, so they look
-    like ordinary encoder backlog, while the vectors for them already
-    exist and are free. Non-zero here means the archive owes work.
+    like ordinary encoder backlog.
+
+    "COULD" IS THE HONEST WORD, and the earlier wording here said the
+    vectors "already exist and are free". Neither half was measured. A
+    shard finalises when nothing in its range is still UPSTREAM of fts —
+    not when everything in its range received a vector — so being inside
+    the range does not prove the archive holds one; and finalising
+    DELETES the shard files, so reopening costs a re-fetch rather than
+    nothing.
+
+    What the numbers do support, on pubmed 2026-09-13: the archive
+    served 35,417,887 of 35,456,211 in-range documents (99.89%), and the
+    residue is timing-shaped rather than a coverage hole — 35,858 of the
+    38,324 fall in shards 27-36, the ones fts was crossing as the archive
+    drained, against 2,466 across shards 0-26. Likely, and worth the
+    re-fetch to find out. Not certain, and this must not say it is.
     """
     from .bundles import genesis
     archive = genesis.ARCHIVES.get(getattr(collection, "genesis_archive", "") or "")

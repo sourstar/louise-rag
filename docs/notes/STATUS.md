@@ -861,8 +861,24 @@ caught up" came to be ignored. Only work that CANNOT START is blocked.
 
 It carries an `archive` row because that is the one that hid twice:
 those documents are waiting for embed, so they look like ordinary
-encoder backlog from the stage counts while their vectors already exist
-and are free.
+encoder backlog from the stage counts.
+
+**Corrected 2026-09-13 by an independent re-check**, because the wording
+here and in `health.py` both said their vectors "already exist and are
+free", and NEITHER half of that was measured. A shard finalises when
+nothing in its range is still UPSTREAM of fts — not when everything in
+its range received a vector — so range membership does not prove the
+archive holds one; and finalising DELETES the shard files, so reopening
+costs a re-fetch rather than nothing.
+
+What the numbers support: the archive served 35,417,887 of 35,456,211
+in-range documents (99.89%), and the residue is timing-shaped rather
+than a coverage hole — 35,858 of the 38,324 fall in shards 27-36, the
+ones fts was crossing as the archive drained, against 2,466 across
+shards 0-26. A genuine hole would spread evenly. So: likely, and worth
+the re-fetch to find out. *An inference with good evidence is still an
+inference, and writing it as a measurement is how a report stops being
+trustworthy.*
 
 **Timing, on the live pubmed manifest: 95.66 s → 6.75 s**, same output.
 Three measurements, and one of them refuted a prediction I had already

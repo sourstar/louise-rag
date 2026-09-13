@@ -266,7 +266,20 @@ def cmd_list(a) -> int:
     # behalf rather than failing the command, which is invariant 1's rule
     # — but a collection that silently stops being listed is how one gets
     # forgotten. Named here, with what to run.
-    for name, reason in sorted(col.unreadable().items()):
+    skipped = sorted(col.unreadable().items())
+    if skipped:
+        # ON STDOUT TOO, and that is the point. The detail belongs on
+        # stderr, but a caller that reads only stdout — a script, a
+        # health check, `| wc -l` — would otherwise see an empty listing
+        # and exit 0, which is indistinguishable from "this node holds
+        # no collections". Measured 2026-09-13: with every Codex on the
+        # node unreadable, stdout was zero lines and the exit was 0.
+        # That is the "idle — pipeline is caught up" failure wearing a
+        # different hat, and it gets the same answer here as in
+        # app/health.py: silence and success must not look alike.
+        print(f"# {len(skipped)} collection(s) held but NOT listed above "
+              f"(unreadable Codex) — see stderr")
+    for name, reason in skipped:
         print(f"  !! {name}: not listed — {reason}", file=sys.stderr)
         print(f"     try: louise hold collection migrate {name}", file=sys.stderr)
     return 0

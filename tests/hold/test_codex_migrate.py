@@ -184,3 +184,21 @@ def test_a_drag_with_neither_says_nothing(written):
     warning nobody needs is how real ones stop being read."""
     root, name, _, _ = written
     assert col.migrate(root, name)["carries_old_id"] == []
+
+
+def test_the_listing_says_on_STDOUT_that_something_was_skipped(written, capsys):
+    """Measured 2026-09-13 by an independent re-check: with every Codex on
+    the node unreadable, `hold collection list` printed ZERO lines to
+    stdout and exited 0 — indistinguishable, to any caller reading only
+    stdout, from "this node holds no collections". The detail belongs on
+    stderr; the FACT that something was skipped has to reach stdout, or
+    silence and success look alike (the same rule app/health.py follows
+    for a stage whose count raises)."""
+    import argparse
+    from app import louise
+    root, name, _, _ = written
+    louise.cmd_list(argparse.Namespace(root=root))
+    out = capsys.readouterr()
+    assert "NOT listed" in out.out, "stdout alone must not imply zero collections"
+    assert "1 collection(s)" in out.out
+    assert name in out.err and "migrate" in out.err, "the detail is still on stderr"
