@@ -388,3 +388,63 @@ def test_downloaded_bytes_are_credited_to_the_budget(swarm, tmp_path):
     after = get_manager().bucket(Direction.DOWN).core.granted[Priority.BACKFILL]
     assert after - before >= len(CONTENT["corpus/alpha.bin"]), \
         "every byte the torrent pulled must be credited to the budget"
+
+
+# ---------------- a stop turns the FILE off, not only the thread ----------------
+
+def test_a_stop_mid_download_turns_the_file_off_and_credits_it(tmp_path, monkeypatch):
+    """Adversarial review 2026-09-13: on a stop, `fetch_one` saved resume
+    data and raised — and left the handle resumed with THIS file at
+    priority 4. The acquisition thread exited, but the handle stays in the
+    session (it seeds what it holds), so libtorrent went on downloading the
+    file after the abort: outside any lease, credited to nothing (invariant
+    5), while the Network page read zero down, on a node just told to pause.
+
+    A fake handle, so the stop lands INSIDE the download loop. The existing
+    abort test pre-sets the stop, which raises in `_await_metadata` before a
+    priority is ever set — it could never have seen this."""
+    calls = {"priorities": [], "credits": 0}
+
+    class FS:
+        def num_files(self): return 3
+        def file_size(self, i): return 1000
+
+    class Info:
+        def files(self): return FS()
+
+    class Handle:
+        def torrent_file(self): return Info()
+        def prioritize_files(self, p): calls["priorities"].append(list(p))
+        def resume(self): pass
+        def file_progress(self): return [0, 0, 0]   # never finishes on its own
+
+    class Lease:
+        def __enter__(self): return None
+        def __exit__(self, *a): return False
+
+    class Manager:
+        def rsync_lease(self, url): return Lease()
+
+    stop = threading.Event()
+    stop.set()
+    from app.transfer import manager as tm
+    monkeypatch.setattr(tt, "_current_stop", lambda: stop)
+    monkeypatch.setattr(tt, "save_root", lambda dest, rel: tmp_path)
+    monkeypatch.setattr(tt, "_add_for_download", lambda ep, root: Handle())
+    monkeypatch.setattr(tt, "_await_metadata", lambda h, s=None: None)
+    monkeypatch.setattr(tt, "_index_of", lambda info, rel: 1)
+    monkeypatch.setattr(tt, "_rename_to_parts", lambda *a, **k: None)
+    monkeypatch.setattr(tt, "_save_resume", lambda h: None)
+    monkeypatch.setattr(tt, "_credit_download",
+                        lambda key, h: calls.__setitem__("credits", calls["credits"] + 1))
+    monkeypatch.setattr(tm, "get_manager", lambda: Manager())
+
+    ep = Endpoint(transport=Transport.TORRENT, url="magnet:?xt=urn:btih:" + "0" * 40)
+    remote = RemoteFile(rel_path="corpus/beta.bin", size=1000)
+    with pytest.raises(TransferAborted):
+        tt.TorrentTransport().fetch_one(ep, remote, tmp_path / "corpus/beta.bin", 0)
+
+    assert calls["priorities"][0][1] == 4, "the file was switched on to download"
+    assert calls["priorities"][-1] == [0, 0, 0], \
+        "and switched OFF before the abort, or libtorrent keeps pulling it"
+    assert calls["credits"] >= 2, "credited in the loop AND once more on the way out"

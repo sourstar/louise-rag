@@ -287,6 +287,21 @@ class TokenBucket:
         """
         if n <= 0:
             return
+        # THE STOP IS CHECKED BEFORE THE UNLIMITED BRANCH, not only inside
+        # the wait loop below. With no rate set — the default when no
+        # platform.toml exists — the branch below returned without ever
+        # looking at `stop`, so every transport that sees a stop ONLY through
+        # this bucket (HTTPS, a segmented range fetch, the genesis archive
+        # fetcher) was blind to it: a 3 GB archive shard or a Wikipedia dump
+        # streamed to completion through a node pause, and through SIGTERM,
+        # and was recorded fetched. Found by adversarial review 2026-09-13;
+        # a probe in the dev image confirmed it (unlimited + stop set:
+        # returned; limited + stop set: raised). Every consumer already
+        # handles TransferAborted, because the limited path always raised it.
+        if stop is not None and stop.is_set():
+            raise TransferAborted(
+                f"transfer aborted before budget ({n} bytes, "
+                f"{priority.name.lower()})")
         with self._cv:
             if self._core.rate is None:
                 # Unlimited: the default when no platform.toml exists, so

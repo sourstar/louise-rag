@@ -270,3 +270,33 @@ def test_zero_and_negative_acquires_are_no_ops():
     b = TokenBucket(1000, burst_seconds=0.5)
     assert run_bounded(lambda: (b.acquire(0, Priority.BACKFILL),
                                  b.acquire(-5, Priority.BACKFILL), True)[-1], seconds=2.0)
+
+
+# ---------------- the stop, even when unlimited ----------------
+
+def test_an_unlimited_bucket_still_honours_the_stop():
+    """With no rate set — the default when no platform.toml exists — the
+    unlimited branch returned before ever looking at `stop`. Every
+    transport that sees a stop ONLY through this bucket (HTTPS, a segmented
+    range fetch, the genesis archive fetcher) was therefore blind to it: a
+    3 GB archive shard streamed to completion through a node pause, and
+    through SIGTERM. Found by adversarial review 2026-09-13; a probe in the
+    dev image showed unlimited+stop returning where limited+stop raised."""
+    b = TokenBucket(None)
+    stop = threading.Event()
+    run_bounded(lambda: b.acquire(1 << 16, Priority.BACKFILL, stop=stop))
+    stop.set()
+    with pytest.raises(TransferAborted):
+        run_bounded(lambda: b.acquire(1 << 16, Priority.BACKFILL, stop=stop))
+    _, granted = b.granted_snapshot()
+    assert granted[Priority.BACKFILL] == 1 << 16, \
+        "the aborted request took no budget — it raised before the take"
+
+
+def test_an_unlimited_bucket_without_a_stop_is_unchanged():
+    """The no-platform.toml default must see zero behaviour change when
+    nobody asks it to stop — the reason the unlimited branch exists."""
+    b = TokenBucket(None)
+    assert run_bounded(lambda: b.acquire(1 << 16, Priority.BACKFILL) or True)
+    assert run_bounded(lambda: b.acquire(1 << 16, Priority.BACKFILL,
+                                         stop=threading.Event()) or True)

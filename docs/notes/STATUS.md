@@ -947,6 +947,143 @@ along, and the comment explaining it is still there.
 rather than the CONTENT. Finding out which is a five-minute check and
 worth it every time.*
 
+### Seed-only kept downloading for ten hours — found and fixed 2026-09-13
+
+Operator: "Is Louise fetching even if the status is seeding only?" It
+was, the whole time.
+
+```
+seed-only window      2026-09-12 22:45:40  ->  2026-09-13 08:50:42   (10.1 h)
+gutenberg fetched     204,486 files, 160.3 GB, INSIDE that window
+per hour              7617 7965 13819 81899 54706 7385 7804 7361 7736 7520 674
+```
+
+Every hour of the window, not a burst at an edge.
+
+**The contract is not in doubt.** docs/07 defines `node pause` as "no
+work"; the worker's own comment defines seed-only as "downloads and
+processing stand down exactly like pause". The main loop honoured both —
+it sets `_paused` for `paused` and `seed-only`, and the pipeline threads
+idle on it. **The fetch never looked.** Its stop was
+`_AnyStop(_stop, _gone_event(name))`, SIGTERM or collection-removed, so a
+fetch already in flight ran to completion; a gutenberg fetch is one rsync
+over the whole mirror, hours long. The genesis archive fetcher had the
+same hole. So `paused` could not stop an in-flight download either — by
+construction, not observed live.
+
+**The fix took three adversarial reviews, and each found my corrections
+wrong.** That is the useful part of this entry.
+
+*Review 1*, of "put `_paused` in the stop":
+
+1. **Blocking, and mine: nothing restarted a fetch the pause stopped.**
+   The post-fetch rescan is queued `acquire=False`, `_request_discovery`
+   is first-reason-wins so no later `acquire=True` could replace it, and
+   the scan stamps the discovery clock — so the fetch did not return for
+   `DISCOVER_INTERVAL_MIN`, 360 minutes, after every resume. A new gap:
+   before, a pause never stopped a fetch. My test for it called
+   `_acquire` by hand and passed while the real wiring never made that
+   call.
+2. The bandwidth bucket's unlimited branch returned before checking the
+   stop, so HTTPS, range and archive downloads ignored a pause — and
+   SIGTERM — whenever no `down_max` was set. Pre-existing.
+3. A torrent left its file at priority 4, so libtorrent kept pulling it
+   after the abort, outside any lease (invariant 5).
+4. A pause reached `_paused` once per main-loop round, which can run
+   minutes (a 120 s embed stream, an unbounded bundle-inbox import).
+
+*Review 2*, of those corrections:
+
+5. **Blocking — a race reopened (1).** The abort was marked in the try
+   body while the thread still had a closing log write to make
+   (busy_timeout 60 s). A resume inside that window consumed the re-arm,
+   `_acquire` saw the old thread alive and returned silently, and the
+   `finally` then reported done with nothing pending. Reproduced
+   deterministically by the reviewer.
+6. **Blocking — the stats beat read the node state from `load_all()[0]`,
+   the main loop from its filtered `all_collections[0]`.** A collection
+   with no `worker_state` reads 'paused', so when the two differed — add
+   one whose name sorts first — the beat set `_paused` every 10 s and the
+   main loop re-armed every round: a fetch stopped and restarted per
+   beat, the loop `acquire=False` exists to prevent. The same divergence
+   failed five pipeline tests in the full suite: `test_stats.py` runs a
+   real publisher with no main loop against a fresh config, whose state
+   defaults to 'paused'.
+7. With no pipeline threads and `DISCOVER_INTERVAL_MIN=0`, the re-arm
+   cleared a clock nobody read, and the fetch was lost until restart.
+
+*Review 3*, of THOSE corrections:
+
+8. The race fix holds. A minor split remained: `_finish` and `_rearm`
+   read the mark at different moments of a round, so a fetch whose
+   `finally` landed between them was re-armed AND treated as a normal
+   completion — a redundant scan, never a lost fetch.
+9. **A regression of mine:** without pipeline threads the re-arm cleared
+   every pending name, then ran `_discover` for each unguarded — so one
+   collection's scan raising lost every restart after it.
+10. The control split below — pre-existing, and not mine to decide.
+
+The corrections from review 3 were verified by tests that reproduce the
+reviewers' own scenarios and by the full suite — not by a fourth review.
+
+**What ships:**
+
+- `_paused` in the corpus and archive stops. `_AnyStop.fired` records
+  WHICH event stopped the work, read after the fact.
+- The pause-abort is marked in the thread's `finally`, in the same locked
+  section that reports it done. `_rearm_paused_aborts` runs every
+  non-paused round, re-arms with `acquire=True`, waits for the old thread
+  to be gone, forgets "done" for what it re-arms, isolates each name so
+  one failure keeps only itself for the next round, and returns before
+  walking any list when nothing is pending.
+- A start refused by the pause is remembered.
+- The bucket checks the stop before its unlimited branch.
+- A torrent stop zeroes the file's priority and credits the bytes once.
+- The stats beat sets `_paused` within 10 s, reading the MAIN LOOP's
+  control collection, and does nothing without a main loop.
+- Without pipeline threads, the re-arm runs `_discover` itself.
+
+**Two known gaps, recorded rather than claimed:**
+
+- *The listing phase.* A pause that arrives DURING a listing — `rsync
+  --list-only`, 12 minutes measured on gutenberg; mirror benchmarks;
+  torrent metadata, up to 120 s — is not seen until the transfer pool
+  starts, because the listing runs with no stop. No corpus file moves in
+  that time; the listing's own traffic does.
+- *The control split.* The operator's pause is WRITTEN by `/api/control`
+  to `db.connect()` = `load_all()[0]`, unfiltered; the web UI and the
+  index maintainer read the same collection. The main loop READS its
+  filtered `all_collections[0]`, boot refusals removed — and since review
+  2, so does the stats beat. When the first-sorting collection is refused
+  at boot, the UI says seed-only while the node keeps downloading.
+  Pre-existing: the main loop never saw that pause either, so the fix is
+  no worse than the original code; and it cannot happen on this node
+  today, where both collections load and gutenberg sorts first. It cannot
+  be fixed inside the worker, because the web process has no way to know
+  which collections the worker refused at boot. The real fix is ONE
+  resolution function for the control collection, shared by the API, the
+  web, the main loop, the beat and the index maintainer — invariant 10's
+  own rule for effective values — and that is a web/worker design change,
+  so it is the operator's decision.
+
+**The shape worth keeping.** Every defect here was the same one wearing
+different clothes: a decision taken from one source while the thing it
+governs reads another. The fetch's stop vs the state that should stop it;
+"marked" vs "done" published at different moments; the beat's control
+collection vs the main loop's; the API's vs the main loop's. And the test
+that should have caught the first was itself built the same way — calling
+the function by hand instead of driving the path the worker runs.
+
+**A spec gap found on the way, not a further bug.** docs/07 specifies a
+whole `louise node` surface — `start [--acquire-only]`, `stop`, `show`,
+`pause [<collection>] [--acquire-only]`, `resume [<collection>]` — and
+nothing in `app/` implements any of it, and `migration-plan.md` does not
+schedule it. Pause today is node-wide only, through the Library's mode
+buttons writing `worker_state`. So "pause one collection" is unbuilt
+rather than broken; recorded here because the fix above cites docs/07's
+definition of pause, and the next reader deserves to know the command
+that definition belongs to does not exist yet.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

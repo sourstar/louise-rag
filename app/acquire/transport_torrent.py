@@ -452,6 +452,24 @@ class TorrentTransport:
                 if done >= total:
                     break
                 if stop is not None and stop.is_set():
+                    # TURN THE FILE OFF BEFORE LEAVING. This thread exits on
+                    # the raise below, but the handle stays in the session
+                    # (it seeds what it holds) and was left resumed with THIS
+                    # file at priority 4 — so libtorrent went on downloading
+                    # it after the abort, at the last leased rate, OUTSIDE
+                    # any lease and credited to nothing (invariant 5): bytes
+                    # arriving while the Network page read 0 down, on a node
+                    # that had just been told to pause or go seed-only.
+                    # Found by adversarial review of the pause fix, 2026-09-13.
+                    #
+                    # The file's priority to 0, NOT `handle.pause()`: pausing
+                    # the handle would also stop its uploads, which is the
+                    # opposite of what seed-only exists to keep running.
+                    # Then credit once more, for whatever landed between the
+                    # loop's last credit and this check.
+                    priorities[index] = 0
+                    handle.prioritize_files(priorities)
+                    _credit_download(key, handle)
                     _save_resume(handle)
                     raise TransferAborted(
                         f"stopped with {done}/{total} bytes of {remote.rel_path}")

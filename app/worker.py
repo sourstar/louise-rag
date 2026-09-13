@@ -1057,16 +1057,43 @@ def _gone_event(name: str) -> threading.Event:
 
 _acquire_threads: dict[str, threading.Thread] = {}
 _acquire_done: dict[str, bool] = {}      # collection -> did it fetch anything
+#: collections whose corpus fetch the node's PAUSE stopped or refused — not
+#: SIGTERM, not retirement. The main loop re-arms them on the first round
+#: the node is no longer paused (`_rearm_paused_aborts`). Guarded by
+#: _acquire_lock.
+_paused_aborts: set[str] = set()
 _acquire_lock = threading.Lock()
 
 
 def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
     con = db.connect(collection)
     fetched_any = False
+    stop: _AnyStop | None = None
     try:
+        # `_paused` IS PART OF THE STOP, and for ten hours it was not.
+        #
+        # The main loop sets `_paused` for both `paused` and `seed-only`,
+        # and both promise no downloads — docs/07 defines `node pause` as
+        # "no work", and seed-only is "downloads and processing stand down
+        # exactly like pause". But this stop was SIGTERM-or-removed only,
+        # so a fetch already in flight never looked at the state again.
+        # A gutenberg fetch is one rsync over the whole mirror, hours long.
+        #
+        # Measured 2026-09-13: seed-only was set at 22:45 and cleared at
+        # 08:50 the next morning, and 204,486 files (160.3 GB) were fetched
+        # inside that window — in every one of its ten hours, not a burst
+        # at an edge. The operator asked why the node was still
+        # downloading while it said "seeding only". It was, the whole time.
+        #
+        # Stopping here reuses the SIGTERM path end to end, which is why it
+        # is safe: rsync terminates its subprocess (`_POLL_SECONDS`, then a
+        # 10 s grace), `--partial` leaves a truthful `.part`, the row is
+        # recorded by `_upsert_aborted` — no error, no retry burned — and
+        # the next run resumes by Range. `acquire-only` does not set
+        # `_paused`, so it keeps fetching, which is that mode's whole point.
+        stop = _AnyStop(_stop, _gone_event(collection.name), _paused)
         result = acquire_engine.run_acquisition(
-            con, collection, spec, profile,
-            stop=_AnyStop(_stop, _gone_event(collection.name)))
+            con, collection, spec, profile, stop=stop)
         fetched_any = bool(result.get("fetched"))
         db.log_event(con, "info", "acquire", f"corpus fetch ({reason}): {result}")
     except (LicenseAckRequiredError, DiskPreflightError) as e:
@@ -1090,6 +1117,25 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
             # no-op fetch requesting one is how the acquire/discover loop
             # sustained itself
             _acquire_done[collection.name] = fetched_any
+            # A FETCH THE PAUSE STOPPED MUST BE RESTARTED BY THE RESUME.
+            #
+            # Marked HERE, in the same critical section that reports the
+            # fetch done — never earlier. The second review reproduced why:
+            # marked in the try body, the name was visible while this thread
+            # still had a closing log write to make (busy_timeout 60 s); a
+            # resume inside that window consumed the re-arm, `_acquire` saw
+            # this thread still alive and returned silently, and then this
+            # `finally` reported done with the name no longer pending — so
+            # the next round queued `acquire=False` and the 360-minute gap
+            # came straight back. Now "done" and "stopped by the pause" are
+            # published together or not at all, and `_rearm_paused_aborts`
+            # also waits for the thread to be gone.
+            #
+            # From `stop.fired`, which records WHICH event stopped it — not
+            # from `_paused` now, since the operator may already have
+            # resumed while rsync's terminate grace ran.
+            if stop is not None and stop.fired is _paused and not _stop.is_set():
+                _paused_aborts.add(collection.name)
 
 
 def _acquire(con, collection, reason: str) -> None:
@@ -1121,6 +1167,18 @@ def _acquire(con, collection, reason: str) -> None:
                          f"Set `profile` in collections/{collection.name}.toml "
                          f"(offered: {', '.join(sorted(spec.profiles))})")
         return
+    if _paused.is_set():
+        # Don't START a fetch the stop would abort in its first second —
+        # mirrors `_acquire_archive`. But REMEMBER it. The first version
+        # returned here recording nothing, on the belief that "the next
+        # discovery after resume calls here again". It does not: that
+        # discovery is DISCOVER_INTERVAL_MIN away (360 min). Checked after
+        # the spec and profile gates, so only a collection that WOULD fetch
+        # is re-armed; one that turns out to need nothing costs a single
+        # no-op fetch, which requests no rescan and so cannot loop.
+        with _acquire_lock:
+            _paused_aborts.add(collection.name)
+        return
     with _acquire_lock:
         existing = _acquire_threads.get(collection.name)
         if existing is not None and existing.is_alive():
@@ -1143,8 +1201,13 @@ def _archive_worker(collection, reason: str) -> None:
     con = db.connect(collection)
     try:
         state = _archive_log_state.setdefault(collection.name, {})
+        # The same omission as the corpus fetch above, and the same fix: a
+        # genesis archive shard is a multi-GB download (NCBI's shard 8 was
+        # 3.05 GB), and `_acquire_archive` checked `_paused` only before
+        # STARTING one — so a shard already downloading ignored a pause.
         result = bundle_genesis_fetch.run_fetcher(
-            con, collection, stop=_AnyStop(_stop, _gone_event(collection.name)),
+            con, collection,
+            stop=_AnyStop(_stop, _gone_event(collection.name), _paused),
             log_state=state)
         if result.get("fetched"):
             db.log_event(con, "info", "genesis",
@@ -1356,6 +1419,15 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
     with _acquire_lock:
         done = dict(_acquire_done)
         _acquire_done.clear()
+        paused_off = set(_paused_aborts)
+    # A fetch the PAUSE stopped is not a finished fetch. Its post-fetch
+    # rescan would be `acquire=False` — and `_request_discovery` is
+    # first-reason-wins, so no later acquire=True could replace it — and it
+    # would stamp the discovery clock. The fetch would then not come back for
+    # DISCOVER_INTERVAL_MIN. Left to `_rearm_paused_aborts` instead, whose
+    # acquire=True discovery picks up what landed AND restarts the fetch.
+    for name in paused_off:
+        done.pop(name, None)
     if pipeline:
         # Filtered on the live set, exactly as the non-pipeline branch below
         # already does. A fetch that finished AFTER its collection was
@@ -1380,6 +1452,97 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
                              f"picked up {stats.get('added', 0)} new, "
                              f"{stats.get('changed', 0)} changed books")
             last_discover[collection.name] = time.time()
+
+
+def _rearm_paused_aborts(all_collections, last_discover, pipeline: bool,
+                         cons=None) -> list[str]:
+    """Restart the corpus fetches the node's pause stopped or refused.
+    Returns the names re-armed.
+
+    Called on EVERY round the node is not paused, not only on the
+    transition: a fetch can finish unwinding after the resume and land its
+    name here a round late, and a transition-only hook would miss it for
+    good.
+
+    A NAME WHOSE OLD FETCH THREAD IS STILL ALIVE STAYS PENDING for the next
+    round. Re-arming it now would reach `_acquire`, which refuses to start
+    a second fetch beside a live one and returns silently — the race the
+    second review reproduced, which lost the restart entirely.
+
+    Only collections still live are re-armed — one retired during the pause
+    is dropped here, not kept forever. A stale queued request is taken first
+    because discovery requests are first-reason-wins: an `acquire=False`
+    left in the queue would silently beat the `acquire=True` this needs.
+
+    Without pipeline threads there are no requests, so this runs `_discover`
+    itself. The first version only cleared the interval stamp and left the
+    interval check to do it — and with DISCOVER_INTERVAL_MIN=0 ("startup
+    only") that check never runs, so the fetch was lost until a restart.
+    """
+    with _acquire_lock:
+        if not _paused_aborts:
+            # THE IDLE ROUND COSTS NOTHING. This runs every round the node
+            # is not paused and almost always has nothing to do; it must not
+            # walk the collection list to find that out (CLAUDE.md: a
+            # per-round cost scales with the work available, never with the
+            # size of a list). Third review, 2026-09-13.
+            return []
+        pending = set(_paused_aborts)
+        live = {c.name: c for c in all_collections}
+        still_running = set()
+        for name in pending:
+            thread = _acquire_threads.get(name)
+            if thread is not None and thread.is_alive():
+                still_running.add(name)
+        _paused_aborts.clear()
+        _paused_aborts.update(still_running)
+        rearmed = sorted((pending - still_running) & live.keys())
+        # Forget "done" for what this re-arms, under the SAME lock. Third
+        # review, 2026-09-13: `_finish_completed_acquires` and this function
+        # read the mark at different moments of one round, so a fetch whose
+        # `finally` landed between them was re-armed here AND left
+        # `_acquire_done` set — and the next round's `_finish` treated it as
+        # a normal completion: an acquire=False rescan in pipeline mode, a
+        # second inline full scan otherwise (1,083 s at wikivec scale).
+        # Nothing was lost — the acquire=True request queued first wins —
+        # but the work was paid twice. The discovery armed here scans
+        # whatever the stopped fetch landed, so the flag has nothing left to
+        # ask for.
+        for name in rearmed:
+            _acquire_done.pop(name, None)
+    failed: list[str] = []
+    for name in rearmed:
+        _take_discovery_request(name)
+        # EACH NAME ON ITS OWN. Third review, 2026-09-13, reproduced: every
+        # pending name was cleared above, then `_discover` ran for each with
+        # no guard — so one scan raising (a corpus-mount OSError, a non-lock
+        # sqlite error, a busy `apply_scope`) left this function and aborted
+        # the round, and every name after it was already cleared, never
+        # discovered, its stamp still fresh: back in 360 minutes, or never
+        # with DISCOVER_INTERVAL_MIN=0. A regression against the version
+        # before, which only popped stamps and so retried by itself. A name
+        # that fails is kept for the next round instead.
+        try:
+            if pipeline:
+                _request_discovery(name, "resume after pause", acquire=True)
+                last_discover[name] = time.time()
+            elif cons is not None and name in cons:
+                _discover(cons[name], live[name], "resume after pause")
+                last_discover[name] = time.time()
+            else:
+                last_discover.pop(name, None)
+        except Exception as e:   # noqa: BLE001 — one collection's scan, not the round
+            failed.append(name)
+            try:
+                db.log_event(cons[name], "warn", "acquire",
+                             f"resume after pause: discovery failed, retrying next "
+                             f"round: {type(e).__name__}: {e}"[:400])
+            except Exception:   # noqa: BLE001 — the log is a courtesy
+                pass
+    if failed:
+        with _acquire_lock:
+            _paused_aborts.update(failed)
+    return [n for n in rearmed if n not in failed]
 
 def _drain_bundle_inbox(con, collection) -> int:
     """Import any bundles waiting in this collection's inbox.
@@ -1509,12 +1672,25 @@ _scan_lock = threading.Lock()
 
 class _AnyStop:
     """is_set() when any of the given events is — the scan must stop both
-    on SIGTERM and when its collection is removed mid-run."""
+    on SIGTERM and when its collection is removed mid-run, and a DOWNLOAD
+    must also stop when the node is paused or seed-only (`_paused`)."""
     def __init__(self, *events: threading.Event) -> None:
         self._events = events
+        #: the event that made is_set() return True, once one has — so a
+        #: caller can tell WHY its work stopped after the fact. A pause
+        #: lifted while the fetch was still unwinding (rsync's 10 s
+        #: terminate grace) must still read as "the pause stopped this", or
+        #: nothing re-arms it (`_paused_aborts`). Written from several
+        #: threads; every writer stores an event that was genuinely set at
+        #: the time, so the race is benign.
+        self.fired: threading.Event | None = None
 
     def is_set(self) -> bool:
-        return any(e.is_set() for e in self._events)
+        for e in self._events:
+            if e.is_set():
+                self.fired = e
+                return True
+        return False
 
 
 def scan_running(name: str) -> bool:
@@ -2450,6 +2626,55 @@ def _log_shares(con, live_paths=None) -> None:
             for k, v in sorted(sizes["windows"].items())))
 
 
+#: the collection the MAIN LOOP reads the node's state from, published each
+#: round. None until a main loop has run — and the stats beat then touches
+#: nothing, which is what a thread with no main loop behind it must do.
+_control_name: str | None = None
+
+
+def _set_control_name(name: str | None) -> None:
+    global _control_name
+    _control_name = name
+
+
+def _control_state_for_beat(seed_cons) -> str | None:
+    """The node state the stats beat may act on: the MAIN LOOP's control
+    collection's, or None when there is no main loop to agree with.
+
+    ONE SOURCE, NOT TWO. The beat used to read `load_all()[0]`, while the
+    main loop reads its FILTERED `all_collections[0]` — boot refusals and
+    unadopted additions removed. When they differed, the beat's collection
+    could have no `worker_state` at all, which reads 'paused' (db.py), so
+    the beat set `_paused` every 10 s while the main loop cleared it and
+    re-armed the fetch every round: a fetch stopped and restarted per beat,
+    each with a full listing — the acquire<->discover loop that
+    `acquire=False` exists to prevent. Reproduced by the second review, and
+    reachable in ordinary operation: add a collection whose name sorts
+    first.
+
+    None without a main loop is not only defensive: `test_stats.py` runs a
+    real `_stats_publisher` with no main loop against a fresh config, whose
+    state defaults to 'paused'. The beat set `_paused`, nothing cleared it,
+    and five pipeline-thread tests later in the suite idled until timeout.
+    """
+    name = _control_name
+    if not name or name not in seed_cons:
+        return None
+    try:
+        return db.worker_state(seed_cons[name])
+    except Exception:   # noqa: BLE001 — telemetry must never decide by raising
+        return None
+
+
+def _note_pause_from_state(state: str) -> None:
+    """Set `_paused` if the node's state says so, and NEVER clear it — see
+    the comment at the call in `_stats_publisher`. Stopping late is the
+    bug; resuming a round late is harmless, so this can only ever make the
+    stop prompter, never make the node do work it was told not to."""
+    if state in ("paused", "seed-only"):
+        _paused.set()
+
+
 def _stats_publisher() -> None:
     from .acquire import seeding
     con = None
@@ -2486,6 +2711,25 @@ def _stats_publisher() -> None:
             for c in collections:
                 if c.name not in seed_cons:
                     seed_cons[c.name] = db.connect(c)
+            # A PAUSE IS SEEN WITHIN ONE BEAT, not one main-loop round. The
+            # main loop sets `_paused` once per round, and nothing inside a
+            # round checks it — an embed stream runs 120 s, a bundle inbox
+            # import is unbounded, a local genesis pass holds ~300 s — so a
+            # fetch kept downloading for minutes after the operator clicked
+            # seed-only (at the incident's 4.4 MB/s, ~1.3 GB per 5 minutes).
+            #
+            # SET ONLY, NEVER CLEAR. Stopping late is the bug; resuming a
+            # round late is harmless. So the main loop stays the sole owner
+            # of the resume path — clearing `_paused` and re-arming the
+            # fetches a pause aborted — and this thread only makes the stop
+            # prompt. It can never make the node do work it was told not to.
+            #
+            # And from the MAIN LOOP's control collection, never this
+            # thread's own `collections[0]` — see `_control_state_for_beat`.
+            # Seeding keeps its original source below, untouched.
+            beat_state = _control_state_for_beat(seed_cons)
+            if beat_state is not None:
+                _note_pause_from_state(beat_state)
             seeding.tick(collections, seed_cons, con, db.worker_state(con))
             db.publish_worker_rates(con, get_manager().rates())
             _log_shares(con, [c.manifest_path for c in all_collections])
@@ -2579,6 +2823,9 @@ def run_forever():
             # 'paused' and stopping every collection.
             control_name = all_collections[0].name
             control_con = cons[control_name]
+            # published so the stats beat reads the node state from the SAME
+            # collection this loop does (`_control_state_for_beat`)
+            _set_control_name(control_name)
             if control_name != last_control_name:
                 adopted = db.adopt_node_control(
                     control_con,
@@ -2628,6 +2875,9 @@ def run_forever():
                 time.sleep(2)
                 continue
             _paused.clear()
+            # Re-arm the fetches a pause stopped, BEFORE the interval check
+            # below — without pipeline threads, that check is what runs them.
+            _rearm_paused_aborts(all_collections, last_discover, pipeline, cons=cons)
             # acquire-only: discovery and fetching continue (the pipeline
             # threads still drain discovery requests), but rdf/fts stand
             # down there and this loop skips embed/genesis/bundles below
