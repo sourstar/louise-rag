@@ -901,6 +901,36 @@ report unreadable manifests; and a stage whose count RAISED was silently
 dropped from the report, which would have read as an all-clear — the
 "caught up" failure again, in a new place.
 
+### What else on disk the new code reads — checked, and it is fine
+
+Having been bitten twice by "new code, old artefact", the rest of
+pubmed's drag was checked rather than assumed. All of it reads:
+
+| member | result |
+|---|---|
+| `codex.json` | **REFUSED** — missing `derivation`, fixed by `hold collection migrate` |
+| `validation.json` | parses |
+| `snapshots/2026-08.json` | parses; the chain restarts after migration (above) |
+| `records/**/*.jsonl.zst` | 30,000 records, 30 frames, every key parses |
+
+**The one that looked like a third landmine and is not.** The stored
+record lines carry 15 keys — `chunks` and `layer` among them — and the
+current `RECORD_KEYS` is 13, because those two were dropped to match
+§9.5 exactly. A stored line is 725 bytes where a re-canonicalisation is
+705, so the bytes genuinely differ.
+
+Nothing compares them. `records` recomputes `content_hash` over title
+and sections alone; `roots` hashes the shard FILE, which nobody
+rewrites; and `records-vs-origin` puts BOTH sides through
+`canonical_line`, so the two dropped keys cancel. That last one is not
+luck — it is the fix for the `figures` shape mismatch, which failed 6 of
+6 records on a plates trial while the re-parse was byte-identical all
+along, and the comment explaining it is still there.
+
+*A key-set change is only a break where something compares the SHAPE
+rather than the CONTENT. Finding out which is a five-minute check and
+worth it every time.*
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
