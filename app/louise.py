@@ -285,6 +285,11 @@ def cmd_collection_migrate(a) -> int:
     print(f"{got['name']}: adding {', '.join(got['added'])} as null")
     print(f"  collection_id  {got['before']}")
     print(f"              -> {got['after']}")
+    # WHAT ELSE NAMES THE OLD ID. Not a refusal — the identity change is
+    # the point — but an operator told "collection_id moves" deserves to
+    # know what else says it, rather than meeting it later as an error.
+    for consequence in got.get("carries_old_id") or ():
+        print(f"  note: {consequence}")
     if not got["written"]:
         print("  (dry run — re-run with --apply to write it)")
         return 0

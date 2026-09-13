@@ -752,8 +752,42 @@ def migrate(root: Path, name: str, *, apply: bool = False) -> dict:
     cx.validate(codex)
     result = {"name": name, "added": added, "before": before,
               "after": codex.collection_id, "written": False,
-              "path": str(path)}
+              "path": str(path), "carries_old_id": _carries_old_id(path.parent)}
     if apply:
         path.write_bytes(codex.canonical())
         result["written"] = True
     return result
+
+
+def _carries_old_id(drag: Path) -> list[str]:
+    """Drag members that name the collection by its CURRENT id, and so
+    will refer to the old one after a migration.
+
+    Not a reason to refuse — the identity change is the point, and the
+    §9.3 field is missing whatever these say — but an operator who is
+    told "collection_id moves" deserves to know WHAT ELSE says it.
+
+    Two on the live pubmed drag:
+
+      - `snapshots/*.json` carry `collection_id`. The chain check
+        (`snapshot.verify_chain`) compares snapshot to snapshot, so one
+        snapshot is fine; the NEXT one, written with the new id, would
+        raise "collection changes mid-chain".
+      - the signed attestations of `hold check` name their witnesses
+        `"<collection_id>/<slice>/<n>"` (09 §9.8), so a fresh run
+        produces different witness names than the ones already signed.
+
+    Neither blocks a deploy and neither loses anything: `hold check`
+    re-runs, and a snapshot chain that begins again is what a new
+    identity means.
+    """
+    out: list[str] = []
+    snaps = sorted((drag / "snapshots").glob("*.json")) if drag.is_dir() else []
+    real = [p for p in snaps if not p.name.endswith(".sig.json")]
+    if real:
+        out.append(f"{len(real)} snapshot(s) — the chain restarts, because "
+                   f"`verify_chain` refuses a collection that changes mid-chain")
+    if (drag / "validation.json").is_file():
+        out.append("signed attestations name witnesses "
+                   "`<collection_id>/<slice>/<n>` — re-run `hold check`")
+    return out

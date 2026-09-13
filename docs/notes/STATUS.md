@@ -694,6 +694,24 @@ The identity moves because `collection_id` is the digest of the object
 and the object gained a field. The space does not, because §2.4 excludes
 `derivation` — so all 35,417,887 pubmed vectors stay admissible.
 
+**What else names the old id.** Two things, found by reading the drag
+rather than by reasoning about the Codex alone, and `migrate` now prints
+both:
+
+  - `snapshots/*.json` carry `collection_id`, and
+    `snapshot.verify_chain` refuses a collection that changes mid-chain.
+    Pubmed holds ONE snapshot, so nothing breaks today — the next one,
+    written with the new id, is where it would surface.
+  - `hold check` names its witnesses `"<collection_id>/<slice>/<n>"`
+    (§9.8), so the eight signed attestations describe the old identity
+    and a fresh run produces different witness names.
+
+Neither blocks anything and neither loses anything: `2026-08` stays
+valid as the old collection's snapshot, a chain that begins again is
+what a new identity means, and the attestations are superseded rather
+than wrong. Worth saying out loud because "collection_id moves" sounds
+like one fact and is three.
+
 **The second landmine, found by following the first.** `_held()` called
 `cx.loads` on every `<name>/drag/codex.json` under the root and let the
 exception out. The node holds FIVE Codexes — the two above plus the

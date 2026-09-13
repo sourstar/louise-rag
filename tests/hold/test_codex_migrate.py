@@ -149,3 +149,38 @@ def test_listing_survives_and_migrate_still_reaches_the_bad_one(written):
     got = col.migrate(root, name, apply=True)
     assert got["written"] is True
     assert col.unreadable() == {} or name not in col._held(root)
+
+
+# ---- what else names the old id -------------------------------------------
+
+def test_migrate_names_the_snapshots_that_carry_the_old_id(written):
+    """`snapshot.verify_chain` refuses a collection that changes
+    mid-chain, so the existing snapshot belongs to the old identity and
+    the chain restarts. One snapshot is fine today; the NEXT one, written
+    with the new id, is where it would surface."""
+    root, name, path, _ = written
+    snaps = path.parent / "snapshots"
+    snaps.mkdir()
+    (snaps / "2026-08.json").write_text('{"collection_id": "sha256:old"}')
+    (snaps / "2026-08.sig.json").write_text("{}")     # not a snapshot itself
+    got = col.migrate(root, name)
+    assert any("1 snapshot(s)" in c for c in got["carries_old_id"]), got
+    assert not any("2 snapshot" in c for c in got["carries_old_id"]), \
+        "the .sig.json is a sidecar, not a snapshot"
+
+
+def test_migrate_names_the_attestations(written):
+    """`hold check` names its witnesses `<collection_id>/<slice>/<n>`
+    (09 §9.8), so a fresh run produces different witness names than the
+    ones already signed."""
+    root, name, path, _ = written
+    (path.parent / "validation.json").write_text('{"checks": []}')
+    got = col.migrate(root, name)
+    assert any("hold check" in c for c in got["carries_old_id"]), got
+
+
+def test_a_drag_with_neither_says_nothing(written):
+    """No snapshots, no attestations — nothing to warn about, and a
+    warning nobody needs is how real ones stop being read."""
+    root, name, _, _ = written
+    assert col.migrate(root, name)["carries_old_id"] == []
