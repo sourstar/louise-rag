@@ -762,6 +762,56 @@ was worried about was already the status quo. A test asserts
 `_is_pending` still reads neither column, so the day that changes, this
 fix gets re-examined instead of silently becoming wrong.
 
+### The node has been running three different code trees at once
+
+Found 2026-09-13 while checking how far behind the node was. It is not
+one tree behind; it is three trees, disagreeing.
+
+```
+louise-rag:local (tag)   sha256:fbfdaeb…   built 2026-09-12 21:29
+web   container runs     sha256:fbfdaeb…   started 21:30
+worker container runs    sha256:60705ee…   started 15:13  ← older image
+src/app/plugins/pubmed/source.py           modified 22:26  ← after both
+src/app/plugins/gutenberg/rdf.py           modified 23:38  ← after both
+```
+
+**web and worker run different code**, which DEPLOYMENT.md forbids in as
+many words — "If any Python changed, recreate both, or web and worker
+run different code against one manifest." Five files differ: `llm.py`,
+`web.py`, `plugins/gutenberg/rdf.py`, `plugins/pubmed/source.py`,
+`plugins/pubmed/pack.py`. And `src/` is ahead of both, so a third
+version sits on disk that nothing runs.
+
+What is actually live, of two days of parser work:
+
+| | web | worker |
+|---|---|---|
+| gutenberg credits by role (`_ROLE_LABEL`) | ✗ | ✗ |
+| gutenberg MARC title strip (`clean_title`) | ✓ | **✗** |
+| gutenberg `subjects_by_scheme` | ✗ | ✗ |
+| pubmed `authors()` / parser 5, 6 | ✗ | ✗ |
+| translation fix (`flatten_whitespace`) | ✓ | n/a |
+
+**The worker is the one that parses.** So every book adopted since is
+rdf'd by the old gutenberg parser. The predicted effect is real but
+small: 8 gutenberg titles now contain a `$`, and most are money (`The
+$30,000 Bequest`, `$1,000 a Plate`) which `clean_title` correctly leaves
+alone — only `Dress design $b: an account of costume…` is a genuine
+uncleaned subfield. Single digits, not the thousands the tool cleaned.
+
+**Why this matters more than the eight titles.** It explains the shape
+of the last two days: fixes verified in the manifest by a backfill tool
+(4,653 titles, 39.2M authors) while the PARSER that keeps them right was
+never deployed — so the data was corrected and the thing that produced
+it was not. A fix reported as shipped, whose code no process is running,
+is indistinguishable from a regression from the outside, and it was
+reported as one.
+
+The deploy recreates both containers from one image, which is the fix.
+**Check `docker inspect <container> --format "{{.Image}}"` on both after
+every deploy** — the assertion that they match is cheap and nobody was
+making it.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
