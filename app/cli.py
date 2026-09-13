@@ -496,6 +496,27 @@ def cmd_genesis_retry(args) -> int:
     return 0
 
 
+def cmd_health(args) -> int:
+    """Exit 1 when a stage has work it cannot start — so this is a CHECK,
+    not only a page to read. A stage with nothing to do exits 0 whether
+    or not it is switched off: "off and finished" is not a problem, and
+    reporting it would make the check cry wolf on every idle collection."""
+    from . import health
+    if args.collection:
+        cols = [_collection_by_name(args.collection)]
+    else:
+        got = collections_mod.load_all(skip_unreadable=True)
+        cols = got[0] if isinstance(got, tuple) else got
+    reports, blocking = health.check(cols, errors=args.errors)
+    print(health.render(reports), end="")
+    if not blocking:
+        return 0
+    print("\nBLOCKED:", file=sys.stderr)
+    for line in blocking:
+        print(f"  {line}", file=sys.stderr)
+    return 1
+
+
 def cmd_genesis_recheck(args) -> int:
     """Reopen FINAL shards that still have documents the archive could
     serve — the one-shot repair for shards finalised before the fts hook
@@ -1233,6 +1254,17 @@ def main(argv=None) -> int:
     p_dump = pack_sub.add_parser("dump", help="stream a shard as plain JSONL")
     p_dump.add_argument("shard")
     p_dump.set_defaults(func=cmd_pack_dump)
+
+    health_parser = top.add_parser(
+        "health", help="is the pipeline stuck, and if so why (exit 1 if blocked)")
+    health_parser.add_argument("collection", nargs="?",
+                               help="one collection (default: every one)")
+    health_parser.add_argument(
+        "--errors", action="store_true",
+        help="also count errored documents (43 s on a 40M manifest: "
+             "`error` is in no index, so proving there are none walks "
+             "the whole scope range)")
+    health_parser.set_defaults(func=cmd_health)
 
     vindex_parser = top.add_parser("index", help="local indexes")
     vindex_sub = vindex_parser.add_subparsers(dest="verb", required=True)

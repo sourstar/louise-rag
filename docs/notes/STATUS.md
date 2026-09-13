@@ -828,6 +828,61 @@ The deploy recreates both containers from one image, which is the fix.
 every deploy** — the assertion that they match is cheap and nobody was
 making it.
 
+### `louise health` — the check the "stuck" reports needed
+
+Operator, 2026-09-13: "I TOLD YOU TO ADD THIS CHECK TO YOUR FUCKING TEST
+POOL". A unit test cannot see the live node; what was missing is a
+command that answers "is it stuck" in one line and exits non-zero when
+something is blocked, so it works in a cron or a monitor.
+
+The distinction it exists to draw, and the one the worker never drew: a
+stage with no work is IDLE and fine *even when switched off* — "off and
+finished" is not a problem, and reporting it would make the check cry
+wolf on every idle collection, which is exactly how "idle — pipeline is
+caught up" came to be ignored. Only work that CANNOT START is blocked.
+
+It carries an `archive` row because that is the one that hid twice:
+those documents are waiting for embed, so they look like ordinary
+encoder backlog from the stage counts while their vectors already exist
+and are free.
+
+**Timing, on the live pubmed manifest: 95.66 s → 6.75 s**, same output.
+Three measurements, and one of them refuted a prediction I had already
+written into a comment:
+
+| | |
+|---|---|
+| stage counts with `AND error IS NULL` | 54.09 s |
+| ...as a covering-index prefix, same answers | **0.48 s** |
+| error count (`error IS NOT NULL`, to return 0) | 43.56 s → opt-in |
+| archive gap over the 37M-id range | 40.60 s |
+| ...with the 37 shard ranges merged into one | 41.23 s — **no gain** |
+| ...walking the 4.58M embed-waiting set instead | **5.47 s** |
+| ...existence probe first, LIMIT 1 | 0.00 s |
+
+**The merge bought nothing, and the reason is worth keeping.** I assumed
+per-query overhead dominated and wrote "41 s against 1" into the code
+before measuring. The cost is per ROW: one 37M-id range costs exactly
+what 37 one-million ranges cost. The win came from asking the question
+from the other end — the embed-waiting set is 4.58M rows against the
+archive's 37M id span, so walking the SMALLER SIDE is 7.4x less work for
+the same answer. *When a count is slow, the question is not how many
+queries it takes but which of the two sets it walks.*
+
+`error IS NULL` was the exact false positive CLAUDE.md documents: the
+plan reads `SEARCH documents USING INDEX idx_documents_scope
+(in_scope=?)` while SQLite does a table lookup per counted row, 4.58M of
+them. Leaving the clause out counts errored documents as waiting — a
+handful against millions, reported beside the count, and feeding no
+scheduling decision, unlike the genesis backlog query where the same
+trade would be wrong.
+
+Its own tests found two defects in it: `db.get_scope` sat outside the
+guard, so a manifest it could not read crashed the check that exists to
+report unreadable manifests; and a stage whose count RAISED was silently
+dropped from the report, which would have read as an all-clear — the
+"caught up" failure again, in a new place.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
