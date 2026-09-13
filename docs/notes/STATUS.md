@@ -656,6 +656,60 @@ published vectors are imported however the encoder is configured. That
 was worth confirming rather than assuming: it is the operator's own
 principle and the code already held it.
 
+### The Codex flag day, found by testing the deploy instead of trusting it
+
+The `derivation` migration was on the "waiting" list as a known flag day.
+It is worse than that list said: it is not a thing to schedule, it is a
+thing that **breaks the node the moment any newer code runs**.
+
+Tested 2026-09-13 with the staged image against the live config, before
+promoting anything:
+
+```
+LOADED: []
+UNREADABLE: gutenberg — CodexError: codex: missing field(s) derivation
+            pubmed    — CodexError: codex: missing field(s) derivation
+```
+
+Zero collections, and `default_collection()` raises on top of it, which
+takes the control manifest with it. `derivation` is a required field of
+the version-2 Codex (§9.3) and both `drag/codex.json` files predate it,
+so they have been non-compliant since the field was specified — the
+running code simply does not know to ask.
+
+**The loader is right and the files are wrong.** `_only` refuses a
+missing field as firmly as an unknown one, because a peer that ignored
+one would hash the same collection differently (§9.18). So the fix is
+`hold collection migrate`, which adds the nullable §9.3 fields a file
+predates and nothing else.
+
+| | before | after |
+|---|---|---|
+| gutenberg `collection_id` | `sha256:e395a9cd…` | `sha256:4a825805…` |
+| pubmed `collection_id` | `sha256:02da1b55…` | `sha256:c4e3bd74…` |
+| gutenberg `space_id` | `sha256:a02a9052…` | **unchanged** |
+| pubmed `space_id` | `sha256:2b9d9416…` | **unchanged** |
+
+The identity moves because `collection_id` is the digest of the object
+and the object gained a field. The space does not, because §2.4 excludes
+`derivation` — so all 35,417,887 pubmed vectors stay admissible.
+
+**The measurement that nearly fooled me.** My first check compared
+`from_dict(dict(raw, derivation=None)).space_id` with
+`from_dict(migrated).space_id` — two names for the same object, so of
+course they matched. The real check computes the old id with the OLD
+code on the running container and the new one with the new code, and
+only that is evidence. *A comparison whose two sides are constructed the
+same way proves the construction, not the claim.*
+
+**And the lesson about deploying.** I had written the runbook and was
+one refused `mkdir` away from running it. What caught this was testing
+the staged image against the real config rather than against the test
+fixtures — the fixtures all carry `derivation`, because the code that
+writes them is current. **A green suite says the code is consistent with
+itself; only the live config says it is consistent with what is already
+on disk.**
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
