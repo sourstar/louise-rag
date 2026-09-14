@@ -1660,6 +1660,36 @@ fixes above. Node suite on the staged tree 2,692 passed; one image for
 web and worker, web healthy, no worker error, the archive mount still
 read-only in both, still acquire-only.
 
+**Wikipedia created, 2026-09-14** (operator's go): `collection_id`
+`sha256:b8ff5fab73452a2796e2ab0912fed2cfeee6cf554b79772d69e6cba01345bc47`,
+from `config/recipes/wikipedia-real.toml` in the worker, with bge-m3
+embedding the calibration set and `toolchain.platform_image` the digest
+of the image the command ran in (07 §7.3). The Codex checked field by
+field against the recipe. Its TOML pins snapshot 20260801; the node loads
+gutenberg, pubmed and wikipedia, and the worker withheld the new one's
+scan and fetch for want of an acknowledgement.
+
+**Acknowledgement by terms hash (04 §4.4).** "An acknowledgement is of a
+text, identified by its hash … A collection whose Codex names a
+`terms_sha256` this peer has already acknowledged … is acknowledged by
+that record." The gate compared a collection's OWN record only; it now
+also reads every record on this peer — Codex collections'
+`state/ack.json` and collection TOMLs' `license_ack`, the parked legacy
+ones included — so the operator's 2026-08-17 acknowledgement of the
+CC BY-SA text covers the new collection.
+
+**Read wrong, corrected (operator: "read the manual").** Gutenberg's
+Codex value: 07 §7.3 — `toolchain.platform_image` is "the digest of the
+platform the command runs in", here the image its `create` ran in, which
+is recorded nowhere. 03 §3.4 makes that digest the reference build every
+other image must prove equivalent to; with the placeholder there is no
+reference, so no peer can build gutenberg's records, and the Codex also
+pins parser 5 against the node's 8. 02 §2.7's relations do not cover a
+Codex with no snapshot and no defect in records or vectors: the
+operator's decision. And `create` should, per 07 §7.3, default to its
+own image's digest rather than refuse — pending the operator's go on the
+deploy passing that digest into the containers.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —

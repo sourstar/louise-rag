@@ -146,8 +146,15 @@ from. That note's three reasons do not apply to this shape.
 
 ## Next
 
-* The recipe (two layers, bge-m3) and the corpus layout on the node: the
-  archive's `data/` and the dumps under one corpus directory.
+* DONE 2026-09-14 — the recipe and the collection. `hold collection
+  create wikipedia` from `config/recipes/wikipedia-real.toml`:
+  `collection_id sha256:b8ff5fab73452a2796e2ab0912fed2cfeee6cf554b79772d69e6cba01345bc47`
+  (ctx 1,024, `verbatim` + `cdc {4000, 1000, 8000}`, the archive credited,
+  20260801 pinned, `work` 1.6B). The archive's `data/` is mounted
+  read-only inside the dumps' origin root, and the node serves the
+  collection. What follows the next deploy, with the acknowledgement
+  resolving by terms hash (04 §4.4): acquisition of the ten other
+  20260801 dumps (45.2 GB) and the first discovery.
 * A page the archive covers must be known BEFORE the first scan: the
   archive is frozen and already complete on the node (1,200 shards), but a
   shard landing after a dump page was minted would leave that page's dump

@@ -98,6 +98,56 @@ def terms_sha256(path: Path | None) -> str | None:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+#: 04 §4.4: "an acknowledgement is of a text, identified by its hash … A
+#: collection whose Codex names a `terms_sha256` this peer has already
+#: acknowledged … is acknowledged by that record." This peer's records are
+#: every Codex collection's `state/ack.json` (`hold collection ack`) and
+#: every collection TOML's `license_ack` — the parked legacy files
+#: included: an operator's acknowledgement of a text does not lapse because
+#: the collection that recorded it was set aside. Re-read at most every
+#: `_PEER_ACKS_TTL_S`, since every gate asks every round.
+_PEER_ACKS_TTL_S = 30.0
+# keyed on the two DIRECTORIES read — physical identity, never a name —
+# so a set read from one node layout never answers for another
+_peer_acks: dict[tuple[str, str], tuple[float, frozenset[str]]] = {}
+
+
+def reset_peer_acks() -> None:
+    _peer_acks.clear()
+
+
+def _peer_acknowledged() -> frozenset[str]:
+    """The terms hashes (bare hex) this peer holds a record of
+    acknowledging, from any collection's record."""
+    import json
+    import tomllib
+    from . import collections as collections_mod      # lazy: it imports plugins
+    root = collections_mod.louise_root() / "collections"
+    tomls = collections_mod.collections_dir()
+    key = (str(root.resolve()), str(tomls.resolve()))
+    now = time.time()
+    hit = _peer_acks.get(key)
+    if hit is not None and now - hit[0] < _PEER_ACKS_TTL_S:
+        return hit[1]
+    found: set[str] = set()
+    for p in (sorted(root.glob("*/state/ack.json")) if root.is_dir() else ()):
+        try:
+            found.add(str(json.loads(p.read_text(encoding="utf-8"))["terms_sha256"])
+                      .replace("sha256:", ""))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    for d in (tomls, tomls.parent / "collections-legacy"):
+        for p in (sorted(d.glob("*.toml")) if d.is_dir() else ()):
+            try:
+                ack = tomllib.loads(p.read_text(encoding="utf-8")).get("license_ack")
+            except (OSError, ValueError):
+                continue
+            if isinstance(ack, str) and "/" in ack:
+                found.add(ack.partition("/")[2].replace("sha256:", ""))
+    _peer_acks[key] = (now, frozenset(found))
+    return _peer_acks[key][1]
+
+
 def state_for(collection, spec=None) -> str:
     cls = _call(license_class_for, collection, spec)
     if cls in ("green", "unknown"):
@@ -106,17 +156,20 @@ def state_for(collection, spec=None) -> str:
         # requires one), never a real source, and never a pack (a pack
         # whose manifest is unreadable is yellow by default)
         return NOT_REQUIRED
-    ack = getattr(collection, "license_ack", None)
-    if not ack or "/" not in ack:
-        return MISSING
     lic = _codex_license(collection)
     pinned = str(getattr(lic, "terms_sha256", None) or "").replace("sha256:", "")
+    # A CODEX collection is acknowledged by any record of its pinned terms
+    # on this peer (04 §4.4), not only by one of its own
+    by_peer = ACKNOWLEDGED if pinned and pinned in _peer_acknowledged() else MISSING
+    ack = getattr(collection, "license_ack", None)
+    if not ack or "/" not in ack:
+        return by_peer
     # a Codex collection's ack is to the terms its Codex PINS
     current = pinned or terms_sha256(_call(terms_path_for, collection, spec))
     if not current:
         return MISSING
     _, _, acked = ack.partition("/")
-    return ACKNOWLEDGED if acked.replace("sha256:", "") == current else MISSING
+    return ACKNOWLEDGED if acked.replace("sha256:", "") == current else by_peer
 
 
 def make_ack(collection) -> str:
