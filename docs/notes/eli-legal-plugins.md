@@ -1,6 +1,10 @@
 # ELI as the template for EU legal corpora — and where it clashes with the pack
 
-**Status: PROPOSAL for evaluation. Nothing built, nothing agreed.**
+**Status: §6's rules BUILT 2026-09-14 as `app/plugins/eli.py`, with
+Normattiva the first plugin on it (operator's instruction); the manifest
+block of §5.3 is not built (a wire-format change). See
+[`STATUS.md`](STATUS.md), "Normattiva on a generic ELI layer".** Originally:
+PROPOSAL for evaluation.
 Written 2026-08-26 on the operator's instruction to treat **ELI** (European
 Legislation Identifier) as the general shape for legal plugins covering EU
 member states, to consider only an **ELI-compliant corpus form**, and to

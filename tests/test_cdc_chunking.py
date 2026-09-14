@@ -130,7 +130,12 @@ def test_only_wikipedia_is_mutable_today():
     visible diff, rather than something that happens by default."""
     mutable = {name for name, src in collections_mod.PLUGIN_REGISTRY.items()
                if src.mutability == Mutability.MUTABLE}
-    assert mutable == {"wikipedia"}
+    # normattiva (2026-09-14): consolidated law is revised in place — and it
+    # declares its own chunker, akn_article, so it does NOT get CDC
+    assert mutable == {"wikipedia", "normattiva"}
+    assert chunking.chunker_name(
+        collections_mod.PLUGIN_REGISTRY["normattiva"].chunking_profile,
+        Mutability.MUTABLE) == chunking.AKN_ARTICLE
 
 
 # ---------------- the scoping that makes it affordable ----------------

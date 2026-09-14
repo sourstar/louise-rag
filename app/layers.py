@@ -31,7 +31,7 @@ from . import chunking
 
 @dataclass(frozen=True)
 class Layer:
-    chunker: str                 # chunking.BOOK | FIXED | VERBATIM | ABSTRACT | CDC
+    chunker: str                 # chunking.BOOK | FIXED | VERBATIM | ABSTRACT | CDC | AKN_ARTICLE
     version: int
     rule: str
     #: What the chunker cuts with. 06 §6.3: "a chunker reads no node

@@ -5,6 +5,7 @@ Two families, chosen by whether the source revises what it publishes
 sources, content-defined boundaries for mutable ones.
 """
 import hashlib
+import re
 
 from . import config
 
@@ -257,6 +258,72 @@ def chunk_cdc(uid: str, native_id, sections: list[tuple[str, str]],
             seq += 1
 
 
+# ---------------- akn_article: one chunk per article ----------------
+#
+# docs/notes/gazzetta-plugin.md §5, approved by the operator 2026-09-14.
+# Legal text carries its own unit — the article, which an amendment
+# replaces and a citation names — so it is cut there and not by content
+# hashing, which would land mid-comma. The plugin's sections ARE its
+# articles and annexes (plugins/normattiva/rendition.py). An article past
+# `max_chars` is split between its commi, and a comma past it by CDC
+# within itself; all three levels are a pure function of (section text,
+# version, params) — invariant 3.
+
+#: The default until the pilot measures it (§5: "whole article" against
+#: "split at N" is an empirical question). A recipe that measured sets
+#: `params.max_chars`, which 09 §9.3 hashes into the space id.
+AKN_MAX_CHARS = 8_000
+#: a comma's number at the margin: "1. ", "2-bis. ", "10-quinquies."
+_AKN_COMMA = re.compile(r"^\d+(?:-[a-z]+)?\.(?:\s|$)")
+
+
+def _akn_pieces(text: str, limit: int) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    units: list[str] = []
+    cur: list[str] = []
+    for line in text.split("\n"):
+        if cur and _AKN_COMMA.match(line):
+            units.append("\n".join(cur))
+            cur = []
+        cur.append(line)
+    if cur:
+        units.append("\n".join(cur))
+    pieces: list[str] = []
+    buf = ""
+    for unit in units:
+        if len(unit) > limit:
+            if buf:
+                pieces.append(buf)
+                buf = ""
+            pieces.extend(cdc_split(unit))
+        elif not buf:
+            buf = unit
+        elif len(buf) + 1 + len(unit) <= limit:
+            buf = f"{buf}\n{unit}"
+        else:
+            pieces.append(buf)
+            buf = unit
+    if buf:
+        pieces.append(buf)
+    return pieces
+
+
+def chunk_akn_article(uid: str, native_id, sections: list[tuple[str, str]],
+                      version=None, params=None):
+    """One chunk per article; an empty body (an article repealed in place,
+    an annex the XML holds no text for) yields none."""
+    limit = int((params or {}).get("max_chars") or AKN_MAX_CHARS)
+    seq = 0
+    for label, body in sections:
+        text = (body or "").strip()
+        if not text:
+            continue
+        for piece in _akn_pieces(text, limit):
+            yield _mk(uid, native_id, seq, label or "", piece, version)
+            seq += 1
+
+
 # ---------------- which chunker, and at which version ----------------
 
 BOOK = "book"
@@ -264,9 +331,11 @@ FIXED = "fixed"
 VERBATIM = "verbatim"
 ABSTRACT = "abstract"
 CDC = "cdc"
+AKN_ARTICLE = "akn_article"
 
 _CHUNKERS = {BOOK: chunk_book, FIXED: chunk_fixed, VERBATIM: chunk_verbatim,
-             ABSTRACT: chunk_abstract, CDC: chunk_cdc}
+             ABSTRACT: chunk_abstract, CDC: chunk_cdc,
+             AKN_ARTICLE: chunk_akn_article}
 
 # CDC is versioned SEPARATELY from the fixed-width chunkers, and that
 # separation is the point: CHUNK_VERSION used to be one global number that
@@ -282,6 +351,9 @@ CDC_CHUNK_VERSION = 1
 # reason: it enters ONLY PubMed's space id. Bump it — and only it — when
 # how an article becomes its one chunk changes.
 ABSTRACT_CHUNK_VERSION = 1
+# The article chunker (Normattiva, 2026-09-14) enters only the spaces of
+# collections that declare it, like the two above.
+AKN_CHUNK_VERSION = 1
 
 # `fixed` is `book` with its window carried in the layer instead of read
 # from the environment, and it is version 1 BECAUSE THAT IS WHAT `book`
@@ -311,6 +383,10 @@ def chunker_name(profile: str | None, mutability=None) -> str:
         # profile was declared but fell through to BOOK, which cut title
         # and abstract into separate chunks
         return ABSTRACT
+    if profile == AKN_ARTICLE:
+        # one chunk per article (Normattiva): its source is MUTABLE, and
+        # would otherwise get CDC, which cuts mid-comma
+        return AKN_ARTICLE
     if mutability == Mutability.MUTABLE:
         return CDC
     return BOOK
@@ -321,6 +397,8 @@ def chunk_version_for(name: str) -> int:
         return CDC_CHUNK_VERSION
     if name == ABSTRACT:
         return ABSTRACT_CHUNK_VERSION
+    if name == AKN_ARTICLE:
+        return AKN_CHUNK_VERSION
     if name == FIXED:
         return FIXED_CHUNK_VERSION
     return config.CHUNK_VERSION

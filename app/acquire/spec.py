@@ -31,6 +31,11 @@ class RemoteFile:
     # classified by the engine after filtering: True = an opted-in EXTRA
     # format (local-only; see AcquisitionSpec.extras), never Louise data
     extra: bool = False
+    # What to request, relative to the endpoint URL, when it is not
+    # `rel_path`: an origin that serves a file by QUERY (Normattiva's
+    # `collection-preconfezionata?nome=Codici&…`) still needs a plain
+    # destination path on disk. None = request `rel_path` (every other spec).
+    remote: str | None = None
 
 
 @dataclass(frozen=True)

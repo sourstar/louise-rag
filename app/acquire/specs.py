@@ -7,6 +7,7 @@ traffic in tests).
 """
 import re
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 from ..plugins.base import LicenseClass
 from .spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter,
@@ -338,10 +339,103 @@ EMBEDDED_SPEC = AcquisitionSpec(
 )
 
 
+# Normattiva's precompiled collections (dati.normattiva.it), as
+# `collections/collection-predefinite` listed them on 2026-09-14: 60 rows,
+# each collection in ORIGINALE, VIGENTE and MULTIVIGENTE. ONE form each:
+# VIGENTE where offered, ORIGINALE for the four published in no other form
+# — the 124,043 repealed acts among them (the plugin's docstring has the
+# reasons). (name, form, acts, bytes): the bytes are the Content-Range total
+# of a one-byte GET of each AKN zip that day, and seed `estimated_bytes`.
+#
+# The files declare NO size, deliberately. The origin rebuilds a zip in
+# place (most `dataCreazione`s moved within the month), and a stale declared
+# size would let a segmented download cut the rebuilt, longer zip at the old
+# length and record it complete. An unknown size is honest; a wrong one is
+# a corrupt corpus that passes. (Rebuilds are therefore not re-fetched by
+# themselves: the listing carries no size, date or ETag to compare.)
+_NORMATTIVA: tuple[tuple[str, str, int, int], ...] = (
+    ("Codici", "V", 40, 10_531_559),
+    ("Leggi costituzionali", "V", 50, 313_481),
+    ("Testi Unici", "V", 257, 9_449_203),
+    ("Atti di attuazione Regolamenti UE", "V", 39, 452_689),
+    ("Atti di recepimento direttive UE", "V", 1_093, 24_165_741),
+    ("DL decaduti", "V", 1_735, 3_822_367),
+    ("DL e leggi di conversione", "V", 7_439, 59_689_174),
+    ("DL proroghe", "V", 75, 1_393_173),
+    ("DPCM", "V", 363, 5_636_141),
+    ("DPR", "V", 47_761, 183_268_338),
+    ("Decreti legislativi luogotenenziali", "V", 1_215, 3_608_774),
+    ("Leggi contenenti deleghe", "V", 79, 2_461_235),
+    ("Leggi di delegazione europea", "V", 32, 1_913_246),
+    ("Leggi di ratifica", "V", 2_334, 31_242_548),
+    ("Regi decreti", "V", 91_346, 355_397_370),
+    ("Regi decreti legislativi", "V", 120, 492_939),
+    ("Regolamenti di delegificazione", "V", 376, 6_957_845),
+    ("Regolamenti governativi", "V", 1_943, 28_944_006),
+    ("Regolamenti ministeriali", "V", 2_078, 32_557_719),
+    ("Atti normativi abrogati (in originale)", "O", 124_043, 476_590_208),
+    ("Decreti Legislativi", "O", 2_922, 72_637_059),
+    ("Leggi delega e relativi provvedimenti delegati", "O", 1_153, 38_701_237),
+    ("Leggi finanziarie e di bilancio", "O", 58, 8_616_271),
+)
+
+
+def _normattiva_rel(name: str, form: str) -> str:
+    """"Atti normativi abrogati (in originale)", "O" →
+    "akn/O/atti-normativi-abrogati-in-originale.zip"."""
+    return f"akn/{form}/{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}.zip"
+
+
+_NORMATTIVA_STARTER = ("Codici", "Leggi costituzionali", "Testi Unici")
+
+NORMATTIVA_SPEC = AcquisitionSpec(
+    source_id="normattiva",
+    transport=Transport.HTTPS,
+    endpoints=(
+        # no auth and no rate limit documented (API PDF rev 10, probed
+        # 2026-09-14); the download answers 302 to a tokenised file that
+        # serves Range
+        Endpoint(transport=Transport.HTTPS,
+                 url="https://api.normattiva.it/t/normattiva.api/bff-opendata/"
+                     "v1/api/v1/collections/download",
+                 max_conns=2,          # a public service: etiquette
+                 static_files=tuple(
+                     RemoteFile(rel_path=_normattiva_rel(name, form),
+                                remote="collection-preconfezionata?" + urlencode(
+                                    {"nome": name, "formato": "AKN",
+                                     "formatoRichiesta": form}, quote_via=quote))
+                     for name, form, _, _ in _NORMATTIVA)),
+    ),
+    layout="container-files",
+    filters=("*.zip",),
+    checksums=ChecksumSource(kind="none"),     # none published (API PDF §6)
+    delta=DeltaSpec(mode="full-resync"),
+    profiles={
+        "demo": Filter(include=(_normattiva_rel("Codici", "V"),)),
+        "starter": Filter(include=tuple(_normattiva_rel(n, "V")
+                                        for n in _NORMATTIVA_STARTER)),
+        "full": Filter(),
+    },
+    estimated_bytes={
+        "demo": 10_531_559,
+        "starter": sum(b for n, f, _, b in _NORMATTIVA if n in _NORMATTIVA_STARTER),
+        "full": sum(b for _, _, _, b in _NORMATTIVA),
+    },
+    profile_labels={
+        "demo": "the 40 codes, in force (Codici)",
+        "starter": "codes, constitutional laws and consolidated texts, in force",
+        "full": "every precompiled collection: in force where offered, else original",
+    },
+    license_class=LicenseClass.YELLOW,          # CC BY 4.0, after an NC window (TERMS.txt)
+    terms_text_path=Path(__file__).parent.parent / "plugins" / "normattiva" / "TERMS.txt",
+)
+
+
 ACQUIRE_REGISTRY: dict[str, AcquisitionSpec] = {
     "embedded": EMBEDDED_SPEC,
     "genome": GENOME_SPEC,
     "gutenberg": GUTENBERG_SPEC,
+    "normattiva": NORMATTIVA_SPEC,
     "pubmed": PUBMED_SPEC,
     "wikipedia": WIKIPEDIA_SPEC,
 }

@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, genome, gutenberg, packed, pubmed, wikipedia
+from .plugins import embedded, genome, gutenberg, normattiva, packed, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "embedded": embedded.SOURCE,
     "genome": genome.SOURCE,
     "gutenberg": gutenberg.SOURCE,
+    "normattiva": normattiva.SOURCE,
     "packed": packed.SOURCE,        # placeholder; a collection gets its per-pack instance
     "pubmed": pubmed.SOURCE,
     "wikipedia": wikipedia.SOURCE,

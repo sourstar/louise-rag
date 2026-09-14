@@ -112,7 +112,7 @@ def test_fixed_is_registered_and_book_is_untouched():
     assert chunking._CHUNKERS[chunking.FIXED] is chunking.chunk_fixed
     assert chunking._CHUNKERS[chunking.BOOK] is chunking.chunk_book
     assert set(chunking._CHUNKERS) == {"book", "fixed", "verbatim",
-                                       "abstract", "cdc"}
+                                       "abstract", "cdc", "akn_article"}
 
 
 def test_every_chunker_takes_the_same_shape():

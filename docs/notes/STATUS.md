@@ -1515,6 +1515,51 @@ per enwiki page, single-threaded. Open for the operator: `keys` of the form
 namespace), and `_SKIP_TITLE` still lets `MOS:`, `Event:` and some talk
 namespaces through (left alone as asked).
 
+**Deployed 2026-09-14 12:17 UTC** (1cf8b29, image `9b79dc5…`): web and
+worker on the same image, `init` true on both, gutenberg/pubmed/wikipedia
+parsers 7/8/3 in the running worker, no error in its first minutes. The
+node suite against the staged tree: 2,598 passed. The live gutenberg and
+pubmed Codices still pin parsers 5 and 4 — as above, the new parsers reach
+records through new collections only.
+
+### Normattiva on a generic ELI layer — 2026-09-14
+
+Built on the operator's instruction ("implement also eli plugin") within
+the 2026-08-26 scope (Normattiva only; the certified Gazzetta is not ours,
+but must stay possible). `app/plugins/eli.py` holds the rules of
+[`eli-legal-plugins.md`](eli-legal-plugins.md) §6 that any member state's
+plugin reuses — native id from the unique work key, collision guard, the
+Expression read from what the origin returned, the fixed `eli_*` extra
+keys. `app/plugins/normattiva/` is the Italian plugin (akn.py, rendition.py,
+source.py, TERMS.txt), `akn_article` v1 its chunker, `NORMATTIVA_SPEC` its
+acquisition: 23 precompiled AKN collections, vigente where offered and
+originale for the four published in no other form (the 124,043 repealed
+acts among them), ~1.35 GB in all; `demo` is the Codici (40 acts, 10.5 MB).
+
+Written against the live data, not the 2021 profile. A census of the 40
+codes: partitions are flat `<chapter>`s whatever their level; notes sit in
+an article's `<section>`; the Codice civile's 3,280 articles arrive as
+annexes; two members are base64 of the XML. All 40 parse (≤1.3 s the
+largest), the rendition reads back to the AKN's skeleton on all 40, and no
+`((` survives (the `))` left are a lettera closing a parenthesis).
+
+Decisions taken in the build, open to the operator: `keys` are
+`eli:it:id/<date>/<codice>` and the URN:NIR — 06 §6.5's namespace ownership
+is the same open question as wikipedia's; preamble, conclusions and notes
+are kept in the record and not embedded; the rendition is versioned by the
+PARSER_VERSION (the parser owns `sections` here, not the chunker as §4.3
+had it); `max_chars` is 8,000 until the pilot measures it; the spec
+declares no file sizes (the origin rebuilds zips in place, and a stale size
+could truncate a segmented download), so a rebuilt zip is not re-fetched
+by itself; `eli_in_force` is false only on the origin's word (the repealed
+acts' collection). Still the operator's: the encoder (the §7 pilot) and
+creating the collection; confirming the CC BY 4.0 statement on the live
+portal before acknowledging (TERMS.txt says so). Not built: the delta feed
+(`ricerca/aggiornati`), the SKOS type tables, the ReferenceSource of §6,
+the manifest's `eli` block (§5.3 — a wire-format change, so ask first).
+Certified-compatible: the GU identities — the by-id permalink, codice
+redazionale, publication date and number — are in every record.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

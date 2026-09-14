@@ -36,6 +36,12 @@ _USER_AGENT = (f"louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
                f"httpx/{httpx.__version__}")
 
 
+def _url(endpoint: Endpoint, remote: RemoteFile) -> str:
+    """`remote.remote` when the origin serves the file by query, else the
+    destination path itself (spec.RemoteFile)."""
+    return f"{endpoint.url.rstrip('/')}/{remote.remote or remote.rel_path}"
+
+
 class HttpsTransport:
     # Declares that this transport can split ONE file across several
     # connections; the engine checks for it rather than knowing which
@@ -54,7 +60,7 @@ class HttpsTransport:
                   resume_from: int) -> int:
         part = dest.with_name(dest.name + ".part")
         part.parent.mkdir(parents=True, exist_ok=True)
-        url = f"{endpoint.url.rstrip('/')}/{remote.rel_path}"
+        url = _url(endpoint, remote)
         headers = {"User-Agent": _USER_AGENT}
         mode = "wb"
         if resume_from > 0 and part.is_file():
@@ -228,7 +234,7 @@ def _fetch_segmented(transport, endpoint: Endpoint, remote: RemoteFile,
         if part.stat().st_size < total:
             f.truncate(total)
 
-    url = f"{endpoint.url.rstrip('/')}/{remote.rel_path}"
+    url = _url(endpoint, remote)
     headers = {"User-Agent": _USER_AGENT}
     if endpoint.auth_token_path is not None:
         headers["Authorization"] = f"Bearer {endpoint.auth_token_path.read_text().strip()}"

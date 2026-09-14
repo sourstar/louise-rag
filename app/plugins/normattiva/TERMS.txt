@@ -1,0 +1,44 @@
+Normattiva (www.normattiva.it; open data at dati.normattiva.it) publishes
+the numbered normative acts of the Italian State, 1861 to today. It is
+realised and run by the Istituto Poligrafico e Zecca dello Stato for the
+Presidenza del Consiglio dei Ministri.
+
+LICENCE. The open-data portal's "Dati disponibili" page states that from
+1 January 2026 its collections are offered under the Creative Commons
+Attribution 4.0 International licence (CC BY 4.0), with attribution.
+https://creativecommons.org/licenses/by/4.0/
+Before that the portal ran an experimental phase under CC BY 4.0 NC
+(non-commercial), then plain CC BY 4.0 from 1 July 2025. A non-commercial
+clause cannot be honoured by a peer-to-peer platform, so a copy fetched in
+the NC window must not be exchanged. A downloaded file does not record the
+window it came from: the timestamp of this acknowledgement is the record.
+Confirm the licence statement on the live portal before acknowledging.
+
+The portal's legal notice (https://www.normattiva.it/staticPage/legal, as
+published on 2026-09-14), verbatim, rewrapped:
+
+  I testi presenti nella banca dati "Normattiva" non hanno carattere di
+  ufficialità.
+
+  L'unico testo ufficiale e definitivo è quello pubblicato sulla Gazzetta
+  Ufficiale Italiana a mezzo stampa, che prevale in casi di discordanza.
+
+  La riproduzione dei testi forniti nel formato elettronico è consentita
+  purchè venga menzionata la fonte, il carattere non autentico e gratuito.
+  I Testi sono disponibili agli utenti al solo scopo informativo. La
+  raccolta, per quanto vasta, è frutto di una selezione redazionale. La
+  Presidenza del Consiglio dei Ministri e l'Istituto Poligrafico e Zecca
+  dello Stato S.p.A., non sono responsabili di eventuali errori o
+  imprecisioni, nonchè di danni conseguenti ad azioni o determinazioni
+  assunte in base alla consultazione del portale.
+
+By acquiring this corpus you acknowledge:
+
+1. ATTRIBUTION. Reuse must name the source: Normattiva (www.normattiva.it),
+   CC BY 4.0.
+2. NOT OFFICIAL, NOT AUTHENTIC, FREE. These texts are not the official
+   text; the Gazzetta Ufficiale as printed prevails. Any reproduction must
+   say so, and must say the text was obtained free of charge.
+3. NO ENDORSEMENT. Neither the Presidenza del Consiglio dei Ministri nor
+   the Istituto Poligrafico e Zecca dello Stato endorses this platform or
+   answers for its use of the corpus.

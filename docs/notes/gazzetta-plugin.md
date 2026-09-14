@@ -1,6 +1,10 @@
 # Gazzetta Ufficiale / Normattiva — plugin feasibility and design
 
-**Status: PROPOSAL, nothing built.** This is the research pass that has to
+**Status: BUILT 2026-09-14 as `normattiva` (build order steps 2, 3, 5
+and 6), on the operator's instruction; the encoder pilot (step 4) and the
+collection are the operator's. What the build decided and what is still
+open: [`STATUS.md`](STATUS.md), "Normattiva on a generic ELI layer".** The
+rest of this document is the proposal as written. This is the research pass that has to
 happen before a `gazzetta` plugin is written: what material exists, in what
 form, what the platform's own constraints allow, and which encoder the
 collection would be pinned to *forever* (invariant 1). The decisions in
