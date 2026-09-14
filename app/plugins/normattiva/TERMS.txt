@@ -12,7 +12,7 @@ Before that the portal ran an experimental phase under CC BY 4.0 NC
 clause cannot be honoured by a peer-to-peer platform, so a copy fetched in
 the NC window must not be exchanged. A downloaded file does not record the
 window it came from: the timestamp of this acknowledgement is the record.
-Confirm the licence statement on the live portal before acknowledging.
+The operator confirmed this statement on 2026-09-14.
 
 The portal's legal notice (https://www.normattiva.it/staticPage/legal, as
 published on 2026-09-14), verbatim, rewrapped:

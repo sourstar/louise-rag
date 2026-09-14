@@ -68,6 +68,36 @@ _DEFER = "\x04"
 #: What an `<hr>` leaves: the plain-text edition's own thought-break line.
 #: It is a scene break in the book, and the reflow left nothing behind.
 _SCENE = "* * * * *"
+#: ITALICS, as the book sets them (operator, 2026-09-14: "if it is italic
+#: in the book text, keep it"), written `_…_` — the plain-text edition's
+#: own convention, so the two editions read alike. Sentinels until
+#: `_normalise`, which moves the spaces a tag enclosed to its outside.
+_I_ON = "\x05"
+_I_OFF = "\x06"
+_ITALIC_TAGS = frozenset({"i", "em", "cite"})
+#: elements with no end tag: never on the open-element stack
+_VOID = frozenset({"br", "hr", "img", "meta", "link", "input", "col", "area",
+                   "base", "wbr", "source", "param", "embed", "track"})
+_ITALIC_STYLE = re.compile(r"font-style\s*:\s*(?:italic|oblique)", re.I)
+_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_STYLE_BLOCK = re.compile(r"<style[^>]*>(.*?)</style>", re.I | re.S)
+
+
+def italic_classes(css: str) -> frozenset[str]:
+    """The classes a stylesheet sets in italics: the class on the element a
+    rule styles (its selector's last part), pseudo-elements aside. PG sets
+    stage directions, verse and epigraphs this way — 4,888 `scenedesc`
+    spans in the 32-book sample, beside 242,568 `<i>` and 416 `<em>`."""
+    out: set[str] = set()
+    for selectors, decls in _CSS_RULE.findall(_CSS_COMMENT.sub("", css)):
+        if not _ITALIC_STYLE.search(decls):
+            continue
+        for sel in selectors.split(","):
+            parts = sel.split()
+            if parts and ":" not in parts[-1]:
+                out.update(re.findall(r"\.([\w-]+)", parts[-1]))
+    return frozenset(out)
 
 _OPF_NS = "{http://www.idpf.org/2007/opf}"
 _CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
@@ -221,12 +251,29 @@ class _Text(HTMLParser):
     that will not parse is a book we cannot serve.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, italic: frozenset[str] = frozenset()) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.images: list[tuple[str, str]] = []   # (src, alt) in document order
         self._skip = 0
         self._cells = 0                            # cells so far in this table row
+        self._italic_classes = italic              # classes the book's CSS sets italic
+        self._open: list[tuple[str, bool]] = []    # open elements, and whether italic
+        self._ital = 0                             # open italic elements
+
+    def _is_italic(self, tag, attrs) -> bool:
+        if tag in _ITALIC_TAGS:
+            return True
+        a = dict(attrs)
+        if self._italic_classes and \
+                set((a.get("class") or "").split()) & self._italic_classes:
+            return True
+        return bool(_ITALIC_STYLE.search(a.get("style") or ""))
+
+    def _brk(self, s: str) -> None:
+        """A break inside italics closes the run and reopens it after, so
+        a run never spans a paragraph, a heading or a line."""
+        self.parts.append(f"{_I_OFF}{s}{_I_ON}" if self._ital else s)
 
     def handle_starttag(self, tag, attrs):
         if tag in _SKIP:
@@ -234,14 +281,37 @@ class _Text(HTMLParser):
             return
         if self._skip:
             return
+        ital = tag not in _VOID and self._is_italic(tag, attrs)
+        if tag not in _VOID:
+            self._open.append((tag, ital))
+        self._start(tag, attrs)          # the element's own break or marker first
+        if ital:
+            if not self._ital:
+                self.parts.append(_I_ON)
+            self._ital += 1
+
+    def _close(self, tag) -> None:
+        """Pop `tag` and anything left open inside it (forgiving, as the
+        parser is); a run ends when its last italic element does."""
+        for i in range(len(self._open) - 1, -1, -1):
+            if self._open[i][0] == tag:
+                n = sum(1 for _, it in self._open[i:] if it)
+                del self._open[i:]
+                if n:
+                    was, self._ital = self._ital, max(0, self._ital - n)
+                    if was and not self._ital:
+                        self.parts.append(_I_OFF)
+                return
+
+    def _start(self, tag, attrs):
         if tag == "br":
-            self.parts.append(_LINE)
+            self._brk(_LINE)
             return
         if tag == "hr":
-            self.parts.append(f"\n\n{_SCENE}\n\n")
+            self._brk(f"\n\n{_SCENE}\n\n")
             return
         if tag in _HEADINGS:
-            self.parts.append(f"\n\n{_HEAD}{tag[1]}")
+            self._brk(f"\n\n{_HEAD}{tag[1]}")
             return
         if tag in ("sup", "sub"):
             # An exponent FUSED into its base changes the number: "10<sup>
@@ -272,12 +342,15 @@ class _Text(HTMLParser):
                 self.parts.append(_IMG)
             return
         if tag in _BLOCK:
-            self.parts.append("\n\n")
+            self._brk("\n\n")
 
     def handle_startendtag(self, tag, attrs):
-        if tag in _HEADINGS or tag in ("sup", "sub"):
-            return          # empty: an opening marker here would never close
-        self.handle_starttag(tag, attrs)
+        if tag in _HEADINGS or tag in ("sup", "sub") or tag in _SKIP or self._skip:
+            # empty: an opening marker here would never close — and a
+            # self-closing `<script src=…/>` used to count as an OPEN skip
+            # that nothing closed, silencing the rest of the document
+            return
+        self._start(tag, attrs)          # never opens an italic run or an element
 
     def handle_endtag(self, tag):
         if tag in _SKIP:
@@ -285,14 +358,15 @@ class _Text(HTMLParser):
             return
         if self._skip:
             return
+        self._close(tag)                 # a run ends BEFORE the element's break
         if tag in _HEADINGS:
-            self.parts.append(f"{_HEAD_END}\n\n")
+            self._brk(f"{_HEAD_END}\n\n")
             return
         if tag in ("sup", "sub"):
             self.parts.append("}")
             return
         if tag in _BLOCK:
-            self.parts.append("\n\n")
+            self._brk("\n\n")
 
     def handle_data(self, data):
         if not self._skip:
@@ -300,6 +374,18 @@ class _Text(HTMLParser):
 
     def text(self) -> str:
         return "".join(self.parts)
+
+
+def _italics(line: str) -> str:
+    """The run sentinels of one line as `_…_`: adjacent runs joined
+    (`<i>Pride</i><i> and Prejudice</i>`), a space a tag enclosed moved
+    outside it ("A<i> word </i>here" reads "A _word_ here"), a run with
+    nothing in it gone."""
+    line = line.replace(_I_OFF + _I_ON, "")
+    line = re.sub(_I_ON + r"(\s+)", r"\1" + _I_ON, line)
+    line = re.sub(r"(\s+)" + _I_OFF, _I_OFF + r"\1", line)
+    line = line.replace(_I_ON + _I_OFF, "")
+    return line.replace(_I_ON, "_").replace(_I_OFF, "_")
 
 
 def _normalise(text: str) -> str:
@@ -314,7 +400,7 @@ def _normalise(text: str) -> str:
     for para in re.split(r"\n\s*\n", text):
         # `_LINE` is the one line break that is CONTENT (a `<br>`), so it
         # survives as "\n" while every incidental one collapses
-        lines = (re.sub(r"\s+", " ", ln).strip() for ln in para.split(_LINE))
+        lines = (re.sub(r"\s+", " ", _italics(ln)).strip() for ln in para.split(_LINE))
         para = "\n".join(ln for ln in lines if ln)
         if para:
             out.append(para)
@@ -341,6 +427,10 @@ def _decode(raw: bytes) -> str:
 def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
     """Every spine document, parsed, in reading order."""
     manifest, spine = _manifest_and_spine(z)
+    # the classes the book's stylesheets set in italics (`_Text`), and the
+    # document's own <style> on top
+    css = italic_classes(" ".join(_decode(z.read(n)) for n in z.namelist()
+                                  if n.lower().endswith(".css")))
     out = []
     for idref in spine:
         entry = manifest.get(idref)
@@ -353,8 +443,10 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
             raw = z.read(href)
         except KeyError:
             continue                        # a manifest item that is not there
-        p = _Text()
-        p.feed(_decode(raw))
+        text = _decode(raw)
+        inline = _STYLE_BLOCK.findall(text)
+        p = _Text(css | italic_classes(" ".join(inline)) if inline else css)
+        p.feed(text)
         p.close()
         out.append((href, p))
     return out
@@ -428,7 +520,12 @@ def _read(path: Path) -> tuple[str, str]:
     deferred: list[str] = []
     for i, (_, alt, _carried) in enumerate(images):
         tail = pieces[i + 1]
-        if len(alt) == 1 and alt.isalpha() and tail[:1].isalpha():
+        if tail[:1] == _I_ON and len(alt) == 1 and alt.isalpha() and tail[1:2].isalpha():
+            # the same, where the word goes on in italics: the initial
+            # joins the run (`<img alt="T"/><i>HE</i>` reads "_THE_")
+            text += _I_ON + alt + _DEFER + tail[1:]
+            deferred.append(alt)
+        elif len(alt) == 1 and alt.isalpha() and tail[:1].isalpha():
             # AN ILLUSTRATED INITIAL: `<img alt="T"/>HE discussion`. The
             # marker's paragraph breaks cut the book's first word in two
             # ("T" / "HE"), in the text that becomes vectors (audit,

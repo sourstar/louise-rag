@@ -54,9 +54,10 @@ def record_key(plugin: str, record: dict) -> str | None:
 
       gutenberg   `extra.issued`  — PG's release date for its own digital
                   edition. It used to be read from `date`, where it did
-                  not belong: PG has no publication date for the work, so
-                  `date` is null there now, and reading it here would
-                  have excluded EVERY record from a dated snapshot.
+                  not belong: `date` is the year of the physical edition
+                  PG transcribed (parser 8), often a century earlier, and
+                  null where PG does not say — reading it here would cut
+                  on the wrong event.
       pubmed      `extra.revised` — DateRevised/DateCompleted, falling
                   back to the publication date. The fallback used to be
                   `extra.date`, which parser 5 removed as a duplicate of

@@ -8,6 +8,7 @@ I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
 """
 import hashlib
+import re
 import zipfile
 import zlib
 from pathlib import Path
@@ -90,6 +91,35 @@ def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bo
     return None, None, False
 
 
+#: a year of print: 1000-2099, not inside a longer number
+_YEAR = re.compile(r"(?<!\d)(1\d{3}|20\d{2})(?!\d)")
+_MARC_C = re.compile(r"\$c\s*([^$]*)")
+
+
+def edition_date(marc: dict, text_header: dict) -> tuple[str | None, str | None]:
+    """`(year, where PG says it)` of the physical edition PG transcribed —
+    the operator's main date (2026-09-14). Three places, one fact: PG's
+    catalogue writes the year alone in marc906 (12,633 books of 79,382),
+    the imprint in marc260 (`$aLondon :$bGeorge Bell, $c1851.`, 12,994),
+    and newer headers compose both into "Original publication: London:
+    George Bell, 1851". None of them is the FIRST edition's date, which PG
+    does not record; marc250's edition statement ("Second edition", 346
+    books) is kept with every other marc field."""
+    for v in marc.get("906", []):
+        m = _YEAR.search(v)
+        if m:
+            return m.group(1), "marc906"
+    for v in marc.get("260", []):
+        c = _MARC_C.search(v)
+        m = _YEAR.search(c.group(1)) if c else None
+        if m:
+            return m.group(1), "marc260"
+    years = _YEAR.findall(text_header.get("Original publication", ""))
+    if years:
+        return years[-1], "text_header"
+    return None, None
+
+
 class GutenbergSource:
     source_id = "gutenberg"
     license_class = LicenseClass.GREEN
@@ -137,7 +167,13 @@ class GutenbergSource:
     #: can no longer run across paragraphs; an epub-form record carries its
     #: PG header fields and `extra.form`. The epub cleaning moved, so the
     #: collection that adopts this parser is a new one, with cleaning 3.
-    PARSER_VERSION = 7
+    #: 8 since 2026-09-14 evening, the operator's two answers: `date` is the
+    #: year of the PHYSICAL EDITION PG transcribed (marc906, marc260 $c or
+    #: the header's "Original publication"), PG's own release date staying
+    #: in `extra.issued`; and ITALICS are kept, `_…_`, in the epub text as
+    #: the plain text already had them — which moves the text, so, like 7,
+    #: it reaches records through a new collection (cleaning_version 3).
+    PARSER_VERSION = 8
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -336,31 +372,26 @@ class GutenbergSource:
             {"name": n, "role": "producer"}
             for n in dict.fromkeys(produced) if n not in named]
         subjects = [s.strip() for s in meta["subjects"].split("|") if s.strip()]
+        edition_year, edition_source = edition_date(meta["marc"], text_header)
         return CanonicalDoc(
             uid=f"{self.source_id}:{native_id}",
             title=meta["title"],
             creators=creators,
             language=meta["lang"],
             # §9.5's `date` IS THE WORK'S PUBLICATION DATE — the operator's
-            # rule of 2026-09-12, and the same rule for every collection
-            # (pubmed writes the journal's PubDate for it).
+            # rule of 2026-09-12 — and for a PG book it is the year of the
+            # PHYSICAL EDITION PG transcribed (operator, 2026-09-14: "the
+            # main date is of course the edition date of the physical
+            # book"). `edition_date` reads it where PG writes it. Parser 7
+            # said PG had no such field: a twelve-book sample showed none,
+            # and the census of all 79,382 RDF files found marc906 and
+            # marc260 on about 13,000.
             #
-            # Project Gutenberg does not have it. Its RDF carries
-            # `dcterms:issued`, which is the date PG published its OWN
-            # digital edition, and nothing else date-like: checked across
-            # twelve major books, the only MARC datafields PG keeps are
-            # 508 (production note), 520 (an automatically generated
-            # summary), 901 (cover image URLs) and 908 (reading ease).
-            # There is no 260$c or 264$c. `marc520`'s prose sometimes says
-            # "published in 1871", but it is generated text, not the
-            # origin asserting a date, and mining a year out of it would
-            # put a claim in a signed record that nobody made.
-            #
-            # So: null. §9.5 admits "string or null", and an absent date
-            # is honest where a release date would be wrong by 135 years
-            # — gutenberg:17832 is Verne's "Une ville flottante" of 1871,
-            # released by PG in 2006.
-            date=None,
+            # Null where PG does not say, never a release date — that would
+            # be wrong by 135 years for gutenberg:17832, Verne's "Une ville
+            # flottante" of 1871, released by PG in 2006 — and never a year
+            # mined from marc520's generated prose, which nobody asserted.
+            date=edition_year,
             subjects=subjects,
             keys=[],
             # `issued` moves here because it is still LOAD-BEARING: the
@@ -381,6 +412,9 @@ class GutenbergSource:
                 # entered THEIRS, which is a fact about this edition and
                 # the key `pack build --until` cuts on.
                 "issued": meta.get("issued"),
+                # which field `date` came from: marc906, marc260 or
+                # text_header (the raw values are in `marc`/`text_header`)
+                "date_source": edition_source,
                 "creators_detail": credits_detail,
                 "languages": meta["languages"],
                 "subjects_by_scheme": meta["subjects_by_scheme"],

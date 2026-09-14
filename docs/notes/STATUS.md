@@ -1566,6 +1566,31 @@ containers list `normattiva` in the plugin registry, no error in the
 worker's first minutes, the node still acquire-only. The code only — no
 Normattiva collection exists until the operator creates one.
 
+### The operator's answers, 2026-09-14 evening
+
+* **Normattiva's encoder is the operator's side project** — a dedicated
+  embedder trained for it. No off-the-shelf encoder is to be proposed and
+  no collection created meanwhile.
+* **The CC BY 4.0 statement is confirmed**; TERMS.txt says so instead of
+  asking for it (no acknowledgement existed to invalidate).
+* **Gutenberg parser 8.** `date` is the year of the physical edition PG
+  transcribed — marc906, else marc260 `$c`, else the header's "Original
+  publication" (they agree where more than one is present) — and
+  `extra.issued` keeps the day it entered PG; `extra.date_source` says
+  which. PG records no first-edition date. The census: marc906 on 12,633
+  books and marc260 on 12,994 of 79,382, so most books stay null (9 of the
+  32 sampled are dated). Italics are kept as `_…_`, the plain text's own
+  convention: `<i>`, `<em>`, `<cite>`, inline italic styles and the
+  classes the book's stylesheet sets italic (stage directions, verse) —
+  76,715 runs over the 32 sample books. Also fixed on the way: a
+  self-closing `<script/>` or `<style/>` silenced the rest of its
+  document. The text moves, so parser 8 reaches records through the same
+  new collection parser 7 needed (cleaning_version 3).
+* **`genesis recount pubmed --yes`, done** with the worker stopped:
+  medcpt-pubmed shards 13, 8 and 9 set from chunk provenance (+53,000,
+  +26,154, +1,500); a recheck finds all 37 ledger rows matching. The worker
+  restarted in acquire-only.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
