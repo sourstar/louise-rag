@@ -1655,6 +1655,11 @@ path; the recipe drafted (ctx 1,024, two layers, `work` 1.6B tokens a
 month) and not yet on the node — `create` mints the permanent id and
 waits for the operator's go.
 
+**Deployed 2026-09-14 18:44 UTC** (6d80c30, image `5fbf103…`): the four
+fixes above. Node suite on the staged tree 2,692 passed; one image for
+web and worker, web healthy, no worker error, the archive mount still
+read-only in both, still acquire-only.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
