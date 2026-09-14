@@ -88,18 +88,25 @@ def cmd_create(a) -> int:
         print(col.create(a.root, cx.from_dict(spec)).collection_id)
         return 0
 
-    # `toolchain.platform_image` is hashed into collection_id (09 §9.3): the
-    # build that parses, cleans, chunks and checks this collection. The flag
-    # used to default to digest(b"") — the SHA-256 of nothing — and the live
-    # gutenberg Codex carries exactly that placeholder (found 2026-09-14).
-    # Refused before anything is read, so no identity names no build again.
+    recipe = _recipe(a.recipe)
+    # `toolchain.platform_image` is hashed into collection_id (09 §9.3), and
+    # it is "the digest of the platform the command runs in unless the
+    # recipe states it" (07 §7.3): the recipe's own value, else
+    # --platform-image, else the digest the deploy hands the container
+    # (LOUISE_PLATFORM_IMAGE — the image it started; a container cannot see
+    # its own image id). The flag used to default to digest(b""), the
+    # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
+    # placeholder (found 2026-09-14), so no identity may name no build again.
+    stated = (recipe.get("toolchain") or {}).get("platform_image")
+    a.platform_image = (stated or a.platform_image
+                        or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
     if not a.platform_image or a.platform_image == cx.digest(b""):
         raise CodexError(
-            "--platform-image is required with --recipe: the digest of the "
-            "platform image this command runs in, which the Codex pins in "
-            "`toolchain.platform_image` (09 §9.3). The SHA-256 of empty bytes "
-            "is a placeholder that names no build, and a Codex is never edited")
-    recipe = _recipe(a.recipe)
+            "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
+            "the digest of the platform the command runs in unless the recipe "
+            "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
+            "--platform-image. The SHA-256 of empty bytes is a placeholder "
+            "that names no build, and a Codex is never edited")
     if a.space_from:
         source = col.read(a.root, a.space_from)
         want = recipe.get("cleaning_version", 1)

@@ -1698,6 +1698,16 @@ and the worker started its fetch and first discovery at once: the
 20260801 index files were landing within the minute (dewiki, frwiki).
 Still acquire-only — nothing is embedded.
 
+**`create` pins the platform it runs in (07 §7.3), operator's go
+2026-09-14.** `toolchain.platform_image` is "the digest of the platform
+the command runs in unless the recipe states it": the recipe's own
+value, else `--platform-image`, else `LOUISE_PLATFORM_IMAGE`, which the
+deploy now sets in web's and worker's environment to the image they start
+in (a container cannot see its own image id) and checks against the
+running image. With none of the three, or with the empty-bytes
+placeholder, `create` refuses. This replaces the refusal-without-the-flag
+of earlier the same day, which contradicted 07 §7.3's command shape.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
