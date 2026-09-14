@@ -1766,6 +1766,13 @@ spec and keep their principle. `embedded` stays until wikipedia's
 records are built from the archive ("remove wikipedia only once it is
 migrated"). The three genome collections stay parked in
 `config/collections-legacy/`, their data untouched.
+Deployed 2026-09-14 23:03 UTC (f5269f6, image `13cbc58…`): node suite on
+the staged tree 2,683 passed; the image asserts no genome/packed in
+either registry and no boxed module shipped; one image for web and
+worker, each with `LOUISE_PLATFORM_IMAGE` = its running image; web
+healthy, mode still acquire-only, no error in either log. The restart
+cut wikipedia's post-fetch discovery scan (running since 22:07), which
+restarted at startup.
 
 ### What is waiting on the operator
 
