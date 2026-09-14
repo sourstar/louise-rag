@@ -326,8 +326,32 @@ def _origin_from_recipe(block: dict[str, Any]) -> Origin:
     spec.setdefault("files", None)
     if spec.get("files") in ([], {}):
         spec["files"] = None
+    if spec["files"] is not None:
+        spec["files"] = [_file_entry(f, i) for i, f in enumerate(spec["files"])]
     b["spec"] = spec
     return Origin(**b)
+
+
+_FILE_KEYS = ("rel_path", "size", "checksum")
+
+
+def _file_entry(f, i: int) -> dict[str, Any]:
+    """09 §9.17's `{rel_path, size or null, checksum or null}` — all three
+    keys, always. TOML has no null, so an ABSENT size or checksum is the
+    null the table allows; without this the Codex carried entries missing
+    the key, a shape §9.17 does not define and a verifier would read
+    differently. An unknown key is refused, as §9.18 refuses them on
+    every hashed object."""
+    if not isinstance(f, dict) or not f.get("rel_path"):
+        raise TemplateError(f"origin.spec.files[{i}] needs a rel_path (09 §9.17)")
+    extra = sorted(set(f) - set(_FILE_KEYS))
+    if extra:
+        raise TemplateError(f"origin.spec.files[{i}]: unknown key(s) {', '.join(extra)} "
+                            f"(09 §9.17: rel_path, size, checksum)")
+    size, checksum = f.get("size"), f.get("checksum")
+    return {"rel_path": str(f["rel_path"]),
+            "size": int(size) if size is not None else None,
+            "checksum": str(checksum) if checksum else None}
 
 
 # --------------------------------------------------------------------------

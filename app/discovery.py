@@ -130,7 +130,8 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     _clear_cursor_if_manifest_is_new(con, collection)
 
     state = DiscoverState(corpus_root=root,
-                           state_dir=collection.manifest_path.parent)
+                           state_dir=collection.manifest_path.parent,
+                           snapshot=getattr(collection, "snapshot", None))
     seen = 0
     # STREAMING with last-write-wins BY ORDER. A source may yield the same
     # uid more than once in one sweep (PubMed updatefiles revising a baseline

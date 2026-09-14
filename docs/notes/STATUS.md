@@ -1625,6 +1625,36 @@ mounted read-only at `/corpora/wikipedia/data` in both (operator's go,
 earlier the same day); the bge-m3 endpoint serves 8,192 tokens, which 03 §3.3
 allows for the space's `ctx` of 1,024.
 
+**Before wikipedia's `create`, 2026-09-14 — four defects found and fixed,
+one left for the operator.**
+- *Discovery ignored the snapshot pin.* It reached acquisition only, and
+  dated dumps coexist in one corpus by design, so the pinned `20260801/`
+  and the legacy `latest/` would have minted the same English pages
+  twice and flipped them on every scan. `DiscoverState.snapshot` now
+  carries the pin; the plugin reads `<wiki>/<snapshot>/` alone, and an
+  unpinned corpus refuses a second dump of one wiki (06 §6.1).
+- *`origin.spec.files` entries were copied as written.* TOML has no null,
+  so an entry without a checksum reached the Codex without the key. The
+  template now writes 09 §9.17's three keys always and refuses others.
+- *`create` defaulted `--platform-image` to `digest(b"")`* — the SHA-256
+  of nothing. The recipe path now refuses a missing or placeholder
+  digest before reading anything. **The live gutenberg Codex carries that
+  placeholder** (`toolchain.platform_image` = `sha256:e3b0c442…`), so its
+  `collection_id` names no build; pubmed's names a real one. Replacing
+  it is a new collection, and the operator's decision.
+- *A reset could be hidden by a refresh already in flight.* It blocked
+  the fresh count and could write its pre-reset result after the
+  invalidation — seen once as an intermittent
+  `test_a_reset_invalidates_the_cache`. An invalidation now bumps a
+  generation; `test_counts_invalidation_race.py` forces the interleaving
+  and failed before the fix.
+
+Also done: all 1,447 archive shards equal the Hub's LFS sha256 at the
+pinned revision; the English 20260801 dump hard-linked into its dated
+path; the recipe drafted (ctx 1,024, two layers, `work` 1.6B tokens a
+month) and not yet on the node — `create` mints the permanent id and
+waits for the operator's go.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —

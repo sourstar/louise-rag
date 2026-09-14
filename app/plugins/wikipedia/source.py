@@ -253,6 +253,15 @@ class WikipediaSource:
             self._archive_ref)
         progress = cursor.Progress(state, self.source_id)
         dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
+        # THE PINNED SNAPSHOT ONLY. Dated dumps coexist in one corpus by
+        # design (acquire/specs.py `_wiki_files`), and the node keeps the
+        # legacy `latest/` beside them: two dumps of one wiki mint the same
+        # ids, and every scan would flip each page between them. A pinned
+        # collection reads `<wiki>/<snapshot>/` and nothing else.
+        pin = getattr(state, "snapshot", None)
+        if pin:
+            dumps = [d for d in dumps if d.parent.name == pin]
+        seen_wikis: set[str] = set()
         # EVERY WIKI OF THE COLLECTION, apart by id (06 §6.1: refuse a
         # collision rather than trust it). A page id is unique only within
         # its wiki, and the native id now carries the wiki's language
@@ -269,6 +278,16 @@ class WikipediaSource:
                                     f"one of the collection's languages "
                                     f"({', '.join(LANG_ORDINAL)})"))
                 continue
+            wiki = dump.name.split("-")[0]
+            if wiki in seen_wikis:
+                # 06 §6.1: refuse a collision rather than trust it — an
+                # unpinned corpus holding two dumps of one wiki
+                yield DocRef(source_id=self.source_id, native_id=dump.name,
+                             locator=str(dump), scope="container",
+                             error=(f"{dump.name}: a second {wiki} dump in the corpus; "
+                                    f"pin one snapshot (the collection's `snapshot`)"))
+                continue
+            seen_wikis.add(wiki)
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
                 yield DocRef(source_id=self.source_id, native_id=dump.name,

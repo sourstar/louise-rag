@@ -233,12 +233,21 @@ class DiscoverState:        # not frozen: received/committed advance during the 
     `on_commit` is called after every commit (including the last). A
     container is safe to remember as done only once `committed` covers its
     last ref — otherwise an interrupted scan would skip a container whose
-    rows died with the transaction."""
+    rows died with the transaction.
+
+    `snapshot` is the collection's pinned dated snapshot of its origin
+    (`Collection.snapshot`), or None. Acquisition fetches only that
+    snapshot, but dated snapshots coexist in one corpus by design, so a
+    source whose origin publishes several reads the pinned one alone —
+    otherwise two dumps of one wiki mint the same ids and every scan flips
+    between them. An optional input the platform supplies; sources that
+    have no snapshots ignore it."""
     corpus_root: Path
     state_dir: Path | None = None
     received: int = 0
     committed: int = 0
     on_commit: list = field(default_factory=list)
+    snapshot: str | None = None
 
 
 class UnindexableDocument(RuntimeError):

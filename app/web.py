@@ -608,6 +608,15 @@ _stage_rate_memo: dict[str, dict] = {}
 # that hangs (or dies un-noticed) must not hold the guard forever, or the
 # counters freeze at an ever-growing age with no refresh ever starting
 _counts_refreshing: dict[str, float] = {}
+# THE GENERATION a refresh was started under (see `invalidate_counts`). A
+# refresh from before the latest invalidation neither blocks a new one nor
+# writes what it counted — without this, a reset's own confirmation view
+# waited behind a pre-reset refresh and then read its pre-reset number
+# (test_counts_invalidation_race.py). Beside `_counts_refreshing`, whose
+# value stays a bare start time; a guard with no generation is current.
+_counts_refreshing_gen: dict[str, tuple[int, int]] = {}
+_counts_gen: dict[str, int] = {}
+_counts_epoch = 0
 _COUNTS_REFRESH_ABANDON_S = 600.0
 # a cache entry that cannot be refreshed (every attempt failing) is dropped
 # once it is this stale, so the next viewer pays the cold scan and sees the
@@ -860,10 +869,13 @@ def _refresh_counts_async(collection) -> None:
     name = _counts_key(collection)
     now = time.time()
     with _counts_lock:
+        gen = (_counts_epoch, _counts_gen.get(name, 0))
         started = _counts_refreshing.get(name)
-        if started is not None and now - started < _COUNTS_REFRESH_ABANDON_S:
+        if (started is not None and now - started < _COUNTS_REFRESH_ABANDON_S
+                and _counts_refreshing_gen.get(name, gen) == gen):
             return
         _counts_refreshing[name] = now
+        _counts_refreshing_gen[name] = gen
 
     def _run():
         try:
@@ -871,8 +883,12 @@ def _refresh_counts_async(collection) -> None:
             counts = _document_counts_query(collection)
             took = time.time() - t0
             with _counts_lock:
-                _counts_scan_secs[name] = took
-                _counts_cache[name] = (time.time(), counts)
+                # counted under an older generation: an action changed the
+                # counts meanwhile, and a newer refresh owns the answer
+                current = (_counts_epoch, _counts_gen.get(name, 0)) == gen
+                if current:
+                    _counts_scan_secs[name] = took
+                    _counts_cache[name] = (time.time(), counts)
             # …and to the manifest, so the NEXT process does not have to
             # show an empty collection while it re-counts (see
             # `_stored_counts`). A telemetry write from render code, so it
@@ -882,7 +898,8 @@ def _refresh_counts_async(collection) -> None:
             # empty collection again. This write happens at most once per
             # TTL — eighteen minutes for pubmed — so there is nothing to
             # sample away. Caught by its own test.
-            _persist_counts(collection, counts)
+            if current:
+                _persist_counts(collection, counts)
         except Exception:   # noqa: BLE001 — a failed refresh keeps the old value
             # ...but never silently: a refresh that fails EVERY time froze
             # the Library's counters at an ever-growing age with nothing in
@@ -897,7 +914,10 @@ def _refresh_counts_async(collection) -> None:
                     del _counts_cache[name]
         finally:
             with _counts_lock:
-                _counts_refreshing.pop(name, None)
+                # a stale refresh must not clear the guard a newer one holds
+                if _counts_refreshing_gen.get(name, gen) == gen:
+                    _counts_refreshing.pop(name, None)
+                    _counts_refreshing_gen.pop(name, None)
 
     threading.Thread(target=_run, name=f"counts:{name}", daemon=True).start()
 
@@ -905,12 +925,20 @@ def _refresh_counts_async(collection) -> None:
 def invalidate_counts(collection=None) -> None:
     """Drop cached counts after an action that changes them (reset, clear
     errors, rescan), so the operator sees the effect of what they just did
-    instead of a stale number. No argument clears everything."""
+    instead of a stale number. No argument clears everything.
+
+    And bumps the generation, so a refresh already in flight — counted
+    before the action — is discarded when it lands instead of standing in
+    for the fresh count the view straight after the action starts."""
+    global _counts_epoch
     with _counts_lock:
         if collection is None:
             _counts_cache.clear()
+            _counts_epoch += 1
         else:
-            _counts_cache.pop(_counts_key(collection), None)
+            key = _counts_key(collection)
+            _counts_cache.pop(key, None)
+            _counts_gen[key] = _counts_gen.get(key, 0) + 1
 
 
 def _worker_stats() -> dict:

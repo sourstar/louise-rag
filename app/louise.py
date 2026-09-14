@@ -88,6 +88,17 @@ def cmd_create(a) -> int:
         print(col.create(a.root, cx.from_dict(spec)).collection_id)
         return 0
 
+    # `toolchain.platform_image` is hashed into collection_id (09 §9.3): the
+    # build that parses, cleans, chunks and checks this collection. The flag
+    # used to default to digest(b"") — the SHA-256 of nothing — and the live
+    # gutenberg Codex carries exactly that placeholder (found 2026-09-14).
+    # Refused before anything is read, so no identity names no build again.
+    if not a.platform_image or a.platform_image == cx.digest(b""):
+        raise CodexError(
+            "--platform-image is required with --recipe: the digest of the "
+            "platform image this command runs in, which the Codex pins in "
+            "`toolchain.platform_image` (09 §9.3). The SHA-256 of empty bytes "
+            "is a placeholder that names no build, and a Codex is never edited")
     recipe = _recipe(a.recipe)
     if a.space_from:
         source = col.read(a.root, a.space_from)
@@ -1231,8 +1242,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recipe", required=True,
                    help="TOML with every Codex field the plugin does not default (06 Â§6.6)")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
-    p.add_argument("--platform-image", default=cx.digest(b""),
-                   help="the digest of the platform this command runs in")
+    p.add_argument("--platform-image", default=None,
+                   help="the digest of the platform image this command runs in "
+                        "(required with --recipe; hashed into collection_id)")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")

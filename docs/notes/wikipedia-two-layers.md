@@ -88,9 +88,15 @@ from. That note's three reasons do not apply to this shape.
 * **A pinned archive revision, not `main`.** The node's archive is
   Upstash's revision `ce4e0ea49276d99975816b8bc85a85bf416b8b62` (last
   modified 2025-02-17): `data/en/000.parquet` and `data/tr/000.parquet`
-  equal the Hub's LFS sha256. The other 1,445 shards are checked the same
-  way before records are built. An archive record's `origin` URL pins
-  that revision (`…/resolve/<revision>/data/…`), never `main`.
+  equal the Hub's LFS sha256 — and then all 1,447, the same way: 0
+  mismatches (2026-09-14, 17:33–17:48 UTC). An archive record's `origin`
+  URL pins that revision (`…/resolve/<revision>/data/…`), never `main`.
+  The English dump is hard-linked into `enwiki/20260801/` (operator's go)
+  so acquisition adopts it rather than fetching 27 GB again; `latest/`
+  stays, which is why discovery reads only the pinned snapshot: the pin
+  reached acquisition and not discovery, so `DiscoverState.snapshot` now
+  carries it and the plugin reads `<wiki>/<snapshot>/` alone; an unpinned
+  corpus with two dumps of one wiki refuses the second.
 * **The corpus is the records** (02 §2.3): one drag, its shards cut from
   both layers — the archive's articles and the dump's pages. Wikivec's
   parquet and the dumps are ORIGINS only, never a second corpus (operator,
