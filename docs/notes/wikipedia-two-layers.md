@@ -38,11 +38,46 @@ from. That note's three reasons do not apply to this shape.
 
 ## Still to settle
 
-* **The Codex's `origin` names one acquisition spec** (09 §9.3, §9.17);
-  this collection has two sources, the dumps and the archive. A layer-1
-  record's `origin` can already be the archive's URL (§9.5 admits one);
-  whether `origin.spec` becomes a list or the archive is reached through
-  its `credits` entry is a spec amendment, on main.
+* **Two sources, one `origin.spec` — settled on main (8068727, the
+  operator's choice).** `origin.spec` stays the dumps' spec, shape
+  unchanged; a record whose text a credited archive supplies carries its
+  `origin` as a URL into that archive (06 §6.4, 09 §9.5), and a record
+  located in an archive the Codex does not credit is refused at build.
+  Code still to follow on this branch: the archive records' `origin`
+  becomes that URL (today `data/en/000.parquet#2::3`, relative), and
+  `hold records build` gains the refusal.
+* **The encoder's window: 8,192 tokens** (operator: the minimum that fits
+  both layers). Wikivec's vectors were made by `SentenceTransformer`
+  bge-m3 (the dataset card), whose `max_seq_length` is 8,192 — and the
+  node's endpoint truncates at 2,048: an archive row past 2,048 tokens
+  re-embeds there at cosine 0.90–0.98 against its own vector (18 rows of
+  3.1k–16.7k tokens, shard 000 of en, de and ja), a short row at 1.000000
+  (2026-09-14). Rows up to 16,723 tokens exist, so only exactly 8,192
+  reproduces them. Layer 2's largest CDC piece is 7,103 tokens (zh; ja
+  6,350, fa 4,788, en 4,225 — the 64 longest pieces of three shards per
+  language), inside it. The endpoint must serve 8,192 before the
+  recipe is written, and the comparison is repeated there.
+* **The worker's origin root.** The worker discovers every collection
+  from its TOML's `corpus_dir`, so both origins must appear under one
+  root in the worker too — a compose mount, the operator's to approve.
+  `hold records build --corpus` takes one root on the command line.
+* **A dated dump, not `latest`.** A record's `origin` must name bytes that
+  can be re-fetched; `latest` moves monthly. The node's `enwiki/latest` IS
+  the 20260801 dump — both files' sha1 equal Wikimedia's published sums
+  (2026-09-14) — and all ten other wikis are offered at 20260801
+  (45.2 GB), so the collection pins 20260801 (`Collection.snapshot`, the
+  spec's `dated-dumps`).
+* **A pinned archive revision, not `main`.** The node's archive is
+  Upstash's revision `ce4e0ea49276d99975816b8bc85a85bf416b8b62` (last
+  modified 2025-02-17): `data/en/000.parquet` and `data/tr/000.parquet`
+  equal the Hub's LFS sha256. The other 1,445 shards are checked the same
+  way before records are built. An archive record's `origin` URL pins
+  that revision (`…/resolve/<revision>/data/…`), never `main`.
+* **The corpus is the records** (02 §2.3): one drag, its shards cut from
+  both layers — the archive's articles and the dump's pages. Wikivec's
+  parquet and the dumps are ORIGINS only, never a second corpus (operator,
+  2026-09-14: "read the manual"). What is left is local: discovery reads
+  the two origins, which sit under two separate mounts on the node.
 * **Acquisition of ten more dumps** — 45.9 GB beside the English 27.1 GB
   already on the node (the spec's `all`, 73.0 GB, probed 2026-09-14).
 * The legacy `wikipedia` and `wikivec` stay parked in
