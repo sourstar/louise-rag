@@ -627,35 +627,6 @@ def cmd_pack_build(args) -> int:
     return 0
 
 
-def cmd_pack_adopt(args) -> int:
-    """The origin collection hands over to its packed twin: vectors (and,
-    with --fts, the text index) move across without re-embedding. Both
-    collections must be pinned to the SAME space; run it with the worker
-    stopped or the origin's TOML retired — nothing may write meanwhile."""
-    from .pack import adopt as pack_adopt
-    origin = _collection_by_name(args.origin)
-    packed = _collection_by_name(args.packed)
-    # invariant 9: vectors (and the text index) cross between the two —
-    # neither side may be a collection whose terms were never acknowledged
-    for side in (origin, packed):
-        if _refuse_unacknowledged(side, "vectors are copied between it and another collection"):
-            return 1
-    if not args.yes:
-        print(f"This copies {origin.name}'s vector table into {packed.name}'s and marks the "
-              f"documents embedded{' (+ the text index)' if args.fts else ''}. Stop the worker "
-              f"first. Re-run with --yes.", file=sys.stderr)
-        return 1
-    try:
-        result = pack_adopt.adopt(origin, packed, fts=args.fts, log=print)
-    except pack_adopt.AdoptError as e:
-        print(f"REFUSED: {e}", file=sys.stderr)
-        return 1
-    print(f"adopted {result['vectors']} vectors for {result['documents']} documents"
-          f"{' and the text index' if result.get('fts') else ''}; "
-          f"{result['missing']} origin documents are not in the pack")
-    return 0
-
-
 # `pack verify`, `pack cat` and `pack dump` are NOT license-gated, by
 # operator decision (2026-09-13): reading a pack by path on local disk is
 # inspection, not use. They take a path, not a collection, encode nothing
@@ -1332,13 +1303,6 @@ def main(argv=None) -> int:
     p_build.add_argument("--unsigned", action="store_true")
     p_build.set_defaults(func=_deprecated(
         cmd_pack_build, "pack build", "hold records build"))
-    p_adopt = pack_sub.add_parser(
-        "adopt", help="move an origin collection's vectors (and index) into its packed twin")
-    p_adopt.add_argument("origin", help="the collection indexed from the origin files")
-    p_adopt.add_argument("packed", help="the collection over the pack built from it")
-    p_adopt.add_argument("--fts", action="store_true", help="also adopt the text index")
-    p_adopt.add_argument("--yes", action="store_true")
-    p_adopt.set_defaults(func=cmd_pack_adopt)
     p_verify = pack_sub.add_parser("verify", help="run the pack's validation plan")
     p_verify.add_argument("pack")
     p_verify.add_argument("--checks", help="comma-separated subset: roots,records,chunks,license,signature")

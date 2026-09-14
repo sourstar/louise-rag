@@ -256,7 +256,7 @@ def _load_one(path: Path) -> PlatformConfig:
         if not isinstance(table_raw, dict):
             raise schedule_mod.ScheduleError(
                 f"{key} must be a table of per-plugin [encoder] blocks, "
-                f"e.g. [{key}.genome]")
+                f"e.g. [{key}.pubmed]")
         for plugin, table in table_raw.items():
             if not isinstance(table, dict):
                 raise schedule_mod.ScheduleError(

@@ -95,11 +95,11 @@ def test_a_clean_rescan_heals_by_not_reporting(collection, monkeypatch):
 
 
 def test_every_plugin_marks_container_failures(tmp_path):
-    """The four container-based plugins must all use scope='container' —
-    each was minting filename-keyed phantoms the same way."""
+    """The container-based plugins must all use scope='container' — each
+    was minting filename-keyed phantoms the same way. (genome, the fourth,
+    is boxed in attic/.)"""
     from app.plugins.base import DiscoverState
     from app.plugins.embedded.source import EmbeddedSource
-    from app.plugins.genome.source import GenomeSource
     from app.plugins.pubmed.source import PubmedSource
     from app.plugins.wikipedia.source import WikipediaSource
 
@@ -107,15 +107,11 @@ def test_every_plugin_marks_container_failures(tmp_path):
     (root / "data" / "en").mkdir(parents=True)
     # one unreadable file per plugin's expected shape
     (root / "bad.xml.gz").write_bytes(b"not gzip")
-    # .fa.gz, not .fa: a plain-text FASTA of garbage yields no records
-    # (no ">" lines) rather than raising, so it is not a container failure
-    (root / "bad.fa.gz").write_bytes(b"not gzip either")
     (root / "data" / "en" / "000.parquet").write_bytes(b"not parquet")
     (root / "xxwiki-latest-pages-articles-multistream.xml.bz2").write_bytes(b"x")
 
     state = DiscoverState(corpus_root=root, state_dir=None)
-    for source in (PubmedSource(), GenomeSource(), EmbeddedSource(),
-                   WikipediaSource()):
+    for source in (PubmedSource(), EmbeddedSource(), WikipediaSource()):
         errors = [r for r in source.discover(state) if r.error]
         assert errors, f"{source.source_id}: expected a container failure"
         for ref in errors:

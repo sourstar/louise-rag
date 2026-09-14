@@ -297,7 +297,7 @@
       <select id="nc_corpus" required>
         <option value="" disabled selected>— choose a mounted folder —</option>
         {% for m in corpus_mounts %}
-        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' (pack — choose the packed plugin)' if m.kind == 'pack' }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
+        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
         {% endfor %}
       </select></div>
   </div>

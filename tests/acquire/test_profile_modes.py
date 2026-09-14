@@ -4,16 +4,16 @@ Reported live: after picking one language for the pre-embedded Wikipedia
 corpus, the grow dialog only offered "all" — because profiles were treated
 as an incremental ladder ordered by size, so the only thing "bigger" than
 the largest language was everything. Languages are independent slices and
-the plugin encodes the language into native_id, so they combine safely; a
-genome assembly does not (that collides), and gutenberg's demo⊂full ladder
-is a genuine ladder.
+the plugin encodes the language into native_id, so they combine safely; an
+EXCLUSIVE source's parts never do (a second part would mint the same ids),
+and gutenberg's demo⊂full ladder is a genuine ladder.
 """
 import pytest
 
 from app import collections as collections_mod, web
 from app.acquire.spec import (Filter, estimated_bytes_for, profile_parts,
                                resolve_profile)
-from app.acquire.specs import ACQUIRE_REGISTRY, EMBEDDED_SPEC, GENOME_SPEC
+from app.acquire.specs import ACQUIRE_REGISTRY, EMBEDDED_SPEC
 
 
 def test_combined_profile_is_the_union_of_its_parts():
@@ -36,9 +36,21 @@ def test_unknown_part_is_refused_by_name():
 
 
 def test_non_additive_sources_never_combine():
-    """genome must not accept two assemblies, however they are spelled."""
+    """An EXCLUSIVE source (one part per collection: a second would mint the
+    same ids) must not accept two, however they are spelled. Its worked case,
+    genome, is boxed in attic/; the rule is the platform's."""
+    from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec,
+                                   Endpoint, Transport)
+    from app.plugins.base import LicenseClass
+    exclusive = AcquisitionSpec(
+        source_id="x", transport=Transport.HTTPS,
+        endpoints=(Endpoint(transport=Transport.HTTPS, url="https://x.invalid"),),
+        layout="container-files", checksums=ChecksumSource(kind="none"),
+        delta=DeltaSpec(mode="full-resync"),
+        profiles={"a": Filter(include=("a/*",)), "b": Filter(include=("b/*",))},
+        profile_mode="exclusive", license_class=LicenseClass.GREEN)
     with pytest.raises(ValueError):
-        resolve_profile(GENOME_SPEC, "sacCer3,hg38")
+        resolve_profile(exclusive, "a,b")
     with pytest.raises(ValueError):
         resolve_profile(ACQUIRE_REGISTRY["gutenberg"], "demo,full")
 

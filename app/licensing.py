@@ -86,9 +86,6 @@ def terms_path_for(collection, spec=None) -> Path | None:
     s = _spec_for(collection, spec)
     if s is not None:
         return s.terms_text_path
-    if collection.plugin == "packed":
-        p = Path(collection.corpus_dir) / "TERMS.txt"
-        return p if p.is_file() else None
     return None
 
 

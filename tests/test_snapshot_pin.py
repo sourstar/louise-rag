@@ -67,12 +67,24 @@ def test_the_profile_filter_still_applies_to_a_snapshot(isolated_config):
 
 
 def test_a_source_without_snapshots_ignores_the_pin(isolated_config):
-    """Genome assemblies are immutable and publish no dated dumps; a pin on
-    such a collection must be inert rather than an error."""
-    from app.acquire.specs import GENOME_SPEC
-    assert GENOME_SPEC.snapshot_files is None
-    files = engine._list_and_filter(GENOME_SPEC, "dm6", "20260801")
-    assert [f.rel_path for f in files] == ["dm6/bigZips/dm6.fa.gz"]
+    """A source whose files are immutable publishes no dated dumps (genome's
+    assemblies were the worked case; boxed in attic/); a pin on such a
+    collection must be inert rather than an error."""
+    from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec,
+                                   Endpoint, Filter, RemoteFile, Transport)
+    from app.plugins.base import LicenseClass
+    spec = AcquisitionSpec(
+        source_id="x", transport=Transport.HTTPS,
+        endpoints=(Endpoint(transport=Transport.HTTPS, url="https://x.invalid",
+                            static_files=(RemoteFile(rel_path="a/a.bin", size=1),
+                                          RemoteFile(rel_path="b/b.bin", size=1))),),
+        layout="container-files", checksums=ChecksumSource(kind="none"),
+        delta=DeltaSpec(mode="full-resync"),
+        profiles={"a": Filter(include=("a/*",)), "b": Filter(include=("b/*",))},
+        profile_mode="exclusive", license_class=LicenseClass.GREEN)
+    assert spec.snapshot_files is None
+    files = engine._list_and_filter(spec, "a", "20260801")
+    assert [f.rel_path for f in files] == ["a/a.bin"]
 
 
 # ---------------- the TOML field ----------------

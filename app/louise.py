@@ -1545,7 +1545,8 @@ def add_deprecated(top, args_of) -> None:
     The rest arrive with the steps that build them: `corpus add`/`grow` need
     `hold records fetch`, `pack verify` needs `hold check`, `pack cat`/`dump`
     need `hold records show`, `corpus add --ack-terms` needs `hold collection
-    ack`, and `pack adopt` needs `dev adopt`. Each is owed by its own step;
+    ack` (`pack adopt`, which needed `dev adopt`, is boxed in attic/). Each
+    is owed by its own step;
     none is quietly forgotten here.
 
     "Hidden" means NO `help=` at all. `argparse.SUPPRESS` does not work on a

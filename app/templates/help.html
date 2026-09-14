@@ -563,11 +563,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     <code>pack build &lt;collection&gt; --out DIR --until YYYY-MM-DD</code> — records that
     existed at the origin on that date and nothing later (Gutenberg by release date, PubMed
     by <i>DateRevised</i>, Wikipedia by the dump's date; the rule is recorded in the
-    manifest, and a resume under another cutoff is refused); then the origin hands over:
-    <code>pack adopt &lt;origin&gt; &lt;packed&gt; --fts --yes</code> moves its vector table,
-    embed marks and provenance (and the text index) into the packed twin with no
-    re-embedding — the twin yields the same document ids and chunk ids in the same space.
-    Run adopt with the worker stopped. Later content is an <i>update</i>: derived from the
+    manifest, and a resume under another cutoff is refused). Later content is an <i>update</i>: derived from the
     previous manifest and the origin by fixed rules, so two honest updaters produce the same
     bytes and there is nothing to reconcile (not built yet; see the design, §6.1).
   </p>
@@ -581,16 +577,11 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     their own datasets under <code>/packs</code> (<code>PACK_MOUNTS_DIR</code>).
   </p>
   <p class="note">
-    <b>Using one.</b> Create a collection with the <b>packed</b> plugin over a pack folder —
-    the create dialog lists the packs it finds under <code>/packs</code> marked
-    "(pack)". The collection needs no origin files and no parser; it keeps the origin's
-    document ids, chunker and license, so bundles, the genesis archive and derived
-    collections all apply to it unchanged. Acquisition from the origin is off for a packed
-    collection; a pack arrives whole (a copy, or the per-slice torrents below).
-    <b>The license is the origin's:</b> a yellow-class pack carries the origin's terms text
-    byte-exact, and the same acknowledgement (same sha256) is required before the node
-    scans it, applies an archive to it, or lets you create the collection at all — a
-    folder is not a bypass. The create dialog shows the pack's terms and records the ack.
+    <b>Using one.</b> The <code>packed</code> plugin, which served a pack as a collection,
+    and <code>pack adopt</code> are boxed in <code>attic/</code> until they are converted
+    to the final format or dropped. <b>The license is the origin's:</b> a yellow-class
+    pack carries the origin's terms text byte-exact, so the same acknowledgement (same
+    sha256) covers corpus, pre-embeddings and pack.
   </p>
   <p class="note">
     <b>Checking one.</b> <code>pack verify DIR [--checks roots,records,chunks,license,signature]
@@ -602,8 +593,8 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     <code>pack dump &lt;shard&gt;</code> (plain JSONL) are the inspection tools.
   </p>
   <p class="note">
-    <b>Sharing one.</b> <code>torrent publish &lt;packed-collection&gt; --per-slice</code>
-    hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
+    <b>Sharing one.</b> <code>torrent publish &lt;collection&gt; --per-slice</code>, over a
+    collection whose folder is a pack (none while the packed plugin is boxed), hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
     publishes the torrent collection over them — a peer takes "PubMed before 1980" as the
     members of those slices (see <a href="#acquire">Fetching from peers</a>).
   </p>
@@ -682,26 +673,6 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
         zero GPU cost; the embed-mode knob only gap-fills what the archive
         cannot cover. The internal plugin id stays <code>embedded</code>:
         it is minted into every document uid and can never be renamed.</td></tr>
-    <tr><td><b>genome</b></td>
-      <td>reference genome assemblies (UCSC FASTA), one assembly per
-        collection.</td>
-      <td>one FASTA per assembly; one chromosome/contig = one document;
-        fixed sequence windows whose chunk ids ARE coordinates.</td>
-      <td>green (consortium reference assemblies)</td>
-      <td>reference genomes only — never personal genomes; all assemblies
-        share one DNA space so cross-species retrieval works.</td></tr>
-    <tr><td><b>packed</b></td>
-      <td>a PACK (see <a href="#packs">Packs</a>): a corpus already parsed and
-        sliced by another node, or by this one from its origin collection.</td>
-      <td><code>records/&lt;slice&gt;/*.jsonl.zst</code> + manifest; one record
-        = one document; the chunker is the origin plugin's (or the pack's
-        declared layers), so chunk ids match the origin's exactly.</td>
-      <td>the pack's (recorded in its manifest; the terms text travels
-        with it)</td>
-      <td>no origin files, no parser, no acquisition from the origin;
-        document ids and possession hashes are the origin's, so bundles
-        and genesis archives apply unchanged. Create it over a "(pack)"
-        folder from the Library.</td></tr>
   </table></div>
 </div>
 
@@ -716,10 +687,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
   <p class="note">
     <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
     panel: pick a name, a plugin (<code>gutenberg</code>,
-    <code>pubmed</code>, <code>wikipedia</code>, or <code>genome</code> —
-    reference assemblies as chromosome documents with deterministic
-    sequence windows; its profiles are assemblies: demo = yeast,
-    starter = + fly, full = + human GRCh38), a profile, and optionally a
+    <code>pubmed</code> or <code>wikipedia</code>), a profile, and optionally a
     dedicated corpus folder.
     <i>Preview</i> shows the source's license class (and terms text, if
     acknowledgement is required) plus the exact TOML; <i>Create on this
@@ -842,11 +810,9 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     <i>additive</i>: each profile is a language, they combine freely
     (<code>profile = "tr,it,en"</code>), and grow is a checklist where what
     you already hold stays checked and checking another <b>adds</b> it
-    rather than replacing it. A genome collection is <i>exclusive</i>: each
-    profile is an assembly, one collection holds exactly one assembly (§9),
-    and grow therefore offers nothing — a second assembly is a second
-    collection, because document ids are per-FASTA record ordinals and two
-    assemblies in one corpus would overwrite each other. Hand-populated collections
+    rather than replacing it. A source may also be <i>exclusive</i>: each
+    profile an alternative that never combines with another (a second would
+    mint the same document ids), so grow offers nothing. Hand-populated collections
     (<code>acquire_enabled = false</code>) ignore profiles entirely; the
     Library card shows theirs as <i>(hand-populated)</i>.
   </p>
@@ -980,7 +946,6 @@ python -m app.cli pack verify DIR [--checks roots,records,chunks,license,signatu
 python -m app.cli pack status DIR
 python -m app.cli pack cat DIR &lt;uid&gt;               # one record and its chunks, as JSON
 python -m app.cli pack dump &lt;shard.jsonl.zst&gt;      # plain JSONL (what zstd -d prints)
-python -m app.cli pack adopt &lt;origin&gt; &lt;packed&gt; [--fts] --yes   # the hand-over (worker stopped)
 python -m tools.pack_convert --plugin P --corpus DIR --out DIR [--until DATE]
 
 python -m app.cli index vector status &lt;collection&gt;

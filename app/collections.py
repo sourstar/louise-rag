@@ -14,15 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, genome, gutenberg, normattiva, packed, pubmed, wikipedia
+from .plugins import embedded, gutenberg, normattiva, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
+# `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
+# reference until converted to the final format or dropped.
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "embedded": embedded.SOURCE,
-    "genome": genome.SOURCE,
     "gutenberg": gutenberg.SOURCE,
     "normattiva": normattiva.SOURCE,
-    "packed": packed.SOURCE,        # placeholder; a collection gets its per-pack instance
     "pubmed": pubmed.SOURCE,
     "wikipedia": wikipedia.SOURCE,
 }
@@ -198,10 +198,6 @@ class Collection:
     codex: Any = None
 
     def plugin_instance(self) -> CorpusSource:
-        if self.plugin == "packed":
-            # a pack's identity (origin plugin, license, chunker) is in its
-            # manifest, so the instance is per collection, not the registry's
-            return packed.for_pack(self.corpus_dir)
         return PLUGIN_REGISTRY[self.plugin]
 
 

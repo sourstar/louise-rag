@@ -74,8 +74,7 @@ def recipe(**over) -> dict:
 # ---- what the plugin declares ---------------------------------------------
 
 def test_every_plugin_declares_what_6_1_requires():
-    for name in ("gutenberg", "pubmed", "wikipedia", "embedded", "genome",
-                 "packed"):
+    for name in ("gutenberg", "pubmed", "wikipedia", "embedded", "normattiva"):
         s = template.source_for(name)
         assert s.protocol_version == 1
         assert s.PARSER_VERSION >= 1
@@ -122,10 +121,15 @@ def test_slicing_completes_the_schemes_description_to_9_3s_shape():
 
 
 def test_a_plugin_with_no_slice_key_gets_one_slice_called_all():
-    block = template.default_slicing(template.source_for("genome"))
+    """A plugin with no slicing scheme (genome was the worked case; boxed in
+    attic/) gets one slice called all, ordered as it declares."""
+    from types import SimpleNamespace
+    unsliced = SimpleNamespace(source_id="unsliced", native_id_order="bytes",
+                               default_slicing=None)
+    block = template.default_slicing(unsliced)
     assert block["keys"] == []
     assert block["unknown"] == "all"
-    assert block["order"] == "bytes", "sequence names sort as bytes, not integers"
+    assert block["order"] == "bytes", "ordered as the plugin declares"
 
 
 def test_facets_arrive_sorted_by_field():

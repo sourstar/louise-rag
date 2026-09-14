@@ -1751,6 +1751,22 @@ from their text into `doc_keys` and does not read record `keys` yet.)
 Deployed 2026-09-14 14:01 UTC (74173fc, image `fa25111…`): node suite
 2,643 passed, web healthy, normattiva parser 2 in the worker, no errors.
 
+**Gutenberg's swap: run by the operator, verified 2026-09-15.** The TOML
+pins `sha256:7de4793a…`; the placeholder Codex's files are kept beside
+the drag in the staging directory, not deleted.
+
+**`genome`, `packed` and `pack adopt` boxed in `attic/`** (operator,
+2026-09-14: "remove them from the active code keeping them in a box for
+reference until they are either converted to the final format or
+permanently dropped"). [`attic/README.md`](../../attic/README.md) lists
+what moved and why. No registry, spec, CLI verb, create-dialog path or
+help text reaches them now, and the image does not carry them. Tests
+that used them as the worked example now use a live plugin or an inline
+spec and keep their principle. `embedded` stays until wikipedia's
+records are built from the archive ("remove wikipedia only once it is
+migrated"). The three genome collections stay parked in
+`config/collections-legacy/`, their data untouched.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

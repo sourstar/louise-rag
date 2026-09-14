@@ -1,20 +1,18 @@
 """The license gate for EVERY way data arrives (invariant 9, amendment
-36, and the operator's rule of 2026-08-27 that a pack is under the same
-license as the corpus and pre-embeddings it packs): a packed collection
-over a yellow pack is not scanned, not fed by an archive and cannot be
-created without acknowledging the pack's own terms text — which is the
-origin's, byte-exact, so one ack is valid for both."""
-import hashlib
-import re
+36): a yellow collection without its acknowledgement is not packed, not
+scanned and not fed by an archive — however the data arrived.
+
+The packed-collection half of this file (a pack's own terms, the create
+dialog over a pack) is boxed with the `packed` plugin in
+attic/tests/test_license_gate.py (2026-09-14).
+"""
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app import collections as collections_mod, config, db, discovery, licensing, spaces, web, worker
-from app.api import app
-from app.pack import build as pack_build, manifest as manifest_mod
+from app import collections as collections_mod, db, licensing, worker
+from app.pack import build as pack_build
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -28,61 +26,43 @@ def _coll(tmp_path, name, plugin, corpus_dir, **kw):
 
 
 @pytest.fixture
-def pubmed_pack(isolated_config, tmp_path):
-    origin = _coll(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
-    assert licensing.state_for(origin) == licensing.MISSING
+def pubmed_origin(isolated_config, tmp_path):
+    """A yellow collection with no acknowledgement recorded."""
+    c = _coll(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    assert licensing.state_for(c) == licensing.MISSING
+    return c
+
+
+def test_pack_build_refuses_a_yellow_collection_without_its_ack(pubmed_origin, tmp_path):
     with pytest.raises(pack_build.BuildError, match="acknowledgement"):
-        pack_build.build(origin, tmp_path / "packs" / "refused", sign=False, log=lambda *_: None)
-    origin = replace(origin, license_ack=licensing.make_ack(origin))
-    assert licensing.state_for(origin) == licensing.ACKNOWLEDGED
-    con = db.connect(origin)
-    discovery.sync_collection(con, origin)
-    con.close()
-    pack_dir = tmp_path / "packs" / "pubmed"
-    pack_build.build(origin, pack_dir, sign=False, log=lambda *_: None)
-    return origin, pack_dir
-
-
-def test_a_pack_carries_the_origins_terms_and_the_same_ack_is_valid_for_both(pubmed_pack, tmp_path):
-    origin, pack_dir = pubmed_pack
-    m = manifest_mod.load(pack_dir)
-    terms = pack_dir / "TERMS.txt"
-    assert m["license"]["class"] == "yellow" and terms.is_file()
-    assert hashlib.sha256(terms.read_bytes()).hexdigest() == m["license"]["terms_sha256"]
-    assert terms.read_bytes() == licensing.terms_path_for(origin).read_bytes(), "byte-exact"
-    packed = _coll(tmp_path, "pubmed-pack", "packed", pack_dir)
-    assert licensing.license_class_for(packed) == "yellow"
-    assert licensing.terms_path_for(packed) == terms
-    assert licensing.state_for(packed) == licensing.MISSING
-    # the origin's ack IS the pack's ack (same terms, same sha256)
-    assert licensing.state_for(replace(packed, license_ack=origin.license_ack)) == licensing.ACKNOWLEDGED
-    # an ack for OTHER terms is not one
-    assert licensing.state_for(replace(packed, license_ack="2026-01-01T00:00:00Z/" + "0" * 64)) == licensing.MISSING
+        pack_build.build(pubmed_origin, tmp_path / "packs" / "refused", sign=False,
+                         log=lambda *_: None)
+    acked = replace(pubmed_origin, license_ack=licensing.make_ack(pubmed_origin))
+    assert licensing.state_for(acked) == licensing.ACKNOWLEDGED
     with pytest.raises(Exception, match="requires an acknowledgement"):
-        licensing.require_ack(packed, use="use")
+        licensing.require_ack(pubmed_origin, use="use")
     # green needs nothing; the gate never blocks it
     green = _coll(tmp_path, "g", "gutenberg", tmp_path / "corpus")
     assert licensing.state_for(green) == licensing.NOT_REQUIRED
 
 
-def test_the_worker_withholds_the_scan_and_the_archive_without_an_ack(pubmed_pack, tmp_path):
-    origin, pack_dir = pubmed_pack
-    packed = _coll(tmp_path, "pubmed-pack", "packed", pack_dir)
-    con = db.connect(packed)
+def test_the_worker_withholds_the_scan_and_the_archive_without_an_ack(pubmed_origin):
+    con = db.connect(pubmed_origin)
     worker._license_nagged.clear()
-    worker._discover(con, packed, "test")
+    worker._discover(con, pubmed_origin, "test")
     assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0, "not scanned"
     events = [r["message"] for r in con.execute("SELECT message FROM events WHERE level='warn'")]
     assert any("corpus scan withheld" in m and "invariant 9" in m for m in events)
-    assert worker._drain_remote_archive(con, replace(packed, genesis_archive="medcpt-pubmed"), None) is False
+    assert worker._drain_remote_archive(
+        con, replace(pubmed_origin, genesis_archive="medcpt-pubmed"), None) is False
     # acknowledged: the scan runs
-    acked = replace(packed, license_ack=origin.license_ack)
+    acked = replace(pubmed_origin, license_ack=licensing.make_ack(pubmed_origin))
     worker._discover(con, acked, "test")
     assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] > 0
     con.close()
 
 
-def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_pack, tmp_path):
+def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_origin, tmp_path):
     """Invariant 9's ingestion half, on the path that had no gate.
 
     `genesis_fetch` refuses to FETCH an archive without an ack, which
@@ -99,19 +79,16 @@ def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_pack, tmp_path)
     """
     from app.bundles import genesis
 
-    origin, pack_dir = pubmed_pack
-    packed = _coll(tmp_path, "pm-arch", "packed", pack_dir)
-    assert licensing.state_for(packed) == licensing.MISSING
-    con = db.connect(packed)
+    con = db.connect(pubmed_origin)
     archive = genesis.ARCHIVES["medcpt-pubmed"]
 
     def never(*a, **k):                       # nothing may be read
         raise AssertionError("the shard was read before the licence was checked")
 
     with pytest.raises(Exception, match="requires an acknowledgement"):
-        genesis.import_shard(con, packed, archive, "0", fetch=never)
+        genesis.import_shard(con, pubmed_origin, archive, "0", fetch=never)
     with pytest.raises(Exception, match="requires an acknowledgement"):
-        genesis.import_archive(con, packed, archive, shards=["0"], fetch=never)
+        genesis.import_archive(con, pubmed_origin, archive, shards=["0"], fetch=never)
 
     # Nothing was recorded either: a refused import leaves no cursor row
     # to short-circuit a later, acknowledged one.
@@ -121,57 +98,3 @@ def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_pack, tmp_path)
     green = _coll(tmp_path, "g-arch", "gutenberg", tmp_path / "corpus")
     assert licensing.state_for(green) == licensing.NOT_REQUIRED
     con.close()
-
-
-@pytest.fixture
-def client(isolated_config, monkeypatch, tmp_path):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))
-    monkeypatch.setattr(web, "_ping", lambda url: True)
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
-    monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", tmp_path / "corpora")
-    (tmp_path / "corpora").mkdir(exist_ok=True)
-    monkeypatch.setattr(config, "PACK_MOUNTS_DIR", tmp_path / "packs")
-    with TestClient(app) as c:
-        c.headers["X-Admin-Token"] = "sekrit"
-        yield c
-
-
-def test_creating_a_packed_collection_over_a_yellow_pack_needs_the_ack(client, pubmed_pack):
-    origin, pack_dir = pubmed_pack
-    body = {"name": "pm-pack", "plugin": "packed", "profile": "hand-populated",
-            "corpus_dir": pack_dir.as_posix()}
-    # the preview shows the PACK's terms (not a spec's)
-    r = client.post("/admin/library/new/preview", json=body)
-    assert r.status_code == 200 and r.json()["license_class"] == "yellow"
-    assert r.json()["terms_text"] and r.json()["terms_text"] in (pack_dir / "TERMS.txt").read_text(encoding="utf-8")
-    r = client.post("/admin/library/new/create", json=body)
-    assert r.status_code == 409 and "terms-acknowledgement-required" in r.json()["detail"]
-    assert collections_mod.by_name("pm-pack") is None
-    r = client.post("/admin/library/new/create", json={**body, "acknowledge_terms": True})
-    assert r.status_code == 200, r.text
-    created = collections_mod.by_name("pm-pack")
-    assert created is not None and created.plugin == "packed"
-    assert licensing.state_for(created) == licensing.ACKNOWLEDGED
-    _, _, digest = created.license_ack.partition("/")
-    assert digest == origin.license_ack.partition("/")[2], "the origin's ack, for the pack"
-    # the card and the terms endpoint speak for the pack
-    r = client.get("/admin/library/pm-pack/terms")
-    assert r.status_code == 200 and r.json()["license_class"] == "yellow"
-    state = web._license_state(created)
-    assert state["class"] == "yellow" and state["state"] == "acknowledged" and not state["needs_ack"]
-
-
-def test_a_green_pack_needs_no_ack(client, isolated_config, tmp_path, corpus_dir):
-    g = _coll(tmp_path, "g", "gutenberg", corpus_dir)
-    con = db.connect(g)
-    discovery.sync_collection(con, g)
-    con.close()
-    pack_dir = tmp_path / "packs" / "gutenberg"
-    pack_build.build(g, pack_dir, records_per_shard=2, sign=False, log=lambda *_: None)
-    r = client.post("/admin/library/new/create",
-                    json={"name": "g-pack", "plugin": "packed", "profile": "hand-populated",
-                          "corpus_dir": pack_dir.as_posix()})
-    assert r.status_code == 200, r.text
-    created = collections_mod.by_name("g-pack")
-    assert created.license_ack is None and licensing.state_for(created) == licensing.NOT_REQUIRED
-    assert not re.search(r"license_ack", collections_mod.config_toml_path("g-pack").read_text())

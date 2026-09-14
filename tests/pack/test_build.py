@@ -1,18 +1,15 @@
-"""`pack build` and the `packed` source: a collection's documents become
-sliced record shards + a manifest; a collection over the pack yields the
-same uids, the same chunks and the same possession hashes as the origin
-— resumably, for gutenberg, pubmed and a synthesized wikipedia dump."""
+"""`pack build`: a collection's documents become sliced record shards + a
+manifest — resumably, for gutenberg, pubmed and a synthesized wikipedia
+dump. (Reading a pack back as a collection, the `packed` plugin, is boxed
+in attic/ with its round-trip checks, 2026-09-14.)"""
 import bz2
-import json
 import threading
 from pathlib import Path
 
 import pytest
 
-from app import collections as collections_mod, db, discovery, layers, plugin_io
+from app import collections as collections_mod, db, discovery
 from app.pack import build as pack_build, manifest as manifest_mod, records, slicing
-from app.plugins.base import DiscoverState
-from app.plugins.packed import for_pack
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -40,27 +37,13 @@ def _discovered(tmp_path, name, plugin, corpus_dir, **kw):
     return c
 
 
-def _chunks_of(collection):
-    con = db.connect(collection)
-    plugin = collection.plugin_instance()
-    out = {}
-    for row in con.execute("SELECT uid, native_id, path, lang FROM documents WHERE error IS NULL ORDER BY uid"):
-        sections = plugin_io.sections(plugin, row)
-        out[row["uid"]] = [(c["id"], c["text"]) for c in layers.chunks_for_document(collection, row, sections)]
-    con.close()
-    return out
+def _pack_uids(pack_dir, m):
+    return {r["uid"] for s in m["shards"]
+            for r in records.iter_records(pack_dir / s["path"])}
 
 
-def _raw_hashes(collection):
-    con = db.connect(collection)
-    plugin = collection.plugin_instance()
-    out = {row["uid"]: plugin_io.canonical_doc(plugin, row).raw_hash
-           for row in con.execute("SELECT uid, native_id, path, lang FROM documents WHERE error IS NULL")}
-    con.close()
-    return out
-
-
-def test_gutenberg_pack_round_trips_uids_chunks_and_possession(isolated_config, tmp_path, corpus_dir):
+def test_gutenberg_pack_slices_by_language_and_carries_every_record(isolated_config, tmp_path,
+                                                                    corpus_dir):
     origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
     pack_dir = tmp_path / "packs" / "gutenberg"
     result = pack_build.build(origin, pack_dir, snapshot="2026-08-26", records_per_shard=2, sign=False,
@@ -76,15 +59,8 @@ def test_gutenberg_pack_round_trips_uids_chunks_and_possession(isolated_config, 
     for s in m["shards"]:
         assert s["sha256"] == records.sha256_of(pack_dir / s["path"])
     assert (pack_dir / "validation.json").is_file()
-    # the pack served as a corpus
-    packed = _discovered(tmp_path, "gutenberg-pack", "packed", pack_dir)
-    assert packed.plugin_instance().source_id == "gutenberg"
-    con = db.connect(packed)
-    uids = sorted(r["uid"] for r in con.execute("SELECT uid FROM documents"))
-    con.close()
-    assert uids == ["gutenberg:10001", "gutenberg:10002", "gutenberg:10003"]
-    assert _chunks_of(packed) == _chunks_of(origin), "identical chunk ids and text"
-    assert _raw_hashes(packed) == _raw_hashes(origin), "possession hashes agree with the origin"
+    assert sorted(_pack_uids(pack_dir, m)) == \
+        ["gutenberg:10001", "gutenberg:10002", "gutenberg:10003"]
     # a packed record is readable as JSON, keys in the fixed order
     rec = records.read_record(pack_dir / m["shards"][0]["path"], "gutenberg:10001")
     assert list(rec) == list(records.RECORD_KEYS)
@@ -108,16 +84,11 @@ def test_pubmed_pack_slices_by_year_and_keeps_the_abstract_chunker(isolated_conf
     assert all(s.startswith("year=") for s in m["slices"]), m["slices"]
     assert m["layers"][0]["chunker"]["id"] == "abstract"
     assert result.records == sum(s["records"] for s in m["slices"].values()) > 0
-    packed = _discovered(tmp_path, "pubmed-pack", "packed", pack_dir)
-    assert packed.plugin_instance().chunking_profile == "abstract"
-    assert _chunks_of(packed) == _chunks_of(origin)
     # tombstoned (DeleteCitation) documents never enter a pack
     con = db.connect(origin)
     deleted = {r["uid"] for r in con.execute("SELECT uid FROM documents WHERE error IS NOT NULL")}
     con.close()
-    con = db.connect(packed)
-    assert not deleted & {r["uid"] for r in con.execute("SELECT uid FROM documents")}
-    con.close()
+    assert not deleted & _pack_uids(pack_dir, m)
 
 
 def _page(pid: int, title: str, text: str) -> str:
@@ -148,8 +119,6 @@ def test_wikipedia_pack_slices_by_language_and_page_range(isolated_config, tmp_p
     m = manifest_mod.load(pack_dir)
     assert set(m["slices"]) == {"lang=en/pages=0M", "lang=en/pages=1M"}
     assert m["layers"][0]["chunker"]["id"] == "cdc"
-    packed = _discovered(tmp_path, "wikipedia-pack", "packed", pack_dir)
-    assert _chunks_of(packed) == _chunks_of(origin)
     assert (pack_dir / "records" / "lang=en" / "pages=1M" / "00001.jsonl.zst").is_file()
 
 

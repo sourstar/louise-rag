@@ -161,10 +161,10 @@ def _collection(tmp_path, name, plugin):
 def test_an_immutable_collections_space_id_does_not_move(isolated_config, tmp_path,
                                                           monkeypatch):
     """The whole point of scoping. If this fails, adopting CDC re-pins
-    gutenberg, pubmed, genome AND the pre-embedded collections — and the
-    last of those cannot be recomputed by re-chunking at all."""
+    gutenberg, pubmed AND the pre-embedded collections — and the last of
+    those cannot be recomputed by re-chunking at all."""
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
-    for plugin in ("gutenberg", "pubmed", "genome", "embedded"):
+    for plugin in ("gutenberg", "pubmed", "embedded"):
         collection = _collection(tmp_path, plugin, plugin)
         components = spaces.gather_components(collection)
         assert components.chunk_version == config.CHUNK_VERSION, plugin

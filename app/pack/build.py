@@ -122,12 +122,7 @@ def _set_meta(con, key, value) -> None:
 
 
 def _origin_plugin(collection) -> str:
-    """The plugin whose scheme applies: a packed corpus keeps its origin's."""
-    if collection.plugin == "packed":
-        try:
-            return manifest_mod.load(collection.corpus_dir)["plugin"]
-        except manifest_mod.ManifestError:
-            return "packed"
+    """The plugin whose scheme applies."""
     return collection.plugin
 
 

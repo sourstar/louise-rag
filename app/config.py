@@ -296,8 +296,8 @@ VECTOR_INDEX_COMPACT_HEADROOM = float(os.getenv("VECTOR_INDEX_COMPACT_HEADROOM",
 #: having work to do — the pair of those two conditions is what let one
 #: table reach 13,657 versions and 267 GiB over 40 GiB of live data.
 VECTOR_INDEX_PRUNE_S = int(os.getenv("VECTOR_INDEX_PRUNE_S", "3600"))
-# The well-known root where PACKS are mounted (pack-format.md): the
-# create dialog offers the packs present here as `packed` corpora.
+# The well-known root where PACKS are mounted (pack-format.md). The create
+# dialog offered them to the `packed` plugin, boxed in attic/ (2026-09-14).
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the

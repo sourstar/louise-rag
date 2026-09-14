@@ -7,6 +7,6 @@ index and proofs (docs/notes/pack-format.md).
     build.py     `pack build`: a collection's documents -> record shards
     verify.py    `pack verify`: the deterministic local checks
 
-The `packed` plugin (app/plugins/packed) serves a pack as a corpus, so a
-collection created over one needs no origin files and no parser.
+The `packed` plugin, which served a pack as a corpus, is boxed in attic/
+with `pack adopt` (operator, 2026-09-14).
 """

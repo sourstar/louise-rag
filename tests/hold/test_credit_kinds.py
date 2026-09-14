@@ -272,10 +272,3 @@ def test_a_recipe_cannot_write_a_corpus_or_community_credit():
     assert "corpus_provider" not in template.OPTIONAL
     assert "archives" in template.OPTIONAL
 
-
-def test_a_packed_collection_credits_the_ORIGINS_provider():
-    """Packing does not make the text ours."""
-    from app.plugins.packed.source import PackedSource
-    packed = PackedSource(manifest={"plugin": "gutenberg", "license": {"class": "green"}})
-    assert packed.corpus_provider == "Project Gutenberg"
-    assert template.corpus_credit(packed).producer == "Project Gutenberg"
