@@ -1616,6 +1616,15 @@ image for web and worker, the worker on wikipedia parser 4 with the
 Upstash archive declaring its eleven language blocks, no error in its
 first minutes, still acquire-only. No collection runs the plugin yet.
 
+**Deployed 2026-09-14 17:29 UTC** (2d49997, image `e7fe4db…`): archive
+records located by URL at Upstash revision `ce4e0ea`, the build's refusal
+of an uncredited archive, and `cdc` sizes read from the layer. Node suite
+on the staged tree 2,681 passed; one image for web and worker, web
+healthy, no worker error, still acquire-only. The archive's `data/` is
+mounted read-only at `/corpora/wikipedia/data` in both (operator's go,
+earlier the same day); the bge-m3 endpoint serves 8,192 tokens, which 03 §3.3
+allows for the space's `ctx` of 1,024.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
