@@ -993,14 +993,12 @@ def _reparse_from(codex, name: str, origin_dir):
         lance_dir=base, acquire_enabled=False, license_ack=None,
         layers=layers_mod.layers_for(codex), codex=codex)
     plugin = collection.plugin_instance()
-    sep = getattr(plugin, "LOCATOR_SEP", None) or plugin_io.DEFAULT_MEMBER_SEP
 
     def reparse(uid: str, locator: str) -> bytes:
-        path, _, member = locator.partition(plugin_io.DEFAULT_MEMBER_SEP)
-        if not (base / path).exists():
-            raise FileNotFoundError(str(base / path))
-        row = {"uid": uid, "native_id": uid.rsplit(":", 1)[-1],
-               "path": str(base / path) + (f"{sep}{member}" if member else "")}
+        local, path = plugin_io.local_locator(plugin, locator, base)
+        if not local.exists():
+            raise FileNotFoundError(str(local))
+        row = {"uid": uid, "native_id": uid.rsplit(":", 1)[-1], "path": path}
         record, _layer, _blob, _plates = pack_build._record_of(
             collection, plugin, row)
         return pack_records.canonical_line(

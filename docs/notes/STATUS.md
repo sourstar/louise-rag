@@ -1487,8 +1487,33 @@ through `linear="no"` pages, a spine member missing from the zip, and an
 epub/txt book with no RDF (its OPF metadata unused). Decisions with the
 operator: `date` from marc260 $c, and emphasis (italics).
 
-Wikipedia parser 3 was not built (the implementing agent hit the session
-limit); its field map is in the workflow journal of 2026-09-14.
+**Wikipedia parser 3** (no collection exists, so nothing forks). The
+operator's decisions: `date` is the revision's date and `extra.revised`
+its full instant; the last editor is kept when disclosed (`{username,
+id}`) and is "not available" when anonymous or suppressed, and an IP is
+discarded wherever the revision writes it — a revert's edit summary names
+the IP it reverted to, so summaries are redacted too. Everything else the
+revision carries is kept, and `extra.wikitext` holds the page as written:
+that covers what no structured field names (tables, sfn/efn, maintenance
+tags, HTML comments, `{{Use dmy dates}}`, ref names). Three defects fixed:
+`lang` now comes from the dump's name (`canonical_doc` drops `ref.extra`,
+so an itwiki page read "en"); the dump's last stream parses despite the
+footer stream; and `origin` is `<dump>#<start>::<end>`, so
+records-vs-origin can reparse a wikipedia record. The prose loses image
+options, category and interlanguage links, magic words and apparatus
+subsections, and gains captions, quotations, math, `<pre>`, the values of
+inline templates, and the cells of tables mwparserfromhell could not read.
+
+Sample: 2,914 real pages (1,549 enwiki, 1,365 simplewiki) through
+discover → fetch → `canonical_doc`, in a dump with header and footer
+streams. 0 errors, every page dated, 0 IPs outside the stored wikitext,
+sort keys on 533/540 pages (the audit counted 536/541). Still in the
+prose: TeX inside math (correct), an unclosed `<ref>` on 4 simplewiki
+pages, table markup on 11 pages, one mis-nested image link. About 0.2 s
+per enwiki page, single-threaded. Open for the operator: `keys` of the form
+`wikipedia:<lang>:<title>` (06 §6.5: no reference source registers that
+namespace), and `_SKIP_TITLE` still lets `MOS:`, `Event:` and some talk
+namespaces through (left alone as asked).
 
 ### What is waiting on the operator
 

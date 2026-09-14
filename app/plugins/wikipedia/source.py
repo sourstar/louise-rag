@@ -11,6 +11,7 @@ Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
 """
 import bz2
 import hashlib
+import ipaddress
 import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -60,7 +61,15 @@ def _stream_pages(dump: Path, start: int, end: int) -> dict[str, bytes]:
         f.seek(start)
         blob = f.read((end - start) if end else -1)
     xml = bz2.decompress(blob).decode("utf-8", errors="replace")
-    # a stream is a sequence of <page> elements with no root
+    # A stream is a sequence of <page> elements with no root — except the
+    # LAST, which the index gives as running to the end of the file: that
+    # read takes Wikimedia's separate `</mediawiki>` footer stream too
+    # (bz2.decompress joins concatenated streams), and `<pages>…</mediawiki>
+    # </pages>` does not parse — every page of the final stream failed
+    # (parser 3). Nothing after the last </page> is a page.
+    last = xml.rfind("</page>")
+    if last != -1:
+        xml = xml[: last + len("</page>")]
     root = ET.fromstring(f"<pages>{xml}</pages>")
     pages: dict[str, bytes] = {}
     for page in root:
@@ -71,6 +80,61 @@ def _stream_pages(dump: Path, start: int, end: int) -> dict[str, bytes]:
         _stream_cache.clear()           # one slot: streams are read sequentially
         _stream_cache[key] = pages
     return pages
+
+
+_NOT_AVAILABLE = "not available"
+
+
+def _editor(rev) -> dict | str:
+    """The revision's contributor: `{username, id}` when disclosed, "not
+    available" when the edit is anonymous (an <ip>) or the contributor is
+    suppressed (`deleted="deleted"`). The IP is read by nothing."""
+    c = rev.find("contributor") if rev is not None else None
+    if c is None or c.get("deleted") or c.find("ip") is not None:
+        return _NOT_AVAILABLE
+    name = (c.findtext("username") or "").strip()
+    if not name:
+        return _NOT_AVAILABLE
+    uid = (c.findtext("id") or "").strip()
+    return {"username": name, **({"id": uid} if uid else {})}
+
+
+#: a run of the characters an IPv4 or IPv6 address is written with;
+#: `ipaddress` decides whether it is one ("12:30" and "added" are not)
+_IP_RUN = re.compile(r"[0-9A-Fa-f.:]{3,}")
+
+
+def _redact_ips(text: str) -> str:
+    """Every IP address in `text` → "not available". A run is tried whole
+    and with a leading `:` / trailing `.` trimmed: `[[User talk:212.…|talk]]`
+    runs the namespace's colon into the address."""
+    def one(m: re.Match) -> str:
+        tok = m.group(0)
+        if "." not in tok and ":" not in tok:
+            return tok
+        for lead in (0, len(tok) - len(tok.lstrip(".:"))):
+            for trail in (len(tok), len(tok.rstrip(".:"))):
+                try:
+                    ipaddress.ip_address(tok[lead:trail])
+                except ValueError:
+                    continue
+                return tok[:lead] + _NOT_AVAILABLE + tok[trail:]
+        return tok
+    return _IP_RUN.sub(one, text)
+
+
+def _comment(rev) -> str:
+    """The edit summary, or "not available" when it was suppressed. An IP
+    address IN it is discarded too: a revert's summary names the anonymous
+    editor it reverted to ("…to last version by <IP>", simplewiki sample)
+    — the operator's rule is that an anonymous editor's IP is not kept,
+    wherever the dump writes it."""
+    el = rev.find("comment") if rev is not None else None
+    if el is None:
+        return ""
+    if el.get("deleted"):
+        return _NOT_AVAILABLE
+    return _redact_ips((el.text or "").strip())
 
 
 def _lang_of(dump_name: str) -> str:
@@ -100,7 +164,21 @@ class WikipediaSource:
     #: `strip_code`. Invariant 3 — bumped explicitly. Free to take: this
     #: is not a configured collection on any node, so no records exist to
     #: fork. See docs/notes/origin-fidelity-audit.md.
-    PARSER_VERSION = 2
+    #: 3 since 2026-09-14: the operator's decisions (`date` = the revision's
+    #: date, the full timestamp kept; a disclosed contributor kept, an
+    #: anonymous one "not available" with its IP discarded; everything else
+    #: the dump carries kept), the field map over 3,052 real pages, and three
+    #: defects: `lang` lost through the pipeline's DocRef, the dump's last
+    #: stream unparseable, and the prose leaking image options, categories,
+    #: interlanguage links and magic words while dropping quotations, math
+    #: and the value of inline templates. Still free: no collection exists.
+    PARSER_VERSION = 3
+    #: 09 §9.5's `origin` is `<dump>#<start>::<end>`: the member is the
+    #: stream's byte range, TWO fields (plugin_io.origin_locator). Without
+    #: these the record carried the raw `::` locator, which the reparse
+    #: could not find, so records-vs-origin reparsed no wikipedia record.
+    LOCATOR_SEP = _LOCATOR_SEP
+    LOCATOR_MEMBER_FIELDS = 2
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # pages are deleted; the tombstone stays
     native_id_order = "numeric"          # page_id, issued ascending
@@ -194,6 +272,10 @@ class WikipediaSource:
                 extra={"title": title, "lang": lang})
 
     def fetch(self, ref: DocRef) -> RawDoc:
+        """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`
+        is their hash — not the dump's bytes, which differ on every page
+        (06 §6.4: how a unit is extracted is part of the parser). A
+        verifier reproduces this serialisation to check a record."""
         dump, start, end = split_locator(ref.locator)
         pages = _stream_pages(dump, start, end)
         data = pages.get(ref.native_id)
@@ -207,10 +289,18 @@ class WikipediaSource:
         page = ET.fromstring(raw.data.decode("utf-8"))
         title = page.findtext("title") or ""
         text = page.findtext("revision/text") or ""
-        lang = raw.ref.extra.get("lang") or "en"
+        # THE DUMP'S OWN NAME, not `ref.extra`: the pipeline rebuilds the
+        # DocRef from the manifest row without `extra`
+        # (plugin_io.canonical_doc), so every page parsed there read "en" —
+        # an itwiki page included (parser 3).
+        dump_name = split_locator(raw.ref.locator)[0].name
+        lang = _lang_of(dump_name)
         parsed: dict = {}
+        rev = page.find("revision")
+        stamp = (page.findtext("revision/timestamp") or "").strip()
         if wikitext.is_redirect(text) or page.find("redirect") is not None:
             sections: list[tuple[str, str]] = []
+            parsed = wikitext.redirect_info(text)
         else:
             # PROMISE 9. `to_sections` alone discarded most of what an
             # article asserts — categories on 93% of enwiki pages,
@@ -225,7 +315,10 @@ class WikipediaSource:
             title=title,
             creators=[],
             language=lang,
-            date=None,
+            # THE DATE OF THE REVISION WE HOLD (operator, 2026-09-14): the
+            # only date a pages-articles dump gives, and that revision is
+            # the work in hand. The full instant is in extra.revised.
+            date=stamp[:10] or None,
             #: the article's own categories, verbatim and in the origin's
             #: order (operator, 2026-09-12). The sortkey after a "|" is a
             #: collation hint for the category page, not a second subject.
@@ -236,12 +329,42 @@ class WikipediaSource:
             # would compete with the prose it annotates, and promise 9
             # requires holding what the origin said, not chunking it.
             extra={k: v for k, v in {
-                # the revision's timestamp — informative in a dated snapshot
-                # (a dump IS the snapshot: pack build --until cuts on it)
-                "revised": (page.findtext("revision/timestamp") or "")[:10] or None,
+                # the revision's timestamp, WHOLE (it was cut to [:10]).
+                # Wikipedia's --until is the dump date (pack/cutoff.py
+                # returns None for it), so nothing downstream compares this
+                "revised": stamp or None,
+                # which encyclopedia: simplewiki and enwiki are both
+                # `language` "en", and they are not the same work
+                "wiki": dump_name.split("-")[0],
                 "revision": (page.findtext("revision/id") or "").strip(),
+                "parent_revision": (page.findtext("revision/parentid") or "").strip(),
+                "revision_origin": (page.findtext("revision/origin") or "").strip(),
+                "minor_edit": rev is not None and rev.find("minor") is not None,
+                "comment": _comment(rev),
+                "revision_sha1": (page.findtext("revision/sha1") or "").strip(),
+                "text_bytes": ((rev.find("text").get("bytes") or "").strip()
+                               if rev is not None and rev.find("text") is not None else ""),
+                "namespace": (page.findtext("ns") or "").strip(),
+                # THE LAST EDITOR — a pages-articles dump holds one revision,
+                # so this is not the article's author, and it is not in
+                # `creators`. Disclosed: kept. Anonymous: "not available",
+                # and the IP address is never written (operator, 2026-09-14).
+                "last_editor": _editor(rev),
                 "redirect_to": (page.find("redirect").get("title")
                                 if page.find("redirect") is not None else ""),
+                "redirect_target": parsed.get("redirect_target", ""),
+                "section_levels": parsed.get("section_levels", []),
+                "category_sortkeys": parsed.get("category_sortkeys", {}),
+                "defaultsort": parsed.get("defaultsort", ""),
+                "images": parsed.get("images", []),
+                "interlanguage": parsed.get("interlanguage", []),
+                "hatnotes": parsed.get("hatnotes", []),
+                # THE PAGE AS THE ORIGIN WROTE IT. Every template, link
+                # target, sort key, table, comment and maintenance tag the
+                # structured fields above do not name is in here — the
+                # operator's rule, "keep the same relevant information
+                # present in the original corpus", taken literally.
+                "wikitext": text,
                 "short_description": parsed.get("short_description", ""),
                 "infoboxes": parsed.get("infoboxes", []),
                 "references": parsed.get("references", []),

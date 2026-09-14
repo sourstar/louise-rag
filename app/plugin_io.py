@@ -48,9 +48,14 @@ def origin_locator(plugin, locator: str, base) -> str:
     """
     sep = getattr(plugin, "LOCATOR_SEP", None) or DEFAULT_MEMBER_SEP
     text = str(locator)
-    path, found, member = text.rpartition(sep) if sep != DEFAULT_MEMBER_SEP \
-        else (text, "", "")
-    if not found:
+    # A member of several fields — wikipedia's stream `start::end` — is
+    # split off at the Nth separator from the right, not the last: the last
+    # gave `…bz2::570#711904`, a path that exists nowhere.
+    fields = int(getattr(plugin, "LOCATOR_MEMBER_FIELDS", 1) or 1)
+    parts = text.rsplit(sep, fields) if sep != DEFAULT_MEMBER_SEP else [text]
+    if len(parts) == fields + 1:
+        path, member = parts[0], sep.join(parts[1:])
+    else:
         path, member = text, ""
     if "://" in path:                       # already a URL: §9.5 admits one
         return path + (DEFAULT_MEMBER_SEP + member if member else "")
@@ -64,6 +69,16 @@ def origin_locator(plugin, locator: str, base) -> str:
             # than emitting an absolute path, which §9.5 forbids outright.
             p = Path(p.name)
     return p.as_posix() + (DEFAULT_MEMBER_SEP + member if member else "")
+
+
+def local_locator(plugin, origin: str, base) -> tuple[Path, str]:
+    """`(origin file under base, the plugin's locator)` — `origin_locator`
+    read back: the relative path joined to `base`, and the member after
+    §9.5's `#` in the plugin's own spelling again."""
+    path, _, member = origin.partition(DEFAULT_MEMBER_SEP)
+    sep = getattr(plugin, "LOCATOR_SEP", None) or DEFAULT_MEMBER_SEP
+    local = Path(base) / path
+    return local, str(local) + (f"{sep}{member}" if member else "")
 
 
 def metadata(plugin, row) -> dict:
