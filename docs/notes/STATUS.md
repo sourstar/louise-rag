@@ -1388,7 +1388,8 @@ races subprocess for its own children's status, and a stolen status is
 exit 0 — a failed rsync's staging file moved into place as complete.
 The node's app config gets `init` through `app.update` (operator's OK).
 
-**Deployed 2026-09-14, 05:04** — `149e40e` (this, the invariant-9
+**Deployed 2026-09-14, 07:04 CEST** (05:04 UTC — the container logs are
+UTC, the node's shell is CEST) — `149e40e` (this, the invariant-9
 audit, the health fixes, the two CLI NameErrors), by the operator
 running deploy-louise.sh: promote, build, prove the image is the new
 code and loads both collections, then `app.update` adding `init: true`,
