@@ -481,6 +481,22 @@ to re-fetch without the producer's manifest. The locator is the
 `DocRef.locator` discovery produced (§6.1); an absolute path never
 enters a record.
 
+**A record whose text a credited archive supplies is located in that
+archive.** A layer may be drawn from a pre-embedded archive's own text
+rather than from the origin the acquisition spec names — Wikipedia's
+first layer is Upstash's paragraphs, read verbatim so that the
+archive's vectors attach one to one (§6.3). Such a record's `origin` is
+a URL into the archive — its rows, under the archive's base as the
+platform's registry declares it — and its `origin_hash` covers those
+rows' bytes as the plugin extracts them. The archive must be one the
+Codex credits (`kind: "archive"`, 02 §2.7): a record located in an
+archive the credits do not name is refused at build, for the reason an
+uncredited archive's vectors are refused at import (§6.6). An archive
+that supplies vectors only — MedCPT for PubMed — locates nothing, and
+its records stay where the acquisition spec says. `origin.spec` remains
+the collection's own acquisition spec and locates every other record;
+its shape does not change.
+
 Where several origin forms exist for the same document, the plugin
 chooses one and **records the choice with its reason** in the Codex, as
 `origin.form`, at creation; the note beside the plugin explains the

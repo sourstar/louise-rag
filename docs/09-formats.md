@@ -309,7 +309,7 @@ vectors it did not compute.
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `spec` | object | yes | the identifying half of the acquisition spec, serialised as §9.17 fixes |
+| `spec` | object | yes | the identifying half of the acquisition spec, serialised as §9.17 fixes; a document whose text a credited archive supplies is located in that archive instead (06 §6.4), and the spec's shape does not change for it |
 | `form` | string | yes | which origin form was taken and why, one sentence (06 §6.4) |
 | `unit` | string | yes | how a record's origin bytes are reached, which is the cost of verifying one: `"file"` the origin publishes the document alone, `"container-member"` a container must be fetched to reach it, `"index-page"` an index makes the container seekable (06 §6.4). It never changes what `origin_hash` covers — that is always the one document (02 §2.3) |
 | `clock` | string | yes | IANA zone of the origin's clock: `"America/New_York"`, `"UTC"`, `"Europe/Rome"` |
@@ -630,7 +630,7 @@ fetchable before an acknowledgement (04 §4.4).
 | `sections` | list of `[heading, text]` | yes | the cleaned text in order (06 §6.1): UTF-8, NFC, LF newlines, no trailing whitespace on any line; `[]` on a pointer record |
 | `figures` | list of figure | `record_line` 2 only | the plates this document carries, in `seq` order; `[]` when it has none, and `[]` on a pointer record. An entry NAMES a figure and never holds it — the bytes are the member `figures-<slice>` (§9.16), which a peer may hold or not. Absent entirely where `record_line` is 1 |
 | `extra` | object | yes | plugin-defined, fixed keys; **everything the origin asserts about the entity that the keys above have no home for** (01 promise 9, 06 §6.4) — ids, publication details, classifications, keywords, an author's identifiers. Its keys are fixed for the collection's LIFE, so a field omitted here is not deferred: adding one bumps the parser and mints a new `collection_id` (§9.3, 02 §2.7). `origin_url` on a red-class source; `in_force` on a legal source; `seal` on a certified source whose origin file carries a seal, holding that file's `file_hash` (§9.15); `reason` never (a reason belongs to the tombstone) |
-| `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL, and where the document is a member of a container the path followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
+| `origin` | string | yes | the locator of this record's own origin bytes: their path relative to the origin base or their URL — a URL into a credited archive where that archive supplies the document's text (06 §6.4) — and where the document is a member of a container the path or URL followed by `#` and the plugin's member index (06 §6.4); never an absolute local path |
 | `content_hash` | BLAKE2b-128 | yes | below |
 | `origin_hash` | BLAKE2b-128 | yes | BLAKE2b-128 of this document's own origin bytes, the ones `origin` locates — one record, one hash, whatever the origin ships them in (02 §2.3); a record without one is refused at build |
 

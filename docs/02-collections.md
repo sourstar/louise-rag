@@ -381,7 +381,10 @@ the record from. The Codex's `origin.unit` says how those bytes are
 reached, which is what tells a verifier the cost of one: `file` where
 the origin publishes the document alone, `container-member` where a
 container must be fetched to reach it, `index-page` where an index
-makes the container seekable (06 §6.4).
+makes the container seekable (06 §6.4). A document whose text a
+credited pre-embedded archive supplies is located there instead — its
+`origin` a URL into that archive — while `origin.spec` locates the rest
+(06 §6.4).
 
 A corpus may be **pruned** — what is not used is dropped — but never
 altered in a way that breaks that reproduction.
