@@ -1690,6 +1690,14 @@ operator's decision. And `create` should, per 07 §7.3, default to its
 own image's digest rather than refuse — pending the operator's go on the
 deploy passing that digest into the containers.
 
+**Deployed 2026-09-14 19:28 UTC** (aed89c3, image `e18234a…`): the
+acknowledgement by terms hash. Node suite on the staged tree 2,696
+passed; three collections loaded, one image for web and worker, web
+healthy, no error. Wikipedia reads `acknowledged` (the 2026-08-17 record)
+and the worker started its fetch and first discovery at once: the
+20260801 index files were landing within the minute (dewiki, frwiki).
+Still acquire-only — nothing is embedded.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
