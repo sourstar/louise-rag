@@ -1610,6 +1610,12 @@ untouched, until the collection exists; the `embedded` plugin stays until
 then. Boxing `genome` and `packed` (operator: "old plugins … in a box")
 is queued behind this.
 
+**Deployed 2026-09-14 15:43 UTC** (15845b3, image `3627030…`): wikipedia
+steps 1–3. Node suite on the staged tree 2,670 passed; web healthy, one
+image for web and worker, the worker on wikipedia parser 4 with the
+Upstash archive declaring its eleven language blocks, no error in its
+first minutes, still acquire-only. No collection runs the plugin yet.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
