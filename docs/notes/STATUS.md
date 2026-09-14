@@ -1605,6 +1605,8 @@ wikipedia write none. The one real choice left: whether a Wikidata
 reference source is wanted BEFORE the wikipedia collection is created —
 adding keys afterwards is a new collection. (Live retrieval tags documents
 from their text into `doc_keys` and does not read record `keys` yet.)
+Deployed 2026-09-14 14:01 UTC (74173fc, image `fa25111…`): node suite
+2,643 passed, web healthy, normattiva parser 2 in the worker, no errors.
 
 ### What is waiting on the operator
 
