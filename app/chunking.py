@@ -202,22 +202,49 @@ _MASK_STRICT = (1 << 14) - 1
 _MASK_LOOSE = (1 << 10) - 1
 
 
-def _cdc_boundaries(text: str):
+_CDC_PARAMS = ("max", "min", "target")
+
+
+def _cdc_sizes(params) -> tuple[int, int, int]:
+    """06 §6.3: cdc's `{target, min, max}`, in characters, come from its
+    layer — "every input a chunker takes other than the cleaned text is a
+    parameter in its layer block", and 09 §9.3 hashes them into space_id.
+    A layer that names none — every cdc layer pinned before cdc read its
+    params — cuts at the constants above, byte for byte what it always
+    did, so no pinned space moves (invariant 3)."""
+    if not params:
+        return CDC_MIN_CHARS, CDC_TARGET_CHARS, CDC_MAX_CHARS
+    if set(params) != set(_CDC_PARAMS):
+        raise ChunkerError(
+            f"cdc takes exactly {{target, min, max}} from its layer's params "
+            f"(06 §6.3), got {sorted(params)}")
+    try:
+        mn, target, mx = int(params["min"]), int(params["target"]), int(params["max"])
+    except (TypeError, ValueError):
+        raise ChunkerError(f"cdc: target, min and max are integers, got {params!r}") from None
+    if not 1 <= mn < target <= mx:
+        raise ChunkerError(
+            f"cdc: 1 <= min < target <= max, got min={mn} target={target} max={mx}")
+    return mn, target, mx
+
+
+def _cdc_boundaries(text: str, min_chars: int = CDC_MIN_CHARS,
+                    target_chars: int = CDC_TARGET_CHARS, max_chars: int = CDC_MAX_CHARS):
     """Yield chunk end offsets for `text`, honouring min/target/max."""
     length = len(text)
     start = 0
     while start < length:
         remaining = length - start
-        if remaining <= CDC_MIN_CHARS:
+        if remaining <= min_chars:
             yield length
             return
-        limit = min(remaining, CDC_MAX_CHARS)
-        target = min(remaining, CDC_TARGET_CHARS)
+        limit = min(remaining, max_chars)
+        target = min(remaining, target_chars)
         h = 0
         cut = None
         # The minimum is skipped without hashing: no cut may be taken there,
         # so the hash over it would be discarded anyway.
-        for offset in range(CDC_MIN_CHARS, limit):
+        for offset in range(min_chars, limit):
             h = ((h << 1) + _GEAR[ord(text[start + offset]) & 0xFF]) & _MASK64
             mask = _MASK_STRICT if offset < target else _MASK_LOOSE
             if not (h & mask):
@@ -228,11 +255,12 @@ def _cdc_boundaries(text: str):
         start = end
 
 
-def cdc_split(text: str) -> list[str]:
-    """`text` cut into content-defined pieces. Pure function of the text."""
+def cdc_split(text: str, params=None) -> list[str]:
+    """`text` cut into content-defined pieces. Pure function of the text
+    and the layer's sizes (`_cdc_sizes`)."""
     pieces = []
     previous = 0
-    for end in _cdc_boundaries(text):
+    for end in _cdc_boundaries(text, *_cdc_sizes(params)):
         piece = text[previous:end]
         if piece:
             pieces.append(piece)
@@ -248,12 +276,13 @@ def chunk_cdc(uid: str, native_id, sections: list[tuple[str, str]],
     exists at all: a section is a natural locality boundary, so an edit in
     one section cannot move boundaries in another even in principle.
     """
+    _cdc_sizes(params)                  # refuse a bad layer before any chunk
     seq = 0
     for label, body in sections:
         text = (body or "").strip()
         if not text:
             continue
-        for piece in cdc_split(text):
+        for piece in cdc_split(text, params):
             yield _mk(uid, native_id, seq, label or "", piece, version)
             seq += 1
 

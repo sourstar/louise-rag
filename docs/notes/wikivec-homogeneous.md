@@ -1,5 +1,15 @@
 # Making wikivec and wikipedia one homogeneous entity
 
+> **Superseded 2026-09-14** by the operator's restated plan,
+> [`wikipedia-two-layers.md`](wikipedia-two-layers.md): ONE collection
+> under the `wikipedia` plugin, wikivec's eleven languages numbered as
+> wikivec numbers them, layer 1 by the archive's declared coverage and
+> layer 2 from the dumps. The "settled" plugin `embedded` and
+> `field:extra.cut` rule below were chosen to keep 91.2M legacy chunk ids
+> byte-identical. That reason no longer binds: under the Codex route,
+> `hold vectors import --archive` reads the archive's parquet into the
+> new drag either way.
+
 Supersedes the "blocked" verdict in
 [`wikivec-merge-blocked.md`](wikivec-merge-blocked.md) — not because the
 blockers were wrong, but because the operator asked a different question

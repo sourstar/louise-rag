@@ -231,8 +231,11 @@ class WikipediaSource:
         {"chunker": {"id": chunking.VERBATIM,
                      "version": chunking.chunk_version_for(chunking.VERBATIM), "params": {}},
          "rule": "archive:upstash-wikipedia-2024-06"},
+        # 06 §6.3's own Wikipedia example; a piece longer than the space's
+        # `ctx` is truncated to it (09 §9.3), never re-cut
         {"chunker": {"id": chunking.CDC,
-                     "version": chunking.chunk_version_for(chunking.CDC), "params": {}},
+                     "version": chunking.chunk_version_for(chunking.CDC),
+                     "params": {"target": 4000, "min": 1000, "max": 8000}},
          "rule": "default"},
     ]
 

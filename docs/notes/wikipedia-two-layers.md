@@ -60,11 +60,21 @@ from. That note's three reasons do not apply to this shape.
   embedded at `max_seq_length` 1,024, so the space's `ctx` is 1,024:
   nothing else reproduces its long rows. Layer 2's largest CDC piece is 7,103 tokens (zh; ja
   6,350, fa 4,788, en 4,225 — the 64 longest pieces of three shards per
-  language), seven times the window: layer 2 needs a cut that stays
-  under 1,024 real tokens in every language — `fixed` and `cdc` both
-  measure characters, so it is sized for the densest script. The
-  operator's choice, pending; the endpoint stays at 8,192 (set on the
-  wrong reading) until then.
+  language), and 09 §9.3 settles it: a chunk is truncated to `ctx`.
+  Through the platform's own `embed_texts` at `ctx` 1,024 — which cuts by
+  a character estimate, since the platform holds no tokenizer
+  (invariant 7) — the long archive rows reproduce at cosine 0.961–0.999
+  and rows up to 865 tokens at 1.000000: inside the space's 0.95
+  tolerance (2026-09-14). The endpoint needs no change: 03 §3.3 asks only
+  that it accept at least `ctx`, and it is at 8,192.
+* **Layer 2's cut is the manual's, not a choice** (operator: "read the
+  manual"). 06 §6.3's own Wikipedia example: `cdc` with `{target: 4000,
+  min: 1000, max: 8000}`; and 09 §9.3: `ctx` is "the encoder's input
+  window in tokens; a chunk is truncated to it". So a piece longer than
+  1,024 tokens is truncated, never re-cut. (For the record: a 1,000-
+  character window reaches 997 real tokens in zh and 962 in ja, at most
+  775 elsewhere.) `cdc` now reads its sizes from the layer; a layer with
+  none cuts at the version-1 constants, which equal the example's.
 * **The worker's origin root.** The worker discovers every collection
   from its TOML's `corpus_dir`, so both origins must appear under one
   root in the worker too — a compose mount, the operator's to approve.
