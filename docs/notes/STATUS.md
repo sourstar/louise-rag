@@ -1591,6 +1591,16 @@ Normattiva collection exists until the operator creates one.
   +26,154, +1,500); a recheck finds all 37 ledger rows matching. The worker
   restarted in acquire-only.
 
+**Deployed 2026-09-14 13:40 UTC** (8978ee5, image `cab89ee…`): node suite
+on the staged tree 2,643 passed; web healthy, the worker on gutenberg
+parser 8, no error in its first minutes, still acquire-only.
+
+**Open: Wikipedia `keys`.** No collection exists, so this is the cheapest
+moment to decide: the page id (`wikipedia:<lang>:<id>`, joins the text and
+the pre-embedded Wikipedia page by page), the Wikidata id (joins across
+corpora; needs each wiki's `page_props` file as a second origin form), or
+none. Titles are out — they move.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
