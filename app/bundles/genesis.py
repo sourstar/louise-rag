@@ -134,6 +134,11 @@ class GenesisArchive:
     # has, and what a peer converts from it that peer signs under its own
     # name (01, promise 3).
     keys: tuple[str, ...] = ()
+    # THE REVISION a record's `origin` pins when this archive supplies the
+    # record's text (06 §6.4): its URL is `<base_url>/resolve/<revision>/…`,
+    # never a moving `main`. Here and not in the Codex for the keys' reason:
+    # an address is a changeable fact, and the credit names the archive.
+    revision: str = ""
 
     def credit(self) -> dict:
         """The archive's entry as 09 §9.3's credit object, ready to hash.
@@ -224,6 +229,9 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     attribution="Wikipedia contributors (CC BY-SA 4.0), embedded by Upstash "
                 "as wikipedia-2024-06-bge-m3",
     keys=(),
+    # the Hub revision the node's copy IS: LFS sha256 of data/en/000 and
+    # data/tr/000 equal the node's files (2026-09-14)
+    revision="ce4e0ea49276d99975816b8bc85a85bf416b8b62",
 )
 
 ARCHIVES: dict[str, GenesisArchive] = {

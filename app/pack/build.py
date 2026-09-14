@@ -45,6 +45,31 @@ class BuildError(RuntimeError):
     pass
 
 
+def _refuse_uncredited_origin(collection, record: dict) -> None:
+    """06 §6.4 (main 8068727): a record located IN an archive — its
+    `origin` a URL under a registered archive's base — must be located in
+    one the Codex credits, for the reason an uncredited archive's vectors
+    are refused at import (§6.6). Aborts the build like a missing
+    `origin_hash`: a record standing on work its collection never declared
+    cannot be repaired by the peer who receives it. A URL can hold no raw
+    `|`, so a straddling record's pieces split safely there."""
+    from ..bundles.genesis import ARCHIVES
+    credited = set()
+    for c in layers_mod._archive_credits(collection):
+        credited.add(getattr(c, "archive", None)
+                     or (c.get("archive") if isinstance(c, dict) else None))
+    for piece in str(record.get("origin") or "").split("|"):
+        if "://" not in piece:
+            continue
+        for a in ARCHIVES.values():
+            if a.base_url and piece.startswith(a.base_url.rstrip("/") + "/") \
+                    and a.archive_id not in credited:
+                raise BuildError(
+                    f"{record['uid']}: located in archive {a.archive_id!r}, which "
+                    f"this collection does not credit (06 §6.4); it credits "
+                    f"{', '.join(sorted(x for x in credited if x)) or 'no archive'}")
+
+
 @dataclass
 class BuildResult:
     pack_dir: Path
@@ -449,6 +474,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         f"returned no raw_hash, so this record could never be "
                         f"verified against its origin (CLAUDE.md invariant 11). "
                         f"Fix the plugin's canonical_doc; do not pack.")
+                _refuse_uncredited_origin(collection, record)
                 if record["uid"] != src["uid"]:
                     n_skipped += 1
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",

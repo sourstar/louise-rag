@@ -46,17 +46,25 @@ from. That note's three reasons do not apply to this shape.
   Code still to follow on this branch: the archive records' `origin`
   becomes that URL (today `data/en/000.parquet#2::3`, relative), and
   `hold records build` gains the refusal.
-* **The encoder's window: 8,192 tokens** (operator: the minimum that fits
-  both layers). Wikivec's vectors were made by `SentenceTransformer`
-  bge-m3 (the dataset card), whose `max_seq_length` is 8,192 — and the
-  node's endpoint truncates at 2,048: an archive row past 2,048 tokens
+* **The encoder's window: 1,024 tokens, Upstash's own** (operator: the
+  minimum that fits both layers). A first reading said 8,192 — the dataset card's
+  `SentenceTransformer` bge-m3, `max_seq_length` 8,192 — and it was
+  WRONG: the card shows the query side only. At the endpoint's 2,048
+  an archive row past 2,048 tokens
   re-embeds there at cosine 0.90–0.98 against its own vector (18 rows of
   3.1k–16.7k tokens, shard 000 of en, de and ja), a short row at 1.000000
-  (2026-09-14). Rows up to 16,723 tokens exist, so only exactly 8,192
-  reproduces them. Layer 2's largest CDC piece is 7,103 tokens (zh; ja
+  (2026-09-14); with the endpoint at 8,192 the same rows diverge MORE
+  (en: 0.78–0.90), and cut at exactly 1,024 every long row reproduces — 1.0000 for all
+  nine rows of 1,574–16,723 tokens in en, de and ja — while rows up to
+  865 tokens reproduce whole (the window scan, 2026-09-14). Wikivec was
+  embedded at `max_seq_length` 1,024, so the space's `ctx` is 1,024:
+  nothing else reproduces its long rows. Layer 2's largest CDC piece is 7,103 tokens (zh; ja
   6,350, fa 4,788, en 4,225 — the 64 longest pieces of three shards per
-  language), inside it. The endpoint must serve 8,192 before the
-  recipe is written, and the comparison is repeated there.
+  language), seven times the window: layer 2 needs a cut that stays
+  under 1,024 real tokens in every language — `fixed` and `cdc` both
+  measure characters, so it is sized for the densest script. The
+  operator's choice, pending; the endpoint stays at 8,192 (set on the
+  wrong reading) until then.
 * **The worker's origin root.** The worker discovers every collection
   from its TOML's `corpus_dir`, so both origins must appear under one
   root in the worker too — a compose mount, the operator's to approve.

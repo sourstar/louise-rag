@@ -80,7 +80,13 @@ def _origin_one(plugin, locator: str, base) -> str:
             # corpus moved since discovery. Fall back to the name rather
             # than emitting an absolute path, which §9.5 forbids outright.
             p = Path(p.name)
-    return p.as_posix() + (DEFAULT_MEMBER_SEP + member if member else "")
+    rel = p.as_posix()
+    # 06 §6.4: a record whose text a credited archive supplies is located
+    # IN that archive — a URL, never a path under this node's copy of it.
+    # Optional and read like LOCATOR_SEP, for the same reason.
+    url_of = getattr(plugin, "origin_url_of", None)
+    url = url_of(rel) if url_of else None
+    return (url or rel) + (DEFAULT_MEMBER_SEP + member if member else "")
 
 
 def local_locator(plugin, origin: str, base) -> tuple[Path, str]:
@@ -99,6 +105,12 @@ def _local_one(plugin, origin: str, base) -> tuple[Path, str]:
     §9.5's `#` in the plugin's own spelling again."""
     path, _, member = origin.partition(DEFAULT_MEMBER_SEP)
     sep = getattr(plugin, "LOCATOR_SEP", None) or DEFAULT_MEMBER_SEP
+    if "://" in path:
+        # an archive's URL (06 §6.4) back to this node's copy of that file
+        rel_of = getattr(plugin, "local_rel_of", None)
+        rel = rel_of(path) if rel_of else None
+        if rel is not None:
+            path = rel
     local = Path(base) / path
     return local, str(local) + (f"{sep}{member}" if member else "")
 

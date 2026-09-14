@@ -41,6 +41,21 @@ _SKIP_TITLE = re.compile(
 _DUMP_SUFFIX = "-pages-articles-multistream.xml.bz2"
 _INDEX_SUFFIX = "-pages-articles-multistream-index.txt.bz2"
 
+#: the archive layer 1 is read from — its credit, its layer rule, its URLs
+ARCHIVE_ID = "upstash-wikipedia-2024-06"
+
+
+def _archive_prefix() -> str:
+    """`<base>/resolve/<revision>/` of the archive, from the platform's
+    registry (06 §6.4, §6.6): an address is a changeable fact and lives
+    there, beside the keys. Imported lazily — a parse child pays it once."""
+    from ...bundles.genesis import ARCHIVES
+    a = ARCHIVES[ARCHIVE_ID]
+    if not a.revision:
+        raise ValueError(f"{ARCHIVE_ID}: the registry pins no revision, and a "
+                         f"record cannot be located in a moving `main`")
+    return f"{a.base_url}/resolve/{a.revision}/"
+
 
 def split_locator(locator: str) -> tuple[Path, int, int]:
     path, _, tail = locator.rpartition(_LOCATOR_SEP)
@@ -304,6 +319,20 @@ class WikipediaSource:
                 locator=f"{dump}{_LOCATOR_SEP}{offset}{_LOCATOR_SEP}{end_offset}",
                 mtime=int(st.st_mtime), size=st.st_size,
                 extra={"title": title, "lang": lang, "page_id": page_id})
+
+    def origin_url_of(self, rel_path: str) -> str | None:
+        """06 §6.4 (main 8068727): an archive row is located IN the archive,
+        by URL at the revision the registry pins — never by this node's
+        path. None for a dump page, which stays relative to `origin.spec`'s
+        base. Read by plugin_io through getattr, like LOCATOR_SEP."""
+        if not (rel_path.startswith("data/") and rel_path.endswith(".parquet")):
+            return None
+        return _archive_prefix() + rel_path
+
+    def local_rel_of(self, url: str) -> str | None:
+        """`origin_url_of` read back: the archive file's corpus-relative path."""
+        prefix = _archive_prefix()
+        return url[len(prefix):] if url.startswith(prefix) else None
 
     def _archive_ref(self, pending: dict, lang: str) -> DocRef:
         """An archive article's ref: wikivec's own id, so the archive's

@@ -103,9 +103,15 @@ def test_a_page_the_archive_lacks_is_read_from_the_dump(corpus):
 
 
 def test_a_straddlers_origin_names_both_shards_and_reads_back(corpus):
+    """06 §6.4 (main 8068727): an archive record is located IN the archive,
+    by URL at the registry's pinned revision — never `main`, never a path
+    under this node's copy; a dump page stays relative to the dumps' base."""
+    from app.bundles.genesis import UPSTASH_WIKIPEDIA as up
+    arch = f"{up.base_url}/resolve/{up.revision}/"
+    assert up.revision and "main" not in arch
     ref = _refs(corpus)[str(native_id_of("en", 11, archive=True))]
     origin = plugin_io.origin_locator(SOURCE, ref.locator, corpus)
-    assert origin == "data/en/000.parquet#2::3|data/en/001.parquet#0::1"
+    assert origin == f"{arch}data/en/000.parquet#2::3|{arch}data/en/001.parquet#0::1"
     local, locator = plugin_io.local_locator(SOURCE, origin, corpus)
     assert local.is_file() and locator == ref.locator
     assert _doc(ref).sections == [("", "Sun\nstraddle start"), ("", "Sun\nstraddle end")]
