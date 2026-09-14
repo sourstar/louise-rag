@@ -106,6 +106,16 @@ def test_each_file_is_counted_on_its_own(con):
     "ssh: connect to host: Connection refused",
     "Temporary failure in name resolution",
     "write error: Broken pipe",
+    # verbatim from gutenberg's fetch_files, 2026-09-14 — each was written
+    # as a file error on the first attempt while the mirror was failing
+    "rsync: [Receiver] failed to connect to ftp.ibiblio.org (152.19.134.42): "
+    "No route to host (113)",
+    "rsync ftp.ibiblio.org::gutenberg-epub/16877/pg16877.txt: exit 35: rsync "
+    "error: timeout waiting for daemon connection (code 35) at socket.c(278)",
+    "rsync error: timeout in data send/receive (code 30) at io.c(197)",
+    "rsync aleph.gutenberg.org::gutenberg-epub/13954/pg13954-images.epub: "
+    "timed out after 300s",
+    "@ERROR: max connections (20) reached -- try again later",
 ])
 def test_the_shapes_a_dropped_endpoint_takes(message):
     assert engine.transient(message) is True

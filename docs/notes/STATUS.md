@@ -1400,6 +1400,45 @@ staged, no zombie rsync. gutenberg's rdf backlog rose to 29,255 as the
 fetch replaced corpus files that had been parsed — changed files are
 re-derived, which is what they should be.
 
+### rsync's forked receiver, and pubmed's card — 2026-09-14
+
+**The zombies init did not reap.** `init: true` reaped rsync's orphans,
+but two worker children stayed `Z` for 700+ s, each with a live orphaned
+receiver under docker-init holding its stdout/stderr pipes. `communicate()`
+waits for EOF before it reaps, so the leader stayed unreaped; the deadline
+path's `kill(); communicate()` had no timeout at all (a stop could hang a
+fetch thread for as long as the orphan lived). Fixed in
+`transport_rsync._supervise`: rsync leads its own process group, the
+leader is reaped by `poll()` the moment it exits, the pipes get a bounded
+grace, then the group is signalled and the pipes abandoned. A stop still
+SIGTERMs the LEADER first — sent to the group, real rsync's receiver
+ignores it and every stop took 10.5 s instead of 0.5 s (review, measured
+against a real `rsync --daemon`; `tests/acquire/test_rsync_real_daemon.py`).
+SIGHUP now stops the CLI and the worker like SIGTERM, since rsync no longer
+shares the terminal's session. An exit 0 whose fork still held the pipes
+is not a success.
+
+**Mirror failures were file errors.** `engine._TRANSIENT` lacked exactly
+the shapes measured that morning — "No route to host", exit 35 "timeout
+waiting for daemon connection", exit 30, the transport's own "timed out
+after", "max connections" — so each was written as a file error on the
+first attempt. Reporting only: selection never read either column.
+
+**Pubmed's card was wrong twice, and the ledger once.** The row read
+`SUM(genesis_imports.docs)` = 35,337,233 over `in_scope` = 39,994,988. It
+now reads vectors HELD inside the archive's declared range — 35,417,887 of
+35,456,211 — names the 38,324 in range without a vector (held by
+acquire-only) and says the 4,538,777 past PMID 36,999,999 are the local
+encoder's. The ledger was 80,654 short in shards 8 (+26,154), 9 (+1,500)
+and 13 (+53,000): it counted a pass's documents once, at the pass's end,
+outside the flush transaction that sets `embed_done` — any pass that ended
+another way lost its flushes from the count (53,000 = 106 flushes of 500).
+Counts now land in the flush's own transaction. `louise genesis recount`
+recomputes a ledger from chunk provenance; a dry run by default, it never
+lowers a row that proves the archive without persisting `proven_at` first.
+Repairing the node's three rows is the operator's call: dry run, then
+`--yes` with the worker stopped.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

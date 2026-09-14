@@ -19,6 +19,7 @@ The fakes set the stop THEMSELVES, from inside the listing or probe: a
 timer could fire before the code under test got there, and the test would
 pass on an earlier check without exercising the bind (review, 2026-09-13).
 """
+import signal
 import subprocess
 import threading
 import time
@@ -91,12 +92,28 @@ class _ListsUntilStopped:
 # ---------------- the rsync listing itself ----------------
 
 class _EndlessListing:
-    """`rsync --list-only` that never finishes on its own."""
+    """`rsync --list-only` that never finishes on its own.
+
+    A stop terminate()s the leader; past a bound, and on a deadline, the
+    transport SIGKILLs rsync's whole process GROUP (os.killpg), so the tests
+    route killpg to `signal_group` — no real pid is ever signalled."""
+
+    pid = 999_999
 
     def __init__(self):
         self.returncode = None
         self.terminated = False
         self.killed = False
+
+    def poll(self):
+        return self.returncode
+
+    def signal_group(self, pid, sig):
+        assert pid == self.pid
+        if sig == signal.SIGTERM:
+            self.terminate()
+        else:
+            self.kill()
 
     def communicate(self, timeout=None):
         if self.terminated or self.killed:
@@ -123,6 +140,7 @@ def test_a_stop_ends_the_rsync_listing_and_nothing_partial_is_returned(monkeypat
 
     proc.communicate = communicate
     monkeypatch.setattr(tr.subprocess, "Popen", lambda argv, **k: proc)
+    monkeypatch.setattr(tr.os, "killpg", proc.signal_group)
     monkeypatch.setattr(tr, "_POLL_SECONDS", 0.01)
     stop = threading.Event()
     endpoint = Endpoint(transport=Transport.RSYNC, url="host::mod")
@@ -149,6 +167,7 @@ def test_a_stop_ends_the_rsync_listing_and_nothing_partial_is_returned(monkeypat
 def test_a_listing_past_its_deadline_is_a_transport_error_not_a_stop(monkeypatch):
     proc = _EndlessListing()
     monkeypatch.setattr(tr.subprocess, "Popen", lambda argv, **k: proc)
+    monkeypatch.setattr(tr.os, "killpg", proc.signal_group)
     monkeypatch.setattr(tr, "_POLL_SECONDS", 0.01)
     monkeypatch.setattr(tr, "_LISTING_TIMEOUT", 0.05)
     with pytest.raises(TransportError) as e:

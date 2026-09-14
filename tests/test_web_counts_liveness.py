@@ -370,9 +370,12 @@ def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
     assert "Progress toward it" not in html, \
         "no duplicate indexing numbers — the indexed bar already shows them"
     assert "not started yet" not in html, "the post-settle gate is gone"
-    # a cold count after a restart must not render "94,384 / 0" (live)
+    # a cold count after a restart must not render "94,384 / 0" (live) —
+    # nor the ledger's 12: the row counts vectors held over the archive's
+    # declared range (test_library_archive_coverage), so cold it is counting
     html_cold = _render_library({**shelf, "counts_pending": True, "in_scope": 0})
-    assert "12 / counting…" in html_cold and "12 / 0<" not in html_cold
+    row = html_cold.split(">pre-embedded (dense)</span>", 1)[1].split("</div>", 1)[0]
+    assert "counting…" in row and "12 / " not in row and "12 / 0<" not in html_cold
 
     standalone = replace(collections_mod.default_collection(),
                          genesis_archive="upstash-wikipedia-2024-06")

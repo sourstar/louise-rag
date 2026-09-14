@@ -1183,3 +1183,324 @@ def test_a_final_shard_is_never_re_fetched(collection, monkeypatch):
         "INSERT INTO genesis_imports(archive,shard,source_url,state,updated_at,"
         "pending,next_pass_at) VALUES('test-arc','0','http://arc','final',0,0,0)")
     assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) is None
+
+
+# --- the ledger counts in the flush's transaction (2026-09-14) ---------------
+#
+# pubmed shards 8, 9 and 13 had 80,654 more embedded documents than their
+# ledger rows said (53,000 in shard 13: exactly 106 flushes of 500). The
+# ledger was counted once, at the END of a pass, so every flush of a pass
+# that ended any other way was imported and never counted — and the
+# resumed pass skips those documents (embed_done=1) as not held.
+
+def _ledger_and_what_landed(con, archive, shard):
+    """(ledger docs, ledger chunks, embedded in the shard's range,
+    provenance rows for the shard) — equal when the ledger is right."""
+    lo, hi = archive.id_range_of(shard)
+    row = con.execute("SELECT docs, chunks FROM genesis_imports WHERE archive=? AND shard=?",
+                      (archive.archive_id, shard)).fetchone()
+    embedded = con.execute(
+        "SELECT COUNT(*) FROM documents WHERE embed_done=1 "
+        "AND CAST(native_id AS INTEGER) BETWEEN ? AND ?", (lo, hi)).fetchone()[0]
+    provenance = con.execute(
+        "SELECT COUNT(*) FROM chunk_verification WHERE bundle_id=?",
+        (f"genesis:{archive.archive_id}/{shard}",)).fetchone()[0]
+    return row["docs"], row["chunks"], embedded, provenance
+
+
+def _fail_the_kth_vector_write(monkeypatch, k, exc):
+    """The k-th Lance write of the run (create or add) raises `exc`; the
+    ones before it land, and the ones after it land too."""
+    real = embeddings._conn
+    calls = {"n": 0}
+
+    def maybe_fail():
+        calls["n"] += 1
+        if calls["n"] == k:
+            raise exc
+
+    class Table:
+        def __init__(self, t):
+            self._t = t
+
+        def add(self, rows):
+            maybe_fail()
+            return self._t.add(rows)
+
+        def __getattr__(self, name):
+            return getattr(self._t, name)
+
+    class Conn:
+        def __init__(self, c):
+            self._c = c
+
+        def open_table(self, name):
+            return Table(self._c.open_table(name))
+
+        def create_table(self, *a, **kw):
+            maybe_fail()
+            return self._c.create_table(*a, **kw)
+
+        def __getattr__(self, name):
+            return getattr(self._c, name)
+
+    monkeypatch.setattr(embeddings, "_conn", lambda c: Conn(real(c)))
+
+
+def _twenty_held(monkeypatch):
+    monkeypatch.setattr(genesis, "APPLY_BATCH_DOCS", 5)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 21))
+    return cache, _declared_archive(["0"], ids_per_shard=100)
+
+
+def _pass(con, collection, archive, cache):
+    return genesis.import_shard(con, collection, archive, "0", embed_fn=_same_function_embed,
+                                fetch=_fake_fetch(cache), revisit=True)
+
+
+def _conflict():
+    return RuntimeError("lance error: Commit conflict for version 7")
+
+
+def _busy():
+    from app.bundles.writer_lock import VectorWriteBusy
+    return VectorWriteBusy("could not acquire the vector write lock: database is locked")
+
+
+@pytest.mark.parametrize("make_exc, raised, state", [
+    (_conflict, "GenesisUnavailable", "skipped"),   # deferred: "what it wrote stands"
+    (_busy, "VectorWriteBusy", "applying"),         # not a contention the worker defers
+    (lambda: RuntimeError("boom"), "RuntimeError", "applying"),
+])
+def test_a_pass_that_ends_early_has_counted_every_flush_it_committed(
+        collection, monkeypatch, make_exc, raised, state):
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+    _fail_the_kth_vector_write(monkeypatch, 3, make_exc())
+    with pytest.raises(Exception) as got:
+        _pass(con, collection, archive, cache)
+    assert type(got.value).__name__ == raised
+    assert con.execute("SELECT state FROM genesis_imports").fetchone()["state"] == state
+    assert _ledger_and_what_landed(con, archive, "0") == (10, 10, 10, 10), \
+        "two flushes of five landed before the third write failed — and are counted"
+
+    # the resumed pass skips those ten as already embedded and counts the rest
+    r = _pass(con, collection, archive, cache)
+    assert r["state"] == "final" and r["docs"] == 10
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+
+
+def test_a_shard_rejected_mid_pass_has_counted_what_it_wrote(collection, monkeypatch):
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+    cache["embeds_chunk_0.npy"][12] = 0.0          # id 13: after two flushes
+    with pytest.raises(GenesisError):
+        _pass(con, collection, archive, cache)
+    assert con.execute("SELECT state FROM genesis_imports").fetchone()["state"] == "rejected"
+    assert _ledger_and_what_landed(con, archive, "0") == (10, 10, 10, 10)
+
+
+def test_a_failure_after_the_last_flush_loses_no_count(collection, monkeypatch):
+    """`_pending_for_shard` and the end-of-pass UPDATE run after the final
+    flush, outside the pass's try: a locked manifest there lost the whole
+    pass's count."""
+    import sqlite3
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+
+    def locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(genesis, "_pending_for_shard", locked)
+    with pytest.raises(sqlite3.OperationalError):
+        _pass(con, collection, archive, cache)
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+
+
+@pytest.mark.parametrize("prior", ["skipped", "applying", "fetched"])
+def test_a_non_revisit_import_never_lowers_the_ledger(collection, monkeypatch, prior):
+    """`genesis import` (import_archive, revisit=False on a remote archive)
+    OVERWROTE docs with its own pass's count, erasing every earlier pass of
+    the same shard."""
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+    _fail_the_kth_vector_write(monkeypatch, 3, _conflict())
+    with pytest.raises(GenesisUnavailable):
+        _pass(con, collection, archive, cache)
+    con.execute("UPDATE genesis_imports SET state=?", (prior,))
+    out = genesis.import_archive(con, collection, archive, embed_fn=_same_function_embed,
+                                 fetch=_fake_fetch(cache))
+    assert out["docs"] == 10, "this pass imported the ten the first one had not"
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+
+
+def test_recount_sets_the_ledger_from_provenance_and_changes_nothing_twice(
+        collection, monkeypatch, capsys):
+    from app import cli
+    from app.bundles import ledger
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    archive = _declared_archive(["0", "1"], ids_per_shard=10)
+    for shard in ("0", "1"):
+        genesis.import_shard(con, collection, archive, shard, embed_fn=_same_function_embed,
+                             fetch=_fake_fetch(cache), revisit=True)
+    # rows as the pre-fix ledger left them: shard 0 lost flushes; shard 1
+    # credits a document the local encoder has since re-embedded (its
+    # provenance is gone: not the archive's any more)
+    con.execute("UPDATE genesis_imports SET docs=4, chunks=4 WHERE shard='0'")
+    ledger.clear_verification(con, "fake:15")
+    # a two-chunk document: docs count documents, chunks count chunks
+    ledger.mark_imported(con, ["fake:3#extra"], "fake:3", "genesis:test-arc",
+                         "genesis:test-arc/0")
+
+    def ledger_rows():
+        return {r["shard"]: (r["docs"], r["chunks"]) for r in con.execute(
+            "SELECT shard, docs, chunks FROM genesis_imports")}
+
+    dry = genesis.recount_ledger(con)
+    assert {(r.shard, r.held_docs, r.held_chunks) for r in dry} == {("0", 9, 10), ("1", 9, 9)}
+    assert ledger_rows() == {"0": (4, 4), "1": (10, 10)}, "a dry run writes nothing"
+
+    monkeypatch.setattr(cli.collections_mod, "load_all", lambda: [collection])
+    assert cli.main(["genesis", "recount", collection.name]) == 2
+    assert "test-arc/0: docs 4 -> 9, chunks 4 -> 10" in capsys.readouterr().out
+    assert ledger_rows() == {"0": (4, 4), "1": (10, 10)}
+
+    assert cli.main(["genesis", "recount", collection.name, "--yes"]) == 0
+    assert ledger_rows() == {"0": (9, 10), "1": (9, 9)}
+    capsys.readouterr()
+    assert cli.main(["genesis", "recount", collection.name, "--yes"]) == 0
+    assert "already match" in capsys.readouterr().out
+    assert not any(r.changed for r in genesis.recount_ledger(con, write=True))
+
+
+def test_the_recount_walk_is_one_ordered_index_scan(collection):
+    """One read of chunk_verification in uid order, answered by the uid
+    index — no TEMP B-TREE for the ORDER BY, no LIST SUBQUERY."""
+    con = db.connect(collection)
+    plan = " | ".join(r[3] for r in con.execute("EXPLAIN QUERY PLAN " + genesis.RECOUNT_SQL))
+    assert "idx_chunk_verification_uid" in plan, plan
+    assert "TEMP B-TREE" not in plan and "LIST SUBQUERY" not in plan, plan
+
+
+def test_the_flush_credit_check_searches_the_chunk_id_index(collection):
+    con = db.connect(collection)
+    sql = genesis.CREDITED_SQL.format(marks="?,?,?")
+    plan = " | ".join(r[3] for r in con.execute("EXPLAIN QUERY PLAN " + sql,
+                                                ("a", "b", "c", "d")))
+    assert plan.startswith("SEARCH chunk_verification USING INDEX "
+                           "sqlite_autoindex_chunk_verification_1 (chunk_id=?)"), plan
+    assert "TEMP B-TREE" not in plan and "LIST SUBQUERY" not in plan, plan
+
+
+def test_a_document_delivered_again_is_credited_once(collection, monkeypatch):
+    """A reindex, a stage reset, a changed document or a requeue sets
+    embed_done=0 and keeps the document's provenance, and the reopened
+    shard's revisit selects it again. mark_imported upserts on chunk_id,
+    so provenance counts it once — and so must the ledger, or it drifts
+    above provenance and `recount` has to pull it back down."""
+    from app.bundles import ledger
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+    assert _pass(con, collection, archive, cache)["state"] == "final"
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+    for i in range(1, 6):           # requeued: failed verification, embed_done=0
+        con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (f"fake:{i}",))
+        for (cid,) in con.execute("SELECT chunk_id FROM chunk_verification WHERE uid=?",
+                                  (f"fake:{i}",)).fetchall():
+            ledger.set_verified(con, cid, 0.1, False)
+    con.execute("UPDATE genesis_imports SET state='applied', pending=NULL, next_pass_at=0")
+    r = _pass(con, collection, archive, cache)
+    assert r["docs"] == 5, "the revisit delivered the five again"
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+    assert not any(rc.changed for rc in genesis.recount_ledger(con))
+
+
+def test_a_recount_never_un_proves_an_archive(collection):
+    """A row from before `proven_at` carries its proof in docs > 0. With no
+    provenance rows it recounts to zero; the proof must survive that, or
+    one rejected shard STOPS the archive — the drain, the fetcher, and the
+    covered ranges handed whole to the local encoder."""
+    con = db.connect(collection)
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,chunks,updated_at) "
+                "VALUES('test-arc','0','final',5,5,123)")
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) "
+                "VALUES('test-arc','1','rejected',124)")
+
+    def rows():
+        return con.execute("SELECT * FROM genesis_imports ORDER BY shard").fetchall()
+    assert not genesis.archive_stopped(rows())
+    out = genesis.recount_ledger(con, write=True)
+    assert [(rc.shard, rc.docs, rc.held_docs) for rc in out if rc.changed] == [("0", 5, 0)]
+    assert not genesis.archive_stopped(rows()), "the recount stopped a proven archive"
+    assert tuple(con.execute("SELECT docs, proven_at FROM genesis_imports WHERE shard='0'")
+                 .fetchone()) == (0, 123), "the proof is persisted at the row's own time"
+
+
+def test_a_recount_holds_the_write_lock_across_its_walk(collection, monkeypatch):
+    """BEGIN IMMEDIATE before the walk: nothing may land between the count
+    and the write. A writer that arrives mid-walk is refused until the
+    recount commits."""
+    import sqlite3
+    from app.bundles import ledger
+    con = db.connect(collection)
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,chunks,updated_at) "
+                "VALUES('test-arc','0','applied',1,1,0)")
+    for i in (1, 2):
+        ledger.mark_imported(con, [f"fake:{i}#0"], f"fake:{i}", "genesis:test-arc",
+                             "genesis:test-arc/0")
+    outcome = []
+
+    def probe(_uid):
+        if not outcome:             # the first row of the walk: try to write
+            other = sqlite3.connect(collection.manifest_path, timeout=0)
+            try:
+                other.execute("BEGIN IMMEDIATE")
+                other.execute(
+                    "INSERT INTO chunk_verification(chunk_id,uid,state,producer,bundle_id) "
+                    "VALUES('fake:3#0','fake:3','imported','genesis:test-arc',"
+                    "'genesis:test-arc/0')")
+                other.execute("COMMIT")
+                outcome.append("wrote")
+            except sqlite3.OperationalError as e:
+                outcome.append(str(e))
+            finally:
+                other.close()
+        return 1
+    con.create_function("probe", 1, probe)
+    monkeypatch.setattr(genesis, "RECOUNT_SQL",
+                        genesis.RECOUNT_SQL.replace("WHERE ", "WHERE probe(uid) AND ", 1))
+    out = genesis.recount_ledger(con, write=True)
+    assert outcome == ["database is locked"], outcome
+    assert [(rc.held_docs, rc.held_chunks) for rc in out] == [(2, 2)]
+    assert con.execute("SELECT docs FROM genesis_imports").fetchone()[0] == 2
+
+
+def test_a_space_repin_zeroes_every_ledger_row_it_keeps(collection, monkeypatch):
+    """A rejection mid-pass leaves docs on the row (counted per flush);
+    `genesis retry` makes it `fetched`, which the re-pin keeps. Its docs
+    stood for provenance the re-pin deletes, and its proof for the space
+    the re-pin drops: both go, or the re-import counts on top."""
+    from app import cli
+    con = db.connect(collection)
+    cache, archive = _twenty_held(monkeypatch)
+    cache["embeds_chunk_0.npy"][12] = 0.0          # id 13: after two flushes
+    with pytest.raises(GenesisError):
+        _pass(con, collection, archive, cache)
+    genesis.retry_rejected(con)
+    assert tuple(con.execute("SELECT state, docs FROM genesis_imports").fetchone()) \
+        == ("fetched", 10)
+    monkeypatch.setattr(cli.collections_mod, "load_all", lambda: [collection])
+    assert cli.main(["space", "repin", collection.name, "--yes"]) == 0
+    assert tuple(con.execute("SELECT state, docs, chunks, proven_at FROM genesis_imports")
+                 .fetchone()) == ("fetched", 0, 0, None)
+    # re-imported against the new space: counted from zero, and proven anew
+    cache["embeds_chunk_0.npy"][12] = _archive_vector(13)
+    for p in (collection.manifest_path.parent / "genesis" / archive.archive_id).iterdir():
+        p.unlink()
+    con.execute("UPDATE documents SET fts_done=1")
+    assert _pass(con, collection, archive, cache)["state"] == "final"
+    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
+    assert con.execute("SELECT proven_at FROM genesis_imports").fetchone()[0] is not None

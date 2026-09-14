@@ -212,16 +212,6 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     return report
 
 
-def _merged(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    merged: list[tuple[int, int]] = []
-    for lo, hi in sorted(spans):
-        if merged and lo <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(hi, merged[-1][1]))
-        else:
-            merged.append((lo, hi))
-    return merged
-
-
 def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
     """Documents the declared archive could serve and has not.
 
@@ -304,13 +294,16 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
     # So: ask whether ANY exists first — instant, and the answer once the
     # archive has been drained, which is the case an operator runs this
     # in most often — and pay the 5.5 s count only to say how many.
-    in_range = ("CAST(native_id AS INTEGER) BETWEEN ? AND ?")
+    # a non-numeric id casts to 0 and would count inside a range from 0;
+    # it belongs to no range (genesis.NUMERIC_ID_SQL) — and the check is
+    # on the row this already reads for the CAST
+    in_range = f"CAST(native_id AS INTEGER) BETWEEN ? AND ? AND {genesis.NUMERIC_ID_SQL}"
     waiting = (f"SELECT {{what}} FROM {_INDEXED} WHERE {_WAITING['embed']} "
                f"AND {in_range}")
     owed = {kind: 0 for kind in spans}
     try:
         for kind, kind_spans in spans.items():
-            for span in _merged(kind_spans):
+            for span in genesis.merge_spans(kind_spans):
                 if con.execute(waiting.format(what="1") + " LIMIT 1",
                                span).fetchone() is None:
                     continue            # nothing here: never pay the count

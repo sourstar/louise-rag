@@ -200,10 +200,27 @@
     <li>A collection with <b>acquisition off</b> does not fetch its vector
       archive either — the archive follows the same acquisition switch and
       the same licence gate as the corpus.</li>
-    <li><b>pre-embedded (dense)</b> counts documents whose vectors came
-      from the archive — no GPU spent. A document the archive turns out not
-      to hold (no abstract, a chunk-shape mismatch) is released to the
-      local encoder once its archive file is complete.</li>
+    <li><b>pre-embedded (dense)</b> is counted over the archive's declared
+      id range (MedCPT: PMIDs 0–36,999,999): in-scope documents inside it
+      that <i>hold</i> vectors, over every in-scope document inside it. It
+      counts vectors held, not the import ledger. The ledger counts, per
+      archive file, the documents that file has delivered, each once; it
+      does not drop one the local encoder later re-embeds, and rows
+      counted before 2026-09-14 lost the flushes of any pass cut short —
+      <code>louise genesis recount</code> recomputes them from the
+      documents' provenance. Under <code>embed = "all"</code> some of the
+      vectors held can be the local encoder's — nothing records per
+      document which. A gap inside the range is named on the card, split
+      into documents still being indexed and documents past indexing; for
+      the latter, <code>louise health</code> says whether the archive is
+      still serving them. Documents outside the range — past its end, and
+      any in a gap between its files or with an id that is not a number —
+      get nothing from the archive: only the local encoder can embed them,
+      so under <code>off</code> they wait. An archive that declares no
+      coverage shows the ledger's count. A
+      document the archive turns out not to hold (no abstract, a
+      chunk-shape mismatch) is released to the local encoder once its
+      archive file is complete.</li>
   </ul>
 
   <h3 style="margin-top:14px">Ask, and the reader</h3>
@@ -466,7 +483,8 @@
     the create dialog when the plugin has a known archive; delete the line
     to opt out) is drained by the worker on its own — one shard per round,
     before any local GPU embedding — and the Library card shows the
-    coverage. An archive is split by its producer into numbered
+    coverage over the archive's declared id range, and how many documents
+    lie past it. An archive is split by its producer into numbered
     <b>archive files</b> ("shards": NCBI publishes MedCPT's vectors as 37
     files of ~3 GB; the pre-embedded Wikipedia corpus IS its 1,447 parquet
     files). A <i>remote</i> archive is a <b>second download stream of the
@@ -894,9 +912,11 @@ lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
     denominator is what the origin's listing held at pass start. A
     collection that also carries a pre-embedded vector archive shows it as
     a light-green <b>sub-box</b> with its own <i>fetched (vectors)</i> and
-    <i>pre-embedded (dense)</i> rows and the local gap-fill knob — same
-    embedding space as the main box (its space badge repeats it), because
-    that is precisely what import admission verifies.
+    <i>pre-embedded (dense)</i> rows (the latter over the archive's
+    declared id range). The embed-mode knob stays in the main box, one per
+    card, and the sub-box repeats no space badge: it is the same embedding
+    space as the main box, because that is precisely what import admission
+    verifies.
   </p>
   <p class="note">
     <b>Reading the fetched counter.</b> The card keeps it bare:

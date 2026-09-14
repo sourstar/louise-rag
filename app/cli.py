@@ -33,6 +33,19 @@ def _handle_sigterm(signum, frame):
         pass
 
 
+#: What ends a command the graceful way. SIGHUP too: rsync leads its own
+#: session (app/acquire/transport_rsync.py), so a terminal that goes away —
+#: a dropped ssh, a `docker exec -it` — no longer takes rsync with it, and
+#: a hangup left at its default killed the command and left rsync writing
+#: its .part with no lease and nobody to stop it.
+_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _route_stop_signals(handler=_handle_sigterm) -> None:
+    for sig in _STOP_SIGNALS:
+        signal.signal(sig, handler)
+
+
 def _refuse_unacknowledged(collection, use: str) -> bool:
     """True (and printed) when this collection may not be EXCHANGED.
 
@@ -91,8 +104,7 @@ def cmd_add(args) -> int:
         _print_plan(plan, profile)
         return 0
 
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-    signal.signal(signal.SIGINT, _handle_sigterm)
+    _route_stop_signals()
     try:
         result = engine.run_acquisition(con, collection, spec, profile, stop=_stop)
     except LicenseAckRequiredError as e:
@@ -220,9 +232,16 @@ def cmd_space_repin(args) -> int:
         con.execute("DELETE FROM chunk_verification")
         con.execute("DELETE FROM genesis_imports WHERE state NOT IN "
                     "('fetching','fetched','applying','applied')")
-        con.execute("UPDATE genesis_imports SET state='fetched', docs=0, chunks=0, "
+        con.execute("UPDATE genesis_imports SET state='fetched', "
                     "pending=NULL, next_pass_at=0, detail=NULL WHERE state IN "
                     "('applying','applied')")
+        # EVERY row kept, not only applying/applied: the ledger counts per
+        # flush, so a fetched row (a rejection retried, a deferral lifted)
+        # or a fetching one carries docs too, and chunk_verification — what
+        # those docs stand for — was just emptied. The proof goes as well:
+        # it was taken against the space this drops, and the next pass
+        # proves the archive against the new one.
+        con.execute("UPDATE genesis_imports SET docs=0, chunks=0, proven_at=NULL")
         db.log_event(con, "info", "spaces",
                      f"space re-pin requested by the operator: {embedded} vectors and "
                      f"{indexed} lexical entries reset — the next worker boot pins the "
@@ -328,8 +347,7 @@ def cmd_bundle_import(args) -> int:
     if _refuse_unacknowledged(collection, "vectors are imported into it"):
         return 1
     con = db.connect(collection)
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-    signal.signal(signal.SIGINT, _handle_sigterm)
+    _route_stop_signals()
     result = bundle_importer.import_bundle(
         con, collection, Path(args.path), stop=_stop,
         allow_first_use=not args.no_first_use)
@@ -415,8 +433,7 @@ def cmd_contribute(args) -> int:
     if _refuse_unacknowledged(collection, "vectors are computed from it and uploaded"):
         return 1
     con = db.connect(collection)
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-    signal.signal(signal.SIGINT, _handle_sigterm)
+    _route_stop_signals()
     try:
         if args.report_demand:
             result = contribute.report_demand(con, collection, args.coordinator)
@@ -464,8 +481,7 @@ def cmd_genesis_import(args) -> int:
         fetch = None
 
     shards = args.shards.split(",") if args.shards else None
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-    signal.signal(signal.SIGINT, _handle_sigterm)
+    _route_stop_signals()
     try:
         result = genesis.import_archive(con, collection, archive, shards=shards,
                                          fetch=fetch, stop=_stop,
@@ -561,13 +577,41 @@ def cmd_genesis_recheck(args) -> int:
     return 0
 
 
+def cmd_genesis_recount(args) -> int:
+    """Recompute the archive ledger's docs/chunks from chunk_verification
+    — the one-shot repair for rows counted before the ledger moved into
+    the flush's transaction (genesis.recount_ledger). A dry run unless
+    --yes; with --yes, stop the worker first."""
+    import time
+    from .bundles import genesis
+    collection = _collection_by_name(args.collection)
+    con = db.connect(collection)
+    t0 = time.monotonic()
+    out = genesis.recount_ledger(con, write=args.yes)
+    # the walk's cost on THIS manifest — what --yes will hold the write
+    # lock for, so the dry run is the measurement
+    print(f"walked chunk_verification in {time.monotonic() - t0:.1f} s")
+    changed = [rc for rc in out if rc.changed]
+    if not changed:
+        print(f"{len(out)} ledger row(s) already match chunk_verification")
+        return 0
+    for rc in changed:
+        print(f"{rc.archive}/{rc.shard}: docs {rc.docs:,} -> {rc.held_docs:,}, "
+              f"chunks {rc.chunks:,} -> {rc.held_chunks:,}")
+    if not args.yes:
+        print(f"{len(changed)} row(s) differ; nothing written. Re-run with --yes "
+              f"(worker stopped) to set them.")
+        return 2
+    print(f"{len(changed)} row(s) set from chunk_verification")
+    return 0
+
+
 def cmd_pack_build(args) -> int:
     """A collection's documents -> a pack (docs/notes/pack-format.md): sliced
     record shards + signed manifest, resumable."""
     from .pack import build as pack_build
     collection = _collection_by_name(args.collection)
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-    signal.signal(signal.SIGINT, _handle_sigterm)
+    _route_stop_signals()
     try:
         result = pack_build.build(collection, Path(args.out), snapshot=args.snapshot, name=args.name,
                                   records_per_shard=args.records_per_shard, until=args.until,
@@ -978,7 +1022,6 @@ def cmd_torrent_seed(args) -> int:
     """Serve an already-published torrent from the corpus on disk, until
     interrupted. libtorrent re-checks the pieces first, which doubles as a
     free integrity audit of what this node claims to hold."""
-    import signal as _signal
     from .acquire import torrent_publish, transport_torrent
 
     collection = _collection_by_name(args.collection)
@@ -997,8 +1040,7 @@ def cmd_torrent_seed(args) -> int:
     print(f"listening on {session.listen_port()}  (Ctrl-C to stop)")
 
     stop = threading.Event()
-    _signal.signal(_signal.SIGINT, lambda *_: stop.set())
-    _signal.signal(_signal.SIGTERM, lambda *_: stop.set())
+    _route_stop_signals(lambda *_: stop.set())
     while not stop.wait(5):
         st = handle.status()
         print(f"  peers={st.num_peers} up={st.upload_payload_rate / 1000:.0f} kB/s "
@@ -1182,6 +1224,14 @@ def _deprecated(fn, old: str, new: str):
 
 
 def main(argv=None) -> int:
+    # A hangup is Ctrl-C until a command routes both to its stop
+    # (_route_stop_signals). rsync leads its own session, so a command that
+    # lists without a stop (`corpus status`, `corpus add --dry-run`) died by
+    # the default SIGHUP while its rsync --list-only ran on; as a
+    # KeyboardInterrupt it reaches the transport, which kills rsync's group
+    # before letting it past.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGHUP, signal.default_int_handler)
     p = argparse.ArgumentParser(prog="app.cli")
     top = p.add_subparsers(dest="command", required=True)
 
@@ -1257,6 +1307,16 @@ def main(argv=None) -> int:
         "recheck", help="reopen final shards that still have unserved documents")
     g_recheck.add_argument("collection")
     g_recheck.set_defaults(func=cmd_genesis_recheck)
+
+    g_recount = genesis_sub.add_parser(
+        "recount", help="recompute the archive ledger's counts from chunk provenance "
+                        "(dry run unless --yes)")
+    g_recount.add_argument("collection")
+    g_recount.add_argument("--yes", action="store_true",
+                           help="write the recounted docs/chunks (stop the worker first; "
+                                "it holds the manifest's write lock as long as the dry "
+                                "run's walk took)")
+    g_recount.set_defaults(func=cmd_genesis_recount)
 
     pack_parser = top.add_parser("pack", help="the pack: build, verify, inspect (docs/notes/pack-format.md)")
     pack_sub = pack_parser.add_subparsers(dest="verb", required=True)

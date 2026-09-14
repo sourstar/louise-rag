@@ -712,15 +712,7 @@ def _covered_ranges(con, collection) -> list[tuple[int, int]]:
     # a final shard delivered all it can; a rejected one (under a proven
     # archive) never will — both release their range to the encoder
     done = {r["shard"] for r in rows if r["state"] in ("final", "rejected")}
-    ranges = sorted(rng for s in archive.shards if s not in done
-                    for rng in (archive.id_range_of(s),) if rng)
-    merged: list[tuple[int, int]] = []
-    for lo, hi in ranges:
-        if merged and lo <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(hi, merged[-1][1]))
-        else:
-            merged.append((lo, hi))
-    return merged
+    return bundle_genesis.declared_spans(archive, exclude=done)
 
 
 def _backfill_rows(con, collection, limit: int) -> list:
@@ -731,10 +723,8 @@ def _backfill_rows(con, collection, limit: int) -> list:
     key = str(collection.manifest_path) if collection is not None else ""
     covered, params = "", []
     if ranges:
-        covered = "AND NOT (" + " OR ".join(
-            "CAST(native_id AS INTEGER) BETWEEN ? AND ?" for _ in ranges) + ")"
-        for lo, hi in ranges:
-            params += [lo, hi]
+        spans_sql, params = bundle_genesis.in_spans_sql(ranges)
+        covered = "AND NOT " + spans_sql
     rows = _cursor_page(
         con, key, "new", bool(ranges),
         lambda start, n: con.execute(_BACKFILL_SQL.format(covered=covered),
@@ -1096,8 +1086,9 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
         # downloading while it said "seeding only". It was, the whole time.
         #
         # Stopping here reuses the SIGTERM path end to end, which is why it
-        # is safe: rsync terminates its subprocess (`_POLL_SECONDS`, then a
-        # 10 s grace), `--partial` leaves a truthful `.part`, the row is
+        # is safe: rsync's leader is SIGTERMed within `_POLL_SECONDS` and
+        # ends itself and its receiver in under a second (its group is
+        # SIGKILLed only past a bound), `--partial` leaves a truthful `.part`, the row is
         # recorded by `_upsert_aborted` — no error, no retry burned — and
         # the next run resumes by Range. `acquire-only` does not set
         # `_paused`, so it keeps fetching, which is that mode's whole point.
@@ -2825,6 +2816,10 @@ def _move_node_control(node_con, loaded) -> None:
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
+    # a hangup too: rsync leads its own session (transport_rsync), so a
+    # worker run from a terminal that goes away would otherwise die by the
+    # default SIGHUP and leave rsync writing with nobody to stop it
+    signal.signal(signal.SIGHUP, _handle_sigterm)
     all_collections = collections_mod.load_all()
     # Before anything reads it: the node state leaves the manifests for
     # state/node.sqlite, from the UNFILTERED list the web wrote to.

@@ -302,6 +302,68 @@ def unserved_in_range_sql(con) -> str:
             f"AND in_scope=1 AND error IS NULL AND fts_done=1 AND embed_done=0")
 
 
+def merge_spans(spans) -> list[tuple[int, int]]:
+    """Sorted, with overlapping and touching id spans joined — MedCPT's 37
+    contiguous one-million shards are one span."""
+    merged: list[tuple[int, int]] = []
+    for lo, hi in sorted(spans):
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(hi, merged[-1][1]))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def declared_spans(archive: "GenesisArchive | None",
+                   exclude=()) -> list[tuple[int, int]]:
+    """The merged id spans the archive DECLARES (amendment 38), less the
+    shards in `exclude`. [] for a local archive or one that declares no
+    coverage: whatever is held, nothing says where the archive ends. One
+    answer for the worker's covered ranges, the health report and the
+    Library card, so the three cannot disagree about where the range is."""
+    if archive is None or archive.local or not archive.ids_per_shard:
+        return []
+    return merge_spans(rng for s in archive.shards if s not in exclude
+                       for rng in (archive.id_range_of(s),) if rng)
+
+
+def in_spans_sql(spans, *, named: bool = False) -> tuple[str, list[int] | dict[str, int]]:
+    """`(CAST(native_id AS INTEGER) BETWEEN ? AND ? OR …)` over `spans`,
+    with its parameters — positional, or `named` (`:span_lo0`, …) for a
+    query that binds by name. The expression is the browse index's, so a
+    query that can use the index may; one that scans pays per row."""
+    if named:
+        sql = " OR ".join(f"CAST(native_id AS INTEGER) BETWEEN :span_lo{i} AND :span_hi{i}"
+                          for i in range(len(spans)))
+        named_params = {}
+        for i, (lo, hi) in enumerate(spans):
+            named_params[f"span_lo{i}"], named_params[f"span_hi{i}"] = lo, hi
+        return f"({sql})", named_params
+    sql = " OR ".join("CAST(native_id AS INTEGER) BETWEEN ? AND ?" for _ in spans)
+    return f"({sql})", [n for span in spans for n in span]
+
+
+#: A native_id that is an integer written plainly. SQLite casts a
+#: non-numeric string to 0 (`CAST('pubmed25n0001.xml.gz' AS INTEGER)` = 0,
+#: `'12abc'` = 12), which puts it inside any range that starts at 0 —
+#: MedCPT's does. Such an id belongs to no declared range
+#: (`reopen_finals_for_range` skips it), so a COUNT that says "inside the
+#: range" ANDs this in. The integer's own text must be the whole id: exact
+#: for '', '12abc', '+5' and '007', and the cheapest form measured (4M-row
+#: scan with the four range SUMs: 3.23 s, against 3.78 s for NOT GLOB
+#: '*[^0-9]*' and 2.76 s with no check at all). For the counts only: the
+#: expression index cannot answer it.
+NUMERIC_ID_SQL = "(length(CAST(native_id AS INTEGER)) = length(native_id))"
+
+#: The flush's credit check: which of a batch's chunks this shard already
+#: delivered. One PK-index search per chunk id in ONE statement, on the
+#: pages mark_imported's upsert then reads: +2.2 ms per 500-document flush
+#: of re-imported documents, 35M synthetic provenance rows (a per-uid query
+#: through the uid index cost +8.2 ms).
+CREDITED_SQL = ("SELECT chunk_id FROM chunk_verification "
+                "WHERE chunk_id IN ({marks}) AND bundle_id=?")
+
+
 def coverage_epoch() -> int:
     return _coverage_epoch
 
@@ -1086,6 +1148,22 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         if own_tx:
             con.execute("BEGIN IMMEDIATE")
         try:
+            # CREDITED ONCE PER DOCUMENT: a document this shard already
+            # delivered comes back whenever something resets embed_done and
+            # keeps its provenance (a reindex, a stage reset, a changed
+            # document, a requeue) and a revisit re-selects it. mark_imported
+            # upserts on chunk_id, so provenance counts it once; so must the
+            # ledger. Read inside this transaction, before the upserts.
+            all_chunk_ids = [c for u in batch_uids for c in batch_chunk_ids.get(u, ())]
+            credited: set[str] = set()
+            for i in range(0, len(all_chunk_ids), 900):
+                part = all_chunk_ids[i:i + 900]
+                credited.update(r[0] for r in con.execute(
+                    CREDITED_SQL.format(marks=",".join("?" * len(part))),
+                    (*part, pseudo_bundle)))
+            new_docs = sum(1 for u in batch_uids
+                           if not credited.intersection(batch_chunk_ids.get(u, ())))
+            new_chunks = len(set(all_chunk_ids) - credited)
             for uid in batch_uids:
                 con.execute(
                     "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
@@ -1097,6 +1175,27 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                 # them eligible for verify-on-use, which is exactly right.
                 ledger.mark_imported(con, batch_chunk_ids.get(uid, []), uid,
                                       producer, pseudo_bundle)
+            # THE LEDGER COUNTS HERE, in the transaction that marks the
+            # documents — never at the end of the pass (invariant 2). It was
+            # counted once, after the walk, so a pass that committed flushes
+            # and then ended any other way — a commit conflict deferred, a
+            # busy manifest, a rejection mid-shard, a kill, a failure in the
+            # final count — left those documents imported and never counted,
+            # and the resumed pass skips them (embed_done=1) as not held.
+            # Live on pubmed 2026-09-14: shards 8, 9 and 13 had 80,654 more
+            # embedded documents in their ranges than their rows said —
+            # 53,000 in 13 is exactly 106 flushes of 500.
+            #
+            # WHAT IT COUNTS: the documents (and chunks) this shard has
+            # delivered, each once — its provenance rows, which is what
+            # `recount_ledger` recomputes. Not vectors held now: a document
+            # the local encoder later re-embeds loses its provenance
+            # (`ledger.clear_verification`) and keeps its count here until
+            # a recount.
+            con.execute(
+                "UPDATE genesis_imports SET docs=COALESCE(docs,0)+?, "
+                "chunks=COALESCE(chunks,0)+? WHERE archive=? AND shard=?",
+                (new_docs, new_chunks, archive.archive_id, shard))
             if own_tx:
                 con.execute("COMMIT")
         except BaseException:
@@ -1341,21 +1440,14 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
             interval = base if docs else min(config.GENESIS_PASS_BACKOFF_MAX_SEC,
                                              max(base, prev_interval * 2))
             next_pass_at = now + interval
-    if revisit:
-        # each revisit pass imports only newly-eligible documents; the
-        # ledger's counters accumulate coverage across passes
-        con.execute(
-            "UPDATE genesis_imports SET state=?, "
-            "docs=COALESCE(docs,0)+?, chunks=COALESCE(chunks,0)+?, detail=NULL, "
-            "pending=?, next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
-            (state, docs, chunks_written, pending, next_pass_at, now,
-             archive.archive_id, shard))
-    else:
-        con.execute(
-            "UPDATE genesis_imports SET state=?, docs=?, chunks=?, detail=NULL, "
-            "pending=?, next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
-            (state, docs, chunks_written, pending, next_pass_at, now,
-             archive.archive_id, shard))
+    # docs and chunks are NOT touched here: every flush added its own to
+    # the row in the transaction that marked them. The ledger only grows —
+    # the non-revisit branch used to OVERWRITE it with this one pass's
+    # count (`docs=?`), erasing every earlier pass of the same shard.
+    con.execute(
+        "UPDATE genesis_imports SET state=?, detail=NULL, "
+        "pending=?, next_pass_at=?, updated_at=? WHERE archive=? AND shard=?",
+        (state, pending, next_pass_at, now, archive.archive_id, shard))
     db.log_event(con, "info", "genesis",
                  f"{archive.archive_id}/{shard}: imported {chunks_written} vectors "
                  f"across {docs} documents ({skipped_absent} not held locally, "
@@ -1413,6 +1505,110 @@ def import_archive(con, collection, archive: GenesisArchive, *,
     return {"shards": results,
             "docs": sum(r.get("docs", 0) for r in results),
             "chunks": sum(r.get("chunks", 0) for r in results)}
+
+
+#: Every archive-imported chunk's provenance row, in uid order — the one
+#: walk `recount_ledger` makes. INDEXED BY the uid index, so the ORDER BY is
+#: the index's own order (no TEMP B-TREE) and a document's chunks arrive
+#: together, which is what counts DOCUMENTS without holding a set of
+#: 35M uids. There is no index on bundle_id: every row is read once.
+RECOUNT_SQL = ("SELECT uid, bundle_id FROM chunk_verification "
+               "INDEXED BY idx_chunk_verification_uid "
+               "WHERE substr(bundle_id, 1, 8) = 'genesis:' ORDER BY uid")
+
+
+@dataclass(frozen=True)
+class LedgerRecount:
+    archive: str
+    shard: str
+    docs: int                # what the ledger says
+    chunks: int
+    held_docs: int           # what chunk_verification says
+    held_chunks: int
+
+    @property
+    def changed(self) -> bool:
+        return (self.docs, self.chunks) != (self.held_docs, self.held_chunks)
+
+
+def recount_ledger(con, *, write: bool = False) -> list[LedgerRecount]:
+    """Recompute every ledger row's docs and chunks from the provenance
+    the flushes wrote — chunk_verification rows whose bundle_id is
+    `genesis:<archive>/<shard>` — and, with `write`, set them.
+
+    THE ONE-SHOT REPAIR for rows counted before the ledger moved into the
+    flush's transaction: those passes lost every flush of a pass that did
+    not reach its end (pubmed 2026-09-14: shards 8, 9 and 13, 80,654
+    documents). chunk_verification is written in the SAME transaction as
+    embed_done, so it is the record of what the archive actually delivered
+    — a document the local encoder re-embedded has lost its rows
+    (`ledger.clear_verification`) and is not credited. A shard with no
+    provenance rows recounts to zero.
+
+    THE LEDGER IS ALSO PROOF EVIDENCE: `row_proven` reads an applied or
+    final row with docs > 0 as proven when `proven_at` is NULL (rows from
+    before that column, and shards other than the one that proved). A
+    recount that lowers such a row to zero would un-prove the archive, and
+    one rejected shard would then STOP it (`archive_stopped`: the drain,
+    the fetcher, and the worker's covered ranges). So before lowering, the
+    proof is persisted: `proven_at` takes the row's `updated_at`.
+
+    `write` takes BEGIN IMMEDIATE BEFORE the walk, so no flush lands
+    between the count and the write; run it with the worker stopped. The
+    walk reads every chunk_verification row once, in uid order (the uid
+    index, then the row for its bundle_id): 58.7 s over 35M synthetic rows
+    (6.5 GiB manifest, warm page cache, a laptop, 2026-09-14) — a floor for
+    the node, not its figure. The node's figure is the dry run's, which the
+    CLI prints; --yes holds the write lock for as long."""
+    own_tx = write and not con.in_transaction
+    if own_tx:
+        con.execute("BEGIN IMMEDIATE")
+    try:
+        rows = {f"genesis:{r['archive']}/{r['shard']}": r for r in con.execute(
+            "SELECT archive, shard, state, docs, chunks, proven_at, updated_at "
+            "FROM genesis_imports ORDER BY archive, shard")}
+        held_docs = dict.fromkeys(rows, 0)
+        held_chunks = dict.fromkeys(rows, 0)
+        last_uid, seen = None, set()
+        for uid, bundle in con.execute(RECOUNT_SQL):
+            if bundle not in rows:
+                continue            # a shard with no ledger row: nothing to set
+            if uid != last_uid:
+                last_uid, seen = uid, set()
+            held_chunks[bundle] += 1
+            if bundle not in seen:
+                seen.add(bundle)
+                held_docs[bundle] += 1
+        out = [LedgerRecount(r["archive"], r["shard"], int(r["docs"] or 0),
+                             int(r["chunks"] or 0), held_docs[b], held_chunks[b])
+               for b, r in rows.items()]
+        if write:
+            now = int(time.time())
+            for rc in out:
+                row = rows[f"genesis:{rc.archive}/{rc.shard}"]
+                if rc.changed and not row["proven_at"] and row_proven(row):
+                    con.execute(
+                        "UPDATE genesis_imports SET proven_at=? WHERE archive=? AND shard=?",
+                        (int(row["updated_at"] or now), rc.archive, rc.shard))
+                if rc.changed:
+                    # docs and chunks only: updated_at and next_pass_at are
+                    # the revisit backoff's clock, not this repair's
+                    con.execute(
+                        "UPDATE genesis_imports SET docs=?, chunks=? "
+                        "WHERE archive=? AND shard=?",
+                        (rc.held_docs, rc.held_chunks, rc.archive, rc.shard))
+            if any(rc.changed for rc in out):
+                db.log_event(con, "info", "genesis",
+                             "ledger recounted from chunk_verification: " + ", ".join(
+                                 f"{rc.archive}/{rc.shard} docs {rc.docs}->{rc.held_docs}"
+                                 for rc in out if rc.changed)[:360])
+            if own_tx:
+                con.execute("COMMIT")
+    except BaseException:
+        if own_tx and con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    return out
 
 
 def reopen_finals_for_range(con, collection, native_ids) -> list[str]:

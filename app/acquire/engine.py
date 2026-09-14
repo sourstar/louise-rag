@@ -380,7 +380,23 @@ def _upsert_fetched(con, source_id: str, f: RemoteFile, endpoint_url: str, local
 _TRANSIENT = ("connection reset by peer", "connection unexpectedly closed",
               "error in socket io", "error in rsync protocol data stream",
               "connection timed out", "connection refused",
-              "temporary failure in name resolution", "broken pipe")
+              "temporary failure in name resolution", "broken pipe",
+              # measured on gutenberg 2026-09-14, all written as FILE errors
+              # on the first attempt while the mirror was the one failing:
+              # ibiblio refusing new connections for minutes at a time
+              # (rsync exit 10, "No route to host"), accepting and never
+              # greeting (exit 35), going silent mid-file (exit 30), and
+              # the transport's own wall-clock deadline on files that take
+              # 3 s on the other mirror. A daemon at its connection cap
+              # says "max connections".
+              "no route to host", "timeout waiting for daemon connection",
+              "timeout in data send/receive", "timed out after",
+              "max connections",
+              # the rsync transport's own verdict on an exit 0 whose fork
+              # kept the pipes and had to be killed (_raise_unless_clean):
+              # not the file, and not known to be the mirror — a retry,
+              # reported only once it repeats past DEFER_ATTEMPTS
+              "still held its output")
 
 #: How many times one file may be dropped on the floor before the
 #: deferral is reported as an error. Low, because a file that cannot

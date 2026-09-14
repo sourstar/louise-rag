@@ -618,9 +618,42 @@ _COUNTS_MAX_AGE_S = 1800.0
 _COUNTS_COLD_WAIT_S = 2.0
 
 
+def _archive_spans(collection) -> list[tuple[int, int]]:
+    """The merged id spans the collection's archive declares — [] unless it
+    is remote, known and declares coverage (genesis.declared_spans)."""
+    if not getattr(collection, "genesis_archive", None):
+        return []
+    from .bundles.genesis import ARCHIVES, declared_spans
+    return declared_spans(ARCHIVES.get(collection.genesis_archive))
+
+
 def _document_counts_query(collection) -> dict:
     """THE scan. One pass for every count either page needs."""
     con = db.connect(collection)
+    spans = _archive_spans(collection)
+    sql, params = _document_counts_sql(spans)
+    row = con.execute(sql, params).fetchone()
+    counts = {k: (row[k] or 0) for k in row.keys()}
+    if spans:
+        # which range these two counts are over: a stored row from before
+        # the declaration changed must not be read as today's range
+        counts["arch_range_hi"] = spans[-1][1]
+    return counts
+
+
+def _counted_over_another_range(collection, counts: dict) -> bool:
+    """Counts taken before the archive's declared range changed (a TOML
+    edit adds, drops or moves it): the card reads them as absent, so they
+    are refreshed now rather than at the TTL — pubmed's is ~9 minutes of
+    "counting…" otherwise. Nothing to compare for a collection without."""
+    spans = _archive_spans(collection)
+    return counts.get("arch_range_hi") != (spans[-1][1] if spans else None)
+
+
+def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
+    """THE scan's SQL and parameters. `spans` (an archive's declared id
+    range, `_archive_spans`) adds four SUMs; without them the SQL is the
+    base scan byte for byte."""
     # blocked vs unindexable: stage failures are prefixed with their stage
     # (worker._execute_step), so an UNPREFIXED error came from discovery and
     # describes the CORPUS — no text in the mirror, retracted upstream.
@@ -630,7 +663,40 @@ def _document_counts_query(collection) -> dict:
         f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed")) + ")")
     pending = (f"in_scope=1 AND fts_done=1 AND error IS NULL AND retries<:max "
                f"AND (embed_done=0 OR embed_version<:ver)")
-    row = con.execute(f"""
+    params: dict = {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}
+    archive_sums = ""
+    if spans:
+        from .bundles.genesis import NUMERIC_ID_SQL, in_spans_sql
+        spans_sql, span_params = in_spans_sql(spans, named=True)
+        params.update(span_params, span_top=spans[-1][1])
+        # a non-numeric id casts to 0: inside a range from 0 unless excluded
+        in_range = f"({spans_sql} AND {NUMERIC_ID_SQL})"
+        # THE ARCHIVE'S DECLARED RANGE, for the pre-embedded row: documents
+        # that HOLD a vector inside it, over in-scope documents inside it.
+        # Vectors held, not the import ledger (SUM(genesis_imports.docs)),
+        # which is pass bookkeeping and read 80,654 short on pubmed. Four
+        # more SUMs on the pass this already makes — deliberately NOT a
+        # walk of idx_documents_native_int, which needs a row lookup per
+        # document for in_scope/embed_done (40.6 s on live pubmed, health.py).
+        # Measured on 4M synthetic rows (2026-09-14): base scan 2.13 s; the
+        # SUMs 2.76 s (two or four cost the same); with the numeric-id check
+        # that keeps a non-numeric id out of the range, 3.23 s — +52% over
+        # the base, the TTL stretching with it (_counts_ttl_for).
+        #
+        # arch_in_range_waiting is the gap `louise health` reports (its
+        # _WAITING['embed'], past indexing), so the card can say how much of
+        # its own gap health will explain; arch_past_range is what is ABOVE
+        # the range — the rest of what lies outside it (a gap between files,
+        # an id below the first, an id that is not a number) is not "past".
+        archive_sums = f""",
+          SUM(CASE WHEN in_scope=1 AND {in_range} THEN 1 ELSE 0 END) arch_in_range,
+          SUM(CASE WHEN in_scope=1 AND embed_done=1 AND {in_range}
+                   THEN 1 ELSE 0 END) arch_in_range_embedded,
+          SUM(CASE WHEN in_scope=1 AND embed_done=0 AND rdf_done=1 AND fts_done=1
+                        AND {in_range} THEN 1 ELSE 0 END) arch_in_range_waiting,
+          SUM(CASE WHEN in_scope=1 AND CAST(native_id AS INTEGER) > :span_top
+                        AND {NUMERIC_ID_SQL} THEN 1 ELSE 0 END) arch_past_range"""
+    return f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
           SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
@@ -663,10 +729,8 @@ def _document_counts_query(collection) -> dict:
           -- it as 0 says "nothing to do" about a collection with thousands of
           -- contigs still to index.
           SUM(CASE WHEN in_scope=1 AND fts_done=0 AND error IS NULL
-                        AND retries<:max THEN 1 ELSE 0 END) docs_unindexed
-        FROM documents""",
-        {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}).fetchone()
-    return {k: (row[k] or 0) for k in row.keys()}
+                        AND retries<:max THEN 1 ELSE 0 END) docs_unindexed{archive_sums}
+        FROM documents""", params
 
 
 def _counts_key(collection) -> str:
@@ -704,7 +768,7 @@ def _document_counts(collection) -> tuple[dict | None, float]:
         entry = _counts_cache.get(name)
     if entry is not None:
         at, counts = entry
-        if now - at > _counts_ttl_for(name):
+        if now - at > _counts_ttl_for(name) or _counted_over_another_range(collection, counts):
             _refresh_counts_async(collection)
         return counts, now - at
     _refresh_counts_async(collection)
@@ -1359,6 +1423,25 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
             fetch_state = "active"
         else:
             fetch_state = "idle"
+    # THE ARCHIVE'S DECLARED RANGE (the pre-embedded row's numbers), from
+    # THE scan's two range SUMs — never a scan here. None whenever they are
+    # absent or were counted over another range (`arch_range_hi`): the
+    # first cold process after a deploy reads a stored row without them,
+    # and the card says "counting…" rather than the ledger or a zero. The
+    # rest follows by subtraction. "Hold" is the honest verb: under "all"
+    # the local encoder may have filled documents inside the range, and no
+    # column says per document where a vector came from.
+    from .bundles.genesis import declared_spans
+    spans = declared_spans(archive)
+    range_hi = spans[-1][1] if spans else None
+    sums = ("arch_in_range", "arch_in_range_embedded", "arch_in_range_waiting",
+            "arch_past_range")
+    ranged = (counts is not None and range_hi is not None
+              and counts.get("arch_range_hi") == range_hi
+              and all(k in counts for k in sums))
+    in_range, in_range_embedded, waiting, past = (
+        (int(counts[k] or 0) for k in sums) if ranged else (None,) * 4)
+    missing = max(0, in_range - in_range_embedded) if ranged else None
     return {
         "archive": collection.genesis_archive,
         "known": archive is not None,
@@ -1380,6 +1463,24 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         # declared coverage: how many in-scope documents the archive CAN
         # cover is unknown without the ids; what it has covered is `docs`
         "declares_coverage": bool(archive and archive.ids_per_shard),
+        "spans": spans,
+        "range_hi": range_hi,
+        "in_range": in_range,
+        "in_range_embedded": in_range_embedded,
+        # "without a vector", never "to import": inside the range does not
+        # prove the archive holds one (health.archive_gap says which)
+        "in_range_missing": missing,
+        # the part of that gap past indexing — health's number — and the
+        # part still being indexed, which health does not count
+        "in_range_waiting": min(waiting, missing) if ranged else None,
+        "in_range_indexing": max(0, missing - waiting) if ranged else None,
+        # above the range's end ("past id N"), and everything outside it
+        "past_range": past,
+        "outside_range": (max(0, int(counts.get("in_scope") or 0) - in_range)
+                          if ranged else None),
+        # the local encoder's progress outside the archive
+        "outside_embedded": (max(0, int(counts.get("embed_done") or 0) - in_range_embedded)
+                             if ranged else None),
     }
 
 
