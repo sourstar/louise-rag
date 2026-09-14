@@ -127,14 +127,16 @@ def _page(pid: int, title: str, text: str) -> str:
 
 @pytest.fixture
 def wiki_corpus(tmp_path) -> Path:
-    d = tmp_path / "wiki-corpus" / "simplewiki" / "latest"
+    # enwiki: simplewiki is not one of the collection's languages
+    # (wikipedia parser 4), and used to pass as "en"
+    d = tmp_path / "wiki-corpus" / "enwiki" / "latest"
     d.mkdir(parents=True)
     s1 = bz2.compress((_page(1, "The Moon", "'''The Moon''' is a satellite.\n\n== Orbit ==\nIt orbits.")
                        + _page(2, "Cheese", "'''Cheese''' is food.")).encode())
     s2 = bz2.compress(_page(1_500_000, "Far page", "A page with a high id.").encode())
-    (d / "simplewiki-latest-pages-articles-multistream.xml.bz2").write_bytes(s1 + s2)
+    (d / "enwiki-latest-pages-articles-multistream.xml.bz2").write_bytes(s1 + s2)
     index = [f"0:1:The Moon", f"0:2:Cheese", f"{len(s1)}:1500000:Far page"]
-    (d / "simplewiki-latest-pages-articles-multistream-index.txt.bz2").write_bytes(
+    (d / "enwiki-latest-pages-articles-multistream-index.txt.bz2").write_bytes(
         bz2.compress(("\n".join(index) + "\n").encode()))
     return tmp_path / "wiki-corpus"
 
@@ -236,7 +238,10 @@ def test_slicing_rules():
     assert slicing.pubmed_slice(doc(extra={"date": "1999"}), 1) == "year=1995-1999"
     assert slicing.pubmed_slice(doc(date="2023-05"), 1) == "year=2023"
     assert slicing.pubmed_slice(doc(), 1) == "year=unknown"
-    assert slicing.wikipedia_slice(doc(language="de"), 2_345_678) == "lang=de/pages=2M"
+    from app.plugins.wikipedia.ids import native_id_of
+    # the native id carries the language and the page (wikipedia parser 4)
+    assert slicing.wikipedia_slice(doc(language="de"), native_id_of("de", 2_345_678)) \
+        == "lang=de/pages=2M"
     assert slicing.embedded_slice(doc(), 10 * 10_000_000_000 + 77) == "lang=tr/pages=0M"
     assert slicing.gutenberg_slice(doc(language="it"), 5) == "lang=it"
     with pytest.raises(ValueError):

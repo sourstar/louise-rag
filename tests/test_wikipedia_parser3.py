@@ -107,7 +107,9 @@ def dump(tmp_path) -> dict:
         offset += len(blob)
     (root / "itwiki-20260801-pages-articles-multistream-index.txt.bz2").write_bytes(
         bz2.compress(("\n".join(lines) + "\n").encode()))
-    refs = {r.native_id: r for r in SOURCE.discover(DiscoverState(corpus_root=root))}
+    # keyed by PAGE id for the tests' readability; the native id carries the
+    # language too since parser 4
+    refs = {r.extra["page_id"]: r for r in SOURCE.discover(DiscoverState(corpus_root=root))}
     return {"root": root, "refs": refs}
 
 
@@ -115,7 +117,7 @@ def _doc(dump, pid: str):
     """Through `plugin_io.canonical_doc` — the worker's, build's and
     reparse's path, which rebuilds the DocRef WITHOUT `extra`."""
     ref = dump["refs"][pid]
-    return plugin_io.canonical_doc(SOURCE, {"native_id": pid, "path": ref.locator})
+    return plugin_io.canonical_doc(SOURCE, {"native_id": ref.native_id, "path": ref.locator})
 
 
 def _prose(doc) -> str:

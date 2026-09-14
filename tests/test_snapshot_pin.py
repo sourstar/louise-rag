@@ -49,12 +49,12 @@ def test_the_spec_declares_dated_dumps():
 def test_a_pinned_collection_lists_its_snapshot(isolated_config, tmp_path):
     """The behaviour that matters: acquisition asks for the pinned dump, not
     for whatever the origin currently calls latest."""
-    pinned = engine._list_and_filter(WIKIPEDIA_SPEC, "full", "20260801")
+    pinned = engine._list_and_filter(WIKIPEDIA_SPEC, "all", "20260801")
     assert pinned, "a pinned collection must have files to fetch"
     assert all("20260801" in f.rel_path for f in pinned), \
         [f.rel_path for f in pinned]
 
-    unpinned = engine._list_and_filter(WIKIPEDIA_SPEC, "full", None)
+    unpinned = engine._list_and_filter(WIKIPEDIA_SPEC, "all", None)
     assert all("latest" in f.rel_path for f in unpinned), \
         [f.rel_path for f in unpinned]
 
@@ -62,7 +62,7 @@ def test_a_pinned_collection_lists_its_snapshot(isolated_config, tmp_path):
 def test_the_profile_filter_still_applies_to_a_snapshot(isolated_config):
     """Pinning selects WHICH dump; the profile still selects which wiki."""
     demo = engine._list_and_filter(WIKIPEDIA_SPEC, "demo", "20260801")
-    assert demo and all(f.rel_path.startswith("simplewiki/") for f in demo)
+    assert demo and all(f.rel_path.startswith("trwiki/") for f in demo)
     assert all("20260801" in f.rel_path for f in demo)
 
 

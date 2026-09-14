@@ -60,8 +60,14 @@ def _pages_bin(page_id: int) -> str:
 def wikipedia_slice(doc: CanonicalDoc, native_id: int) -> str:
     """Language and a page-id range: page ids are stable and monotonic in
     creation time, the honest proxy for "created before ~2010" (creation
-    dates are not in the dumps)."""
-    return f"lang={doc.language or 'und'}/{_pages_bin(native_id)}"
+    dates are not in the dumps). The native id carries the language and
+    the page id (wikipedia parser 4); the bin is over the page id."""
+    from ..plugins.wikipedia.source import decode_native_id
+    try:
+        lang, page, _ = decode_native_id(int(native_id))
+    except (KeyError, ValueError):
+        return f"lang={doc.language or 'und'}/pages=unknown"
+    return f"lang={lang}/{_pages_bin(page)}"
 
 
 def embedded_slice(doc: CanonicalDoc, native_id: int) -> str:
@@ -113,9 +119,9 @@ def slice_hint(plugin_name: str, row) -> str | None:
     parse each. None = parse the document and use the scheme."""
     try:
         if plugin_name == "wikipedia":
-            from ..plugins.wikipedia.source import _lang_of, split_locator
-            dump, _s, _e = split_locator(row["path"])
-            return f"lang={_lang_of(dump.name)}/{_pages_bin(int(row['native_id']))}"
+            from ..plugins.wikipedia.source import decode_native_id
+            lang, page, _ = decode_native_id(int(row["native_id"]))
+            return f"lang={lang}/{_pages_bin(page)}"
         if plugin_name == "embedded":
             from ..plugins.embedded.source import decode_native_id
             lang, article = decode_native_id(int(row["native_id"]))

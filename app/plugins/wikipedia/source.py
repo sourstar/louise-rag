@@ -8,10 +8,18 @@ fetch() decompresses ONLY the one stream a page lives in.
 
 Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
     "<dump path>::<stream start>::<stream end>"    end == 0 → EOF.
+
+ONE COLLECTION, WIKIVEC'S LANGUAGES, TWO LAYERS (operator, 2026-09-10 and
+2026-09-14; docs/notes/wikipedia-two-layers.md). The native id carries the
+language, in wikivec's own numbering, so every wiki of the collection
+coexists and a document the pre-embedded archive covers keeps the id its
+vectors are keyed by. A page read from a DUMP is numbered above the
+archive's whole range, which makes the layer a pure function of the id.
 """
 import bz2
 import hashlib
 import ipaddress
+import json
 import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -19,7 +27,8 @@ from xml.etree import ElementTree as ET
 from .. import cursor
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
-from . import wikitext
+from . import archive, wikitext
+from .ids import DUMP_BASE, LANG_ORDINAL, decode_native_id, native_id_of  # noqa: F401
 
 _LOCATOR_SEP = "::"
 # canonical-namespace pages only; everything else is navigation/meta
@@ -138,9 +147,15 @@ def _comment(rev) -> str:
 
 
 def _lang_of(dump_name: str) -> str:
-    wiki = dump_name.split("-")[0]          # enwiki / simplewiki / itwiki
-    prefix = wiki[:-4] if wiki.endswith("wiki") else wiki
-    return "en" if prefix in ("en", "simple") else prefix
+    """"enwiki-latest-…" → "en". "simplewiki-…" → "simple", which is not
+    one of the collection's languages and is refused at discovery (it used
+    to read as "en" and collide with enwiki's page ids)."""
+    wiki = dump_name.split("-")[0]
+    return wiki[:-4] if wiki.endswith("wiki") else wiki
+
+
+#: the id scheme (language, page, source) lives in `ids.py`; the archive's
+#: reading in `archive.py` — docs/notes/wikipedia-two-layers.md
 
 
 class WikipediaSource:
@@ -172,13 +187,19 @@ class WikipediaSource:
     #: stream unparseable, and the prose leaking image options, categories,
     #: interlanguage links and magic words while dropping quotations, math
     #: and the value of inline templates. Still free: no collection exists.
-    PARSER_VERSION = 3
+    #: 4 the same evening: the native id carries the language (wikivec's
+    #: numbering) so the collection holds all of wikivec's languages, and
+    #: `extra.page_id` keeps the Wikipedia page id the id no longer is.
+    PARSER_VERSION = 4
     #: 09 §9.5's `origin` is `<dump>#<start>::<end>`: the member is the
     #: stream's byte range, TWO fields (plugin_io.origin_locator). Without
     #: these the record carried the raw `::` locator, which the reparse
     #: could not find, so records-vs-origin reparsed no wikipedia record.
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 2
+    #: an archive article that straddles two shards is two pieces, each in
+    #: its own file: `origin` locates both, joined the same way
+    LOCATOR_SEGMENT_SEP = archive.SEG_SEP
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # pages are deleted; the tombstone stays
     native_id_order = "numeric"          # page_id, issued ascending
@@ -190,35 +211,32 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
+        # LAYER 1's SOURCE FIRST: the pre-embedded archive's articles, under
+        # its own ids. `covered` is every page the archive holds, whatever
+        # the scan cursor skips, so the dump pass below never mints a second
+        # document for one of them.
+        covered = archive.covered_articles(root, state.state_dir)
+        yield from archive.discover_articles(
+            state, self.source_id, cursor.Progress(state, f"{self.source_id}-archive"),
+            self._archive_ref)
         progress = cursor.Progress(state, self.source_id)
         dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
-        # REFUSE A COLLISION AT DISCOVERY (06 §6.1) rather than trusting it.
-        #
-        # `native_id` is the page id and carries no language, while `lang`
-        # goes only into `DocRef.extra` — so two dumps share a uid for every
-        # page id they both use. `documents.uid` is the primary key, and the
-        # collision is not an error anywhere downstream: discovery finds the
-        # existing row, sees a different hash, and runs `UPDATE … rdf_done=0,
-        # fts_done=0, embed_done=0 WHERE uid=?`. The second language
-        # overwrites the first and resets its stages, and every scan
-        # flip-flops the two — silently, and for as long as both are mounted.
-        #
-        # Refusing here is the narrow fix. Making the id language-bearing is
-        # the other one, and it would rewrite every uid of an existing 19.4M
-        # document collection — not something to do as a side effect of a
-        # scan. See docs/notes/wikivec-homogeneous.md §6.
-        langs = {_lang_of(d.name): d.name for d in dumps}
-        if len(langs) > 1:
-            yield DocRef(
-                source_id=self.source_id, native_id="", locator=str(root),
-                scope="container",
-                error=(f"{len(langs)} Wikipedia dumps of different languages "
-                       f"under one corpus ({', '.join(sorted(langs))}): a page "
-                       f"id is unique per language, not across them, so these "
-                       f"would share uids and silently overwrite each other. "
-                       f"One language per collection (06 §6.1)"))
-            return
+        # EVERY WIKI OF THE COLLECTION, apart by id (06 §6.1: refuse a
+        # collision rather than trust it). A page id is unique only within
+        # its wiki, and the native id now carries the wiki's language
+        # (`native_id_of`), so two dumps can no longer share a uid — the
+        # refusal of a second language that stood here (a page-id-only id
+        # let the second overwrite the first, silently) is no longer needed.
+        # A wiki outside the collection's languages — simplewiki included,
+        # which used to pass as "en" — has no number, and is reported.
         for dump in dumps:
+            if _lang_of(dump.name) not in LANG_ORDINAL:
+                yield DocRef(source_id=self.source_id, native_id=dump.name,
+                             locator=str(dump), scope="container",
+                             error=(f"{dump.name}: {_lang_of(dump.name)!r} is not "
+                                    f"one of the collection's languages "
+                                    f"({', '.join(LANG_ORDINAL)})"))
+                continue
             index = dump.with_name(dump.name.replace(_DUMP_SUFFIX, _INDEX_SUFFIX))
             if not index.is_file():
                 yield DocRef(source_id=self.source_id, native_id=dump.name,
@@ -242,7 +260,7 @@ class WikipediaSource:
                             continue
                         offset = int(offset_s)
                         if offset != last_offset and pending:
-                            yield from self._flush(pending, offset, dump, st, lang)
+                            yield from self._flush(pending, offset, dump, st, lang, covered)
                             pending = []
                         last_offset = offset
                         if _SKIP_TITLE.match(title):
@@ -256,29 +274,90 @@ class WikipediaSource:
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
             if pending:
-                yield from self._flush(pending, 0, dump, st, lang)
+                yield from self._flush(pending, 0, dump, st, lang, covered)
             # both files staged together, recorded once the dump's refs are
             # committed (cursor.Progress) — an interrupted scan resumes here
             progress.stage(dump)
             progress.stage(index)
         progress.flush()
 
-    def _flush(self, pending, end_offset, dump, st, lang):
+    def _flush(self, pending, end_offset, dump, st, lang, covered):
         for offset, page_id, title in pending:
+            if archive.covers(covered, lang, int(page_id)):
+                continue            # layer 1: read from the archive, not here
             yield DocRef(
-                source_id=self.source_id, native_id=page_id,
+                source_id=self.source_id, native_id=str(native_id_of(lang, int(page_id))),
                 locator=f"{dump}{_LOCATOR_SEP}{offset}{_LOCATOR_SEP}{end_offset}",
                 mtime=int(st.st_mtime), size=st.st_size,
-                extra={"title": title, "lang": lang})
+                extra={"title": title, "lang": lang, "page_id": page_id})
+
+    def _archive_ref(self, pending: dict, lang: str) -> DocRef:
+        """An archive article's ref: wikivec's own id, so the archive's
+        vectors attach to it one to one. Size is the article's ROW COUNT —
+        the change gate is (mtime, size), and a shard's size says nothing
+        about one article in it (the legacy plugin's lesson)."""
+        try:
+            page_id = int(pending["article"])
+        except (KeyError, ValueError):
+            return DocRef(source_id=self.source_id, native_id=str(pending.get("article")),
+                          locator=archive.join_segments(pending["segments"]),
+                          error=f"malformed article id {pending.get('article')!r}")
+        return DocRef(
+            source_id=self.source_id,
+            native_id=str(native_id_of(lang, page_id, archive=True)),
+            locator=archive.join_segments(pending["segments"]),
+            mtime=pending["mtime"], size=pending["rows"],
+            extra={"title": pending["title"], "lang": lang, "page_id": str(page_id),
+                   "source": "archive"})
+
+    def _fetch_archive(self, ref: DocRef) -> RawDoc:
+        """The article's rows, as the legacy plugin fetched them — the same
+        bytes, so the same `origin_hash`."""
+        rows: list[dict] = []
+        for path, start, end in archive.split_locator(ref.locator):
+            rows.extend(archive.read_rows(path, start, end))
+        data = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(),
+                      data=data)
+
+    def _parse_archive(self, raw: RawDoc, lang: str, page_id: int) -> CanonicalDoc:
+        """LAYER 1: the archive's own text in the archive's own cut — one
+        row, one section, each as its producer embedded it (`embed_input`)
+        — so `verbatim` makes exactly the chunks its vectors were computed
+        from. Everything the archive gives about the article is here: its
+        rows' id, url, title and text (the vectors enter by the archive
+        route)."""
+        rows = json.loads(raw.data.decode("utf-8"))
+        rows.sort(key=lambda r: archive.split_row_id(r["id"])[1])
+        return CanonicalDoc(
+            uid=f"{self.source_id}:{raw.ref.native_id}",
+            title=rows[0]["title"] if rows else "",
+            creators=[],
+            language=lang,
+            date=None,            # the archive carries no revision date
+            subjects=[],
+            keys=[],
+            extra={k: v for k, v in {
+                "page_id": str(page_id),
+                "wiki": f"{lang}wiki",
+                "source": "archive",
+                "archive": "upstash-wikipedia-2024-06",
+                "url": rows[0]["url"] if rows else "",
+            }.items() if v},
+            sections=[("", archive.embed_input(r["title"], r["text"])) for r in rows],
+            raw_hash=raw.raw_hash,
+        )
 
     def fetch(self, ref: DocRef) -> RawDoc:
         """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`
         is their hash — not the dump's bytes, which differ on every page
         (06 §6.4: how a unit is extracted is part of the parser). A
         verifier reproduces this serialisation to check a record."""
+        if archive.is_archive_locator(ref.locator):
+            return self._fetch_archive(ref)
         dump, start, end = split_locator(ref.locator)
         pages = _stream_pages(dump, start, end)
-        data = pages.get(ref.native_id)
+        data = pages.get(str(decode_native_id(int(ref.native_id))[1]))
         if data is None:
             raise RuntimeError(f"page {ref.native_id} not found in its stream "
                                 f"({ref.locator})")
@@ -286,6 +365,9 @@ class WikipediaSource:
         return RawDoc(ref=ref, raw_hash=digest, data=data)
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
+        lang_of_id, page_of_id, from_archive = decode_native_id(int(raw.ref.native_id))
+        if from_archive:
+            return self._parse_archive(raw, lang_of_id, page_of_id)
         page = ET.fromstring(raw.data.decode("utf-8"))
         title = page.findtext("title") or ""
         text = page.findtext("revision/text") or ""
@@ -294,7 +376,7 @@ class WikipediaSource:
         # (plugin_io.canonical_doc), so every page parsed there read "en" —
         # an itwiki page included (parser 3).
         dump_name = split_locator(raw.ref.locator)[0].name
-        lang = _lang_of(dump_name)
+        lang, page_id, _from_archive = decode_native_id(int(raw.ref.native_id))
         parsed: dict = {}
         rev = page.find("revision")
         stamp = (page.findtext("revision/timestamp") or "").strip()
@@ -336,6 +418,12 @@ class WikipediaSource:
                 # which encyclopedia: simplewiki and enwiki are both
                 # `language` "en", and they are not the same work
                 "wiki": dump_name.split("-")[0],
+                # the Wikipedia page id — the native id carries it inside the
+                # language's block now, and is no longer it (parser 4)
+                "page_id": str(page_id),
+                # which source this record was read from: the dump, or (layer
+                # 1) the pre-embedded archive — invariant 11's form, per record
+                "source": "dump",
                 "revision": (page.findtext("revision/id") or "").strip(),
                 "parent_revision": (page.findtext("revision/parentid") or "").strip(),
                 "revision_origin": (page.findtext("revision/origin") or "").strip(),

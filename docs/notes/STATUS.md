@@ -1596,6 +1596,18 @@ Normattiva collection exists until the operator creates one.
 on the staged tree 2,643 passed; web healthy, the worker on gutenberg
 parser 8, no error in its first minutes, still acquire-only.
 
+**Wikipedia: one collection, wikivec's languages, two layers** (the
+operator's plan, restated 2026-09-14 after I had narrowed it to "English,
+two sister collections" — wrong). Steps 1–2 built: language-bearing ids in
+wikivec's numbering (parser 4) and the plugin reading the archive's own
+text for the articles it covers and the dumps for the rest. The plan, the
+mapping onto the documents and what is next are in
+[`wikipedia-two-layers.md`](wikipedia-two-layers.md). The legacy
+wikipedia/wikivec stay parked in `config/collections-legacy/`, data
+untouched, until the collection exists; the `embedded` plugin stays until
+then. Boxing `genome` and `packed` (operator: "old plugins … in a box")
+is queued behind this.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —

@@ -32,6 +32,18 @@ DEFAULT_MEMBER_SEP = "#"
 
 
 def origin_locator(plugin, locator: str, base) -> str:
+    """09 §9.5's `origin` for `locator` (see `_origin_one`). A unit in
+    several PIECES — an archive article whose rows straddle two shards
+    (wikipedia's layer 1) — locates each piece in its own file, joined by
+    the plugin's `LOCATOR_SEGMENT_SEP`."""
+    seg = getattr(plugin, "LOCATOR_SEGMENT_SEP", None)
+    text = str(locator)
+    if seg and seg in text:
+        return seg.join(_origin_one(plugin, part, base) for part in text.split(seg))
+    return _origin_one(plugin, text, base)
+
+
+def _origin_one(plugin, locator: str, base) -> str:
     """09 §9.5's `origin` — "the locator of this record's own origin bytes".
 
     "their path relative to the origin base or their URL, and where the
@@ -72,6 +84,16 @@ def origin_locator(plugin, locator: str, base) -> str:
 
 
 def local_locator(plugin, origin: str, base) -> tuple[Path, str]:
+    """`origin_locator` read back, piece by piece where the unit has
+    several; the path returned is the first piece's file."""
+    seg = getattr(plugin, "LOCATOR_SEGMENT_SEP", None)
+    if seg and seg in origin:
+        pieces = [_local_one(plugin, part, base) for part in origin.split(seg)]
+        return pieces[0][0], seg.join(loc for _, loc in pieces)
+    return _local_one(plugin, origin, base)
+
+
+def _local_one(plugin, origin: str, base) -> tuple[Path, str]:
     """`(origin file under base, the plugin's locator)` — `origin_locator`
     read back: the relative path joined to `base`, and the member after
     §9.5's `#` in the plugin's own spelling again."""

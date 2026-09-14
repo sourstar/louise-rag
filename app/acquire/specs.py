@@ -104,7 +104,16 @@ PUBMED_SPEC = AcquisitionSpec(
     terms_text_path=Path(__file__).parent.parent / "plugins" / "pubmed" / "TERMS.txt",
 )
 
-WIKIS = ("simplewiki", "enwiki")
+#: wikivec's languages — the collection holds them all (operator,
+#: 2026-09-14) — one dump each. Bytes: the latest multistream dump plus its
+#: index, as dumps.wikimedia.org answered a HEAD on 2026-09-14.
+_WIKI_DUMP_BYTES: dict[str, int] = {
+    "en": 27_081_871_176, "de": 8_313_373_480, "fr": 7_313_571_295,
+    "ru": 6_251_105_573, "es": 5_430_508_793, "it": 4_480_650_780,
+    "ja": 4_884_253_000, "pt": 2_879_266_237, "zh": 3_625_051_601,
+    "fa": 1_590_148_993, "tr": 1_145_175_844,
+}
+WIKIS = tuple(f"{lang}wiki" for lang in _WIKI_DUMP_BYTES)
 _SNAPSHOT_RE = re.compile(r"^\d{8}$")
 
 
@@ -174,7 +183,7 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
     endpoints=(
         Endpoint(transport=Transport.HTTPS, url="https://dumps.wikimedia.org",
                  max_conns=2,   # dumps.wikimedia.org etiquette: max 2 connections
-                 static_files=_wiki_files("simplewiki") + _wiki_files("enwiki")),
+                 static_files=sum((_wiki_files(w) for w in WIKIS), ())),
     ),
     layout="container-files",
     filters=("*multistream.xml.bz2", "*multistream-index.txt.bz2"),
@@ -185,15 +194,19 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
     snapshot_files=_wikipedia_snapshot_files,
     snapshot_index=wikipedia_snapshots,
     profiles={
-        # profiles select WHICH wiki: Simple English is a real, useful,
-        # self-contained corpus at 1/70th of enwiki's size
-        "demo": Filter(include=("simplewiki/*",)),
-        "starter": Filter(include=("simplewiki/*",)),
-        "full": Filter(),                       # simplewiki + enwiki
+        # A LANGUAGE per profile, and they combine: the native id carries
+        # the language (wikipedia parser 4), so any set of wikis coexists —
+        # the pre-embedded corpus's own shape. simplewiki is not among them:
+        # it is not one of wikivec's languages, and it used to pass as "en"
+        # and share enwiki's page ids (the old collection held 19.4M
+        # documents mixed that way).
+        "demo": Filter(include=("trwiki/*",)),      # the smallest dump, 1.1 GB
+        **{lang: Filter(include=(f"{lang}wiki/*",)) for lang in _WIKI_DUMP_BYTES},
+        "all": Filter(),
     },
-    estimated_bytes={
-        "demo": 350_000_000, "starter": 350_000_000, "full": 23_000_000_000,
-    },
+    profile_mode="additive",
+    estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"], **_WIKI_DUMP_BYTES,
+                     "all": sum(_WIKI_DUMP_BYTES.values())},
     license_class=LicenseClass.YELLOW,          # CC BY-SA (§8)
     terms_text_path=Path(__file__).parent.parent / "plugins" / "wikipedia" / "TERMS.txt",
 )
