@@ -1560,6 +1560,12 @@ the manifest's `eli` block (§5.3 — a wire-format change, so ask first).
 Certified-compatible: the GU identities — the by-id permalink, codice
 redazionale, publication date and number — are in every record.
 
+**Deployed 2026-09-14 12:46 UTC** (1c3178e, image `b6fdb73…`): the node
+suite against the staged tree passed (2,627); web healthy, both
+containers list `normattiva` in the plugin registry, no error in the
+worker's first minutes, the node still acquire-only. The code only — no
+Normattiva collection exists until the operator creates one.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
