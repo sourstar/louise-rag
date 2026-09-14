@@ -1731,6 +1731,14 @@ the same sub-box, rows and badge. The Library now keys the sub-box on a
 of on the archive's kind, and a collection whose archive files are all
 on disk reads them all as fetched.
 
+**Deployed 2026-09-14 20:55 UTC** (8408115, image `d7e2c35…`): node suite
+on the staged tree 2,704 passed; one image for web and worker, each with
+`LOUISE_PLATFORM_IMAGE` = its running image; no error in either. The
+live web builds wikipedia's pre-embeddings as the sub-box: not
+stand-alone, 1,447 / 1,447 archive files fetched, badge done.
+Gutenberg's TOML still pins the placeholder Codex until the operator
+runs the swap.
+
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a
 plugin writes only ids whose namespace a reference source has registered —
