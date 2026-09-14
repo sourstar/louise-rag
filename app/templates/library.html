@@ -92,11 +92,11 @@
      pubmed's main box read as truncated without it) — named for what it
      is: pre-embedded when the vectors arrive via an archive. The sub-box
      below keeps only what is specific to the archive itself. #}
-  {# amendment 38: a REMOTE archive's main-box row is TOTAL coverage
-     (archive + local encoder) — 'embedded (dense)'; only a stand-alone
-     pre-embedded corpus (local archive: the corpus IS the vectors) keeps
-     the 'pre-embedded' name on its one and only dense row #}
-  {% set dense_label = 'pre-embedded (dense)' if c.genesis and c.genesis.local else 'embedded (dense)' %}
+  {# amendment 38: a collection with pre-embeddings shows TOTAL coverage
+     (archive + local encoder) as 'embedded (dense)' in its main box; only
+     a stand-alone pre-embedded collection (wikivec, whose card IS the
+     archive) keeps the 'pre-embedded' name on its one dense row #}
+  {% set dense_label = 'pre-embedded (dense)' if c.genesis and c.genesis.standalone else 'embedded (dense)' %}
   {# dense state: done -> green; an ARCHIVE collection's vectors are in
      the scheduling pool whenever the worker runs (import ignores the
      mode) -> turquoise; otherwise the mode speaks: off -> grey,
@@ -115,7 +115,7 @@
       {# backfill selects from the manifest directly and never touches the
          lazy queue, so the queue count is always 0 here and says nothing #}
       {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
-      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.local %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
+      {% elif c.genesis and c.genesis.declares_coverage and not c.genesis.standalone %}dense backfill: {{ c.embed_ready|num }} indexed document{{ '' if c.embed_ready == 1 else 's' }} without vectors
       {% else %}dense backfill: {{ c.embed_ready }} document{{ '' if c.embed_ready == 1 else 's' }} awaiting the encoder
       {% endif %}
     {% elif c.embed_mode == 'lazy' %}
@@ -142,13 +142,14 @@
     <span class="badge err">embedding paused</span> {{ c.gate.reason }}
   </div>
   {% endif %}
-  {% if c.genesis and not c.genesis.local %}
-  {# a COMBINED ("double") plugin: a remote vector archive beside the
-     corpus — a second dataset with its own fetching and pacing, so it
-     gets its own SUB-BOX (lighter green). It lives in the SAME embedding
-     space as the main box (what import admission verifies), so no space
-     badge is repeated here. A stand-alone pre-embedded collection
-     (wikivec) never gets one: its whole card IS the pre-embedded box. #}
+  {% if c.genesis and not c.genesis.standalone %}
+  {# a collection WITH PRE-EMBEDDINGS — pubmed and MedCPT, wikipedia and
+     Upstash — shows them in their own SUB-BOX (lighter green), the same
+     rows and the same badge on every card (operator, 2026-09-14). It
+     lives in the SAME embedding space as the main box (what import
+     admission verifies), so no space badge is repeated here. Only a
+     stand-alone pre-embedded collection (wikivec) never gets one: its
+     whole card IS the pre-embedded box. #}
   <div style="background:rgba(111,191,115,.06);border:1px solid rgba(111,191,115,.30);border-radius:6px;padding:8px 10px;margin-top:8px">
     <div>
       pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>

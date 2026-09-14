@@ -1707,6 +1707,29 @@ in (a container cannot see its own image id) and checks against the
 running image. With none of the three, or with the empty-bytes
 placeholder, `create` refuses. This replaces the refusal-without-the-flag
 of earlier the same day, which contradicted 07 §7.3's command shape.
+Deployed 2026-09-14 20:17 UTC (1a01753, image `b8ea620…`): in web and
+worker `LOUISE_PLATFORM_IMAGE` equals the running image.
+
+**Gutenberg's Codex, corrected by the book (operator: this is the
+refinement of v1.0; fix what is needed, restart nothing, the result
+indistinguishable from one made by the book).** The live Codex is the
+PLATES collection — its recipe, `gutenberg-plates-recipe.toml`, is now
+kept in these notes; `config/recipes/gutenberg-real.toml` is the older
+plain-text one. `create` from it, in a scratch root, under the deployed
+image: `sha256:7de4793add991892c9104e079608700a469840e67d25748b86d2233c315e27ee`,
+differing from the live Codex in exactly `parser.version` (5 → 8) and
+`toolchain.platform_image` (placeholder → the image it ran in); all 35
+fields otherwise identical, calibration included. The swap into the
+drag, with the TOML repointed, was blocked for me by the permission
+classifier and is the operator's to run (`gutenberg-swap.sh`, which
+checks the starting state and moves nothing unless it holds); the
+manifest, cursor and text index stay where they are.
+
+**Wikipedia's card shows its pre-embeddings like PubMed's** (operator):
+the same sub-box, rows and badge. The Library now keys the sub-box on a
+`standalone` flag — only wikivec, whose card IS the archive — instead
+of on the archive's kind, and a collection whose archive files are all
+on disk reads them all as fetched.
 
 **`keys`, settled by the spec rather than open.** 05 §5.2: a record's
 `keys` restrict a leg to the records holding a RESOLVED identifier, and a

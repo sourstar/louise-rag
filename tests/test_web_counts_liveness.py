@@ -282,10 +282,11 @@ def test_local_genesis_archive_reports_indexing_pacing(isolated_config):
 def test_genesis_badge_speaks_the_archive_fetch_state(isolated_config):
     """Operator color scheme for the archive badge: green when the archive
     data is fetched/done, orange while fetching is in progress, grey when
-    fetching is off/idle. Local archives read the card's own fetched state;
-    remote ones read the shard download state."""
+    fetching is off/idle. A STAND-ALONE pre-embedded collection (wikivec,
+    the `embedded` plugin: its card IS the archive) reads the card's own
+    fetched state; a remote archive reads the shard download state."""
     from dataclasses import replace
-    local = replace(collections_mod.default_collection(),
+    local = replace(collections_mod.default_collection(), plugin="embedded",
                     genesis_archive="upstash-wikipedia-2024-06")
     con = db.connect(local)
 
@@ -336,14 +337,14 @@ def _render_library(shelf):
 
 
 def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
-    """Only a COMBINED plugin — a remote vector archive beside a corpus
-    (pubmed) — gets the sub-box, and it holds ONLY what is specific to the
-    archive (its fetched (vectors) meter and the waiting note). The dense
-    row and the gap-fill knob live in the MAIN box on every card (operator:
-    pubmed's main box read as truncated without them), named pre-embedded
-    (dense) when the vectors arrive via an archive. No repeated space
-    badge, no duplicate indexing numbers. A stand-alone pre-embedded
-    collection (wikivec, local archive) stays ONE box; a plain collection
+    """Every collection WITH PRE-EMBEDDINGS — pubmed and MedCPT, wikipedia
+    and Upstash (operator, 2026-09-14) — gets the sub-box, and it holds
+    ONLY what is specific to the archive (its fetched (vectors) meter and
+    the waiting note). The dense row and the gap-fill knob live in the MAIN
+    box on every card (operator: pubmed's main box read as truncated
+    without them). No repeated space badge, no duplicate indexing numbers.
+    Only a stand-alone pre-embedded collection (wikivec, the `embedded`
+    plugin: its card IS the archive) stays ONE box; a plain collection
     keeps embedded (dense)."""
     from dataclasses import replace
     c = replace(collections_mod.default_collection(),
@@ -384,7 +385,14 @@ def test_library_card_renders_the_pre_embedded_subbox(isolated_config):
     row = html_cold.split(">pre-embedded (dense)</span>", 1)[1].split("</div>", 1)[0]
     assert "counting…" in row and "12 / " not in row and "12 / 0<" not in html_cold
 
-    standalone = replace(collections_mod.default_collection(),
+    wikipedia = replace(collections_mod.default_collection(), plugin="wikipedia",
+                        genesis_archive="upstash-wikipedia-2024-06")
+    html_wiki = _render_library(web._collection_shelf(wikipedia, {}))
+    assert "fetched (vectors)" in html_wiki and "pre-embedded data:" in html_wiki, \
+        "wikipedia shows its pre-embeddings in pubmed's sub-box"
+    assert html_wiki.count(">embedded (dense)</span>") == 1
+
+    standalone = replace(collections_mod.default_collection(), plugin="embedded",
                          genesis_archive="upstash-wikipedia-2024-06")
     html_local = _render_library(web._collection_shelf(standalone, {}))
     assert "fetched (vectors)" not in html_local, \

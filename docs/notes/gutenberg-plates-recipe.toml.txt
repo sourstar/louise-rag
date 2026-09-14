@@ -1,0 +1,161 @@
+# Project Gutenberg — the real collection. Step 8.
+#
+# `create` mints a PERMANENT collection_id and space_id from these bytes.
+# Every digest was read from the node on 2026-09-10, not copied:
+#   encoder.image    docker inspect ghcr.io/ggml-org/llama.cpp:server-intel-b10603
+#                    — the APPROVED row of docs/notes/approved-encoders.md
+#   encoder.weights  sha256sum of the GGUF the container actually serves
+#   dim / ctx / pooling  the endpoint's own answer and the container's
+#                    command line (-c 8192 --pooling last)
+#
+# The space block is byte-identical to the step-6 proof's, so the
+# throwaway and this collection land in ONE space and the round trip
+# proved on 22 books is the round trip this collection runs.
+
+# THE CLEANING CHANGED, so its version moves (invariant 3: "any change to
+# chunking or cleaning bumps the version of the thing that changed,
+# explicitly"). `pg_epub.read_clean` reflows an epub's paragraphs;
+# `pg_text.read_clean` preserves the .txt's hard wrap at ~70 characters.
+# Measured on the node 2026-09-11: 0 of 60 books holding both forms
+# produced an identical content_hash, and 6 of 1,228 chunks hashed the
+# same — 0.5%.
+#
+# `cleaning_version` is inside `space_id`, which is the point. Leaving it
+# at 1 would put this collection in the SAME space as the plain-text one
+# while the two produce different text for the same book, and a vector
+# admitted across that boundary would be a vector of text the record does
+# not contain. Nothing would detect it: both halves compute their ids
+# honestly. One integer prevents it.
+#
+# AT THE TOP, and deliberately: in TOML a bare key belongs to the table
+# above it, so these written after a [table] header would land inside it.
+# `hold collection create` refuses that rather than accepting a layer with
+# a `cleaning_version` in it — which is how this file was caught once.
+cleaning_version = 2
+
+# 09 §9.5's record line WITH the `figures` key. The plates are named in
+# the record by hash and carried under `figures/<slice>/`; their CAPTIONS
+# stay in `sections` and stay indexed, so `content_hash` never covers a
+# figure.
+record_line = 2
+
+[descriptive]
+title = "Project Gutenberg"
+summary = "The public-domain books of Project Gutenberg with their plates, read from the epub where one is published, sliced by language."
+
+[space]
+dim = 2560
+dtype = "f16"
+ctx = 8192
+pooling = "last"
+normalise = true
+# Measured, not assumed. b10603 against b10450 on this Arc: cosine min
+# 1.000000 over 16 texts. b10603 Arc against b10603 Vulkan on another
+# machine: min 0.999599. This endpoint's own self-consistency over 16
+# calibration texts of 222–32,768 characters, 2026-09-10: min 1.000000.
+# 0.95 is what every worked example in the documents uses and the
+# measurements sit far inside it. The second-endpoint cross-check that
+# would tighten it is DELIBERATE-skipped — one Arc fits one model server
+# (docs/notes/step6-preflight.md item 5).
+tolerance = "0.95"
+epoch = "0"
+evaluation = ""
+
+[space.encoder]
+image = "sha256:33927f8a9af7657469e5b3a65027a1b2d0419f185385cc82f7be59790590a74d"
+weights = "sha256:2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b"
+label = "Qwen3-Embedding-4B-Q4_K_M"
+
+[space.query.encoder]
+image = "sha256:33927f8a9af7657469e5b3a65027a1b2d0419f185385cc82f7be59790590a74d"
+weights = "sha256:2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b"
+
+[space.calibration]
+set = "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+
+[space.calibration.quorum]
+n = 16
+min_pass = 12
+
+# The ONGOING work per period, not the corpus (09 §9.3: "tokens of the
+# encoder's tokenizer per `per`"). Derived from step 6's measurement —
+# 1,503,457 tokens over 22 books is 68,339 tokens/book — at the few
+# hundred books a month Project Gutenberg actually adds.
+[work]
+tokens = 20000000
+per = "P1M"
+
+# 09 §9.17's identifying half of the acquisition spec, from
+# app/acquire/specs.py::GUTENBERG_SPEC — the real one.
+[origin]
+form = "the epub where the origin publishes one, because the plates are only there and nowhere else; the plain text where it does not; the catalogue record where neither exists. One rule, applied in that order, so a verifier reaching for the same book directory reaches the same form"
+unit = "file"
+clock = "UTC"
+cutoff_rule = "record-date"
+
+[origin.spec]
+source_id = "gutenberg"
+transport = "rsync"
+url = "ftp.ibiblio.org::gutenberg-epub"
+layout = "one-dir-per-doc"
+listing = "directory"
+filters = ["*.txt*", "*.rdf", "*.epub", "!*mbt-*", "!*.mobi", "!*.kf8*"]
+
+[origin.spec.checksums]
+kind = "none"
+suffix = ""
+algo = ""
+
+[origin.spec.delta]
+mode = "full-resync"
+
+# 03 §3.2's default fraction, "always at least one shard". The proof used
+# "1" because it had one shard; at 77,866 books that would sample
+# everything, which is a different check.
+[validation]
+checks = ["roots", "records", "chunks", "records-vs-origin", "figures", "license", "signature", "calibration", "vectors-sample"]
+required = []
+
+[validation.sample.records]
+shards = "0.05"
+
+[validation.sample.chunks]
+shards = "0.05"
+
+[validation.sample."vectors-sample"]
+shards = "0.05"
+
+[validation.sample."records-vs-origin"]
+shards = "0.05"
+
+# THE PLATES ARE THE POINT OF THIS COLLECTION, so they are checked. The
+# figure hash on the record line is the only thing that ever re-hashes a
+# plate, and `validation` is inside `collection_id` — before the id exists
+# is the only moment this can be added. `hold collection create` refuses a
+# `record_line` 2 recipe that omits it.
+[validation.sample.figures]
+shards = "0.05"
+
+# THE LAYER, DECLARED EXPLICITLY — preflight item 2, and the reason it is
+# item 2. The gutenberg plugin declares `chunking_profile = "book"`, and
+# `book` is NOT one of 06 §6.3's four chunkers (`fixed`, `cdc`,
+# `abstract`, `verbatim`); it is a grandfathered name kept so nothing
+# already pinned moves. A recipe that omits `layers` inherits it — and
+# 03 §3.5 gates T1's overlap-band check on `fixed` layers, so a Gutenberg
+# collection whose layer says `book` is NEVER T1-checked by anyone, for
+# the life of the collection. `layers` is inside `collection_id`, so that
+# cannot be corrected later; it can only be replaced.
+#
+# `fixed{tokens: 1000, overlap: 120}` at version 1 cuts BYTE-IDENTICALLY
+# to `book` at this node's live settings (CHUNK_TOKENS=1000,
+# CHUNK_OVERLAP=120, CHUNK_VERSION=1, read from the worker 2026-09-10)
+# and produces the same chunk ids — so declaring it costs nothing and
+# buys T1 forever.
+[[layers]]
+rule = "default"
+
+[layers.chunker]
+id = "fixed"
+version = 1
+params = { tokens = 1000, overlap = 120 }
+

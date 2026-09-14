@@ -1389,6 +1389,11 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         return None
     from .bundles.genesis import ARCHIVES, _local_shards
     archive = ARCHIVES.get(collection.genesis_archive)
+    # STAND-ALONE: a collection whose card IS the archive (wikivec, the
+    # `embedded` plugin). Every other collection with pre-embeddings —
+    # pubmed and MedCPT, wikipedia and Upstash — shows them in the same
+    # sub-box with the same rows (operator, 2026-09-14).
+    standalone = bool(archive and archive.local and collection.plugin == "embedded")
     totals = con.execute(
         "SELECT COUNT(*) shards, SUM(state IN ('applied','final')) applied, "
         "SUM(state='final') final, SUM(docs) docs, "
@@ -1431,13 +1436,17 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     # card's own fetched state; for a remote one it is the shard download:
     # all applied = done, a shard mid-apply = active, otherwise idle.
     applied = totals["applied"] or 0
-    if archive is not None and archive.local:
+    if standalone:
         if fetched and fetched.get("complete"):
             fetch_state = "done"
         elif fetched and fetched.get("active"):
             fetch_state = "active"
         else:
             fetch_state = "idle"
+    elif archive is not None and archive.local:
+        # pre-embeddings whose files are all on disk: every one counts as
+        # fetched, the way a remote archive's landed files do
+        fetch_state = "done" if shard_total else "idle"
     else:
         # amendment 38: the archive is a second acquisition stream — its
         # fetch meter is shards LANDED (fetched, applying, applied, final)
@@ -1474,10 +1483,12 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "archive": collection.genesis_archive,
         "known": archive is not None,
         "local": bool(archive and archive.local),
+        "standalone": standalone,
         "shard_total": shard_total,
         "applied": applied,
         "final": totals["final"] or 0,
-        "fetched": totals["fetched"] or 0,
+        "fetched": (shard_total if archive is not None and archive.local and not standalone
+                    else totals["fetched"] or 0),
         "resident_bytes": totals["resident_bytes"] or 0,
         "pending": totals["pending"] or 0,
         "docs": totals["docs"] or 0,
