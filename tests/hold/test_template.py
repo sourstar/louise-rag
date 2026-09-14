@@ -105,7 +105,10 @@ def test_layers_come_from_the_plugins_own_cut():
     assert len(layers) == 1
     assert layers[0].rule == "default"
     assert layers[0].chunker.id == "abstract"
-    assert template.default_layers(template.source_for("wikipedia"))[0].chunker.id == "cdc"
+    # a plugin that DECLARES its layers is taken at its word: wikipedia's two
+    # (the archive's verbatim cut, then cdc for the dump's pages)
+    assert [l.chunker.id for l in template.default_layers(template.source_for("wikipedia"))] \
+        == ["verbatim", "cdc"]
     assert template.default_layers(template.source_for("gutenberg"))[0].chunker.id == "book"
 
 
@@ -311,7 +314,10 @@ def test_medcpts_coverage_is_its_declared_id_ranges():
     from app.bundles.genesis import ARCHIVES
     assert ARCHIVES["medcpt-pubmed"].coverage() == \
         {"ids_per_shard": 1_000_000, "shards": 37}
-    assert ARCHIVES["upstash-wikipedia-2024-06"].coverage() == "all"
+    # its language blocks since wikipedia's two layers: "all" would have put
+    # every document of the collection in layer 1
+    assert ARCHIVES["upstash-wikipedia-2024-06"].coverage() == \
+        {"ids_per_shard": 10 ** 10, "shards": 11}
 
 
 def test_an_archive_that_signs_nothing_is_credited_like_any_other():

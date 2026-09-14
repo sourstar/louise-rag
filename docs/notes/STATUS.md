@@ -1598,9 +1598,11 @@ parser 8, no error in its first minutes, still acquire-only.
 
 **Wikipedia: one collection, wikivec's languages, two layers** (the
 operator's plan, restated 2026-09-14 after I had narrowed it to "English,
-two sister collections" — wrong). Steps 1–2 built: language-bearing ids in
-wikivec's numbering (parser 4) and the plugin reading the archive's own
-text for the articles it covers and the dumps for the rest. The plan, the
+two sister collections" — wrong). Steps 1–3 built: language-bearing ids in
+wikivec's numbering (parser 4), the plugin reading the archive's own text
+for the articles it covers and the dumps for the rest, and genesis
+importing layer 1's vectors under the collection's ids while the local
+encoder keeps off what the archive supplies. The plan, the
 mapping onto the documents and what is next are in
 [`wikipedia-two-layers.md`](wikipedia-two-layers.md). The legacy
 wikipedia/wikivec stay parked in `config/collections-legacy/`, data

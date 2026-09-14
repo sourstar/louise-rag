@@ -111,7 +111,9 @@ def test_no_declared_range_leaves_the_scan_and_the_row_as_they_were(isolated_con
         shards=("0", "1"), uid_prefix="pubmed:"))
     remote = replace(plain, genesis_archive="undeclared")
     local = replace(plain, genesis_archive="upstash-wikipedia-2024-06")
-    for c in (plain, local, remote):
+    # the local archive declares its language blocks (wikipedia's layer 1)
+    assert web._archive_spans(local) == [(0, 11 * 10 ** 10 - 1)]
+    for c in (plain, remote):
         assert web._archive_spans(c) == []
         assert web._document_counts_sql(web._archive_spans(c))[0] == base_sql
         assert not any(k.startswith("arch_") for k in web._document_counts_query(c))
@@ -286,7 +288,7 @@ def test_the_card_the_worker_and_health_share_one_range(pubmed):
     assert worker._covered_ranges(con, pubmed) \
         == genesis.declared_spans(genesis.MEDCPT_PUBMED, exclude={"3"}) \
         == [(0, 2_999_999), (4_000_000, HI)]
-    assert genesis.declared_spans(genesis.UPSTASH_WIKIPEDIA) == []
+    assert genesis.declared_spans(genesis.UPSTASH_WIKIPEDIA) == [(0, 11 * 10 ** 10 - 1)]
     sql, params = genesis.in_spans_sql([(0, 9), (20, 29)])
     assert sql == ("(CAST(native_id AS INTEGER) BETWEEN ? AND ? OR "
                    "CAST(native_id AS INTEGER) BETWEEN ? AND ?)")

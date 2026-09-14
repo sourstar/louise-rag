@@ -703,12 +703,19 @@ def _covered_ranges(con, collection) -> list[tuple[int, int]]:
     if collection is None or not collection.genesis_archive:
         return []
     archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive)
-    if archive is None or archive.local or not archive.ids_per_shard:
+    if archive is None or not archive.ids_per_shard:
         return []
     rows = con.execute("SELECT shard, state, proven_at, docs FROM genesis_imports "
                        "WHERE archive=?", (archive.archive_id,)).fetchall()
     if bundle_genesis.archive_stopped(rows):
         return []           # nothing proven, something rejected: not this function
+    if archive.local:
+        # A LOCAL archive (wikipedia's layer 1): its shards are FILES and
+        # never go final, so its declared range stays the archive's, and
+        # what a read cannot cover — a straddler, a rejected file's
+        # documents, text that would not load — reaches the encoder by uid
+        # (`_backfill_rows`, `genesis.residual_uids`)
+        return bundle_genesis.declared_spans(archive)
     # a final shard delivered all it can; a rejected one (under a proven
     # archive) never will — both release their range to the encoder
     done = {r["shard"] for r in rows if r["state"] in ("final", "rejected")}
@@ -730,6 +737,11 @@ def _backfill_rows(con, collection, limit: int) -> list:
         lambda start, n: con.execute(_BACKFILL_SQL.format(covered=covered),
                                      (config.MAX_RETRIES, start, *params, n)).fetchall(),
         limit)
+    if ranges and len(rows) < limit:
+        archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
+        if archive is not None and archive.local:
+            rows += _residual_rows(con, collection, limit - len(rows),
+                                   {r["uid"] for r in rows})
     if len(rows) < limit:
         rows += _cursor_page(
             con, key, "ver", bool(ranges),
@@ -737,6 +749,28 @@ def _backfill_rows(con, collection, limit: int) -> list:
                                                         start, n)).fetchall(),
             limit - len(rows))
     return rows
+
+
+#: a LOCAL archive's residuals, by primary key: bounded by the residual set
+#: (a straddler per shard boundary, the odd unloadable text), never a walk
+_RESIDUAL_SQL = ("SELECT rowid AS rid, * FROM documents WHERE uid IN ({marks}) "
+                 "AND in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
+                 "AND error IS NULL AND retries<?")
+
+
+def _residual_rows(con, collection, limit: int, seen: set) -> list:
+    """The documents inside a local archive's declared range that its reads
+    could not cover (`genesis.residual_uids`) — the only ones there the
+    local encoder may embed (amendment 11)."""
+    uids = [u for u in bundle_genesis.residual_uids(collection) if u not in seen]
+    out: list = []
+    for i in range(0, len(uids), 500):
+        part = uids[i:i + 500]
+        out += con.execute(_RESIDUAL_SQL.format(marks=",".join("?" * len(part))),
+                           (*part, config.MAX_RETRIES)).fetchall()
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def _cursor_page(con, key: str, kind: str, use_cursor: bool, query, limit: int) -> list:

@@ -94,6 +94,14 @@ def queries(names) -> bool:
              (1_000_000, 1_999_999)),
             ("local-archive candidates page", genesis._CANDIDATES_PAGE_SQL, (-1, 2048)),
         ]
+        # the encoder's backfill with the archive's range held back — the
+        # worker's own predicate, from the cursor's cold start (-1)
+        ranges = worker._covered_ranges(con, col)
+        if ranges:
+            spans_sql, span_params = genesis.in_spans_sql(ranges)
+            checks.append(("embed backfill (archive range held)",
+                           worker._BACKFILL_SQL.format(covered="AND NOT " + spans_sql),
+                           (config.MAX_RETRIES, -1, *span_params, 64)))
         if anchor is not None:
             checks.append(("prefetch probe (rdf)", worker._RDF_AHEAD,
                            (anchor[0], config.MAX_RETRIES, 40_000)))
@@ -128,7 +136,9 @@ def phases(name: str) -> None:
     t0 = time.perf_counter()
     rows_iter, _files = genesis._ADAPTERS[archive.adapter](
         Path(cache_dir) if archive.local else cache_dir, shard,
-        genesis._not_on_disk, archive.uid_prefix, col, wanted=None)
+        genesis._not_on_disk,
+        f"{col.plugin}:" if archive.local else archive.uid_prefix,   # as import_shard
+        col, wanted=None)
     t_open = time.perf_counter() - t0
     t0 = time.perf_counter()
     n_docs = n_vecs = 0

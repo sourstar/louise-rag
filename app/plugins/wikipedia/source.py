@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from ... import chunking
 from .. import cursor
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
@@ -205,6 +206,19 @@ class WikipediaSource:
     native_id_order = "numeric"          # page_id, issued ascending
     default_facets = [
         {"field": "lang", "kind": "flat", "separator": None, "authority": None},
+    ]
+    #: ONE collection, two layers (docs/notes/wikipedia-two-layers.md, 06
+    #: §6.3): the archive's articles in the archive's own cut, so its
+    #: vectors attach one to one; every dump-read page by content-defined
+    #: chunks. Which is which is the archive's coverage in the Codex, over
+    #: the id. Versions are the chunkers' own, never literals here.
+    default_layers = [
+        {"chunker": {"id": chunking.VERBATIM,
+                     "version": chunking.chunk_version_for(chunking.VERBATIM), "params": {}},
+         "rule": "archive:upstash-wikipedia-2024-06"},
+        {"chunker": {"id": chunking.CDC,
+                     "version": chunking.chunk_version_for(chunking.CDC), "params": {}},
+         "rule": "default"},
     ]
 
     def discover(self, state: DiscoverState):

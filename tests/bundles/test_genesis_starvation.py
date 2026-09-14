@@ -17,8 +17,9 @@ The contract pinned here, which every later rework of this path must keep:
 2. A document the archive cannot cover never buys a read on its account.
    A shard-boundary straddler (vectors split across two files, so the
    chunk-shape gate refuses it from either side) is known from its
-   two-segment locator and is skipped a priori — no read, no state, and
-   nothing to forget on restart. A candidate whose chunk text will not load
+   two-segment locator and is skipped a priori — no read, and nothing a
+   restart can turn into one: the walk releases it to the local encoder
+   again from its locator alone. A candidate whose chunk text will not load
    costs one read and is then RESIDUAL for its shard. Either way genesis
    yields the round so the local encoder may gap-fill — and a NEW candidate
    in that shard reopens it.

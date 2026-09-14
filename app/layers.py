@@ -19,8 +19,9 @@ TOML:
 Rules:
     default            every document (must be the last layer)
     archive:<id>       documents the named genesis archive declares it can
-                       cover (a remote archive with declared id ranges); a
-                       local archive (the corpus IS the archive) covers all
+                       cover (its declared id ranges — wikipedia's local
+                       archive declares its language blocks); an archive
+                       that declares no range covers all
     field:<name>=<value>  documents whose record field — a top-level field,
                        or `extra.<key>` — has that value (06 §6.3)
 """
@@ -259,8 +260,10 @@ def _rule_matches(rule: str, collection, native_id: int, row=None) -> bool:
         archive = ARCHIVES.get(archive_id)
         if archive is None:
             return False
-        if archive.local or not archive.ids_per_shard:
-            return True             # the corpus IS the archive: it covers all
+        if not archive.ids_per_shard:
+            return True             # it declares no range: it covers all
+        # a declared range, local archives included since wikipedia's two
+        # layers: the legacy wikivec's ids all fall inside it
         return archive.shard_of_id(int(native_id)) is not None
     if rule.startswith("field:"):
         # 06 §6.3: "the documents whose record field (a top-level field, or

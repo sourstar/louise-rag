@@ -197,7 +197,20 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     archive_id="upstash-wikipedia-2024-06",
     base_url="https://huggingface.co/datasets/Upstash/wikipedia-2024-06-bge-m3",
     adapter="corpus-embedded",
-    shards=(),
+    # ITS DECLARED COVERAGE, by language block (docs/notes/wikipedia-two-
+    # layers.md). The archive's articles are numbered ordinal × 10^10 + page
+    # id (the frozen table, app/plugins/wikipedia/ids.py), so block i is
+    # language i and the eleven are exactly its ids. For a LOCAL archive
+    # `shards` names these blocks, not its files — those are found on disk
+    # (`_local_shards`). The Codex's credit carries it and 06 §6.3's
+    # `archive:` rule reads it: wikipedia's layer 1 is these ids and never
+    # a dump-read page (numbered from 10^12). It was "all", which would have
+    # put every document of the collection in layer 1.
+    shards=tuple(str(i) for i in range(11)),
+    ids_per_shard=10 ** 10,
+    # Not what a local archive's uids carry: those are the COLLECTION's
+    # (`import_shard`) — `embedded:` for the legacy wikivec, `wikipedia:`
+    # for wikipedia's layer 1, over the same numbers.
     uid_prefix="embedded:",
     local=True,
     producer="Upstash",
@@ -317,11 +330,12 @@ def merge_spans(spans) -> list[tuple[int, int]]:
 def declared_spans(archive: "GenesisArchive | None",
                    exclude=()) -> list[tuple[int, int]]:
     """The merged id spans the archive DECLARES (amendment 38), less the
-    shards in `exclude`. [] for a local archive or one that declares no
-    coverage: whatever is held, nothing says where the archive ends. One
-    answer for the worker's covered ranges, the health report and the
-    Library card, so the three cannot disagree about where the range is."""
-    if archive is None or archive.local or not archive.ids_per_shard:
+    shards in `exclude`. [] for one that declares no coverage: whatever is
+    held, nothing says where the archive ends. A LOCAL archive declares one
+    too since wikipedia's two layers — its language blocks. One answer for
+    the worker's covered ranges, the health report and the Library card, so
+    the three cannot disagree about where the range is."""
+    if archive is None or not archive.ids_per_shard:
         return []
     return merge_spans(rng for s in archive.shards if s not in exclude
                        for rng in (archive.id_range_of(s),) if rng)
@@ -408,6 +422,29 @@ def reset_revisit_state() -> None:
         _residual.clear()
 
 
+#: the residual key of what a local archive's candidate walk RELEASES
+#: without a read — straddlers (known from their locators) and the
+#: documents of a rejected shard: the local encoder's (amendment 11)
+_RELEASED = "(released)"
+
+
+def _add_residual(collection, shard: str, uids) -> None:
+    key = (str(collection.manifest_path), shard)
+    with _residual_lock:
+        _residual[key] = _residual.get(key, frozenset()) | frozenset(uids)
+
+
+def residual_uids(collection) -> list[str]:
+    """Every document this process found a LOCAL archive cannot cover for
+    this collection — straddlers, text that would not load, stale samples.
+    They are the local encoder's (amendment 11): the archive's declared
+    range keeps the encoder off everything else (worker._backfill_rows)."""
+    key = str(collection.manifest_path)
+    with _residual_lock:
+        return sorted({u for (k, _shard), uids in _residual.items() if k == key
+                       for u in uids})
+
+
 @dataclass
 class ShardDemand:
     """What one on-disk shard is being waited on for: the embed-eligible
@@ -425,12 +462,14 @@ def _shard_of_locator(root: Path, locator: str, split_locator) -> str | None:
     - a STRADDLER (two segments: the article's rows span a shard boundary)
       — each shard is read independently and yields a partial vector list,
       so the chunk-shape gate refuses it from either side. Known from the
-      locator alone, so it costs no read, ever, and no state: the residual
-      record is process-local and would otherwise buy one re-read per
-      straddler shard after every restart — ~one per shard, an hour of
-      reads on a 471-shard language once fts has passed them all. The local
-      encoder gap-fills straddlers (amendment 11); a future adapter that
+      locator alone, so it costs no read, ever: a residual found BY a read
+      is process-local and would otherwise buy one re-read per straddler
+      shard after every restart — ~one per shard, an hour of reads on a
+      471-shard language once fts has passed them all. The walk RELEASES
+      it instead (`_RELEASED`, rebuilt by the next walk at no cost), and
+      the local encoder gap-fills it (amendment 11); a future adapter that
       reads both segments would lift this.
+    - a DUMP page (wikipedia's layer 2): no archive shard at all.
     - a locator outside the corpus root (a moved corpus, before discovery
       repairs it) names no readable shard."""
     try:
@@ -438,9 +477,23 @@ def _shard_of_locator(root: Path, locator: str, split_locator) -> str | None:
         if len(segments) != 1:
             return None
         path, _start, _end = segments[0]
+        if not str(path).endswith(".parquet"):
+            # the collection's corpus holds both sources, and a dump's
+            # bz2 stream is no archive shard
+            return None
         return Path(path).relative_to(root).as_posix()
     except (ValueError, IndexError):
         return None
+
+
+def _straddles(locator: str, split_locator) -> bool:
+    """An archive locator of two or more segments: the article's rows span
+    a shard boundary, so no single read can cover it."""
+    try:
+        segments = split_locator(locator)
+    except (ValueError, IndexError):
+        return False
+    return len(segments) > 1 and str(segments[0][0]).endswith(".parquet")
 
 
 def _candidate_shards(con, collection) -> list[ShardDemand]:
@@ -448,9 +501,17 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
     embed-eligible and not yet covered, found from the candidates' own
     locators — never by sweeping the shard list — in candidate index
     order. Empty when there is nothing the archive could do this round."""
-    from ..plugins.embedded.source import split_locator   # format v1 locators
+    from ..plugins.wikipedia.archive import split_locator   # format v1 locators
     root = collection.corpus_dir
     demand: dict[str, ShardDemand] = {}
+    # A REJECTED shard is never re-read (`genesis retry` puts it back): its
+    # documents are the local encoder's, and only its — the archive's
+    # declared range stays the archive's everywhere else (worker.
+    # _covered_ranges). ≤ one row per shard read, on a primary-key prefix.
+    rejected = {r["shard"] for r in con.execute(
+        "SELECT shard FROM genesis_imports WHERE archive=? AND state='rejected'",
+        (collection.genesis_archive or "",))}
+    released: list[str] = []
     last_rowid, scanned = -1, 0
     while scanned < _CANDIDATE_SCAN_CAP:
         page = con.execute(_CANDIDATES_PAGE_SQL,
@@ -459,7 +520,14 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
             break
         for r in page:
             shard = _shard_of_locator(root, r["path"], split_locator)
-            if shard is None or r["uid"] in _residual_of(collection, shard):
+            if shard is None:
+                if _straddles(r["path"], split_locator):
+                    released.append(r["uid"])
+                continue
+            if shard in rejected:
+                released.append(r["uid"])
+                continue
+            if r["uid"] in _residual_of(collection, shard):
                 continue
             d = demand.get(shard)
             ts = int(r["updated_at"] or 0)
@@ -471,6 +539,8 @@ def _candidate_shards(con, collection) -> list[ShardDemand]:
                 d.oldest = min(d.oldest, ts)
         last_rowid = page[-1]["rowid"]
         scanned += len(page)
+    if released:
+        _add_residual(collection, _RELEASED, released)
     return list(demand.values())
 
 
@@ -839,7 +909,8 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
     437 MB shard to import those 1,000 documents (~20 % of each batch's
     wall time)."""
     import pyarrow.parquet as pq
-    from ..plugins.embedded.source import LANG_ORDINAL, encode_native_id, split_locator, split_row_id
+    from ..plugins.wikipedia.archive import split_locator, split_row_id
+    from ..plugins.wikipedia.ids import LANG_ORDINAL, native_id_of
     path = collection.corpus_dir / shard
     if not path.is_file():
         raise GenesisUnavailable(f"corpus shard missing: {path}")
@@ -877,13 +948,13 @@ def _read_corpus_embedded_shard(cache_dir: Path, shard: str,
                 article, _seq = split_row_id(rid)
                 if article != current:
                     if current is not None:
-                        uid = f"{uid_prefix}{encode_native_id(lang, int(current))}"
+                        uid = f"{uid_prefix}{native_id_of(lang, int(current), archive=True)}"
                         if want is None or uid in want:
                             yield uid, vecs
                     current, vecs = article, []
                 vecs.append(np.asarray(vec, dtype=np.float32))
         if current is not None:
-            uid = f"{uid_prefix}{encode_native_id(lang, int(current))}"
+            uid = f"{uid_prefix}{native_id_of(lang, int(current), archive=True)}"
             if want is None or uid in want:
                 yield uid, vecs
     return rows(), [path]
@@ -1058,8 +1129,12 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     if wanted is None and revisit and not archive.local and archive.id_range_of(shard):
         lo, hi = archive.id_range_of(shard)
         wanted = {r["uid"]: None for r in con.execute(eligible_in_range_sql(con), (lo, hi))}
+    # A LOCAL archive's rows become the COLLECTION's documents, and a uid is
+    # `<plugin>:<native_id>` (02 §2.3): `embedded:` for the legacy wikivec,
+    # `wikipedia:` for wikipedia's layer 1 — one archive, the same ids.
+    uid_prefix = f"{collection.plugin}:" if archive.local else archive.uid_prefix
     rows_iter, files = _ADAPTERS[archive.adapter](cache_dir, shard, fetch,
-                                                    archive.uid_prefix, collection,
+                                                    uid_prefix, collection,
                                                     wanted=wanted)
     # the fetcher digested a remote shard when it landed (3 GB, ~10 s);
     # a revisit pass on the embed thread must not pay that again

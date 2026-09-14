@@ -67,14 +67,26 @@ from. That note's three reasons do not apply to this shape.
   archive's reading moved from `embedded` into `wikipedia/archive.py`
   (`embedded` imports it back until wikivec is migrated), and a record's
   `origin` locates both shards of an article that straddles two.
+* 2026-09-14, step 3: the archive route. The Upstash entry declares its
+  eleven language blocks (`{ids_per_shard: 10^10, shards: 11}`; it said
+  "all", which would have put every document in layer 1), and 06 §6.3's
+  `archive:` rule reads it — from the Codex's credit, or from the registry
+  before a Codex exists. Its vectors land under the collection's ids
+  (`wikipedia:`; the legacy wikivec keeps `embedded:` over the same
+  numbers). The candidate walk takes archive shards only, so a dump page
+  is never read as one. Under "all" the local encoder holds off the
+  archive's declared range except for what no read covers: straddlers, a
+  rejected shard's documents, text that would not load. A rejected shard
+  is not re-read. The plugin declares the two layers (`verbatim` by the
+  archive rule, `cdc` by default). Measured on the node's wikivec manifest
+  (22.0M documents, 4.23M eligible and not embedded): the encoder's
+  backfill with the range held is an index search, 2.05 s from a cold
+  cursor and at most once per 120 s cursor lifetime (a local import never
+  resets it); the candidate walk at its cap costs 0.21 s. The first cost
+  follows the archive's import backlog, not the corpus.
 
 ## Next
 
-* Step 3, the archive route: the Upstash entry's `coverage` becomes
-  `{ids_per_shard: 10^10, shards: 11}` (today "all", which would put every
-  document in layer 1), its vectors land under `wikipedia:` ids (the
-  collection's plugin, not the registry's `embedded:`), and the candidate
-  walk skips dump locators instead of reading a bz2 as a parquet shard.
 * The recipe (two layers, bge-m3) and the corpus layout on the node: the
   archive's `data/` and the dumps under one corpus directory.
 * A page the archive covers must be known BEFORE the first scan: the
