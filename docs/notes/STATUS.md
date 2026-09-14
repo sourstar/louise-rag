@@ -1543,9 +1543,10 @@ annexes; two members are base64 of the XML. All 40 parse (≤1.3 s the
 largest), the rendition reads back to the AKN's skeleton on all 40, and no
 `((` survives (the `))` left are a lettera closing a parenthesis).
 
-Decisions taken in the build, open to the operator: `keys` are
-`eli:it:id/<date>/<codice>` and the URN:NIR — 06 §6.5's namespace ownership
-is the same open question as wikipedia's; preamble, conclusions and notes
+Decisions taken in the build, open to the operator: `keys` are EMPTY
+(parser 2, the same evening — parser 1 wrote unregistered `eli:`/`urn:`
+ids, and 05 §5.2 says a plugin writes only registered ones; the
+identities are in `extra`); preamble, conclusions and notes
 are kept in the record and not embedded; the rendition is versioned by the
 PARSER_VERSION (the parser owns `sections` here, not the chunker as §4.3
 had it); `max_chars` is 8,000 until the pilot measures it; the spec
@@ -1595,11 +1596,15 @@ Normattiva collection exists until the operator creates one.
 on the staged tree 2,643 passed; web healthy, the worker on gutenberg
 parser 8, no error in its first minutes, still acquire-only.
 
-**Open: Wikipedia `keys`.** No collection exists, so this is the cheapest
-moment to decide: the page id (`wikipedia:<lang>:<id>`, joins the text and
-the pre-embedded Wikipedia page by page), the Wikidata id (joins across
-corpora; needs each wiki's `page_props` file as a second origin form), or
-none. Titles are out — they move.
+**`keys`, settled by the spec rather than open.** 05 §5.2: a record's
+`keys` restrict a leg to the records holding a RESOLVED identifier, and a
+plugin writes only ids whose namespace a reference source has registered —
+any other form never matches the resolver's, silently. Nothing registers
+`eli`, `urn`, `wikipedia` or `wikidata`, so normattiva (parser 2) and
+wikipedia write none. The one real choice left: whether a Wikidata
+reference source is wanted BEFORE the wikipedia collection is created —
+adding keys afterwards is a new collection. (Live retrieval tags documents
+from their text into `doc_keys` and does not read record `keys` yet.)
 
 ### What is waiting on the operator
 

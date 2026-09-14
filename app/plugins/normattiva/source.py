@@ -109,8 +109,10 @@ class NormattivaSource:
     # Consolidated text is revised in place with every amendment.
     mutability = Mutability.MUTABLE
     protocol_version = PROTOCOL_VERSION
-    #: 1 since 2026-09-14.
-    PARSER_VERSION = 1
+    #: 1 since 2026-09-14. 2 the same evening: `keys` empty — 1 wrote
+    #: unregistered `eli:`/`urn:` ids, which 05 §5.2 forbids. Free: no
+    #: collection was ever created from 1.
+    PARSER_VERSION = 2
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.native_id: publication date first
@@ -254,7 +256,6 @@ class NormattivaSource:
                             for t in act.attachments],
             "meta_other": act.meta_other,
         }
-        keys = sorted({PROFILE.key(by_id)} | ({urn} if urn else set()))
         return CanonicalDoc(
             uid=f"{self.source_id}:{raw.ref.native_id}",
             title=" — ".join(x for x in (denomination, act.doc_title) if x),
@@ -262,7 +263,13 @@ class NormattivaSource:
             language="it",
             date=act.doc_date or None,           # the act's own date (date_document)
             subjects=[],
-            keys=keys,
+            # NONE YET. 05 §5.2: "a plugin writes only registered ids into a
+            # record's `keys`" — a key in any form but the resolver's never
+            # matches, silently — and no reference source registers `eli`
+            # or `urn`. The identities are all in `extra` (eli_work,
+            # eli_expression, urn_nir, codice_redazionale); keys join them
+            # when an `eli` reference source exists, as a new collection.
+            keys=[],
             extra={k: v for k, v in extra.items() if v not in (None, "", [], {})},
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,
