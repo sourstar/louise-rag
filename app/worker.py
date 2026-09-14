@@ -19,6 +19,7 @@ this, only collections[0] was ever discovered/ingested at all — a second
 configured collection was silently, permanently never touched.
 """
 import errno
+import os
 import signal
 import sqlite3
 # run_forever's boot-refusal branch prints to sys.stderr, and this module
@@ -3006,10 +3007,25 @@ def run_forever():
     node_con.close()
 
 
+def _warn_if_pid1() -> None:
+    """PID 1 must reap orphans, and Python does not. rsync forks a
+    receiver; when rsync exits first (a SIGKILL, some error exits) the
+    receiver is re-parented to PID 1 and stays a zombie — observed live
+    2026-09-13, 25 in three hours, all under this process. Reaping them
+    here would race subprocess for its own children's exit status, and a
+    stolen status reads as exit 0: a failed rsync's staging file moved into
+    place as complete. So: say it, and let the container's init reap."""
+    if os.getpid() == 1:
+        print("WARNING: the worker is PID 1 with no init — rsync's orphaned "
+              "children will never be reaped. Set `init: true` on the service "
+              "(deploy/truenas-app.yaml).", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     """`python -m app.worker`. docs/07 §7.7: the node "stops every
     collection at its unit and exits 130 on a signal" — invariant 2 says
     the same — and it exited 0. `_stop` is set only by the signal handler."""
+    _warn_if_pid1()
     run_forever()
     return 130 if _stop.is_set() else 0
 

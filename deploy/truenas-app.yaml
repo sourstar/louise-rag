@@ -80,6 +80,12 @@ services:
     image: louise-rag:local
     pull_policy: never
     restart: unless-stopped
+    # init: without it the app's Python is the container's PID 1, and PID 1
+    # must reap orphans. rsync forks a receiver; when rsync exits first (a
+    # SIGKILL, some error exits) the receiver is re-parented to PID 1 and
+    # stays a zombie forever — observed live 2026-09-13, 25 in 3 h. Docker's
+    # init reaps them. The worker warns at start when it finds itself PID 1.
+    init: true
     ports:
       - '30042:8742'
     environment: &env
@@ -126,6 +132,7 @@ services:
     pull_policy: never
     restart: unless-stopped
     command: ['python', '-m', 'app.worker']
+    init: true                  # reaps rsync's orphaned children — see web
     environment: *env
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro

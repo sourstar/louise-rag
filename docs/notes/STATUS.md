@@ -1370,6 +1370,24 @@ importing it. An undefined-name sweep then found `index vector status`
 raising NameError on `config` for every collection with no vector index
 yet. Both fixed and tested; the sweep of app/ and tools/ is clean.
 
+### Zombie rsync under a Python PID 1 — found 2026-09-13, night
+
+The monitor's "STALLED" on gutenberg was the fetch's tail, not a stall:
+10 files never tried, 14,274 that failed before (12,607 once, almost all
+ibiblio rsync exit 10) returning at their backoff's pace. Looking for
+it, the host showed 25 `[rsync] <defunct>`, all children of the worker,
+one about every eight minutes since the deploy.
+
+rsync forks a receiver; when rsync exits first (our SIGKILL at a
+deadline, and error exits whose cleanup waits with WNOHANG) the receiver
+is re-parented to PID 1 — here `python -m app.worker`, no init — and
+never reaped. No pids limit is set, so the cost is a table slot each.
+Fix: `init: true` on both services (deploy/truenas-app.yaml); the worker
+warns at start when it is PID 1. Reaping in the worker was rejected: it
+races subprocess for its own children's status, and a stolen status is
+exit 0 — a failed rsync's staging file moved into place as complete.
+The node's app config gets `init` through `app.update` (operator's OK).
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
