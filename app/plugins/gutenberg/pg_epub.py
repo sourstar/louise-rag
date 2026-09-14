@@ -50,15 +50,34 @@ CONTAINER = "META-INF/container.xml"
 #: known. A NUL cannot occur in XHTML text, so it cannot collide.
 _IMG = "\x00"
 
+#: STRUCTURE THE REFLOW USED TO ERASE (parser 7, the 2026-09-14 audit).
+#: Control characters cannot occur in XHTML text either, so none collides.
+#: A `<br>` is a line break INSIDE a paragraph — a verse line — where a
+#: block element is a paragraph break (a stanza): before this both became a
+#: paragraph break and the record could not tell a line from a stanza.
+_LINE = "\x01"
+#: A heading paragraph: `_HEAD` + its level digit, the text, `_HEAD_END`.
+#: The book's OWN headings decide its sections; the chapter regex read
+#: verse lines and body paragraphs as chapter titles in 8 of 32 sampled
+#: books.
+_HEAD = "\x02"
+_HEAD_END = "\x03"
+_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+#: An illustrated initial's marker, deferred to its paragraph's end.
+_DEFER = "\x04"
+#: What an `<hr>` leaves: the plain-text edition's own thought-break line.
+#: It is a scene break in the book, and the reflow left nothing behind.
+_SCENE = "* * * * *"
+
 _OPF_NS = "{http://www.idpf.org/2007/opf}"
 _CONTAINER_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
 
 #: Elements after which a paragraph break is emitted. An epub's text is
 #: reflowable, so the only paragraph structure it has is its markup.
 _BLOCK = frozenset({
-    "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr",
+    "p", "div", "li", "tr",
     "blockquote", "pre", "section", "article", "figure", "figcaption",
-    "table", "hr", "dd", "dt",
+    "table", "dd", "dt",
 })
 
 #: Never contributes text.
@@ -73,10 +92,12 @@ _IMAGE_TYPES = {
 #: Gutenberg wraps its own licence around the book inside the epub too, in
 #: the same words the plain text uses. `pg_text` cuts on these; so do we,
 #: so that the two editions at least agree on WHERE THE BOOK BEGINS.
-_START = re.compile(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*",
-                    re.I | re.S)
-_END = re.compile(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*",
-                  re.I | re.S)
+#:
+#: BOUNDED TO ONE PARAGRAPH (parser 7). `.*?` under re.S let a START line
+#: that lost its closing `***` run on to the next `***` anywhere in the
+#: book and cut everything in between as licence. Wrapped lines inside the
+#: marker are still allowed; a blank line is not.
+from .pg_text import _END, _START  # noqa: E402 — one definition for both editions
 
 
 class EpubError(RuntimeError):
@@ -205,6 +226,7 @@ class _Text(HTMLParser):
         self.parts: list[str] = []
         self.images: list[tuple[str, str]] = []   # (src, alt) in document order
         self._skip = 0
+        self._cells = 0                            # cells so far in this table row
 
     def handle_starttag(self, tag, attrs):
         if tag in _SKIP:
@@ -212,6 +234,29 @@ class _Text(HTMLParser):
             return
         if self._skip:
             return
+        if tag == "br":
+            self.parts.append(_LINE)
+            return
+        if tag == "hr":
+            self.parts.append(f"\n\n{_SCENE}\n\n")
+            return
+        if tag in _HEADINGS:
+            self.parts.append(f"\n\n{_HEAD}{tag[1]}")
+            return
+        if tag in ("sup", "sub"):
+            # An exponent FUSED into its base changes the number: "10<sup>
+            # 6</sup>" read "106". The plain-text edition writes ^{…} and
+            # _{…}; so does this, and the value survives.
+            self.parts.append("^{" if tag == "sup" else "_{")
+            return
+        if tag in ("td", "th"):
+            # Cells ran together with no boundary at all ("NameAgeTom12").
+            if self._cells:
+                self.parts.append(" | ")
+            self._cells += 1
+            return
+        if tag == "tr":
+            self._cells = 0
         if tag == "img":
             a = dict(attrs)
             src = a.get("src") or ""
@@ -230,6 +275,8 @@ class _Text(HTMLParser):
             self.parts.append("\n\n")
 
     def handle_startendtag(self, tag, attrs):
+        if tag in _HEADINGS or tag in ("sup", "sub"):
+            return          # empty: an opening marker here would never close
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
@@ -237,6 +284,12 @@ class _Text(HTMLParser):
             self._skip = max(0, self._skip - 1)
             return
         if self._skip:
+            return
+        if tag in _HEADINGS:
+            self.parts.append(f"{_HEAD_END}\n\n")
+            return
+        if tag in ("sup", "sub"):
+            self.parts.append("}")
             return
         if tag in _BLOCK:
             self.parts.append("\n\n")
@@ -259,10 +312,30 @@ def _normalise(text: str) -> str:
     """
     out = []
     for para in re.split(r"\n\s*\n", text):
-        para = re.sub(r"\s+", " ", para).strip()
+        # `_LINE` is the one line break that is CONTENT (a `<br>`), so it
+        # survives as "\n" while every incidental one collapses
+        lines = (re.sub(r"\s+", " ", ln).strip() for ln in para.split(_LINE))
+        para = "\n".join(ln for ln in lines if ln)
         if para:
             out.append(para)
     return "\n\n".join(out)
+
+
+#: an XHTML member's declared encoding (`<?xml … encoding="…"?>`)
+_XML_ENCODING = re.compile(rb"""^\s*<\?xml[^>]*?encoding=["']([A-Za-z0-9._-]+)["']""")
+
+
+def _decode(raw: bytes) -> str:
+    """The member's text in the encoding IT DECLARES. Decoding every member
+    as UTF-8 with errors='replace' turned each non-ASCII character of a
+    Latin-1 member into U+FFFD — an irreversible alteration of the text
+    (audit, 2026-09-14). UTF-8 remains the default, as XML says it is."""
+    m = _XML_ENCODING.match(raw[:200])
+    enc = m.group(1).decode("ascii") if m else "utf-8"
+    try:
+        return raw.decode(enc)
+    except (LookupError, UnicodeDecodeError):
+        return raw.decode("utf-8", errors="replace")
 
 
 def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
@@ -281,7 +354,7 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
         except KeyError:
             continue                        # a manifest item that is not there
         p = _Text()
-        p.feed(raw.decode("utf-8", errors="replace"))
+        p.feed(_decode(raw))
         p.close()
         out.append((href, p))
     return out
@@ -341,13 +414,9 @@ def _marker(alt: str) -> str:
     return f"\n\n[Illustration: {alt}]\n\n" if alt else "\n\n[Illustration]\n\n"
 
 
-def read_clean(path: Path) -> str:
-    """The book's text, in reading order, with the PG wrapper removed.
-
-    The counterpart of `pg_text.read_clean`, and NOT expected to equal it —
-    see the module docstring. Feed the result to
-    `pg_text.split_chapters`, which is edition-independent.
-    """
+def _read(path: Path) -> tuple[str, str]:
+    """`(header, structured text)` — the PG header before `*** START`,
+    and the book after it, normalised, with the heading sentinels in."""
     with zipfile.ZipFile(path) as z:
         raw, images = _walk(z)
 
@@ -356,16 +425,190 @@ def read_clean(path: Path) -> str:
     # construction and `figures[N]` is the Nth marker (09 §9.5).
     pieces = raw.split(_IMG)
     text = pieces[0]
+    deferred: list[str] = []
     for i, (_, alt, _carried) in enumerate(images):
-        text += _marker(alt) + pieces[i + 1]
+        tail = pieces[i + 1]
+        if len(alt) == 1 and alt.isalpha() and tail[:1].isalpha():
+            # AN ILLUSTRATED INITIAL: `<img alt="T"/>HE discussion`. The
+            # marker's paragraph breaks cut the book's first word in two
+            # ("T" / "HE"), in the text that becomes vectors (audit,
+            # 2026-09-14). The letter goes back into its word — the plain
+            # edition reads "THE discussion" — and the marker to the end of
+            # its paragraph, which keeps every marker in reading order, so
+            # the Nth is still figures[N].
+            text += alt + _DEFER + tail
+            deferred.append(alt)
+        else:
+            text += _marker(alt) + tail
 
+    header = ""
     m = _START.search(text)
     if m:
-        text = text[m.end():]
+        header, text = text[: m.start()], text[m.end():]
     m = _END.search(text)
     if m:
         text = text[: m.start()]
-    return _normalise(text)
+    return (_plain(_undefer(_normalise(header), deferred)),
+            _undefer(_normalise(text), deferred))
+
+
+def _undefer(text: str, alts: list[str]) -> str:
+    """Each paragraph holding deferred initials, followed by their markers
+    as paragraphs of their own — in the order they occurred. `alts` is
+    consumed front to back across the header and then the body, which is
+    the order `_read` met them in."""
+    if _DEFER not in text:
+        return text
+    out = []
+    for para in text.split("\n\n"):
+        n = para.count(_DEFER)
+        out.append(para.replace(_DEFER, ""))
+        for _ in range(n):
+            out.append(_marker(alts.pop(0)).strip())
+    return "\n\n".join(out)
+
+
+_SENTINELS = re.compile(f"{_HEAD}[1-6]?|{_HEAD_END}")
+
+
+def _plain(structured: str) -> str:
+    """The structured text without its heading sentinels: a heading stays a
+    paragraph of its own, as it always read."""
+    paras = (_SENTINELS.sub("", p).strip() for p in structured.split("\n\n"))
+    return "\n\n".join(p for p in paras if p)
+
+
+def read_clean(path: Path) -> str:
+    """The book's text, in reading order, with the PG wrapper removed.
+
+    The counterpart of `pg_text.read_clean`, and NOT expected to equal it —
+    see the module docstring. The SECTIONS of an epub come from `sections`,
+    which reads the book's own headings, not from a regex over this.
+    """
+    return _plain(_read(path)[1])
+
+
+def header_fields(path: Path) -> dict[str, str]:
+    """The `Key: value` fields of the PG header inside the epub — Title,
+    Author, Release date, Most recently updated, Language, Credits.
+    `pg_text.header_fields` read them for the txt edition only, so an
+    epub-form record carried none (audit, 2026-09-14): the prose around
+    them is boilerplate, the fields are not."""
+    from .pg_text import _HEADER_FIELD
+    out: dict[str, str] = {}
+    for line in _read(path)[0].replace("\n\n", "\n").splitlines():
+        got = _HEADER_FIELD.match(line.strip())
+        if got and got.group(2).strip():
+            out[got.group(1).strip()] = got.group(2).strip()
+    return out
+
+
+def _is_marker(para: str) -> bool:
+    return para.startswith("[Illustration") and para.endswith("]")
+
+
+def _heading(paras: list[str], i: int) -> tuple[str, list[str], int]:
+    """`(title, markers, next index)` for the heading that opens at `i`.
+
+    A heading is a BLOCK, from `_HEAD` to `_HEAD_END`, not one paragraph:
+    an `<img>` inside it leaves its marker as a paragraph of its own, which
+    split Pride and Prejudice's illustrated chapter headings into an empty
+    title and stray paragraphs — every chapter read "Text". Its words are
+    the title, a `<br>` inside becoming a dash ("CHAPTER I.<br/>DOWN THE
+    RABBIT-HOLE" is one title); a heading that is only a picture takes its
+    alt text. The markers go back to the BODY, in order, so the Nth marker
+    is still `figures[N]` (09 §9.5). The block only extends over markers and
+    the paragraph that closes it, so a heading whose close is missing
+    cannot swallow the prose after it.
+
+    A CAPTION INSIDE THE HEADING (Pride and Prejudice: the picture, then
+    "I hope Mr. Bingley will like it.", then "CHAPTER II."): the words
+    between the first picture and the heading's last paragraph are that
+    picture's caption. They go to the body after its marker — a caption
+    stays in `sections` and stays embedded (decision 1, 2026-09-08) — and
+    the title is the heading's own words before the picture and its last
+    paragraph.
+    """
+    j = i
+    block = [paras[i]]
+    while (_HEAD_END not in block[-1] and j + 1 < len(paras)
+           and not paras[j + 1].startswith(_HEAD) and len(block) < _HEAD_SPAN):
+        j += 1
+        block.append(paras[j])
+    if _HEAD_END not in block[-1]:
+        # never closed within the bound: the heading is its first paragraph
+        block, j = [paras[i]], i
+    parts = [q for q in (_SENTINELS.sub("", x).strip() for x in block) if q]
+    first = next((k for k, q in enumerate(parts) if _is_marker(q)), None)
+    last = len(parts) - 1
+    if first is None:
+        titled, lead = parts, []
+    else:
+        titled = [q for k, q in enumerate(parts)
+                  if not _is_marker(q) and (k < first or k == last)]
+        lead = [q for k, q in enumerate(parts)
+                if _is_marker(q) or (first < k < last)]
+    title = " — ".join(ln.strip() for w in titled for ln in w.split("\n") if ln.strip())
+    if not title and first is not None:
+        title = parts[first][len("[Illustration"):-1].lstrip(":").strip()
+    return title, lead, j + 1
+
+
+#: how many paragraphs one heading may span before it is taken as unclosed
+_HEAD_SPAN = 8
+
+
+def sections(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """`(sections, unplaced)` — the epub's sections, cut at ITS OWN headings.
+
+    Parser 7. The chapter regex over reflowed text read verse lines and
+    body paragraphs as chapter titles (8 of 32 sampled books, ~23,000
+    characters moved out of prose into titles), and with `<br>` kept as a
+    line break it would read every one-word verse line as one. The book
+    already says where its sections are: its `<h1>`…`<h6>`.
+
+    Consecutive headings are one path — "BOOK I › CHAPTER I" — since a
+    heading followed at once by another is a level of the hierarchy, not an
+    empty section. Text before the first heading is "Front matter". A
+    heading path left with no body at all (the book ends on it) is
+    `unplaced`, for `extra`, as the regex path's contents page is.
+
+    A book whose markup has no headings falls back to the regex, applied
+    to WHOLE PARAGRAPHS only, so a verse line inside a stanza can never be
+    taken for a chapter.
+    """
+    from .pg_text import flat_sections, paragraph_chapters
+    text = _read(path)[1]
+    paras = text.split("\n\n")
+    first = next((i for i, p in enumerate(paras) if p.startswith(_HEAD)), None)
+    if first is None:
+        plain = _plain(text)
+        return paragraph_chapters(plain) or (flat_sections(plain), [])
+    out: list[tuple[str, str]] = []
+    front = [q for q in (_SENTINELS.sub("", p).strip() for p in paras[:first]) if q]
+    if front:
+        out.append(("Front matter", "\n\n".join(front)))
+    path_titles: list[str] = []
+    body: list[str] = []
+    i = first
+    while i < len(paras):
+        if paras[i].startswith(_HEAD):
+            title, markers, i = _heading(paras, i)
+            if body:
+                out.append((" › ".join(path_titles) or "Text", "\n\n".join(body)))
+                path_titles, body = [], []
+            if title:
+                path_titles.append(title)
+            body.extend(markers)
+            continue
+        q = _SENTINELS.sub("", paras[i]).strip()
+        if q:
+            body.append(q)
+        i += 1
+    if body:
+        out.append((" › ".join(path_titles) or "Text", "\n\n".join(body)))
+        path_titles = []
+    return out, [" › ".join(path_titles)] if path_titles else []
 
 
 # --------------------------------------------------------------------------

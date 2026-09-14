@@ -107,7 +107,17 @@ class PubmedSource:
     #: outright. Unlike 5 and 6 this one DOES move `content_hash`, because
     #: §9.5 hashes [title, sections] and the title is a section here;
     #: it is free for the same reason, no v1.0 records exist yet.
-    PARSER_VERSION = 7
+    #: 8 since 2026-09-14, the fidelity sample check (180,000 records over
+    #: six baseline files): OtherAbstract read from MedlineCitation, where it
+    #: lives — parser 7 looked under Article and wrote none; investigators;
+    #: chemical registry numbers; MeSH Type/AutoHM; supplementary-concept
+    #: Type; every ELocationID with ValidYN and every ArticleId; the lists'
+    #: CompleteYN; NumberOfReferences; general notes' owners; correction
+    #: PMID versions; History times; cited works' doi/pmcid and nested
+    #: reference lists; affiliation identifiers; the title and abstract as
+    #: marked up. RECORDS ONLY: `sections` is untouched, so no chunk id and
+    #: none of the archive's 35.4M vectors moves.
+    PARSER_VERSION = 8
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE        # a retraction notice is a fact of the corpus
     native_id_order = "numeric"          # PMIDs, issued ascending

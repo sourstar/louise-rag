@@ -31,7 +31,14 @@ def col(isolated_config):
     web.invalidate_counts()
 
 
-def _wait_counts(c, timeout=5.0):
+def _wait_counts(c, timeout=30.0):
+    """The counts as the refresh lands them. A test that asserts on rates
+    or ETAs must wait for this: `_collection_shelf` renders "counting…" —
+    and computes no rate at all — when the refresh misses the page's
+    2-second cold wait, which a loaded machine does (a full-suite run
+    failed `test_a_bursty_stage_keeps_its_eta_across_a_quiet_window` that
+    way, 2026-09-14). Returns as soon as they arrive; the bound is only
+    there for a refresh that never does."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         counts, _ = web._document_counts(c)
@@ -430,6 +437,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
                    _json.dumps({"rdf": 10, "fts": 0, "embed": 0, "fetch": 0, "rdf_ph": 540, "rdf_n": 1,
                                 "ts": int(time.time()) - 600}))
     web.invalidate_counts()
+    _wait_counts(c)
 
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["rdf"] == 540
@@ -459,6 +467,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
         "rdf_ph": 540, "rdf_n": 2, "embed_ph": 1200, "embed_n": 2,
         "ts": int(time.time()) - 600}
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {})
     rec = web._stage_rate_memo[str(c.manifest_path)]
     assert rec["rdf"] == 100 and rec["rdf_ph"] is None and rec["rdf_n"] == 0, \
@@ -474,6 +483,7 @@ def test_stage_rates_prove_motion_on_slow_stages(isolated_config):
     db.set_control(con, "stage_rate",
                    _json.dumps({"rdf": 10, "fts": 0, "ts": int(time.time()) - 600}))
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {})
     assert all(v is None for v in shelf["stage_rates"].values())
 
@@ -528,6 +538,7 @@ def test_stage_rates_survive_a_manifest_too_busy_to_write(isolated_config):
                     "VALUES(?,'g',?,?,1,0,0,0,0)", (f"g:{i}", str(i), f"/x{i}"))
     con.commit()
     web.invalidate_counts()
+    _wait_counts(c)
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     # seed only MEMORY (the busy-manifest case: control never accepts it)
     web._stage_rate_memo[str(c.manifest_path)] = {
@@ -566,6 +577,7 @@ def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
                     (f"g:{i}", str(i), f"/x{i}", 1 if i < 1000 else 0))
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {}, "running")
     assert shelf["stage_etas"]["rdf"] == "waiting for the index"
     assert "1.000 documents ahead" in shelf["stage_eta_why"]["rdf"]
@@ -584,6 +596,7 @@ def test_rdf_ahead_of_fts_is_shown_as_waiting_not_tbd(isolated_config):
     # once fts catches up to within a batch, rdf is judged on its own rate again
     con.execute("UPDATE documents SET fts_done=1 WHERE CAST(native_id AS INTEGER) < 950")
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {}, "running")
     assert shelf["stage_etas"]["rdf"] == web.ETA_UNKNOWN
 
@@ -723,6 +736,7 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
         "rdf": 100, "fts": 100, "embed": 20, "fetch": 0, "ts": now - 360,
         "embed_ph": 60, "embed_n": 2, "embed_pts": now - 720, "embed_pc": 20}
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["embed"] == 60 and shelf["stage_etas"]["embed"] == "~80min", \
         "a quiet window keeps the smoothed rate (80 left at 60/h)"
@@ -735,6 +749,7 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
     con.execute("UPDATE documents SET embed_done=1 WHERE uid IN ('g:20','g:21','g:22','g:23')")
     web._stage_rate_memo[key] = {**rec, "ts": now - 360}
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["embed"] == round(0.3 * 20 + 0.7 * 60)
     assert web._stage_rate_memo[key]["embed_pc"] == 24
@@ -744,6 +759,7 @@ def test_a_bursty_stage_keeps_its_eta_across_a_quiet_window(isolated_config):
         "rdf": 100, "fts": 100, "embed": 24, "fetch": 0, "ts": now - 360,
         "embed_ph": 48, "embed_n": 3, "embed_pts": now - 1801, "embed_pc": 24}
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {})
     assert shelf["stage_rates"]["embed"] is None
     assert shelf["stage_etas"]["embed"] == web.ETA_UNKNOWN
@@ -807,6 +823,7 @@ def test_a_finished_stage_prints_nothing_at_all(isolated_config):
                      "no txt file" if bad else None))
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {}, "running")
 
     assert shelf["unindexable"] == 2
@@ -840,6 +857,7 @@ def test_only_blocked_work_left_prints_nothing_either(isolated_config):
                      "fts: tantivy exploded" if stuck else None))
     web._stage_rate_memo.pop(str(c.manifest_path), None)
     web.invalidate_counts()
+    _wait_counts(c)
     shelf = web._collection_shelf(c, {}, "running")
 
     assert shelf["blocked"] == 2

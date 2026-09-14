@@ -6,8 +6,16 @@ inside each book directory, so no EPUB parsing is needed.
 import re
 from pathlib import Path
 
-_START = re.compile(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*", re.I | re.S)
-_END = re.compile(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG.*?\*\*\*", re.I | re.S)
+#: PG's licence markers. BOUNDED TO ONE PARAGRAPH (parser 7): `.*?` under
+#: re.S let a START line that lost its closing `***` run on to the next
+#: `***` anywhere in the book and cut everything between as licence. A
+#: wrapped line inside the marker is still allowed (long titles wrap in the
+#: .txt), a lone `*` too; a blank line ends it.
+_MARK_BODY = r"(?:[^*\n]|\*(?!\*\*)|\n(?![ \t]*\n)){0,400}?"
+_START = re.compile(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG"
+                    + _MARK_BODY + r"\*\*\*", re.I)
+_END = re.compile(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG"
+                  + _MARK_BODY + r"\*\*\*", re.I)
 
 #: a PG header field line: "Credits: Produced by ...". Anchored and
 #: bounded so a colon inside prose ("Note: see below") in the body is not
@@ -235,7 +243,12 @@ def split_chapters(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, s
                 parts.append((m.group(0).strip(), body))
         if parts:
             return parts
-    # fallback: flat slicing on paragraph boundaries
+    return flat_sections(text, max_flat_chars)
+
+
+def flat_sections(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, str]]:
+    """Flat slicing on paragraph boundaries, when a book yields no usable
+    headings — so downstream code always gets bounded pieces."""
     parts, buf, size, idx = [], [], 0, 1
     for para in text.split("\n\n"):
         buf.append(para)
@@ -246,3 +259,28 @@ def split_chapters(text: str, max_flat_chars: int = 60_000) -> list[tuple[str, s
     if buf:
         parts.append((f"Section {idx}", "\n\n".join(buf).strip()))
     return parts or [("Text", text)]
+
+
+def paragraph_chapters(text: str) -> tuple[list[tuple[str, str]], list[str]] | None:
+    """`split_chapters` for an EPUB with no heading markup: the chapter
+    pattern must match a WHOLE one-line paragraph, never a line inside one,
+    so a verse line (kept as a line break since parser 7) cannot be read as
+    a chapter title. `(sections, headings with no body)`, or None when the
+    pattern finds nothing usable (the caller slices flat)."""
+    paras = text.split("\n\n")
+    heads = [i for i, p in enumerate(paras)
+             if "\n" not in p and (m := _CHAPTER.match(p)) and m.end() == len(p)]
+    if not 1 <= len(heads) <= 400:
+        return None
+    out: list[tuple[str, str]] = []
+    unplaced: list[str] = []
+    if heads[0] and "\n\n".join(paras[:heads[0]]).strip():
+        out.append(("Front matter", "\n\n".join(paras[:heads[0]]).strip()))
+    for n, i in enumerate(heads):
+        end = heads[n + 1] if n + 1 < len(heads) else len(paras)
+        body = "\n\n".join(paras[i + 1:end]).strip()
+        if body:
+            out.append((paras[i].strip(), body))
+        else:
+            unplaced.append(paras[i].strip())
+    return (out, unplaced) if out else None

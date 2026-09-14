@@ -1439,6 +1439,57 @@ lowers a row that proves the archive without persisting `proven_at` first.
 Repairing the node's three rows is the operator's call: dry run, then
 `--yes` with the worker stopped.
 
+**Deployed 2026-09-14, ~13:05 CEST — `59c400b`**, by `deploy-louise.sh`
+(the promote was not refused this time). Checked live: one image for
+web and worker under docker-init, the worker log clean, `louise health`
+unchanged. The card's scan on the real manifest (64 s) returns exactly
+the predicted 35,417,887 / 35,456,211, 38,324 waiting, 4,538,777 past
+the range. `genesis recount pubmed` dry run (36.7 s): shards 13, 8 and 9
+differ by +53,000, +26,154 and +1,500 — present in chunk provenance, so
+they are archive imports the ledger lost, not local encodes. Not written.
+23 minutes after the restart: 0 zombie rsync, 0 orphans under
+docker-init, 14 live transfers — the leak is gone.
+
+### Fidelity audits: gutenberg parser 7, pubmed parser 8 — 2026-09-14
+
+The operator asked before switching embedding on whether gutenberg keeps
+everything PG says about a book, and then for the same check on pubmed
+and wikipedia (samples). The answer was no for both built plugins.
+
+**Gutenberg — the text that becomes vectors was losing structure.** The
+chapter regex read verse and body paragraphs as titles (8 of 32 books);
+line breaks, exponents, scene breaks, table cell boundaries, illustrated
+initials and non-UTF-8 members were lost or altered; a START marker
+missing its `***` could cut a book. Parser 7 cuts an epub at its own
+headings and keeps all of these (commit message has the numbers). The
+record also gains the epub's header fields, `extra.form`, roles given
+by reference, every title and the title's own form.
+
+**THE LIVE COLLECTION CANNOT ADOPT PARSER 7 IN PLACE.** Its Codex pins
+parser 5 (the code was already at 6), and the epub cleaning moved, so a
+parser-7 gutenberg is a new collection: `cleaning_version = 3` in its
+recipe, created by the operator. Nothing is lost by it — gutenberg holds
+no vectors (embed off), and its 50,167 indexed documents were cut by
+older parsers with no per-document record of which, so they would have
+to be re-cut anyway. **Do not switch gutenberg's embedding on before the
+replacement exists.**
+
+**Pubmed — records only.** Parser 8 keeps ~20 fields parser 7 dropped
+(OtherAbstract was read under the wrong parent and never written), all in
+`extra`; `sections` is untouched so the archive's vectors stay bound. Its
+Codex pins parser 4, so the same holds: the v1.0 pubmed records are
+built with the current parser in a new collection.
+
+Still open from the gutenberg audit, recorded here so it is not lost:
+print page numbers and transcriber's original readings (`title=`
+attributes, 11/32 and several books), full-size plates reached only
+through `linear="no"` pages, a spine member missing from the zip, and an
+epub/txt book with no RDF (its OPF metadata unused). Decisions with the
+operator: `date` from marc260 $c, and emphasis (italics).
+
+Wikipedia parser 3 was not built (the implementing agent hit the session
+limit); its field map is in the workflow journal of 2026-09-14.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

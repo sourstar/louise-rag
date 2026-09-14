@@ -9,6 +9,7 @@ CanonicalDoc) can't express.
 """
 import hashlib
 import zipfile
+import zlib
 from pathlib import Path
 
 from .. import cursor
@@ -126,7 +127,17 @@ class GutenbergSource:
     #: IS inside `content_hash`, so this moves one, which costs nothing
     #: here: the v1.0 gutenberg root starts from zero vectors either way
     #: (migration-plan.md step 8).
-    PARSER_VERSION = 6
+    #: 7 since 2026-09-14, the fidelity audit's text findings (invariant 11):
+    #: an epub's sections come from ITS OWN headings, not from the chapter
+    #: regex, which read verse and body paragraphs as titles; a `<br>`
+    #: survives as a line break (a stanza is no longer indistinguishable
+    #: from a line); `<sup>`/`<sub>` keep their value as ^{…}/_{…}; an `<hr>`
+    #: leaves the plain edition's scene break; table cells keep a boundary;
+    #: a member is decoded in the encoding it declares; the licence markers
+    #: can no longer run across paragraphs; an epub-form record carries its
+    #: PG header fields and `extra.form`. The epub cleaning moved, so the
+    #: collection that adopts this parser is a new one, with cleaning 3.
+    PARSER_VERSION = 7
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -244,22 +255,29 @@ class GutenbergSource:
         suffix = raw.path.suffix.lower()
         plates: list = []
         text_header: dict[str, str] = {}
+        text_toc: list[str] = []
         if suffix == ".epub":
             # `pick_form` proved this file readable, and between then and
             # now a sync can have replaced it. A file that will not open is
             # a CORPUS FACT — retrying reads the same bytes — so it is
             # raised unprefixed rather than escaping as a stage error,
             # which the Library counts as blocked and which burns a retry
-            # (tests/test_unindexable_stability.py).
+            # (tests/test_unindexable_stability.py). A member whose DEFLATE
+            # data is damaged raises zlib.error, which escaped as a stage
+            # error and burned the retries of a book whose other forms may
+            # be perfectly good (audit, 2026-09-14).
             try:
-                text = pg_epub.read_clean(raw.path)
+                # the book's OWN headings cut it (parser 7); the heading
+                # paths left with no body go to `text_toc`, as the regex
+                # path's contents-page lines do
+                sections, text_toc = pg_epub.sections(raw.path)
                 found = pg_epub.figures(raw.path)
-            except (zipfile.BadZipFile, pg_epub.EpubError, OSError) as e:
+                text_header = pg_epub.header_fields(raw.path)
+            except (zipfile.BadZipFile, zlib.error, pg_epub.EpubError, OSError) as e:
                 raise UnindexableDocument(
                     f"{raw.path.name} is not a readable epub for book "
                     f"{native_id} ({type(e).__name__})") from e
-            sections = pg_text.split_chapters(text)
-            body_text = text
+            body_text = ""
             # The caption is already an `[Illustration: …]` marker inside
             # `sections`, so it is indexed; only the BYTES are a member.
             plates = [Figure(href=f.href, media_type=f.media_type,
@@ -279,13 +297,14 @@ class GutenbergSource:
             # the PG header's `Key: value` fields — Credits above all,
             # which read_clean discards with the boilerplate around it
             text_header = pg_text.header_fields(raw.path)
-        # THE BOOK'S OWN CONTENTS PAGE, which `split_chapters` drops: its
-        # lines each match the chapter pattern and leave no body behind,
-        # so 415 headings over 400 sampled books went nowhere. In `extra`
-        # rather than `sections` on purpose — promise 9 requires keeping
-        # what the origin said, not embedding it, and a contents page cut
-        # into chunks competes with the prose it indexes.
-        text_toc = pg_text.headings_without_body(body_text) if body_text else []
+            # THE BOOK'S OWN CONTENTS PAGE, which `split_chapters` drops:
+            # its lines each match the chapter pattern and leave no body
+            # behind, so 415 headings over 400 sampled books went nowhere.
+            # In `extra` rather than `sections` on purpose — promise 9
+            # requires keeping what the origin said, not embedding it, and
+            # a contents page cut into chunks competes with the prose it
+            # indexes.
+            text_toc = pg_text.headings_without_body(body_text) if body_text else []
         # AUTHORS ALONE (operator, 2026-09-12: "authors are the only
         # authors. illustrators and translators must be credited but as
         # illustrators and translators"). Built from the ROLES, never by
@@ -366,6 +385,11 @@ class GutenbergSource:
                 "languages": meta["languages"],
                 "subjects_by_scheme": meta["subjects_by_scheme"],
                 "alt_titles": meta["alt_titles"],
+                # the first title in the origin's own form, where `title`'s
+                # cleaning changed it (its title / subtitle line break), and
+                # every further dcterms:title (parser 7; both were dropped)
+                "title_raw": meta["title_raw"],
+                "other_titles": meta["other_titles"],
                 "description": meta["description"],
                 "toc": meta["toc"],
                 "dcmi_type": meta["dcmi_type"],
@@ -377,8 +401,14 @@ class GutenbergSource:
                 # Captured by number so a datafield this code has never
                 # heard of survives.
                 "marc": meta["marc"],
-                # the text file's own header fields, Credits included
+                # the header fields of the edition read, Credits included —
+                # the epub's own since parser 7, the .txt's before
                 "text_header": text_header,
+                # WHICH FORM the reading rule chose for this book. The
+                # module docstring promised it per record and no record
+                # carried it (audit, 2026-09-14): a verifier needs it to
+                # reach for the same bytes (invariant 11).
+                "form": {".epub": "epub", ".rdf": "rdf"}.get(suffix, "txt"),
             }.items() if v not in ("", None, [], {})},
             sections=sections,
             figures=plates,
@@ -413,7 +443,7 @@ class GutenbergSource:
             # raised unprefixed, never a stage error that burns a retry.
             try:
                 return pg_epub.read_clean(path)
-            except (zipfile.BadZipFile, pg_epub.EpubError, OSError) as e:
+            except (zipfile.BadZipFile, zlib.error, pg_epub.EpubError, OSError) as e:
                 raise UnindexableDocument(
                     f"{path.name} is not a readable epub for book "
                     f"{native_id} ({type(e).__name__})") from e
@@ -425,6 +455,21 @@ class GutenbergSource:
         return pg_text.split_chapters(text)
 
     def read_chapters(self, book_dir: Path, native_id: int) -> list[tuple[str, str]]:
+        """The sections the fts and embed stages cut — THE SAME ones `parse`
+        puts in the record. An epub is cut at its own headings since parser
+        7, so it cannot go through `split_text(read_text())` any more: that
+        would index a regex's sections while the record held the markup's,
+        and every chunk id would name a chunk the record does not contain."""
+        from . import pg_epub
+
+        form, path, _ = pick_form(book_dir, native_id)
+        if form == "epub":
+            try:
+                return pg_epub.sections(path)[0]
+            except (zipfile.BadZipFile, zlib.error, pg_epub.EpubError, OSError) as e:
+                raise UnindexableDocument(
+                    f"{path.name} is not a readable epub for book "
+                    f"{native_id} ({type(e).__name__})") from e
         text = self.read_text(book_dir, native_id)
         # An rdf-only book has no body. `split_chapters` answers empty text
         # with `[("Text", "")]` — one section holding nothing — which would

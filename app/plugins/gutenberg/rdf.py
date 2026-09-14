@@ -72,7 +72,13 @@ def _scheme(el: ET.Element) -> str:
     return got.group(1) if got else ""
 
 
-def _agents(ebook: ET.Element) -> list[dict]:
+def _is_role(tag: str) -> bool:
+    """A credit-bearing element: `dcterms:creator` or any MARC relator."""
+    return (tag == f"{{{NS['dcterms']}}}creator"
+            or tag.startswith(f"{{{NS['marcrel']}}}"))
+
+
+def _agents(ebook: ET.Element, root: ET.Element | None = None) -> list[dict]:
     """Every agent the RDF names, WITH ITS ROLE and everything it says
     about them — the PG agent id, birth and death years, aliases and
     webpages. Promise 9 admits no category for dropping any of it: they
@@ -84,12 +90,32 @@ def _agents(ebook: ET.Element) -> list[dict]:
     is what the old code did, flattening illustrators and translators
     into the same anonymous author list.
     """
+    # AGENTS GIVEN BY REFERENCE (parser 7). RDF/XML writes an agent inline
+    # once and refers to it after that — `<marcrel:ill rdf:resource=
+    # "2009/agents/53"/>` for an author who also illustrated — and this
+    # skipped every such element: the person's second role was lost, and
+    # where the reference was the CREATOR, the book's author was missing
+    # from `creators` altogether (census 2026-09-14: 32 references in the
+    # 79,382 files). A reference resolves to the agent the file describes
+    # under that `rdf:about`; one it does not describe is still kept, id
+    # and role, because that much the origin said.
+    described = {}
+    for a in (root if root is not None else ebook).iter(f"{{{NS['pgterms']}}}agent"):
+        about = (a.get(f"{{{NS['rdf']}}}about") or "").strip()
+        if about:
+            described.setdefault(about, a)
     out = []
     for child in ebook:
         agent = child.find("pgterms:agent", NS)
-        if agent is None:
-            continue
         role = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if agent is None:
+            ref = (child.get(f"{{{NS['rdf']}}}resource") or "").strip()
+            if not (ref and _is_role(child.tag) and "/agents/" in ref):
+                continue
+            agent = described.get(ref)
+            if agent is None:
+                out.append({"role": role, "agent_id": ref})
+                continue
         entry = {
             "name": (agent.findtext("pgterms:name", namespaces=NS) or "").strip(),
             "role": role,
@@ -115,7 +141,8 @@ def parse(book_dir: Path, book_id: int) -> dict:
     out = {"title": "", "authors": "", "lang": "und", "subjects": "", "bookshelves": "",
            "issued": None, "creators_detail": [], "author_names": [], "languages": [],
            "subjects_by_scheme": {}, "alt_titles": [], "description": "",
-           "toc": "", "dcmi_type": "", "rights": "", "reading_ease": "", "marc": {}}
+           "toc": "", "dcmi_type": "", "rights": "", "reading_ease": "", "marc": {},
+           "title_raw": "", "other_titles": []}
     if not path.is_file():
         return out
     try:
@@ -127,9 +154,18 @@ def parse(book_dir: Path, book_id: int) -> dict:
     if ebook is None:
         return out
 
-    t = ebook.find("dcterms:title", NS)
-    if t is not None and t.text:
-        out["title"] = clean_title(t.text)
+    # EVERY TITLE (parser 7). `find` took the first and the rest went
+    # nowhere, not even to alt_titles (census: 79,386 titles in 79,381
+    # files). And the first loses its line breaks to `clean_title` — PG
+    # writes "The Fables of Aesop\r\nSelected, Told Anew…", title then
+    # subtitle — so the origin's own form is kept beside it when it differs.
+    titles = [t.text.strip() for t in ebook.findall("dcterms:title", NS)
+              if t.text and t.text.strip()]
+    if titles:
+        out["title"] = clean_title(titles[0])
+        if titles[0] != out["title"]:
+            out["title_raw"] = titles[0]
+        out["other_titles"] = titles[1:]
 
     # the PG release date ("YYYY-MM-DD"): what a dated snapshot of the
     # catalogue cuts on (pack build --until) — never the text's own date
@@ -142,7 +178,7 @@ def parse(book_dir: Path, book_id: int) -> dict:
     # 25 titles and 7 author lists sat exactly at 500, so their tails
     # were cut and nothing said so. A silent truncation is the shape
     # promise 9 forbids.
-    agents = _agents(ebook)
+    agents = _agents(ebook, root)
     out["creators_detail"] = agents
     # AUTHORS ARE THE ONLY AUTHORS, and everyone else is credited AS WHAT
     # THEY DID (operator, 2026-09-12). PG names illustrators, translators

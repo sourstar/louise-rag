@@ -233,6 +233,51 @@ def _plain(elem: ET.Element | None, path: str) -> str:
     return _text(elem.find(path)) if elem is not None else ""
 
 
+def _part_attrs(at: ET.Element) -> dict:
+    """A structured-abstract part's own labels: the publisher's `Label`
+    and NLM's `NlmCategory` — independent assertions (AIM vs OBJECTIVE);
+    only the Label reached the text (audit 2026-09-14)."""
+    return {k: v for k, v in {"label": (at.get("Label") or "").strip(),
+                              "nlm_category": (at.get("NlmCategory") or "").strip()}.items()
+            if v}
+
+
+def _person(a: ET.Element) -> dict | None:
+    """One Author or Investigator, with everything the origin says: names,
+    identifiers, affiliations AND the identifiers of those affiliations
+    (GRID, ISNI, Ringgold — parser 7 read only the text; audit 2026-09-14)."""
+    ids = {}
+    for ident in a.findall("Identifier"):
+        src = (ident.get("Source") or "").strip().lower() or "unknown"
+        if ident.text and ident.text.strip():
+            ids[src] = ident.text.strip()
+    affs, aff_ids = [], []
+    for af in a.findall("AffiliationInfo"):
+        text = _text(af.find("Affiliation"))
+        if text:
+            affs.append(text)
+        for ident in af.findall("Identifier"):
+            if (ident.text or "").strip():
+                aff_ids.append({"affiliation": text,
+                                "source": (ident.get("Source") or "").strip(),
+                                "id": ident.text.strip()})
+    entry = {
+        "last": (a.findtext("LastName") or "").strip(),
+        "fore": (a.findtext("ForeName") or "").strip(),
+        "initials": (a.findtext("Initials") or "").strip(),
+        "suffix": (a.findtext("Suffix") or "").strip(),
+        "collective": (a.findtext("CollectiveName") or "").strip(),
+        "valid": (a.get("ValidYN") or "").strip(),
+        "equal_contrib": (a.get("EqualContrib") or "").strip(),
+        "identifiers": ids,
+        "affiliations": affs,
+        "affiliation_ids": aff_ids,
+    }
+    if any(entry[k] for k in ("last", "collective")) or ids:
+        return {k: v for k, v in entry.items() if v}
+    return None
+
+
 def authors_full(elem: ET.Element) -> list[dict]:
     """Every author, with everything the origin says about them.
 
@@ -241,28 +286,22 @@ def authors_full(elem: ET.Element) -> list[dict]:
     the origin asserting who the author IS, and promise 9 admits no
     category that covers dropping them.
     """
-    out = []
-    for a in elem.findall("MedlineCitation/Article/AuthorList/Author"):
-        ids = {}
-        for ident in a.findall("Identifier"):
-            src = (ident.get("Source") or "").strip().lower() or "unknown"
-            if ident.text and ident.text.strip():
-                ids[src] = ident.text.strip()
-        affs = [_text(af.find("Affiliation")) for af in a.findall("AffiliationInfo")]
-        entry = {
-            "last": (a.findtext("LastName") or "").strip(),
-            "fore": (a.findtext("ForeName") or "").strip(),
-            "initials": (a.findtext("Initials") or "").strip(),
-            "suffix": (a.findtext("Suffix") or "").strip(),
-            "collective": (a.findtext("CollectiveName") or "").strip(),
-            "valid": (a.get("ValidYN") or "").strip(),
-            "equal_contrib": (a.get("EqualContrib") or "").strip(),
-            "identifiers": ids,
-            "affiliations": [x for x in affs if x],
-        }
-        if any(entry[k] for k in ("last", "collective")) or ids:
-            out.append({k: v for k, v in entry.items() if v})
-    return out
+    return [p for p in (_person(a) for a in
+                        elem.findall("MedlineCitation/Article/AuthorList/Author")) if p]
+
+
+def _inner_xml(el: ET.Element | None) -> str:
+    """An element's content AS MARKED UP, when it holds markup at all.
+
+    `_text` flattens `<sup>`, `<sub>`, `<i>` and MathML into their text,
+    so "10<sup>6</sup> cells" reads "106 cells" — a number the origin
+    never wrote. That flattened text is what `sections` holds, and it must
+    stay so: pubmed's 35.4M vectors came from the MedCPT archive and are
+    bound to those chunk ids. So the origin's own form is kept BESIDE it,
+    in the record, and nothing that moves a vector changes."""
+    if el is None or len(el) == 0:
+        return ""
+    return ((el.text or "") + "".join(ET.tostring(c, encoding="unicode") for c in el)).strip()
 
 
 def mesh_headings(elem: ET.Element) -> tuple[list[str], list[dict]]:
@@ -289,15 +328,25 @@ def mesh_headings(elem: ET.Element) -> tuple[list[str], list[dict]]:
             subjects.extend(f"{name}/{q.text.strip()}" for q in quals)
         else:
             subjects.append(name)
-        detail.append({
+        entry = {
             "descriptor": name,
             "ui": (d.get("UI") or "").strip(),
             "major": (d.get("MajorTopicYN") or "").strip(),
-            "qualifiers": [{"name": q.text.strip(),
-                            "ui": (q.get("UI") or "").strip(),
-                            "major": (q.get("MajorTopicYN") or "").strip()}
+            "qualifiers": [{**{"name": q.text.strip(),
+                               "ui": (q.get("UI") or "").strip(),
+                               "major": (q.get("MajorTopicYN") or "").strip()},
+                            **({"auto_hm": q.get("AutoHM").strip()}
+                               if (q.get("AutoHM") or "").strip() else {})}
                            for q in quals],
-        })
+        }
+        # "Geographic" on a place heading, and AutoHM — whether the
+        # heading was assigned automatically: both the origin's word about
+        # the term (parser 8; AutoHM was "unsure" and keep-by-default
+        # settles it, operator 2026-09-14)
+        for key, attr in (("type", "Type"), ("auto_hm", "AutoHM")):
+            if (d.get(attr) or "").strip():
+                entry[key] = d.get(attr).strip()
+        detail.append(entry)
     return subjects, detail
 
 
@@ -340,53 +389,99 @@ def parse_full(elem: ET.Element) -> dict:
                             pd.findtext("Season"), pd.findtext("Month"),
                             pd.findtext("Day")) if t and t.strip()).strip()
 
+    # OTHER ABSTRACTS LIVE UNDER MedlineCitation, not Article — the DTD and
+    # every real record put them there, and parser 7 looked under Article
+    # only, so none was ever written (914 of 180,000 sampled records, the
+    # author's own abstract in Russian, Italian, Chinese…; audit 2026-09-14).
+    # The fixture had the element in the wrong place, which is how the test
+    # passed. Both parents are read, in document order.
     abstracts_other = []
-    if art is not None:
-        for oa in art.findall("OtherAbstract"):
-            body = "\n\n".join(
-                f"{at.get('Label')}: {_text(at)}" if at.get("Label") else _text(at)
-                for at in oa.findall("AbstractText"))
-            if body.strip():
-                abstracts_other.append({"language": (oa.get("Language") or "").strip(),
-                                        "type": (oa.get("Type") or "").strip(),
-                                        "text": body})
+    for oa in ((cit.findall("OtherAbstract") if cit is not None else [])
+               + (art.findall("OtherAbstract") if art is not None else [])):
+        body = "\n\n".join(
+            f"{at.get('Label')}: {_text(at)}" if at.get("Label") else _text(at)
+            for at in oa.findall("AbstractText"))
+        if body.strip():
+            abstracts_other.append({k: v for k, v in {
+                "language": (oa.get("Language") or "").strip(),
+                "type": (oa.get("Type") or "").strip(),
+                "text": body,
+                "copyright": _plain(oa, "CopyrightInformation"),
+                "parts": [p for p in (_part_attrs(at) for at in oa.findall("AbstractText")) if p],
+                "xml": [x for x in (_inner_xml(at) for at in oa.findall("AbstractText")) if x],
+            }.items() if v})
 
     ids = {}
+    article_ids = []
     for aid in (pub.findall("ArticleIdList/ArticleId") if pub is not None else []):
         kind = (aid.get("IdType") or "").strip().lower() or "unknown"
         if aid.text and aid.text.strip():
             ids.setdefault(kind, aid.text.strip())
+            article_ids.append({"type": kind, "id": aid.text.strip()})
+    # EVERY ELocationID, as the article states it. They were merged into
+    # `ids` with setdefault, so one whose type ArticleIdList already held
+    # was discarded (PMID 27983690: pii "E77" against "insects7040077"), and
+    # its ValidYN — "N" marks an identifier NLM knows to be wrong — was
+    # never read (audit 2026-09-14). `ids` stays the merged map.
+    elocation_ids = []
     for el in (art.findall("ELocationID") if art is not None else []):
         kind = (el.get("EIdType") or "").strip().lower()
         if el.text and el.text.strip() and kind:
             ids.setdefault(kind, el.text.strip())
+            elocation_ids.append({k: v for k, v in {
+                "type": kind, "id": el.text.strip(),
+                "valid": (el.get("ValidYN") or "").strip()}.items() if v})
 
     history = []
     for d in (pub.findall("History/PubMedPubDate") if pub is not None else []):
         when = _date(d)
         if when:
-            history.append({"status": (d.get("PubStatus") or "").strip(), "date": when})
+            entry = {"status": (d.get("PubStatus") or "").strip(), "date": when}
+            # PubMed's own time of day (Hour, Minute) — not the date the
+            # article entered OUR corpus, so promise 9(c) does not cover it
+            hh, mm = (d.findtext("Hour") or "").strip(), (d.findtext("Minute") or "").strip()
+            if hh.isdigit():
+                entry["time"] = f"{int(hh):02d}:{int(mm) if mm.isdigit() else 0:02d}"
+            history.append(entry)
 
     corrections = []
     for cc in (cit.findall("CommentsCorrectionsList/CommentsCorrections")
                if cit is not None else []):
+        p = cc.find("PMID")
         corrections.append({k: v for k, v in {
             "ref_type": (cc.get("RefType") or "").strip(),
             "source": _plain(cc, "RefSource"),
             "pmid": (cc.findtext("PMID") or "").strip(),
+            "pmid_version": (p.get("Version") or "").strip() if p is not None else "",
             "note": _plain(cc, "Note"),
         }.items() if v})
 
+    # THE BIBLIOGRAPHY, with every id of every cited work (doi, pmcid —
+    # parser 7 kept the pubmed one alone) and the grouping the origin
+    # gives it: a nested ReferenceList and its Title ("Supplementary
+    # references"), which `.//Reference` flattened away.
     references = []
-    for ref in (pub.findall("ReferenceList//Reference") if pub is not None else []):
-        cited = {k: v for k, v in {
-            "citation": _plain(ref, "Citation"),
-            "pmid": next((a.text.strip() for a in ref.findall("ArticleIdList/ArticleId")
-                          if (a.get("IdType") or "").lower() == "pubmed"
-                          and a.text and a.text.strip()), ""),
-        }.items() if v}
-        if cited:
-            references.append(cited)
+
+    def _refs(rl: ET.Element, titles: list[str]) -> None:
+        title = _plain(rl, "Title")
+        path = titles + [title] if title else titles
+        for ref in rl.findall("Reference"):
+            rid = {(a.get("IdType") or "").strip().lower() or "unknown": a.text.strip()
+                   for a in ref.findall("ArticleIdList/ArticleId")
+                   if a.text and a.text.strip()}
+            cited = {k: v for k, v in {
+                "citation": _plain(ref, "Citation"),
+                "pmid": rid.get("pubmed", ""),
+                "ids": rid,
+                "list_title": " › ".join(path),
+            }.items() if v}
+            if cited:
+                references.append(cited)
+        for sub in rl.findall("ReferenceList"):
+            _refs(sub, path)
+
+    for rl in (pub.findall("ReferenceList") if pub is not None else []):
+        _refs(rl, [])
 
     def _values(path: str, attr: str | None = None) -> list:
         got = []
@@ -443,18 +538,65 @@ def parse_full(elem: ET.Element) -> dict:
         "revised": _date(cit.find("DateRevised")) if cit is not None else None,
         "date_completed": _date(cit.find("DateCompleted")) if cit is not None else None,
         "article_date": _date(art.find("ArticleDate")) if art is not None else None,
+        "article_date_type": ((art.find("ArticleDate").get("DateType") or "").strip()
+                              if art is not None and art.find("ArticleDate") is not None
+                              else ""),
         "history": history,
         "publication_status": _plain(pub, "PublicationStatus"),
+        # every id as stated, beside the merged `ids` map
+        "article_ids": article_ids,
+        "elocation_ids": elocation_ids,
+        # the title and abstract AS MARKED UP, where they carry markup —
+        # superscripts, subscripts, MathML — which the flattened text in
+        # `sections` cannot hold without moving the archive's vectors
+        "title_xml": _inner_xml(art.find("ArticleTitle")) if art is not None else "",
+        "abstract_xml": [x for x in (_inner_xml(at) for at in
+                                     (art.findall("Abstract/AbstractText")
+                                      if art is not None else [])) if x],
+        "abstract_parts": [p for p in (_part_attrs(at) for at in
+                                       (art.findall("Abstract/AbstractText")
+                                        if art is not None else [])) if p],
         # subject machinery beyond `subjects`
         "mesh": mesh_detail,
-        "chemicals": _values("ChemicalList/Chemical/NameOfSubstance", "UI"),
-        "suppl_mesh": _values("SupplMeshList/SupplMeshName", "UI"),
+        # the CAS / EC / UNII number beside the name (49% of records;
+        # parser 7 read the name and its UI only)
+        "chemicals": [{k: v for k, v in {
+            "name": _text(ch.find("NameOfSubstance")),
+            "ui": ((ch.find("NameOfSubstance").get("UI") or "").strip()
+                   if ch.find("NameOfSubstance") is not None else ""),
+            "registry_number": (ch.findtext("RegistryNumber") or "").strip(),
+        }.items() if v} for ch in (cit.findall("ChemicalList/Chemical")
+                                   if cit is not None else [])
+            if _text(ch.find("NameOfSubstance"))],
+        # Disease / Protocol / Organism / Population: which KIND of
+        # supplementary concept (parser 7 dropped the attribute)
+        "suppl_mesh": [{k: v for k, v in {
+            "name": _text(s), "ui": (s.get("UI") or "").strip(),
+            "type": (s.get("Type") or "").strip()}.items() if v}
+            for s in (cit.findall("SupplMeshList/SupplMeshName") if cit is not None else [])
+            if _text(s)],
         "gene_symbols": _values("GeneSymbolList/GeneSymbol"),
-        "personal_name_subjects": [
-            " ".join(x for x in ((p.findtext("LastName") or "").strip(),
-                                  (p.findtext("ForeName") or "").strip()) if x)
+        # the person the article is ABOUT, with the initials and suffix
+        # parser 7 dropped
+        "personal_name_subjects": [{k: v for k, v in {
+            "last": (p.findtext("LastName") or "").strip(),
+            "fore": (p.findtext("ForeName") or "").strip(),
+            "initials": (p.findtext("Initials") or "").strip(),
+            "suffix": (p.findtext("Suffix") or "").strip()}.items() if v}
             for p in (cit.findall("PersonalNameSubjectList/PersonalNameSubject")
                       if cit is not None else [])],
+        # the INVESTIGATORS — collaborators named by the record, never read
+        # at all (322 of 180,000 sampled records, 25,300 named people)
+        "investigators": [p for p in (_person(i) for i in
+                                      (cit.findall("InvestigatorList/Investigator")
+                                       if cit is not None else [])) if p],
+        # N here is the origin stating the list is TRUNCATED
+        "authors_complete": _attr(art, "AuthorList", "CompleteYN"),
+        "grants_complete": _attr(art, "GrantList", "CompleteYN"),
+        "databanks_complete": _attr(art, "DataBankList", "CompleteYN"),
+        # older records have no ReferenceList, so the count cannot be
+        # derived (1% of records; "unsure", kept by the operator's rule)
+        "number_of_references": _plain(cit, "NumberOfReferences"),
         # funding, data, and the rest
         "grants": [{k: v for k, v in {
             "id": (g.findtext("GrantID") or "").strip(),
@@ -472,7 +614,10 @@ def parse_full(elem: ET.Element) -> dict:
                       for o in (cit.findall("OtherID") if cit is not None else [])
                       if _text(o)],
         "space_flight_missions": _values("SpaceFlightMission"),
-        "general_notes": _values("GeneralNote"),
+        # with WHO wrote the note (NLM, NASA, KIE…) — parser 7 kept the text
+        "general_notes": [{k: v for k, v in {
+            "note": _text(g), "owner": (g.get("Owner") or "").strip()}.items() if v}
+            for g in (cit.findall("GeneralNote") if cit is not None else []) if _text(g)],
         "comments_corrections": corrections,
         "references": references,
         "languages": [(l.text or "").strip().lower()
@@ -481,6 +626,11 @@ def parse_full(elem: ET.Element) -> dict:
     }
     return {**base, "subjects": subjects, "authors_full": authors_full(elem),
             "extra": {k: v for k, v in extra.items() if v not in ("", None, [], {})}}
+
+
+def _attr(parent: ET.Element | None, path: str, name: str) -> str:
+    el = parent.find(path) if parent is not None else None
+    return (el.get(name) or "").strip() if el is not None else ""
 
 
 def parse_delete_pmids(elem: ET.Element) -> list[str]:
