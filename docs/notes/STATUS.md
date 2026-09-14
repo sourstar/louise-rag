@@ -1388,6 +1388,17 @@ races subprocess for its own children's status, and a stolen status is
 exit 0 — a failed rsync's staging file moved into place as complete.
 The node's app config gets `init` through `app.update` (operator's OK).
 
+**Deployed 2026-09-14, 05:04** — `149e40e` (this, the invariant-9
+audit, the health fixes, the two CLI NameErrors), by the operator
+running deploy-louise.sh: promote, build, prove the image is the new
+code and loads both collections, then `app.update` adding `init: true`,
+which is the restart. Checked live: web and worker on one image, PID 1
+`/sbin/docker-init` in both, mode still acquire-only, licensing
+unchanged (gutenberg green, pubmed acknowledged), `louise health` as
+staged, no zombie rsync. gutenberg's rdf backlog rose to 29,255 as the
+fetch replaced corpus files that had been parsed — changed files are
+re-derived, which is what they should be.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
