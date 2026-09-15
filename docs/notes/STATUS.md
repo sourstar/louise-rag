@@ -1885,6 +1885,20 @@ calibration texts past 500). By the book (09 §9.3: a chunk is truncated
 to `ctx`) the platform cuts by the endpoint's own tokenizer — the
 operator's go pending.
 
+**Rollback mark: three embedding servers on one GPU (operator,
+2026-09-15).** From **03:14:41 UTC** the Intel GPU serves three
+llama.cpp embedders at once: Qwen3-4B (gutenberg, since 02:12:46),
+bge-m3 (since 02:18:11) and the MedCPT pair (since 03:14:41); wikipedia's
+encoder moved onto it at **03:34:26 UTC**. Should vectors computed on it
+turn out corrupt, the rollback is per collection: the documents with
+`embed_done=1 AND updated_at >= 03:14:41 UTC` — the embed stage stamps
+`updated_at` when it writes a vector; other stages move it too, so this
+over-selects, which is the safe side — are reset and re-embedded. Only
+COMPUTED vectors are at risk: an archive's imported vectors are not
+computed on the GPU (it runs their 16-sample proofs). The data dataset
+has no ZFS snapshot to roll back to instead, and the SSD pool's backup
+replication was in error when this was written.
+
 **Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
 available; the operator stopped a llama.cpp probe container (8.5 GB).
 Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is

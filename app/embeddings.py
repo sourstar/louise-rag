@@ -66,6 +66,21 @@ def _dense_script(ch: str) -> bool:
             0xF900 <= o <= 0xFAFF or          # CJK compatibility
             0x20000 <= o <= 0x2FA1F)          # CJK extension B+
 
+def _over_budget(response) -> bool:
+    """Did the server refuse an input for being longer than it will take?
+
+    Three spellings of one answer: 400 (older llama-server), 413 (TEI), and
+    500 with "too large to process" (llama-server now: "input (774 tokens)
+    is too large to process. increase the physical batch size"). Seen live
+    2026-09-15 serving MedCPT as GGUF — a 500 the client did not recognise
+    ended the request instead of shrinking the cut, where TEI's 413 for the
+    same text had always shrunk it. Any OTHER 500 is a real failure and
+    still surfaces with the server's message."""
+    if response.status_code in (400, 413):
+        return True
+    return response.status_code == 500 and "too large to process" in response.text
+
+
 def _embed_batch(batch: list[str], timeout: float,
                  recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
@@ -108,7 +123,7 @@ def _embed_batch(batch: list[str], timeout: float,
             # PubMed abstract for a 5 % overshoot (measured on the MedCPT
             # tokenizer: 3.8–6.2 chars/token, so ctx*4 chars is 410–530
             # tokens; the dense tail case needs ~10 % less, not 50 %).
-            if e.response.status_code in (400, 413) and budget > 256:
+            if _over_budget(e.response) and budget > 256:
                 budget = max(256, int(budget * 0.8))
                 continue
             detail = e.response.text[:200].replace("\n", " ")

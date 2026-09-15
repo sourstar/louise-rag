@@ -154,6 +154,63 @@ def test_413_from_bert_class_servers_shrinks_the_budget_gently(isolated_config, 
         assert nxt == max(256, int(prev * 0.8)), attempts
 
 
+def _refusing_server(monkeypatch, status, text, limit=1000):
+    """A server that refuses any input longer than `limit` chars with
+    `status` and body `text`, and accepts the rest."""
+    import httpx as httpx_mod
+    attempts = []
+
+    class Resp:
+        def __init__(self, status_code):
+            self.status_code = status_code
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx_mod.HTTPStatusError(
+                    "refused", request=httpx_mod.Request("POST", "http://x"),
+                    response=httpx_mod.Response(self.status_code, text=text))
+        def json(self):
+            return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(len(json["input"][0]))
+        return Resp(status if len(json["input"][0]) > limit else 200)
+    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    return attempts
+
+
+def test_llama_servers_500_too_large_shrinks_the_budget_as_teis_413_does(
+        isolated_config, monkeypatch):
+    """llama-server now refuses an over-long input with HTTP 500 "input (774
+    tokens) is too large to process. increase the physical batch size" — and
+    does not truncate. Seen live 2026-09-15 serving MedCPT as GGUF: the client
+    raised where TEI's 413 for the same text had always made it shrink. The
+    two must cut the SAME text to the same length, or two servers of one
+    model embed different inputs."""
+    recipe = collections_mod.EmbedRecipe(
+        url="http://gguf:1", api="openai", model="medcpt", dtype="f16", ctx=512)
+    llama = _refusing_server(
+        monkeypatch, 500, '{"error":{"code":500,"message":"input (774 tokens) '
+        'is too large to process. increase the physical batch size (current '
+        'batch size: 512)","type":"server_error"}}')
+    assert len(embeddings.embed_texts(["A" * 10_000], recipe=recipe)) == 1
+    tei = _refusing_server(monkeypatch, 413, "Input validation error")
+    embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    assert llama == tei, "the same cuts, step for step, on either server"
+    assert llama[-1] <= 1000
+
+
+def test_any_other_500_is_still_an_error(isolated_config, monkeypatch):
+    """Only the over-budget refusal shrinks the cut: a server that fails for
+    any other reason must say so, not have its input quietly shortened ten
+    times over."""
+    _refusing_server(monkeypatch, 500, '{"error":"CUDA error: out of memory"}',
+                     limit=0)
+    recipe = collections_mod.EmbedRecipe(
+        url="http://gguf:1", api="openai", model="medcpt", dtype="f16", ctx=512)
+    with pytest.raises(RuntimeError, match="HTTP 500: .*out of memory"):
+        embeddings.embed_texts(["an abstract"], recipe=recipe)
+
+
 def test_space_components_come_from_the_recipe(isolated_config, config_dir):
     _write_toml(config_dir, "medcpt", MEDCPT_TOML)
     c = collections_mod.by_name("medcpt")
