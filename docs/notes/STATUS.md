@@ -1807,15 +1807,29 @@ file; the page's form is plugin, space-from and recipe, and shows the
 command line. The old form wrote a file naming no Codex; its routes stay
 one release as deprecated aliases. Help's "Adding a collection" follows.
 
-**Deploy of 8261747 — handed to the operator (2026-09-15).** Local and
-node suites 2,719 passed. The deploy stops the app, swaps the three
-collection files for 07 §7.8's shape, adds the origin mounts (keeping the
-old container paths until discovery has moved every stored locator) and
-restarts; the permission classifier refused it for me, so it runs as the
-operator's script, which checks the new files load, under the new image
-and with the new mounts, before it stops anything. The node is still
-acquire-only: leaving it (the Library's mode control) is the operator's
-switch too, refused for me the same way.
+**Deployed 2026-09-15 02:15 UTC (8261747, image `b9abcab…`)** at the
+operator's instruction. Before stopping anything the script loaded the
+new files under the new image with the new mounts: all three, with
+profiles full/full/all, pubmed's archive `medcpt-pubmed`, wikipedia's
+`upstash-wikipedia-2024-06` and dump 20260801 derived from their Codexes.
+Web and worker on one image, `LOUISE_PLATFORM_IMAGE` = it; each origin
+visible at `<LOUISE_ROOT>/collections/<name>/origin`; the old files kept
+as `*.bak-20260915`; no error in either log. Discovery logged "corpus
+moved" for all three at 02:15:05 and re-enumerates to rewrite their
+stored locators; the old container paths stay mounted until it has, then
+leave the compose file ([`legacy-to-delete.md`](legacy-to-delete.md) §6).
+The node runs in mode `running` (the operator's switch). The host has
+little memory to spare: at 02:08 UTC the kernel's OOM killer took the
+CPU TEI encoder four times (~12 G each) and a `llama-server` once, the
+TEI kills during a 512-text calibration run against it.
+
+**How the deploy ran.** Local and node suites 2,719 passed on 8261747.
+The script (stop the app, swap the three collection files, add the
+origin mounts, restart) checks the new files load under the new image
+and mounts before it stops anything. The permission classifier refused
+its first run; it ran on the operator's explicit instruction. Leaving
+acquire-only was refused to me the same way and was the operator's
+switch in the Library.
 
 ### What is waiting on the operator
 
