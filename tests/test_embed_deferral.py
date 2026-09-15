@@ -60,6 +60,38 @@ def test_everything_else_is_still_the_documents_problem(exc):
     assert worker.endpoint_unavailable(exc) is False
 
 
+def _wrapped(status):
+    """The embed client's shape: the server's answer wrapped in a
+    RuntimeError (`raise … from e`)."""
+    req = httpx.Request("POST", "http://gpu:30443/v1/embeddings")
+    try:
+        try:
+            raise httpx.HTTPStatusError("answer", request=req,
+                                        response=httpx.Response(status, request=req))
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"embed server HTTP {status}: ...") from e
+    except RuntimeError as outer:
+        return outer
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+def test_a_server_that_says_not_now_is_the_endpoints_fault(status):
+    """llama.cpp answers 503 "Loading model" while it starts: 41 pubmed
+    documents were blocked by it across two app restarts (2026-09-15)."""
+    assert worker.endpoint_unavailable(_wrapped(status)) is True
+
+
+def test_a_500_is_still_the_documents_problem():
+    assert worker.endpoint_unavailable(_wrapped(500)) is False
+
+
+def test_a_vector_lock_timeout_is_contention_not_the_document():
+    from app.bundles.writer_lock import VectorWriteBusy
+    e = VectorWriteBusy("could not acquire the vector write lock: database is locked")
+    assert worker.manifest_contended(e) is True
+    assert worker.transient_failure(e) is True
+
+
 # ---------------- the serial path ----------------
 
 def test_a_dead_encoder_leaves_the_document_untouched(collection, monkeypatch):

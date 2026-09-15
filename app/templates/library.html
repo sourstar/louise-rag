@@ -328,7 +328,9 @@ async function setEmbedMode(name,mode){
   catch(e){toast('embed mode failed: '+e);location.reload()}
 }
 async function libReset(name,stage){
-  try{await postJSON('/admin/library/'+name+'/reset',{stage});toast('reset '+stage+' on '+name);location.reload()}
+  try{const d=await postJSON('/admin/library/'+name+'/reset',{stage});
+    if(d.background){toast('clearing errors on '+name+' in the background — the counts update when it is done');return}
+    toast('reset '+stage+' on '+name);location.reload()}
   catch(e){toast('reset failed: '+e)}
 }
 function openGrow(name){

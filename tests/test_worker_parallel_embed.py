@@ -208,6 +208,33 @@ def test_writes_of_other_documents_cost_no_check(collection, monkeypatch):
     assert checks == [], "no check for this process's writes of other documents"
 
 
+@pytest.mark.parametrize("failure", ["loading", "lock"])
+def test_transient_failures_leave_documents_untouched_in_the_parallel_path(
+        collection, monkeypatch, failure):
+    """This path asked only whether the encoder was unreachable, so on
+    2026-09-15 a 503 "Loading model" (41 documents) and a vector-lock
+    timeout (4) were written onto pubmed documents as errors."""
+    import httpx
+    from app.bundles.writer_lock import VectorWriteBusy
+    con = db.connect(collection)
+
+    def fail(texts, timeout=300, recipe=None, query=False):
+        if failure == "lock":
+            raise VectorWriteBusy("could not acquire the vector write lock: database is locked")
+        req = httpx.Request("POST", "http://gpu/v1/embeddings")
+        try:
+            raise httpx.HTTPStatusError("x", request=req,
+                                        response=httpx.Response(503, request=req))
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError("embed server HTTP 503: Loading model") from e
+    monkeypatch.setattr(embeddings, "embed_texts", fail)
+
+    assert worker._embed_parallel(con, collection, collections_mod.recipe_for(collection)) is False
+    rows = con.execute("SELECT error, retries, embed_done FROM documents").fetchall()
+    assert all(r["error"] is None and r["retries"] == 0 and r["embed_done"] == 0
+               for r in rows), "a deferral writes nothing onto a document"
+
+
 def test_serial_recipes_never_enter_the_parallel_path(collection, monkeypatch):
     from dataclasses import replace
     serial = replace(collection, embed=replace(collection.embed, concurrency=1))

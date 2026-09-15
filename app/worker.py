@@ -968,7 +968,7 @@ def _embed_parallel(con, collection, recipe) -> bool:
                 chars=sum(len(c.get("text") or "") for c in chunks))
             return (row["uid"], n, None)
         except Exception as e:  # noqa: BLE001 — isolated per document
-            if endpoint_unavailable(e):
+            if transient_failure(e):
                 return (row["uid"], None, DEFERRED)
             return (row["uid"], None, f"{type(e).__name__}: {e}"[:400])
 
@@ -1061,7 +1061,8 @@ def _embed_parallel(con, collection, recipe) -> bool:
                      f"{recipe.concurrency}")
     if deferred:
         db.log_event(con, "warn", "embed",
-                     f"{deferred} document(s) deferred — encoder unreachable; "
+                     f"{deferred} document(s) deferred — encoder unreachable or busy, "
+                     f"or the store held by another writer; "
                      f"untouched, and retried when it answers again")
     # Nothing embedded and something deferred means the endpoint is down:
     # report no work so the caller yields the round rather than spinning
@@ -1807,6 +1808,26 @@ _ENDPOINT_DOWN_ERRNOS = frozenset(
     {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH})
 
 
+#: HTTP answers that mean "not now", never "not this document": a server
+#: still loading its weights (llama.cpp answers 503 "Loading model" until
+#: they are in — 41 pubmed documents were blocked by it across two app
+#: restarts on 2026-09-15), one overloaded (429), or a proxy that lost it
+#: (502/504). A 500 is NOT here: it can be the document's own failure.
+_ENDPOINT_BUSY_STATUS = frozenset({429, 502, 503, 504})
+
+
+def _http_status(exc: BaseException | None) -> int | None:
+    """The HTTP status behind an exception, however deep: the embed client
+    wraps the server's answer in a RuntimeError (`raise … from e`)."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
 def manifest_contended(exc: BaseException) -> bool:
     """Is this failure another writer holding the manifest, not the document?
 
@@ -1823,8 +1844,12 @@ def manifest_contended(exc: BaseException) -> bool:
     behind it lost the lock and errored documents that had nothing wrong with
     them (observed live: six in the first minutes, still accruing).
     """
-    return (isinstance(exc, sqlite3.OperationalError)
-            and "locked" in str(exc).lower())
+    from .bundles.writer_lock import VectorWriteBusy
+    # The vector write lock IS the manifest's lock (`BEGIN IMMEDIATE`),
+    # timed out. Its class was recognised nowhere, so on 2026-09-15 it was
+    # written as an error onto four pubmed documents at a deploy's restart.
+    return isinstance(exc, VectorWriteBusy) or (
+        isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower())
 
 
 def endpoint_unavailable(exc: BaseException) -> bool:
@@ -1846,7 +1871,20 @@ def endpoint_unavailable(exc: BaseException) -> bool:
         return True
     if isinstance(exc, ConnectionError):      # ConnectionRefusedError et al
         return True
+    if _http_status(exc) in _ENDPOINT_BUSY_STATUS:
+        return True
     return isinstance(exc, OSError) and exc.errno in _ENDPOINT_DOWN_ERRNOS
+
+
+def transient_failure(exc: BaseException) -> bool:
+    """The moment's fault, not the document's: the encoder away or busy,
+    the manifest or the vector store held by another writer. ONE test for
+    both embed paths — the parallel one (every encoder at concurrency > 1,
+    pubmed's among them) asked only `endpoint_unavailable`, so a 503 or a
+    vector-lock timeout there was written onto the document as an error,
+    which takes it out of every selection until a human clears it."""
+    return (endpoint_unavailable(exc) or manifest_contended(exc)
+            or vector_store_contended(exc))
 
 
 def _execute_step(con, collection, stage, row) -> bool:

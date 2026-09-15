@@ -653,7 +653,7 @@ def get_bandwidth_override(con) -> float | None:
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
-def apply_reset(con, stage: str, book_ids: list[int]) -> None:
+def apply_reset(con, stage: str, book_ids: list[int]) -> int | None:
     """Shared by app/api.py's /api/reset (default collection) and
     app/web.py's per-collection Library admin action — same SQL either way,
     just a different `con` (each collection's manifest.db has its own
@@ -675,9 +675,23 @@ def apply_reset(con, stage: str, book_ids: list[int]) -> None:
         # had not changed (cursor skip). Retrying cannot change a corpus
         # fact; the card for unindexable documents says exactly that.
         prefixed = " OR ".join(f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed"))
-        con.execute(
-            f"UPDATE documents SET error=NULL, retries=0 "
-            f"WHERE {where} AND (error IS NULL OR {prefixed})", params)
+        # ONLY THE ROWS THE RESET CHANGES: a stage error, or retries spent
+        # without one. This was `error IS NULL OR …`, which matched every
+        # healthy document too and rewrote them all — on pubmed 40M rows in
+        # one transaction, minutes under the manifest's write lock: the
+        # worker starved behind it (vector-lock timeouts, recorded as
+        # errors) and the request could end before the reset did, so the
+        # button read as doing nothing (2026-09-15). No index answers this,
+        # so it is READ first, under no write lock, and only the rows found
+        # are written, a few hundred per transaction.
+        cond = f"{where} AND ((error IS NULL AND retries > 0) OR {prefixed})"
+        rowids = [r[0] for r in con.execute(
+            f"SELECT rowid FROM documents WHERE {cond}", params)]
+        for i in range(0, len(rowids), 500):
+            part = rowids[i:i + 500]
+            con.execute(f"UPDATE documents SET error=NULL, retries=0 "
+                        f"WHERE rowid IN ({','.join('?' * len(part))})", part)
+        return len(rowids)
     elif stage in ("rdf", "fts", "embed"):
         con.execute(f"UPDATE documents SET {stage}_done=0 WHERE {where}", params)
         if stage == "rdf":

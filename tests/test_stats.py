@@ -266,8 +266,13 @@ def test_a_reset_invalidates_the_cache(client, isolated_config):
     web.invalidate_counts()
     assert web._document_counts(col)[0]["blocked"] == 1
 
-    assert client.post(f"/admin/library/{col.name}/reset",
-                       json={"stage": "errors"}).status_code == 200
+    r = client.post(f"/admin/library/{col.name}/reset", json={"stage": "errors"})
+    assert r.status_code == 200 and r.json()["background"], \
+        "the full clear runs in the background: on pubmed it reads 40M rows"
+    import time
+    deadline = time.monotonic() + 10
+    while web._document_counts(col)[0]["blocked"] and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert web._document_counts(col)[0]["blocked"] == 0, "cache must not hide the reset"
 
 

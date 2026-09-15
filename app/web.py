@@ -1681,9 +1681,46 @@ class LibraryResetBody(BaseModel):
     book_ids: list[int] = []
 
 
+#: manifest paths with a background "clear errors" running (library_reset)
+_clearing: set[str] = set()
+_clearing_lock = threading.Lock()
+
+
+def _clear_errors_job(collection, key: str) -> None:
+    try:
+        con = db.connect(collection)
+        try:
+            n = db.apply_reset(con, "errors", [])
+            db.log_event(con, "info", "control",
+                         f"reset errors (all): {n} document(s) cleared")
+        finally:
+            con.close()
+        invalidate_counts(collection)
+    except Exception as e:  # noqa: BLE001 — a background job must not fail silently
+        print(f"clear errors on {collection.name} failed: {type(e).__name__}: {e}",
+              flush=True)
+    finally:
+        with _clearing_lock:
+            _clearing.discard(key)
+
+
 @admin_router.post("/library/{name}/reset")
 def library_reset(name: str, body: LibraryResetBody):
     collection = _collection_or_404(name)
+    if body.stage == "errors" and not body.book_ids:
+        # IN THE BACKGROUND. No index answers "which documents hold a stage
+        # error", so finding them reads the whole manifest — about 75 s on
+        # pubmed's 40M rows (2026-09-15). The page returns at once and the
+        # counts are refreshed when the clear is done; a second press while
+        # one runs is the same clear, not another.
+        key = str(collection.manifest_path)
+        with _clearing_lock:
+            running = key in _clearing
+            _clearing.add(key)
+        if not running:
+            threading.Thread(target=_clear_errors_job, args=(collection, key),
+                             name=f"clear-errors-{collection.name}", daemon=True).start()
+        return {"ok": True, "background": True, "already_running": running}
     con = db.connect(collection)
     try:
         db.apply_reset(con, body.stage, body.book_ids)
