@@ -9,6 +9,7 @@ slots; order is preserved. Vectors are stored float16 when EMBED_DTYPE=f16
 import hashlib
 import math
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -357,6 +358,9 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     existing = _committed_table(db)
     dtype = (_np_dtype_of_table(existing) if existing is not None
              else _np_dtype_of_recipe(recipe))
+    # The version the read below is judged against, taken BEFORE it: a
+    # commit between the two is only checked when it need not have been.
+    seen = existing.version if existing is not None else 0
 
     have = _written_chunks(db, book_id)
     wanted = {c["id"]: c["text"] for c in chunks}
@@ -417,13 +421,20 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
             # before it could happen live
             if TABLE in db.table_names():
                 tbl = db.open_table(TABLE)
+                before = tbl.version
                 if purge:
                     # once, and only when the document must be rebuilt: the
                     # slices that follow are additions to a document whose
                     # remaining rows were verified byte-identical above
                     tbl.delete(_book_filter(book_id))
                     purge = False
+                elif _unexplained_since(db.uri, seen, before, book_id):
+                    # the read above is stale: something this process cannot
+                    # account for may have written this document since
+                    _drop_clashing(tbl, book_id, [r["id"] for r in rows])
                 tbl.add(rows)
+                seen = tbl.version
+                _note_own_versions(db.uri, before + 1, seen, book_id)
             else:
                 dim = len(rows[0]["vector"])
                 vt = pa.float16() if dtype is np.float16 else pa.float32()
@@ -434,17 +445,24 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                     pa.field("vector", pa.list_(vt, dim)),
                 ])
                 try:
-                    db.create_table(TABLE, data=rows, schema=schema)
+                    tbl = db.create_table(TABLE, data=rows, schema=schema)
                     purge = False
+                    before = 0
                 except ValueError:
                     # lost a create race despite the lock (a writer without
                     # lock_con, or a cross-process writer between our check
-                    # and create) — converge on the append path
+                    # and create) — converge on the append path; that writer
+                    # is by definition one this process cannot account for
                     tbl = db.open_table(TABLE)
+                    before = tbl.version
                     if purge:
                         tbl.delete(_book_filter(book_id))
                         purge = False
+                    else:
+                        _drop_clashing(tbl, book_id, [r["id"] for r in rows])
                     tbl.add(rows)
+                seen = tbl.version
+                _note_own_versions(db.uri, before + 1, seen, book_id)
         written += len(rows)
         if stop is not None and stop.is_set() and start + len(part) < len(todo):
             # SIGTERM between slices. The slices already written STAY
@@ -465,6 +483,74 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
 #: the shape FIRST: `upsert_chunks` derives these from a bundle written by
 #: a stranger, and a filter string is the wrong place to discover a quote.
 _CHUNK_ID = re.compile(r"\A[A-Za-z0-9_.+-]+:[0-9]+:[0-9]+:[0-9]+\Z")
+
+
+#: The versions of each vector table that THIS process's upsert_book
+#: committed, keyed on the table's location (a path, never a name) and
+#: mapped to the document each one wrote. Under the write lock a writer
+#: compares the table's version with the one it saw before its read; a gap
+#: this log explains entirely — its siblings in the parallel embed stage
+#: writing OTHER documents — cannot have touched its document and costs no
+#: read. Anything else (an import, another process, index maintenance, its
+#: own document) is checked by `_drop_clashing`, which measured 0.55–0.65 s
+#: on pubmed (35.4M rows, 7,967 fragments, 2026-09-15) whatever its shape:
+#: paid per document inside the lock, it would serialise every writer.
+_own_versions: dict[str, dict[int, int]] = {}
+_own_versions_lock = threading.Lock()
+_OWN_VERSIONS_KEPT = 10_000
+
+
+def _note_own_versions(where: str, first: int, last: int, book_id: int) -> None:
+    """Versions first..last of the table at `where` are this process's
+    write of `book_id` — called under the write lock, so nothing else
+    committed in between."""
+    with _own_versions_lock:
+        log = _own_versions.setdefault(where, {})
+        for v in range(first, last + 1):
+            log[v] = book_id
+        if len(log) > _OWN_VERSIONS_KEPT:
+            for v in sorted(log)[:len(log) - _OWN_VERSIONS_KEPT]:
+                del log[v]
+
+
+def _unexplained_since(where: str, seen: int, current: int, book_id: int) -> bool:
+    """Could a commit after version `seen` have written `book_id`'s rows?
+    Only a version this process logged for ANOTHER document says no."""
+    if current == seen:
+        return False
+    if current < seen or current - seen > _OWN_VERSIONS_KEPT:
+        return True                  # the table was replaced, or the log cannot say
+    with _own_versions_lock:
+        log = _own_versions.get(where, {})
+        return any(log.get(v) in (None, book_id) for v in range(seen + 1, current + 1))
+
+
+def _drop_clashing(tbl, book_id: int, ids: list[str]) -> None:
+    """Delete-then-insert keyed on the chunk id (invariant 2), for
+    upsert_book's append, whose caller holds the write lock — run only when
+    `_unexplained_since` cannot rule a foreign write out.
+
+    upsert_book reads what a document holds BEFORE the lock, to embed only
+    what is missing, and that read is stale by the time the lock is held:
+    an import in another process (the CLI, the web) may have written the
+    same document since, and appending on top of it stored every chunk
+    twice — tests/bundles/test_import.py's concurrent test, 24 rows for 12
+    ids, in a node suite run on 2026-09-15. Narrowed on `book_id`, the
+    BTREE every write depends on, and deleting only on a clash, as
+    upsert_chunks does."""
+    want = set(ids)
+    have = [x["id"] for x in
+            tbl.search().where(_book_filter(book_id), prefilter=True)
+            .select(["id"]).limit(_RESUME_SCAN_MAX).to_list()
+            if x["id"] in want]
+    for cid in have:
+        if not _CHUNK_ID.match(cid):
+            raise ValueError(
+                f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
+                f"(09 §9.5); no filter is built from it")
+    for j in range(0, len(have), 500):
+        quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
+        tbl.delete(f"{_book_filter(book_id)} AND id IN ({quoted})")
 
 
 def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,

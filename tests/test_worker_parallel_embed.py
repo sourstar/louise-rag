@@ -106,6 +106,33 @@ def test_one_bad_document_is_isolated(collection, monkeypatch):
     assert done == 7, "every healthy document still embedded"
 
 
+def _chunks_of(n, parts=1):
+    return [{"id": f"fake:{n}:{s}:1", "seq": s, "chapter": "",
+             "text": f"abstract of {n}, part {s}"} for s in range(parts)]
+
+
+def _fixed_vectors(monkeypatch):
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            [[1.0] + [0.0] * 7 for _ in texts])
+
+
+def _another_writer_commits_first(monkeypatch, write):
+    """`write()` — another writer — commits once, just before this one takes
+    the vector write lock: the interleaving no read made before the lock
+    can see."""
+    import contextlib
+    lock, pending = embeddings._write_lock, [write]
+
+    @contextlib.contextmanager
+    def lock_after_it(lock_con):
+        if pending:
+            pending.pop()()
+        with lock(lock_con):
+            yield
+    monkeypatch.setattr(embeddings, "_write_lock", lock_after_it)
+
+
 def test_a_table_another_writer_is_still_creating_is_not_an_error(collection, monkeypatch):
     """Seen 6 times in 150 runs of the test above on the node (2026-09-15):
     on a fresh collection the first writers race, and one of them found
@@ -115,32 +142,70 @@ def test_a_table_another_writer_is_still_creating_is_not_an_error(collection, mo
     of every selection until a human clears it. Outside the write lock a
     table in that state is a table that does not exist yet; the check
     inside the lock, taken after the creator has committed, decides."""
-    import contextlib
     import shutil
-    monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda texts, timeout=300, recipe=None, query=False:
-                            [[1.0] + [0.0] * 7 for _ in texts])
-
-    def chunks_of(n):
-        return [{"id": f"fake:{n}:0:1", "seq": 0, "chapter": "",
-                 "text": f"abstract of {n}"}]
+    _fixed_vectors(monkeypatch)
     being_created = collection.lance_dir / f"{embeddings.TABLE}.lance"
     being_created.mkdir(parents=True)          # listed, no version committed
-    lock, creator = embeddings._write_lock, [2]    # the creating writer's document
 
-    @contextlib.contextmanager
-    def lock_after_the_creator_commits(lock_con):
-        if creator:                            # it commits first, once
-            n = creator.pop()
-            shutil.rmtree(being_created)
-            embeddings.upsert_book(n, "en", chunks_of(n), collection)
-        with lock(lock_con):
-            yield
-    monkeypatch.setattr(embeddings, "_write_lock", lock_after_the_creator_commits)
+    def creator():
+        shutil.rmtree(being_created)
+        embeddings.upsert_book(2, "en", _chunks_of(2), collection)
+    _another_writer_commits_first(monkeypatch, creator)
 
-    assert embeddings.upsert_book(1, "en", chunks_of(1), collection) == 1
+    assert embeddings.upsert_book(1, "en", _chunks_of(1), collection) == 1
     tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
     assert tbl.count_rows() == 2, "both writers' vectors, one table"
+
+
+def test_a_document_written_between_the_read_and_the_lock_is_stored_once(
+        collection, monkeypatch):
+    """Caught once by tests/bundles/test_import.py's concurrent test in a
+    node suite run (2026-09-15): 24 rows for 12 chunk ids. upsert_book reads
+    what the document holds before the lock and appended when that read
+    found nothing — on top of what another writer stored in between."""
+    _fixed_vectors(monkeypatch)
+    chunks = _chunks_of(1, parts=3)
+    _another_writer_commits_first(
+        monkeypatch, lambda: embeddings.upsert_book(1, "en", chunks, collection))
+
+    assert embeddings.upsert_book(1, "en", chunks, collection) == 3
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    ids = [r["id"] for r in tbl.search().select(["id"]).limit(100).to_list()]
+    assert sorted(ids) == sorted(c["id"] for c in chunks), "each chunk stored once"
+
+
+def test_an_import_between_the_read_and_the_lock_is_checked(collection, monkeypatch):
+    """An import's write is one this process's own log cannot account for —
+    tests/bundles/test_import.py's case — so the stale read is checked."""
+    _fixed_vectors(monkeypatch)
+    chunks = _chunks_of(1, parts=3)
+    imported = [dict(c, book_id=1, lang="en", vector=[0.0, 1.0] + [0.0] * 6)
+                for c in chunks]
+    _another_writer_commits_first(
+        monkeypatch, lambda: embeddings.upsert_chunks(imported, collection, dtype="f16"))
+
+    embeddings.upsert_book(1, "en", chunks, collection)
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    ids = [r["id"] for r in tbl.search().select(["id"]).limit(100).to_list()]
+    assert sorted(ids) == sorted(c["id"] for c in chunks), "each chunk stored once"
+
+
+def test_writes_of_other_documents_cost_no_check(collection, monkeypatch):
+    """The parallel embed stage's siblings write OTHER documents between a
+    writer's read and its lock all the time. Their versions are logged, so
+    the check — 0.55–0.65 s on pubmed (2026-09-15) — is not paid per
+    document."""
+    _fixed_vectors(monkeypatch)
+    checks = []
+    real = embeddings._drop_clashing
+    monkeypatch.setattr(embeddings, "_drop_clashing",
+                        lambda *a: (checks.append(a[1]), real(*a)))
+    embeddings.upsert_book(3, "en", _chunks_of(3), collection)     # the table exists
+    _another_writer_commits_first(
+        monkeypatch, lambda: embeddings.upsert_book(2, "en", _chunks_of(2), collection))
+
+    embeddings.upsert_book(1, "en", _chunks_of(1), collection)
+    assert checks == [], "no check for this process's writes of other documents"
 
 
 def test_serial_recipes_never_enter_the_parallel_path(collection, monkeypatch):
