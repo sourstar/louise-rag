@@ -56,6 +56,27 @@ class HttpsTransport:
                         segments: int) -> int:
         return _fetch_segmented(self, endpoint, remote, dest, segments)
 
+    def size_of(self, endpoint: Endpoint, remote: RemoteFile) -> int | None:
+        """The origin's length for a file its spec lists without one — a
+        HEAD, so the engine can adopt a copy already in place instead of
+        fetching it again (engine._origin_says_complete). None when the
+        origin will not say. It moves no body, so it draws nothing from the
+        budget."""
+        headers = {"User-Agent": _USER_AGENT}
+        if endpoint.auth_token_path is not None:
+            headers["Authorization"] = f"Bearer {endpoint.auth_token_path.read_text().strip()}"
+        try:
+            with httpx.Client(timeout=30, follow_redirects=True) as client:
+                r = client.head(_url(endpoint, remote), headers=headers)
+        except httpx.HTTPError:
+            return None
+        if r.status_code != 200:
+            return None
+        try:
+            return int(r.headers["content-length"])
+        except (KeyError, ValueError):
+            return None
+
     def fetch_one(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
                   resume_from: int) -> int:
         part = dest.with_name(dest.name + ".part")

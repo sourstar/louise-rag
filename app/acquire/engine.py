@@ -233,6 +233,34 @@ def is_adoptable(collection, f: RemoteFile) -> bool:
         return False
 
 
+def _origin_says_complete(transport, endpoint, f: RemoteFile, dest: Path) -> bool:
+    """For a file its spec lists WITHOUT a size: is the copy at `dest` as
+    long as the origin says the file is?
+
+    `is_adoptable` answers no to an unknown size, and for a listing that is
+    the honest answer. But a dated dump's URL is immutable and its spec
+    still carries no length — 09 §9.17 allows `size: null`, and once a Codex
+    pins the file the size is inside `collection_id`, so it cannot be added
+    later. Observed live 2026-09-14: the 27 GB enwiki dump, hard-linked into
+    the pinned path, was fetched again because nothing could say it was
+    complete. The origin can: the transport's `size_of` (a HEAD over HTTPS).
+    Same test as `is_adoptable` once the size is known, and the same
+    verification after it (`_adopt_one_file`). A transport that cannot say,
+    or an origin that will not, leaves the file to the normal download."""
+    if f.size:
+        return False
+    size_of = getattr(transport, "size_of", None)
+    if size_of is None:
+        return False
+    try:
+        if not dest.is_file():
+            return False
+        size = size_of(endpoint, f)
+        return bool(size) and dest.stat().st_size == size
+    except (OSError, TransportError):
+        return False
+
+
 def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteFile]) -> AcquisitionPlan:
     pending: list[RemoteFile] = []
     bytes_total = bytes_pending = 0
@@ -637,8 +665,9 @@ def _promote(land: Path, dest: Path) -> None:
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
-    # Already there and complete? Verify and record it; move nothing.
-    if is_adoptable(collection, f):
+    # Already there and complete? Verify and record it; move nothing. A file
+    # listed without a size is complete when the origin says it is.
+    if is_adoptable(collection, f) or _origin_says_complete(transport, endpoint, f, dest):
         adopted = _adopt_one_file(f, collection, spec)
         if adopted is not None:
             return adopted

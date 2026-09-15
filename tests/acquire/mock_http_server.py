@@ -42,6 +42,25 @@ class _Handler(BaseHTTPRequestHandler):
             with server.lock:
                 server.live -= 1
 
+    def do_HEAD(self):
+        """The file's length and no body — what `HttpsTransport.size_of`
+        asks. Counted apart from GETs, so `request_count` still means "the
+        file's bytes were served"."""
+        server: "MockServer" = self.server.mock   # type: ignore[attr-defined]
+        name = self.path.lstrip("/")
+        path = server.root / name
+        with server.lock:
+            server.head_counts[name] = server.head_counts.get(name, 0) + 1
+        if name in server.no_head or not path.is_file():
+            self.send_response(405 if name in server.no_head else 404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+
     def _serve(self, server: "MockServer", name: str, path: Path):
         target = server.redirects.get(name)
         if target is not None:
@@ -134,6 +153,8 @@ class MockServer:
         self.no_ranges: set[str] = set()     # names served without Range support
         self.last_user_agent: dict[str, str | None] = {}
         self.redirects: dict[str, str] = {}
+        self.head_counts: dict[str, int] = {}
+        self.no_head: set[str] = set()       # names whose HEAD is refused (405)
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
@@ -163,6 +184,9 @@ class MockServer:
 
     def request_count(self, name: str) -> int:
         return self.request_counts.get(name, 0)
+
+    def head_count(self, name: str) -> int:
+        return self.head_counts.get(name, 0)
 
     def last_range(self, name: str) -> str | None:
         return self.last_range_header.get(name)

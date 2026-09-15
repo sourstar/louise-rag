@@ -9,8 +9,25 @@ never become a shortcut past the *checking*.
 """
 from app import db
 from app.acquire import engine
+from app.acquire.spec import Endpoint, RemoteFile, Transport
 
 from tests.acquire.test_engine import _collection, _spec, _write_origin_file
+
+
+def _sizeless_spec(mock_server, name):
+    """The spec a dated dump has: the file listed, its length not."""
+    return _spec(mock_server, endpoints=(Endpoint(
+        transport=Transport.HTTPS, url=mock_server.base_url,
+        static_files=(RemoteFile(rel_path=name),)),))
+
+
+def _staged(tmp_path, mock_server, body, local):
+    _write_origin_file(mock_server, "a.txt", body)
+    collection = _collection(tmp_path)
+    dest = collection.corpus_dir / "a.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(local)
+    return collection, db.connect(collection), dest
 
 
 def test_a_preseeded_file_is_verified_and_recorded_without_a_download(
@@ -142,6 +159,51 @@ def test_a_stale_part_file_is_cleared_when_the_destination_is_adopted(
 
     engine.run_acquisition(con, collection, spec, "demo")
     assert not part.exists()
+    assert dest.read_bytes() == body
+
+
+def test_a_file_listed_without_a_size_is_adopted_at_the_origins_length(
+        tmp_path, mock_server):
+    """A dated dump's URL is immutable and its spec still carries no size
+    (09 §9.17 allows null; once a Codex pins the file the size is inside
+    its id). Observed live 2026-09-14: the 27 GB enwiki dump, hard-linked
+    into place, was fetched again. The origin can say how long it is."""
+    body = b"s" * 4096
+    collection, con, _ = _staged(tmp_path, mock_server, body, body)
+    spec = _sizeless_spec(mock_server, "a.txt")
+
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["adopted"] == 1
+    assert mock_server.request_count("a.txt") == 0, "no bytes may move"
+    assert mock_server.head_count("a.txt") == 1
+    row = con.execute("SELECT * FROM fetch_files WHERE rel_path='a.txt'").fetchone()
+    assert row["fetch_done"] == 1 and row["bytes_fetched"] == len(body) and row["blake2"]
+    assert row["remote_size"] is None, \
+        "the listing's size, so the next run agrees the file is done"
+
+    again = engine.run_acquisition(con, collection, spec, "demo")
+    assert again["skipped"] == 1
+    assert mock_server.head_count("a.txt") == 1, "a done file is not asked about again"
+
+
+def test_a_sizeless_copy_the_origin_disagrees_with_is_downloaded(tmp_path, mock_server):
+    body = b"t" * 4096
+    collection, con, dest = _staged(tmp_path, mock_server, body, b"t" * 4095)
+    result = engine.run_acquisition(con, collection, _sizeless_spec(mock_server, "a.txt"),
+                                    "demo")
+    assert (result["adopted"], result["fetched"]) == (0, 1)
+    assert mock_server.request_count("a.txt") == 1
+    assert dest.read_bytes() == body
+
+
+def test_an_origin_that_will_not_say_leaves_the_file_to_the_download(tmp_path, mock_server):
+    body = b"u" * 4096
+    collection, con, dest = _staged(tmp_path, mock_server, body, body)
+    mock_server.no_head.add("a.txt")
+    result = engine.run_acquisition(con, collection, _sizeless_spec(mock_server, "a.txt"),
+                                    "demo")
+    assert (result["adopted"], result["fetched"]) == (0, 1)
+    assert mock_server.request_count("a.txt") == 1
     assert dest.read_bytes() == body
 
 
