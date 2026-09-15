@@ -69,6 +69,25 @@ def test_the_wikis_own_namespace_names_decide_what_is_an_article(tmp_path):
         "a category, a template and a file are not articles; a colon in a title is"
 
 
+def test_eswikis_anexo_is_articles(tmp_path):
+    """Operator, 2026-09-15: eswiki's namespace 104 holds encyclopedic
+    lists — enwiki's namespace-0 "List of…" articles — and stays."""
+    d = tmp_path / "wikipedia" / "eswiki" / "20260801"
+    d.mkdir(parents=True)
+    base = "eswiki-20260801-pages-articles-multistream"
+    head = bz2.compress(('<mediawiki xml:lang="es"><siteinfo><namespaces>'
+                         '<namespace key="0" case="first-letter" />'
+                         '<namespace key="10" case="first-letter">Plantilla</namespace>'
+                         '<namespace key="104" case="first-letter">Anexo</namespace>'
+                         '</namespaces></siteinfo>\n').encode())
+    pages = [(1, 0, "Madrid"), (2, 104, "Anexo:Países de Europa"), (3, 10, "Plantilla:Ficha")]
+    (d / f"{base}.xml.bz2").write_bytes(head + bz2.compress("".join(_page(*p) for p in pages).encode()))
+    index = d / f"{base}-index.txt.bz2"
+    index.write_bytes(bz2.compress("".join(f"{len(head)}:{p}:{t}\n" for p, _n, t in pages).encode()))
+    assert wsrc.namespace_prefixes(d / f"{base}.xml.bz2", index) == ("Plantilla:",)
+    assert _articles(tmp_path / "wikipedia") == [native_id_of("es", 1), native_id_of("es", 2)]
+
+
 def test_a_dump_without_a_namespace_table_keeps_the_english_list(tmp_path):
     root = tmp_path / "wikipedia"
     dump, index = _dump(root, None)

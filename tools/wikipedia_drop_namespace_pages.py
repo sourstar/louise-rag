@@ -10,7 +10,8 @@ reads the names from each dump's <siteinfo> header
 (`source.namespace_prefixes`); this removes what the old list let in.
 
 WHAT IT REMOVES. A manifest row whose page is, by its dump's index and the
-dump's own namespace table, not an article — and only while nothing has
+dump's own namespace table, not an article (eswiki's `Anexo` IS one:
+`source._CONTENT_NAMESPACES`) — and only while nothing has
 been done with it: rdf, fts and embed undone, no error. Such a row is a
 pointer into the dump and nothing else; no catalog entry, text index or
 vector refers to it. A row that HAS moved on is counted and kept: removing
@@ -39,7 +40,9 @@ from app import collections as collections_mod, db
 from app.plugins.wikipedia import source as wsrc
 from app.plugins.wikipedia.ids import LANG_ORDINAL, native_id_of
 
-BATCH = 5000
+#: rows per transaction: short, so the running worker's writers wait on
+#: this for a moment at a time, never for long
+BATCH = 1000
 
 _HELD = ("SELECT rdf_done, fts_done, embed_done, error FROM documents "
          "WHERE source=? AND native_id=?")

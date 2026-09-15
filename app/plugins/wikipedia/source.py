@@ -46,11 +46,17 @@ _INDEX_SUFFIX = "-pages-articles-multistream-index.txt.bz2"
 #: `<namespace key="14" case="first-letter">Kategorie</namespace>` (or the
 #: articles' own, `<namespace key="0" … />`) in a dump's <siteinfo>
 _NAMESPACE = re.compile(r'<namespace key="(-?\d+)"[^>]*?(?:/>|>([^<]*)</namespace>)')
+#: Namespaces besides 0 whose pages ARE articles, per wiki, by KEY (a key
+#: never changes; a name can). eswiki's 104, `Anexo`: encyclopedic lists —
+#: what enwiki keeps as namespace-0 "List of…" articles (operator,
+#: 2026-09-15; 93,184 pages).
+_CONTENT_NAMESPACES = {"es": frozenset({"104"})}
 
 
 def namespace_prefixes(dump: Path, index: Path) -> tuple[str, ...] | None:
     """`"Name:"` for every namespace of this wiki but the articles' (key
-    0), in the wiki's OWN names, read from the dump's <siteinfo> header —
+    0, and `_CONTENT_NAMESPACES`), in the wiki's OWN names, read from the
+    dump's <siteinfo> header —
     the bytes before the first page stream, whose offset the index's first
     line gives. None when there is no such header to read.
 
@@ -69,7 +75,9 @@ def namespace_prefixes(dump: Path, index: Path) -> tuple[str, ...] | None:
             head = bz2.decompress(f.read(int(first))).decode("utf-8", errors="replace")
     except (OSError, EOFError, ValueError):
         return None
-    names = tuple(f"{name}:" for key, name in _NAMESPACE.findall(head) if key != "0" and name)
+    articles = {"0"} | _CONTENT_NAMESPACES.get(_lang_of(dump.name), frozenset())
+    names = tuple(f"{name}:" for key, name in _NAMESPACE.findall(head)
+                  if key not in articles and name)
     return names or None
 
 #: the archive layer 1 is read from — its credit, its layer rule, its URLs
