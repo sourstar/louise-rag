@@ -32,7 +32,10 @@ from . import archive, wikitext
 from .ids import DUMP_BASE, LANG_ORDINAL, decode_native_id, native_id_of  # noqa: F401
 
 _LOCATOR_SEP = "::"
-# canonical-namespace pages only; everything else is navigation/meta
+# canonical-namespace pages only; everything else is navigation/meta. The
+# FALLBACK for a dump whose header names no namespaces: English names only,
+# so it let every other wiki's categories and templates through (see
+# `namespace_prefixes`, which is what discovery reads)
 _SKIP_TITLE = re.compile(
     r"^(File|Image|Category|Template|Wikipedia|Help|Portal|Draft|Module|"
     r"MediaWiki|Special|Talk|User|User talk|Wikipedia talk|Category talk|"
@@ -40,6 +43,34 @@ _SKIP_TITLE = re.compile(
     r"Gadget|Topic|Book):")
 _DUMP_SUFFIX = "-pages-articles-multistream.xml.bz2"
 _INDEX_SUFFIX = "-pages-articles-multistream-index.txt.bz2"
+#: `<namespace key="14" case="first-letter">Kategorie</namespace>` (or the
+#: articles' own, `<namespace key="0" … />`) in a dump's <siteinfo>
+_NAMESPACE = re.compile(r'<namespace key="(-?\d+)"[^>]*?(?:/>|>([^<]*)</namespace>)')
+
+
+def namespace_prefixes(dump: Path, index: Path) -> tuple[str, ...] | None:
+    """`"Name:"` for every namespace of this wiki but the articles' (key
+    0), in the wiki's OWN names, read from the dump's <siteinfo> header —
+    the bytes before the first page stream, whose offset the index's first
+    line gives. None when there is no such header to read.
+
+    `pages-articles` carries categories, templates, files, portals and
+    modules beside the articles, and only the title's prefix says which —
+    in the wiki's language. The English list this replaces let
+    `Kategorie:`, `Catégorie:`, `Категория:`, `رده:`… through on ten of
+    the eleven wikis: 25 % of 440 sampled dump pages (2026-09-15), about
+    9 M documents that are not articles."""
+    try:
+        with bz2.open(index, "rt", encoding="utf-8", errors="replace") as f:
+            first = f.readline().split(":", 1)[0]
+        if not first.isdigit() or int(first) == 0:
+            return None
+        with open(dump, "rb") as f:
+            head = bz2.decompress(f.read(int(first))).decode("utf-8", errors="replace")
+    except (OSError, EOFError, ValueError):
+        return None
+    names = tuple(f"{name}:" for key, name in _NAMESPACE.findall(head) if key != "0" and name)
+    return names or None
 
 #: the archive layer 1 is read from — its credit, its layer rule, its URLs
 ARCHIVE_ID = "upstash-wikipedia-2024-06"
@@ -298,6 +329,8 @@ class WikipediaSource:
                 continue     # already enumerated at this (mtime, size)
             st = dump.stat()
             lang = _lang_of(dump.name)
+            # articles only, by THIS wiki's own namespace names
+            skip = namespace_prefixes(dump, index)
             # group index lines by stream offset so each page knows its
             # stream's end (= the next distinct offset)
             pending: list[tuple[int, str, str]] = []
@@ -314,7 +347,7 @@ class WikipediaSource:
                             yield from self._flush(pending, offset, dump, st, lang, covered)
                             pending = []
                         last_offset = offset
-                        if _SKIP_TITLE.match(title):
+                        if (title.startswith(skip) if skip else _SKIP_TITLE.match(title)):
                             continue
                         pending.append((offset, page_id, title))
             except Exception as e:  # noqa: BLE001 — truncated/corrupt index: one

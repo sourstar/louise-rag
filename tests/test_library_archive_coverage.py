@@ -242,6 +242,30 @@ def test_past_the_range_means_above_its_end(isolated_config, monkeypatch):
     web.invalidate_counts()
 
 
+def test_past_the_range_says_what_this_archive_means_by_it(isolated_config, monkeypatch):
+    """"Newer than the archive" is pubmed's meaning: PMIDs only grow. Past
+    wikipedia's language blocks lie the pages read from the dumps, and the
+    card called 38 M of them newer (2026-09-15). Display only: the note is
+    never part of the credit hashed into a collection's id."""
+    assert genesis.MEDCPT_PUBMED.past_range == "newer than the archive"
+    assert "newer" not in genesis.UPSTASH_WIKIPEDIA.past_range
+    for archive in genesis.ARCHIVES.values():
+        assert archive.past_range not in json.dumps(archive.credit())
+    monkeypatch.setitem(genesis.ARCHIVES, "blocks", genesis.GenesisArchive(
+        archive_id="blocks", base_url="http://x", adapter="medcpt-npy",
+        shards=("0", "1"), uid_prefix="pubmed:", ids_per_shard=10,
+        past_range=genesis.UPSTASH_WIKIPEDIA.past_range))
+    c = replace(collections_mod.default_collection(), genesis_archive="blocks")
+    con = db.connect(c)
+    for nid, embed in ((1, 1), (12, 0), (1000, 0), (1001, 0)):
+        _add(con, nid, embed=embed)
+    web.invalidate_counts()
+    html = _render({**web._collection_shelf(c, {}), "embed_mode": "off"})
+    web.invalidate_counts()
+    assert ("2 past id 19: pages read from the dumps, which the archive does not hold; "
+            "only the local encoder can embed them, and embedding is off") in html
+
+
 def test_the_first_cold_render_after_the_deploy_says_counting(pubmed, monkeypatch):
     """The real path: a stored counts row written before the range SUMs
     existed, an empty cache, and a scan that cannot land inside the cold

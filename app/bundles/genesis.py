@@ -139,6 +139,11 @@ class GenesisArchive:
     # never a moving `main`. Here and not in the Codex for the keys' reason:
     # an address is a changeable fact, and the credit names the archive.
     revision: str = ""
+    # What a document PAST the declared range is, in the Library's words —
+    # display only, never credited. For pubmed that is a newer article
+    # (PMIDs only grow); past wikipedia's language blocks lie the pages
+    # read from the dumps, and "newer" put 38 M of them in the wrong light.
+    past_range: str = "newer than the archive"
 
     def credit(self) -> dict:
         """The archive's entry as 09 §9.3's credit object, ready to hash.
@@ -232,6 +237,7 @@ UPSTASH_WIKIPEDIA = GenesisArchive(
     # the Hub revision the node's copy IS: LFS sha256 of data/en/000 and
     # data/tr/000 equal the node's files (2026-09-14)
     revision="ce4e0ea49276d99975816b8bc85a85bf416b8b62",
+    past_range="pages read from the dumps, which the archive does not hold",
 )
 
 ARCHIVES: dict[str, GenesisArchive] = {

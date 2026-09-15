@@ -186,7 +186,7 @@
     <div class="note">{{ g.in_range_missing|num }} inside the range still without a vector{% if g.in_range_indexing %} ({{ g.in_range_indexing|num }} still being indexed){% endif %}{% if g.in_range_waiting %} — <code>louise health {{ c.name }}</code> says whether the archive is still serving {% if g.in_range_indexing %}the other {{ g.in_range_waiting|num }}{% else %}them{% endif %}{% endif %}</div>
     {% endif %}
     {% if g.outside_range %}
-    <div class="note">{% if g.outside_range == g.past_range %}{{ g.past_range|num }} past id {{ g.range_hi|num }}: newer than the archive{% else %}{{ g.outside_range|num }} outside the declared range{% if g.past_range %} ({{ g.past_range|num }} past id {{ g.range_hi|num }}){% endif %}: the archive has no vectors for them{% endif %}; only the local encoder can embed them{% if c.embed_mode == 'off' %}, and embedding is off{% else %} ({{ g.outside_embedded|num }} done){% endif %}</div>
+    <div class="note">{% if g.outside_range == g.past_range %}{{ g.past_range|num }} past id {{ g.range_hi|num }}: {{ g.past_note }}{% else %}{{ g.outside_range|num }} outside the declared range{% if g.past_range %} ({{ g.past_range|num }} past id {{ g.range_hi|num }}){% endif %}: the archive has no vectors for them{% endif %}; only the local encoder can embed them{% if c.embed_mode == 'off' %}, and embedding is off{% else %} ({{ g.outside_embedded|num }} done){% endif %}</div>
     {% endif %}
     {% elif c.genesis.range_hi is not none %}
     {# a declared range whose counts are not in yet (the first cold process

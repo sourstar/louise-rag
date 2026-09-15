@@ -1515,6 +1515,7 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "in_range_indexing": max(0, missing - waiting) if ranged else None,
         # above the range's end ("past id N"), and everything outside it
         "past_range": past,
+        "past_note": archive.past_range if archive is not None else "",
         "outside_range": (max(0, int(counts.get("in_scope") or 0) - in_range)
                           if ranged else None),
         # the local encoder's progress outside the archive
