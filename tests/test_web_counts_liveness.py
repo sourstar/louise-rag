@@ -81,8 +81,21 @@ def test_a_slow_cold_scan_yields_counting_not_a_hang(col, monkeypatch):
 
 
 def test_a_failing_refresh_is_not_silent_and_a_hung_guard_expires(col, monkeypatch, capsys):
-    _wait_counts(col)
+    # A refresh fills the cache BEFORE it persists the counts, and holds its
+    # guard until it has — so the cache can be ready while the guard is still
+    # held, and a refresh asked for meanwhile is skipped, by design. On a
+    # loaded node the forced failing refresh below was skipped that way and
+    # nothing was printed (node suite, 2026-09-15). Persisting is made slow
+    # here so the race is met on every run, and the test waits for the guard.
+    real_persist = web._persist_counts
+    monkeypatch.setattr(web, "_persist_counts",
+                        lambda c, counts: (time.sleep(0.5), real_persist(c, counts)))
     name = web._counts_key(col)
+    _wait_counts(col)
+    deadline = time.time() + 10
+    while name in web._counts_refreshing and time.time() < deadline:
+        time.sleep(0.02)
+    assert name not in web._counts_refreshing, "the first refresh finished"
 
     # a refresh that fails logs, keeps the value while it is young...
     with web._counts_lock:
