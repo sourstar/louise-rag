@@ -202,14 +202,24 @@ def clear(state_dir: Path | None, plugin: str) -> bool:
     outside the platform (an external mirror running `rsync --inplace`
     over an existing file). This is the escape hatch for that case, wired
     to the Library's "rescan" button so an operator has a real forced
-    full rescan rather than a documented file to delete by hand."""
+    full rescan rather than a documented file to delete by hand.
+
+    EVERY cursor the plugin keeps: its own and each route's sub-cursor
+    (`<plugin>-<route>_scan_cursor.json` — wikipedia walks its archive under
+    `wikipedia-archive`). Clearing only the first is not "forget
+    everything". Observed live 2026-09-15: wikipedia's origin moved, this
+    cleared the dump cursor and left the archive's; the archive walk then
+    skipped every shard as unchanged (the keys are corpus-relative), no
+    archive locator was ever repaired, and the archive import — which finds
+    its shards from those locators — stood still."""
     if state_dir is None:
         return False
-    path = state_dir / f"{plugin}_scan_cursor.json"
-    try:
-        path.unlink()
-        return True
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return False
+    cleared = False
+    for path in (state_dir / f"{plugin}_scan_cursor.json",
+                 *state_dir.glob(f"{plugin}-*_scan_cursor.json")):
+        try:
+            path.unlink()
+            cleared = True
+        except OSError:          # already gone, or unremovable: nothing to forget
+            pass
+    return cleared
