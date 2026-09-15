@@ -288,6 +288,7 @@ def prune(collection, con=None, *, log=None) -> dict:
         return {"pruned": False, "reason": "low disk"}
     keep = timedelta(hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H))
     before = _versions(tbl)
+    v0 = _version(tbl)
     t0 = time.monotonic()
     try:
         # `delete_unverified` stays FALSE by omission: it would remove
@@ -305,12 +306,18 @@ def prune(collection, con=None, *, log=None) -> dict:
             log(msg)
         return {"pruned": False, "reason": str(e)}
     dt = time.monotonic() - t0
-    after = _versions(_table(collection) or tbl)
-    removed = None if (before is None or after is None) else before - after
+    latest = _table(collection) or tbl
+    after, v1 = _versions(latest), _version(latest)
+    # Writers keep committing while optimize runs (pubmed's embed adds a
+    # version per document), and every version they add is inside the
+    # window, so before - after undercounts by that many: on 2026-09-15 it
+    # logged "pruned -1656" for a 146 s run. The version number counts them.
+    written = None if (v0 is None or v1 is None) else max(0, v1 - v0)
+    removed = None if None in (before, after, written) else before + written - after
     out = {"pruned": True, "seconds": round(dt, 1),
            "versions_before": before, "versions_after": after,
-           "versions_removed": removed}
-    if removed:
+           "versions_written": written, "versions_removed": removed}
+    if removed and removed > 0:
         msg = (f"pruned {removed} superseded Lance version(s), "
                f"{after} kept ({dt:.0f}s)")
         if con is not None:
@@ -323,6 +330,14 @@ def prune(collection, con=None, *, log=None) -> dict:
 def _versions(tbl) -> int | None:
     try:
         return len(tbl.list_versions())
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def _version(tbl) -> int | None:
+    """The table's latest version number; it grows by one per commit."""
+    try:
+        return int(tbl.version)
     except Exception:                                   # noqa: BLE001
         return None
 

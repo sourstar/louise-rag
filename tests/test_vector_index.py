@@ -301,3 +301,44 @@ def test_refresh_is_skipped_when_the_disk_is_nearly_full(isolated_config, tmp_pa
     monkeypatch.setattr(vector_index, "stats", lambda coll: {"rows": 1})
     vector_index.refresh(c)
     assert called["optimize"] is True
+
+
+def test_a_prune_counts_what_it_removed_while_writers_keep_committing(
+        isolated_config, tmp_path, monkeypatch):
+    """Pubmed's embed commits a version per document while optimize runs,
+    and every one lands inside the retention window. Counted as before -
+    after, a 146 s prune logged "pruned -1656 superseded Lance version(s)"
+    (2026-09-15). The table's version number counts the writes."""
+    from app import collections as collections_mod, vector_index
+
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+
+    class FakeTable:
+        """`drops` old versions go, `writes` new ones arrive meanwhile."""
+        def __init__(self, kept, version, drops, writes):
+            self.kept, self.version, self.drops, self.writes = kept, version, drops, writes
+
+        def list_versions(self):
+            return [None] * self.kept
+
+        def optimize(self, **kw):
+            self.kept += self.writes - self.drops
+            self.version += self.writes
+
+    monkeypatch.setattr(vector_index, "free_bytes", lambda coll: 500 * 2**30)
+    monkeypatch.setattr(vector_index, "_table", lambda coll: tbl)
+    said = []
+
+    tbl = FakeTable(kept=15_000, version=230_000, drops=300, writes=2_000)
+    out = vector_index.prune(c, log=said.append)
+    assert (out["versions_removed"], out["versions_written"]) == (300, 2_000)
+    assert said == ["pruned 300 superseded Lance version(s), 16700 kept (0s)"]
+
+    # nothing old enough to drop while writers are busy: nothing is claimed
+    said.clear()
+    tbl = FakeTable(kept=15_000, version=230_000, drops=0, writes=1_656)
+    out = vector_index.prune(c, log=said.append)
+    assert out["versions_removed"] == 0 and said == []
