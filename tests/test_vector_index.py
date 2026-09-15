@@ -94,6 +94,31 @@ def test_ensure_builds_only_past_the_row_threshold(collection, monkeypatch):
     assert vector_index.stats(collection)["indexed"]
 
 
+def test_ensure_asks_before_each_step_and_stops_when_told(collection, monkeypatch):
+    """Each step is a Lance call of minutes that cannot be interrupted, so
+    a pause is honoured between them (2026-09-15: pubmed's prune ran 485 s
+    on a paused node, and more was queued behind it)."""
+    steps: list[str] = []
+    monkeypatch.setattr(vector_index, "stats", lambda c: {
+        "rows": 10**6, "indexed": True, "book_id_indexed": True, "unindexed_rows": 10**6})
+    monkeypatch.setattr(vector_index, "prune", lambda c, con=None, log=None:
+                        steps.append("prune") or {"pruned": True})
+    monkeypatch.setattr(vector_index, "refresh", lambda c, con=None, log=None:
+                        steps.append("refresh") or {"refreshed": True})
+
+    assert vector_index.ensure(collection, may_continue=lambda: False) is None
+    assert steps == [], "paused before it began: nothing runs"
+
+    answers = iter([True, False])                  # paused while the prune ran
+    out = vector_index.ensure(collection, may_continue=lambda: next(answers))
+    assert steps == ["prune"] and out == {"pruned": True}
+
+    vector_index._pruned_at.pop(str(collection.lance_dir), None)
+    steps.clear()
+    vector_index.ensure(collection)                # the CLI: no gate, every step
+    assert steps == ["prune", "refresh"]
+
+
 def test_search_falls_back_to_the_flat_scan_without_an_index(collection, monkeypatch):
     vecs = _fill(collection, 50)
     monkeypatch.setattr(embeddings, "embed_texts",
@@ -174,13 +199,18 @@ def test_maintenance_marks_itself_busy_for_its_own_sake(collection, monkeypatch)
 
 
 def test_the_worker_maintains_the_index_off_the_gpu_loop_and_throttled(collection, monkeypatch):
-    from app import db, worker
+    from app import db, node_state, worker
     _fill(collection, 300)
     con = db.connect(collection)
     monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
     monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", "ivf_flat")
     monkeypatch.setattr(vector_index, "partitions_for", lambda rows: 4)
     worker._vindex_last.clear()
+    # paused: nothing runs, and nothing is stamped — due the moment it lifts
+    node_state.set_worker_state("paused")
+    assert worker._maintain_vector_index(con, collection) is False
+    assert not vector_index.stats(collection)["book_id_indexed"]
+    node_state.set_worker_state("running")
     assert worker._maintain_vector_index(con, collection) is True      # book_id index
     worker._vindex_last.clear()
     assert worker._maintain_vector_index(con, collection) is True      # vector index

@@ -385,10 +385,18 @@ def prune_due(collection) -> bool:
     return True
 
 
-def ensure(collection, con=None, *, log=None) -> dict | None:
+def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     """The worker's automatic path: build when the table is big enough and
     has no index; refresh when enough unindexed rows accumulated. Returns
-    what it did, or None for nothing."""
+    what it did, or None for nothing.
+
+    `may_continue` is asked before each heavy step — the prune, then the
+    index work. Each is a Lance call of minutes that cannot be interrupted
+    once started, so a pause is honoured BETWEEN them; the worker passes
+    its `_maintenance_allowed`. Absent, every step runs (the CLI)."""
+    go = may_continue or (lambda: True)
+    if not go():
+        return None
     st = stats(collection)
     if st is None:
         return None
@@ -401,6 +409,8 @@ def ensure(collection, con=None, *, log=None) -> dict | None:
         pruned = prune(collection, con, log=log)
         if pruned.get("bytes_freed"):
             st = stats(collection) or st
+        if not go():
+            return pruned               # paused while the prune ran
     # the book_id index FIRST: it is cheap and every write pays for its
     # absence (build_scalar explains), including the writes the vector
     # index build itself waits behind

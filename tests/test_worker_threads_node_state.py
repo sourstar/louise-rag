@@ -66,9 +66,13 @@ def test_the_beat_logs_the_fair_shares(isolated_config, monkeypatch):
     monkeypatch.setattr(worker, "STATS_PUBLISH_INTERVAL_S", 0.05)
     monkeypatch.setattr(seeding, "tick", lambda *a: None)
     name = collections_mod.load_all()[0].name
-    s = sched.scheduler()
-    s.sync(sched.RES_INDEX, {name: object()})
-    s.declare(sched.RES_INDEX, name)
+    # Its own scheduler, and a flow that HAS work. `declare` alone waits for
+    # the stale-readmission interval, so on the process-wide scheduler this
+    # test depended on what earlier tests had left in it: `acquire` gave no
+    # turn once in a run of 28 (2026-09-15), passed on the next two.
+    s = sched.Scheduler()
+    monkeypatch.setattr(sched, "_scheduler", s)
+    s.demand(sched.RES_INDEX, name)
     turn = s.acquire(sched.RES_INDEX)
     turn.spent(3.0, units=1)
     turn.release(idle=False)
@@ -107,5 +111,43 @@ def test_the_index_maintainer_works_while_running_and_idles_when_paused(isolated
         sched.scheduler().demand(sched.RES_INDEX, name)     # more work, while paused
         time.sleep(0.5)
         assert len(calls) == seen, "a seed-only node leaves its index alone"
+    finally:
+        _halt(maintainer)
+
+
+def test_a_pause_mid_cycle_stops_the_maintainer_before_the_next_collection(
+        isolated_config, monkeypatch, tmp_path):
+    """Live 2026-09-15: the pause was read once per cycle, so a cycle under
+    way when the operator paused went on to every collection's optimize —
+    pubmed's for 485 s, then the next — about nine cores on a paused node.
+    It is asked before each collection now: the one in flight finishes,
+    nothing after it starts."""
+    monkeypatch.setattr(worker, "INDEX_MAINTAINER_INTERVAL_S", 0.05)
+    cols = []
+    for n in ("a", "b"):
+        (tmp_path / n).mkdir()
+        cols.append(collections_mod.Collection(
+            name=n, plugin="gutenberg", profile=None, embed_mode_default=None,
+            corpus_dir=tmp_path / n / "corpus", manifest_path=tmp_path / n / "manifest.db",
+            fts_dir=tmp_path / n / "fts", lance_dir=tmp_path / n / "lancedb"))
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: cols)
+    s = sched.Scheduler(base_quantum_s=1.0)
+    monkeypatch.setattr(sched, "_scheduler", s)
+    for c in cols:
+        s.demand(sched.RES_INDEX, c.name)
+    calls: list[str] = []
+
+    def maintain(con, c):
+        calls.append(c.name)
+        node_state.set_worker_state("paused")      # the operator pauses mid-cycle
+        return True
+    monkeypatch.setattr(worker, "_maintain_vector_index", maintain)
+    node_state.set_worker_state("running")
+    maintainer = threading.Thread(target=worker._index_maintainer, daemon=True)
+    maintainer.start()
+    try:
+        assert _wait(lambda: len(calls) >= 1)
+        time.sleep(0.5)                  # many cycles, all of them paused
+        assert len(calls) == 1, f"maintained after the pause: {calls}"
     finally:
         _halt(maintainer)

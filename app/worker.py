@@ -1318,9 +1318,11 @@ def _maintain_vector_index(con, collection) -> bool:
     now = time.time()
     if now - _vindex_last.get(key, 0.0) < config.VECTOR_INDEX_REFRESH_S:
         return False
+    if not _maintenance_allowed():
+        return False        # not stamped: due again as soon as the pause lifts
     _vindex_last[key] = now
     try:
-        out = vector_index.ensure(collection, con)
+        out = vector_index.ensure(collection, con, may_continue=_maintenance_allowed)
     except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
         db.log_event(con, "warn", "index",
                      f"vector index maintenance deferred: {type(e).__name__}: {e}"[:300])
@@ -1362,18 +1364,30 @@ def vector_store_contended(exc: BaseException) -> bool:
 INDEX_MAINTAINER_INTERVAL_S = 60.0
 
 
+def _maintenance_allowed() -> bool:
+    """Index maintenance is CPU work like any stage's, and a pause stops
+    it — asked before EACH collection and between the steps of
+    `vector_index.ensure`, not once per cycle. Live 2026-09-15: asked only
+    at the top of the cycle, a node the operator had paused ran pubmed's
+    optimize for 485 s and went straight on to the next collection's —
+    twelve Lance threads, ~9 cores. A Lance call already running cannot be
+    interrupted; it finishes, and nothing new starts after it."""
+    return (not _stop.is_set()
+            and node_state.worker_state() not in ("paused", "seed-only"))
+
+
 def _index_maintainer() -> None:
     """One low-priority thread for every collection's vector index. Its
-    own connections (SQLite is thread-affine); idles while the node is
-    paused; one collection at a time, so two hour-long builds never run
-    together."""
+    own connections (SQLite is thread-affine); stands down while the node
+    is paused (`_maintenance_allowed`); one collection at a time, so two
+    hour-long builds never run together."""
     cons: dict[str, object] = {}
     while not _stop.wait(INDEX_MAINTAINER_INTERVAL_S):
         try:
             collections = collections_mod.load_all()
             if not collections:
                 continue
-            if node_state.worker_state() in ("paused", "seed-only"):
+            if not _maintenance_allowed():
                 continue
             # Served by the SAME fair-share rotation as the encoder
             # (app/sched.py), not in list order. One collection at a time is
@@ -1389,8 +1403,8 @@ def _index_maintainer() -> None:
             for name in by_name:
                 s.declare(sched.RES_INDEX, name)
             for _ in range(len(by_name)):
-                if _stop.is_set():
-                    break
+                if not _maintenance_allowed():
+                    break                   # paused mid-cycle: nothing after this starts
                 turn = s.acquire(sched.RES_INDEX)
                 if turn is None:
                     break
