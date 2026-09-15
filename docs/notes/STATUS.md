@@ -1798,7 +1798,24 @@ mtime moved, so discovery re-read every enwiki page; none had been
 parsed, so each got its first hash and nothing was reset. The fix is in
 the engine, not the spec (`origin.spec.files` is inside `collection_id`):
 a file whose spec declares no size is adopted at the origin's
-Content-Length rather than fetched again. Next after this deploy.
+Content-Length rather than fetched again (af66b87).
+
+**The Library's new collection is `hold collection create --recipe`**
+(07 §7.6): `POST /api/hold/collection/create` runs the same function as
+the command (`louise.create_from`) and writes the Codex and 07 §7.8's
+file; the page's form is plugin, space-from and recipe, and shows the
+command line. The old form wrote a file naming no Codex; its routes stay
+one release as deprecated aliases. Help's "Adding a collection" follows.
+
+**Deploy of 8261747 — handed to the operator (2026-09-15).** Local and
+node suites 2,719 passed. The deploy stops the app, swaps the three
+collection files for 07 §7.8's shape, adds the origin mounts (keeping the
+old container paths until discovery has moved every stored locator) and
+restarts; the permission classifier refused it for me, so it runs as the
+operator's script, which checks the new files load, under the new image
+and with the new mounts, before it stops anything. The node is still
+acquire-only: leaving it (the Library's mode control) is the operator's
+switch too, refused for me the same way.
 
 ### What is waiting on the operator
 
