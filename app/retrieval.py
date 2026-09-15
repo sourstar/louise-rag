@@ -181,7 +181,13 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         t0 = time.time()
         groups = fts.existing_groups(collection)
         if translate and len(groups) > 1:
-            langs = [g for g in groups if g not in ("other", "cjk", "en")]
+            # THE LARGEST GROUPS, not the alphabetically first: `groups` is
+            # sorted by name and the cap used to keep ar, ca, da, … while
+            # larger ones went untranslated. Each language costs the chat
+            # model ~0.5 s (12 took 6.3 s warm, 4 took 2.1 s; 2026-09-15).
+            sizes = fts.group_sizes(collection)
+            langs = sorted((g for g in groups if g not in ("other", "cjk", "en")),
+                           key=lambda g: -sizes.get(g, 0))[:config.TRANSLATE_MAX_LANGS]
             translations = llm.translate_query(query, langs)
         for group in groups:
             q = translations.get(group, query)

@@ -106,6 +106,21 @@ def existing_groups(collection=None) -> list[str]:
     return sorted(p.name for p in collection.fts_dir.iterdir()
                   if p.is_dir() and (p / "meta.json").exists())
 
+def group_sizes(collection=None) -> dict[str, int]:
+    """Chunks indexed per language group, from each index's own searcher —
+    what query translation orders its languages by, largest first. An
+    unreadable group counts as empty rather than failing the search."""
+    sizes: dict[str, int] = {}
+    for group in existing_groups(collection):
+        try:
+            idx = get_index(group, collection)
+            idx.reload()
+            sizes[group] = int(idx.searcher().num_docs)
+        except Exception:   # noqa: BLE001
+            sizes[group] = 0
+    return sizes
+
+
 def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict]):
     writer.delete_documents("book_id", book_id)
     for c in chunks:
