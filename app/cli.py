@@ -180,7 +180,8 @@ def cmd_embed_materialize(args) -> int:
         # peer_source sends acquisition back to the origin.
         embed_mode=collection.embed_mode_default, layers=collection.layers,
         snapshot=collection.snapshot, extras=collection.extras,
-        peer_source=collection.peer_source)
+        peer_source=collection.peer_source, title=collection.title,
+        slices=collection.slices, kinds=collection.kinds, share=collection.share)
     print(f"{collection.name}: materialized the env recipe into {toml_path}")
     print(f"  model={recipe.model} url={recipe.url} api={recipe.api} "
           f"dtype={recipe.dtype} ctx={recipe.ctx} dim={recipe.dim}")

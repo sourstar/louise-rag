@@ -227,6 +227,34 @@ def estimated_bytes_for(spec: AcquisitionSpec, profile: str) -> int | None:
     return None
 
 
+def everything_profile(spec: AcquisitionSpec) -> str | None:
+    """The profile that selects every slice — what 07 §7.8's `slices =
+    "all"` fetches. Profiles are local (09 §9.17), so the collection file
+    names the selection and this finds the spec's spelling of it."""
+    for name, flt in spec.profiles.items():
+        if flt == Filter():
+            return name
+    return None
+
+
+def pinned_snapshot(spec: AcquisitionSpec, origin_spec: dict | None) -> str | None:
+    """The dated dump a Codex pins, read back from its `origin.spec.files`
+    (09 §9.17: "for a dated-dump origin the dump pinned"), so that a
+    collection file never states it a second time. None when the source
+    publishes no dated dumps or the Codex pins none."""
+    files = (origin_spec or {}).get("files")
+    if spec.snapshot_files is None or not files:
+        return None
+    pinned = {f["rel_path"] for f in files}
+    dates = sorted({seg for p in pinned for seg in p.split("/")
+                    if len(seg) == 8 and seg.isdigit()})
+    for date in dates:
+        if {f.rel_path for f in spec.snapshot_files(date)} == pinned:
+            return date
+    raise ValueError(f"{spec.source_id}: the Codex pins {len(pinned)} origin "
+                     f"files that no dated snapshot of this spec lists")
+
+
 @dataclass(frozen=True)
 class AcquisitionPlan:
     """--dry-run / status output."""

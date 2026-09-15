@@ -1,0 +1,251 @@
+"""07 §7.8's collection file: `codex`, `title`, `slices`, `kinds`, `embed`,
+`share` and `[encoder]` — and nothing the Codex or the tree already says.
+
+The files on disk were written before §7.8 spelled the file out, and they
+carried a second answer to five questions the Codex already answers: which
+archive (its `credits`), which dump (its `origin.spec.files`), the space's
+window (its `space`), where the origin lives (beside the drag, operator
+2026-09-15) and whether to fetch (the file's own `slices`). Each of those
+is now DERIVED; the old keys are still read, so no deployed collection
+changes on upgrade, and a rewrite keeps one only where the derivation
+would give a different value.
+"""
+from pathlib import Path
+
+import pytest
+
+from app import collections as collections_mod, louise
+from app.acquire import spec as acquire_spec
+from app.acquire.specs import ACQUIRE_REGISTRY, WIKIPEDIA_SPEC
+from app.hold import collection as col
+from app.hold.codex import CodexError
+from app.web import _write_collection_toml
+from tests.hold.conftest import KEY, NOW, PLATFORM, a_credit, fake_embed
+from tests.hold.test_template import recipe
+
+ARCHIVE = "upstash-wikipedia-2024-06"
+
+
+@pytest.fixture
+def node(tmp_path, isolated_config, monkeypatch):
+    """A node whose files live in CONFIG_DIR and whose collections live
+    under LOUISE_ROOT — the reference node's two directories."""
+    root = tmp_path / "louise"
+    (root / "collections").mkdir(parents=True)
+    cfg = tmp_path / "config"
+    (cfg / "collections").mkdir(parents=True)
+    monkeypatch.setenv("LOUISE_ROOT", str(root))
+    monkeypatch.setenv("CONFIG_DIR", str(cfg))
+    monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)
+
+    def make(credits=()):
+        return col.create_from_recipe(
+            root / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
+            embed=fake_embed, name="gutenberg", key=KEY, now=NOW, credits=credits)
+
+    def load(text):
+        path = cfg / "collections" / "gutenberg.toml"
+        path.write_text(text, encoding="utf-8")
+        return path, collections_mod._load_one(path)
+
+    return root, make, load
+
+
+def rewrite(path, c):
+    """As every rewrite path in the app calls the writer."""
+    _write_collection_toml(
+        path, codex=c.codex.collection_id, plugin=c.plugin, profile=c.profile,
+        acquire_enabled=c.acquire_enabled, corpus_dir=c.corpus_dir,
+        manifest=c.manifest_path, fts=c.fts_dir, lancedb=c.lance_dir,
+        license_ack=c.license_ack, genesis_archive=c.genesis_archive,
+        embed=c.embed, embed_mode=c.embed_mode_default, layers=c.layers,
+        snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
+        title=c.title, slices=c.slices, kinds=c.kinds, share=c.share)
+
+
+# ---- what the file says, and what it derives ------------------------------
+
+def test_the_file_says_only_what_the_codex_does_not(node):
+    root, make, load = node
+    cx = make()
+    _, c = load(f'codex = "{cx.collection_id}"\nslices = "all"\n'
+                'kinds = ["records", "vectors"]\nembed = "off"\nshare = false\n')
+    assert c.slices == "all" and c.profile == "full", \
+        "the acquisition spec's spelling of every slice"
+    assert c.acquire_enabled is True
+    assert c.corpus_dir == root / "collections" / "gutenberg" / "origin"
+    assert c.genesis_archive is None, "this Codex credits no archive"
+    assert (c.kinds, c.share, c.title) == (("records", "vectors"), False, None)
+
+
+def test_the_archive_is_the_one_the_codex_credits(node):
+    _, make, load = node
+    cx = make(credits=(a_credit(ARCHIVE),))
+    head = f'codex = "{cx.collection_id}"\nslices = "all"\n'
+    assert load(head)[1].genesis_archive == ARCHIVE
+    assert load(head + 'kinds = ["records"]\n')[1].genesis_archive is None, \
+        "a peer that holds no vectors imports none"
+    with pytest.raises(ValueError, match="03 §3.5"):
+        load(f'codex = "{cx.collection_id}"\ngenesis_archive = "medcpt-pubmed"\n')
+
+
+def test_holding_nothing_fetches_nothing(node):
+    _, make, load = node
+    _, c = load(f'codex = "{make().collection_id}"\nslices = []\n')
+    assert (c.slices, c.profile, c.acquire_enabled) == ((), None, False)
+
+
+def test_a_collection_holding_nothing_has_no_origin_to_miss(node):
+    """No slice, nothing fetched, so no origin directory yet — which is not
+    an error the discovery scan should log every round."""
+    from app import db, discovery
+    _, make, load = node
+    _, c = load(f'codex = "{make().collection_id}"\nslices = []\n')
+    con = db.connect(c)
+    assert discovery.sync_collection(con, c)["seen"] == 0
+    assert con.execute("SELECT 1 FROM events WHERE level='error'").fetchone() is None
+    con.close()
+
+
+def test_part_of_a_collection_waits_for_records_fetch(node):
+    _, make, load = node
+    with pytest.raises(ValueError, match="records fetch"):
+        load(f'codex = "{make().collection_id}"\nslices = ["lang=en"]\n')
+
+
+def test_kinds_are_02s_closed_list(node):
+    _, make, load = node
+    with pytest.raises(ValueError, match="closed"):
+        load(f'codex = "{make().collection_id}"\nkinds = ["records", "pdfs"]\n')
+
+
+def test_slices_and_profile_are_one_answer(node):
+    _, make, load = node
+    with pytest.raises(ValueError, match="keep one"):
+        load(f'codex = "{make().collection_id}"\nslices = "all"\nprofile = "full"\n')
+
+
+# ---- the space is the Codex's --------------------------------------------
+
+def test_the_encoder_table_names_an_endpoint_not_a_space(node):
+    _, make, load = node
+    cx = make()
+    head = (f'codex = "{cx.collection_id}"\nslices = "all"\n\n'
+            '[encoder]\nurl = "http://enc:8080"\n')
+    r = collections_mod.recipe_for(load(head)[1])
+    assert (r.url, r.dtype, r.ctx, r.dim) == \
+        ("http://enc:8080", cx.space.dtype, cx.space.ctx, cx.space.dim)
+    with pytest.raises(ValueError, match="02 §2.4"):
+        load(head + f"ctx = {cx.space.ctx * 2}\n")
+
+
+def test_an_endpoint_from_the_defaults_brings_no_window(node, monkeypatch):
+    """No `[encoder]`: the ENDPOINT falls back through 07 §7.8's order, and
+    the space stays the Codex's."""
+    _, make, load = node
+    cx = make()
+    monkeypatch.setattr(collections_mod.config, "EMBED_CTX", cx.space.ctx * 16)
+    r = collections_mod.recipe_for(load(f'codex = "{cx.collection_id}"\n')[1])
+    assert r.url == collections_mod.env_recipe().url
+    assert r.ctx == cx.space.ctx
+
+
+# ---- the files already on disk --------------------------------------------
+
+def test_the_old_shape_loads_as_it_did(node):
+    """A file that never named `slices`, `kinds`, `share` or `title` keeps
+    the old defaults for what it leaves out: nothing starts fetching,
+    importing or moving on upgrade."""
+    _, make, load = node
+    cx = make(credits=(a_credit(ARCHIVE),))
+    _, c = load(f'codex = "{cx.collection_id}"\nprofile = "full"\n'
+                'corpus_dir = "/corpus"\n')
+    assert c.corpus_dir == Path("/corpus")
+    assert (c.acquire_enabled, c.genesis_archive) == (False, None)
+    assert (c.slices, c.profile) == ("all", "full")
+
+
+def test_a_rewrite_drops_every_key_the_codex_answers(node):
+    root, make, load = node
+    cx = make(credits=(a_credit(ARCHIVE),))
+    origin = root / "collections" / "gutenberg" / "origin"
+    path, before = load(f'codex = "{cx.collection_id}"\nprofile = "full"\n'
+                        'acquire_enabled = true\n'
+                        f'genesis_archive = "{ARCHIVE}"\n'
+                        f'corpus_dir = "{origin.as_posix()}"\n')
+    rewrite(path, before)
+    text = path.read_text(encoding="utf-8")
+    assert text == (f'codex = "{cx.collection_id}"\nslices = "all"\n'
+                    'kinds = ["records", "vectors"]\nshare = false\n')
+    assert collections_mod._load_one(path) == before
+
+
+def test_a_rewrite_keeps_what_the_codex_cannot_say(node):
+    _, make, load = node
+    path, before = load(f'codex = "{make().collection_id}"\nprofile = "full"\n'
+                        'corpus_dir = "/corpus"\nacquire_enabled = false\n')
+    rewrite(path, before)
+    text = path.read_text(encoding="utf-8")
+    assert 'corpus_dir = "/corpus"' in text and "acquire_enabled = false" in text
+    assert collections_mod._load_one(path) == before
+
+
+def test_the_new_shape_survives_a_rewrite(node):
+    _, make, load = node
+    cx = make()
+    text = (f'codex = "{cx.collection_id}"\ntitle = "Gutenberg, plates"\n'
+            'slices = "all"\nkinds = ["records"]\nembed = "on-demand"\n'
+            'share = true\n\n[encoder]\nurl = "http://enc:8080"\n'
+            'query_url = "http://enc:8081"\n')
+    path, before = load(text)
+    rewrite(path, before)
+    assert path.read_text(encoding="utf-8") == text
+    assert collections_mod._load_one(path) == before
+
+
+# ---- `hold collection create` writes the file -----------------------------
+
+def test_create_writes_where_the_node_reads(node):
+    root, make, _ = node
+    cx = make()
+    held = louise._write_held_file(root / "collections", cx)
+    assert held == collections_mod.config_toml_path("gutenberg")
+    c = collections_mod._load_one(held)
+    assert c.codex.collection_id == cx.collection_id
+    assert (c.slices, c.acquire_enabled, c.embed_mode_default, c.share) == \
+        ((), False, "off", False), "a new collection holds nothing and spends nothing"
+    assert louise._write_held_file(root / "collections", cx) == held, \
+        "the same Codex again: nothing to write"
+    held.write_text('codex = "sha256:' + "0" * 64 + '"\n', encoding="utf-8")
+    with pytest.raises(CodexError, match="another collection is another name"):
+        louise._write_held_file(root / "collections", cx)
+
+
+def test_a_create_in_another_root_writes_beside_its_drags(tmp_path, isolated_config,
+                                                          monkeypatch):
+    scratch = tmp_path / "scratch" / "collections"
+    scratch.mkdir(parents=True)
+    monkeypatch.setenv("LOUISE_ROOT", str(tmp_path / "node"))
+    cx = col.create_from_recipe(scratch, "gutenberg", recipe(), platform_image=PLATFORM,
+                                embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+    assert louise._write_held_file(scratch, cx) == scratch / "gutenberg.toml"
+
+
+# ---- the two derivations ---------------------------------------------------
+
+@pytest.mark.parametrize("plugin,everything", [
+    ("gutenberg", "full"), ("pubmed", "full"), ("wikipedia", "all"),
+    ("embedded", "all"), ("normattiva", "full")])
+def test_every_spec_spells_all(plugin, everything):
+    assert acquire_spec.everything_profile(ACQUIRE_REGISTRY[plugin]) == everything
+
+
+def test_the_dump_is_the_one_the_codex_pins():
+    files = [{"rel_path": f.rel_path, "size": None, "checksum": None}
+             for f in WIKIPEDIA_SPEC.snapshot_files("20260801")]
+    assert acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": files}) == "20260801"
+    assert acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": None}) is None
+    with pytest.raises(ValueError, match="no dated snapshot"):
+        acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": files[:3]})
+    assert acquire_spec.pinned_snapshot(ACQUIRE_REGISTRY["gutenberg"],
+                                        {"files": files}) is None

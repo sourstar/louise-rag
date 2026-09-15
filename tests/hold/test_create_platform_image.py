@@ -66,6 +66,7 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
         return SimpleNamespace(collection_id="sha256:" + "cd" * 32)
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: None)
     monkeypatch.setattr(col, "create_from_recipe", fake_create)
+    monkeypatch.setattr(louise, "_write_held_file", lambda root, codex: root)
     monkeypatch.setenv("EMBED_URL", "http://encoder.invalid")
 
     extra, recipe = (), '[space]\ndim = 8\ndtype = "f16"\nctx = 512\n'

@@ -1628,6 +1628,18 @@ def grow_run(name: str, body: GrowBody):
                                       f"{', '.join(unknown)} — this source "
                                       f"offers: {', '.join(sorted(spec.extras)) or 'none'}")
         extras = tuple(body.extras)
+    slices = collection.slices
+    if collection.codex is not None:
+        # A Codex collection's file holds SLICES (07 §7.8), and today a node
+        # holds "all" of one or none: part of one is `hold records fetch
+        # --slice` (07 §7.3), not built yet. So growing means everything.
+        everything = acquire_spec.everything_profile(spec)
+        if body.profile != everything:
+            raise HTTPException(
+                409, f"{name} is held by its Codex: its file names slices "
+                     f"(07 §7.8), and a node holds all of them ({everything!r}) "
+                     f"or none until `hold records fetch --slice` exists")
+        slices = "all"
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
@@ -1648,7 +1660,8 @@ def grow_run(name: str, body: GrowBody):
         embed=collections_mod.recipe_for(collection),
         embed_mode=collection.embed_mode_default, layers=collection.layers,
         snapshot=collection.snapshot, extras=extras,
-        peer_source=collection.peer_source)
+        peer_source=collection.peer_source, title=collection.title,
+        slices=slices, kinds=collection.kinds, share=collection.share)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -1763,49 +1776,82 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
                        acquire_enabled: bool, corpus_dir: Path,
                        genesis_archive: str | None, encoder,
                        embed_mode: str | None, snapshot: str | None,
-                       extras: tuple[str, ...]) -> None:
-    """07 §7.8's shape: `codex`, the node-local desired state, `[encoder]`.
+                       extras: tuple[str, ...], title: str | None = None,
+                       slices=None, kinds=None, share: bool = False) -> None:
+    """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
+    `share`, and `[encoder]` naming where this node reaches the encoder.
 
     What is NOT written is the point. `plugin`, the chunker `[[layers]]`
     and the `[paths]` tree are the CODEX's answers — all three are inside
     `collection_id` or derived from `<LOUISE_ROOT>/collections/<name>/` —
-    and a file that repeated them could disagree with them. 07 §7.8: "A
-    file's `codex` is never edited: a name holds one collection for its
-    life, and another collection is another name." So this function
+    and a file that repeated them could disagree with them; so are the
+    space's `dtype`, `ctx` and `dim`, which `[encoder]` no longer states.
+    07 §7.8: "A file's `codex` is never edited: a name holds one collection
+    for its life, and another collection is another name." So this function
     carries the id through every rewrite and never invents one.
 
-    `license_ack` is absent for the same reason: a Codex collection's
-    acknowledgement is `state/ack.json` (09 §9.13), read by
+    The keys a Codex file carried before §7.8 spelled the file out —
+    `profile`, `acquire_enabled`, `genesis_archive`, `snapshot`,
+    `corpus_dir`, `extras` — are written only where loading the file back
+    without them would give a different value (`collections.codex_defaults`
+    is the one derivation both sides use), so a rewrite never changes what
+    a collection does.
+
+    `license_ack` is absent for the same reason as `plugin`: a Codex
+    collection's acknowledgement is `state/ack.json` (09 §9.13), read by
     `collections._codex_ack`, not a line in this file.
     """
+    name = path.stem
+    cx = collections_mod.codex_at(name)
+    kinds = tuple(kinds or collections_mod.DEFAULT_KINDS)
+    if slices is None and profile and \
+            profile == collections_mod.codex_defaults(cx, name, None, kinds)["everything"]:
+        slices = "all"
+    derived = collections_mod.codex_defaults(cx, name, slices, kinds)
     lines = [f'codex = "{codex}"']
+    if title:
+        lines.append(f"title = {_toml_scalar(title)}")
+    if slices == "all":
+        lines.append('slices = "all"')
+    elif slices is not None:
+        lines.append("slices = [%s]" % ", ".join(_toml_scalar(s) for s in slices))
+    elif profile:
+        # a profile that selects PART of the corpus has no §7.8 spelling
+        # until `hold records fetch --slice` exists: kept, not translated
+        lines.append(f"profile = {_toml_scalar(profile)}")
+    lines.append("kinds = [%s]" % ", ".join(_toml_scalar(k) for k in kinds))
     if embed_mode:
         lines.append(f'embed = "{_MODE_ON_DISK.get(embed_mode, embed_mode)}"')
-    if snapshot:
-        lines.append(f'snapshot = "{snapshot}"')
-    if profile:
-        lines.append(f'profile = "{profile}"')
-    if acquire_enabled:
-        lines.append("acquire_enabled = true")
-    if genesis_archive:
-        lines.append(f'genesis_archive = "{genesis_archive}"')
+    lines.append(f"share = {'true' if share else 'false'}")
+    kept = []
+    if bool(acquire_enabled) != derived["acquire_enabled"]:
+        kept.append(f"acquire_enabled = {'true' if acquire_enabled else 'false'}")
+    if (genesis_archive or None) != derived["genesis_archive"]:
+        kept.append(f"genesis_archive = {_toml_scalar(genesis_archive or '')}")
+    if snapshot and snapshot != derived["snapshot"]:
+        kept.append(f"snapshot = {_toml_scalar(snapshot)}")
+    if Path(corpus_dir) != derived["corpus_dir"]:
+        kept.append(f"corpus_dir = {_toml_scalar(Path(corpus_dir).as_posix())}")
     if extras:
-        lines.append("extras = [%s]" % ", ".join(f'"{e}"' for e in extras))
-    lines.append(f'corpus_dir = "{corpus_dir.as_posix()}"')
+        kept.append("extras = [%s]" % ", ".join(_toml_scalar(e) for e in extras))
+    if kept:
+        lines += ["", "# Not keys of 07 §7.8's file: each is kept because the Codex and",
+                  "# <LOUISE_ROOT>/collections/<name>/ do not give the same answer.",
+                  *kept]
     if encoder is not None:
         # `[encoder]`, not `[embed]`: on a Codex file the bare `embed` key
         # above is the MODE (07 §7.8), so the recipe cannot share its name.
-        lines += ["", "[encoder]", f'url = "{encoder.url}"',
-                  f'api = "{encoder.api}"', f'model = "{encoder.model}"',
-                  f'dtype = "{encoder.dtype}"', f"ctx = {encoder.ctx}"]
-        if encoder.dim is not None:
-            lines.append(f"dim = {encoder.dim}")
+        lines += ["", "[encoder]", f"url = {_toml_scalar(encoder.url)}"]
         if encoder.query_url:
-            lines.append(f'query_url = "{encoder.query_url}"')
+            lines.append(f"query_url = {_toml_scalar(encoder.query_url)}")
+        if encoder.api != "openai":
+            lines.append(f"api = {_toml_scalar(encoder.api)}")
+        if encoder.model and encoder.model != cx.space.encoder.label:
+            lines.append(f"model = {_toml_scalar(encoder.model)}")
         if getattr(encoder, "concurrency", 1) > 1:
             lines.append(f"concurrency = {encoder.concurrency}")
         if getattr(encoder, "device", None):
-            lines.append(f'device = "{encoder.device}"')
+            lines.append(f"device = {_toml_scalar(encoder.device)}")
     lines.append("")
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text("\n".join(lines), encoding="utf-8")
@@ -1822,7 +1868,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                             snapshot: str | None = None,
                             extras: tuple[str, ...] = (),
                             peer_source: str | None = None,
-                            layers=None) -> None:
+                            layers=None, title: str | None = None,
+                            slices=None, kinds=None, share: bool = False) -> None:
     """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
     purpose: a call site that forgets it must fail loudly here, because
     the failure it would otherwise cause is silent and unrepairable.
@@ -1844,7 +1891,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             path, codex=codex, profile=profile,
             acquire_enabled=acquire_enabled, corpus_dir=corpus_dir,
             genesis_archive=genesis_archive, encoder=embed,
-            embed_mode=embed_mode, snapshot=snapshot, extras=extras)
+            embed_mode=embed_mode, snapshot=snapshot, extras=extras,
+            title=title, slices=slices, kinds=kinds, share=share)
         return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
@@ -2117,7 +2165,9 @@ def new_collection_create(body: CreateCollectionBody):
                 embed_mode=existing.embed_mode_default,
                 layers=existing.layers,
                 snapshot=existing.snapshot, extras=existing.extras,
-                peer_source=existing.peer_source)
+                peer_source=existing.peer_source, title=existing.title,
+                slices=existing.slices, kinds=existing.kinds,
+                share=existing.share)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -2336,7 +2386,9 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 embed_mode=existing.embed_mode_default,
                 layers=existing.layers,
                 snapshot=existing.snapshot, extras=existing.extras,
-                peer_source=existing.peer_source)
+                peer_source=existing.peer_source, title=existing.title,
+                slices=existing.slices, kinds=existing.kinds,
+                share=existing.share)
     _write_collection_toml(
         toml_path, codex=_codex_id(collection),
         plugin=collection.plugin, profile=collection.profile,
@@ -2348,7 +2400,9 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         embed=collections_mod.recipe_for(collection),
         embed_mode=body.mode, layers=collection.layers,
         snapshot=collection.snapshot,
-        extras=collection.extras, peer_source=collection.peer_source)
+        extras=collection.extras, peer_source=collection.peer_source,
+        title=collection.title, slices=collection.slices,
+        kinds=collection.kinds, share=collection.share)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -2424,7 +2478,9 @@ def collection_ack(name: str):
         snapshot=collection.snapshot, extras=collection.extras,
         # peer_source was missing here: acknowledging a licence would
         # silently un-declare a collection fed from a peer torrent
-        peer_source=collection.peer_source)
+        peer_source=collection.peer_source, title=collection.title,
+        slices=collection.slices, kinds=collection.kinds,
+        share=collection.share)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

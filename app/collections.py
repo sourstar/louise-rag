@@ -126,14 +126,24 @@ def recipe_for(collection) -> EmbedRecipe:
 
     Order: the collection's own [embed] block, then the node's per-plugin
     default, then the Tier-1 env recipe. Each step is a fallback for the
-    one before it, never an override of it (invariant 10)."""
+    one before it, never an override of it (invariant 10).
+
+    A Codex collection's SPACE is the Codex's (02 §2.4): whichever step
+    names the endpoint, `dtype`, `ctx` and `dim` are its space's, so an
+    endpoint that falls back to the node's default does not bring the
+    default's window with it."""
     if collection is not None and getattr(collection, "embed", None) is not None:
         return collection.embed
+    recipe = None
     if collection is not None and getattr(collection, "plugin", None):
-        default = default_recipe_for_plugin(collection.plugin)
-        if default is not None:
-            return default
-    return env_recipe()
+        recipe = default_recipe_for_plugin(collection.plugin)
+    recipe = recipe or env_recipe()
+    codex = getattr(collection, "codex", None) if collection is not None else None
+    if codex is not None:
+        from dataclasses import replace
+        recipe = replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
+                         dim=int(codex.space.dim))
+    return recipe
 
 
 # What the worker may SPEND on a collection's local encoder (never what
@@ -196,6 +206,12 @@ class Collection:
     # licence all come from it, and `spaces.validate_boot` pins the vector
     # table against `codex.space_id` rather than the legacy preimage.
     codex: Any = None
+    # 07 §7.8's collection file. Set from a Codex TOML; a legacy file
+    # leaves the defaults, which are what a legacy collection always was.
+    title: str | None = None            # this peer's own listing; never published
+    slices: Any = None                  # "all" | () | None when the file does not say
+    kinds: tuple[str, ...] = ("records", "vectors")   # 07 §7.7's default
+    share: bool = False
 
     def plugin_instance(self) -> CorpusSource:
         return PLUGIN_REGISTRY[self.plugin]
@@ -271,7 +287,75 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
             f"its life (07 §7.8); this one is not served, shared or searched "
             f"until they agree")
 
-    corpus = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
+    # 07 §7.8's file is `codex`, `title`, `slices`, `kinds`, `embed`,
+    # `share` and `[encoder]`. Everything else a Codex file used to say is
+    # an answer the Codex or the tree already gives — the archive is in
+    # `credits`, the dump in `origin.spec`, the space in `space`, the origin
+    # beside the drag — so those keys are still READ (the files on disk
+    # predate the shape) but derived when absent (`codex_defaults`).
+    #
+    # A file in the OLD shape keeps the old defaults for what it leaves
+    # out: a file that never said `slices`, `kinds`, `share` or `title` is
+    # read exactly as it was before this existed, so no deployed collection
+    # starts fetching, importing or moving on upgrade.
+    where = str(path)
+    _warn_deprecated(path, raw)
+    new_shape = any(k in raw for k in _SPEC_FILE_ONLY_KEYS)
+    kinds = _parse_kinds(raw.get("kinds"), where)
+    title = raw.get("title")
+    if title is not None and not isinstance(title, str):
+        raise ValueError(f"{where}: title is a string (07 §7.8), got {title!r}")
+    share = raw.get("share", False)
+    if not isinstance(share, bool):
+        raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
+    slices = None
+    if "slices" in raw:
+        if "profile" in raw:
+            raise ValueError(
+                f"{where}: slices and profile are both given. `slices` is 07 "
+                f"§7.8's key and `profile` the older spelling it replaces; "
+                f"keep one")
+        slices = _parse_slices(raw["slices"], where)
+    defaults = codex_defaults(codex, name, slices, kinds)
+    if slices is None and raw.get("profile") and raw["profile"] == defaults["everything"]:
+        # the profile that selects every slice IS `slices = "all"`
+        slices = "all"
+        defaults = codex_defaults(codex, name, slices, kinds)
+    profile = raw["profile"] if raw.get("profile") else defaults["profile"]
+
+    if "acquire_enabled" in raw:
+        acquire = bool(raw["acquire_enabled"])
+    else:
+        acquire = defaults["acquire_enabled"] if new_shape else False
+
+    credited = _credited_archives(codex)
+    if "genesis_archive" in raw:
+        genesis = raw["genesis_archive"] or None
+        if genesis and genesis not in credited:
+            raise ValueError(
+                f"{where}: genesis_archive = {genesis!r} and the Codex credits "
+                f"{', '.join(credited) or 'no archive'}. An archive's vectors "
+                f"are admitted only when `credits` names it (03 §3.5), so "
+                f"this collection would import what it must refuse")
+    else:
+        genesis = defaults["genesis_archive"] if new_shape else None
+
+    snapshot = defaults["snapshot"]
+    if raw.get("snapshot"):
+        stated = str(raw["snapshot"])
+        if snapshot and stated != snapshot:
+            raise ValueError(
+                f"{where}: snapshot = {stated!r} and the Codex pins "
+                f"{snapshot!r} (09 §9.17: a dated-dump origin's `files` are "
+                f"the dump pinned). A name holds one collection for its life "
+                f"(07 §7.8)")
+        snapshot = stated
+
+    if raw.get("corpus_dir"):
+        corpus = Path(raw["corpus_dir"])
+    else:
+        corpus = defaults["corpus_dir"] if new_shape else config.CORPUS_DIR
+
     embed_mode = _embed_mode(raw.get("embed", raw.get("embed_mode")), path)
     from . import layers as layers_mod
     return Collection(
@@ -281,21 +365,25 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         # and then chunk it differently — invariant 1's failure mode, and
         # undetectable, because both peers computed the id honestly.
         plugin=codex.plugin,
-        profile=raw.get("profile"),
+        profile=profile,
         embed_mode_default=embed_mode,
         corpus_dir=corpus,
         manifest_path=d / "state" / "manifest.sqlite",
         fts_dir=d / "index",
         lance_dir=d / "lance",
-        acquire_enabled=bool(raw.get("acquire_enabled", False)),
+        acquire_enabled=acquire,
         license_ack=_codex_ack(codex, d / "state"),
-        embed=parse_recipe(raw.get("embed_recipe") or raw.get("encoder"),
-                           where=str(path)),
-        genesis_archive=raw.get("genesis_archive"),
+        embed=_codex_encoder(raw.get("embed_recipe") or raw.get("encoder"),
+                             codex, where),
+        genesis_archive=genesis,
         extras=tuple(raw.get("extras") or ()),
-        snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
+        snapshot=snapshot,
         layers=layers_mod.layers_for(codex),
         codex=codex,
+        title=title,
+        slices=slices,
+        kinds=kinds,
+        share=share,
     )
 
 
@@ -317,6 +405,134 @@ def _embed_mode(value, path: Path) -> str | None:
             f"{path}: embed must be one of off | on-demand | all "
             f"(07 §7.8), got {value!r}")
     return mode
+
+
+#: 02 §2.6: "The kinds are closed, and `--kinds` (07 §7.3) takes their names."
+MEMBER_KINDS = ("records", "vectors", "buckets", "index", "relations", "figures",
+                "bundle", "centres", "calibration", "terms", "seals", "origin")
+#: 07 §7.7: "the default is records and vectors".
+DEFAULT_KINDS = ("records", "vectors")
+#: Keys a Codex file carried before 07 §7.8 spelled the file out. Each is
+#: still read; `web._write_codex_toml` writes one back only where the Codex
+#: and the tree do not give the same answer.
+DEPRECATED_CODEX_KEYS = ("profile", "acquire_enabled", "genesis_archive",
+                         "snapshot", "corpus_dir", "extras")
+#: The keys only 07 §7.8's shape has: a file with any of them is read by
+#: that shape's rules.
+_SPEC_FILE_ONLY_KEYS = ("slices", "kinds", "share", "title")
+_WARNED: set[tuple[str, str]] = set()
+
+
+def origin_dir(name: str) -> Path:
+    """`<LOUISE_ROOT>/collections/<name>/origin/` — the origin files a
+    collection's records are parsed from: what acquisition fetched (06
+    §6.2's corpus directory), kept after the records are written so they
+    can be re-fetched and checked (invariant 11). Beside `drag/`, `state/`,
+    `index/` and `lance/`, so one root holds everything about a collection
+    (operator, 2026-09-15). The bytes may live anywhere: on the reference
+    node this path is a mount of the dataset that holds them."""
+    return louise_root() / "collections" / name / "origin"
+
+
+def codex_at(name: str):
+    """The Codex a held name's drag carries."""
+    from .hold import codex as cx
+    return cx.loads((louise_root() / "collections" / name / "drag"
+                     / "codex.json").read_bytes())
+
+
+def _credited_archives(codex) -> list[str]:
+    return [c.archive for c in codex.credits if c.kind == "archive" and c.archive]
+
+
+def codex_defaults(codex, name: str, slices, kinds) -> dict[str, Any]:
+    """What a Codex file's older keys come to when the file does not state
+    them — each an answer the Codex or the tree already gives.
+
+    ONE derivation for the loader and the writer, so a rewrite drops a key
+    exactly when loading the file back without it gives the same value.
+
+    - `profile`: the acquisition spec's spelling of `slices = "all"` — the
+      profile that selects everything. Profiles are local (09 §9.17); the
+      file names the selection.
+    - `acquire_enabled`: the node fetches what the file holds — every
+      slice, records among the kinds — from an origin the plugin can fetch.
+    - `genesis_archive`: the archive `credits` names (03 §3.5 admits no
+      other), when this peer holds vectors.
+    - `snapshot`: the dump the Codex pins in `origin.spec.files`.
+    - `corpus_dir`: `origin_dir(name)`.
+    """
+    from .acquire import spec as acquire_spec
+    from .acquire.specs import ACQUIRE_REGISTRY
+    spec = ACQUIRE_REGISTRY.get(codex.plugin)
+    everything = acquire_spec.everything_profile(spec) if spec is not None else None
+    credited = _credited_archives(codex)
+    return {
+        "everything": everything,
+        "profile": everything if slices == "all" else None,
+        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds),
+        "genesis_archive": credited[0] if credited and "vectors" in kinds else None,
+        "snapshot": (acquire_spec.pinned_snapshot(spec, codex.origin.spec)
+                     if spec is not None else None),
+        "corpus_dir": origin_dir(name),
+    }
+
+
+def _parse_slices(value: Any, where: str):
+    if value == "all":
+        return "all"
+    if isinstance(value, list) and all(isinstance(v, str) and v for v in value):
+        if value:
+            raise ValueError(
+                f"{where}: slices = {value!r}. Holding PART of a collection is "
+                f"`hold records fetch --slice` (07 §7.3), which is not built "
+                f'yet: a node holds "all" or, with [], nothing')
+        return ()
+    raise ValueError(f'{where}: slices is "all" or a list of slice values '
+                     f"(07 §7.8), got {value!r}")
+
+
+def _parse_kinds(value: Any, where: str) -> tuple[str, ...]:
+    if value is None:
+        return DEFAULT_KINDS
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{where}: kinds is a list of member kinds (07 §7.8), "
+                         f"got {value!r}")
+    unknown = [k for k in value if k not in MEMBER_KINDS]
+    if unknown:
+        raise ValueError(f"{where}: kinds {unknown!r} — 02 §2.6's kinds are "
+                         f"closed: {', '.join(MEMBER_KINDS)}")
+    return tuple(value)
+
+
+def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
+    """`[encoder]` on a Codex file: WHERE this node reaches the Codex's
+    encoder (07 §7.8), never what the space is. `dtype`, `ctx` and `dim`
+    are the space's (02 §2.4): a file that still states one must state the
+    Codex's, or it is a second answer and the collection is refused."""
+    if not isinstance(raw, dict):
+        return None
+    space = codex.space
+    for key, have in (("dtype", space.dtype), ("ctx", space.ctx), ("dim", space.dim)):
+        if key in raw and str(raw[key]) != str(have):
+            raise ValueError(
+                f"{where}: [encoder] {key} = {raw[key]!r} and the Codex's space "
+                f"says {have!r}. The space is the Codex's (02 §2.4); this "
+                f"table names only where this node reaches it (07 §7.8)")
+    return parse_recipe({**raw, "model": raw.get("model") or space.encoder.label or "",
+                         "dtype": space.dtype, "ctx": space.ctx, "dim": space.dim},
+                        where=f"{where} [encoder]")
+
+
+def _warn_deprecated(path: Path, raw: dict) -> None:
+    import sys
+    for key in DEPRECATED_CODEX_KEYS:
+        if key in raw and (str(path), key) not in _WARNED:
+            _WARNED.add((str(path), key))
+            print(f"[warn:config] {path}: `{key}` is not a key of 07 §7.8's "
+                  f"collection file — still read; a rewrite keeps it only "
+                  f"where the Codex and the tree do not give the same answer",
+                  file=sys.stderr, flush=True)
 
 
 def _codex_ack(codex, state_dir: Path) -> str | None:

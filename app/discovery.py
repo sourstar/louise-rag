@@ -107,6 +107,11 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     plugin = collection.plugin_instance()
     root = collection.corpus_dir
     if not root.is_dir():
+        if getattr(collection, "slices", None) == ():
+            # holds no slice (07 §7.8 `slices = []`): nothing was fetched,
+            # so there is no origin yet and nothing to scan — not an error
+            return {"seen": 0, "added": 0, "changed": 0, "missing_txt": 0,
+                    "secs": 0.0}
         db.log_event(con, "error", "discover", f"corpus dir not found: {root}")
         return {"error": f"corpus dir not found: {root}"}
 

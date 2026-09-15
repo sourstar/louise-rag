@@ -1774,6 +1774,32 @@ healthy, mode still acquire-only, no error in either log. The restart
 cut wikipedia's post-fetch discovery scan (running since 22:07), which
 restarted at startup.
 
+**The collection file is 07 §7.8's (2026-09-15).** `codex`, `title`,
+`slices`, `kinds`, `embed`, `share`, and an `[encoder]` that names the
+endpoint only. The archive, the dump, the space's window and the origin
+were a second answer to what the Codex or the tree already says; they are
+derived now (`collections.codex_defaults`), the old keys still read, and a
+file in the old shape keeps the old defaults for what it leaves out.
+`hold collection create` writes the file. **Origins** live at
+`<LOUISE_ROOT>/collections/<name>/origin/` (operator; docs/07 on main,
+43703e3) — on the reference node a mount of the archive-pool datasets
+that already hold them, so no byte moves. Origins on the SSD pools go to
+the archive pool (operator): only the boxed genome FASTAs were there,
+copied to the archive pool's origins dataset and verified by checksum;
+the SSD copies wait for the operator in
+[`legacy-to-delete.md`](legacy-to-delete.md).
+
+**Wikipedia's "3.04M changed" is not a content change.** All 12,640,809
+"changed" pages are enwiki's: acquisition re-fetched the hard-linked
+dump (fetch record: 26,668,484,995 bytes, done 22:07:33 UTC) because the
+pinned spec declares no size for a dated dump, so the copy already in
+place could not be adopted — 27 GB moved again, the same bytes. The dump's
+mtime moved, so discovery re-read every enwiki page; none had been
+parsed, so each got its first hash and nothing was reset. The fix is in
+the engine, not the spec (`origin.spec.files` is inside `collection_id`):
+a file whose spec declares no size is adopted at the origin's
+Content-Length rather than fetched again. Next after this deploy.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

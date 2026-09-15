@@ -203,6 +203,21 @@ current and only form of those collections. **Delete nothing.**
 
 ---
 
+## 6. Found 2026-09-15, while moving origins off the SSD pools
+
+The operator's rule of 2026-09-15: a collection's origin files live on
+the archive pool, never on an SSD pool. Looking for origins on the SSDs
+turned up these. Nothing has been deleted.
+
+| what | size | condition |
+|---|---|---|
+| the SSD copies of the genome FASTAs (the three `genome-*` datasets on the SSD pool) | 1.0 G | copied to the archive pool's origins dataset, equal by checksum, and the node's mounts pointed there. Delete when the operator confirms; the collections' data (§4) is a different thing and stays |
+| a second Gutenberg tree on the archive pool (`louise-corpora/gutenberg`) | 299 G | no service mounts it; the live Gutenberg origin is the books dataset. Probably an earlier mirror: the operator says what it is before anything happens to it |
+| an old `gutenberg-rag` data directory on the second SSD pool | 37.8 G | a manifest, text index and vector table from before the collections existed; nothing reads it |
+| the old container paths of the three live origins (`/corpus`, `/corpora/pubmed`, `/corpora/wikipedia`) | — | mounts, not bytes. Each origin is also mounted at `<LOUISE_ROOT>/collections/<name>/origin` (07 §7.8); the old paths stay until discovery has moved every stored locator, then leave the compose file |
+
+---
+
 ## What "confirmed working" is not
 
 A row count is not a confirmation. `hold check` passing on the DRAG is

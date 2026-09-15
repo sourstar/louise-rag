@@ -9,7 +9,7 @@
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
     louise hold collection list
     louise hold collection show <codex>
-    louise hold records build <collection> --corpus DIR [--snapshot ID]
+    louise hold records build <collection> [--corpus DIR] [--snapshot ID]
     louise hold records validation <collection>
     louise hold snapshot create <collection> [--snapshot ID]
     louise hold snapshot list <collection>
@@ -147,8 +147,55 @@ def cmd_create(a) -> int:
               f"in space {codex.space_id} â calibration is not inside "
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
+    held = _write_held_file(a.root, codex)
+    print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
+
+
+def _write_held_file(root, codex) -> Path:
+    """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
+    and the file existing is the collection being held.
+
+    It says what a new collection holds before anything is fetched: no
+    slice yet (`records fetch` records the ones it takes, 07 §7.3), the
+    default kinds, nothing spent on embedding, nothing shared. The encoder
+    endpoint is left to §7.8's resolution order — the collection's
+    `[encoder]` once an operator writes one, else
+    `[encoder_defaults.<plugin>]`, else EMBED_URL — rather than frozen here.
+
+    Where: `<root>/<name>.toml`, the spec's path. On a node whose files
+    live in CONFIG_DIR rather than under LOUISE_ROOT (the reference node:
+    /config beside /data), a create in the node's own root writes where the
+    node reads, `collections.config_toml_path(name)`.
+
+    A name holds one collection for its life: a file already naming this
+    Codex is left alone, and one naming another is refused.
+    """
+    from app import collections as collections_mod
+    name = col.name_of(root, codex.collection_id)
+    node_root = collections_mod.louise_root() / "collections"
+    path = (collections_mod.config_toml_path(name)
+            if Path(root).resolve() == node_root.resolve()
+            else Path(root) / f"{name}.toml")
+    if path.exists():
+        with open(path, "rb") as f:
+            held = str(tomllib.load(f).get("codex") or "")
+        if held.removeprefix("sha256:") == codex.collection_id.removeprefix("sha256:"):
+            return path
+        raise CodexError(
+            f"{path} holds {held or 'no codex'} and this is "
+            f"{codex.collection_id}: a name holds one collection for its "
+            f"life, and another collection is another name (07 §7.8)")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(f'codex = "{codex.collection_id}"\n'
+                   "slices = []\n"
+                   'kinds = ["records", "vectors"]\n'
+                   'embed = "off"\n'
+                   "share = false\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 def _utc_now() -> str:
@@ -332,7 +379,11 @@ def cmd_collection_migrate(a) -> int:
 
 def cmd_records_build(a) -> int:
     from app.hold import records as rec
-    rec.build(a.root, a.collection, corpus_dir=a.corpus,
+    # 07 §7.3's `build <collection> [--snapshot ID]`: the origin is the
+    # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
+    # another, for a node whose origins are not there yet
+    corpus = a.corpus or (Path(a.root) / col.name_of(a.root, a.collection) / "origin")
+    rec.build(a.root, a.collection, corpus_dir=corpus,
               snapshot_id=a.snapshot_id, records_per_shard=a.records_per_shard)
     return 0
 
@@ -1319,7 +1370,8 @@ def build_parser() -> argparse.ArgumentParser:
     def args_records_build(p):
         root_arg(p); p.add_argument("collection")
         p.add_argument("--corpus",
-                       help="the corpus directory to parse (until `records fetch`)")
+                       help="the origin directory to parse (default: the "
+                            "collection's own, <root>/<name>/origin, 07 §7.8)")
         p.add_argument("--snapshot", dest="snapshot_id",
                        help="the cutoff to build to")
         p.add_argument("--shard-records", type=int, dest="records_per_shard",

@@ -34,7 +34,8 @@ def write(path, c):
         manifest=c.manifest_path, fts=c.fts_dir, lancedb=c.lance_dir,
         license_ack=c.license_ack, genesis_archive=c.genesis_archive,
         embed=c.embed, embed_mode=c.embed_mode_default, layers=c.layers,
-        snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source)
+        snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
+        title=c.title, slices=c.slices, kinds=c.kinds, share=c.share)
 
 
 @pytest.fixture
@@ -155,8 +156,10 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         'acquire_enabled = true\n'
         'corpus_dir = "/corpus"\n'
         '\n[encoder]\n'
+        # the space's own values (tests/hold/test_template.py's recipe):
+        # still accepted where they agree with the Codex, never written back
         'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
-        'dtype = "f16"\nctx = 8192\ndim = 2560\n', encoding="utf-8")
+        'dtype = "f16"\nctx = 512\ndim = 768\n', encoding="utf-8")
 
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
@@ -191,7 +194,8 @@ def test_a_rewrite_never_writes_a_second_answer(codex_loaded):
     path, before, _ = codex_loaded
     write(path, before)
     text = path.read_text(encoding="utf-8")
-    for forbidden in ("[[layers]]", "[paths]", "plugin =", "[embed]"):
+    for forbidden in ("[[layers]]", "[paths]", "plugin =", "[embed]",
+                      "dtype =", "ctx =", "dim ="):
         assert forbidden not in text, \
             f"{forbidden!r} restates what the Codex already fixes"
 
