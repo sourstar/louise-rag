@@ -277,8 +277,11 @@ routes below lands.
 
 **On the CPU** (TEI 1.8, NCBI's weights, 435-token candidates): 0.32 s per
 candidate with the node paused — 3.0 s for 10, 6.4 s for 20, 15.9 s for 50
-— and ~1.7× that under the worker's load. The budget (`[ask]
-latency_budget_ms`, 400 ms) is 16× short at 20 candidates, 40× at 50.
+— and ~1.7× that under the worker's load (10.8 s for 20, 26 s for 50).
+Against the spec's former 400 ms budget that was 16× short at 20
+candidates; against the 8 s the operator set the same day, 50 candidates
+— the spec's number — are still twice over even on an idle node, and 20
+fit only while nothing else runs.
 
 **As GGUF** (llama.cpp b10630), two faults, one fixable here:
 1. The converter drops BERT's pooler (`pooler.dense`, "we are only using
