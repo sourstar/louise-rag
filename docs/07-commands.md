@@ -620,7 +620,8 @@ answer 401 (§7.4). `EMBED_URL` unset means everything that needs an
 encoder — `vectors build`, T3, T4, the vector leg of a search — defers
 (exit 3) unless a collection's file names its own endpoint; `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
-`reranked: false` (05 §5.6). Secrets are named by path only — the key,
+`reranked: false` (05 §5.6) for every collection whose file names no
+`[reranker]` of its own. Secrets are named by path only — the key,
 the token — never by value in an environment variable, a file, a log
 line or a message.
 
@@ -634,7 +635,7 @@ line or a message.
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
-[ask]        latency_budget_ms = 400                    # the reranker's bound (05 §5.6)
+[ask]        latency_budget_ms = 8000                   # the reranker's bound (05 §5.6)
 [encoder_defaults.pubmed]   url = "http://nas:30440"    # per plugin; a collection's own [encoder] wins
 ```
 
@@ -652,11 +653,18 @@ share  = true
 [encoder]
 url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
+
+[reranker]                                     # optional (05 §5.6): this node's reranker for this collection
+url = "http://nas:30447/v1/rerank"             # the full endpoint
+api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 ```
 
 The encoder endpoint resolves in this order, each a fallback for the one
 before it, never an override: the collection's `[encoder]`, then
-`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. `embed
+`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. The
+reranker resolves the same way, without a per-plugin tier: the
+collection's `[reranker]`, then `RERANK_URL`; with neither, the list keeps
+its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
@@ -679,7 +687,8 @@ collection is another name.
 │       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
-│       └── lance/           the vector table search reads
+│       ├── lance/           the vector table search reads
+│       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here
 ├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
@@ -699,7 +708,7 @@ containers — both of which 09 §9.4 lists in their own top-level arrays
 rather than in `shards` or `files`. A collection with relations was
 unshareable and nothing said why.
 
-`index/`, `lance/`, the configuration files and the keys never travel,
+`index/`, `lance/`, `origin/`, the configuration files and the keys never travel,
 and neither does the state database, which holds the cursor of 06 §6.1,
 the acknowledgement of 09 §9.13 and the attestations of 09 §9.8. Two
 things it keeps DO travel, by their own routes rather than as drag
