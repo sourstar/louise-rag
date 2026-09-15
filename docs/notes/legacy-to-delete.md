@@ -213,7 +213,6 @@ turned up these. Nothing has been deleted.
 |---|---|---|
 | the SSD copies of the genome FASTAs (the three `genome-*` datasets on the SSD pool) | 1.0 G | copied to the archive pool's origins dataset, equal by checksum, and the node's mounts pointed there. Delete when the operator confirms; the collections' data (§4) is a different thing and stays |
 | a second Gutenberg tree on the archive pool (`louise-corpora/gutenberg`) | 299 G | no service mounts it; the live Gutenberg origin is the books dataset. Probably an earlier mirror: the operator says what it is before anything happens to it |
-| an old `gutenberg-rag` data directory on the second SSD pool | 37.8 G | a manifest, text index and vector table from before the collections existed; nothing reads it |
 | the old container paths of the three live origins (`/corpus`, `/corpora/pubmed`, `/corpora/wikipedia`) | — | mounts, not bytes. Each origin is also mounted at `<LOUISE_ROOT>/collections/<name>/origin` (07 §7.8); the old paths stay until discovery has moved every stored locator, then leave the compose file |
 
 ---
@@ -227,6 +226,11 @@ confirmation is a person searching the collection and getting the right
 answer back, plus the counts agreeing.
 
 ## Already deleted, for the record
+
+`gutenberg-rag` (2026-09-15, operator): the old data directory on the
+second SSD pool — a manifest, text index and vector table from before the
+collections existed, 37.8 GB with its seven automatic snapshots — and the
+stopped app that still referenced it. No container mounted it.
 
 `gutenberg-pack` and its 48 GB (2026-09-10), before this rule was
 stated. It sat outside the ferry list so the migration does not need it,

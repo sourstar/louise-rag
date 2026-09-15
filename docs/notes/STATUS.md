@@ -1823,6 +1823,21 @@ little memory to spare: at 02:08 UTC the kernel's OOM killer took the
 CPU TEI encoder four times (~12 G each) and a `llama-server` once, the
 TEI kills during a 512-text calibration run against it.
 
+**A GPU bge-m3 endpoint, checked against wikipedia's space (operator,
+2026-09-15).** llama.cpp (Intel build b10630) serving `bge-m3-FP16.gguf`.
+With `--pooling last` it failed wikipedia's calibration gate outright —
+median cosine 0.42: bge-m3 is CLS-pooled and the Codex fixes
+`pooling: "cls"`. With `--pooling cls` it passes: worst 0.9990 over all
+512 calibration texts, ~38,700 tokens/s. Against Upstash's own vectors
+(160 rows, five languages, short and long) it agrees with the CPU TEI
+encoder to 0.9994 or better on every row, and is deterministic, batched
+or single. A row re-embedded from its `text` alone can fall to 0.78
+against the archive; with its title prefixed — what Upstash embedded,
+and what `wikipedia.archive.embed_input` sends (amendment 11) — the same
+rows are at median 1.0000, worst 0.9607. It is not wikipedia's
+configured endpoint: that is one line in the collection file, the
+operator's to change.
+
 **How the deploy ran.** Local and node suites 2,719 passed on 8261747.
 The script (stop the app, swap the three collection files, add the
 origin mounts, restart) checks the new files load under the new image
