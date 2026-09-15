@@ -2153,6 +2153,28 @@ fragments at 14:10 (296 small), where one-document commits had left
 3,560 within 15 minutes of a compaction. At this rate pubmed's ~4.4 M
 remaining abstracts take about 19 hours rather than about 20 days.
 
+**Wikipedia: 7.2 M pages that were not articles, removed (84379e1,
+1db6186).** The card said 38,138,536 documents lay "past id
+109,999,999,999: newer than the archive". Those are the dump layer. 440 of
+them, sampled at random and parsed through the plugin, were 279 redirects,
+108 pages of other namespaces and 53 articles. Discovery skipped
+non-article pages by an English list of namespace names, so on ten of the
+eleven wikis `Kategorie:`, `Catégorie:`, `Категория:`, `رده:`, `Şablon:`…
+came in as articles. It now reads each dump's own names from its
+`<siteinfo>` header (keeping eswiki's `Anexo`, namespace 104: encyclopedic
+lists, operator's decision). `tools/wikipedia_drop_namespace_pages`
+removed the rows the old list had let in — 7,198,530 in 10 minutes, none
+of them touched by rdf, fts or embed, in 1,000-row transactions the
+worker never noticed: ru 1.39 M, fr 1.36 M, fa 1.12 M, de 0.80 M, pt
+0.75 M, es 0.62 M, tr 0.61 M, it 0.53 M, ja, zh, en 23 k. The card now
+says what lies past the range for each archive: for wikipedia, "pages
+read from the dumps, which the archive does not hold" (pubmed's stays
+"newer than the archive"). Redirects stay records with no text, their
+target in `extra` (operator): 92 % of 330 sampled point to an article,
+7 % to a section of one, none outside the wiki. Search reads a record's
+text and its catalog fields (title, authors, subjects — for a dump-read
+article, its categories); nothing else in `extra` is searched.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
