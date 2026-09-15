@@ -1899,6 +1899,58 @@ computed on the GPU (it runs their 16-sample proofs). The data dataset
 has no ZFS snapshot to roll back to instead, and the SSD pool's backup
 replication was in error when this was written.
 
+**Pubmed on the GPU MedCPT pair — what it took (2026-09-15).** Not the
+tokenizer cut proposed above: llama.cpp's refusal (HTTP 500 "too large
+to process") now shrinks the character cut exactly as TEI's 413 does
+(b1e56ab), so both pairs embed the same inputs. With the staged image,
+pubmed's gate on the GGUF article encoder passed 16/16 (whole set worst
+0.9896, median 1.0000), and all 512 calibration texts UNCUT through the
+platform's client, GGUF against TEI, gave article min 0.9896 (the 193
+past the first cut: min 1.0000) and query min 0.9910 — none below 0.95.
+The node suite then caught two vector-writer races, both older than this
+work, fixed before the deploy:
+- 1ef447c — on a fresh collection the parallel embed stage's first
+  writers raced; one found `chunks` listed but not yet committed, and a
+  healthy document recorded "Table 'chunks' was not found". 6 of 150
+  runs under load before, 0 of 150 after.
+- ac54d6c — a document another writer stored between upsert_book's
+  pre-lock read and its lock was appended on top of (24 rows for 12
+  ids). A check under the lock costs 0.55–0.65 s on pubmed's table in
+  every shape measured (35.4M rows, 7,967 fragments; the book_id BTREE
+  covers all but 7,601 rows and the plan uses it), so it runs only when
+  the table moved in a way this process's own log of versions cannot
+  account for. 150 of 150 runs of both races under load after.
+
+Measured on the way and not changed: upsert_book's per-document
+`_written_chunks` read costs ~1 s on pubmed's table. Four threads at ~1 s
+each bound the embed rate near 4 documents/s, and pubmed embedded ~3.3/s
+on the CPU pair — so the GPU pair may not raise the rate until that read
+is cheaper; the fragment count is the likely lever (compaction).
+
+**Deployed and switched.** ac54d6c deployed at 04:59 UTC (image
+3f4ea11, web and worker alike). Pubmed's `[encoder]` moved to the GPU
+pair at **05:00:42 UTC** — its two URL lines only, edited in place: the
+live file carries `embed = "all"`, which a copy prepared elsewhere said
+"off" and would have undone (the swap refused it; the TEI file is kept
+beside it). The GGUF article encoder took 132k prompt tokens between
+05:01:14 and 05:04:47, and pubmed embedded 307 documents in its first
+full window on it (05:01:42–05:03:41) with no error — about the rate it
+had on TEI (333–440 per window), as the ~1 s read predicts. TEI's
+article encoder served the embed call already streaming when the file
+changed, and nothing after 05:04:14. These vectors fall under the
+rollback mark above.
+
+**Version prune against a table that never stops writing.** Pubmed's
+index maintainer skipped its version prune at 04:40 and 05:04 UTC ("Too
+many concurrent writers", after 30 s of retries). The first skip is
+older than the deploy: prunes had succeeded through 03:38, and the skips
+began once pubmed embedded without pause. `optimize` (compact + prune +
+index, the only entry point this lancedb has) loses its commit to the
+embed stage's adds. The table stays intact and gains versions until a
+prune wins. The earlier successes logged "pruned -312" and "-229":
+`before - after` also counts the versions concurrent writers added
+during the call, so the figure is wrong, not the prune.
+
 **Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
 available; the operator stopped a llama.cpp probe container (8.5 GB).
 Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is
