@@ -1951,6 +1951,29 @@ prune wins. The earlier successes logged "pruned -312" and "-229":
 `before - after` also counts the versions concurrent writers added
 during the call, so the figure is wrong, not the prune.
 
+**Compaction, measured on a copy (operator's choice, 2026-09-15).** The
+table is on the SSD pool already, so moving it would buy nothing. A block-cloned
+copy (16 s, almost no space) was run through the app's own `optimize`
+(2 h retention) with nothing else writing: 3.9 min, peak 1.2 GiB, rows
+unchanged (35,461,914), versions 15,012 → 11,935. upsert_book's
+per-document read went from a median of 437–491 ms to 8 ms, the id read
+from 304–351 ms to 1.8 ms. So the live table's cost is the missed
+maintenance, not the disk — and the maintainer loses its commit to the
+continuous embed (above), so on the live table it needs the embedding
+paused for its few minutes, or a way to win. Not done on the live table.
+
+**Library badges.** The license ✓ followed `ack_recorded`, so only
+pubmed showed one — gutenberg is green, and wikipedia (yellow) is
+acknowledged through a record of its terms elsewhere on this peer, which
+that flag does not see. It now means nothing gates use (green, or a
+valid acknowledgement), with a tooltip saying which; read back from the
+new image, all three carry it (3d0b0fd, deployed 07:02
+UTC). The GPU/CPU badge reads
+the [encoder]'s `device` and infers CPU from concurrency > 1 without it:
+pubmed and wikipedia run on the GPU at concurrency 4 and do not declare
+it. The one-line `device = "gpu"` edits were refused to me by the
+permission classifier and are the operator's to run.
+
 **Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
 available; the operator stopped a llama.cpp probe container (8.5 GB).
 Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is
