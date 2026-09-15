@@ -1666,7 +1666,8 @@ def grow_run(name: str, body: GrowBody):
         embed_mode=collection.embed_mode_default, layers=collection.layers,
         snapshot=collection.snapshot, extras=extras,
         peer_source=collection.peer_source, title=collection.title,
-        slices=slices, kinds=collection.kinds, share=collection.share)
+        slices=slices, kinds=collection.kinds, share=collection.share,
+        reranker=collection.reranker)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -1819,9 +1820,11 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
                        genesis_archive: str | None, encoder,
                        embed_mode: str | None, snapshot: str | None,
                        extras: tuple[str, ...], title: str | None = None,
-                       slices=None, kinds=None, share: bool = False) -> None:
+                       slices=None, kinds=None, share: bool = False,
+                       reranker=None) -> None:
     """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
-    `share`, and `[encoder]` naming where this node reaches the encoder.
+    `share`, `[encoder]` naming where this node reaches the encoder, and
+    `[reranker]` where it reaches the collection's reranker (05 §5.6).
 
     What is NOT written is the point. `plugin`, the chunker `[[layers]]`
     and the `[paths]` tree are the CODEX's answers — all three are inside
@@ -1894,10 +1897,27 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
             lines.append(f"concurrency = {encoder.concurrency}")
         if getattr(encoder, "device", None):
             lines.append(f"device = {_toml_scalar(encoder.device)}")
+    lines += _reranker_lines(reranker)
     lines.append("")
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text("\n".join(lines), encoding="utf-8")
     tmp.replace(path)
+
+
+def _reranker_lines(reranker) -> list[str]:
+    """A collection's `[reranker]` (05 §5.6), carried through every rewrite
+    like `[encoder]`: node-local and query-time, never the Codex's. The
+    writers used to drop it. On 2026-09-15 pubmed's file was rewritten when
+    its embedding was switched back on, came out without the table, and its
+    searches went unreranked with nothing saying so. The round-trip guard
+    passed throughout: its fixtures declared no reranker, so None == None."""
+    if reranker is None:
+        return []
+    lines = ["", "[reranker]", f"url = {_toml_scalar(reranker.url)}",
+             f"api = {_toml_scalar(reranker.api)}"]
+    if reranker.model:
+        lines.append(f"model = {_toml_scalar(reranker.model)}")
+    return lines
 
 
 def _write_collection_toml(path: Path, *, codex: str | None,
@@ -1911,7 +1931,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                             extras: tuple[str, ...] = (),
                             peer_source: str | None = None,
                             layers=None, title: str | None = None,
-                            slices=None, kinds=None, share: bool = False) -> None:
+                            slices=None, kinds=None, share: bool = False,
+                            reranker=None) -> None:
     """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
     purpose: a call site that forgets it must fail loudly here, because
     the failure it would otherwise cause is silent and unrepairable.
@@ -1934,7 +1955,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             acquire_enabled=acquire_enabled, corpus_dir=corpus_dir,
             genesis_archive=genesis_archive, encoder=embed,
             embed_mode=embed_mode, snapshot=snapshot, extras=extras,
-            title=title, slices=slices, kinds=kinds, share=share)
+            title=title, slices=slices, kinds=kinds, share=share,
+            reranker=reranker)
         return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
@@ -2011,6 +2033,7 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                 lines.append("params = { %s }" % ", ".join(
                     f"{k} = {_toml_scalar(v)}"
                     for k, v in sorted(layer.params.items())))
+    lines += _reranker_lines(reranker)
     lines += [
         "",
         "[paths]",
@@ -2215,7 +2238,7 @@ def new_collection_create(body: CreateCollectionBody):
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source, title=existing.title,
                 slices=existing.slices, kinds=existing.kinds,
-                share=existing.share)
+                share=existing.share, reranker=existing.reranker)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -2436,7 +2459,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source, title=existing.title,
                 slices=existing.slices, kinds=existing.kinds,
-                share=existing.share)
+                share=existing.share, reranker=existing.reranker)
     _write_collection_toml(
         toml_path, codex=_codex_id(collection),
         plugin=collection.plugin, profile=collection.profile,
@@ -2450,7 +2473,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         snapshot=collection.snapshot,
         extras=collection.extras, peer_source=collection.peer_source,
         title=collection.title, slices=collection.slices,
-        kinds=collection.kinds, share=collection.share)
+        kinds=collection.kinds, share=collection.share,
+        reranker=collection.reranker)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -2528,7 +2552,7 @@ def collection_ack(name: str):
         # silently un-declare a collection fed from a peer torrent
         peer_source=collection.peer_source, title=collection.title,
         slices=collection.slices, kinds=collection.kinds,
-        share=collection.share)
+        share=collection.share, reranker=collection.reranker)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

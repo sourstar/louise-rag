@@ -35,7 +35,8 @@ def write(path, c):
         license_ack=c.license_ack, genesis_archive=c.genesis_archive,
         embed=c.embed, embed_mode=c.embed_mode_default, layers=c.layers,
         snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
-        title=c.title, slices=c.slices, kinds=c.kinds, share=c.share)
+        title=c.title, slices=c.slices, kinds=c.kinds, share=c.share,
+        reranker=c.reranker)
 
 
 @pytest.fixture
@@ -64,6 +65,8 @@ def loaded(tmp_path, isolated_config, monkeypatch):
         # params-less the round-trip asserted nothing about them.
         '\n[[layers]]\nchunker = "cdc"\nrule = "default"\n'
         'params = { tokens = 1000, overlap = 120 }\n'
+        '\n[reranker]\nurl = "http://rr:8080/rerank"\napi = "tei"\n'
+        'model = "ncbi/MedCPT-Cross-Encoder"\n'
         '\n[paths]\n'
         'manifest = "/data/w/manifest.db"\nfts = "/data/w/fts"\n'
         'lancedb = "/data/w/lancedb"\n', encoding="utf-8")
@@ -152,6 +155,12 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
     path = cfg / "collections" / "gutenberg.toml"
     path.write_text(
         f'codex = "{cx.collection_id}"\n'
+        # 07 §7.8's own keys, each away from its default: the guards
+        # compared None with None on all four until 2026-09-15
+        'title = "Project Gutenberg"\n'
+        'slices = "all"\n'
+        'kinds = ["records"]\n'
+        'share = true\n'
         'embed = "on-demand"\n'
         'acquire_enabled = true\n'
         'corpus_dir = "/corpus"\n'
@@ -159,7 +168,9 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back
         'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
-        'dtype = "f16"\nctx = 512\ndim = 768\n', encoding="utf-8")
+        'dtype = "f16"\nctx = 512\ndim = 768\n'
+        '\n[reranker]\nurl = "http://rr:30447/v1/rerank"\napi = "jina"\n'
+        'model = "bge-reranker-v2-m3"\n', encoding="utf-8")
 
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
@@ -242,3 +253,34 @@ def test_every_field_survives_a_codex_rewrite(codex_loaded, field):
     after = collections_mod._load_one(path)
     assert getattr(after, field) == getattr(before, field), (
         f"{field!r} did not survive a Codex TOML rewrite")
+
+
+# ---- the guards themselves ------------------------------------------------
+#
+# Both parametrized guards compare a field before and after a rewrite, so a
+# field BOTH fixtures leave at its default passes them however the writer
+# treats it. `reranker` did exactly that from the day it was added until
+# 2026-09-15, when an ordinary rewrite dropped pubmed's.
+
+# fields no fixture can populate, each with the reason
+_UNPOPULATED: dict[str, str] = {}
+
+
+def test_the_guards_are_not_vacuous(loaded, codex_loaded):
+    _, legacy = loaded
+    _, codexed, _ = codex_loaded
+    vacuous = []
+    for f in dataclasses.fields(collections_mod.Collection):
+        if f.default is not dataclasses.MISSING:
+            default = f.default
+        elif f.default_factory is not dataclasses.MISSING:
+            default = f.default_factory()
+        else:
+            continue                    # required: always populated
+        if getattr(legacy, f.name) == default and getattr(codexed, f.name) == default \
+                and f.name not in _UNPOPULATED:
+            vacuous.append(f.name)
+    assert not vacuous, (
+        f"{vacuous} sit at their defaults in both fixtures, so the round-trip "
+        f"guards pass on them whatever the writer does — declare them in a "
+        f"fixture, or list them in _UNPOPULATED with the reason")
