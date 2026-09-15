@@ -2016,7 +2016,8 @@ BAAI's own weights (transformers on the same 8 pairs: identical ranking,
 largest difference 0.04), served as a `bge-rerank` service beside bge-m3
 in its app, :30447, llama.cpp `--reranking` with four slots. Each
 collection file names it in `[reranker]`; `platform.toml`'s `[ask]
-latency_budget_ms` is 8000. The code now does what 05 §5.6 says and it did
+latency_budget_ms` is 8000 — and, confirmed by the operator, the spec's
+default too (07 §7.8, was 400). The code now does what 05 §5.6 says and it did
 not: each collection's list reranked on its own and fused by rank, the top
 50 reordered, candidates sent whole, a fallback reported as `reranked:
 false`. The CPU MedCPT reranker services added to both MedCPT apps this

@@ -90,8 +90,10 @@ class AdmissionConfig:
 class AskConfig:
     """`[ask]` (07 §7.8): the reranker's latency bound (05 §5.6). A list
     the reranker cannot order inside it keeps its fused order and says
-    `reranked: false`."""
-    latency_budget_ms: int = 400
+    `reranked: false`. 8000 by the operator's decision (2026-09-15): at
+    the spec's former 400 every list fell back, and the GPU reranker takes
+    0.3–0.7 s on pubmed and wikipedia and 3–6 s on gutenberg's long chunks."""
+    latency_budget_ms: int = 8000
 
 
 @dataclass(frozen=True)

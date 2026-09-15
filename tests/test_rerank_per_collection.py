@@ -141,7 +141,7 @@ def test_the_budget_is_platform_toml_ask_latency_budget_ms(tmp_path):
     p.write_text("[ask]\nlatency_budget_ms = 1500\n", encoding="utf-8")
     assert platform_config._load_one(p).ask.latency_budget_ms == 1500
     p.write_text("", encoding="utf-8")
-    assert platform_config._load_one(p).ask.latency_budget_ms == 400, "07 §7.8's default"
+    assert platform_config._load_one(p).ask.latency_budget_ms == 8000, "07 §7.8's default"
     p.write_text("[ask]\nlatency_budget_ms = 0\n", encoding="utf-8")
     with pytest.raises(Exception, match="latency_budget_ms"):
         platform_config._load_one(p)
