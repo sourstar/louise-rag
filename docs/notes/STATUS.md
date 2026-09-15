@@ -2061,6 +2061,48 @@ its first run; it ran on the operator's explicit instruction. Leaving
 acquire-only was refused to me the same way and was the operator's
 switch in the Library.
 
+**Gutenberg search, 24 s → 7.5–9 s (58a21f2, deployed 12:52 UTC).**
+Measured live: 19.2 s of a 24.4 s search was the lexical leg with
+translation, 0.6 s without. Ollama unloads a model after 5 idle minutes
+and searches come less often, so nearly every search reloaded qwen3:8b
+(6.4 GB, on the GPU) before translating; and the 12-language cap took the
+alphabetically first groups. Now `keep_alive` is 30 min (`LLM_KEEP_ALIVE`)
+and the query goes to the 6 largest groups by chunks indexed
+(`TRANSLATE_MAX_LANGS`). Warm, after the deploy: translation 2.6–3.3 s,
+BM25 over 18 groups 0.6 s, reranking 3.3–5.4 s (its ~1,500-token chunks),
+total 7.5–9 s; the first search after an idle half hour still pays the
+~13 s load.
+
+**The old origin mounts are gone (same restart).** `fetch_files.local_path`
+was the last store of the old paths (386,921 gutenberg, 2,668 pubmed, 22
+wikipedia rows), relocated to `/data/collections/<name>/origin/` first;
+every other table of the three manifests, node.sqlite and refs.db was
+scanned and names none. `/corpus`, `/corpora/pubmed`, `/corpora/wikipedia`
+and `/corpora/wikipedia/data` left both services, `CORPUS_DIR` points at
+gutenberg's `origin/`, all three collections load, and the startup fetch
+found every file where the ledger says (2,668 and 22 skipped as held).
+
+**The SSD pool's backup.** Its replication had failed since 2026-08-28:
+excluding datasets it had already sent took away its incremental base.
+The old target is kept as `tank/backup/ssd4-until-2026-08-28` (1.87 T,
+legacy-to-delete §6) and a fresh replication ran at the old name. It
+excludes `apps/louise-rag`, so the live collections' 1.1 T has no copy
+newer than August — a manual snapshot
+(`ssd4/apps/louise-rag@manual-20260915-before-cleanup`) sits on the same
+pool. Whether to replicate it is the operator's call.
+
+**Pubmed's write path, measured (12:40 UTC, embedding on).** ~2 documents
+a second (1.3–3.0 per 20-minute window since 10:40, no downward trend),
+and the MedCPT article encoder idle ~90% of the time (11 ms a request,
+~150 ms between). The hourly prune is `optimize` and compacts too; it won
+at 10:39 and 11:43. Between prunes every embedded document adds one small
+fragment (6,529 of 6,566 fragments at 12:49) and one version, so each
+per-document read and commit costs more as the hour goes on. That is the
+engineering rules' "per-item cost that depends on how much has been
+processed", bounded only by the prune interval. The fix is in the write
+path: several documents per Lance commit (one fragment, one version) —
+proposed, not built.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
