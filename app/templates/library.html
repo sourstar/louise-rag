@@ -41,7 +41,7 @@
        accepted, red while one is still needed. The class WORD keeps its
        own colour, so a yellow licence reads yellow inside a green
        border instead of the whole badge reading green. #}
-    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}">license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ack_recorded else '') }}</span>
+    <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
     {% endif %}
   </div>
   {% if c.fetched %}

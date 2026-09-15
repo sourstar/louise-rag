@@ -1539,6 +1539,11 @@ def _license_state(collection: collections_mod.Collection) -> dict:
         "needs_ack": bool(
             cls in ("yellow", "red") and state == licensing.MISSING
             and collections_mod.config_toml_path(collection.name).exists()),
+        # the badge's ✓: a known class and nothing gating use — green needs
+        # no acknowledgement, yellow/red have a valid one. It used to be
+        # `ack_recorded` alone, so only the one yellow collection showed a
+        # ✓ and every green one looked unchecked (operator, 2026-09-15).
+        "ok": bool(cls in ("green", "yellow", "red") and state != licensing.MISSING),
     }
 
 
