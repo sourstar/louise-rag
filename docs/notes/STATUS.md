@@ -2103,6 +2103,24 @@ processed", bounded only by the prune interval. The fix is in the write
 path: several documents per Lance commit (one fragment, one version) —
 proposed, not built.
 
+**MedCPT reranks pubmed, on the GPU (a93ccfe; live ~13:40 UTC).** An
+OpenVINO sidecar (`deploy/medcpt-rerank/`) builds the segment ids with
+the model's own pair tokenizer, which neither llama.cpp nor OpenVINO
+Model Server's `/v3/rerank` does. Against transformers fp32 on 3 real
+queries × 50 candidates: τ 0.974–1.000, top 10 identical, 72–95 ms per
+list, against ~16 s on the CPU. Through the search: 300–392 ms.
+reranker-scope.md §12 has the numbers.
+
+**A Library change deleted a collection's reranker (cae114a).** Pubmed's
+file had lost its `[reranker]` when its embedding was switched back on
+(12:16 UTC). Both collection-file writers rebuild the file from the
+fields they know, and `[reranker]` was not among them. Pubmed's searches
+were unreranked from 12:16 until the block was restored, and nothing
+said so. The round-trip guard compared None with None because its
+fixtures declared no reranker. A new test now fails on any field left at
+its default in both fixtures; it found `title`, `slices`, `kinds` and
+`share` covered the same empty way.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

@@ -266,14 +266,36 @@ across an already-distributed pack.
    is the better answer to "what is this node's user actually interested
    in", which is the whole point of lazy embedding.
 
-## 12. MedCPT's cross-encoder — measured, parked (2026-09-15)
+## 12. MedCPT's cross-encoder — measured, parked, then served (2026-09-15)
 
 **Decision (operator).** A reranker per collection, on the GPU where the
 model runs there correctly. PubMed's natural reranker, NCBI's
 MedCPT-Cross-Encoder (trained with the MedCPT article and query encoders
-PubMed runs), fits neither place today, so PubMed uses the shared GPU
-reranker gutenberg and wikipedia use (bge-reranker-v2-m3) until one of the
-routes below lands.
+PubMed runs), fit neither place at first, so PubMed used the shared GPU
+reranker gutenberg and wikipedia use (bge-reranker-v2-m3) until the
+OpenVINO route below landed the same afternoon.
+
+**Served: OpenVINO on the Intel GPU, the pair tokenizer outside it.**
+`deploy/medcpt-rerank/`: `convert.py` turns NCBI's weights into an
+OpenVINO IR (fp16 weights); `server.py` builds `input_ids`,
+`attention_mask` and `token_type_ids` with the model's own
+`tokenizer.json`, runs the IR on the GPU and answers TEI's `/rerank`.
+It runs as the third service of the embed-gpu-medcpt app (:30445), and
+pubmed's `[reranker]` names it (`api = "tei"`). Held to transformers fp32
+on the original weights, with 3 real pubmed queries × 50 candidates
+(8.8–13.1 k tokens a list, ~95 % of them segment 1):
+
+| | max \|logit diff\| | Kendall τ | top-10 | 50 candidates |
+|---|---|---|---|---|
+| encodings (tokenizers vs transformers) | identical | | | |
+| IR on CPU, f32 | < 0.01 | 0.974–1.000 | same | 2.6–11.8 s (loaded node) |
+| IR on the GPU, f16 | ≤ 0.04 | 0.974–1.000 | same | 72–95 ms warm |
+
+Four lists at once: 251 ms. Through the platform's search: 300–392 ms
+rerank. τ 0.974 is near-ties swapping, not disagreement: the top 10 are
+identical on every query. One trap on the way: this CPU (Zen 4) runs
+OpenVINO in bf16 by default, and the first CPU check showed drift of up to
+0.25 logits and τ 0.93. That was the precision, not the conversion.
 
 **On the CPU** (TEI 1.8, NCBI's weights, 435-token candidates): 0.32 s per
 candidate with the node paused — 3.0 s for 10, 6.4 s for 20, 15.9 s for 50
@@ -294,10 +316,13 @@ fit only while nothing else runs.
    stay 8–15 logits off NCBI's and the rest of the order differs. Not
    fixable in the file alone.
 
-**Routes, for when it matters:**
-- OpenVINO Model Server on the Intel GPU: serves cross-encoders through a
-  Cohere-style `/v3/rerank` from the real graph, segment ids included.
-  MedCPT is not on its tested list but is the class of one that is.
+**Routes, as they stood before the OpenVINO sidecar:**
+- OpenVINO Model Server on the Intel GPU through its Cohere-style
+  `/v3/rerank`. This turned out to be wrong: its rerank calculator
+  (`src/rerank/rerank_calculator_ov.cc`) fills `token_type_ids` with 0,
+  the same fault as llama.cpp. The model runs fine under OpenVINO; the
+  pairing has to be done outside the server, which is what the sidecar
+  does.
 - A llama.cpp that passes segment ids for rerank pairs (a patched build,
   or upstream if it ever lands).
 - Fold segment 1 into a second copy of the vocabulary (token embedding +
