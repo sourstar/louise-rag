@@ -620,7 +620,8 @@ answer 401 (§7.4). `EMBED_URL` unset means everything that needs an
 encoder — `vectors build`, T3, T4, the vector leg of a search — defers
 (exit 3) unless a collection's file names its own endpoint; `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
-`reranked: false` (05 §5.6). Secrets are named by path only — the key,
+`reranked: false` (05 §5.6) for every collection whose file names no
+`[reranker]` of its own. Secrets are named by path only — the key,
 the token — never by value in an environment variable, a file, a log
 line or a message.
 
@@ -652,11 +653,18 @@ share  = true
 [encoder]
 url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
+
+[reranker]                                     # optional (05 §5.6): this node's reranker for this collection
+url = "http://nas:30447/v1/rerank"             # the full endpoint
+api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 ```
 
 The encoder endpoint resolves in this order, each a fallback for the one
 before it, never an override: the collection's `[encoder]`, then
-`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. `embed
+`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. The
+reranker resolves the same way, without a per-plugin tier: the
+collection's `[reranker]`, then `RERANK_URL`; with neither, the list keeps
+its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
