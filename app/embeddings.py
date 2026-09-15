@@ -13,6 +13,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import httpx
 import lancedb
@@ -212,6 +213,19 @@ def _np_dtype_of_table(tbl):
 def _np_dtype_of_recipe(recipe):
     return np.float16 if recipe.dtype == "f16" else np.float32
 
+def _create_table(db, rows):
+    """The vector table, created with its first rows; the vector type and
+    width are the rows' own."""
+    dim = len(rows[0]["vector"])
+    vt = pa.float16() if rows[0]["vector"].dtype == np.float16 else pa.float32()
+    schema = pa.schema([
+        pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+        pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+        pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+        pa.field("vector", pa.list_(vt, dim)),
+    ])
+    return db.create_table(TABLE, data=rows, schema=schema)
+
 def _book_filter(book_id) -> str:
     """Build a Lance filter for one document.
 
@@ -314,7 +328,8 @@ BOOK_COLUMN_NAME = "book_id"
 
 
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
-                lock_con=None, stop=None) -> int:
+                lock_con=None, stop=None, *, held: "HeldRead | None" = None,
+                sink: "PendingWrites | None" = None) -> int:
     """Write one document's vectors, delete-then-insert (invariant 2),
     INCREMENTALLY and resumably.
 
@@ -350,19 +365,32 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
 
     `stop`, when given, is checked between slices: the work already written
     stays written and the document resumes on the next run.
+
+    `held` and `sink` are the parallel embed stage's, and exist for what a
+    SMALL document costs. Measured on pubmed (2026-09-15): reading what one
+    abstract already held took 503 ms, its commit 37 ms, the encoder 32 ms;
+    and each one-document commit left a fragment every later read scans.
+    `held` is that read made once for a group of documents (`held_chunks`);
+    with `sink`, a document that fits one slice leaves its rows there and
+    the caller commits a batch of them at once (`write_pending`), marking
+    them done only after. A longer document still writes its own slices.
     """
     if not chunks:
         return 0
     recipe = collections_mod.recipe_for(collection)
     db = _conn(collection)
-    existing = _committed_table(db)
-    dtype = (_np_dtype_of_table(existing) if existing is not None
-             else _np_dtype_of_recipe(recipe))
-    # The version the read below is judged against, taken BEFORE it: a
-    # commit between the two is only checked when it need not have been.
-    seen = existing.version if existing is not None else 0
-
-    have = _written_chunks(db, book_id)
+    if held is None:
+        existing = _committed_table(db)
+        dtype = (_np_dtype_of_table(existing) if existing is not None
+                 else _np_dtype_of_recipe(recipe))
+        # The version the read below is judged against, taken BEFORE it: a
+        # commit between the two is only checked when it need not have been.
+        seen = existing.version if existing is not None else 0
+        have = _written_chunks(db, book_id)
+    else:
+        dtype = held.dtype if held.dtype is not None else _np_dtype_of_recipe(recipe)
+        seen = held.seen
+        have = held.of(book_id)
     wanted = {c["id"]: c["text"] for c in chunks}
     done = {i for i, r in have.items() if wanted.get(i) == r["text"]}
     # Anything stored that is not a byte-exact chunk of the CURRENT document
@@ -391,27 +419,18 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     todo = [c for c in chunks if c["id"] not in done]
     if not todo:
         return len(chunks)          # already complete; nothing to embed
+    if sink is not None and len(todo) <= config.EMBED_SLICE_CHUNKS:
+        # one slice: embedded here, committed with the rest of its batch
+        sink.put(PendingDoc(int(book_id),
+                            _rows_for(book_id, lang, todo, recipe, carry, dtype),
+                            purge=rebuild, seen=seen))
+        return len(todo) + len(done)
 
     written = 0
     purge = rebuild
     for start in range(0, len(todo), config.EMBED_SLICE_CHUNKS):
         part = todo[start:start + config.EMBED_SLICE_CHUNKS]
-        # Embedding happens OUTSIDE the lock: it is the slow part, it touches
-        # the network, and holding a cross-process write lock across it would
-        # serialize every writer on the slowest endpoint call.
-        # Only the chunks whose TEXT this peer does not already hold reach
-        # the encoder. The rest are carried at their new ids for free.
-        fresh = [c for c in part if chunk_text_hash(c["text"]) not in carry]
-        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
-        embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
-        rows = [{
-            "id": c["id"], "book_id": book_id, "lang": lang or "und",
-            "seq": c["seq"], "chapter": c["chapter"] or "",
-            "text": c["text"],
-            "vector": np.asarray(
-                embedded[c["id"]] if c["id"] in embedded
-                else carry[chunk_text_hash(c["text"])], dtype=dtype),
-        } for c in part]
+        rows = _rows_for(book_id, lang, part, recipe, carry, dtype)
 
         with _write_lock(lock_con):
             # existence re-checked INSIDE the lock: the pre-lock check picked
@@ -436,16 +455,8 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 seen = tbl.version
                 _note_own_versions(db.uri, before + 1, seen, book_id)
             else:
-                dim = len(rows[0]["vector"])
-                vt = pa.float16() if dtype is np.float16 else pa.float32()
-                schema = pa.schema([
-                    pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
-                    pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
-                    pa.field("chapter", pa.string()), pa.field("text", pa.string()),
-                    pa.field("vector", pa.list_(vt, dim)),
-                ])
                 try:
-                    tbl = db.create_table(TABLE, data=rows, schema=schema)
+                    tbl = _create_table(db, rows)
                     purge = False
                     before = 0
                 except ValueError:
@@ -477,6 +488,156 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 f"the document resumes from what is already written")
     return written + len(done)
 
+
+def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
+              dtype) -> list[dict]:
+    """One slice's rows. Embedding happens OUTSIDE the lock: it is the slow
+    part, it touches the network, and holding a cross-process write lock
+    across it would serialize every writer on the slowest endpoint call.
+    Only the chunks whose TEXT this peer does not already hold reach the
+    encoder. The rest are carried at their new ids for free."""
+    fresh = [c for c in part if chunk_text_hash(c["text"]) not in carry]
+    vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
+    embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
+    return [{
+        "id": c["id"], "book_id": book_id, "lang": lang or "und",
+        "seq": c["seq"], "chapter": c["chapter"] or "",
+        "text": c["text"],
+        "vector": np.asarray(
+            embedded[c["id"]] if c["id"] in embedded
+            else carry[chunk_text_hash(c["text"])], dtype=dtype),
+    } for c in part]
+
+
+@dataclass(frozen=True)
+class HeldRead:
+    """What a group of documents already holds in the vector table, read
+    once for the group (`held_chunks`). `seen` is the table version the
+    read is judged against, and `dtype` the table's vector type, None while
+    there is no table."""
+    by_book: dict
+    seen: int
+    dtype: object = None
+
+    def of(self, book_id) -> dict:
+        return self.by_book.get(int(book_id), {})
+
+
+def held_chunks(collection, book_ids) -> HeldRead:
+    """`_written_chunks` for a whole group of documents, in one read.
+
+    It costs about the same for a hundred documents as for one: the time
+    goes on the fragments the book_id index does not cover yet, which a
+    read scans whatever it asks for (pubmed, 2026-09-15: 697 ms at 3,559
+    fragments, 918 ms at 3,972). Raises when the table cannot be read, or
+    when the group holds more rows than one read returns: an incomplete
+    answer would read as "not written yet" and store chunks twice."""
+    db = _conn(collection)
+    tbl = _committed_table(db)
+    if tbl is None:
+        return HeldRead({}, 0, None)
+    seen = tbl.version
+    by_book: dict[int, dict[str, dict]] = {}
+    ids = sorted({int(b) for b in book_ids})
+    for i in range(0, len(ids), 500):
+        part = ",".join(str(b) for b in ids[i:i + 500])
+        rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})", prefilter=True)
+                .select(["id", "book_id", "text", "vector"])
+                .limit(_RESUME_SCAN_MAX).to_list())
+        if len(rows) >= _RESUME_SCAN_MAX:
+            raise RuntimeError(f"{len(rows)} stored rows for {len(ids[i:i + 500])} "
+                               f"documents: more than one read returns")
+        for r in rows:
+            by_book.setdefault(int(r["book_id"]), {})[r["id"]] = {
+                "text": r["text"], "vector": r["vector"]}
+    return HeldRead(by_book, seen, _np_dtype_of_table(tbl))
+
+
+@dataclass
+class PendingDoc:
+    """One document's rows, embedded and not yet written."""
+    book_id: int
+    rows: list
+    purge: bool       # rebuilt: its stored rows go first
+    seen: int         # the version its read of held rows was judged against
+
+
+class PendingWrites:
+    """Where `upsert_book(..., sink=)` leaves a one-slice document's rows;
+    `write_pending` commits a batch of them. The parallel stage's workers
+    put, its main thread takes."""
+
+    def __init__(self):
+        self._docs: dict[int, PendingDoc] = {}
+        self._lock = threading.Lock()
+
+    def put(self, doc: PendingDoc) -> None:
+        with self._lock:
+            self._docs[doc.book_id] = doc
+
+    def holds(self, book_id) -> bool:
+        with self._lock:
+            return int(book_id) in self._docs
+
+    def take(self, book_ids) -> list[PendingDoc]:
+        with self._lock:
+            return [self._docs.pop(int(b)) for b in book_ids if int(b) in self._docs]
+
+
+def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
+                  on_written=None) -> None:
+    """Commit a batch of documents, delete-then-insert per document
+    (invariant 2), in at most three Lance commits whatever its size: the
+    rebuilt documents' deletes, the chunks another writer stored since a
+    document's read, and ONE add. `upsert_book` makes one or more commits
+    per document.
+
+    `on_written` runs inside the write lock after the add. With `lock_con`
+    the caller's manifest connection, the documents are marked done in the
+    transaction that serialised the write, and never before it is durable.
+    A failure anywhere rolls that transaction back and marks nothing. A
+    batch whose add landed and whose mark did not is read back as complete
+    next time, and marked without reaching the encoder again."""
+    docs = [d for d in docs if d.rows]
+    if not docs:
+        return
+    db = _conn(collection)
+    rows = [r for d in docs for r in d.rows]
+    purge = [d.book_id for d in docs if d.purge]
+    with _write_lock(lock_con):
+        if TABLE in db.table_names():
+            tbl = db.open_table(TABLE)
+            before = tbl.version
+            _purge_books(tbl, purge)
+            stale = {d.book_id: [r["id"] for r in d.rows] for d in docs
+                     if not d.purge and _unexplained_since(db.uri, d.seen, before, d.book_id)}
+            if stale:
+                _drop_clashing_many(tbl, stale)
+            tbl.add(rows)
+        else:
+            try:
+                tbl = _create_table(db, rows)
+                before = 0
+            except ValueError:
+                # lost a create race despite the lock: converge on the
+                # append path; that writer is one this process cannot
+                # account for, so every document is checked
+                tbl = db.open_table(TABLE)
+                before = tbl.version
+                _purge_books(tbl, purge)
+                _drop_clashing_many(tbl, {d.book_id: [r["id"] for r in d.rows]
+                                          for d in docs if not d.purge})
+                tbl.add(rows)
+        _note_own_versions(db.uri, before + 1, tbl.version, [d.book_id for d in docs])
+        if on_written is not None:
+            on_written()
+
+
+def _purge_books(tbl, book_ids) -> None:
+    books = sorted({int(b) for b in book_ids})
+    for i in range(0, len(books), 500):
+        tbl.delete(f"{BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in books[i:i + 500])})")
+
 #: A chunk id is `{uid}:{seq}:{version}` and a uid is `{source}:{native_id}`
 #: (app/chunking.py, 09 §9.5). Lance filters are strings and not
 #: parameterised statements, so an id that reaches one is checked against
@@ -495,34 +656,49 @@ _CHUNK_ID = re.compile(r"\A[A-Za-z0-9_.+-]+:[0-9]+:[0-9]+:[0-9]+\Z")
 #: own document) is checked by `_drop_clashing`, which measured 0.55–0.65 s
 #: on pubmed (35.4M rows, 7,967 fragments, 2026-09-15) whatever its shape:
 #: paid per document inside the lock, it would serialise every writer.
-_own_versions: dict[str, dict[int, int]] = {}
+_own_versions: dict[str, dict[int, frozenset]] = {}
 _own_versions_lock = threading.Lock()
 _OWN_VERSIONS_KEPT = 10_000
+#: A batched commit names up to EMBED_BATCH_DOCS documents, so the log is
+#: bounded by the documents it names as well as by its versions.
+_OWN_IDS_KEPT = 200_000
+_own_ids: dict[str, int] = {}
 
 
-def _note_own_versions(where: str, first: int, last: int, book_id: int) -> None:
+def _note_own_versions(where: str, first: int, last: int, book_ids) -> None:
     """Versions first..last of the table at `where` are this process's
-    write of `book_id` — called under the write lock, so nothing else
-    committed in between."""
+    write of `book_ids` (one document, or a batch) — called under the write
+    lock, so nothing else committed in between."""
+    ids = frozenset([int(book_ids)] if isinstance(book_ids, int)
+                    else (int(b) for b in book_ids))
     with _own_versions_lock:
         log = _own_versions.setdefault(where, {})
+        total = _own_ids.get(where, 0)
         for v in range(first, last + 1):
-            log[v] = book_id
-        if len(log) > _OWN_VERSIONS_KEPT:
-            for v in sorted(log)[:len(log) - _OWN_VERSIONS_KEPT]:
-                del log[v]
+            total += len(ids) - len(log.get(v, ()))
+            log[v] = ids
+        if len(log) > _OWN_VERSIONS_KEPT or total > _OWN_IDS_KEPT:
+            for v in sorted(log):
+                if len(log) <= _OWN_VERSIONS_KEPT * 0.9 and total <= _OWN_IDS_KEPT * 0.9:
+                    break
+                total -= len(log.pop(v))
+        _own_ids[where] = total
 
 
 def _unexplained_since(where: str, seen: int, current: int, book_id: int) -> bool:
     """Could a commit after version `seen` have written `book_id`'s rows?
-    Only a version this process logged for ANOTHER document says no."""
+    Only a version this process logged for OTHER documents says no."""
     if current == seen:
         return False
     if current < seen or current - seen > _OWN_VERSIONS_KEPT:
         return True                  # the table was replaced, or the log cannot say
     with _own_versions_lock:
         log = _own_versions.get(where, {})
-        return any(log.get(v) in (None, book_id) for v in range(seen + 1, current + 1))
+        for v in range(seen + 1, current + 1):
+            ids = log.get(v)
+            if ids is None or book_id in ids:
+                return True
+        return False
 
 
 def _drop_clashing(tbl, book_id: int, ids: list[str]) -> None:
@@ -538,19 +714,29 @@ def _drop_clashing(tbl, book_id: int, ids: list[str]) -> None:
     ids, in a node suite run on 2026-09-15. Narrowed on `book_id`, the
     BTREE every write depends on, and deleting only on a clash, as
     upsert_chunks does."""
-    want = set(ids)
-    have = [x["id"] for x in
-            tbl.search().where(_book_filter(book_id), prefilter=True)
-            .select(["id"]).limit(_RESUME_SCAN_MAX).to_list()
-            if x["id"] in want]
-    for cid in have:
-        if not _CHUNK_ID.match(cid):
-            raise ValueError(
-                f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
-                f"(09 §9.5); no filter is built from it")
-    for j in range(0, len(have), 500):
-        quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
-        tbl.delete(f"{_book_filter(book_id)} AND id IN ({quoted})")
+    _drop_clashing_many(tbl, {int(book_id): ids})
+
+
+def _drop_clashing_many(tbl, ids_by_book: dict) -> None:
+    """`_drop_clashing` for several documents, one read per 500 of them —
+    `write_pending`'s, for the documents of a batch whose read another
+    writer may have overtaken."""
+    books = sorted(int(b) for b in ids_by_book)
+    want = {c for ids in ids_by_book.values() for c in ids}
+    for i in range(0, len(books), 500):
+        part = ",".join(str(b) for b in books[i:i + 500])
+        have = [x["id"] for x in
+                tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})", prefilter=True)
+                .select(["id"]).limit(_RESUME_SCAN_MAX).to_list()
+                if x["id"] in want]
+        for cid in have:
+            if not _CHUNK_ID.match(cid):
+                raise ValueError(
+                    f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
+                    f"(09 §9.5); no filter is built from it")
+        for j in range(0, len(have), 500):
+            quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
+            tbl.delete(f"{BOOK_COLUMN_NAME} IN ({part}) AND id IN ({quoted})")
 
 
 def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,

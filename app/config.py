@@ -136,6 +136,14 @@ WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
 # full almost all the time (a document is minutes), short enough that stop
 # / state changes are honored within a reasonable delay.
 EMBED_STREAM_S = float(os.getenv("EMBED_STREAM_S", "120"))
+# The parallel embed stage reads what the next EMBED_BATCH_DOCS candidates
+# already hold in ONE read, and commits the ones it embeds in ONE Lance
+# commit (at that many, or after EMBED_COMMIT_S). Measured per pubmed
+# document (2026-09-15): the read 503 ms, the commit 37 ms, the encoder
+# 32 ms; a commit of 64 or 256 documents cost 9-34 ms in all, and each
+# one-document commit left a fragment that every later read scans.
+EMBED_BATCH_DOCS = int(os.getenv("EMBED_BATCH_DOCS", "128"))
+EMBED_COMMIT_S = float(os.getenv("EMBED_COMMIT_S", "10"))
 # Rescan the corpus for new/changed books: always at worker startup, then every
 # N minutes while running (0 = only at startup / manual rescan).
 DISCOVER_INTERVAL_MIN = int(os.getenv("DISCOVER_INTERVAL_MIN", "360"))

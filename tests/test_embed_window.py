@@ -33,7 +33,7 @@ def test_window_stays_full_and_streams_past_the_first_batch(isolated_config, mon
     lock = threading.Lock()
     state = {"active": 0, "max_active": 0, "starts": []}
 
-    def fake_upsert(native_id, lang, chunks, collection, lock_con=None):
+    def fake_upsert(native_id, lang, chunks, collection, lock_con=None, **kw):
         with lock:
             state["active"] += 1
             state["max_active"] = max(state["max_active"], state["active"])
@@ -71,7 +71,7 @@ def test_a_deferral_stops_refilling_the_window(isolated_config, monkeypatch):
                         lambda row, col: [{"text": "t", "tokens": 1}])
     calls = []
 
-    def dead(native_id, lang, chunks, collection, lock_con=None):
+    def dead(native_id, lang, chunks, collection, lock_con=None, **kw):
         calls.append(native_id)
         raise ConnectionError("encoder down")
     monkeypatch.setattr(worker.embeddings, "upsert_book", dead)

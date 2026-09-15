@@ -939,22 +939,38 @@ def _embed_parallel(con, collection, recipe) -> bool:
     GPU llama-server collections never come here (concurrency defaults 1) —
     document-serial embedding is a decision, not an accident: parallel multi-
     sequence processing is precisely the failure mode the batch gate guards.
+
+    ONE READ AND ONE COMMIT PER BATCH, not per document (2026-09-15).
+    Measured per pubmed abstract: reading what it already held 503 ms, its
+    commit 37 ms, the encoder 32 ms — ~2 documents a second with the GPU
+    idle ~90 % of the time. And each one-document commit left a fragment
+    that every later read scans (+0.5 ms apiece; 6,566 of them between two
+    hourly compactions). So the held rows of EMBED_BATCH_DOCS candidates are
+    read at once (`embeddings.held_chunks`); a worker still embeds one
+    document, but leaves a one-slice document's rows in `sink`; and this
+    thread commits them together (`embeddings.write_pending`), marking them
+    done inside the same manifest transaction (invariant 2) — at
+    EMBED_BATCH_DOCS documents, after EMBED_COMMIT_S, and when the call
+    ends, SIGTERM included. A longer document still writes its own slices.
     """
     scope = db.get_scope(con)
-    rows = _embed_candidates(con, scope, recipe.concurrency * 2, collection)
+    group = max(recipe.concurrency * 2, config.EMBED_BATCH_DOCS)
+    rows = _embed_candidates(con, scope, group, collection)
     if not rows:
         return False
+    sink = embeddings.PendingWrites()
 
-    def work(row):
+    def work(row, held):
         if _stop.is_set():
-            return (row["uid"], None, "stopped")
+            return (row, None, "stopped", False)
         try:
             chunks = _load_chunks(row, collection)
             tcon = db.connect(collection)
             started = time.time()
             try:
                 n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
-                                            chunks, collection, lock_con=tcon)
+                                            chunks, collection, lock_con=tcon,
+                                            held=held, sink=sink)
             finally:
                 tcon.close()
             # Measured HERE as well as in stage_embed, because every CPU
@@ -966,11 +982,22 @@ def _embed_parallel(con, collection, recipe) -> bool:
             stats.recorder().record_embed(
                 collection.name, seconds=time.time() - started, docs=1, chunks=n,
                 chars=sum(len(c.get("text") or "") for c in chunks))
-            return (row["uid"], n, None)
+            return (row, n, None, sink.holds(int(row["native_id"])))
         except Exception as e:  # noqa: BLE001 — isolated per document
             if transient_failure(e):
-                return (row["uid"], None, DEFERRED)
-            return (row["uid"], None, f"{type(e).__name__}: {e}"[:400])
+                return (row, None, DEFERRED, False)
+            return (row, None, f"{type(e).__name__}: {e}"[:400], False)
+
+    def read_held(group_rows):
+        """What these documents already hold, in ONE read. None makes each
+        read its own, as before: slower, never wrong."""
+        try:
+            return embeddings.held_chunks(collection, [int(r["native_id"]) for r in group_rows])
+        except Exception as e:  # noqa: BLE001
+            _batch_log(con, "embed", collection,
+                       f"one read for {len(group_rows)} documents failed "
+                       f"({type(e).__name__}: {e}); each reads its own")
+            return None
 
     # A document only commits when ALL of its chunks are done, so a large one
     # is a long silence — a yeast chromosome is ~200 chunks and DNABERT-2 on
@@ -998,46 +1025,96 @@ def _embed_parallel(con, collection, recipe) -> bool:
     deadline = time.time() + getattr(config, "EMBED_STREAM_S", 120.0)
     in_flight: dict = {}          # future -> uid
     seen: set[str] = {r["uid"] for r in rows}
-    queue: list = list(rows)
+    first_held = read_held(rows)
+    queue: list = [(r, first_held) for r in rows]
+    awaiting: dict[int, str] = {}   # book_id -> uid: embedded, its batch not yet committed
+    waiting_since = 0.0
     done = deferred = 0
 
-    def commit(uid, n, err) -> None:
-        nonlocal done, deferred
+    def mark_done(uids) -> None:
         now = int(time.time())
+        for uid in uids:
+            con.execute(
+                "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
+                "WHERE uid=?", (config.EMBED_VERSION, now, uid))
+            bundle_ledger.clear_verification(con, uid)
+            con.execute("DELETE FROM embed_queue WHERE uid=?", (uid,))
+
+    def record_error(uid, err) -> None:
+        con.execute(
+            "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
+            "WHERE uid=?", (f"embed: {err}"[:500], int(time.time()), uid))
+        db.log_event(con, "error", "embed", err, uid)
+
+    def commit(row, n, err, buffered) -> None:
+        nonlocal done, deferred, waiting_since
         if err == "stopped":
             return
         if err == DEFERRED:
             # the encoder was not answering: leave the row exactly as it was
             deferred += 1
             return
-        if err is None:
-            con.execute(
-                "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
-                "WHERE uid=?", (config.EMBED_VERSION, now, uid))
-            bundle_ledger.clear_verification(con, uid)
-            con.execute("DELETE FROM embed_queue WHERE uid=?", (uid,))
-            done += 1
+        if err is not None:
+            record_error(row["uid"], err)
+        elif buffered:
+            # embedded and not yet written: its batch's commit marks it
+            if not awaiting:
+                waiting_since = time.time()
+            awaiting[int(row["native_id"])] = row["uid"]
         else:
-            con.execute(
-                "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
-                "WHERE uid=?", (f"embed: {err}"[:500], now, uid))
-            db.log_event(con, "error", "embed", err, uid)
+            mark_done([row["uid"]])
+            done += 1
+
+    def flush() -> None:
+        """ONE Lance commit for every document embedded since the last,
+        marked done inside the same manifest transaction."""
+        nonlocal done, deferred
+        if not awaiting:
+            return
+        batch = dict(awaiting)
+        awaiting.clear()
+        docs = sink.take(list(batch))
+        uids = [batch[d.book_id] for d in docs]
+        try:
+            embeddings.write_pending(docs, collection, lock_con=con,
+                                     on_written=lambda: mark_done(uids))
+            done += len(uids)
+            return
+        except Exception as e:  # noqa: BLE001
+            if transient_failure(e):
+                deferred += len(uids)       # nothing marked: embedded again later
+                return
+        # not the moment's fault: one document at a time, so that only the
+        # one at fault is recorded as such
+        for doc in docs:
+            uid = batch[doc.book_id]
+            try:
+                embeddings.write_pending([doc], collection, lock_con=con,
+                                         on_written=lambda u=uid: mark_done([u]))
+                done += 1
+            except Exception as e:  # noqa: BLE001
+                if transient_failure(e):
+                    deferred += 1
+                else:
+                    record_error(uid, f"{type(e).__name__}: {e}"[:400])
 
     def refill(pool) -> None:
         nonlocal queue
         while len(in_flight) < recipe.concurrency and not _stop.is_set() \
                 and time.time() < deadline:
             if not queue:
-                # candidates committed by THIS thread are already out of
-                # the selection; the ones in flight are not, hence `seen`
-                fresh = [r for r in _embed_candidates(con, scope, recipe.concurrency * 2, collection)
+                # candidates committed by THIS thread are already out of the
+                # selection; the ones in flight or awaiting their batch's
+                # commit are not, hence `seen`
+                fresh = [r for r in _embed_candidates(con, scope, group, collection)
                          if r["uid"] not in seen]
                 if not fresh:
                     return
                 seen.update(r["uid"] for r in fresh)
-                queue = fresh
-            row = queue.pop(0)
-            in_flight[pool.submit(work, row)] = row["uid"]
+                held = read_held(fresh)
+                queue = [(r, held) for r in fresh]
+            row, held = queue.pop(0)
+            in_flight[pool.submit(work, row, held)] = row["uid"]
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
     try:
@@ -1048,11 +1125,15 @@ def _embed_parallel(con, collection, recipe) -> bool:
                 for fut in finished:
                     in_flight.pop(fut)
                     commit(*fut.result())
+                if len(awaiting) >= group or (
+                        awaiting and time.time() - waiting_since >= config.EMBED_COMMIT_S):
+                    flush()
                 # a dead encoder must not be walked document by document:
                 # stop refilling as soon as a deferral shows up
                 if deferred == 0:
                     refill(pool)
                 stats.recorder().set_in_flight(collection.name, len(in_flight))
+        flush()         # what was embedded is written, SIGTERM included
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
     if done:

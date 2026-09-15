@@ -235,6 +235,169 @@ def test_transient_failures_leave_documents_untouched_in_the_parallel_path(
                for r in rows), "a deferral writes nothing onto a document"
 
 
+# ---- one read and one commit per batch (2026-09-15) ------------------------
+#
+# Measured per pubmed abstract: reading what it already held 503 ms, its
+# commit 37 ms, the encoder 32 ms, and every one-document commit left a
+# fragment each later read scans. These are cost tests first: they count
+# the reads and the commits, then check nothing was stored twice.
+
+def _counting_vectors(monkeypatch, texts):
+    def fake(batch, timeout=300, recipe=None, query=False):
+        texts.extend(batch)
+        return [[1.0] + [0.0] * 7 for _ in batch]
+    monkeypatch.setattr(embeddings, "embed_texts", fake)
+
+
+def _stored_ids(collection):
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    return sorted(r["id"] for r in tbl.search().select(["id"]).limit(1000).to_list())
+
+
+def _marked(con):
+    return con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0]
+
+
+def test_a_batch_is_one_read_and_one_commit_not_one_per_document(collection, monkeypatch):
+    _fixed_vectors(monkeypatch)
+    monkeypatch.setattr(worker.config, "EMBED_BATCH_DOCS", 6)    # 8 documents: two groups
+    monkeypatch.setattr(worker.config, "EMBED_COMMIT_S", 60.0)
+    reads, checks = [], []
+    real_read, real_check = embeddings.held_chunks, embeddings._drop_clashing_many
+    monkeypatch.setattr(embeddings, "held_chunks",
+                        lambda c, ids: (reads.append(list(ids)), real_read(c, ids))[1])
+    monkeypatch.setattr(embeddings, "_drop_clashing_many",
+                        lambda *a: (checks.append(a[1]), real_check(*a))[1])
+
+    def per_document_read(*a):
+        raise AssertionError("a per-document read in the parallel path")
+    monkeypatch.setattr(embeddings, "_written_chunks", per_document_read)
+    con = db.connect(collection)
+
+    assert worker._embed_parallel(con, collection, collections_mod.recipe_for(collection)) is True
+    assert _marked(con) == 8
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.count_rows() == 8
+    assert len(reads) == 2, f"{len(reads)} reads for two groups of candidates"
+    assert tbl.version <= 2, f"{tbl.version} commits for 8 documents"
+    assert checks == [], "this process's own batches of OTHER documents need no check"
+
+
+def test_a_batch_resumes_and_rebuilds_as_one_document_at_a_time_would(collection, monkeypatch):
+    """Inside a batch each document is still judged by what it holds: a
+    partial one embeds only what is missing, a recut one is rebuilt with its
+    vectors carried over by text (06 §6.3), and nothing is stored twice."""
+    texts = []
+    _counting_vectors(monkeypatch, texts)
+    now = {n: _chunks_of(n, parts=3) for n in range(1, 9)}
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, c: now[int(row["native_id"])])
+    embeddings.upsert_book(1, "en", now[1][:1], collection)            # partial
+    embeddings.upsert_book(2, "en", [dict(c, id=f"fake:2:{c['seq'] + 10}:1")
+                                     for c in now[2]], collection)      # recut: other ids
+    texts.clear()
+    con = db.connect(collection)
+
+    worker._embed_parallel(con, collection, collections_mod.recipe_for(collection))
+    assert _marked(con) == 8
+    assert _stored_ids(collection) == sorted(c["id"] for n in now for c in now[n]), \
+        "each current chunk once; the recut document's old ids gone"
+    assert not [t for t in texts if t.startswith("abstract of 2,")], \
+        "a recut document's texts are carried over, not re-embedded"
+    assert sorted(t for t in texts if t.startswith("abstract of 1,")) == \
+        ["abstract of 1, part 1", "abstract of 1, part 2"]
+
+
+def test_a_batch_written_but_not_marked_is_marked_later_without_the_encoder(
+        collection, monkeypatch):
+    """The mark shares the write's manifest transaction. When it cannot be
+    taken nothing is marked; the vectors that landed read back as complete,
+    and the next pass marks them without calling the encoder again."""
+    import sqlite3
+    texts = []
+    _counting_vectors(monkeypatch, texts)
+    real_clear = worker.bundle_ledger.clear_verification
+
+    def locked(con, uid):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(worker.bundle_ledger, "clear_verification", locked)
+    con = db.connect(collection)
+    recipe = collections_mod.recipe_for(collection)
+
+    worker._embed_parallel(con, collection, recipe)
+    assert _marked(con) == 0, "a mark that failed marks nothing"
+    written = embeddings._conn(collection).open_table(embeddings.TABLE).count_rows()
+    assert written >= 1
+
+    monkeypatch.setattr(worker.bundle_ledger, "clear_verification", real_clear)
+    worker._embed_parallel(con, collection, recipe)
+    assert _marked(con) == 8
+    assert len(texts) == 8, "each text reached the encoder once, over both passes"
+    assert len(_stored_ids(collection)) == 8
+
+
+def test_an_import_between_a_batchs_read_and_its_commit_is_checked(collection, monkeypatch):
+    """Another writer (an import, the CLI) can store a document of the batch
+    after the batch read it. That version is not this process's, so the
+    batch checks those chunks and stores each once."""
+    _fixed_vectors(monkeypatch)
+    now = {n: _chunks_of(n, parts=2) for n in range(1, 9)}
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, c: now[int(row["native_id"])])
+    imported = [dict(c, book_id=3, lang="en", vector=[0.0, 1.0] + [0.0] * 6) for c in now[3]]
+    real_write, pending = embeddings.write_pending, [True]
+
+    def import_first(docs, *a, **k):
+        if pending:
+            pending.pop()
+            embeddings.upsert_chunks(imported, collection, dtype="f16")
+        return real_write(docs, *a, **k)
+    monkeypatch.setattr(embeddings, "write_pending", import_first)
+    con = db.connect(collection)
+
+    worker._embed_parallel(con, collection, collections_mod.recipe_for(collection))
+    assert _marked(con) == 8
+    assert _stored_ids(collection) == sorted(c["id"] for n in now for c in now[n])
+
+
+def test_a_batch_that_fails_is_retried_one_document_at_a_time(collection, monkeypatch):
+    """A failure that is not the moment's must not become every document's
+    error: the batch is retried one by one, and only the culprit is marked."""
+    _fixed_vectors(monkeypatch)
+    real_write = embeddings.write_pending
+
+    def refuse_3(docs, *a, **k):
+        if any(d.book_id == 3 for d in docs):
+            raise ValueError("document 3 is malformed")
+        return real_write(docs, *a, **k)
+    monkeypatch.setattr(embeddings, "write_pending", refuse_3)
+    con = db.connect(collection)
+
+    worker._embed_parallel(con, collection, collections_mod.recipe_for(collection))
+    bad = con.execute("SELECT error, retries, embed_done FROM documents "
+                      "WHERE uid='fake:3'").fetchone()
+    assert "malformed" in bad["error"] and bad["retries"] == 1 and bad["embed_done"] == 0
+    assert _marked(con) == 7
+    assert embeddings._conn(collection).open_table(embeddings.TABLE).count_rows() == 7
+
+
+def test_a_document_longer_than_a_slice_still_writes_its_own_slices(collection, monkeypatch):
+    """A long document is not held in memory for a batch: it keeps
+    upsert_book's resumable slices, so SIGTERM between them loses nothing."""
+    _fixed_vectors(monkeypatch)
+    monkeypatch.setattr(worker.config, "EMBED_SLICE_CHUNKS", 2)
+    now = {n: _chunks_of(n, parts=3 if n == 5 else 1) for n in range(1, 9)}
+    monkeypatch.setattr(worker, "_load_chunks", lambda row, c: now[int(row["native_id"])])
+    buffered = []
+    real_put = embeddings.PendingWrites.put
+    monkeypatch.setattr(embeddings.PendingWrites, "put",
+                        lambda self, d: (buffered.append(d.book_id), real_put(self, d))[1])
+    con = db.connect(collection)
+
+    worker._embed_parallel(con, collection, collections_mod.recipe_for(collection))
+    assert 5 not in buffered and len(buffered) == 7
+    assert _marked(con) == 8
+    assert _stored_ids(collection) == sorted(c["id"] for n in now for c in now[n])
+
+
 def test_serial_recipes_never_enter_the_parallel_path(collection, monkeypatch):
     from dataclasses import replace
     serial = replace(collection, embed=replace(collection.embed, concurrency=1))
