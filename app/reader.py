@@ -45,10 +45,7 @@ def document(collection, book_id: int) -> dict | None:
     not know it. `chunks` is [] when neither index store holds text yet
     (not indexed: the card says so)."""
     con = db.connect(collection)
-    row = con.execute(
-        "SELECT uid, source, native_id, path, lang, title, authors, subjects, "
-        "fts_done, embed_done FROM documents WHERE CAST(native_id AS INTEGER)=? "
-        "OR native_id=? LIMIT 1", (book_id, str(book_id))).fetchone()
+    row = _row(con, collection, book_id)
     if row is None:
         return None
     row = dict(row)
@@ -73,6 +70,35 @@ def document(collection, book_id: int) -> dict | None:
         "text_from": source_store,
     }
     return {"header": header, "chunks": chunks}
+
+
+_ROW_COLUMNS = ("uid, source, native_id, path, lang, title, authors, subjects, "
+                "fts_done, embed_done")
+# a probe of idx_documents_native (source, native_id), UNIQUE
+READER_ROW_SQL = (f"SELECT {_ROW_COLUMNS} FROM documents "
+                  "WHERE source=? AND native_id=? LIMIT 1")
+# the integer form, for an id stored with another spelling ("0123"); only
+# where the worker has built idx_documents_native_int — never a scan
+READER_ROW_INT_SQL = (f"SELECT {_ROW_COLUMNS} FROM documents "
+                      "WHERE CAST(native_id AS INTEGER)=? LIMIT 1")
+
+
+def _row(con, collection, book_id: int):
+    """The manifest row behind a reader link, by index and nothing else.
+
+    It was `CAST(native_id AS INTEGER)=? OR native_id=?`, which no index
+    answers: the unique index is (source, native_id), so `native_id=?`
+    alone cannot use it, and an OR is served by indexes only when both
+    halves are. Every click walked the whole table — 40M rows on PubMed.
+    Observed live 2026-09-15: an Ask hit's abstract never loaded and the
+    reader page did not answer within 60 s."""
+    row = con.execute(READER_ROW_SQL,
+                      (collection.plugin, str(book_id))).fetchone()
+    if row is None and con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='idx_documents_native_int'").fetchone():
+        row = con.execute(READER_ROW_INT_SQL, (int(book_id),)).fetchone()
+    return row
 
 
 def _chunks_from_fts(collection, row: dict, book_id: int) -> list[dict]:
