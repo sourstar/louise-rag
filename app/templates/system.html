@@ -10,11 +10,11 @@
     {% for k,v in effective.tier1.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
   <div class="note" style="margin-top:12px">Tier 2 — collections/*.toml (file value):</div>
-  <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th><th>embed recipe</th></tr>
+  <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th><th>embed recipe</th><th>reranker</th></tr>
     {% for c in effective.tier2 %}
     <tr><td>{{ c.collection }}</td><td>{{ c.plugin }}</td><td>{{ c.profile or '(default)' }}</td>
       <td>{{ c.embed_mode or '(default)' }}</td><td>{{ c.acquire_enabled }}</td><td>{{ c.license_ack }}</td>
-      <td>{{ c.embed_recipe }}</td></tr>
+      <td>{{ c.embed_recipe }}</td><td>{{ c.reranker }}</td></tr>
     {% endfor %}
   </table>
   <div class="note" style="margin-top:12px">Tier 2 — platform.toml:</div>

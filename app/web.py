@@ -2780,6 +2780,12 @@ def set_bandwidth_override(body: BandwidthOverrideBody):
 
 # ---------------- System ----------------
 
+def _reranker_label(recipe) -> str:
+    if recipe is None:
+        return "(none — fused order)"
+    return f"{recipe.model or '(model not named)'} @ {recipe.url} ({recipe.api})"
+
+
 def _effective_config() -> dict:
     tier1 = {
         "OLLAMA_URL": config.OLLAMA_URL, "EMBED_URL": config.EMBED_URL,
@@ -2799,6 +2805,9 @@ def _effective_config() -> dict:
         "embed_recipe": (f"{c.embed.model} @ {c.embed.url}"
                           + (" (+query encoder)" if c.embed.query_url else "")
                           if c.embed else "(node default)"),
+        # THE resolution search uses (collections.reranker_for): the
+        # collection's [reranker], else RERANK_URL, else none
+        "reranker": _reranker_label(collections_mod.reranker_for(c)),
     } for c in collections_mod.load_all()]
 
     # platform.toml is the OTHER Tier-2 file (architecture-v2.md §14). Shown
@@ -2816,6 +2825,7 @@ def _effective_config() -> dict:
         "transfer.workers": pc.transfer.workers,
         "transfer.per_endpoint": pc.transfer.per_endpoint,
         "transfer.segments_per_file": pc.transfer.segments_per_file,
+        "ask.latency_budget_ms": pc.ask.latency_budget_ms,
     }
 
     # the node's overrides from THE resolution the worker uses
@@ -2852,6 +2862,11 @@ def _health_pings() -> list[dict]:
             endpoints.setdefault(c.embed.url, []).append(f"{c.name}.embed")
             if c.embed.query_url:
                 endpoints.setdefault(c.embed.query_url, []).append(f"{c.name}.query")
+        # and its reranker (05 §5.6) — a collection file's [reranker] is
+        # an endpoint like any other, and was the one the page left out
+        own = getattr(c, "reranker", None)
+        if own is not None:
+            endpoints.setdefault(own.url, []).append(f"{c.name}.rerank")
     return [{"names": names, "url": url, "ok": _ping(url)} for url, names in endpoints.items()]
 
 

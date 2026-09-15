@@ -707,7 +707,18 @@ share  = false
 
 [encoder]                      # optional: where this node reaches the Codex's encoder
 url = "http://…"               # (+ query_url for a bi-encoder); else platform.toml's
-                               # [encoder_defaults.&lt;plugin&gt;], else EMBED_URL</pre>
+                               # [encoder_defaults.&lt;plugin&gt;], else EMBED_URL
+
+[reranker]                     # optional: this node's reranker for this collection
+url = "http://…/v1/rerank"     # the full endpoint; else RERANK_URL, else none
+api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({query, texts})</pre>
+  <p class="note">
+    Each collection's results are reranked by its own reranker, then fused
+    by rank (05 §5.6). A reranker that is down, refuses, or exceeds
+    <code>platform.toml</code>'s <code>[ask] latency_budget_ms</code>
+    (8000 by default) leaves that collection's results in their fused
+    order, and the search says so (<code>reranked: false</code>).
+  </p>
   <p class="note">
     Nothing else goes in the file. The plugin, layers, space, archive and
     pinned dump are the Codex's, and the origin files live at

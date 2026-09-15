@@ -240,6 +240,25 @@ def test_system_page_shows_platform_toml_tier2_rows(client):
     assert "platform.toml" in r.text
     assert "bandwidth.schedule" in r.text
     assert "transfer.workers" in r.text
+    assert "ask.latency_budget_ms" in r.text, "the reranker's budget (07 §7.8)"
+
+
+def test_the_system_page_shows_each_collections_reranker_and_pings_it(isolated_config,
+                                                                     monkeypatch):
+    """The page listed RERANK_URL "(disabled)" and every collection's
+    encoder, and no collection's reranker — while each collection's own
+    [reranker] was live (2026-09-15)."""
+    import dataclasses
+    rr = collections_mod.RerankRecipe(url="http://gpu:30447/v1/rerank", api="jina",
+                                      model="bge-reranker-v2-m3")
+    c = dataclasses.replace(collections_mod.default_collection(), reranker=rr)
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [c])
+    monkeypatch.setattr(web, "_ping", lambda url: True)
+    eff = web._effective_config()
+    assert eff["tier2"][0]["reranker"] == "bge-reranker-v2-m3 @ http://gpu:30447/v1/rerank (jina)"
+    assert eff["tier2_platform"]["ask.latency_budget_ms"] == 8000
+    assert any(h["url"] == rr.url and f"{c.name}.rerank" in h["names"]
+               for h in web._health_pings())
 
 
 def test_system_page_renders_effective_config_and_boot_report(client):
