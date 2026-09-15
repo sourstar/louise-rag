@@ -2032,6 +2032,19 @@ list fell back. With one slot, a request abandoned at the budget kept the
 server computing and every search behind it ran out of time too — seen at
 5 s, gone with four slots.
 
+**The pause, seen live; pubmed compacted (11:56–12:02 UTC).** The
+operator paused the node and turned pubmed's embedding off. Nothing
+started after 11:56:38 — no stage, no table written — and the only work
+left was wikipedia's index maintenance, one Lance call begun before the
+pause, running on to its end as the fix intends (~9 cores meanwhile).
+With no writer on pubmed's table, `app.cli index vector prune pubmed` ran
+the app's own optimize in 72 s: 1,830 superseded versions dropped (14,668
+kept — the 2 h window, and every embed writes one), data files 21,114 →
+19,594, the book_id index covering every row. upsert_book's per-document
+read went from a median of 383 ms to 7.7–8.3 ms — the copy's 8 ms,
+reproduced. The maintainer's own optimize keeps losing its commit to a
+continuous embed; while that is so, compaction wants a pause.
+
 **Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
 available; the operator stopped a llama.cpp probe container (8.5 GB).
 Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is
