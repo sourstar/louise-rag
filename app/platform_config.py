@@ -87,11 +87,20 @@ class AdmissionConfig:
 
 
 @dataclass(frozen=True)
+class AskConfig:
+    """`[ask]` (07 §7.8): the reranker's latency bound (05 §5.6). A list
+    the reranker cannot order inside it keeps its fused order and says
+    `reranked: false`."""
+    latency_budget_ms: int = 400
+
+
+@dataclass(frozen=True)
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
+    ask: AskConfig = AskConfig()
     # [encoder_defaults.<plugin>] -> the raw [encoder]-shaped table. Kept
     # RAW here on purpose: app/collections.py owns EmbedRecipe and parses
     # it, and importing that module from this one would close an import
@@ -286,6 +295,12 @@ def _load_one(path: Path) -> PlatformConfig:
                                  defaults.queue_bytes),
     )
 
+    ask_raw = raw.get("ask", {}) or {}
+    if not isinstance(ask_raw, dict):
+        raise schedule_mod.ScheduleError("ask must be a table")
+    ask = AskConfig(latency_budget_ms=_positive_int(
+        ask_raw, "latency_budget_ms", AskConfig().latency_budget_ms))
+
     node_raw = raw.get("node", {}) or {}
     codex_only_raw = node_raw.get("codex_only", False)
     if not isinstance(codex_only_raw, bool):
@@ -298,6 +313,7 @@ def _load_one(path: Path) -> PlatformConfig:
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
+                          ask=ask,
                           embed_defaults=embed_raw,
                           codex_only=codex_only_raw,
                           source_path=path)

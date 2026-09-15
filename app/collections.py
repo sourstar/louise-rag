@@ -103,6 +103,47 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
                           f"(missing {missing})") from None
 
 
+@dataclass(frozen=True)
+class RerankRecipe:
+    """Where this node reaches a reranker for a collection (05 §5.6): a
+    query-time choice of the asking peer, node-local, never named by a
+    Codex. `url` is the full endpoint. `api` is its wire format:
+    "tei" — {"query", "texts"} -> [{"index", "score"}], RERANK_URL's
+    format — or "jina" — {"query", "documents"} -> {"results": [{"index",
+    "relevance_score"}]}, what llama.cpp's /v1/rerank serves."""
+    url: str
+    api: str = "tei"
+    model: str | None = None        # sent where the API takes one; descriptive otherwise
+
+
+RERANK_APIS = ("tei", "jina")
+
+
+def parse_reranker(raw: Any, *, where: str) -> RerankRecipe | None:
+    """A collection file's `[reranker]` table -> RerankRecipe; None when
+    the file declares none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not raw.get("url"):
+        raise ValueError(f"{where}: [reranker] needs a url")
+    api = str(raw.get("api", "tei")).lower()
+    if api not in RERANK_APIS:
+        raise ValueError(f"{where}: [reranker] api must be one of "
+                         f"{', '.join(RERANK_APIS)}, got {api!r}")
+    return RerankRecipe(url=str(raw["url"]), api=api,
+                        model=str(raw["model"]) if raw.get("model") else None)
+
+
+def reranker_for(collection) -> RerankRecipe | None:
+    """THE way to resolve a collection's reranker: its own `[reranker]`,
+    then the node's RERANK_URL (TEI format), else none — and a list with
+    no reranker keeps its fused order (05 §5.6)."""
+    own = getattr(collection, "reranker", None) if collection is not None else None
+    if own is not None:
+        return own
+    return RerankRecipe(url=config.RERANK_URL) if config.RERANK_URL else None
+
+
 def default_recipe_for_plugin(plugin: str) -> EmbedRecipe | None:
     """The node's default recipe for a PLUGIN, from platform.toml's
     [encoder_defaults.<plugin>] — or None when the node declares none.
@@ -170,6 +211,8 @@ class Collection:
     acquire_enabled: bool = False
     license_ack: str | None = None   # "<iso8601>/<sha256-of-terms-text>", Tier-2 only (invariant 10)
     embed: EmbedRecipe | None = None  # [embed] block; None = env fallback
+    # [reranker] block (05 §5.6); None = RERANK_URL, else no reranking
+    reranker: RerankRecipe | None = None
     # Declarative reuse of published embeddings (§8 genesis): the worker
     # drains this archive automatically before spending GPU on backfill.
     genesis_archive: str | None = None
@@ -375,6 +418,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         license_ack=_codex_ack(codex, d / "state"),
         embed=_codex_encoder(raw.get("embed_recipe") or raw.get("encoder"),
                              codex, where),
+        reranker=parse_reranker(raw.get("reranker"), where=where),
         genesis_archive=genesis,
         extras=tuple(raw.get("extras") or ()),
         snapshot=snapshot,
@@ -587,6 +631,7 @@ def _load_one(path: Path) -> Collection:
         acquire_enabled=bool(raw.get("acquire_enabled", False)),
         license_ack=raw.get("license_ack"),
         embed=embed,
+        reranker=parse_reranker(raw.get("reranker"), where=str(path)),
         genesis_archive=raw.get("genesis_archive"),
         extras=tuple(raw.get("extras") or ()),
         # one magnet/.torrent, or several (a TOML array, or one per line):

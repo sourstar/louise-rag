@@ -76,24 +76,56 @@ def _merge_rrf(lists: list[list[dict]]) -> list[dict]:
         m["sources"] = sorted(m["sources"])
     return merged
 
-def _rerank(query: str, hits: list[dict], top_n: int) -> list[dict]:
-    if not config.RERANK_URL or not hits:
-        return hits[:top_n]
+#: 05 §5.6: the reranker re-orders the top 50 of ONE ranked list.
+RERANK_TOP_N = 50
+
+
+def _rerank_budget_s() -> float:
+    """The node's `[ask] latency_budget_ms` (07 §7.8), in seconds."""
+    from . import platform_config
     try:
-        with httpx.Client(timeout=60) as client:
-            r = client.post(config.RERANK_URL, json={
-                "query": query, "texts": [h["text"][:2000] for h in hits]})
-            r.raise_for_status()
-            order = r.json()  # TEI format: [{"index": i, "score": s}, ...]
-            ranked = sorted(order, key=lambda o: -o["score"])
-            out = []
-            for o in ranked[:top_n]:
-                h = dict(hits[o["index"]])
-                h["rerank_score"] = float(o["score"])
-                out.append(h)
-            return out
-    except Exception:
-        return hits[:top_n]
+        return platform_config.load().ask.latency_budget_ms / 1000.0
+    except Exception:   # noqa: BLE001 — a broken platform.toml must not break search
+        return platform_config.AskConfig().latency_budget_ms / 1000.0
+
+
+def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float
+                 ) -> tuple[list[dict], bool]:
+    """05 §5.6 for ONE ranked list: the reranker re-orders its top 50 and
+    the rest keep the fused order below them. Each candidate goes whole —
+    its best chunk's text; this used to cut every one to 2,000 characters,
+    so a long chunk was judged on a prefix the model never saw alone. A
+    512-token model's own server truncates at its limit (TEI's `truncate`);
+    the platform does not. Unreachable, refusing, over the node's budget or
+    answering for only some candidates: the fused order stands and the
+    second value says False — the fallback is visible, never silent."""
+    if recipe is None or not hits:
+        return hits, False
+    head, tail = hits[:RERANK_TOP_N], hits[RERANK_TOP_N:]
+    texts = [h.get("text") or "" for h in head]
+    if recipe.api == "jina":
+        body = {"query": query, "documents": texts, "top_n": len(texts)}
+        if recipe.model:
+            body["model"] = recipe.model
+    else:
+        body = {"query": query, "texts": texts, "truncate": True}
+    try:
+        r = httpx.post(recipe.url, json=body, timeout=budget_s)
+        r.raise_for_status()
+        data = r.json()
+        rows = data["results"] if isinstance(data, dict) else data
+        scores = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
+                                         else o["score"]) for o in rows}
+    except Exception:   # noqa: BLE001 — any failure is the fused order, said so
+        return hits, False
+    if sorted(scores) != list(range(len(head))):
+        return hits, False
+    ranked = []
+    for i in sorted(scores, key=lambda i: -scores[i]):
+        h = dict(head[i])
+        h["rerank_score"] = scores[i]
+        ranked.append(h)
+    return ranked + tail, True
 
 def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
     facts: list[PinnedFact] = []
@@ -288,8 +320,11 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
 
     t0 = time.time()
     candidates = _attach_work_fields(
-        con, collection, partial["merged"][: max(k * 4, 40)], query)
-    final = _rerank(query, candidates, top_n=k)
+        con, collection, partial["merged"][: max(k * 4, RERANK_TOP_N)], query)
+    ranked, reranked = _rerank_list(query, candidates,
+                                    collections_mod.reranker_for(collection),
+                                    _rerank_budget_s())
+    final = ranked[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
     _attach_metadata_and_enqueue(con, collection, final)
@@ -297,7 +332,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     timings["total"] = round((time.time() - t_total) * 1000, 1)
     return {"query": query, "mode": mode, "translations": partial["translations"],
             "catalog": partial["catalog"], "hits": final, "facts": [asdict(f) for f in facts],
-            "timings": timings}
+            "timings": timings, "reranked": reranked}
 
 
 def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
@@ -370,7 +405,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     # below regardless of executor internals (invariant 3).
     outcomes.sort(key=lambda o: o[0].name)
 
-    per_collection_lists: list[list[dict]] = []
+    per_collection: list[tuple] = []      # (collection, its merged list)
     translations: dict[str, str] = {}
     timings_per_collection: dict[str, dict] = {}
     catalog: list[dict] = []
@@ -380,36 +415,39 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         merged = partial["merged"]
         if len(collections) > 1:
             merged = merged[:config.FEDERATION_CANDIDATE_BUDGET]
-        per_collection_lists.append(merged)
+        per_collection.append((collection, merged))
         translations.update(partial["translations"])
         timings_per_collection[collection.name] = partial["timings"]
         catalog.extend(partial["catalog"])
-
-    fused = _merge_rrf_federated(per_collection_lists)
+    collection_by_name = {c.name: c for c in collections}
 
     t0 = time.time()
-    # Same as search(): dedup the CANDIDATES, so the reranker fills k from
-    # the survivors. Grouped by collection because `book_id` alone is
-    # ambiguous across them, and because `work` lives in each collection's
-    # own manifest — a work is only ever deduplicated against itself.
-    candidates = fused[: max(k * 4, 40)]
-    collection_by_name = {c.name: c for c in collections}
-    grouped: dict[str, list[dict]] = {}
-    for h in candidates:
-        grouped.setdefault(h["source_collection"], []).append(h)
-    kept: set[int] = set()
-    for name, hits in grouped.items():
-        target = collection_by_name.get(name)
-        if target is None:
-            kept.update(id(h) for h in hits)
-            continue
+    # 05 §5.6: each collection's list is reranked ON ITS OWN, by that
+    # collection's reranker — two spaces are never put on one score scale —
+    # and only then fused, by rank. This used to fuse first and rerank the
+    # merged list once, with the node's one RERANK_URL: every collection
+    # scored by the same model, on one scale. Work dedup runs first and per
+    # collection (`work` lives in each collection's own manifest, and
+    # `book_id` alone is ambiguous across them), so the reranker draws from
+    # the survivors. The lists rerank in parallel: one slow reranker costs
+    # the query its own time, not the sum.
+    budget_s = _rerank_budget_s()
+
+    def _rerank_one(item):
+        collection, merged = item
+        candidates = merged[: max(k * 4, RERANK_TOP_N)]
         try:
-            kept.update(id(h) for h in _attach_work_fields(
-                db.connect(target), target, hits, query))
+            candidates = _attach_work_fields(db.connect(collection), collection,
+                                             candidates, query)
         except Exception:   # noqa: BLE001 — a dedup that cannot run returns
-            kept.update(id(h) for h in hits)        # every hit, never none
-    candidates = [h for h in candidates if id(h) in kept]
-    final = _rerank(query, candidates, top_n=k)
+            pass            # every hit, never none
+        return _rerank_list(query, candidates,
+                            collections_mod.reranker_for(collection), budget_s)
+
+    with ThreadPoolExecutor(max_workers=max(1, len(per_collection))) as ex:
+        ranked = list(ex.map(_rerank_one, per_collection))
+    reranked = {c.name: ok for (c, _), (_, ok) in zip(per_collection, ranked)}
+    final = _merge_rrf_federated([hits for hits, _ in ranked])[:k]
     rerank_ms = round((time.time() - t0) * 1000, 1)
 
     # metadata attach + lazy-embed enqueue, grouped by source_collection
@@ -433,7 +471,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
 
     return {"query": query, "mode": mode, "translations": translations,
             "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
-            "timings": timings}
+            "timings": timings, "reranked": reranked}
 
 ANSWER_SYSTEM = (
     "You are a research assistant over a large multilingual library of "
