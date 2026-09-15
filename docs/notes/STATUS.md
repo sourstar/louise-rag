@@ -2131,9 +2131,12 @@ task, which would have pinned days of that on an SSD with 615 G free. It
 has its own: snapshot task 4 (hourly, kept 2 h on the SSD) and
 replication task 6 to `tank/backup/louise-rag` (kept 1 day there), the
 first full send ~450 MB/s. `tank/backup/ssd4-until-2026-08-28` (1.87 T)
-was destroyed after a dry run showed no holds or clones. The manual
-snapshot `@manual-20260915-before-cleanup` still pins everything
-rewritten since 12:19 UTC and grows until it is destroyed.
+was destroyed after a dry run showed no holds or clones. So was the
+manual snapshot `@manual-20260915-before-cleanup` (operator, ~15:05 UTC;
+49.6 GB), once tank held the full post-cleanup copy: it pinned everything
+rewritten since 12:19 UTC, and ssd4's free space had fallen from 618 to
+585 G in 40 minutes. What the SSD holds for snapshots is now bounded by
+task 4's two hours.
 
 **Pubmed embeds ~25× faster: one read and one commit per batch (370512c,
 deployed 13:58 UTC).** Measured per abstract before: reading what it
