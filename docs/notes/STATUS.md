@@ -2135,6 +2135,21 @@ was destroyed after a dry run showed no holds or clones. The manual
 snapshot `@manual-20260915-before-cleanup` still pins everything
 rewritten since 12:19 UTC and grows until it is destroyed.
 
+**Pubmed embeds ~25× faster: one read and one commit per batch (370512c,
+deployed 13:58 UTC).** Measured per abstract before: reading what it
+already held 503 ms, the commit 37 ms, the encoder 32 ms. On a clone, the
+read cost 697–918 ms as one-document commits added fragments (+0.5 ms
+each), and a commit of 64 or 256 documents cost 9–34 ms in all
+(scheduling.md pitfall 13). Now 128 candidates are read at once and the
+embedded ones committed together, marked done inside the same manifest
+transaction. Live, the four rounds after the deploy embedded 10,113,
+9,088, 10,052 and 7,085 documents in ~120 s each (59–84 docs/s), 63 docs/s
+wall-clock including the other stages' turns, against 2.50 docs/s before
+(4,180 over the 28 minutes up to 13:52). No errors. The table held 333
+fragments at 14:10 (296 small), where one-document commits had left
+3,560 within 15 minutes of a compaction. At this rate pubmed's ~4.4 M
+remaining abstracts take about 19 hours rather than about 20 days.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
