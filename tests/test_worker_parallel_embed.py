@@ -106,6 +106,43 @@ def test_one_bad_document_is_isolated(collection, monkeypatch):
     assert done == 7, "every healthy document still embedded"
 
 
+def test_a_table_another_writer_is_still_creating_is_not_an_error(collection, monkeypatch):
+    """Seen 6 times in 150 runs of the test above on the node (2026-09-15):
+    on a fresh collection the first writers race, and one of them found
+    `chunks` LISTED — create_table makes the table's directory before it
+    commits a first version — but not openable, and a healthy document
+    recorded "ValueError: Table 'chunks' was not found", which takes it out
+    of every selection until a human clears it. Outside the write lock a
+    table in that state is a table that does not exist yet; the check
+    inside the lock, taken after the creator has committed, decides."""
+    import contextlib
+    import shutil
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            [[1.0] + [0.0] * 7 for _ in texts])
+
+    def chunks_of(n):
+        return [{"id": f"fake:{n}:0:1", "seq": 0, "chapter": "",
+                 "text": f"abstract of {n}"}]
+    being_created = collection.lance_dir / f"{embeddings.TABLE}.lance"
+    being_created.mkdir(parents=True)          # listed, no version committed
+    lock, creator = embeddings._write_lock, [2]    # the creating writer's document
+
+    @contextlib.contextmanager
+    def lock_after_the_creator_commits(lock_con):
+        if creator:                            # it commits first, once
+            n = creator.pop()
+            shutil.rmtree(being_created)
+            embeddings.upsert_book(n, "en", chunks_of(n), collection)
+        with lock(lock_con):
+            yield
+    monkeypatch.setattr(embeddings, "_write_lock", lock_after_the_creator_commits)
+
+    assert embeddings.upsert_book(1, "en", chunks_of(1), collection) == 1
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.count_rows() == 2, "both writers' vectors, one table"
+
+
 def test_serial_recipes_never_enter_the_parallel_path(collection, monkeypatch):
     from dataclasses import replace
     serial = replace(collection, embed=replace(collection.embed, concurrency=1))

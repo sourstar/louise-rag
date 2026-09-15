@@ -180,6 +180,25 @@ class EmbedInterrupted(RuntimeError):
     next run continues from there."""
 
 
+def _committed_table(db):
+    """The vector table, or None while it does not exist yet — including
+    while another writer is creating it. `table_names()` lists a table as
+    soon as create_table has made its directory, and `open_table()` refuses
+    it ("Table 'chunks' was not found") until its first version commits.
+    Seen on the node 2026-09-15: on a fresh collection the parallel embed
+    stage's first writers raced, and the refusal was recorded as an error on
+    a healthy document. Only a reader OUTSIDE the write lock can meet that
+    state — inside it the creator has committed. Any other failure to open
+    still raises."""
+    if TABLE not in db.table_names():
+        return None
+    try:
+        return db.open_table(TABLE)
+    except ValueError as e:
+        if "was not found" not in str(e):
+            raise
+        return None
+
 def _np_dtype_of_table(tbl):
     try:
         vt = tbl.schema.field("vector").type.value_type
@@ -335,8 +354,9 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         return 0
     recipe = collections_mod.recipe_for(collection)
     db = _conn(collection)
-    exists = TABLE in db.table_names()
-    dtype = _np_dtype_of_table(db.open_table(TABLE)) if exists else _np_dtype_of_recipe(recipe)
+    existing = _committed_table(db)
+    dtype = (_np_dtype_of_table(existing) if existing is not None
+             else _np_dtype_of_recipe(recipe))
 
     have = _written_chunks(db, book_id)
     wanted = {c["id"]: c["text"] for c in chunks}
@@ -479,8 +499,9 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
                 f"(09 §9.5); it is not written and no filter is built from it")
 
     db = _conn(collection)
-    if TABLE in db.table_names():
-        np_dtype = _np_dtype_of_table(db.open_table(TABLE))
+    existing = _committed_table(db)
+    if existing is not None:
+        np_dtype = _np_dtype_of_table(existing)
     elif dtype is not None:
         np_dtype = np.float16 if dtype == "f16" else np.float32
     else:
