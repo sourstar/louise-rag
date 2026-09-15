@@ -679,7 +679,8 @@ collection is another name.
 │       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
-│       └── lance/           the vector table search reads
+│       ├── lance/           the vector table search reads
+│       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here
 ├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
@@ -699,7 +700,7 @@ containers — both of which 09 §9.4 lists in their own top-level arrays
 rather than in `shards` or `files`. A collection with relations was
 unshareable and nothing said why.
 
-`index/`, `lance/`, the configuration files and the keys never travel,
+`index/`, `lance/`, `origin/`, the configuration files and the keys never travel,
 and neither does the state database, which holds the cursor of 06 §6.1,
 the acknowledgement of 09 §9.13 and the attestations of 09 §9.8. Two
 things it keeps DO travel, by their own routes rather than as drag
