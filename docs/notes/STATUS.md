@@ -2121,6 +2121,20 @@ fixtures declared no reranker. A new test now fails on any field left at
 its default in both fixtures; it found `title`, `slices`, `kinds` and
 `share` covered the same empty way.
 
+**The live collections are backed up; the old backup is gone (operator,
+14:30 CEST).** `ssd4/apps/louise-rag` was excluded from the SSD pool's
+replication and had no copy newer than August. Its churn under snapshots
+is steep: this morning's manual snapshot held 49.6 GB 72 minutes after it
+was taken (Lance manifests and compaction, wikipedia's imports, SQLite
+pages rewritten in place). So it did NOT join the pool's weekly snapshot
+task, which would have pinned days of that on an SSD with 615 G free. It
+has its own: snapshot task 4 (hourly, kept 2 h on the SSD) and
+replication task 6 to `tank/backup/louise-rag` (kept 1 day there), the
+first full send ~450 MB/s. `tank/backup/ssd4-until-2026-08-28` (1.87 T)
+was destroyed after a dry run showed no holds or clones. The manual
+snapshot `@manual-20260915-before-cleanup` still pins everything
+rewritten since 12:19 UTC and grows until it is destroyed.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

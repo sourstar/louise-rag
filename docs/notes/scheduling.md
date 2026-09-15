@@ -269,6 +269,18 @@ identity (the manifest path), never on a name and never on a default;
 and tests reset process-level state between cases (`conftest.py`'s
 `fresh_worker_state`).
 
+**13. A per-document commit whose cost lands on every later READ.**
+Pubmed's parallel embed made one Lance commit per abstract. Each commit
+was cheap (37 ms), but each one left a small fragment the book_id index
+does not cover. Every later per-document read scans all such fragments:
+503 ms live, 697–918 ms on a clone as they grew (+0.5 ms apiece), until
+the hourly compaction reset them. The read was the cost, the encoder sat
+~90 % idle, and the stage ran at ~2 documents a second (2026-09-15).
+→ Where the unit is small, read and commit per BATCH: one read of what a
+group already holds, one commit for what it embedded (`held_chunks`,
+`write_pending`). A write's cost includes what it leaves for the reads
+after it.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first

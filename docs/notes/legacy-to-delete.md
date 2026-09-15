@@ -211,7 +211,7 @@ turned up these.
 
 | what | size | condition |
 |---|---|---|
-| the SSD pool's former backup, renamed `tank/backup/ssd4-until-2026-08-28` | 1.87 T | its replication had stopped on 2026-08-28 (the task excluded datasets it had already sent, so it lost its incremental base). Renamed on 2026-09-15 and a fresh replication started at the old name; the old one holds the only copies of `apps/louise-rag` (1.03 T), wikivec (540 G) and gutenberg (241 G) as of August. Delete when the operator decides nothing in it is still wanted |
+| ~~the SSD pool's former backup, `tank/backup/ssd4-until-2026-08-28`~~ | 1.87 T | **deleted 2026-09-15** (operator). Its replication had stopped on 2026-08-28: the task excluded datasets it had already sent, so it lost its incremental base. A dry run first: no holds, no clones, no task targeting it. The live collections now have their own replication (`tank/backup/louise-rag`, hourly) |
 | ~~the SSD copies of the genome FASTAs~~ | 1.0 G | **deleted 2026-09-15** (operator): each dataset's one file checked equal by SHA-256 to its copy in the archive pool's origins dataset, no container mounting it; destroyed with their daily snapshots. The collections' data (§4) is a different thing and stays |
 | ~~the old container paths of the three live origins (`/corpus`, `/corpora/pubmed`, `/corpora/wikipedia`, `/corpora/wikipedia/data`)~~ | — | **removed from both services 2026-09-15** (58a21f2's deploy), after `documents.path` and `fetch_files.local_path` were relocated to `<LOUISE_ROOT>/collections/<name>/origin` and a scan of the live state databases found no other stored path. `CORPUS_DIR` points at gutenberg's `origin/`. `/corpora/wikivec` and `/corpora/genome-*` stay: layer 1 and the boxed genomes still read them |
 
