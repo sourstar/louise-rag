@@ -1838,6 +1838,61 @@ rows are at median 1.0000, worst 0.9607. It is not wikipedia's
 configured endpoint: that is one line in the collection file, the
 operator's to change.
 
+**Wikipedia's archive import stood still after the origin move, and why
+(found and fixed 2026-09-15).** Discovery's moved-corpus repair cleared
+`wikipedia_scan_cursor.json` and left the archive walk's own cursor,
+`wikipedia-archive_scan_cursor.json`; cursor keys are corpus-relative, so
+every archive shard read as unchanged, no archive locator was rewritten
+(0 of 60.1M rows in 40 minutes), and the archive import — which groups
+its candidates into shards by locator, relative to the new root — had
+nothing to do from 02:09 to 03:16 UTC with 884,176 documents waiting.
+`cursor.clear` now takes a plugin's sub-cursors too (d06efe7, deployed
+03:12 UTC, image `25a2bc0…`; the Library's rescan had the same gap). After
+the restart the archive walk re-enumerated, 1.45M of the first 2M rows
+were relocated within five minutes, and imports resumed: 35 shards
+applied, 254,431 documents with the archive's vectors.
+
+**A PubMed click took 134 s (found 2026-09-15).** Profiled live: the
+reader's row lookup, `CAST(native_id AS INTEGER)=? OR native_id=?`,
+reaches no index — the unique one is (source, native_id) — so every
+click scanned the 40M-row manifest; the text index, the pack and the
+reference line together took 0.07 s. The Ask panel's abstract never
+arrived. 7f2fbe7 probes the unique index, plan-checked; deployed 03:33
+UTC (image `b2aef0e…`, node suite 2,725 passed): the same page now
+answers in 0.58 s, the Ask panel's fragment in 0.015 s. (Six archive
+shards were skipped as retryable at 03:32–03:33, during the deploy's
+image build, when the CPU encoder their sample proof used did not answer
+in time; they are retried after the ten-minute backoff.)
+
+**Wikipedia's encoder is the GPU bge-m3 endpoint (operator,
+2026-09-15)** — the llama.cpp one that passed wikipedia's gate, in place
+of the CPU TEI encoder; one line in its collection file, the old one kept
+beside it. Embedding is still off, so for now it serves the archive
+import's per-shard sample proofs.
+
+**MedCPT as GGUF (operator, 2026-09-15).** Both encoders converted to
+f16 with llama.cpp b10630 — its converter refuses a tokenizer hash it
+does not know, and MedCPT's WordPiece vocabulary is not in its list; for
+a WordPiece vocabulary that label is not what llama.cpp tokenizes by, so
+the refusal was patched to "default" inside the throwaway converter — and
+served by a new GPU app, Article and Query. Against the CPU TEI pair on
+all 512 calibration texts cut to 500 tokens: article min 0.9896, query
+min 0.9910, medians 1.0000, deterministic, batched equal to single. NOT
+yet pubmed's endpoints: llama.cpp refuses an input past its batch (512)
+where TEI truncates, and the platform cuts to `ctx` by a character
+estimate that overshoots on PubMed text (774 tokens seen; 199 of the 512
+calibration texts past 500). By the book (09 §9.3: a chunk is truncated
+to `ctx`) the platform cuts by the endpoint's own tokenizer — the
+operator's go pending.
+
+**Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
+available; the operator stopped a llama.cpp probe container (8.5 GB).
+Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is
+reclaimable, so the committed load is ~45 GB — the worker 16.9 GB and
+the idle CPU bge-m3 encoder 12.1 GB the largest. The OOM kills of 02:08
+UTC came during a 512-text burst to that encoder; whether the ARC was
+slow to shrink then is not known.
+
 **How the deploy ran.** Local and node suites 2,719 passed on 8261747.
 The script (stop the app, swap the three collection files, add the
 origin mounts, restart) checks the new files load under the new image
