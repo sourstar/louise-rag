@@ -212,7 +212,6 @@ turned up these. Nothing has been deleted.
 | what | size | condition |
 |---|---|---|
 | the SSD copies of the genome FASTAs (the three `genome-*` datasets on the SSD pool) | 1.0 G | copied to the archive pool's origins dataset, equal by checksum, and the node's mounts pointed there. Delete when the operator confirms; the collections' data (§4) is a different thing and stays |
-| a second Gutenberg tree on the archive pool (`louise-corpora/gutenberg`) | 299 G | no service mounts it; the live Gutenberg origin is the books dataset. Probably an earlier mirror: the operator says what it is before anything happens to it |
 | the old container paths of the three live origins (`/corpus`, `/corpora/pubmed`, `/corpora/wikipedia`) | — | mounts, not bytes. Each origin is also mounted at `<LOUISE_ROOT>/collections/<name>/origin` (07 §7.8); the old paths stay until discovery has moved every stored locator, then leave the compose file |
 
 ---
@@ -226,6 +225,14 @@ confirmation is a person searching the collection and getting the right
 answer back, plus the counts agreeing.
 
 ## Already deleted, for the record
+
+A second Gutenberg tree on the archive pool, `louise-corpora/gutenberg`
+(2026-09-15, operator: "if none of the files are missing, delete"): a
+dataset of 220 GB with one manual snapshot, mounted by no service.
+Compared against the live origin (the books dataset) first: of its
+606,564 files none was missing there; 484,248 matched in size and the
+other 122,316 existed there in a newer revision — the August mirror of
+the same files. Destroyed with its snapshot.
 
 `gutenberg-rag` (2026-09-15, operator): the old data directory on the
 second SSD pool — a manifest, text index and vector table from before the
