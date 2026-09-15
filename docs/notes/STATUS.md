@@ -1974,6 +1974,63 @@ pubmed and wikipedia run on the GPU at concurrency 4 and do not declare
 it. The one-line `device = "gpu"` edits were refused to me by the
 permission classifier and are the operator's to run.
 
+**GPU/CPU labels, fixed at the source (09:01 UTC).** On the operator's
+explicit instruction the in-place edit went through: pubmed's and
+wikipedia's files declare `device = "gpu"` (backed up beside them), and
+all three collections resolve to GPU in the live image.
+
+**A pause that did not stop the CPU (349f639, deployed 08:58 UTC).**
+Paused, the worker held ~9 cores — twelve lancedb threads. The index
+maintainer read the pause once per 60 s cycle, before its loop over
+collections, so a cycle under way ran every collection's Lance optimize:
+pubmed's for 485 s during the pause, then the next. It is asked before
+each collection and between `ensure`'s steps now. A Lance call already
+running cannot be interrupted and finishes — an IVF build can take up to
+an hour — and nothing after it starts. Not yet seen on a paused node: the
+operator resumed before the deploy. (The 485 s run was pubmed's live
+prune finally winning its commit, with nothing writing.)
+
+**Blocked documents that were not broken (687a2c0, deployed 09:23 UTC).**
+46 pubmed documents blocked this morning, every one by a moment: 41 ×
+HTTP 503 "Loading model" (llama.cpp while its weights load — the GPU
+MedCPT app was restarted twice, for the CPU reranker's service and its
+removal), 4 × vector-lock timeouts at a deploy's restart, 1 connection
+dropped mid-request. Both embed paths now defer 429/502/503/504 and lock
+contention; the parallel one — pubmed's — asked only whether the encoder
+was unreachable. "Clear errors & retry" read as doing nothing because it
+rewrote EVERY in-scope document (`error IS NULL OR …`): 40M rows in one
+transaction on pubmed, minutes under the manifest's lock, starving the
+worker and outliving the request. It now reads the matching rows first
+(~75 s, no write lock) and writes only those, in the background. The 46
+need one press of the button, which the dropped connection's document
+also does.
+
+**A reranker per collection, on the GPU (6dcb987, deployed 09:23 UTC;
+node configuration 09:25–09:38).** Operator's decision: each collection
+reranked by its own reranker, on the GPU where the model runs correctly.
+PubMed shares gutenberg's and wikipedia's until MedCPT's cross-encoder can
+run correctly — 0.32 s per candidate on the CPU even with the node paused,
+and as GGUF llama.cpp gives every token segment 0 (reranker-scope.md §12).
+The reranker is BAAI/bge-reranker-v2-m3 as f16 GGUF, which reproduces
+BAAI's own weights (transformers on the same 8 pairs: identical ranking,
+largest difference 0.04), served as a `bge-rerank` service beside bge-m3
+in its app, :30447, llama.cpp `--reranking` with four slots. Each
+collection file names it in `[reranker]`; `platform.toml`'s `[ask]
+latency_budget_ms` is 8000. The code now does what 05 §5.6 says and it did
+not: each collection's list reranked on its own and fused by rank, the top
+50 reordered, candidates sent whole, a fallback reported as `reranked:
+false`. The CPU MedCPT reranker services added to both MedCPT apps this
+morning were removed, with the model they had downloaded.
+
+Measured live through /api/search: pubmed 335–543 ms and wikipedia
+361–671 ms every time; gutenberg 2.8–6.4 s (its candidates are ~1,500-token
+chunks); all three together 2.4–4.7 s. Of the last two runs' 16 lists 15
+were reranked; one (wikipedia's, in a federated search) fell back at the
+budget while the shared GPU was busy. At the spec's 400 ms default every
+list fell back. With one slot, a request abandoned at the budget kept the
+server computing and every search behind it ran out of time too — seen at
+5 s, gone with four slots.
+
 **Memory.** With the node out of acquire-only `free` showed 2 GB of 61 GB
 available; the operator stopped a llama.cpp probe container (8.5 GB).
 Most of what it freed went back to the ZFS ARC (9.2 → 13.9 GB), which is

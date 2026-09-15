@@ -238,13 +238,13 @@ across an already-distributed pack.
 - No automatic application of a hint or predicate on import — a pack is data
   received from a producer, and invariant 10's tiers give received data no
   route to desired state.
-- No per-collection reranker (`RERANK_URL` is node-global) until a measured
-  case shows one node-wide choice failing some collection. Note the
-  federation problem it would create: `_rerank` runs **once** over the fused
-  cross-collection list, so N per-collection rerankers give N incomparable
-  score scales — either fuse reranked lists, discarding the cross-collection
-  calibration the reranker existed to provide, or pick one and leave the
-  rest silently inert.
+- ~~No per-collection reranker (`RERANK_URL` is node-global) until a
+  measured case shows one node-wide choice failing some collection.~~
+  Superseded 2026-09-15 by the operator's decision and by 05 §5.6 itself,
+  which reranks each list on its own: a collection file's `[reranker]` now
+  names its reranker, each collection's list is reranked by it, and the
+  reranked lists are fused BY RANK — the "N incomparable score scales"
+  this bullet feared never meet on one scale. See §12.
 - No change to pinned facts bypassing RRF and rerank both
   (`retrieval.py:227`, `:367`) — invariant 4 at the query layer.
 
@@ -265,3 +265,43 @@ across an already-distributed pack.
    "query time cannot bind" claim unconditional. Against: the reranked order
    is the better answer to "what is this node's user actually interested
    in", which is the whole point of lazy embedding.
+
+## 12. MedCPT's cross-encoder — measured, parked (2026-09-15)
+
+**Decision (operator).** A reranker per collection, on the GPU where the
+model runs there correctly. PubMed's natural reranker, NCBI's
+MedCPT-Cross-Encoder (trained with the MedCPT article and query encoders
+PubMed runs), fits neither place today, so PubMed uses the shared GPU
+reranker gutenberg and wikipedia use (bge-reranker-v2-m3) until one of the
+routes below lands.
+
+**On the CPU** (TEI 1.8, NCBI's weights, 435-token candidates): 0.32 s per
+candidate with the node paused — 3.0 s for 10, 6.4 s for 20, 15.9 s for 50
+— and ~1.7× that under the worker's load. The budget (`[ask]
+latency_budget_ms`, 400 ms) is 16× short at 20 candidates, 40× at 50.
+
+**As GGUF** (llama.cpp b10630), two faults, one fixable here:
+1. The converter drops BERT's pooler (`pooler.dense`, "we are only using
+   BERT for embeddings") and writes no pooling type. Patched in a
+   throwaway converter (keep it as `classifier.dense` → `cls`; write RANK):
+   the right document then ranks first.
+2. llama.cpp gives EVERY token segment 0 (`src/models/bert.cpp` adds
+   `type_embd` row 0; `llama_batch` carries no segment ids), and a BERT
+   cross-encoder was trained with the document as segment 1. The scores
+   stay 8–15 logits off NCBI's and the rest of the order differs. Not
+   fixable in the file alone.
+
+**Routes, for when it matters:**
+- OpenVINO Model Server on the Intel GPU: serves cross-encoders through a
+  Cohere-style `/v3/rerank` from the real graph, segment ids included.
+  MedCPT is not on its tested list but is the class of one that is.
+- A llama.cpp that passes segment ids for rerank pairs (a patched build,
+  or upstream if it ever lands).
+- Fold segment 1 into a second copy of the vocabulary (token embedding +
+  segment-1 row − segment-0 row) and send the document half as those ids:
+  exact, no C++ change, but the caller must tokenize — the platform holds
+  no tokenizer (invariant 7), so it would need the server's /tokenize.
+
+The deciding measurement for any of them is the same two numbers: NCBI's
+scores reproduced (Kendall tau against TEI or transformers on the same
+pairs), and 50 candidates inside the budget.
