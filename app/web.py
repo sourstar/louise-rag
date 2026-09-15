@@ -2085,7 +2085,13 @@ def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
 
 @admin_router.post("/library/new/create")
 def new_collection_create(body: CreateCollectionBody):
-    """Writes the collection's Tier-2 TOML — the same file an operator would
+    """DEPRECATED (07 §7.6): the web interface's new collection is
+    `POST /api/hold/collection/create` — `hold collection create --recipe
+    FILE`, which writes a Codex and 07 §7.8's file. The Library no longer
+    calls this; it stays for one release, as the migration keeps every old
+    name, and it writes a file that names no Codex.
+
+    Writes the collection's Tier-2 TOML — the same file an operator would
     save by hand from the preview. Paths are auto-isolated per collection
     (DATA_DIR/<name>/...) because the TOML defaults deliberately point at the
     FIRST collection's paths, and two collections must never share a

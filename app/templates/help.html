@@ -678,74 +678,53 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
 
 <div class="panel" id="collections">
   <h2>Adding a collection</h2>
-  <p class="note lead"><b>In short:</b> a collection is one corpus in one embedding space, defined by one TOML file — the create dialog writes it for you.</p>
+  <p class="note lead"><b>In short:</b> a collection is a Codex plus one small file saying what this node holds of it — <code>hold collection create</code> writes both.</p>
   <p class="note">
-    A collection is defined by one versioned TOML file — that file existing
-    is what makes the collection exist (config tier 2, never a database
-    write). The workflow:
+    <b>1. Write a recipe.</b> A TOML with every Codex field the plugin does
+    not default: at least its <code>[space]</code> and <code>[work]</code>
+    blocks, or <code>--space-from</code> a collection already held for the
+    space (06 §6.6). The recipes under <code>config/recipes/</code> are
+    worked examples.
   </p>
   <p class="note">
-    <b>1. Draft it.</b> On the Library page, use the <i>Add a collection</i>
-    panel: pick a name, a plugin (<code>gutenberg</code>,
-    <code>pubmed</code> or <code>wikipedia</code>), a profile, and optionally a
-    dedicated corpus folder.
-    <i>Preview</i> shows the source's license class (and terms text, if
-    acknowledgement is required) plus the exact TOML; <i>Create on this
-    node</i> writes that TOML for you, with per-collection data paths
-    already isolated.
+    <b>2. Create it.</b> On the Library page, <i>Add a collection</i>: pick
+    the plugin, paste the recipe, <i>Create on this node</i>. The same from
+    a shell:
   </p>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE [--space-from &lt;collection&gt;]</pre>
   <p class="note">
-    <b>Dedicated corpus folders (TrueNAS).</b> Corpus datasets are mapped
-    under one well-known root inside the container, <code>/corpora</code>
-    (env <code>CORPUS_MOUNTS_DIR</code>) — you never type arbitrary
-    container paths. Create the dataset on the host, edit the louise-rag
-    app, and add to <i>both</i> services (web and worker):
+    It embeds the calibration set with the encoder the recipe names, writes
+    the Codex into the collection's drag, prints its id, and writes the
+    collection's file, <code>collections/&lt;name&gt;.toml</code> (07 §7.8) —
+    the file existing is the collection being held:
   </p>
-  <pre class="cli">volumes:
-  - /mnt/tank/data/pubmed:/corpora/pubmed        # example: rw, platform acquires into it
-  - /mnt/&lt;pool&gt;/&lt;dataset&gt;:/corpora/&lt;name&gt;:ro    # ro when an external process feeds it
-  ...</pre>
-  <p class="note">
-    Saving the edit restarts the app with the mount; the folder then appears
-    in the create dialog's corpus dropdown. A folder already claimed by
-    another collection is shown but not selectable — one corpus, one
-    collection.
-  </p>
-  <p class="note">
-    <b>2. (By hand, alternatively)</b> save it yourself as
-    <code>collections/&lt;name&gt;.toml</code> under the node's CONFIG_DIR
-    (on this deployment:
-    <code>/mnt/ssd4/apps/louise-rag/config/collections/</code>), and commit
-    it if the config is versioned. A minimal file:
-  </p>
-  <pre class="cli">plugin = "pubmed"
-profile = "demo"
-acquire_enabled = true            # omit for a hand-populated corpus
-# license_ack = "&lt;from corpus add --ack-terms&gt;"   # yellow-class sources only
+  <pre class="cli">codex  = "sha256:…"            # the collection this name holds, for its life
+slices = []                    # "all" to fetch everything; nothing until you say so
+kinds  = ["records", "vectors"]
+embed  = "off"                 # off | on-demand | all: what this node spends
+share  = false
+# title = "…"                  # this node's own listing name, never published
 
-corpus_dir = "/corpus-pubmed"     # where the documents live (or will land)
-[paths]                           # REQUIRED for a second collection:
-manifest = "/data/pubmed/manifest.db"   # defaults point at the first
-fts      = "/data/pubmed/fts"           # collection's paths — never share
-lancedb  = "/data/pubmed/lancedb"       # a manifest or vector table</pre>
+[encoder]                      # optional: where this node reaches the Codex's encoder
+url = "http://…"               # (+ query_url for a bi-encoder); else platform.toml's
+                               # [encoder_defaults.&lt;plugin&gt;], else EMBED_URL</pre>
   <p class="note">
-    <b>3. It goes live on its own</b> — the web pages read collections per
-    request, and the worker hot-reloads them each round: a created
-    collection starts discovering within seconds, no restart. It appears on
-    the Library page and in Ask's collection chips; its embedding space is
-    pinned on first contact.
+    Nothing else goes in the file. The plugin, layers, space, archive and
+    pinned dump are the Codex's, and the origin files live at
+    <code>&lt;LOUISE_ROOT&gt;/collections/&lt;name&gt;/origin/</code> — the
+    bytes may sit on other storage, mounted there. Files written before
+    this shape still load; a rewrite keeps their older keys
+    (<code>profile</code>, <code>corpus_dir</code>, …) only where they
+    differ from what the Codex and the tree say.
   </p>
   <p class="note">
-    <b>4. Fill it.</b> Either point <code>corpus_dir</code> at documents you
-    already have (the worker discovers them on its next scan), or — with
-    <code>acquire_enabled = true</code> — fetch from the source:
-    <code>python -m app.cli corpus add &lt;name&gt; --profile demo --dry-run</code>
-    to see size/ETA, then without <code>--dry-run</code> to run. A
-    yellow-class source refuses to fetch until its terms are acknowledged
-    (<code>corpus add &lt;name&gt; --ack-terms &lt;terms-file&gt;</code>
-    prints the <code>license_ack</code> line for the TOML). Then grow it
-    later with <code>corpus grow &lt;name&gt; --profile full</code> or the
-    Library page's <i>grow profile…</i> button.
+    <b>3. Acknowledge, then fill it.</b> A yellow- or red-class source is
+    withheld from every use until
+    <code>louise hold collection ack &lt;collection&gt;</code> records the
+    acknowledgement. Then set <code>slices = "all"</code> in the file: the
+    worker re-reads it between rounds and starts fetching, discovering and
+    parsing — no restart. Origin files already on disk at the origin path
+    are adopted, not fetched again.
   </p>
   <p class="note">
     <b>Managing it.</b> Each collection card also offers:

@@ -105,7 +105,7 @@ def test_help_page_is_open_and_documents_the_platform(client):
     r = client.get("/help")
     assert r.status_code == 200
     for anchor in ("Embedding safety", "backend gate", "EMBED_BATCH=1",
-                    "Adding a collection", "collections/", "license_ack",
+                    "Adding a collection", "collections/", "hold collection ack",
                     "What a profile is", "starter", "grow profile",
                     "Reusing published embeddings", "genesis import",
                     "CLI reference", "Troubleshooting"):

@@ -85,10 +85,24 @@ def cmd_create(a) -> int:
         spec = _json(a.recipe)
         spec.setdefault("kind", cx.CODEX_KIND)
         spec.setdefault("version", cx.CODEX_VERSION)
-        print(col.create(a.root, cx.from_dict(spec)).collection_id)
+        codex = col.create(a.root, cx.from_dict(spec))
+        print(f"held: {_write_held_file(a.root, codex)}", file=sys.stderr)
+        print(codex.collection_id)
         return 0
+    codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
+                              platform_image=a.platform_image,
+                              space_from=a.space_from)
+    print(f"held: {held}", file=sys.stderr)
+    print(codex.collection_id)
+    return 0
 
-    recipe = _recipe(a.recipe)
+
+def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
+                space_from: str | None = None):
+    """`hold collection create <plugin> --recipe FILE` — for the command
+    line and for its route alike (07 §7.4: the web interface is a client of
+    the same function, not a second implementation). Returns the Codex and
+    the collection file it wrote (07 §7.8)."""
     # `toolchain.platform_image` is hashed into collection_id (09 §9.3), and
     # it is "the digest of the platform the command runs in unless the
     # recipe states it" (07 §7.3): the recipe's own value, else
@@ -98,17 +112,17 @@ def cmd_create(a) -> int:
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
     stated = (recipe.get("toolchain") or {}).get("platform_image")
-    a.platform_image = (stated or a.platform_image
-                        or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
-    if not a.platform_image or a.platform_image == cx.digest(b""):
+    platform_image = (stated or platform_image
+                      or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
+    if not platform_image or platform_image == cx.digest(b""):
         raise CodexError(
             "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
             "the digest of the platform the command runs in unless the recipe "
             "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
             "--platform-image. The SHA-256 of empty bytes is a placeholder "
             "that names no build, and a Codex is never edited")
-    if a.space_from:
-        source = col.read(a.root, a.space_from)
+    if space_from:
+        source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
         if source.cleaning_version != want:
             raise CodexError(
@@ -134,23 +148,20 @@ def cmd_create(a) -> int:
     # without allowing null, so there is no unsigned collection. Loaded by
     # PATH (invariant 8) and never printed.
     from app.bundles import keys as node_keys
-    codex = col.create_from_recipe(a.root, a.plugin, recipe,
+    codex = col.create_from_recipe(root, plugin, recipe,
                                    key=node_keys.load_signing_key(), now=_utc_now(),
-                                   platform_image=a.platform_image,
+                                   platform_image=platform_image,
                                    embed=_embed_for_recipe(recipe["space"]),
                                    credits=credits)
-    if a.space_from and (codex.space.envelope,
-                         codex.space.calibration.vectors) != drifted:
-        print(f"warning: --space-from {a.space_from} recorded reference "
+    if space_from and (codex.space.envelope,
+                       codex.space.calibration.vectors) != drifted:
+        print(f"warning: --space-from {space_from} recorded reference "
               f"vectors {drifted[1]} and this node's encoder produced "
               f"{codex.space.calibration.vectors}. Both collections are "
               f"in space {codex.space_id} â calibration is not inside "
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
-    held = _write_held_file(a.root, codex)
-    print(f"held: {held}", file=sys.stderr)
-    print(codex.collection_id)
-    return 0
+    return codex, _write_held_file(root, codex)
 
 
 def _write_held_file(root, codex) -> Path:

@@ -104,11 +104,10 @@ def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
                                "acknowledge_terms": True})
         assert r.status_code == 400, bad
         assert "available" in r.json()["detail"]
-
-    # the library page offers the mounts, marking the claimed one
-    page = client.get("/admin/library")
-    assert (mounts_root / "spare").as_posix() in page.text
-    assert "in use by withdir" in page.text
+    # (The Library page no longer offers a corpus folder: its form is
+    # `hold collection create --recipe` since 2026-09-15, and a collection's
+    # origin is <LOUISE_ROOT>/collections/<name>/origin — 07 §7.6, §7.8.
+    # This deprecated route keeps its own checks for one release.)
 
 
 def test_create_requires_a_chosen_corpus_folder(client, tmp_path):
@@ -133,11 +132,6 @@ def test_create_requires_a_chosen_corpus_folder(client, tmp_path):
     assert client.post("/admin/library/new/create",
                        json={"name": "nodir", "plugin": "pubmed",
                               "corpus_dir": "   "}).status_code == 400
-
-    # and the form cannot submit one either: no selectable default option
-    page = client.get("/admin/library").text
-    assert 'option value="" disabled selected' in page
-    assert "(default — under the shared corpus root)" not in page
 
 
 def test_create_rejects_bad_names_dup_and_unknown_plugin(client):

@@ -265,63 +265,32 @@
 
 <div class="panel">
   <h2>Add a collection</h2>
+  {# 07 §7.6: the web interface's new collection IS `hold collection
+     create --recipe FILE`, through its route (07 §7.4). It writes the Codex
+     and the collection file of 07 §7.8. #}
+  <div class="note">A collection is created from a <b>recipe</b>: a TOML with
+    every Codex field the plugin does not default — at least its
+    <code>[space]</code> and <code>[work]</code>, or a held collection to take
+    the space from (06 §6.6). This writes the Codex and the collection's file,
+    which holds no slice yet: nothing is fetched until you set
+    <code>slices = "all"</code> in it. See Help.</div>
   <div class="row">
-    <div><label>Name</label><input id="nc_name" placeholder="e.g. pubmed"></div>
     <div><label>Plugin</label>
       {# display names only — the internal id is minted into every document
          uid and can never change; 'embedded' currently means the wikivec
          pre-embedded Wikipedia dataset on every known deployment #}
       <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}</select>
     </div>
-    <div><label>Profile</label><select id="nc_profile"></select></div>
-    {# spec.extras: local-only extra formats — counter shows "(+ e/E)", details in Help #}
-    <div id="nc_extras_wrap" style="display:none"><label>Extra formats (local only — see Help)</label>
-      <div id="nc_extras"></div></div>
-    <div><label>Acquisition</label>
-      {# WHERE the corpus comes from (STATUS 5c, now built): the origin, a
-         peer's torrent, or nothing. The peer path is the same acquisition
-         engine on the torrent transport — same profiles, license gate,
-         disk preflight (engine.effective_spec). #}
-      <select id="nc_acquire_source">
-        <option value="off">off — I fill the corpus folder myself</option>
-        <option value="source" selected>fetch corpus from the source</option>
-        <option value="peers">fetch corpus from peers (torrent)</option>
-      </select>
-      <div id="nc_peer_wrap" style="display:none;margin-top:6px">
-        <textarea id="nc_peer_source" rows="2" placeholder="torrent-collection magnet, or magnet / /config/x.torrent — one per line" style="width:100%"></textarea>
-      </div></div>
-    <div><label>Corpus folder</label>
-      {# No default option: a collection points at a real mounted dataset or
-         it is not created. The old "(default)" entry invented a path that
-         existed in no container. #}
-      <select id="nc_corpus" required>
-        <option value="" disabled selected>— choose a mounted folder —</option>
-        {% for m in corpus_mounts %}
-        <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
-        {% endfor %}
-      </select></div>
+    <div><label>Space from (optional)</label>
+      <input id="nc_space_from" placeholder="a held collection's name or id"></div>
   </div>
-  <div id="nc_companion_block" style="display:none">
-    <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin-top:8px">
-      <input type="checkbox" id="nc_companion" style="width:auto"
-             onchange="document.getElementById('nc_companion_corpus').style.display=this.checked?'':'none'">
-      also add the <b>pre-embedded companion</b> (a second collection
-      <i>&lt;name&gt;-vec</i>, embedded plugin) — needs its own corpus folder
-      and its own license acknowledgement.
-    </label>
-    <select id="nc_companion_corpus" style="display:none">
-      <option value="" disabled selected>— companion corpus folder —</option>
-      {% for m in corpus_mounts %}
-      <option value="{{ m.path }}" {{ 'disabled' if m.used_by }}>{{ m.path }}{{ ' — in use by ' + m.used_by if m.used_by }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="note">folders mapped under <code>{{ corpus_mounts_dir }}</code>{% if not corpus_mounts %} (none mapped yet){% endif %} — see Help to add one.</div>
+  <label>Recipe (TOML)</label>
+  <textarea id="nc_recipe" rows="10" style="width:100%" placeholder="[space]&#10;…&#10;&#10;[work]&#10;…"></textarea>
   <div class="actions">
-    <button class="primary" onclick="previewNewCollection()">Preview</button>
-    <button onclick="createCollection()">Create on this node</button>
+    <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <div id="nc_preview"></div>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE [--space-from &lt;collection&gt;]</pre>
+  <div id="nc_result"></div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -340,41 +309,6 @@ PROFILE_HELD["{{ c.name }}"]={{ c.profile_parts|tojson }};
 EXTRAS_OFFERED["{{ c.name }}"]={{ c.extras_offered|tojson }};
 EXTRAS_HELD["{{ c.name }}"]={{ c.extras_held|tojson }};
 {% endfor %}
-function fillProfileSelect(){
-  const plugin=document.getElementById('nc_plugin').value;
-  const sel=document.getElementById('nc_profile');
-  const opts=PLUGIN_PROFILES[plugin]||[];
-  sel.innerHTML=(opts.length
-    ? opts.map(o=>`<option value="${esc(o.name)}">${esc(o.label)}</option>`).join('')
-    : '<option value="demo">demo</option>')
-    // every plugin can be hand-populated: no profile, no acquisition —
-    // the operator fills the corpus folder and discovery indexes it
-    + '<option value="hand-populated">(hand-populated — I fill the corpus folder myself)</option>';
-  const xw=document.getElementById('nc_extras_wrap');
-  const xb=document.getElementById('nc_extras');
-  const extras=PLUGIN_EXTRAS[plugin]||[];
-  xb.innerHTML=extras.map(x=>
-    `<label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px;margin:2px 0">
-       <input type="checkbox" class="nc_extra" value="${esc(x)}" style="width:auto"> ${esc(x)}
-     </label>`).join('');
-  const src=document.getElementById('nc_acquire_source');
-  const peerWrap=document.getElementById('nc_peer_wrap');
-  src.onchange=()=>{peerWrap.style.display=src.value==='peers'?'':'none'};
-  sel.onchange=()=>{
-    const hp=sel.value==='hand-populated';
-    if(hp)src.value='off';
-    src.disabled=hp;
-    src.onchange();
-    // extras need acquisition: nothing to opt into on a hand-filled corpus
-    xw.style.display=(extras.length&&!hp)?'':'none';
-  };
-  sel.onchange();
-  // the pre-embedded companion pairs with the live wikipedia plugin only
-  document.getElementById('nc_companion_block').style.display =
-    plugin==='wikipedia' ? '' : 'none';
-}
-document.getElementById('nc_plugin').addEventListener('change',fillProfileSelect);
-fillProfileSelect();
 async function setWorkerState(state){
   try{await postJSON('/api/control',{state})}
   catch(e){toast('could not set '+state+': '+e);return}
@@ -514,90 +448,21 @@ async function getJSON(url){
   const r=await fetch(url);const d=await r.json().catch(()=>({}));
   if(!r.ok)throw (d.detail||r.statusText);return d;
 }
-// plugins that offer SUB-PLUGINS at install time. The offer is made ONCE,
-// here: proceeding without one is confirmed explicitly, because this form
-// will not offer it again for this collection.
-const SUB_PLUGINS={wikipedia:{name:'wikivec',what:'the pre-embedded companion '
-  +'(a second collection on the wikivec/embedded plugin)'}};
-async function createCollection(ackMain,ackCompanion,skipSubConfirmed){
-  const name=document.getElementById('nc_name').value.trim();
+// 07 §7.6: a new collection is `hold collection create --recipe FILE`,
+// through its route (07 §7.4) — the Codex and the collection file
+async function createCollection(){
   const plugin=document.getElementById('nc_plugin').value;
-  const profile=document.getElementById('nc_profile').value.trim()||'demo';
-  const corpus_dir=document.getElementById('nc_corpus').value.trim();
-  const acquire_source=document.getElementById('nc_acquire_source').value;
-  const acquire_enabled=acquire_source!=='off';
-  const peer_source=acquire_source==='peers'
-    ? document.getElementById('nc_peer_source').value.trim() : '';
-  if(acquire_source==='peers'&&!peer_source){toast('paste the peer magnet or .torrent path');return}
-  const wantCompanion=plugin==='wikipedia'
-    && document.getElementById('nc_companion').checked;
-  const companion_corpus_dir=wantCompanion
-    ? document.getElementById('nc_companion_corpus').value.trim() : '';
-  if(!name){toast('name required');return}
-  if(!corpus_dir){toast('choose a corpus folder');return}
-  if(wantCompanion&&!companion_corpus_dir){toast('choose a corpus folder for the companion');return}
-  const sub=SUB_PLUGINS[plugin];
-  if(sub&&!wantCompanion&&!skipSubConfirmed){
-    showModal(`<h2>${esc(plugin)} offers a sub-plugin: ${esc(sub.name)}</h2>
-      <div class="note">${esc(sub.what)}. Offered <b>at install only</b> — not
-      proposed again for this collection. Proceed without ${esc(sub.name)}?</div>
-      <div class="actions">
-        <button class="primary" onclick="hideModal();document.getElementById('nc_companion').checked=true;document.getElementById('nc_companion').onchange();toast('tick done — now choose the companion\\'s corpus folder')">add ${esc(sub.name)} too</button>
-        <button onclick="hideModal();createCollection(${!!ackMain},${!!ackCompanion},true)">proceed without it</button>
-        <button onclick="hideModal()">Cancel</button>
-      </div>`);
-    return;
-  }
+  const recipe=document.getElementById('nc_recipe').value;
+  const space_from=document.getElementById('nc_space_from').value.trim()||null;
+  const box=document.getElementById('nc_result');
+  if(!recipe.trim()){toast('paste the recipe');return}
+  box.innerHTML='<div class="note">creating — the calibration set is embedded first…</div>';
   try{
-    const extras=(profile==='hand-populated')?[]
-      :[...document.querySelectorAll('.nc_extra:checked')].map(e=>e.value);
-    const d=await postJSON('/admin/library/new/create',
-      {name,plugin,profile,corpus_dir,acquire_enabled,
-       acquire_source,peer_source,
-       acknowledge_terms:!!ackMain,
-       companion_corpus_dir,
-       acknowledge_companion_terms:!!ackCompanion,
-       extras});
-    const mountWarn=d.corpus_mounted?''
-      :`<div class="note" style="color:var(--err)">corpus folder not mounted yet</div>`;
-    showModal(`<h2>Collection created</h2>
-      <div class="note">Written to <b>${esc(d.toml_path)}</b> — corpus: <b>${esc(d.corpus_dir)}</b>${d.companion?` · companion: <b>${esc(d.companion)}</b>`:''}</div>
-      ${mountWarn}
-      <pre class="cli" style="white-space:pre-wrap">${esc(d.note)}</pre>
-      <div class="actions"><button class="primary" onclick="hideModal();location.reload()">OK</button></div>`);
-  }catch(e){
-    // each terms gate retries the create carrying every consent already
-    // given, so acknowledging the main source and then the companion's
-    // (two different terms texts) takes two modals, never re-asks
-    if(String(e).startsWith('terms-acknowledgement-required')){
-      let terms;
-      try{terms=await postJSON('/admin/library/new/preview',{name,plugin,profile,corpus_dir})}
-      catch(_){terms={}}
-      showModal(`<h2>License terms — ${esc(plugin)}</h2>
-        <div class="note">Acknowledge these terms before any byte is fetched or used.</div>
-        <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
-        <div class="actions">
-          <button class="primary" onclick="hideModal();createCollection(true,${!!ackCompanion},true)">I acknowledge — create</button>
-          <button onclick="hideModal()">Cancel</button>
-        </div>`);
-      return;
-    }
-    if(String(e).startsWith('companion-terms-acknowledgement-required')){
-      let terms;
-      try{terms=await postJSON('/admin/library/new/preview',{name,plugin:'embedded',profile:'all'})}
-      catch(_){terms={}}
-      showModal(`<h2>License terms — pre-embedded companion (embedded)</h2>
-        <div class="note">The companion's dataset has its own terms, separate
-          from ${esc(plugin)}'s.</div>
-        <pre class="cli" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">${esc(terms.terms_text||'(terms unavailable)')}</pre>
-        <div class="actions">
-          <button class="primary" onclick="hideModal();createCollection(${!!ackMain},true,true)">I acknowledge — create both</button>
-          <button onclick="hideModal()">Cancel</button>
-        </div>`);
-      return;
-    }
-    toast('create failed: '+e)
-  }
+    const d=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from});
+    box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
+      file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
+      <pre class="cli">${esc(d.cli)}</pre>`;
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 async function removeCollection(name){
   showModal(`<h2>Remove ${esc(name)}?</h2>
@@ -641,22 +506,6 @@ function importBundle(name){
     toast('queued as '+d.entry+' — verified and imported next round');
   };
   input.click();
-}
-async function previewNewCollection(){
-  const name=document.getElementById('nc_name').value.trim();
-  const plugin=document.getElementById('nc_plugin').value;
-  const profile=document.getElementById('nc_profile').value.trim()||'demo';
-  const box=document.getElementById('nc_preview');
-  if(!name){toast('name required');return}
-  box.innerHTML='<div class="note">previewing…</div>';
-  try{
-    const d=await postJSON('/admin/library/new/preview',{name,plugin,profile});
-    box.innerHTML=`<div class="note">license class: ${esc(d.license_class)}${d.terms_text?'<br><br>'+esc(d.terms_text.slice(0,600))+'…':''}</div>
-      <div class="note" style="margin-top:8px">Write this to <b>${esc(d.toml_path)}</b>:</div>
-      <pre class="cli">${esc(d.toml)}</pre>
-      <div class="note">${esc(d.instructions)}</div>
-      <pre class="cli">${esc(d.cli)}</pre>`;
-  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 </script>
 {% endblock %}

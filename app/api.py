@@ -200,6 +200,45 @@ def events(after: int = 0, limit: int = 60):
 class ControlBody(BaseModel):
     state: str
 
+class HoldCreateBody(BaseModel):
+    plugin: str
+    recipe: str | dict           # the recipe TOML's text, or the table itself
+    space_from: str | None = None
+    platform_image: str | None = None
+
+
+@app.post("/api/hold/collection/create", dependencies=[Depends(auth.require_admin)])
+def hold_collection_create(body: HoldCreateBody):
+    """`louise hold collection create` as one route (07 §7.4): the body's
+    keys are the command's flags, and a refusal (exit 2) answers 409. It
+    writes the Codex and the collection file (07 §7.8) — what the Library's
+    *new collection* is now (07 §7.6), in place of the form that wrote a
+    file naming no Codex."""
+    import tomllib
+    from . import louise
+    from .hold.codex import CodexError
+    if body.plugin not in collections_mod.PLUGIN_REGISTRY:
+        raise HTTPException(409, f"unknown plugin: {body.plugin!r}")
+    try:
+        recipe = (tomllib.loads(body.recipe) if isinstance(body.recipe, str)
+                  else dict(body.recipe))
+    except tomllib.TOMLDecodeError as e:
+        raise HTTPException(409, f"the recipe is not TOML: {e}") from None
+    root = louise._default_root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        codex, held = louise.create_from(root, body.plugin, recipe,
+                                         platform_image=body.platform_image,
+                                         space_from=body.space_from)
+    except CodexError as e:
+        raise HTTPException(409, str(e)) from None
+    cli = f"louise hold collection create {body.plugin} --recipe FILE"
+    if body.space_from:
+        cli += f" --space-from {body.space_from}"
+    return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
+            "held": str(held), "cli": cli}
+
+
 @app.post("/api/control", dependencies=[Depends(auth.require_admin)])
 def control(body: ControlBody):
     if body.state not in db.WORKER_STATES:
