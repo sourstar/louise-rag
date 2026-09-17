@@ -2187,6 +2187,45 @@ wikipedia 0 of 30,940,006, because none of its dump layer has reached fts
 yet (its rdf/fts are still inside layer 1), so that number grows as
 indexing arrives.
 
+**Wikipedia's three stages, measured (2026-09-17 06:00 UTC).** Position:
+52,923,125 in scope, rdf 9.45 M, fts 9.45 M, vectors held 9.45 M, nothing
+blocked — all of it inside layer 1 (the archive's 21,983,119 articles);
+layer 2's 30,940,006 dump pages are untouched. Rates, from stage counters
+over a 10-minute window: rdf 54.7, fts 77.1, import 77.7 docs/s (a
+2.3-minute window read 121.5 / 49.5 / 62.7 — the three take turns on one
+pipeline thread, so short windows favour whichever is running). The
+page's own `stage_rate` agrees: 273 k/h ≈ 76/s for fts and import. The
+import's unthrottled events give 45.3 docs/s over 41.4 h — the honest
+long-run figure, which includes a 64-minute outage (the NAS rebooted at
+05:08 UTC) and the index passes below. rdf and fts log lines go through
+`_batch_log` (one per stage per 30 s), so event-derived rdf/fts totals are
+lower bounds — count the counters, not the lines.
+
+The import is healthy and paced by indexing as designed: 2,750 passes over
+422 shards, 6.5 revisits each, 2.9 % of the documents it met not yet
+indexed, 54 empty passes, 6.6 vectors a document.
+
+WHAT COSTS THE NODE: the worker holds ~10 of 12 cores (load 17.3), and
+9.92 of them are in `lancedb-tokio` threads (120 of 137 cumulative CPU
+minutes); tantivy ≈ 0, and the parse pool's eleven children idle at 0.7 %
+each — parsing is NOT the bottleneck. No single query shape explains it:
+the import's `book_id IN (…)` lookup costs ~1 core (0.36–0.58 s for 100–500
+ids) and its delete-shaped `book_id IN (…) AND id IN (…)` 1.0–1.3 cores
+(0.97–3.69 s for 600–6,252 ids). It is the write path as a whole: ~1.9
+commits/s, ~1 new fragment/s, 486 vectors/s into a 66.8 M-row, 155 GiB
+table. The IVF-PQ index falls behind at exactly the write rate (4.7 M
+unindexed rows and climbing, +486/s), and reclaiming that costs refreshes
+of 1,672–2,525 s and prunes of 2,371–3,061 s — two of which lost their
+commit to the writer ("Retryable commit conflict … Rewrite", 2026-09-16).
+Those unindexed rows are also scanned by every wikipedia search.
+
+At these rates layer 1 needs ~45 h more at 77 docs/s (~77 h at the
+long-run 45 docs/s), and layer 2's 30.9 M pages ~110 h of indexing after
+it — a week of pipeline time, and probably less for layer 2, whose
+redirects carry no text. Nothing here is a fault; the question is whether
+the archive import is worth ~10 cores, or whether it should yield more of
+them to the collections a person is waiting on.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
