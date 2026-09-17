@@ -314,6 +314,17 @@ VECTOR_INDEX_COMPACT_HEADROOM = float(os.getenv("VECTOR_INDEX_COMPACT_HEADROOM",
 #: having work to do — the pair of those two conditions is what let one
 #: table reach 13,657 versions and 267 GiB over 40 GiB of live data.
 VECTOR_INDEX_PRUNE_S = int(os.getenv("VECTOR_INDEX_PRUNE_S", "3600"))
+#: Small fragments that make a COMPACTION worth its cost. A stream of small
+#: writes leaves about one per commit (wikipedia's archive import: ~1/s,
+#: 2026-09-17), and every read and write pays for them — but compacting
+#: that 155 GiB table cost 40–51 minutes of ~10 cores, so it must not run
+#: for a handful. Separate from the version cleanup since the same day:
+#: `Table.optimize()` welds the two together, `pylance` reaches them apart.
+VECTOR_INDEX_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_COMPACT_FRAGMENTS", "4000"))
+#: Rows a compaction aims to put in each fragment it writes (lance's own
+#: default). Bounding the output is what keeps one pass from rewriting the
+#: table into a shape the next pass has to undo.
+VECTOR_INDEX_FRAGMENT_ROWS = int(os.getenv("VECTOR_INDEX_FRAGMENT_ROWS", "1048576"))
 # The well-known root where PACKS are mounted (pack-format.md). The create
 # dialog offered them to the `packed` plugin, boxed in attic/ (2026-09-14).
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))

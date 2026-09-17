@@ -15,6 +15,21 @@ tantivy>=0.24
 # deliberate act with a re-index, not a surprise from an unrelated build.
 PyStemmer==2.2.0.3
 lancedb>=0.15
+# The Lance dataset API behind lancedb, for the THREE JOBS lancedb's own
+# `Table.optimize()` welds into one call (operator, 2026-09-17). Without it
+# `to_lance()` raises, so `cleanup_old_versions` and `compact_files` — both
+# of which route through it — are unreachable, and dropping superseded
+# versions drags a full compaction behind it: 40–51 min of ~10 cores per
+# hour on wikipedia's 155 GiB table, while the index refresh those passes
+# should be making room for stayed 3.5x past its threshold (4.7M unindexed
+# rows against 1.34M). With it, versions are cleaned cheaply and often,
+# compaction is bounded per pass, and the refresh runs on its own trigger.
+#
+# PINNED, and not to the newest: the Python package must read the tables
+# lancedb's bundled Rust core writes, and lancedb 0.38 tests against
+# pylance 9.0.x (its own extra asks >=5.0.0b5). A format mismatch on a
+# 155 GiB table is not something to discover from an unrelated upgrade.
+pylance==9.0.1
 # Pinned deliberately: P1.1 signs a digest of a Parquet file, and pyarrow's
 # writer output is not byte-stable across versions (`created_by` embeds the
 # Arrow version, and row-group/dictionary/statistics behavior has moved

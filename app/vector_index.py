@@ -108,6 +108,24 @@ def _table(collection):
     return conn.open_table(embeddings.TABLE)
 
 
+def _dataset(tbl):
+    """The Lance dataset behind a lancedb table, or None where the Lance
+    package is absent.
+
+    `Table.optimize()` welds three jobs into one call — drop superseded
+    versions, compact fragments, fold new rows into the index — and they
+    earn their cost on different triggers. `cleanup_old_versions` and
+    `optimize.compact_files` reach two of them apart, and both route
+    through this handle, which raises without `pylance`. Measured on a
+    clone of wikipedia's 155 GiB table (2026-09-17): the cleanup alone took
+    18.5 s and dropped 2,176 versions and 479 MB, where the welded call had
+    been costing 40–51 minutes of ~10 cores every hour."""
+    try:
+        return tbl.to_lance()
+    except Exception:   # noqa: BLE001 — no pylance: the welded call still works
+        return None
+
+
 def _vector_indices(tbl) -> list:
     try:
         return [ix for ix in tbl.list_indices()
@@ -214,8 +232,16 @@ def stats(collection) -> dict | None:
     rows = tbl.count_rows()
     indices = _vector_indices(tbl)
     book_id_indexed = bool(_scalar_indices(tbl))
+    # fragments decide whether a COMPACTION is worth its cost (compact_due)
+    fragments = small_fragments = None
+    try:
+        fs = dict(tbl.stats())["fragment_stats"]
+        fragments, small_fragments = fs.get("num_fragments"), fs.get("num_small_fragments")
+    except Exception:   # noqa: BLE001 — an older table simply does not say
+        pass
     if not indices:
-        return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed}
+        return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed,
+                "fragments": fragments, "small_fragments": small_fragments}
     name = getattr(indices[0], "name", None)
     unindexed = None
     try:
@@ -226,7 +252,8 @@ def stats(collection) -> dict | None:
     return {"rows": rows, "indexed": True, "name": name,
             "type": str(getattr(indices[0], "index_type", "")),
             "unindexed_rows": unindexed,
-            "book_id_indexed": book_id_indexed}
+            "book_id_indexed": book_id_indexed,
+            "fragments": fragments, "small_fragments": small_fragments}
 
 
 def prune(collection, con=None, *, log=None) -> dict:
@@ -264,16 +291,50 @@ def prune(collection, con=None, *, log=None) -> dict:
 
     A NOTE ON THE CALL. Pruning and compaction have opposite disk
     profiles: pruning only deletes, compaction writes before it deletes.
-    They ought to be separable and in this lancedb they are not —
-    `cleanup_old_versions` is deprecated as of 0.21 and needs `pylance`,
-    which this image does not carry, so `optimize` (compact + prune +
-    index, one call) is the only entry point. That is why this function
-    still checks headroom at all; if a prune-only call becomes available,
-    the check belongs on `refresh` alone and this one can drop it.
+    They ought to be separable, and since 2026-09-17 (`pylance`, operator)
+    they are: `cleanup_old_versions` drops versions and touches nothing
+    else — 18.5 s on wikipedia's 155 GiB table against 40–51 minutes for
+    the welded `optimize()`, which was running EVERY HOUR and starving the
+    index refresh behind it. Compaction moved to `compact`, on its own
+    trigger. Without the Lance package this falls back to the welded call,
+    and only that path needs headroom.
     """
     tbl = _table(collection)
     if tbl is None:
         return {"pruned": False, "reason": "no table"}
+    keep = timedelta(hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H))
+    ds = _dataset(tbl)
+    if ds is not None:
+        before = _versions(tbl)
+        t0 = time.monotonic()
+        try:
+            # `delete_unverified` stays FALSE by omission: it would remove
+            # files Lance cannot prove are unreferenced, which is exactly
+            # the file a concurrent writer has written and not yet
+            # committed. Deleting only, so no headroom is needed.
+            st = ds.cleanup_old_versions(older_than=keep)
+        except Exception as e:                          # noqa: BLE001
+            msg = f"version prune skipped: {type(e).__name__}: {e}"
+            if con is not None:
+                db.log_event(con, "warn", "index", msg)
+            elif log:
+                log(msg)
+            return {"pruned": False, "reason": str(e)}
+        dt = time.monotonic() - t0
+        removed = int(getattr(st, "old_versions", 0) or 0)
+        freed = int(getattr(st, "bytes_removed", 0) or 0)
+        after = _versions(_table(collection) or tbl)
+        out = {"pruned": True, "seconds": round(dt, 1), "versions_before": before,
+               "versions_after": after, "versions_removed": removed,
+               "bytes_freed": freed}
+        if removed:
+            msg = (f"pruned {removed} superseded Lance version(s), {after} kept "
+                   f"({dt:.0f}s, {freed / 2**30:.1f} GiB)")
+            if con is not None:
+                db.log_event(con, "info", "index", msg)
+            elif log:
+                log(msg)
+        return out
     if not headroom_ok(collection, tbl):
         # `optimize` compacts as well as prunes (see the docstring), so it
         # does need headroom. What it must not have is a flat floor no
@@ -286,7 +347,6 @@ def prune(collection, con=None, *, log=None) -> dict:
         elif log:
             log(msg)
         return {"pruned": False, "reason": "low disk"}
-    keep = timedelta(hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H))
     before = _versions(tbl)
     v0 = _version(tbl)
     t0 = time.monotonic()
@@ -384,6 +444,75 @@ def headroom_ok(collection, tbl=None) -> bool:
     return free >= need
 
 
+def compact_due(st: dict | None) -> bool:
+    """Enough small fragments for a rewrite to earn its cost. One commit
+    leaves one fragment, and a stream of small writes makes them faster
+    than any pass retires them (wikipedia's import: ~1/s); every read and
+    write then pays for them. But compacting that table cost 40–51 minutes
+    of ~10 cores, so a handful is never worth it."""
+    if not st:
+        return False
+    small = st.get("small_fragments")
+    return small is not None and small >= config.VECTOR_INDEX_COMPACT_FRAGMENTS
+
+
+def compact(collection, con=None, *, log=None) -> dict:
+    """Merge the small fragments a stream of small writes leaves behind.
+
+    IT HOLDS THE TABLE while it runs, which `prune` never did. Compaction
+    rewrites fragments, and a writer committing underneath takes the
+    rewrite's commit away: two of wikipedia's passes died with "Retryable
+    commit conflict … Rewrite" after ~40 minutes of work each (2026-09-16).
+    `maintenance()` stands this collection's vector writers down for the
+    duration — a deferral, never an error, exactly as for a refresh — so
+    the work either lands or was never started.
+    """
+    tbl = _table(collection)
+    if tbl is None:
+        return {"compacted": False, "reason": "no table"}
+    if not headroom_ok(collection, tbl):
+        free = free_bytes(collection)
+        msg = (f"compaction deferred: {(free or 0) / 2**30:.0f} GiB free is under "
+               f"what compacting this table needs "
+               f"({config.VECTOR_INDEX_COMPACT_HEADROOM:.0%} of it); it writes the "
+               f"new fragments before it drops the old")
+        if con is not None:
+            db.log_event(con, "warn", "index", msg)
+        elif log:
+            log(msg)
+        return {"compacted": False, "reason": "low disk"}
+    before = stats(collection) or {}
+    ds = _dataset(tbl)
+    t0 = time.monotonic()
+    try:
+        with maintenance(collection):
+            if ds is not None:
+                ds.optimize.compact_files(
+                    target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS)
+            else:
+                tbl.optimize(cleanup_older_than=timedelta(
+                    hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
+    except Exception as e:                              # noqa: BLE001
+        # A compaction that loses its commit is not the caller's failure:
+        # the table is intact and merely more fragmented than it could be.
+        msg = f"compaction skipped: {type(e).__name__}: {e}"
+        if con is not None:
+            db.log_event(con, "warn", "index", msg)
+        elif log:
+            log(msg)
+        return {"compacted": False, "reason": str(e)}
+    forget(collection)
+    dt = time.monotonic() - t0
+    after = stats(collection) or {}
+    msg = (f"compacted {before.get('small_fragments')} small fragment(s) of "
+           f"{before.get('fragments')} into {after.get('fragments')} ({dt:.0f}s)")
+    if con is not None:
+        db.log_event(con, "info", "index", msg)
+    elif log:
+        log(msg)
+    return {"compacted": True, "seconds": round(dt, 1), "before": before, "after": after}
+
+
 def prune_due(collection) -> bool:
     """Once per VECTOR_INDEX_PRUNE_S per collection, in this process."""
     key = str(collection.lance_dir)
@@ -453,9 +582,17 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
                          f"vector index built ({out['type']}, {out['partitions']} partitions, "
                          f"{out['rows']} rows, {out['seconds']}s) — semantic queries probe instead of scan")
         return out
+    # THE INDEX BEFORE THE FRAGMENTS. An unindexed row is scanned by every
+    # query; a small fragment only makes reads and writes dearer. Run as one
+    # welded `optimize()` on a clock, the compaction always went first and
+    # the refresh starved: wikipedia sat at 4.7M unindexed rows against a
+    # 1.34M threshold while the hourly pass spent 40–51 minutes compacting
+    # (2026-09-17).
     if refresh_due(st):
         with maintenance(collection):
             return refresh(collection, con, log=log)
+    if compact_due(st):
+        return compact(collection, con, log=log)
     return None
 
 
@@ -497,9 +634,16 @@ def refresh(collection, con=None, *, log=None) -> dict:
             log(msg)
         return {"refreshed": False, "reason": "low disk", "free_gb": free / 2**30}
     before = stats(collection) or {}
+    ds = _dataset(tbl)
     t0 = time.monotonic()
-    tbl.optimize(cleanup_older_than=timedelta(
-        hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
+    if ds is not None:
+        # THE INDEX ONLY (2026-09-17): folding new rows in is what a
+        # refresh is for, and `optimize()` would compact the whole table
+        # on the way — the cost that kept this from running at all.
+        ds.optimize.optimize_indices()
+    else:
+        tbl.optimize(cleanup_older_than=timedelta(
+            hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
     forget(collection)
     dt = time.monotonic() - t0
     after = stats(collection) or {}

@@ -47,8 +47,12 @@ def _flat_top(collection, q, k=5):
 @pytest.mark.parametrize("kind", ["ivf_flat", "ivf_pq"])
 def test_build_probe_and_refresh(collection, monkeypatch, kind):
     vecs = _fill(collection, 600)
-    assert vector_index.stats(collection) == {"rows": 600, "indexed": False,
-                                              "book_id_indexed": False}
+    st = vector_index.stats(collection)
+    assert {k: st[k] for k in ("rows", "indexed", "book_id_indexed")} == {
+        "rows": 600, "indexed": False, "book_id_indexed": False}
+    # fragments ride the same call since 2026-09-17: `compact_due` reads
+    # its trigger from here, so a table that cannot say has none
+    assert st["fragments"] and st["small_fragments"] is not None
     assert not vector_index.has_index(collection)
     monkeypatch.setattr(config, "VECTOR_INDEX_TYPE", kind)
     out = vector_index.build(collection, partitions=4)
@@ -301,6 +305,154 @@ def test_refresh_is_skipped_when_the_disk_is_nearly_full(isolated_config, tmp_pa
     monkeypatch.setattr(vector_index, "stats", lambda coll: {"rows": 1})
     vector_index.refresh(c)
     assert called["optimize"] is True
+
+
+class _Cleanup:
+    def __init__(self, old_versions=0, bytes_removed=0):
+        self.old_versions, self.bytes_removed = old_versions, bytes_removed
+
+
+class _FakeDataset:
+    """The Lance dataset `to_lance()` hands back: the two jobs lancedb's
+    `optimize()` welds together, reachable apart."""
+
+    def __init__(self, calls, removed=0):
+        self.calls, self.removed = calls, removed
+        self.optimize = self
+
+    def cleanup_old_versions(self, older_than=None, **kw):
+        self.calls.append(("cleanup", older_than))
+        return _Cleanup(old_versions=self.removed, bytes_removed=self.removed * 1000)
+
+    def compact_files(self, **kw):
+        self.calls.append(("compact", kw.get("target_rows_per_fragment")))
+
+    def optimize_indices(self, **kw):
+        self.calls.append(("index", None))
+
+
+def _table_with_dataset(monkeypatch, vector_index, calls, *, removed=0, versions=10,
+                        pylance=True, fragments=(50, 40)):
+    class FakeTable:
+        version = 7
+
+        def list_versions(self):
+            return [None] * versions
+
+        def stats(self):
+            return {"fragment_stats": {"num_fragments": fragments[0],
+                                       "num_small_fragments": fragments[1]}}
+
+        def count_rows(self):
+            return 1000
+
+        def optimize(self, **kw):
+            calls.append(("welded", kw.get("cleanup_older_than")))
+
+        def to_lance(self):
+            if not pylance:
+                raise ImportError("The lance library is required to use this function.")
+            return _FakeDataset(calls, removed)
+    tbl = FakeTable()
+    monkeypatch.setattr(vector_index, "_table", lambda coll: tbl)
+    monkeypatch.setattr(vector_index, "free_bytes", lambda coll: 500 * 2**30)
+    return tbl
+
+
+def test_a_prune_drops_versions_and_compacts_nothing(isolated_config, tmp_path, monkeypatch):
+    """The two were one call, and the expensive half ran hourly while the
+    index refresh behind it starved. Measured on wikipedia's 155 GiB table
+    (2026-09-17): cleanup alone 18.5 s, the welded call 40–51 minutes."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    calls = []
+    _table_with_dataset(monkeypatch, vector_index, calls, removed=2176)
+    said = []
+    out = vector_index.prune(c, log=said.append)
+
+    assert [k for k, _ in calls] == ["cleanup"], "a prune must not compact"
+    assert out["versions_removed"] == 2176 and out["pruned"] is True
+    assert said and said[0].startswith("pruned 2176 superseded Lance version(s)")
+
+
+def test_without_the_lance_package_a_prune_still_works(isolated_config, tmp_path, monkeypatch):
+    """No pylance: `to_lance()` raises and the welded call is all there is."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    calls = []
+    _table_with_dataset(monkeypatch, vector_index, calls, pylance=False)
+    vector_index.prune(c, log=lambda m: None)
+    assert [k for k, _ in calls] == ["welded"]
+
+
+def test_a_compaction_waits_for_enough_small_fragments(monkeypatch):
+    from app import vector_index
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    assert not vector_index.compact_due({"small_fragments": 3999})
+    assert vector_index.compact_due({"small_fragments": 4000})
+    assert not vector_index.compact_due({"small_fragments": None})
+    assert not vector_index.compact_due(None)
+
+
+def test_a_compaction_holds_the_table_while_it_runs(isolated_config, tmp_path, monkeypatch):
+    """A writer that commits under a rewrite takes its commit away: two of
+    wikipedia's passes died with "Retryable commit conflict … Rewrite"
+    after ~40 minutes each (2026-09-16). A prune held nothing."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    calls, busy = [], []
+    _table_with_dataset(monkeypatch, vector_index, calls, fragments=(5000, 4800))
+    real = vector_index.maintenance
+
+    class watched(real):
+        def __enter__(self):
+            out = super().__enter__()
+            busy.append(vector_index.busy(c))
+            return out
+    monkeypatch.setattr(vector_index, "maintenance", watched)
+
+    out = vector_index.compact(c, log=lambda m: None)
+    assert out["compacted"] is True
+    assert busy == [True], "the writers must stand down for a rewrite"
+    assert [k for k, _ in calls] == ["compact"]
+    assert not vector_index.busy(c), "and start again after it"
+
+
+def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_path, monkeypatch):
+    """Both due: the index wins. An unindexed row is scanned by every
+    query; a small fragment only makes reads and writes dearer."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    steps = []
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 10_000_000, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 4_700_000, "small_fragments": 9_000})
+    monkeypatch.setattr(vector_index, "prune_due", lambda coll: False)
+    monkeypatch.setattr(vector_index, "refresh", lambda coll, con=None, log=None:
+                        steps.append("refresh") or {"refreshed": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
+                        steps.append("compact") or {"compacted": True})
+    vector_index.ensure(c)
+    assert steps == ["refresh"]
+
+    steps.clear()
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 10_000_000, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 0, "small_fragments": 9_000})
+    vector_index.ensure(c)
+    assert steps == ["compact"], "with the index current, the fragments get their turn"
 
 
 def test_a_prune_counts_what_it_removed_while_writers_keep_committing(
