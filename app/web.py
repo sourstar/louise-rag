@@ -704,7 +704,17 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
           SUM(CASE WHEN in_scope=1 AND embed_done=0 AND rdf_done=1 AND fts_done=1
                         AND {in_range} THEN 1 ELSE 0 END) arch_in_range_waiting,
           SUM(CASE WHEN in_scope=1 AND CAST(native_id AS INTEGER) > :span_top
-                        AND {NUMERIC_ID_SQL} THEN 1 ELSE 0 END) arch_past_range"""
+                        AND {NUMERIC_ID_SQL} THEN 1 ELSE 0 END) arch_past_range,
+          -- Of what lies OUTSIDE the range, the documents with NO TEXT:
+          -- `chunks` is written by the fts stage, so an indexed document
+          -- with none has nothing for an encoder to embed. Wikipedia's
+          -- redirects are that — a record of their target and no more —
+          -- and the card said all 30.9 M pages past the range were the
+          -- local encoder's work (2026-09-15). An UNINDEXED row is not
+          -- counted: its chunk count is unknown, never zero.
+          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND fts_done=1
+                        AND COALESCE(chunks, 0) = 0
+                   THEN 1 ELSE 0 END) arch_outside_empty"""
     return f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
@@ -1472,12 +1482,12 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     spans = declared_spans(archive)
     range_hi = spans[-1][1] if spans else None
     sums = ("arch_in_range", "arch_in_range_embedded", "arch_in_range_waiting",
-            "arch_past_range")
+            "arch_past_range", "arch_outside_empty")
     ranged = (counts is not None and range_hi is not None
               and counts.get("arch_range_hi") == range_hi
               and all(k in counts for k in sums))
-    in_range, in_range_embedded, waiting, past = (
-        (int(counts[k] or 0) for k in sums) if ranged else (None,) * 4)
+    in_range, in_range_embedded, waiting, past, outside_empty = (
+        (int(counts[k] or 0) for k in sums) if ranged else (None,) * 5)
     missing = max(0, in_range - in_range_embedded) if ranged else None
     return {
         "archive": collection.genesis_archive,
@@ -1518,6 +1528,10 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "past_note": archive.past_range if archive is not None else "",
         "outside_range": (max(0, int(counts.get("in_scope") or 0) - in_range)
                           if ranged else None),
+        # of those, the ones an encoder would find nothing to embed in:
+        # indexed and holding no chunk (a wikipedia redirect is a record of
+        # its target and no more). Never a document still to be indexed.
+        "outside_empty": outside_empty,
         # the local encoder's progress outside the archive
         "outside_embedded": (max(0, int(counts.get("embed_done") or 0) - in_range_embedded)
                              if ranged else None),

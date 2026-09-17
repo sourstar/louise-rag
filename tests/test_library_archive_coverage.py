@@ -35,8 +35,10 @@ def pubmed(isolated_config):
         (40_000_000, 1, 1),                      # past it: the local encoder's
         (40_000_001, 1, 0),
     ]:
+        # `chunks` as the fts stage writes it: these documents hold text.
+        # It decides what has nothing to embed, and the column defaults to 0
         con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,"
-                    "rdf_done,fts_done,embed_done) VALUES(?,?,?,?,?,1,1,?)",
+                    "rdf_done,fts_done,embed_done,chunks) VALUES(?,?,?,?,?,1,1,?,3)",
                     (f"pubmed:{nid}", "pubmed", str(nid), f"/x/{nid}", scope, embed))
     # the ledger, deliberately low: nothing on the row may read it
     con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,updated_at) "
@@ -180,10 +182,10 @@ def test_the_gap_on_the_card_is_the_gap_health_reports(pubmed):
     assert g["in_range_missing"] == health.archive_gap(con, pubmed).waiting == 2
 
 
-def _add(con, nid, *, fts=1, embed=0):
+def _add(con, nid, *, fts=1, embed=0, chunks=3):
     con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
-                "fts_done,embed_done) VALUES(?,?,?,?,1,1,?,?)",
-                (f"pubmed:{nid}", "pubmed", str(nid), f"/x/{nid}", fts, embed))
+                "fts_done,embed_done,chunks) VALUES(?,?,?,?,1,1,?,?,?)",
+                (f"pubmed:{nid}", "pubmed", str(nid), f"/x/{nid}", fts, embed, chunks))
     web.invalidate_counts()
 
 
@@ -264,6 +266,25 @@ def test_past_the_range_says_what_this_archive_means_by_it(isolated_config, monk
     web.invalidate_counts()
     assert ("2 past id 19: pages read from the dumps, which the archive does not hold; "
             "only the local encoder can embed them, and embedding is off") in html
+
+
+def test_a_document_with_nothing_to_embed_is_not_the_encoders_work(pubmed):
+    """A record with no text has nothing for an encoder to embed. Wikipedia's
+    redirects are that — a record of their target and no more — and the card
+    called all 30,940,006 pages past the range the local encoder's work
+    (2026-09-15). `chunks` is the fts stage's, so only an INDEXED document
+    can be known to hold none; one still to be indexed is unknown, not zero."""
+    con = db.connect(pubmed)
+    _add(con, 40_000_002, chunks=0)                 # indexed, no text
+    _add(con, 40_000_003, fts=0, chunks=0)          # not indexed yet
+    counts = web._document_counts_query(pubmed)
+    assert counts["arch_outside_empty"] == 1
+    g = web._genesis_state(con, pubmed, counts)
+    assert (g["past_range"], g["outside_range"], g["outside_empty"]) == (5, 5, 1)
+    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "off"})
+    assert (f"5 past id {HI_TEXT}: newer than the archive; 1 with nothing to embed; "
+            f"only the local encoder can embed the rest, and embedding is off") in html
+    web.invalidate_counts()
 
 
 def test_the_first_cold_render_after_the_deploy_says_counting(pubmed, monkeypatch):
