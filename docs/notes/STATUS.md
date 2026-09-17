@@ -2205,15 +2205,23 @@ The import is healthy and paced by indexing as designed: 2,750 passes over
 422 shards, 6.5 revisits each, 2.9 % of the documents it met not yet
 indexed, 54 empty passes, 6.6 vectors a document.
 
-WHAT COSTS THE NODE: the worker holds ~10 of 12 cores (load 17.3), and
-9.92 of them are in `lancedb-tokio` threads (120 of 137 cumulative CPU
-minutes); tantivy ≈ 0, and the parse pool's eleven children idle at 0.7 %
-each — parsing is NOT the bottleneck. No single query shape explains it:
-the import's `book_id IN (…)` lookup costs ~1 core (0.36–0.58 s for 100–500
-ids) and its delete-shaped `book_id IN (…) AND id IN (…)` 1.0–1.3 cores
-(0.97–3.69 s for 600–6,252 ids). It is the write path as a whole: ~1.9
-commits/s, ~1 new fragment/s, 486 vectors/s into a 66.8 M-row, 155 GiB
-table. The IVF-PQ index falls behind at exactly the write rate (4.7 M
+WHAT COSTS THE NODE — CORRECTED an hour later, having first credited it to
+the import: the worker holds ~10 of 12 cores (load 17.3), and 9.92 of them
+are in `lancedb-tokio` threads (120 of 137 cumulative CPU minutes); tantivy
+≈ 0, and the parse pool's eleven children idle at 0.7 % each — parsing is
+NOT the bottleneck. Most of it is the HOURLY OPTIMIZE, not the import: the
+pass that began after the 05:39 restart wrote a 2.45 GB fragment (with
+196 and 173 MB siblings) at 05:43, touched 647 files and 773 MB in ten
+minutes, and the process read 57 MB/s while writing 0.1 MB/s — a
+compaction's profile, not a writer's. The import's own work is small
+beside it: its `book_id IN (…)` lookup ~1 core (0.36–0.58 s for 100–500
+ids), its delete-shaped `book_id IN (…) AND id IN (…)` 1.0–1.3 cores
+(0.97–3.69 s for 600–6,252 ids), and its writes ~1.9 commits/s, ~1 new
+fragment/s, 486 vectors/s into a 66.8 M-row, 155 GiB table. WHAT MISLED
+ME: unindexed rows climbed at the full write rate throughout, which rules
+out only the INDEX phase of `optimize()` — never the compaction that runs
+before it. A pass logs nothing until it ends, so "no line since the
+restart" is not "nothing running". The IVF-PQ index falls behind at exactly the write rate (4.7 M
 unindexed rows and climbing, +486/s), and reclaiming that costs refreshes
 of 1,672–2,525 s and prunes of 2,371–3,061 s — two of which lost their
 commit to the writer ("Retryable commit conflict … Rewrite", 2026-09-16).
@@ -2222,9 +2230,22 @@ Those unindexed rows are also scanned by every wikipedia search.
 At these rates layer 1 needs ~45 h more at 77 docs/s (~77 h at the
 long-run 45 docs/s), and layer 2's 30.9 M pages ~110 h of indexing after
 it — a week of pipeline time, and probably less for layer 2, whose
-redirects carry no text. Nothing here is a fault; the question is whether
-the archive import is worth ~10 cores, or whether it should yield more of
-them to the collections a person is waiting on.
+redirects carry no text.
+
+THE FAULT IS THE CADENCE, not the import. `prune()` calls
+`tbl.optimize(cleanup_older_than=…)`, which in this lancedb welds three
+jobs into one: version cleanup, compaction, index update. They pay off on
+different triggers — cleanup on the 2 h retention window (nothing younger
+can be freed, so an hourly run is mostly wasted), compaction on fragment
+count, the index refresh on unindexed rows (2 % of the table). Run hourly
+as one call, the expensive half always goes first and the valuable half
+starves: 4.7 M unindexed against a 1.34 M threshold, while every wikipedia
+search scans those rows. Two passes also lost their commit to the importer
+("Retryable commit conflict … Rewrite") and threw away ~40 minutes each,
+because a prune — unlike a refresh — does not mark the collection busy, so
+writers keep committing under it. Operator, 2026-09-17: add `pylance`
+(`to_lance()` raises without it, which is what made `cleanup_old_versions`
+and `compact_files` unreachable) and split the three.
 
 ### What is waiting on the operator
 
