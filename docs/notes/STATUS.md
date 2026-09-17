@@ -2175,6 +2175,18 @@ target in `extra` (operator): 92 % of 330 sampled point to an article,
 text and its catalog fields (title, authors, subjects — for a dump-read
 article, its categories); nothing else in `extra` is searched.
 
+**A record with no text is not the encoder's work (2026-09-17).** The
+same card called all 30,940,006 pages past wikipedia's range the local
+encoder's, and most of them are redirects — records of their target and
+no more. The counts scan gains one SUM (`arch_outside_empty`: in scope,
+outside the range, indexed, no chunk), and the line now reads
+"…; N with nothing to embed; only the local encoder can embed the rest".
+`chunks` is the fts stage's, so a document still to be indexed is not
+counted — unknown, never zero. Live: pubmed 8,576 of its 4,538,777;
+wikipedia 0 of 30,940,006, because none of its dump layer has reached fts
+yet (its rdf/fts are still inside layer 1), so that number grows as
+indexing arrives.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
