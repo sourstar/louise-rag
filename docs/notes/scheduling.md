@@ -281,6 +281,23 @@ group already holds, one commit for what it embedded (`held_chunks`,
 `write_pending`). A write's cost includes what it leaves for the reads
 after it.
 
+**14. One call doing three jobs, scheduled by the dearest of them.**
+`Table.optimize()` welds version cleanup, compaction and the index update
+together, and the hourly "prune" called it: 40–51 minutes of ~10 cores per
+pass on wikipedia's 155 GiB table, while the half that mattered never ran
+— 4.7 M unindexed rows against a 1.34 M threshold, scanned by every search
+of that collection. Three passes in two days were also thrown away
+("Retryable commit conflict … Rewrite", "Too many concurrent writers"),
+because a prune marked nothing busy and the archive import kept committing
+underneath a rewrite. Cleanup alone, once reachable, took 18.5 s.
+→ Jobs with different triggers are different jobs: cleanup on the
+retention window, compaction on fragment count, the index on unindexed
+rows. Schedule each on its own, run the cheap one often, and let the one
+that rewrites data hold the table while it does (`maintenance()`).
+Diagnosing it needs care too: a pass logs nothing until it ends, and
+unindexed rows climbing during one rules out only its index phase, never
+the compaction before it.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first
@@ -367,7 +384,7 @@ means when N collections are all busy at once:
 | disk | nothing | N archive passes read N × 437 MB shards concurrently; on the HDD pool that is thrash |
 | manifest write lock | per collection | no cross-collection effect — correct by construction |
 | vector store | per collection, MVCC | no cross-collection effect since amendment 52 |
-| index maintenance | one thread, one collection at a time | a 41-minute compaction makes the other collections wait their turn — one slow table delays everyone's index freshness |
+| index maintenance | one thread, one collection at a time | a compaction still makes the others wait (40–51 min on a 155 GiB table), but since 2026-09-17 it runs on a fragment trigger rather than hourly, and the version cleanup it used to drag along takes ~18 s |
 
 So the honest summary: **fetch is scheduled, everything else is
 first-come-first-served.** It has held up so far because the collections

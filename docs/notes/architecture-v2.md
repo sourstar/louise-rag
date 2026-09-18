@@ -1202,8 +1202,11 @@ the live deployment:
     ordered layers in the space id only when more than one); and the
     LOCAL VECTOR INDEX (`app/vector_index.py`: Lance IVF-PQ by default —
     IVF-FLAT by knob — built by the worker off the GPU loop once a table
-    reaches `VECTOR_INDEX_MIN_ROWS`, new rows folded in by `optimize`
-    when `VECTOR_INDEX_REFRESH_ROWS` accumulate, the search probing with
+    reaches `VECTOR_INDEX_MIN_ROWS`, new rows folded in when
+    `VECTOR_INDEX_REFRESH_ROWS` accumulate — by `optimize_indices` since
+    2026-09-17, version cleanup, compaction and the index update being
+    three jobs on three triggers rather than one hourly `optimize()` —
+    the search probing with
     `nprobes` + `refine_factor` whenever an index exists, `index vector
     build|status`). Also: Wikipedia's fetch caches the last decompressed
     multistream chunk (one slot) — every stage walks pages in stream
@@ -1263,7 +1266,17 @@ the live deployment:
     and a refresh is due at `VECTOR_INDEX_REFRESH_ROWS` AND
     `VECTOR_INDEX_REFRESH_FRACTION` of the table. Each rule is pinned by
     a regression test that counts the work (lookups, row groups) rather
-    than timing it.
+    than timing it. AMENDED 2026-09-17 (`pylance`, operator): the version
+    prune no longer drags a compaction with it — `cleanup_old_versions`
+    deletes and nothing else (18.5 s on a 155 GiB table against 40–51
+    minutes for the welded call), compaction is its own job on a fragment
+    trigger (`VECTOR_INDEX_COMPACT_FRAGMENTS`) and marks the collection
+    busy as a refresh does, and `ensure` runs the index before the
+    fragments. The welded `optimize()` had been running hourly and
+    starving the refresh behind it: wikipedia sat at 4.7M unindexed rows
+    against a 1.34M threshold, scanned by every one of its searches, while
+    three passes in two days were thrown away by commit conflicts with the
+    archive import that a prune, marking nothing busy, could not exclude.
 46. **§8 / invariant 9 — ONE license gate, packs included (operator rule,
     2026-08-27: "the license that applies to the corpus and its
     pre-embeddings applies to the pack").** The acquisition gate covered

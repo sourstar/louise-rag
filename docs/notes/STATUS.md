@@ -2247,6 +2247,79 @@ writers keep committing under it. Operator, 2026-09-17: add `pylance`
 (`to_lance()` raises without it, which is what made `cleanup_old_versions`
 and `compact_files` unreachable) and split the three.
 
+**Prune, compact and refresh split — deployed 2026-09-18 06:28 UTC
+(e4437a9, image `f21ddd6…`).** The operator authorised `pylance`, which is
+what made the three reachable apart: `to_lance()` raises without it, and
+`cleanup_old_versions` and `compact_files` both route through it. Verified
+first on a ZFS clone of the live table — lancedb 0.38 and lance 9.0.1 read
+it identically before and after a lance-side write, and the cleanup alone
+took 18.5 s to drop 2,176 versions, 479 MB and 124 data files.
+
+What it replaced, measured over two mornings on wikipedia's 155 GiB /
+70.7M-row table: the hourly welded `optimize()` held ~10 of 12 cores (631
+CPU-minutes in `lancedb-tokio` in one hour; 1,099 % on the container),
+read 48–57 MB/s while writing almost nothing, and finished nothing —
+three passes in two days died as "Retryable commit conflict … Rewrite" or
+"Too many concurrent writers", because a prune marked nothing busy and the
+archive import kept committing underneath a rewrite. Behind it the index
+starved: 4.7M unindexed rows on 2026-09-17 and 8,626,627 by the next
+morning, against a 1.41M threshold, every one of them scanned by every
+wikipedia search.
+
+Now: `prune` cleans versions only (no compaction, no headroom test — it
+only deletes, and on a tight pool it is the work that relieves it);
+`refresh` calls `optimize_indices` and nothing else; `compact` is its own
+job on a fragment trigger (`VECTOR_INDEX_COMPACT_FRAGMENTS`, 4,000 small)
+and holds the table through `maintenance()` so writers stand down instead
+of taking its commit; and `ensure` runs the index before the fragments.
+The welded call remains as the fallback where lance is absent, which is
+the only path that still needs headroom — a test pins each half.
+`list_versions()` is gone from the cleanup path too: 10.3 s on wikipedia's
+7,891 manifests, which would have doubled an 18.5 s cleanup to fill in a
+log line (`CleanupStats` already says what went).
+
+Straight after the deploy the worker fell from 1,099 % to 190 % CPU, with
+1.7 CPU-minutes of `lancedb-tokio` in its first two minutes against 631 in
+the hour before, and the disk work became the useful kind: 143 MB/s read,
+54 MB/s written, wikipedia importing es/037 and indexing 1,247–2,340
+documents a commit.
+
+**What it did, live (2026-09-18).** The NAS was off overnight and came
+back at 05:07 UTC; by 06:16 the old code had wikipedia at 8,626,627
+unindexed rows, 3,269 fragments and one maintenance pass running 67
+minutes with nothing to show — the third such pass in two days, the
+previous one having ended at 06:39 the day before as "Too many concurrent
+writers … retry_timeout of 30 s". The split deployed at 06:28. Within
+roughly twelve minutes wikipedia's unindexed rows fell to 2,084,583 — the
+6.5M the old cadence had never got to — and pubmed's fragments fell from
+1,547 to 207. Neither cleanup logged anything, correctly: no version on
+either table was older than the 2 h window (oldest 1.4 h, the node having
+just rebooted), so there was nothing to drop. Compaction stayed out of the
+way, as intended, until the fragment trigger.
+
+TWO THINGS STILL OPEN, recorded rather than guessed at. First, no
+`info:index` line has appeared at all since the deploy, so the fold was
+either an `optimize_indices` still in flight (it commits as it goes and
+logs only when it returns) or Lance's own background maintenance — pubmed
+compacted without any trigger of ours firing, which our code cannot
+explain. Second, `lance_backgroun` threads hold ~6–8 cores continuously
+(118.9 CPU-minutes in 19 minutes) while no index file is written and the
+worker holds no open handle on either table; the plausible reading is
+per-commit BTREE maintenance on Lance's runtime under an import committing
+about twice a second, but that is a hypothesis, not a measurement. Both
+want an hour with `optimize_indices` instrumented before anything is
+concluded.
+
+A THIRD DEFECT, fixed the same morning: `maintenance()` never actually
+stood writers down — `worker._vector_writes_allowed` returned True for
+every kind of maintenance (amendment 52, deliberately, because a
+41-minute refresh reached every few minutes left a collection idle most of
+its life). So the compaction's exclusivity, which is the whole reason the
+old passes lost their commits, did not exist. `vector_index.rewrite` now
+marks a FRAGMENT REWRITE specifically, and the writer gate defers for that
+and nothing else: builds and refreshes keep their concurrency, a
+compaction — rare by construction — gets the table to itself.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
