@@ -2375,8 +2375,31 @@ the kernel lines at 06:48:38 and 07:07:56 UTC: a staging check and a probe.
   deploy checks and test runs; a long-running worker meets it once per stop.
 - No data is touched, and no newer lancedb exists: `lancedb>=0.15`
   resolves to 0.38.0.
-- Anything that scripts on a louise exit code must read 139 after a clean
-  run as this, until lancedb fixes it.
+- Worked around the same day in `app/process_exit.py`. `python -m
+  app.worker`, `app.cli` and `app.louise` run the parts of a normal exit
+  that anyone can observe (threads joined, atexit callbacks, output
+  flushed), then leave with `os._exit`, so the teardown never happens.
+- Tests pin the behaviour. A child with a `__del__` shows the teardown is
+  skipped; the control run through `sys.exit` shows the probe works.
+  Twelve processes that searched a Lance table all exit 0.
+
+**Every process we ship now has its SIGTERM behaviour in the suite**
+(`tests/test_process_signals.py`):
+- The real worker, mid-round, exits 130 with "worker stopped (signal)".
+- The real web drains, then reports the signal.
+- Every image under `deploy/` either runs uvicorn or runs a script that
+  handles SIGTERM itself.
+- `web` and `worker` run under an init.
+
+The audit of the other collections is in the suite too
+(`tests/test_reader_thread_safety.py`):
+- wikipedia's archive opens a new reader for every read.
+- normattiva reads its cached zips under a lock.
+- gutenberg keeps nothing open.
+
+`tests/test_invariant_guards.py` confines Lance to embeddings,
+vector_index and spaces: one layer and one maintenance regime for every
+collection.
 
 ### What is waiting on the operator
 

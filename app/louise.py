@@ -1681,4 +1681,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from app import process_exit
+    process_exit.run(main)

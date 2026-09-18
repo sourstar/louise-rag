@@ -11,6 +11,8 @@ the moment it drifts.
 - Invariant 9 (license gates): the acknowledgement is sha256 over the
   terms text, so TERMS.txt is byte-exact — a CRLF checkout would silently
   invalidate every recorded ack. .gitattributes guards it; this asserts it.
+- Lance: only embeddings, vector_index and spaces open it — one layer,
+  one maintenance regime, for every collection.
 - Logging: every stdout line names its collection (db.ManifestConnection),
   because seven collections share one worker stdout.
 """
@@ -32,6 +34,23 @@ def test_app_never_imports_a_gpu_stack():
     offenders = [str(p.relative_to(APP.parent))
                  for p in APP.rglob("*.py") if _GPU_IMPORT.search(p.read_text(encoding="utf-8"))]
     assert offenders == [], f"invariant 7: GPU stack imported by {offenders}"
+
+
+# Lance is ONE layer for every collection: vectors are written by
+# embeddings, maintained (prune, compact, refresh) by vector_index, and
+# checked against the Codex by spaces. A plugin or stage that opened Lance
+# itself would be a second maintenance regime nobody schedules.
+_LANCE_LAYER = {"app/embeddings.py", "app/spaces.py", "app/vector_index.py"}
+_LANCE_TOUCH = re.compile(
+    r"^\s*(?:import|from)\s+(?:lancedb|lance)\b|lancedb\.connect\(|\.to_lance\(",
+    re.MULTILINE)
+
+
+def test_lance_is_managed_in_one_place_for_every_collection():
+    touching = {p.relative_to(APP.parent).as_posix()
+                for p in APP.rglob("*.py") if _LANCE_TOUCH.search(p.read_text(encoding="utf-8"))}
+    assert touching - _LANCE_LAYER == set(), \
+        f"Lance opened outside the common layer: {sorted(touching - _LANCE_LAYER)}"
 
 
 def test_admin_token_file_wins_over_the_env_value(tmp_path):
