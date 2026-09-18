@@ -11,8 +11,8 @@ when every encoder was a llama.cpp build, and it is the server
 *Revised the same day. The first version ruled out every all-in-one
 design because `space_id` hashes the serving image's digest (02 §2.4).
 The operator: the specification is in progress and has one user, so a
-rule that gets in the way is amended, not obeyed. §5 names the
-amendment this proposal needs.*
+rule that gets in the way is amended, not obeyed. §5 records the
+amendment, now made.*
 
 ## 1. What runs today
 
@@ -109,22 +109,37 @@ groups:
 - **Which models are preloaded is desired state** (the file). Load and
   unload at runtime are overrides that a restart resets (invariant 10).
 
-## 5. The amendment it needs
+## 5. The amendment
 
-Under 02 §2.4 as written, `space_id` hashes the digest of the image that
-serves the encoder. One image serving every model changes digest
-whenever any runtime or model server changes, and that would re-key
-every space.
+**Settled 2026-09-19** (specs on `main`, `0d85f7f`, operator's choice).
+The first draft of this section was wrong on one point: rebuilding the
+image never re-keyed an existing collection, whose Codex is fixed. It
+would only have forced every endpoint through the gate again. What the
+specs now say:
 
-The need behind the rule is real. A moving `:server-intel` tag once
-corrupted vectors for days, because an encoder's vectors depend on the
-build. The proposal is to keep that need and move where it is pinned:
-- `space.encoder` names the **runtime build**, e.g. `llama.cpp b10630
-  sycl` or `torch 2.13 xpu`, plus the weights digest;
-- the pool image pins those builds;
-- the calibration gate (03 §3.3) catches a build that drifts.
+- **The engine.** `space.encoder.engine` = `{name, build, variant,
+  image, args, env, device}`: the tested run, frozen inside
+  `collection_id` so anyone can reproduce the reference (09 §9.3). For
+  this pool:
+  - `image` is the pool image;
+  - `args` is the model entry's `cmd`, with `${WEIGHTS}` and `${PORT}`
+    left as placeholders;
+  - `device` is the Arc or the CPU.
+- **The space.** `space_id` hashes the weights and the settings, never
+  the engine. A newer engine or pool build joins by passing the gate
+  (03 §3.3).
+- **The fingerprint.** A hash of the endpoint's vectors for 16 fixed
+  calibration texts, recorded at `embedder check --accept`. It is taken
+  again after every batch, and the batch commits only on equality. It
+  replaces `app/verify/backend_gate.py`'s probe baseline and its 0.995
+  cosine threshold. A pool that reloads a model with a different `cmd`
+  is caught at the next batch boundary.
 
-Affects 02 §2.4, 09 §9.3 and `app/hold/codex.py`. Operator's decision.
+Code to follow on `louise`:
+- `app/hold/codex.py`: Codex version 3 and the new `space_id`;
+- the version bumps in the bundle header, attestation, digest and
+  calibration objects;
+- the fingerprint in place of the backend gate.
 
 ## 6. Sequential or concurrent
 
