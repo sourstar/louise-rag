@@ -143,14 +143,25 @@ have. An identifier that resolves to no reference row and no record is
 returned as *unresolved*; it never produces an empty fact.
 
 **Translation is an expand step, off by default.** When it is on, the
-peer translates the query into each language its text indexes hold,
-using its chat model, and runs the text leg once per variant; the
-record's rank in the leg is its best rank across the variants. A
-variant is a query, not a leg: a collection indexed in five languages
-casts no more votes than one indexed in one. The response lists the
-translations used. It is turned on per request and by nothing else:
-`translate: true` on `louise_search` (§5.4), `--translate` on `ask
-search` (07 §7.3).
+peer translates the query into the MAIN languages its text indexes
+hold — each language with an index of its own — and, when the request
+asks for every language, into every language they hold; it runs the
+text leg once per variant; the record's rank in the leg is its best
+rank across the variants. A variant is a query, not a leg: a collection
+indexed in five languages casts no more votes than one indexed in one.
+The peer translates with its translation model (`TRANSLATE_URL`, 07
+§7.8) where it has one, and with its chat model where it has not; the
+response lists the translations used and which model made them. It is
+turned on per request and by nothing else: `translate: true` on
+`louise_search` (§5.4), `--translate` on `ask search` (07 §7.3); every
+language is `all_languages: true` / `--all-languages`, or `lang:all` in
+the query.
+
+**A query may limit the languages of what it returns.** `lang:de` (or
+`lang:de,fr`) in the query, or an instruction the peer reads in it ("only
+texts in German"), restricts every leg to records written in those
+languages. It is a filter like any other: it narrows, never boosts, and
+the response names it.
 
 ## 5.3 What a result carries
 
@@ -277,7 +288,7 @@ platform image and change only with it:
 
 ```
 louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
-              as_of?, freshness?, translate?)
+              as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}

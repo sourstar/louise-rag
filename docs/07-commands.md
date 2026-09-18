@@ -58,7 +58,8 @@ one.
 
 ```
 louise hold
-  collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
+  collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
+                                                                       write a Codex; print its id
               derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
@@ -111,7 +112,7 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate] [--<facet> VALUE | --not-<facet> VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--<facet> VALUE | --not-<facet> VALUE …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); a facet flag restricts the legs and never ranks (§5.2, §5.7)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
@@ -598,7 +599,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `EMBED_URL`, `RERANK_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
 
@@ -616,9 +617,12 @@ tier; a value shown anywhere else comes from that resolution too.
 `NODE_KEY_PATH` unset means this peer cannot sign — no bundles, no
 attestations, no `share` of its own work; import, check and search work
 without it. `ADMIN_TOKEN_FILE` unset means the `hold` and `node` routes
-answer 401 (§7.4). `EMBED_URL` unset means everything that needs an
-encoder — `vectors build`, T3, T4, the vector leg of a search — defers
-(exit 3) unless a collection's file names its own endpoint; `CHAT_URL`
+answer 401 (§7.4). There is no default encoder: a collection names
+its own in its file's `[encoder]`, and a file that names none is a
+non-compliant collection — refused, not served, shared or searched, the
+reason named by `hold collection show` — and everything that would need
+its encoder (`vectors build`, T3, T4) defers (exit 3). `TRANSLATE_URL`
+unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own. Secrets are named by path only — the key,
@@ -636,7 +640,6 @@ line or a message.
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 8000                   # the reranker's bound (05 §5.6)
-[encoder_defaults.pubmed]   url = "http://nas:30440"    # per plugin; a collection's own [encoder] wins
 ```
 
 **`collections/<name>.toml`** — one held collection; the file existing
@@ -650,7 +653,7 @@ kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
 share  = true
 
-[encoder]
+[encoder]                                      # required: a collection names its own encoder, there is no default
 url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
 
@@ -659,12 +662,12 @@ url = "http://nas:30447/v1/rerank"             # the full endpoint
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 ```
 
-The encoder endpoint resolves in this order, each a fallback for the one
-before it, never an override: the collection's `[encoder]`, then
-`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. The
-reranker resolves the same way, without a per-plugin tier: the
-collection's `[reranker]`, then `RERANK_URL`; with neither, the list keeps
-its fused order and says so (05 §5.6). `embed
+The encoder endpoint is the collection's `[encoder]` and nothing else: a
+node has no default encoder, and a file that names none is refused
+(operator, 2026-09-18). `hold collection create` writes the endpoint it
+was given (`--encoder`) into the file it creates. The reranker resolves
+the collection's `[reranker]`, then `RERANK_URL`; with neither, the list
+keeps its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
