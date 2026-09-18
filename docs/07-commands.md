@@ -60,13 +60,13 @@ one.
 louise hold
   collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
                                                                        write a Codex; print its id
-              derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
+              derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
-              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-image D --encoder-weights D]
+              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-weights D --engine FILE]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
@@ -86,8 +86,9 @@ louise hold
               list <collection>
   embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept keeps the passing run's signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
-              calibrate --encoder-image D --encoder-weights D [--against IMAGE:WEIGHTS …] [--set SHA256]
-                                                                       the tolerance a space can bear, measured between the reference build and each --against build
+              calibrate --encoder-weights D --engine FILE [--against FILE …] [--set SHA256]
+                                                                       the tolerance a space can bear, measured between the reference engine and each --against
+                                                                       encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
@@ -133,8 +134,8 @@ louise dev                                                             operator 
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   migrate pack <name> --recipe FILE [--platform-image D]               give a pre-Codex pack its Codexes and first snapshot (§7.6); writes.
-                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder image and
-                                                                       weights, tolerance, work, validation, descriptive — and the calibration set is embedded per space
+                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder's weights
+                                                                       and engine, tolerance, work, validation, descriptive — and the calibration set is embedded per space
                                                                        as `create` does; the first space named is the root, the others `derived_from` it
   adopt <pack-dir> <collection>                                        the one-time move of a pre-Codex pack's vectors and index into the collection's drag; writes
   refs-sync            reference tables from their origins; writes
@@ -231,10 +232,13 @@ reader needs at the command line:
   it has no effect on a failing run. It stores no vectors: the statement
   already carries the seed, so anyone can reproduce the sample and
   recheck the verdict, and a 512-row baseline beside it would be a second
-  answer to a question the statement answers. `vectors build` and
-  `share contribute` refuse (exit 2) without a passing check for this
-  collection's space on the configured endpoint; the node runs the check
-  before the first shard of a round.
+  answer to a question the statement answers. Of the endpoint's output it
+  keeps only the fingerprint (03 §3.3), a hash. `vectors build` and
+  `share contribute` refuse (exit 2) without a current statement for
+  this collection's space on the configured endpoint (09 §9.12). The node
+  takes the fingerprint before the first shard of a round and after
+  every batch, and runs the whole check again only when the fingerprint
+  differs.
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
   fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
@@ -451,7 +455,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
-| `backend check` / `rebaseline` | `hold embedder check` / `--accept` |
+| `backend check` / `rebaseline` | `hold embedder check` / `--accept`; the probe baseline and its cosine threshold become the statement's fingerprint, compared for equality (03 §3.3) |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
@@ -530,9 +534,10 @@ facet takes `FROM..TO`, either end omitted for open.
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
 combined with `--slice`. `--space` and `--work` take a TOML holding
-that Codex block in the form 09 §9.3 fixes; `--encoder-image` and
-`--encoder-weights` are shorthand for a `--space` file changing only
-those two digests, and any other field a new encoder needs — `dim`,
+that Codex block in the form 09 §9.3 fixes; `--encoder-weights` and
+`--engine` are shorthand for a `--space` file changing only
+`space.encoder` — the weights digest, and the engine as a TOML file in
+09 §9.3's form — and any other field a new encoder needs — `dim`,
 `ctx`, `pooling`, `normalise`, `query`, `tolerance` — is given in
 `--space`, the calibration and envelope being computed from the named
 encoder as `create` computes them.
@@ -582,7 +587,7 @@ signal does not shorten that. The unit per stage:
 | `records fetch`, `share fetch` | the current file, at byte granularity — a checkpoint mid-file, the byte offset committed |
 | `records build` | the document; a shard cut short is re-cut on resume |
 | `snapshot create` | atomic: the file is written last and is there entire or not at all |
-| `vectors build` | the batch: the chunks in flight to the encoder |
+| `vectors build` | the batch: the chunks in flight to the encoder, committed only when the fingerprint taken after it equals the statement's (03 §3.3) — otherwise dropped, a deferral |
 | `vectors import`, `share contribute` | the bundle, marked applied in the same transaction as its last row |
 | `index build` | the shard |
 | `check`, `share attest` | the sampled shard; an attestation is written only for a completed check |
@@ -655,7 +660,10 @@ share  = true
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
 url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
+engine = "engines/medcpt-article-b10630.toml"  # the engine this endpoint runs, in 09 §9.3's form; absent = the Codex's own.
+                                               # The statement names it; the fingerprint holds the endpoint to it
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
+query_engine = "engines/medcpt-query-b10630.toml"   # the same, for the query side
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint

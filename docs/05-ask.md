@@ -59,6 +59,18 @@ a legal query can run over the Gazzetta and the Official Journal
 together and rank them against each other. Within a space, fusion is
 one pass: every leg of every collection in the space enters the same
 sum, and a collection's text index contributes to its space's list.
+
+Comparable is checked, not assumed. Two creators who chose the same
+weights and settings on different engines share a space and pin
+different reference vectors (02 §2.4). Their collections are searched
+as one list only once their references agree. A peer establishes that
+once, with no encoder: it runs the gate of 03 §3.3 in both directions,
+each collection's reference vectors standing in for a peer's run
+against the other's reference, `tolerance` and `quorum`. Each draw is
+seeded with `H` of the two `collection_id`s concatenated in byte order,
+so every peer reaches the same verdict. Two collections that pin the
+same `calibration.vectors` agree by construction. Two that disagree are
+searched as two spaces, and `hold collection show` says why.
 Collections in different spaces are searched separately and presented
 separately — the sister of §2.7 is a different list, never merged with
 its mother's. A mixed list would have no single question behind it and

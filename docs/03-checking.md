@@ -20,7 +20,7 @@ when its cosine against a compliant encoder's output for the same chunk
 is at least the Codex's `tolerance` — a statistical statement, sampled,
 never exhaustive in practice. The encoder on the other side of that
 comparison is the checking peer's own, admitted by the gate of §3.3:
-nobody holds the reference build's output for an arbitrary chunk. Two
+nobody holds the reference engine's output for an arbitrary chunk. Two
 compliant builds can therefore sit twice as far apart as either sits
 from the reference, and the tolerance is chosen knowing that (§3.3). A
 cosine is computed in f32: both vectors are upcast from the space's
@@ -130,13 +130,14 @@ is the Codex's `space.calibration.quorum`, `{n: 16, min_pass: 12}`: the
 run passes when, over n texts drawn from the set by the seeded rule of
 §3.2, at least `min_pass` reach cosine ≥ `tolerance` against their
 reference vector and the median of those n does too. This is the only
-admission test, and it is per combination — a new driver, a new build,
-a new quantisation is a new test. The worker re-runs it before every
-embedding session for a collection and whenever the endpoint reports a
-different build or model identity than the last accepted run; a failure
+admission test, and it is per combination — a new engine, a new build,
+a new device or driver, a new quantisation is a new test. Which engine
+a peer runs is its own choice: the one the Codex freezes (02 §2.4) is
+the reference every run is measured against, not a requirement, and a
+newer build that is faster is welcome the moment it passes. A failure
 stops embedding for that collection as a deferral, never as an error on
 a document, and is shown by `hold collection show`. `hold embedder
-check --accept` is the only way a changed build becomes the one this
+check --accept` is the only way a changed engine becomes the one this
 peer stands behind: it keeps that run's signed statement, which is what
 the digest publishes and what 04 §4.5 weights.
 
@@ -151,19 +152,49 @@ For the same reason a derived space's reference vectors are its
 source's, derived by the same function, and `hold collection create`
 writes its calibration member without calling an encoder at all.
 
-There is no separate drift detector, and deliberately so. "Is this
-encoder still the same function?" already has an answer — run the gate —
-and the worker runs it before every embedding session and whenever the
-endpoint reports a different build. A second mechanism beside that would
-need its own threshold, and 03 §3.1 has already said where a threshold
-may come from.
+**The fingerprint: the same engine between runs.** A pass admits an
+engine at one moment. Nothing in it says that the endpoint answering an
+hour later is still that engine: a model pool reloads models, a tag
+moves under an image name, a flag is edited, and a compliant engine
+swapped for another compliant engine would pass the gate again while
+its vectors were credited to a run nobody accepted. So the passing run
+also records a **fingerprint**: the hash of what the endpoint returns
+for sixteen fixed texts of the calibration set, the shortest to the
+longest, sent as the peer sends chunks (09 §9.12). One engine on one
+machine is deterministic, so the fingerprint needs no threshold: the
+same bytes are the same run, and any other bytes are not. It is not a
+second threshold beside the gate — equality needs none — and it is
+taken wherever this peer's encoder produces or judges vectors:
 
-The result is a signed **calibration statement** — "this encoder image
-and these weights, on this peer, are compliant with this space" — whose
+- **Embedding** (`vectors build`, `share contribute`): before a
+  session's first batch, and after every batch, before that batch
+  commits (07 §7.7). Equal, the batch commits. Different, the batch is
+  dropped uncommitted — a deferral, never an error on a document — and
+  embedding for that space waits on the gate, run again in full, and
+  then on `--accept`: a pass under changed bytes is a different run,
+  and only the operator stands behind a different run.
+- **Checking** (T3, T4, `vectors-sample`, `hold vectors check`): before
+  and after the check. A mismatch makes the check inconclusive, and an
+  inconclusive check yields no attestation (§3.6).
+- **Searching**: when the node starts, whenever the embedding side
+  fingerprints the same endpoint, and before the next search after a
+  mismatch. While the fingerprint differs, searches of that space run
+  without their vector leg and say so.
+
+An endpoint that does not reproduce its own sixteen vectors bit for bit
+has no fingerprint. The gate embeds the sixteen texts twice to find
+out, and its statement then says `null`. In its place, each of the
+checks above runs the gate's quorum rule on the sixteen texts against
+their reference rows.
+That makes a change slower to be sure of, and the check is never
+skipped.
+
+The result is a signed **calibration statement** — "this engine and
+these weights, on this peer, are compliant with this space" — whose
 bytes are 09 §9.12's *peer's calibration statement*, a different
 object from the space author's calibration member defined in the same
-section. It names the space, the encoder image and weights
-digests, the seed and the sampled texts, the worst and median cosine
+section. It names the space, the engine and the weights digest, the
+fingerprint, the seed and the sampled texts, the worst and median cosine
 OVER THOSE SAMPLED TEXTS — not over all 512, so that the statement
 carries the very numbers the pass decision used and anyone holding it
 can recheck the verdict from the seed alone — the endpoint's maximum
@@ -175,8 +206,8 @@ that admits the peer to verify chunks within that length and to
 contribute nothing.
 
 `hold embedder calibrate` measures the tolerance a space can bear: the
-worst cosine on the calibration set between the reference build and
-every other build the creator can reach. The creator writes a
+worst cosine on the calibration set between the reference engine and
+every other engine or build the creator can reach. The creator writes a
 `tolerance` at or below that, knowing that two compliant builds may
 differ from each other by twice the angle either has to the reference
 (§3.1); the tolerance of a space comes from that measurement and never
@@ -228,7 +259,7 @@ until its own `records-vs-origin` and `chunks` pass under the image it
 runs; `hold collection show` says so and names the check to run.
 
 For encoders the word is **compliant**, not equivalent, because the
-statement is statistical: an encoder build that passes calibration may
+statement is statistical: an engine that passes calibration may
 contribute to the space, and stays a distinct producer in provenance.
 
 What a frozen hash does and does not do: it removes ambiguity about
@@ -554,7 +585,7 @@ naming both producers — 04 §4.5's "duplicates are checks".
 Every completed check yields an **attestation**: collection, snapshot,
 check, seed and sampled shards, result — `pass`, `fail`, `forgery`,
 `withdraw` or `supersedes` — a detail block per check, platform image,
-encoder image for statistical checks, the verifier's key, time. Its id
+encoder engine and weights for statistical checks, the verifier's key, time. Its id
 is the hash of its canonical body and its signature is under the
 attestation domain (09 §9.8, 09 §9.2). An inconclusive check yields
 none. Attestations travel like any event (04 §4.2), a peer that lacks a

@@ -29,7 +29,8 @@ A **collection** is a corpus turned into what a RAG system searches:
 - the **vectors** — one embedding per chunk, in one model's space, plus
   the labels that make them searchable without loading everything;
 - the **Codex** — the exact recipe that produced both: which origin,
-  which parser and chunker, which encoder build and settings, what
+  which parser and chunker, which model and settings and the engine
+  its reference vectors were computed with, what
   licence, what update cadence. The Codex is small, public and
   immutable; its hash *is* the collection's identity.
 
@@ -192,7 +193,8 @@ they are needed.
 | shard | a run of one slice's records, sorted by native id and cut at the Codex's `shard_records`; closed once full, re-issued under the same number while it is still filling or when a record in it changes. The unit of transfer, of embedding and of verification (02 §2.2–2.3) |
 | member | what a peer fetches or shares as one unit (02 §2.6): one slice of one kind — records, vectors, buckets, index, relations, figures — or a whole-collection file such as the calibration member or the licence terms; 09 §9.16 gives the closed list of kinds. The snapshot names the size and root of each member it lists, before the first byte moves; a bundle and an `index-<slice>` are named by their own rules instead (04 §4.3) |
 | holdings | what your copy actually has — which slices, which kinds |
-| space | a function from cleaned text to vectors: the encoder build and its settings, the layers and the cleaning version, named by `space_id` (02 §2.4). One collection, one space; collections in one space are searched as one ranked list (05 §5.1), and vectors from different spaces are never compared |
+| space | a function from cleaned text to vectors: the model's weights and its settings, the layers and the cleaning version, named by `space_id` (02 §2.4) — not the engine that runs the model. One collection, one space; collections in one space are searched as one ranked list once their references agree (05 §5.1), and vectors from different spaces are never compared |
+| engine | how a model is run: the serving software, its build, the image holding it, its arguments and environment, the device (02 §2.4). The Codex freezes the one its reference vectors came from, so anyone can run it again; a peer may run any engine that passes the calibration gate, and a fingerprint proves it is still the engine that passed (03 §3.3) |
 | bundle (signed block) | a batch of vectors on a collection's own records, signed by the key that produced them; the unit in which embedding work travels — 03 §3.5, 09 §9.7; 08 §8.6 says *signed block* |
 | attestation | the signed result of one completed check — collection, snapshot, check, seed and sampled shards, result, the verifier's key (03 §3.6, 09 §9.8); it travels as an event, and trust levels are counted from attestations, never from assurances |
 | pointer record | the record a red-class collection ships in place of text: the same line with `sections` empty and `extra.origin_url` set (02 §2.3, 04 §4.4); the text is fetched from the origin by every peer that holds the collection, and vectors, pointers and index travel while the text never does |

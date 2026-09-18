@@ -594,7 +594,9 @@ content; a resolver never returns a bare symbol.
    them could phrase them away. The
    calibration comes first and needs no record: the calibration set is
    a corpus-independent file shipped with the platform, `create` embeds
-   it with the named encoder, writes the reference vectors' hash into
+   it with the named encoder — running the engine the recipe declares,
+   which the Codex freezes beside the vectors it produced (§2.4) —
+   writes the reference vectors' hash into
    `space.calibration` and their envelope into `space.envelope`, and
    stores the vectors as the drag member `calibration/<set>.safetensors`
    (§2.4, 09 §9.12). The Codex's hash is the collection's identity.
