@@ -33,7 +33,7 @@ Everything except two items travels through this repository.
 4. Reaching the node from outside its LAN: substitute your remote
    host/tunnel for the LAN address in every DEPLOYMENT.md command; nothing
    else changes.
-5. No local Python is assumed anywhere: `docker build -t louise-rag:dev .`
+5. No local Python is assumed anywhere: `docker build --target dev -t louise-rag:dev .`
    recreates the test image, and tests run as in Conventions below.
 
 ---
@@ -2671,10 +2671,24 @@ fragment, with the endpoint faked and every request recorded:
 - changing the language started over from the screen, and "original"
   restored every unit byte for byte.
 
-Over a long read, 40 of the 150 paragraphs were sent. The harness is in
-the session's scratchpad, not the repository: it needs Node and
-Chromium, which the toolchain does not have. The committed tests check
-the wiring (tests/test_web_pages.py).
+Over a long read, 40 of the 150 paragraphs were sent.
+
+That check is now part of the suite (operator, 2026-09-18: "do it").
+- `tests/test_reader_translation_browser.py` renders the pages through the
+  app, then runs `tests/browser/reader_translation.js` in headless
+  Chromium. It takes 29 s. Breaking "below and above at first" in the
+  page made it fail, as it should.
+- The Dockerfile's `dev` stage carries the browser: Debian's
+  `chromium-headless-shell` (101 packages rather than 168 for full
+  Chromium) and `nodejs`. puppeteer-core 23.11.1 is installed in a
+  `node:20-slim` stage, because Debian's npm alone is 363 more packages.
+  This adds about 0.7 GB to the dev image.
+- The runtime, the default and last stage, is unchanged, and BuildKit
+  (Docker 29 on the node) never builds the dev stages for it.
+- **Build the test image with `docker build --target dev -t
+  louise-rag:dev .`** An image without a browser skips this one test and
+  says why. That includes the runtime image the node's staging suite
+  runs in.
 
 ### The GPU panel on the System page (2026-09-18, night)
 

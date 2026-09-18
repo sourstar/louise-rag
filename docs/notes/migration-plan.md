@@ -56,7 +56,7 @@ Specs are edited on `main` and merged forward into `louise`; code never
 lands on `main`. On a machine with the real environment:
 
 ```
-docker build -t louise-rag:dev .
+docker build --target dev -t louise-rag:dev .
 docker run --rm -v "${PWD}:/srv" -w /srv -e PYTHONPATH=/srv louise-rag:dev \
   timeout -s KILL 900 python -m pytest tests/ -q
 ```

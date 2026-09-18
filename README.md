@@ -73,7 +73,7 @@ single `ADMIN_TOKEN` (`X-Admin-Token` header or the login cookie).
 ## Quick start (dev, Docker)
 
 ```bash
-docker build -t louise-rag:dev .
+docker build --target dev -t louise-rag:dev .
 docker run --rm -v "$PWD:/srv" -w /srv louise-rag:dev python -m pytest tests/ -q
 ```
 

@@ -1,7 +1,7 @@
 # F1's two-node integration flow (architecture-v2.md §5-§7 end to end):
 # producer node, consumer node, coordinator, mocked embed endpoint.
 #
-#   Build the image once:   docker build -t louise-rag:dev .
+#   Build the image once:   docker build --target dev -t louise-rag:dev .
 #   Run the flow:           docker compose -f tests/integration/two_node/docker-compose.yml run --rm driver
 #   Run it AGAIN (must also pass — system-level idempotence):
 #                           docker compose -f tests/integration/two_node/docker-compose.yml run --rm driver
