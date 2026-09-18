@@ -1415,21 +1415,25 @@ def _maintain_vector_index(con, collection) -> bool:
 def _vector_writes_allowed(collection) -> bool:
     """Whether this collection's vector writers may run.
 
-    They ALWAYS may. This used to answer "not while the index maintainer
-    is working", which was over-cautious and expensive: a compaction of
-    wikivec's 70 GB table takes ~41 minutes, and the collection did no
-    embedding and no archive import for the whole of it — measured live,
-    and with the refresh threshold reached every few minutes of work the
-    collection would have spent most of its life standing down.
+    For a BUILD or a REFRESH they always may, and that is deliberate
+    (2026-08-28). This used to answer "not while the index maintainer is
+    working", and with a 41-minute pass reached every few minutes of work
+    the collection stood down for most of its life. Lance is MVCC — 210
+    concurrent delete+add writes measured during `optimize()`, zero errors
+    — and a rare commit conflict surfaces as an exception that
+    `vector_store_contended` turns into a deferral: the document is
+    untouched and retried, never errored.
 
-    Lance is MVCC: a concurrent delete+add during `optimize()` is
-    supported (measured: 210 writes during a maintenance pass, zero
-    errors), and a rare commit conflict surfaces as an exception that
-    `vector_store_contended` turns into a deferral — the document is
-    untouched and retried, never errored. The maintainer's `busy` flag
-    survives for what it is actually for: not running two maintenance
-    operations on one table at once."""
-    return True
+    A COMPACTION is the one exception (2026-09-18). It rewrites fragments,
+    so a writer committing underneath takes its commit away rather than
+    merely racing it: three of wikipedia's passes died that way in two
+    days, 40–51 minutes of work each, against an archive import committing
+    about twice a second. It is also rare by construction — only past
+    `VECTOR_INDEX_COMPACT_FRAGMENTS` small fragments — so waiting for one
+    is affordable where waiting for every refresh was not.
+    """
+    from . import vector_index
+    return not vector_index.rewriting(collection)
 
 
 def vector_store_contended(exc: BaseException) -> bool:

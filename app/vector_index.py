@@ -77,6 +77,47 @@ class maintenance:
         return False
 
 
+#: Lance dirs whose fragments are being REWRITTEN right now (a compaction).
+#: Writers of that collection stand down for these and only these — see
+#: `rewrite` and worker._vector_writes_allowed.
+_rewriting: set[str] = set()
+
+
+def rewriting(collection) -> bool:
+    with _state_lock:
+        return str(collection.lance_dir) in _rewriting
+
+
+class rewrite(maintenance):
+    """`maintenance`, plus exclusivity against this collection's OWN
+    writers.
+
+    A compaction rewrites fragments, and a writer that commits underneath
+    takes the rewrite's commit away: three of wikipedia's passes died that
+    way in two days — "Retryable commit conflict … Rewrite" (2026-09-16,
+    twice) and "Too many concurrent writers … retry_timeout of 30 s"
+    (2026-09-17) — after 40–51 minutes of work each, against an archive
+    import committing about twice a second.
+
+    Builds and refreshes deliberately do NOT use this (amendment 52: Lance
+    is MVCC, a concurrent delete+add during `optimize()` is supported, and
+    those run often enough that standing writers down cost the collection
+    most of its life). A compaction is rare by construction — only when
+    `VECTOR_INDEX_COMPACT_FRAGMENTS` small fragments have accumulated — so
+    the exclusivity it needs is affordable."""
+
+    def __enter__(self):
+        super().__enter__()
+        with _state_lock:
+            _rewriting.add(self.key)
+        return self
+
+    def __exit__(self, *exc):
+        with _state_lock:
+            _rewriting.discard(self.key)
+        return super().__exit__(*exc)
+
+
 def free_bytes(collection) -> int | None:
     """Free space on the filesystem holding this collection's vectors."""
     try:
@@ -462,13 +503,15 @@ def compact_due(st: dict | None) -> bool:
 def compact(collection, con=None, *, log=None) -> dict:
     """Merge the small fragments a stream of small writes leaves behind.
 
-    IT HOLDS THE TABLE while it runs, which `prune` never did. Compaction
-    rewrites fragments, and a writer committing underneath takes the
-    rewrite's commit away: two of wikipedia's passes died with "Retryable
-    commit conflict … Rewrite" after ~40 minutes of work each (2026-09-16).
-    `maintenance()` stands this collection's vector writers down for the
-    duration — a deferral, never an error, exactly as for a refresh — so
-    the work either lands or was never started.
+    IT TAKES THE TABLE EXCLUSIVELY (`rewrite`), which `prune` never did
+    and a refresh deliberately does not. A compaction rewrites fragments,
+    and a writer that commits underneath takes its commit away: three of
+    wikipedia's passes died that way in two days — twice as "Retryable
+    commit conflict … Rewrite" (2026-09-16) and once as "Too many
+    concurrent writers" (2026-09-17) — after 40–51 minutes of work each.
+    So this collection's embed step and archive pass defer while it runs
+    (a deferral, never an error), and it is rare enough by construction to
+    make that affordable.
     """
     tbl = _table(collection)
     if tbl is None:
@@ -488,7 +531,7 @@ def compact(collection, con=None, *, log=None) -> dict:
     ds = _dataset(tbl)
     t0 = time.monotonic()
     try:
-        with maintenance(collection):
+        with rewrite(collection):
             if ds is not None:
                 ds.optimize.compact_files(
                     target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS)

@@ -400,31 +400,56 @@ def test_a_compaction_waits_for_enough_small_fragments(monkeypatch):
     assert not vector_index.compact_due(None)
 
 
-def test_a_compaction_holds_the_table_while_it_runs(isolated_config, tmp_path, monkeypatch):
-    """A writer that commits under a rewrite takes its commit away: two of
-    wikipedia's passes died with "Retryable commit conflict … Rewrite"
-    after ~40 minutes each (2026-09-16). A prune held nothing."""
-    from app import collections as collections_mod, vector_index
+def test_a_compaction_takes_the_table_and_writers_defer(isolated_config, tmp_path, monkeypatch):
+    """A writer that commits under a rewrite takes its commit away: three
+    of wikipedia's passes died that way in two days — "Retryable commit
+    conflict … Rewrite" (2026-09-16, twice) and "Too many concurrent
+    writers" (2026-09-17) — 40–51 minutes of work each. Marking the table
+    busy was not enough: `_vector_writes_allowed` answered True for every
+    kind of maintenance."""
+    from app import collections as collections_mod, vector_index, worker
     c = collections_mod.Collection(
         name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
         corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
-    calls, busy = [], []
+    calls, seen = [], []
     _table_with_dataset(monkeypatch, vector_index, calls, fragments=(5000, 4800))
-    real = vector_index.maintenance
+    real = vector_index.rewrite
 
     class watched(real):
         def __enter__(self):
             out = super().__enter__()
-            busy.append(vector_index.busy(c))
+            seen.append((vector_index.busy(c), vector_index.rewriting(c),
+                         worker._vector_writes_allowed(c)))
             return out
-    monkeypatch.setattr(vector_index, "maintenance", watched)
+    monkeypatch.setattr(vector_index, "rewrite", watched)
 
+    assert worker._vector_writes_allowed(c) is True, "before: writers run"
     out = vector_index.compact(c, log=lambda m: None)
     assert out["compacted"] is True
-    assert busy == [True], "the writers must stand down for a rewrite"
+    assert seen == [(True, True, False)], "busy, rewriting, and writers deferred"
     assert [k for k, _ in calls] == ["compact"]
-    assert not vector_index.busy(c), "and start again after it"
+    assert vector_index.rewriting(c) is False
+    assert worker._vector_writes_allowed(c) is True, "and run again after it"
+
+
+def test_only_a_rewrite_stands_the_writers_down(isolated_config, tmp_path):
+    """A build or a refresh must not: they run often, Lance is MVCC, and
+    standing down for each left the collection idle most of its life
+    (2026-08-28). Only the compaction is exclusive."""
+    from app import collections as collections_mod, vector_index, worker
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    with vector_index.maintenance(c):
+        assert vector_index.busy(c) is True
+        assert vector_index.rewriting(c) is False
+        assert worker._vector_writes_allowed(c) is True
+    with vector_index.rewrite(c):
+        assert vector_index.busy(c) is True, "a rewrite is maintenance too"
+        assert worker._vector_writes_allowed(c) is False
+    assert vector_index.busy(c) is False and vector_index.rewriting(c) is False
 
 
 def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_path, monkeypatch):
