@@ -92,3 +92,17 @@ def test_the_http_round_trip():
         assert got["translations"] == ["<2it>|HELLO"]
     finally:
         httpd.shutdown()
+
+
+def test_the_weights_leave_the_page_cache_once_loaded(tmp_path, monkeypatch):
+    # every file under a local MODEL_ID is advised away — the 2.5 GB TrueNAS
+    # counted against the container — and a hub id not cached here is no error
+    (tmp_path / "sub").mkdir()
+    for p in ("model.safetensors", "config.json", "sub/spiece.model"):
+        (tmp_path / p).write_bytes(b"x")
+    advised = []
+    monkeypatch.setattr(server.os, "posix_fadvise",
+                        lambda fd, off, n, how: advised.append(how))
+    assert server._drop_file_cache(str(tmp_path)) == 3
+    assert advised == [server.os.POSIX_FADV_DONTNEED] * 3
+    assert server._drop_file_cache("no-such/model-anywhere") == 0

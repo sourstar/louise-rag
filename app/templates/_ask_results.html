@@ -22,7 +22,7 @@
   {# how many languages the question went out in, and who translated it —
      fifty codes in a row buried the rest of this line; they stay in the
      tooltip #}
-  {% if result.translations %}<span class="badge lapis" title="{{ result.translations.keys()|sort|join(', ') }}">fan-out: {{ result.translations|length }} {{ 'languages, every one held' if result.language and result.language.every else 'main languages' }}{% if result.language and result.language.by %}, by the {{ result.language.by }}{% endif %}</span>{% endif %}
+  {% if result.translations %}{% set n = result.translations|length %}{% set word = 'language' if n == 1 else 'languages' %}<span class="badge lapis" title="{{ result.translations.keys()|sort|join(', ') }}">fan-out: {{ n }} {{ word ~ ', every one held' if result.language and result.language.every else 'main ' ~ word }}{% if result.language and result.language.by %}, by the {{ result.language.by }}{% endif %}</span>{% endif %}
   {# THE LANGUAGE RULE, SAID ON THE PAGE (operator, 2026-09-18): every
      language is searched unless the query limits it. A limit is a filter
      that hides records, so it is named, never silent — and so is a search

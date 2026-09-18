@@ -217,10 +217,11 @@ def load(model_id: str, device: str, dtype_name: str):
 
 
 def _release_host_memory() -> None:
-    """Hand the host allocator's freed pages back to the system. The GPU
-    runtime's first pass compiles its kernels and keeps ~2.5 GB of that
-    (2,892 MB of RSS after it, measured); what it freed stays with glibc
-    otherwise."""
+    """Hand the host allocator's freed pages back to the system. What stays
+    is the GPU runtime's: its first pass loads torch's compiled GPU kernels
+    and keeps them in host memory (1.9 GB of Level Zero kernel binaries, read
+    in its memory on the node, 2026-09-18), plus 0.8 GB of heap. What the
+    pass freed stays with glibc otherwise."""
     import ctypes
     import gc
     gc.collect()
@@ -228,6 +229,36 @@ def _release_host_memory() -> None:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except OSError:
         pass
+
+
+def _drop_file_cache(model_id: str) -> int:
+    """Evict the weights' files from the page cache; how many were advised.
+    The load reads them through mmap, and those pages are charged to this
+    container: TrueNAS showed 5.6 GB for it, 2.5 GB of which were the cached
+    bf16 weights (operator, 2026-09-18). Nothing reads them again once the
+    model is on the device. A hub id is resolved to its local snapshot."""
+    root = model_id
+    if not os.path.isdir(root):
+        try:
+            from huggingface_hub import snapshot_download
+            root = snapshot_download(model_id, local_files_only=True)
+        except Exception:                               # noqa: BLE001 — not cached here
+            return 0
+    advised = 0
+    for base, _, names in os.walk(root):
+        for name in names:
+            try:
+                fd = os.open(os.path.join(base, name), os.O_RDONLY)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                advised += 1
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
+    return advised
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -294,6 +325,8 @@ def main() -> None:
     Handler.translator.translate([("the first pass compiles its kernels", "de")])
     print(f"warm in {time.monotonic() - t0:.1f}s", file=sys.stderr, flush=True)
     _release_host_memory()
+    print(f"page cache dropped for {_drop_file_cache(model_id)} model files",
+          file=sys.stderr, flush=True)
     # PID 1 in its container: without a handler every `docker stop` sat out
     # the grace period and ended in SIGKILL (medcpt-rerank, 2026-09-16).
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))

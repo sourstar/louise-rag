@@ -2591,8 +2591,17 @@ Measured on the node:
     host heap is trimmed after warm-up.
   - A bfloat16 copy (5.5 GB, `deploy/madlad-translate/to_bf16.py`) is what
     runs. Its translations are identical.
-  - What remains is the GPU runtime's compiled kernels, about 2.5 GB after
-    the first pass.
+  - **TrueNAS then showed 5.6 GB** ("still using more than 5GB RAM"). It
+    counts the cgroup's `memory_stats.usage`, page cache included, and
+    2.5 GB of it was the bf16 file, read through mmap at load. The server
+    now evicts the model's files after warm-up (`POSIX_FADV_DONTNEED`,
+    which works on ZFS: 2,048 MB → 0 in a test): 3.03 GiB, 0.11 GB of
+    it file.
+  - What remains is the GPU runtime's, not the model's: 1.9 GB of torch's
+    compiled GPU kernels (Level Zero binaries, their `zeInfo` metadata
+    read in the process's memory) and 0.8 GB of heap. Quantized weights
+    would not lower it, because the weights are on the card; only another
+    runtime would.
 - Its quality is good in the main languages. In the tail it is weak: Welsh
   gave "the red dragon", Latin nonsense. The chat model made the white
   whale a white shark.

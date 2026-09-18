@@ -1000,6 +1000,20 @@ def test_the_page_names_a_language_restriction_and_a_failed_plan():
     assert "only:" not in html and "not translated" not in html
 
 
+def test_the_fan_out_badge_counts_in_good_english():
+    # "fan-out: 1 main languages" was live for `Rilke lang:de` (2026-09-18)
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    base = {"hits": [], "timings": {"fts": 1}}
+    one = tpl.render(result={**base, "translations": {"de": "Rilke"},
+                             "language": {"core": "Rilke", "only": ["de"], "status": "ok",
+                                          "by": "translation model"}})
+    assert "fan-out: 1 main language, by the translation model" in one
+    two = tpl.render(result={**base, "translations": {"de": "a", "fr": "b"},
+                             "language": {"core": "q", "only": [], "status": "ok",
+                                          "every": True}})
+    assert "fan-out: 2 languages, every one held" in two
+
+
 def test_the_ask_page_sets_how_many_before_and_after_reranking(client, monkeypatch):
     """"I want to be able to set the maximum number of results a query
     returns before and after reranking, with as default the recommended
