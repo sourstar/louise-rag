@@ -2401,6 +2401,22 @@ The audit of the other collections is in the suite too
 vector_index and spaces: one layer and one maintenance regime for every
 collection.
 
+**pubmed's rate after the fixes (11:15–11:35 UTC).**
+- `sched_report --rates` over 300 s: embed 17.5 docs/s and fts 1,507
+  docs/s.
+- Embedding runs at ~31 docs/s inside its 120 s windows; fts holds the
+  thread in between.
+- 17,164,250 documents still wait for fts, 13.8M of them untouched since
+  the 09-15 re-pin; nothing reset them today. Another 243,026 are past fts
+  and wait for embedding.
+- At 1,500–2,000 docs/s the fts backlog clears in about 3 hours. Then
+  embedding has pubmed's thread to itself.
+- The encoder answers in 5–36 ms, so it is not the limit.
+- The index maintainer now runs at nice 10 (a27f780). A refresh had been
+  taking every core at the pipeline's priority. That change did not move
+  pubmed's rate: its threads were not starved. Scheduling pitfall 15 has
+  the measurement.
+
 ### ssd4 is louise-rag's pool; one hourly restore point (2026-09-18)
 
 The operator wants a restore point for an SSD failure, not a time machine.

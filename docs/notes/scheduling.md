@@ -299,12 +299,21 @@ unindexed rows climbing during one rules out only its index phase, never
 the compaction before it.
 
 **15. "Its own thread" is not "low priority".** The maintainer was
-documented as one low-priority thread, and nothing lowered it: a wikipedia
-index refresh ran on pylance's runtime threads at 12.2 of the node's 12
-cores, while the pipeline's Python threads got 0.33. pubmed embedded
-12 docs/s against 38–41 the day before (2026-09-18). A thread of its own
-isolates ordering and failure. It does not isolate CPU, and the Rust
-runtimes underneath fan out to every core.
+documented as one low-priority thread, and nothing lowered it. On
+2026-09-18 a wikipedia index refresh ran on pylance's runtime threads at
+12.2 of the node's 12 cores, at the pipeline's own priority. A thread of
+its own isolates ordering and failure. It does not isolate CPU, and the
+Rust runtimes underneath fan out to every core.
+
+The same day also shows how easy it is to misread. pubmed's embedding
+looked starved (12 docs/s from the log, against 38–41 the day before),
+but the pipeline's Python threads wanted about one core and had it, and
+the rate did not move once the maintainer was niced. The real limit was
+the split of pubmed's one pipeline thread: embedding ran at 31 docs/s in
+its windows and fts had the rest, with 17.2M documents left over from the
+09-15 re-pin. Measure the thread's wants (`--rates`, per-thread CPU and
+wait states) before blaming the neighbour that is busiest.
+
 → Background CPU runs niced: the parse pool's children at 10, and the
 maintainer's thread at 10, set before its first Lance call. Linux nice is
 per thread and inherited at spawn, so pylance's runtime is born at 10.

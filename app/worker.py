@@ -1451,12 +1451,14 @@ INDEX_MAINTAINER_INTERVAL_S = 60.0
 
 # The maintainer's CPU yields to the pipeline's, as the parse pool's does
 # (nice 10). Measured 2026-09-18: a wikipedia index refresh ran on
-# pylance's runtime threads at 12.2 of the node's 12 cores while the
-# pipeline's Python threads got 0.33, and pubmed embedded 12 docs/s
-# against 38-41 the day before. Nice is per THREAD on Linux and inherited
-# by the threads a thread spawns, so the maintainer lowers itself before its
-# first Lance call and pylance's runtime, which that call creates, starts
-# at the same level. lancedb's own runtime (the embed writes) is created
+# pylance's runtime threads at 12.2 of the node's 12 cores, at the SAME
+# priority as the pipeline. The pipeline was not starved that time — its
+# threads wanted about one core and got it, and pubmed's rate did not move
+# once this was in — but a background job had been competing with it as an
+# equal, and any stage that wanted more would have lost. Nice is per
+# THREAD on Linux and inherited by the threads a thread spawns, so the
+# maintainer lowers itself before its first Lance call and pylance's
+# runtime, which that call creates, starts at the same level. lancedb's own runtime (the embed writes) is created
 # at boot by refuse_boot on the main thread and stays at 0 — which is also
 # why a first index BUILD, run there by lancedb, is not covered.
 INDEX_MAINTAINER_NICE = 10

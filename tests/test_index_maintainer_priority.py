@@ -1,9 +1,8 @@
 """The index maintainer yields the CPU to the pipeline (INDEX_MAINTAINER_NICE).
 
 Live 2026-09-18: a wikipedia refresh on pylance's runtime threads took 12.2
-of 12 cores, the pipeline's Python threads got 0.33, and pubmed embedded
-12 docs/s against 38-41 the day before. The thread said "low-priority" in
-its docstring and nothing made it so.
+of 12 cores at the same priority as the pipeline. The thread said
+"low-priority" in its docstring and nothing made it so.
 """
 import os
 import subprocess
