@@ -157,17 +157,36 @@ def test_the_headroom_test_is_proportional_and_not_a_flat_floor(table, monkeypat
 
 
 def test_a_big_table_still_defers_when_there_is_no_room_for_it(table, monkeypatch):
-    """The guard it does NOT lose. `optimize` writes new fragments before
-    deleting the old — observed taking free space DOWN 23 GiB on a 291 GiB
-    table before releasing any — so a maintenance pass must never be the
-    thing that fills the pool."""
+    """The guard it does NOT lose — carried by the calls that WRITE.
+    Compaction writes its new fragments before deleting the old (observed
+    taking free space DOWN 23 GiB on a 291 GiB table before releasing
+    any), so it must never be the thing that fills the pool. The same
+    holds for a refresh, and for the welded `optimize()` that the fallback
+    still calls where the Lance package is absent."""
     monkeypatch.setattr(vector_index, "free_bytes", lambda c: 8 * 2**30)
     monkeypatch.setattr(vector_index, "table_bytes", lambda c: 300 * 2**30)
     assert vector_index.headroom_ok(table) is False
-    out = vector_index.prune(table)
-    assert out["pruned"] is False and out["reason"] == "low disk"
+    out = vector_index.compact(table)
+    assert out["compacted"] is False and out["reason"] == "low disk"
     out = vector_index.refresh(table)
     assert out["refreshed"] is False and out["reason"] == "low disk"
+    monkeypatch.setattr(vector_index, "_dataset", lambda tbl: None)
+    out = vector_index.prune(table)
+    assert out["pruned"] is False and out["reason"] == "low disk"
+
+
+def test_dropping_versions_runs_even_when_the_pool_is_tight(table, monkeypatch):
+    """And the one that must NOT defer (2026-09-17). Dropping superseded
+    versions only deletes — on a tight pool that is exactly the work which
+    relieves it, and reason 2 above is what refusing it looked like."""
+    pytest.importorskip("lance", reason="the cleanup-only path needs the Lance package")
+    monkeypatch.setattr(vector_index, "free_bytes", lambda c: 8 * 2**30)
+    monkeypatch.setattr(vector_index, "table_bytes", lambda c: 300 * 2**30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_KEEP_VERSIONS_H", 0.0)
+    assert vector_index.headroom_ok(table) is False
+    before = versions(table)
+    out = vector_index.prune(table)
+    assert out["pruned"] is True and versions(table) < before
 
 
 def test_headroom_scales_with_the_table(monkeypatch, table):
