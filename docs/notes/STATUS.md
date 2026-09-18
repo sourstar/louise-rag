@@ -2435,6 +2435,23 @@ Recounted from the manifest:
   - Exact at the time of the check: 4,538,724 with text, 4,359,996 done,
     178,728 left, none unindexed and none erred.
 
+After the deploy (099f704), pubmed's card computes 4,538,777 past the
+archive, 53 with nothing to embed, 4,416,978 done and 121,746 left.
+
+**wikipedia's card, verified the same way (2026-09-18).** The card's own
+code agrees with independent SQL, in both directions.
+- Past the archive: 30,940,006 past id 109,999,999,999, all of them not
+  yet indexed and none erred, so "0 with nothing to embed" is correct: an
+  unindexed page cannot be known to be empty. Embedding is off.
+- Inside the range: 21,983,119 documents, 10.98M holding vectors, and
+  11.0M still being indexed.
+- "Which the archive does not hold" holds: of 3,000 random dump-layer
+  pages across all 11 languages, none has an archive-layer twin
+  (`archive.covers` at discovery).
+- Of 150 random dump pages, 132 are redirects (88%) and 18 are articles
+  (12%). Once indexed, about 27M will read as "nothing to embed", and the
+  local encoder's real work is about 3.7M articles (2.2–5.6M at 95%).
+
 ### ssd4 is louise-rag's pool; one hourly restore point (2026-09-18)
 
 The operator wants a restore point for an SSD failure, not a time machine.
