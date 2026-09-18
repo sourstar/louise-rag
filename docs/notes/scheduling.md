@@ -27,7 +27,7 @@ the part that prevents the seventh.
 |---|---|---|
 | **main loop** (`run_forever`) | node control state, the round over collections that do NOT own their embed, bundles, telemetry publish | run a long CPU or IO job; it is GPU-serial across collections by doctrine |
 | **pipeline thread**, one per collection (`_pipeline_worker`) | that collection's rdf/fts, its archive passes, and — when the collection `owns_own_embed` (its encoder is its own container) — its embed step | touch another collection's manifest, index or Lance table |
-| **index maintainer** (one thread, `_index_maintainer`) | the vector index and the `book_id` index of every collection, one at a time | run on a pipeline thread (a refresh took 41 minutes and idled wikivec), hold a manifest write transaction while it works |
+| **index maintainer** (one thread, `_index_maintainer`, at `nice 10` like the parse pool — and the pylance runtime it creates with it) | the vector index and the `book_id` index of every collection, one at a time | run on a pipeline thread (a refresh took 41 minutes and idled wikivec), hold a manifest write transaction while it works |
 | **stats publisher** | telemetry, the seeding table | do any pipeline work |
 | **discovery scan** (one thread per collection, on demand) | enumerating the corpus into the manifest in batches | hold the write lock across a whole scan |
 | **acquisition** (background, budgeted) | fetching corpus and archive bytes | bypass the transfer manager's budget |
@@ -297,6 +297,20 @@ that rewrites data hold the table while it does (`maintenance()`).
 Diagnosing it needs care too: a pass logs nothing until it ends, and
 unindexed rows climbing during one rules out only its index phase, never
 the compaction before it.
+
+**15. "Its own thread" is not "low priority".** The maintainer was
+documented as one low-priority thread, and nothing lowered it: a wikipedia
+index refresh ran on pylance's runtime threads at 12.2 of the node's 12
+cores, while the pipeline's Python threads got 0.33. pubmed embedded
+12 docs/s against 38–41 the day before (2026-09-18). A thread of its own
+isolates ordering and failure. It does not isolate CPU, and the Rust
+runtimes underneath fan out to every core.
+→ Background CPU runs niced: the parse pool's children at 10, and the
+maintainer's thread at 10, set before its first Lance call. Linux nice is
+per thread and inherited at spawn, so pylance's runtime is born at 10.
+Mind whoever creates a runtime first: lancedb's, which carries the embed
+writes, is created on the main thread at boot (`refuse_boot`) and stays at
+0. A test checks both from `/proc/self/task`.
 
 ## 6. Before you change the scheduler — the checklist
 

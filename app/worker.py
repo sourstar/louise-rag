@@ -1449,6 +1449,29 @@ def vector_store_contended(exc: BaseException) -> bool:
 
 INDEX_MAINTAINER_INTERVAL_S = 60.0
 
+# The maintainer's CPU yields to the pipeline's, as the parse pool's does
+# (nice 10). Measured 2026-09-18: a wikipedia index refresh ran on
+# pylance's runtime threads at 12.2 of the node's 12 cores while the
+# pipeline's Python threads got 0.33, and pubmed embedded 12 docs/s
+# against 38-41 the day before. Nice is per THREAD on Linux and inherited
+# by the threads a thread spawns, so the maintainer lowers itself before its
+# first Lance call and pylance's runtime, which that call creates, starts
+# at the same level. lancedb's own runtime (the embed writes) is created
+# at boot by refuse_boot on the main thread and stays at 0 — which is also
+# why a first index BUILD, run there by lancedb, is not covered.
+INDEX_MAINTAINER_NICE = 10
+
+
+def _lower_own_priority(increment: int) -> int | None:
+    """Raise the CALLING thread's nice value by `increment`; the new value,
+    or None where the platform does not allow it (then it runs unniced)."""
+    try:
+        tid = threading.get_native_id()
+        os.setpriority(os.PRIO_PROCESS, tid, os.getpriority(os.PRIO_PROCESS, tid) + increment)
+        return os.getpriority(os.PRIO_PROCESS, tid)
+    except (AttributeError, OSError):
+        return None
+
 
 def _maintenance_allowed() -> bool:
     """Index maintenance is CPU work like any stage's, and a pause stops
@@ -1466,7 +1489,9 @@ def _index_maintainer() -> None:
     """One low-priority thread for every collection's vector index. Its
     own connections (SQLite is thread-affine); stands down while the node
     is paused (`_maintenance_allowed`); one collection at a time, so two
-    hour-long builds never run together."""
+    hour-long builds never run together. Low priority in fact, not only in
+    name: see INDEX_MAINTAINER_NICE."""
+    _lower_own_priority(INDEX_MAINTAINER_NICE)
     cons: dict[str, object] = {}
     while not _stop.wait(INDEX_MAINTAINER_INTERVAL_S):
         try:
