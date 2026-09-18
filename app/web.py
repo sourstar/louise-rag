@@ -714,7 +714,15 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
           -- counted: its chunk count is unknown, never zero.
           SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND fts_done=1
                         AND COALESCE(chunks, 0) = 0
-                   THEN 1 ELSE 0 END) arch_outside_empty"""
+                   THEN 1 ELSE 0 END) arch_outside_empty,
+          -- The local encoder's progress on THE REST: embedded, and not one
+          -- of those. The embed stage marks a document with no chunk done
+          -- without writing a vector, and the card, which derived this as
+          -- embed_done minus the range's, counted 37 of pubmed's 53 empty
+          -- records both as "nothing to embed" and as "done" (2026-09-18).
+          SUM(CASE WHEN in_scope=1 AND NOT {in_range} AND embed_done=1
+                        AND NOT (fts_done=1 AND COALESCE(chunks, 0) = 0)
+                   THEN 1 ELSE 0 END) arch_outside_embedded"""
     return f"""
         SELECT COUNT(*) total, SUM(in_scope) in_scope,
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
@@ -1482,12 +1490,12 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     spans = declared_spans(archive)
     range_hi = spans[-1][1] if spans else None
     sums = ("arch_in_range", "arch_in_range_embedded", "arch_in_range_waiting",
-            "arch_past_range", "arch_outside_empty")
+            "arch_past_range", "arch_outside_empty", "arch_outside_embedded")
     ranged = (counts is not None and range_hi is not None
               and counts.get("arch_range_hi") == range_hi
               and all(k in counts for k in sums))
-    in_range, in_range_embedded, waiting, past, outside_empty = (
-        (int(counts[k] or 0) for k in sums) if ranged else (None,) * 5)
+    in_range, in_range_embedded, waiting, past, outside_empty, outside_embedded = (
+        (int(counts[k] or 0) for k in sums) if ranged else (None,) * 6)
     missing = max(0, in_range - in_range_embedded) if ranged else None
     return {
         "archive": collection.genesis_archive,
@@ -1533,8 +1541,7 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         # its target and no more). Never a document still to be indexed.
         "outside_empty": outside_empty,
         # the local encoder's progress outside the archive
-        "outside_embedded": (max(0, int(counts.get("embed_done") or 0) - in_range_embedded)
-                             if ranged else None),
+        "outside_embedded": outside_embedded,
     }
 
 

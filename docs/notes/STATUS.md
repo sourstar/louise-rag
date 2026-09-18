@@ -2417,6 +2417,24 @@ collection.
   pubmed's rate: its threads were not starved. Scheduling pitfall 15 has
   the measurement.
 
+**pubmed's past-archive card line, verified (2026-09-18).** The card
+read "4.538.777 past id 36.999.999: newer than the archive; 53 with nothing
+to embed; only the local encoder can embed the rest (4.314.026 done)".
+Recounted from the manifest:
+- 4,538,777 is exact, and no in-scope document lies outside the range
+  without being past it.
+- The 53 are empty at the origin, all of them in-process records with an
+  empty `<ArticleTitle />`, no Abstract, no VernacularTitle and no
+  OtherAbstract. The parser reads them right, and the records keep every
+  other field.
+- "done" was wrong. It was derived as embed_done minus the range's
+  embedded, and the embed stage marks an empty document done without
+  writing a vector, so 37 of the 53 were also counted as done.
+  - The card now sums `arch_outside_embedded` in its one scan: embedded
+    and not empty.
+  - Exact at the time of the check: 4,538,724 with text, 4,359,996 done,
+    178,728 left, none unindexed and none erred.
+
 ### ssd4 is louise-rag's pool; one hourly restore point (2026-09-18)
 
 The operator wants a restore point for an SSD failure, not a time machine.

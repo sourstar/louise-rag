@@ -287,6 +287,23 @@ def test_a_document_with_nothing_to_embed_is_not_the_encoders_work(pubmed):
     web.invalidate_counts()
 
 
+def test_an_empty_record_marked_embedded_is_not_counted_as_done(pubmed):
+    """The embed stage marks a document with no chunk done without writing a
+    vector. "done" is the encoder's progress on THE REST: pubmed's card
+    counted 37 of its 53 empty records in both (2026-09-18)."""
+    con = db.connect(pubmed)
+    _add(con, 40_000_002, chunks=0, embed=1)        # empty, vacuously "done"
+    _add(con, 40_000_003, chunks=0)                 # empty, not reached yet
+    counts = web._document_counts_query(pubmed)
+    assert (counts["arch_outside_empty"], counts["arch_outside_embedded"]) == (2, 1)
+    g = web._genesis_state(con, pubmed, counts)
+    assert (g["past_range"], g["outside_empty"], g["outside_embedded"]) == (5, 2, 1)
+    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "all"})
+    assert (f"5 past id {HI_TEXT}: newer than the archive; 2 with nothing to embed; "
+            f"only the local encoder can embed the rest (1 done)") in html
+    web.invalidate_counts()
+
+
 def test_the_first_cold_render_after_the_deploy_says_counting(pubmed, monkeypatch):
     """The real path: a stored counts row written before the range SUMs
     existed, an empty cache, and a scan that cannot land inside the cold
