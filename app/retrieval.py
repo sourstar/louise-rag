@@ -28,8 +28,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import httpx
-from . import (catalog, collections as collections_mod, config, db, embeddings, fts,
-               language_plan, refs, work_dedup)
+from . import (catalog, collections as collections_mod, config, db, dispatch, embeddings,
+               fts, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
 
@@ -147,7 +147,8 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     else:
         body = {"query": query, "texts": texts, "truncate": True}
     try:
-        r = httpx.post(recipe.url, json=body, timeout=budget_s)
+        with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
+            r = httpx.post(recipe.url, json=body, timeout=budget_s)
         r.raise_for_status()
         data = r.json()
         rows = data["results"] if isinstance(data, dict) else data
@@ -262,17 +263,18 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         # whatever vectors exist. With no table, embeddings.search returns []
         # and an unreachable endpoint degrades via the except below.
         t0 = time.time()
-        # A5: claim the encoder before using it. The worker reads this
-        # between documents and stands its own embedding down, so a query
-        # waits for at most the document already in flight instead of
-        # queueing behind a whole backfill batch (db.claim_query_priority).
-        db.claim_query_priority(con, getattr(collection, "name", "") or "")
         try:
-            # the restriction is a PREFILTER (measured 2026-09-18: +0.8 s at
-            # most, on wikipedia); a post-filter would return an empty leg
-            # whenever the top k were in other languages
-            lists.append(embeddings.search(core, k=limit, collection=collection,
-                                           langs=list(plan.only) or None))
+            # A5, now at the level of a request (docs/notes/scheduling.md
+            # §12): the claim stands corpus embedding aside on the whole
+            # device for as long as this query embeds, and the worker
+            # yields between CHUNKS — no longer between documents, which on
+            # gutenberg measured up to 145 s.
+            with dispatch.interactive(dispatch.Level.QUERY):
+                # the restriction is a PREFILTER (measured 2026-09-18: +0.8
+                # s at most, on wikipedia); a post-filter would return an
+                # empty leg whenever the top k were in other languages
+                lists.append(embeddings.search(core, k=limit, collection=collection,
+                                               langs=list(plan.only) or None))
         except Exception as e:
             db.log_event(con, "warn", "dense", f"dense search failed: {e}")
         timings["dense"] = round((time.time() - t0) * 1000, 1)

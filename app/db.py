@@ -530,37 +530,10 @@ def _read_sample(con, key: str, max_age_s: float):
     return (payload, age) if age <= max_age_s else (None, age)
 
 
-# QUERY PRIORITY (docs/notes/scheduling.md §10, A5). A query is answered by the
-# WEB process and the backfill runs in the WORKER, so "queries outrank
-# regular processing" cannot be arranged inside either one — an in-process
-# scheduler cannot see the other's demand. This control key is the
-# reservation crossing that boundary: the web process stamps it when it is
-# about to embed a query, the worker reads it between documents and stands
-# its own embedding down until it expires.
-#
-# Short TTL, and deliberately so: a stale claim would idle the encoder for
-# nothing, and the worst case of losing one is a query that waits for one
-# document — the honest failure direction.
-QUERY_PRIORITY_KEY = "query_priority"
-QUERY_PRIORITY_TTL_S = 10.0
-
-
-def claim_query_priority(con, collection_name: str = "") -> None:
-    """"A human is waiting on the encoder." Never raises: a query must be
-    answered even when the control table cannot be written."""
-    try:
-        _publish_sample(con, QUERY_PRIORITY_KEY, collection_name)
-    except Exception:   # noqa: BLE001 — a reservation is an optimisation
-        pass
-
-
-def query_priority_claimed(con, max_age_s: float = QUERY_PRIORITY_TTL_S) -> bool:
-    try:
-        payload, _ = _read_sample(con, QUERY_PRIORITY_KEY, max_age_s)
-    except Exception:   # noqa: BLE001
-        return False
-    return payload is not None
-
+# QUERY PRIORITY (A5) is the node's interactive claim now, in
+# state/node.sqlite (app/dispatch.py, docs/notes/scheduling.md §12): one
+# claim for every interactive level, cleared when the last call ends, read
+# by the worker before each REQUEST rather than between documents.
 
 WORKER_STATS_KEY = "worker_stats"
 # Throughput samples age out more slowly than instantaneous rates: a

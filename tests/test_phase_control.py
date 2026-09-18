@@ -160,50 +160,72 @@ def test_a_collection_that_stopped_using_the_pool_stops_counting(monkeypatch):
 
 # ------------------------------------------------------- query priority (A5)
 
+def _node_store():
+    """The worker makes the node store at boot; a claim never does."""
+    from app import dispatch, node_state
+    node_state.connect().close()
+    dispatch.reset()
+
+
 def test_a_query_claim_is_visible_to_the_worker(tmp_path, isolated_config):
     """The reservation has to cross a PROCESS boundary: the query is
     answered by the web process and the backfill runs in the worker, so
-    neither one's in-process scheduler can see the other's demand."""
+    neither one's in-process scheduler can see the other's demand. And it
+    is released when the last interactive call ends — not a TTL later,
+    which would idle the encoder for nothing after every query."""
+    from app import dispatch
     c, con = _discovered(tmp_path)
+    _node_store()
     assert worker.query_waiting(con) is False
-    db.claim_query_priority(con, c.name)
+    with dispatch.interactive(dispatch.Level.QUERY):
+        worker.reset_query_priority_memo()
+        assert worker.query_waiting(con) is True
+    worker.reset_query_priority_memo()
+    assert worker.query_waiting(con) is False
+
+
+def test_a_claim_left_by_a_dead_web_process_expires(tmp_path, isolated_config):
+    """A web process that dies mid-call cannot clear its claim; its
+    refresher stops, and the claim lapses at its TTL. The failure direction
+    is deliberate: losing a claim costs a request one chunk's wait, keeping
+    one forever would stop corpus embedding for good."""
+    import time as _time
+
+    from app import dispatch
+    c, con = _discovered(tmp_path)
+    _node_store()
+    dispatch._write_claim(_time.time() + 60)
     worker.reset_query_priority_memo()
     assert worker.query_waiting(con) is True
-
-
-def test_a_query_claim_expires(tmp_path, isolated_config, monkeypatch):
-    """A stale claim would idle the encoder for nothing. The failure
-    direction is deliberate: losing a claim costs a query one document's
-    wait, keeping one too long costs everybody."""
-    c, con = _discovered(tmp_path)
-    db.claim_query_priority(con, c.name)
-    assert db.query_priority_claimed(con) is True
-    assert db.query_priority_claimed(con, max_age_s=-1.0) is False
-
-
-def test_the_claim_is_polled_not_read_per_document(tmp_path, isolated_config):
-    """At 175 embeds/s an unmemoised read would put a SELECT on the control
-    table for every document embedded."""
-    c, con = _discovered(tmp_path)
+    dispatch._write_claim(_time.time() - 1)
     worker.reset_query_priority_memo()
-    worker.query_waiting(con)
-    reads = []
-    con.set_trace_callback(reads.append)
+    assert worker.query_waiting(con) is False
+
+
+def test_the_claim_is_polled_not_read_per_request(tmp_path, isolated_config, monkeypatch):
+    """A CORPUS request waiting at a gate asks every poll, and at 175
+    embeds/s an unmemoised read would be a query on the node store per
+    chunk."""
+    from app import dispatch
+    _node_store()
+    opened = []
+    real = dispatch._node_con
+    monkeypatch.setattr(dispatch, "_node_con", lambda: opened.append(1) or real())
+    monkeypatch.setattr(config, "GATE_POLL_S", 60.0)
     for _ in range(50):
-        worker.query_waiting(con)
-    con.set_trace_callback(None)
-    assert reads == [], "the answer is memoised between documents"
+        dispatch.interactive_active()
+    assert len(opened) == 1, "the answer is memoised for GATE_POLL_S"
 
 
-def test_a_search_claims_the_encoder_before_using_it(tmp_path, isolated_config,
-                                                     monkeypatch):
-    """The claim must be written by the QUERY path itself — a reservation
+def test_a_search_claims_before_the_encoder_is_used(tmp_path, isolated_config):
+    """The claim must be made by the QUERY path itself — a reservation
     nobody makes is not a reservation."""
     import inspect
 
     from app import retrieval
     lines = [ln.split("#")[0] for ln in
              inspect.getsource(retrieval._search_one_collection).splitlines()]
-    claim = next(i for i, ln in enumerate(lines) if "claim_query_priority" in ln)
+    claim = next(i for i, ln in enumerate(lines)
+                 if "dispatch.interactive(dispatch.Level.QUERY)" in ln)
     use = next(i for i, ln in enumerate(lines) if "lists.append(embeddings.search" in ln)
     assert claim < use, "claimed before the encoder is used, not after"

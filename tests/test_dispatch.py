@@ -1,0 +1,262 @@
+"""Model work by priority (app/dispatch.py, docs/notes/scheduling.md §12).
+
+The operator's ladder, lowest first: corpus embedding, translation, chat,
+reranking, query embedding. Every request passes its server's gate, which
+admits the server's capacity at a time — strictly by level, then fairly by
+service time within a level — and corpus work stands aside from the whole
+device while anything interactive runs on the node.
+"""
+import threading
+import time
+
+import httpx
+import pytest
+
+from app import config, dispatch, worker
+from app.dispatch import Level
+
+
+@pytest.fixture(autouse=True)
+def fresh_gates():
+    dispatch.reset()
+    yield
+    dispatch.reset()
+
+
+def _hold(gate, level, plugin, started: threading.Event, release: threading.Event, order: list):
+    def run():
+        with gate.admit(level, plugin, timeout=10):
+            order.append((level, plugin))
+            started.set()
+            release.wait(10)
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def _queue(gate, level, plugin, order: list):
+    def run():
+        with gate.admit(level, plugin, timeout=10):
+            order.append((level, plugin))
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def _waiting(gate, n):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if gate.snapshot()["waiting"] >= n:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"{n} waiters never queued: {gate.snapshot()}")
+
+
+def test_the_highest_level_goes_first_whatever_arrived_first():
+    g = dispatch.gate("http://enc", 1, gpu=False)
+    order, started, release = [], threading.Event(), threading.Event()
+    holder = _hold(g, Level.CORPUS, "a", started, release, order)
+    started.wait(5)
+    waiters = [_queue(g, Level.CORPUS, "a", order)]
+    _waiting(g, 1)
+    waiters += [_queue(g, Level.TRANSLATE, "web", order)]
+    _waiting(g, 2)
+    waiters += [_queue(g, Level.QUERY, "web", order)]
+    _waiting(g, 3)
+    release.set()
+    for t in [holder, *waiters]:
+        t.join(5)
+    assert [lvl for lvl, _ in order] == [Level.CORPUS, Level.QUERY, Level.TRANSLATE, Level.CORPUS]
+
+
+def test_within_a_level_the_least_served_plugin_goes_first():
+    """Fair by SERVICE TIME, not by request count: a plugin whose requests
+    are long (gutenberg's 1,500-token chunks) does not take the share of
+    one whose requests are short (pubmed's abstracts)."""
+    g = dispatch.gate("http://enc", 1, gpu=False)
+    with g.admit(Level.CORPUS, "long"):
+        time.sleep(0.2)
+    with g.admit(Level.CORPUS, "short"):
+        pass
+    order, started, release = [], threading.Event(), threading.Event()
+    holder = _hold(g, Level.CORPUS, "long", started, release, order)
+    started.wait(5)
+    a = _queue(g, Level.CORPUS, "long", order)
+    _waiting(g, 1)
+    b = _queue(g, Level.CORPUS, "short", order)
+    _waiting(g, 2)
+    release.set()
+    for t in (holder, a, b):
+        t.join(5)
+    assert [p for _, p in order] == ["long", "short", "long"]
+
+
+def test_a_plugin_back_from_idle_banks_nothing():
+    """Idle must not earn credit (§10): a plugin that was away starts level
+    with the least-served plugin present, not at zero — or it would take the
+    gate for as long as the others had been working."""
+    g = dispatch.gate("http://enc", 1, gpu=False)
+    with g.admit(Level.CORPUS, "busy"):
+        time.sleep(0.2)
+    order, started, release = [], threading.Event(), threading.Event()
+    holder = _hold(g, Level.CORPUS, "busy", started, release, order)
+    started.wait(5)
+    back = _queue(g, Level.CORPUS, "back", order)
+    _waiting(g, 1)
+    assert g._served["back"] >= g._served["busy"] - 1e-9
+    release.set()
+    holder.join(5)
+    back.join(5)
+
+
+def test_an_unbounded_gate_orders_nothing_and_waits_for_nothing():
+    g = dispatch.gate("http://chat", None, gpu=True)
+    inside = threading.Event()
+    with g.admit(Level.TRANSLATE, "web"):
+        t = threading.Thread(target=lambda: g.admit(Level.QUERY, "web").__enter__() or inside.set())
+        t.start()
+        assert inside.wait(2), "an unbounded gate admitted at once"
+
+
+def test_corpus_stands_aside_on_the_gpu_while_anything_interactive_runs(monkeypatch):
+    """The unit of yielding is one REQUEST — a chunk — not a document: the
+    rotation used to yield between documents, and one gutenberg document
+    measured 145 s."""
+    live = {"on": True}
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: live["on"])
+    monkeypatch.setattr(config, "GATE_POLL_S", 0.02)
+    gpu = dispatch.gate("http://gpu-enc", 1, gpu=True)
+    admitted = threading.Event()
+
+    def corpus():
+        with gpu.admit(Level.CORPUS, "gutenberg", timeout=10):
+            admitted.set()
+    t = threading.Thread(target=corpus, daemon=True)
+    t.start()
+    assert not admitted.wait(0.3), "corpus went ahead while a person was waiting"
+    live["on"] = False
+    assert admitted.wait(2), "corpus resumed once nothing interactive ran"
+    t.join(2)
+    # a CPU encoder shares no device with the interactive models
+    live["on"] = True
+    cpu = dispatch.gate("http://cpu-enc", 1, gpu=False)
+    with cpu.admit(Level.CORPUS, "pubmed", timeout=1):
+        pass
+
+
+def test_a_wait_is_bounded_and_is_a_deferral_not_an_error(monkeypatch):
+    """CLAUDE.md: a pipeline thread never waits without a bound. The bound
+    is the request's own timeout, and running out of it is the endpoint
+    being busy — worker.transient_failure says so, so no error is ever
+    written onto the document."""
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
+    monkeypatch.setattr(config, "GATE_POLL_S", 0.02)
+    g = dispatch.gate("http://gpu-enc", 1, gpu=True)
+    with pytest.raises(dispatch.GateTimeout) as err:
+        with g.admit(Level.CORPUS, "gutenberg", timeout=0.2):
+            pass
+    assert isinstance(err.value, httpx.ConnectTimeout)
+    assert worker.transient_failure(err.value)
+    assert g.snapshot()["waiting"] == 0, "a waiter that gave up leaves the queue"
+
+
+def test_stopping_wakes_every_waiter(monkeypatch):
+    """SIGTERM: a request not yet admitted is not a unit in flight."""
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
+    monkeypatch.setattr(config, "GATE_POLL_S", 5.0)
+    g = dispatch.gate("http://gpu-enc", 1, gpu=True)
+    got = []
+
+    def corpus():
+        try:
+            with g.admit(Level.CORPUS, "gutenberg", timeout=60):
+                got.append("admitted")
+        except dispatch.GateTimeout:
+            got.append("deferred")
+    t = threading.Thread(target=corpus, daemon=True)
+    t.start()
+    _waiting(g, 1)
+    dispatch.stop_all()
+    t.join(2)
+    assert got == ["deferred"]
+
+
+def test_a_level_crosses_into_embed_texts_pool_threads(monkeypatch):
+    """A pool thread starts with an EMPTY context. Without handing the
+    caller's over, a corpus request made from embed_texts' sub-batch pool
+    would reach the gate as QUERY — ahead of every person's request."""
+    from app import collections as collections_mod, embeddings
+    seen = []
+    lock = threading.Lock()
+
+    def fake_batch(batch, timeout, recipe):
+        with lock:
+            seen.append(dispatch.current())
+        return [[0.0] for _ in batch]
+    monkeypatch.setattr(embeddings, "_embed_batch", fake_batch)
+    monkeypatch.setattr(config, "EMBED_BATCH", 1)
+    monkeypatch.setattr(config, "EMBED_CONCURRENCY", 3)
+    recipe = collections_mod.EmbedRecipe(url="http://enc", api="openai", model="m",
+                                         dtype="f16", ctx=512)
+    with dispatch.working_as(Level.CORPUS, "gutenberg"):
+        embeddings.embed_texts(["a", "b", "c", "d"], recipe=recipe)
+    assert seen and set(seen) == {(Level.CORPUS, "gutenberg")}
+
+
+def test_every_embedding_request_passes_its_servers_gate(monkeypatch):
+    from app import collections as collections_mod, embeddings
+    calls = []
+
+    class Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"index": 0, "embedding": [1.0]}]}
+
+    def fake_post(url, json, timeout):
+        calls.append(dispatch.gate("http://enc").snapshot()["busy"])
+        return Resp()
+    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    recipe = collections_mod.EmbedRecipe(url="http://enc", api="openai", model="m",
+                                         dtype="f16", ctx=512)
+    embeddings._request_vectors(["x"], 5, recipe)
+    assert calls == [1], "the request was made INSIDE the gate"
+
+
+def test_the_claim_is_held_across_nested_calls_and_cleared_by_the_last(
+        tmp_path, isolated_config):
+    """Cleared when the last interactive call ends, not a TTL later — a TTL
+    later would idle the encoders for nothing after every search."""
+    from app import node_state
+    node_state.connect().close()
+    with dispatch.interactive(Level.CHAT):
+        dispatch._claim_seen.clear()
+        assert dispatch.interactive_active()
+        with dispatch.interactive(Level.TRANSLATE):
+            pass
+        dispatch._claim_seen.clear()
+        assert dispatch.interactive_active(), "the outer call is still running"
+    dispatch._claim_seen.clear()
+    assert not dispatch.interactive_active()
+
+
+def test_a_claim_never_creates_the_node_store(tmp_path, isolated_config):
+    """The worker makes the store at boot. A process without one has no
+    worker to stand aside, and a claim that made one would write a node's
+    live state (conftest's guard exists because two tests once did)."""
+    from app import node_state
+    assert not node_state.path().exists()
+    with dispatch.interactive(Level.QUERY):
+        pass
+    assert not node_state.path().exists()
+    assert dispatch.interactive_active() is False
+
+
+def test_interactive_endpoints_are_bounded_only_by_configuration(monkeypatch):
+    monkeypatch.setattr(config, "GATE_CAPACITY", "http://chat:11434=1, http://mt=2")
+    assert dispatch.configured_capacity("http://chat:11434/") == 1
+    assert dispatch.configured_capacity("http://mt") == 2
+    assert dispatch.configured_capacity("http://rerank") is None

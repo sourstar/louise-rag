@@ -20,7 +20,7 @@ import time
 
 import httpx
 
-from . import config
+from . import config, dispatch
 
 #: one request's bound. Twelve whole entries in one call measured 33.6 s
 #: on the node's GPU (batch 32), a query into 51 languages 1.5 s.
@@ -68,9 +68,11 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
     if not items or not available():
         return []
     try:
-        r = httpx.post(f"{config.TRANSLATE_URL}/translate",
-                       json={"items": [{"text": t, "to": to} for t, to in items]},
-                       timeout=TIMEOUT_S)
+        with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
+                           timeout=TIMEOUT_S):
+            r = httpx.post(f"{config.TRANSLATE_URL}/translate",
+                           json={"items": [{"text": t, "to": to} for t, to in items]},
+                           timeout=TIMEOUT_S)
         r.raise_for_status()
         out = r.json().get("translations")
     except Exception:   # noqa: BLE001 — the caller falls back and says so

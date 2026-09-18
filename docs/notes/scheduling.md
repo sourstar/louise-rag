@@ -25,7 +25,8 @@ the part that prevents the seventh.
 
 | runner | owns | must never |
 |---|---|---|
-| **main loop** (`run_forever`) | node control state, the round over collections that do NOT own their embed, bundles, telemetry publish | run a long CPU or IO job; it is GPU-serial across collections by doctrine |
+| **main loop** (`run_forever`) | node control state, discovery requests, telemetry publish, and keeping the embed producers matched to the collections (§12; with `WORKER_EMBED_PRODUCERS=0`, the old encoder rotation and bundles) | run a long CPU or IO job |
+| **embed producer**, one per collection (`_embed_producer`, nice 0) | that collection's embedding: selection, chunks, held rows, the commit; its requests pass the encoder's gate (§12) | drain bundles or archives, or do anything that does not feed its encoder |
 | **pipeline thread**, one per collection (`_pipeline_worker`) | that collection's rdf/fts (rdf also commits each batch's catalog-index entries, app/catalog.py, before the marks), its archive passes, and — when the collection `owns_own_embed` (its encoder is its own container) — its embed step | touch another collection's manifest, index or Lance table |
 | **index maintainer** (one thread, `_index_maintainer`, at `nice 10` like the parse pool — and the pylance runtime it creates with it) | the vector index and the `book_id` index of every collection, one at a time; and each collection's catalog-index BACKFILL (app/catalog.py) until it is complete, in rowid windows, `CATALOG_BACKFILL_BUDGET_S` per turn | run on a pipeline thread (a refresh took 41 minutes and idled wikivec), hold a manifest write transaction while it works |
 | **stats publisher** | telemetry, the seeding table | do any pipeline work |
@@ -50,7 +51,7 @@ Two ownership rules follow from the table and are load-bearing:
 | **the GIL** | every pipeline thread (one interpreter) | the whole worker was ONE core busy at 87 % with eleven idle — parse/chunk is pure Python (amendment 47) |
 | **the manifest write lock** (per collection) | rdf/fts marks, archive flush marks, discovery batches, control writes | an archive importing at 1,400 docs/s holds it in a near-continuous stream of short transactions; other writers wait |
 | **the Lance table** (per collection) | the embed step, archive flushes, the index maintainer | a build/refresh marks the collection busy and its vector writers stand down (rdf/fts continue) |
-| **the encoders** | GPU: all collections that do not own theirs; CPU: one per collection | GPU work is serial by doctrine; a CPU encoder is idle whenever its collection's archive covers what would be embedded. **The Arc fits ONE model server at a time**, so today the GPU moves between collections BY HAND — see [`gpu-time-slots.md`](gpu-time-slots.md) for the deferred design that makes it serial by construction, in roughly one-hour slots (operator, 2026-09-10; waits for the multi-embedder llama server) |
+| **the encoders** | every collection naming the endpoint, through its gate (§12) | the Arc holds eight model servers at once (25.7 of 34.2 GB, 2026-09-18), so "GPU work is serial by doctrine" and "one model server at a time" are stale. What serialised the GPU was the main loop feeding every endpoint in turn: gutenberg's encoder was idle in 233 of 300 s with 78,178 documents waiting (§12) |
 | **disk** | corpora on the HDD pool, `/data` (manifests, Lance, packs) on NVMe | a 437 MB shard read is ~6 s from the HDD; row-group reads keep it to a few MB |
 
 ## 3. The rules — each one paid for
@@ -374,7 +375,8 @@ writes, is created on the main thread at boot (`refuse_boot`) and stays at
 
 | concern | file |
 |---|---|
-| the round, stage selection, batching, pipeline threads, prefetch | `app/worker.py` |
+| the round, stage selection, batching, pipeline threads, prefetch, embed producers | `app/worker.py` |
+| model requests by priority: levels, gates, the interactive claim (§12) | `app/dispatch.py` |
 | the parse pool | `app/parallel.py` |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
@@ -742,3 +744,134 @@ batch; the archive pass yields only between shards, so B3's granularity
 there is still coarse; and if the encoder ever moves from Ollama to vLLM,
 A5 becomes a per-request `priority` field on the server and this
 reservation should be retired rather than extended.
+
+## 12. Model work by priority, fed so the GPU does not wait (2026-09-19)
+
+*Operator, 2026-09-19. There are work queues with priorities, lowest to
+highest: corpus embedding, translation, chat, reranking, query
+embedding. The operator's rules:*
+
+- *A plugin queues up to two batches per priority level, and prepares a
+  third when there is more work, so that a returned batch is replaced at
+  once.*
+- *The threads feeding the GPU outrank indexing and parsing: "the CPU
+  load to feed the GPU is trivial but crucial".*
+
+### What was measured first
+
+All on the live node, read-only, with the `xe` driver's per-client
+`drm-cycles-ccs` counters.
+
+| measured | value |
+|---|---|
+| gutenberg's encoder (Qwen3-4B), 5-minute trace at 1 Hz | busy **20.7%**, idle in 233 of 300 s, with 78,178 documents waiting |
+| the same encoder while a document was running | 95% busy: the GPU is not slow, it is **not fed** |
+| the encoder rotation's own accounting over 607 s | gutenberg 268 s (8 documents); **pubmed 250 s, 0 documents**; wikipedia 40 s |
+| pubmed's embed selection, one call | 153 s cold, 105 s warm, nothing found (fixed: f5c4f29) |
+| query embedding / rerank against a 95%-busy card | 3–10 ms / 19 ms (10 documents): not hurt |
+| chat translating a question into 51 languages | 34.3 s idle, 56–192 s with the GPU busy (§STATUS, 2026-09-18) |
+
+Two py-spy dumps taken while the encoder sat at 0% showed the main
+thread busy with work that feeds nothing:
+- the backfill walk (`_next_embed → _backfill_rows → _cursor_page`);
+- an archive drain, in its encoder turn (`_serve_turn → _run_one_step →
+  _drain_remote_archive`).
+
+**The cause is structural.** The main loop serves every encoder
+endpoint serially, one turn each, and a turn also drains bundles and
+archives and runs the selection. So one collection's fruitless turn
+idles every other collection's encoder. The doctrine "GPU work is
+serial" dates from when the Arc fitted one model server; it runs eight
+now (§2's row on the encoders is stale on this point).
+
+### The model
+
+**Levels.** `CORPUS < TRANSLATE < CHAT < RERANK < QUERY`
+(`app/dispatch.py`). Every model request carries one.
+
+**One gate per endpoint.** All requests to one model server pass its
+gate (`embeddings._request_vectors`, the reranker, chat, translation).
+The gate admits at most the endpoint's capacity at a time (1 for a GPU
+llama-server, whose `-np 1` serves one sequence anyway; a CPU encoder's
+declared concurrency). Admission is strict by level. Within a level it
+is fair by service time: the waiter whose plugin has had the least
+goes first. A plugin returning from idle starts level with the others
+and banks nothing — §10's "idle must not cost the entitlement, nor earn
+credit".
+
+**Corpus yields the whole device, not only its endpoint.** An
+interactive request on the chat model does not queue at the Qwen3-4B
+gate, but it shares the card. So CORPUS is admitted on a GPU endpoint
+only while no interactive request is live anywhere on the node. The web
+process stamps a claim (`state/node.sqlite`) while any interactive call
+runs and clears it when the last one ends. The worker reads it
+memoised, before each REQUEST. The unit of yielding is one chunk
+(~0.2 s on gutenberg), not one document (up to 145 s measured,
+gutenberg:14300).
+
+**Interactive levels do not wait for each other across models, by
+design.** A device-wide strict ladder would make one user's
+translation wait behind another user's minute-long chat answer. The
+ladder orders them where they actually compete: at a shared gate. That
+happens with query and corpus on one encoder, and with chat and
+translation when TRANSLATE_URL is unset. Measured, small interactive
+requests are not hurt by co-residence (the table above). Chat is the
+one that is, and it is hurt by corpus work, which yields to it.
+
+**Two batches submitted, a third prepared (the operator's rule).**
+- Each collection has an embed PRODUCER thread. It selects candidates,
+  loads chunks and reads what is held: all the CPU work of a batch.
+- A batch is one document's requests.
+- At most two batches per (collection, level) hold a slot at the gate,
+  and a third is prepared meanwhile.
+- When a batch returns, its slot passes at once to the prepared one,
+  and the producer starts the next.
+- The commit (Lance rows, then the marks in the same transaction,
+  invariant 2) happens on the producer, off the gate.
+
+So the gate always has a successor waiting, and the GPU sees
+back-to-back requests. Across collections on one endpoint the fair
+share comes from the gate's service-time order, which replaces the
+main loop's per-turn rotation for embedding. `app/sched.py` still
+orders the index maintainer.
+
+**Feeders only feed.** Bundle inboxes and archive drains leave the
+encoder turn. They run on the collection's pipeline thread, as remote
+archives already did.
+
+**CPU priority.**
+- The producers and the main loop run at nice 0.
+- Pipeline threads (rdf, fts, archive), acquisition and discovery drop
+  to nice 5.
+- The parse pool and the index maintainer stay at 10.
+
+Nice is per thread on Linux and cannot be lowered back without
+CAP_SYS_NICE, which is why the producers are threads of their own. Nice
+does not order the GIL. What protects the feeders is that their CPU
+work is short and they wait on HTTP with the GIL released, and that
+parsing already runs in other processes (amendment 47).
+
+**Rollback.** `WORKER_EMBED_PRODUCERS=0` restores the main loop's
+rotation and the pipeline threads' old priority. The gates stay: they sit
+in the embedding client, so corpus requests still stand aside per
+request.
+
+### As built
+
+| piece | where | proved by |
+|---|---|---|
+| levels, gates, the claim | `app/dispatch.py` | `tests/test_dispatch.py` |
+| every embedding request through its gate | `embeddings._request_vectors`; `embed_texts` hands the caller's level to its pool threads | the same |
+| the web's levels | `retrieval` (query, rerank), `llm` (chat; translation by the chat model), `translate` (MADLAD) | `tests/test_phase_control.py` (the query claims before it embeds) |
+| producers, 2 submitted + 1 prepared | `worker._embed_producer`, `_embed_parallel(slots=…)` | `tests/test_embed_producers.py`, on the timeline |
+| a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
+| nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
+| the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
+
+### What to measure after deploying
+
+- The same 5-minute trace of gutenberg's encoder. Target: busy whenever
+  documents wait.
+- The `[sched]` gate lines: the waits and the service share per level.
+- Chat's latency while corpus embedding runs, against the 34 s idle
+  figure.

@@ -34,8 +34,9 @@ from pathlib import Path
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                embeddings, entities, fts, node_state, plugin_io, refs, sched, sizing,
+                dispatch, embeddings, entities, fts, node_state, plugin_io, refs, sched, sizing,
                 spaces, stats)
+from .dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -63,6 +64,13 @@ def _handle_sigterm(signum, frame):
     # cap bounds shutdown latency even if this call is skipped.
     try:
         get_manager().wake_all()
+    except Exception:
+        pass
+    # ...and anything waiting at an encoder's gate: a request not yet
+    # admitted is not a unit in flight, so it defers instead of waiting out
+    # its timeout (the gates' Conditions are RLock-based, as the bucket's)
+    try:
+        dispatch.stop_all()
     except Exception:
         pass
 
@@ -1016,7 +1024,8 @@ def _embed_candidates(con, scope, limit: int, collection=None):
     return rows
 
 
-def _embed_parallel(con, collection, recipe) -> bool:
+def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
+                    keep_going=None) -> bool:
     """CPU-encoder collections (recipe.concurrency > 1) embed several WHOLE
     DOCUMENTS concurrently. Per-doc request concurrency cannot help a corpus
     whose documents are single chunks (PubMed abstracts); the unit of
@@ -1025,9 +1034,19 @@ def _embed_parallel(con, collection, recipe) -> bool:
     SQLite lock, cross-connection); manifest row updates and logging happen
     back on this thread, which owns `con`.
 
-    GPU llama-server collections never come here (concurrency defaults 1) —
-    document-serial embedding is a decision, not an accident: parallel multi-
-    sequence processing is precisely the failure mode the batch gate guards.
+    WITH `slots` — the embed producers, every encoder, GPU included
+    (docs/notes/scheduling.md §12). The operator's rule: at most `slots`
+    documents SUBMITTED to the encoder's gate at once, and one more being
+    PREPARED meanwhile (its chunks cut, its held rows read), so that the
+    moment a document comes back its slot is taken by one that is ready.
+    The gate admits the server's capacity at a time — one request for a GPU
+    llama-server, which is what the old document-serial path guaranteed:
+    the server never sees two sequences at once, the failure mode the batch
+    gate guards. Without `slots` (the rollback), `recipe.concurrency`
+    documents run at once, as before.
+
+    `keep_going()` is asked before each refill: False stops taking new
+    documents (a pause), and what is in flight finishes and is committed.
 
     ONE READ AND ONE COMMIT PER BATCH, not per document (2026-09-15).
     Measured per pubmed abstract: reading what it already held 503 ms, its
@@ -1043,7 +1062,9 @@ def _embed_parallel(con, collection, recipe) -> bool:
     ends, SIGTERM included. A longer document still writes its own slices.
     """
     scope = db.get_scope(con)
-    group = max(recipe.concurrency * 2, config.EMBED_BATCH_DOCS)
+    window = recipe.concurrency if slots is None else slots + 1
+    submitted = None if slots is None else threading.Semaphore(slots)
+    group = max(window * 2, config.EMBED_BATCH_DOCS)
     rows = _embed_candidates(con, scope, group, collection)
     if not rows:
         return False
@@ -1053,15 +1074,31 @@ def _embed_parallel(con, collection, recipe) -> bool:
         if _stop.is_set():
             return (row, None, "stopped", False)
         try:
-            chunks = _load_chunks(row, collection)
-            tcon = db.connect(collection)
-            started = time.time()
-            try:
-                n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
-                                            chunks, collection, lock_con=tcon,
-                                            held=held, sink=sink)
-            finally:
-                tcon.close()
+            # a pool thread starts with an empty context: its requests
+            # declare themselves here, or they would reach the gate at the
+            # process default
+            with dispatch.working_as(Level.CORPUS, collection.name):
+                chunks = _load_chunks(row, collection)      # PREPARED
+                tcon = db.connect(collection)
+                try:
+                    if submitted is not None:
+                        # SUBMITTED: wait for one of the plugin's slots
+                        while not submitted.acquire(timeout=1.0):
+                            if _stop.is_set():
+                                return (row, None, "stopped", False)
+                    started = time.time()
+                    try:
+                        # `stop` bounds SIGTERM to one slice of a long
+                        # document (stage_embed's reason: gutenberg 4656 is
+                        # 5,335 chunks); the rest resumes from what is written
+                        n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
+                                                    chunks, collection, lock_con=tcon,
+                                                    stop=_stop, held=held, sink=sink)
+                    finally:
+                        if submitted is not None:
+                            submitted.release()
+                finally:
+                    tcon.close()
             # Measured HERE as well as in stage_embed, because every CPU
             # encoder in the deployment takes this path and only the GPU one
             # takes the other. Recording in stage_embed alone left the Stats
@@ -1072,6 +1109,11 @@ def _embed_parallel(con, collection, recipe) -> bool:
                 collection.name, seconds=time.time() - started, docs=1, chunks=n,
                 chars=sum(len(c.get("text") or "") for c in chunks))
             return (row, n, None, sink.holds(int(row["native_id"])))
+        except embeddings.EmbedInterrupted:
+            # SIGTERM between two slices of a long document: what is written
+            # stays, the document is NOT done, and resumes from it — never
+            # an error, which would take it out of every selection
+            return (row, None, DEFERRED, False)
         except Exception as e:  # noqa: BLE001 — isolated per document
             if transient_failure(e):
                 return (row, None, DEFERRED, False)
@@ -1097,7 +1139,8 @@ def _embed_parallel(con, collection, recipe) -> bool:
     db.log_event(con, "info", "embed",
                  f"embedding {len(rows)} document(s)"
                  + (f" / {pending_chunks} chunks" if pending_chunks else "")
-                 + f" with {recipe.concurrency} workers")
+                 + (f" with {recipe.concurrency} workers" if slots is None
+                    else f", {slots} submitted and 1 prepared at a time"))
 
     # A SLIDING WINDOW, not a batch-and-join. Measured live on the AMD
     # instance (60 s GPU trace at 1 Hz): the batch form ran ~20 s at
@@ -1189,8 +1232,8 @@ def _embed_parallel(con, collection, recipe) -> bool:
 
     def refill(pool) -> None:
         nonlocal queue
-        while len(in_flight) < recipe.concurrency and not _stop.is_set() \
-                and time.time() < deadline:
+        while len(in_flight) < window and not _stop.is_set() \
+                and time.time() < deadline and (keep_going is None or keep_going()):
             if not queue:
                 # candidates committed by THIS thread are already out of the
                 # selection; the ones in flight or awaiting their batch's
@@ -1207,7 +1250,7 @@ def _embed_parallel(con, collection, recipe) -> bool:
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
     try:
-        with ThreadPoolExecutor(max_workers=recipe.concurrency) as pool:
+        with ThreadPoolExecutor(max_workers=window) as pool:
             refill(pool)
             while in_flight:
                 finished, _ = wait(list(in_flight), return_when=FIRST_COMPLETED)
@@ -1228,7 +1271,7 @@ def _embed_parallel(con, collection, recipe) -> bool:
     if done:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
-                     f"{recipe.concurrency}")
+                     f"{recipe.concurrency if slots is None else slots}")
     if deferred:
         db.log_event(con, "warn", "embed",
                      f"{deferred} document(s) deferred — encoder unreachable or busy, "
@@ -1270,7 +1313,23 @@ _paused_aborts: set[str] = set()
 _acquire_lock = threading.Lock()
 
 
+def _background_priority() -> None:
+    """Acquisition, archive fetches and discovery yield the CPU to the
+    encoder feeders like indexing does (docs/notes/scheduling.md §12) —
+    measured 2026-09-19, gutenberg's rsync listing held the GIL parsing
+    dates while its encoder sat idle. Threads they spawn inherit it.
+
+    Never the MAIN thread: nice cannot be raised back without
+    CAP_SYS_NICE, and a caller that ran one of these inline there (a test,
+    a CLI) would leave the whole process's main thread lowered for good."""
+    if threading.current_thread() is threading.main_thread():
+        return
+    if producers_enabled(bool(config.WORKER_PIPELINE_THREADS)):
+        _lower_own_priority(config.BACKGROUND_NICE)
+
+
 def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
+    _background_priority()
     con = db.connect(collection)
     fetched_any = False
     stop: _AnyStop | None = None
@@ -1404,6 +1463,7 @@ _archive_log_state: dict[str, dict] = {}
 
 
 def _archive_worker(collection, reason: str) -> None:
+    _background_priority()
     con = db.connect(collection)
     try:
         state = _archive_log_state.setdefault(collection.name, {})
@@ -2009,6 +2069,7 @@ def _start_scan(collection, reason: str, acquire: bool, gone: threading.Event) -
 
 
 def _scan_worker(collection, reason: str, acquire: bool, gone: threading.Event) -> None:
+    _background_priority()
     con = db.connect(collection)            # connections are thread-affine
     stop = _AnyStop(_stop, gone)
     try:
@@ -2447,33 +2508,17 @@ def embed_resource(collection) -> str:
     return sched.encoder(collections_mod.recipe_for(collection).url)
 
 
-_QUERY_PRIORITY_POLL_S = 0.5
-_query_priority_seen: dict[str, tuple[float, bool]] = {}
-
-
 def query_waiting(con) -> bool:
-    """Is a human waiting on this encoder right now (A5)?
-
-    Memoised for _QUERY_PRIORITY_POLL_S: the answer is read between
-    documents, and at 175 embeds/s an unmemoised read would put a needless
-    SELECT on the control table for every document. Half a second is far
-    below the cost of the document it protects, so the memo cannot make a
-    query wait measurably longer."""
-    key = str(getattr(con, "collection_name", "") or id(con))
-    now = time.monotonic()
-    seen = _query_priority_seen.get(key)
-    if seen is not None and now - seen[0] < _QUERY_PRIORITY_POLL_S:
-        return seen[1]
-    try:
-        active = db.query_priority_claimed(con)
-    except Exception:   # noqa: BLE001 — a reservation is an optimisation
-        active = False
-    _query_priority_seen[key] = (now, active)
-    return active
+    """Is a person waiting on a model right now (A5)? The node's
+    interactive claim (app/dispatch.py), memoised there. The rollback
+    rotation (`_serve_turn`) reads it between documents; the producers do
+    not need to, because their requests stand aside at the gate, per
+    chunk. `con` is kept for the rollback's call shape."""
+    return dispatch.interactive_active()
 
 
 def reset_query_priority_memo() -> None:
-    _query_priority_seen.clear()
+    dispatch._claim_seen.clear()
 
 
 def _serve_turn(con, collection, turn, last_idle_log, pipeline) -> bool:
@@ -2583,6 +2628,11 @@ def _serve_in_order(cons, servable, last_idle_log, pipeline) -> bool:
 
 
 def _pipeline_worker(collection, gone: threading.Event) -> None:
+    producers = producers_enabled(True)
+    # indexing and parsing yield the CPU to the threads feeding the encoders
+    # (operator, 2026-09-19; docs/notes/scheduling.md §12) — only with
+    # producers: in the rollback this thread may embed
+    _background_priority()
     con = db.connect(collection)
     db.log_event(con, "info", "worker",
                  f"pipeline thread started for {collection.name!r}")
@@ -2613,13 +2663,18 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 if _acquire_only.is_set():
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
-                if owns_own_embed(collection):
+                if not producers and owns_own_embed(collection):
                     # The full pipeline, embed and genesis included: this
                     # collection's encoder is its own container, so nothing
                     # here competes with the GPU or with another collection.
                     if not _run_one_step(con, collection, _pipeline_idle_log,
                                           pipeline_active=False):
                         time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                # With producers, imported vectors arrive HERE: a bundle
+                # import is CPU/IO work (reads, T3's sixteen, Lance writes),
+                # and on the thread that feeds an encoder it would idle it.
+                if producers and _drain_bundle_inbox(con, collection):
                     continue
                 # A REMOTE archive (amendment 38) is applied HERE, on the
                 # collection's own thread, never on the GPU-serial main
@@ -2700,6 +2755,94 @@ def _sync_pipeline_threads(all_collections) -> None:
             thread.start()
 
 
+# ---- embed producers (docs/notes/scheduling.md §12) ------------------------
+# One thread per collection feeds that collection's encoder gate, replacing
+# the main loop's encoder rotation. Measured before (2026-09-19): the loop
+# served the endpoints serially, so pubmed's fruitless turns (250 s in ten
+# minutes, 0 documents) left gutenberg's GPU idle in 233 of 300 seconds with
+# 78,178 documents waiting. A producer only feeds: selection, chunks, the
+# held-rows read, the commit. Bundles and archives run on the pipeline
+# thread. It stays at nice 0 while indexing and parsing sit below it.
+_embed_producers: dict[str, tuple[threading.Thread, threading.Event]] = {}
+
+
+def producers_enabled(pipeline: bool) -> bool:
+    return bool(pipeline and config.WORKER_EMBED_PRODUCERS)
+
+
+def _producer_step(con, collection) -> bool:
+    """One stream of this collection's embedding, or False when it has
+    none to do now — switched off, unlicensed, its encoder failing its
+    baseline, or its vector table under maintenance: each a deferral."""
+    scope = db.get_scope(con)
+    if scope["embed_mode"] not in ("lazy", "all"):
+        return False
+    if not _license_allows(con, collection, "embedding"):
+        return False
+    if not _vector_writes_allowed(collection):
+        return False
+    if not backend_gate.embed_allowed(con, collection):
+        return False
+    recipe = collections_mod.recipe_for(collection)
+    slots = max(config.EMBED_PLUGIN_SLOTS, recipe.concurrency)
+    with dispatch.working_as(Level.CORPUS, collection.name):
+        return _embed_parallel(
+            con, collection, recipe, slots=slots,
+            keep_going=lambda: not (_paused.is_set() or _acquire_only.is_set()))
+
+
+def _embed_producer(collection, gone: threading.Event) -> None:
+    con = db.connect(collection)
+    db.log_event(con, "info", "worker",
+                 f"embed producer started for {collection.name!r}")
+    try:
+        while not _stop.is_set() and not gone.is_set():
+            if _paused.is_set() or _acquire_only.is_set():
+                time.sleep(2)
+                continue
+            collection = _live_collection(collection)
+            try:
+                if not _producer_step(con, collection):
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+            except Exception as e:   # noqa: BLE001 — a producer must outlive any stream
+                if manifest_contended(e):
+                    db.log_event(con, "warn", "embed",
+                                 f"stream deferred — manifest busy ({e})")
+                    time.sleep(2)
+                    continue
+                try:
+                    db.log_event(con, "error", "embed",
+                                 f"embed producer error:\n{traceback.format_exc()[:1200]}")
+                except Exception:
+                    print(traceback.format_exc()[:1200], flush=True)
+                time.sleep(5)
+        db.log_event(con, "info", "worker",
+                     f"embed producer stopped for {collection.name!r}")
+    finally:
+        con.close()
+
+
+def _sync_embed_producers(collections) -> None:
+    """Reconcile producers with the collections that may embed: start one
+    per new collection, stop the producer of a removed one (it finishes
+    what it has in flight and commits it — invariant 2)."""
+    live = {c.name: c for c in collections}
+    for name in list(_embed_producers):
+        thread, gone = _embed_producers[name]
+        if name not in live:
+            gone.set()
+            del _embed_producers[name]
+        elif not thread.is_alive():
+            del _embed_producers[name]      # crashed: restarted below
+    for name, collection in live.items():
+        if name not in _embed_producers:
+            gone = threading.Event()
+            thread = threading.Thread(target=_embed_producer, args=(collection, gone),
+                                      name=f"embed-{name}", daemon=True)
+            _embed_producers[name] = (thread, gone)
+            thread.start()
+
+
 def _join_pipeline_threads(timeout: float = 90.0) -> None:
     """Shutdown: each thread finishes its current document and exits (the
     stop event is checked between documents). The deadline is shared, and
@@ -2707,6 +2850,10 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
     exit-0 contract past the container's grace period."""
     deadline = time.time() + timeout
     for thread, _ in list(_pipeline_threads.values()):
+        thread.join(timeout=max(0.0, deadline - time.time()))
+    # the embed producers: what is in flight finishes (a long document stops
+    # at its next slice) and is committed before the process exits
+    for thread, _ in list(_embed_producers.values()):
         thread.join(timeout=max(0.0, deadline - time.time()))
     # scans stop at their next ref and commit the batch so far; give them
     # the same deadline so that commit lands before the process exits
@@ -2962,6 +3109,16 @@ def _log_shares(con, live_paths=None) -> None:
         db.log_event(con, "info", "sched", "windows — " + "; ".join(
             f"{_sizing_label(k)}: {v:,} rowids"
             for k, v in sorted(sizes["windows"].items())))
+    # The encoder gates (docs/notes/scheduling.md §12), cumulative since
+    # start: per level, requests admitted, the time they waited to be, and
+    # the time they held the server. A corpus level that waits while
+    # nothing interactive runs, or an encoder whose served time does not
+    # grow while documents wait, is the defect this exists to show.
+    for name, g in dispatch.snapshot().items():
+        if g["levels"]:
+            db.log_event(con, "info", "sched", f"gate {name} — " + "; ".join(
+                f"{lvl}: {s['admitted']} admitted, waited {s['waited_s']:.0f}s, "
+                f"served {s['served_s']:.0f}s" for lvl, s in g["levels"].items()))
 
 
 #: set while run_forever's loop runs. The stats beat acts on the node state
@@ -3182,6 +3339,10 @@ def run_forever():
         floor_cap_s=config.SCHED_FLOOR_CAP_S,
         # the minimum efficient unit is a measurement, not a setting
         learn_floor=True)
+    # This process's model requests are background work unless they say
+    # otherwise: a sample proof or a check stands aside for a person too
+    # (docs/notes/scheduling.md §12).
+    dispatch.set_default_level(Level.CORPUS)
     threading.Thread(target=_stats_publisher, name="stats-publisher",
                      daemon=True).start()
     # the vector index maintainer: its own thread, so an hour-long build or
@@ -3289,6 +3450,14 @@ def run_forever():
             # embed is excluded — touching it here would put two embed
             # writers on one collection AND let a CPU encoder block the
             # GPU's turn, which is the bug that split exists to fix.
+            if producers_enabled(pipeline):
+                # every collection's encoder is fed by its own producer
+                # (docs/notes/scheduling.md §12); this loop only keeps them
+                # matched to the collection set. They stand down on their
+                # own in acquire-only and while paused.
+                _sync_embed_producers(all_collections)
+                time.sleep(config.WORKER_IDLE_SLEEP)
+                continue
             if state != "acquire-only":
                 servable = servable_collections(all_collections, pipeline)
                 serve = (_serve_rotation if config.SCHED_FAIR_SHARE

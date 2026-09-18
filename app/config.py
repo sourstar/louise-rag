@@ -197,6 +197,30 @@ REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
 # finished — the next call carries on from the cursor. Measured live
 # before it existed: 105-153 s per call on pubmed, for nothing found.
 BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
+
+# ---- model work by priority (app/dispatch.py; docs/notes/scheduling.md §12)
+# How often a CORPUS request waiting at a GPU gate re-reads the node's
+# interactive claim — the claim lives in another process, so nothing wakes it.
+GATE_POLL_S = float(os.getenv("GATE_POLL_S", "0.1"))
+# The claim's lifetime, refreshed at half of it while an interactive call
+# runs; it only matters if the web process dies holding one.
+INTERACTIVE_CLAIM_TTL_S = float(os.getenv("INTERACTIVE_CLAIM_TTL_S", "5"))
+# Interactive endpoints are unbounded unless named here, `url=n,url=n`:
+# bounding one is what makes the ladder order it (chat before translation
+# on one CHAT_URL), and nothing measured yet says any of them contend.
+GATE_CAPACITY = os.getenv("GATE_CAPACITY", "")
+# The operator's rule: a plugin keeps at most this many batches (documents)
+# submitted to its encoder's gate, and prepares one more meanwhile, so a
+# returned batch is replaced at once.
+EMBED_PLUGIN_SLOTS = int(os.getenv("EMBED_PLUGIN_SLOTS", "2"))
+# 1: one embed producer thread per collection feeds the gates (§12).
+# 0: the main loop's encoder rotation, as before — the rollback.
+WORKER_EMBED_PRODUCERS = int(os.getenv("WORKER_EMBED_PRODUCERS", "1"))
+# The feeders outrank indexing and parsing (operator, 2026-09-19): pipeline,
+# acquisition and discovery threads lower themselves by this much; the
+# producers and the main loop stay at 0; the parse pool and the index
+# maintainer are at 10.
+BACKGROUND_NICE = int(os.getenv("BACKGROUND_NICE", "5"))
 # The phase controller's low watermark (worker._archive_yields): when fewer
 # than this many documents are waiting for a vector AND fts has work ready,
 # fts takes the collection's thread ahead of an archive pass. Feeding the

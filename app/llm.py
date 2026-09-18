@@ -2,7 +2,8 @@
 import json
 import re
 import httpx
-from . import config
+from . import config, dispatch
+from .dispatch import Level
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.S)
 
@@ -10,8 +11,12 @@ def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
 def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
-         num_ctx: int = 16384) -> str:
-    with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
+         num_ctx: int = 16384, *, level: Level = Level.CHAT) -> str:
+    """`level`: CHAT, or TRANSLATE when the chat model stands in for the
+    translation model — the two meet at CHAT_URL's gate, where chat goes
+    first (docs/notes/scheduling.md §12)."""
+    with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
+            httpx.Client(timeout=config.LLM_TIMEOUT) as client:
         r = client.post(f"{config.CHAT_URL}/api/chat", json={
             "model": config.CHAT_MODEL, "messages": messages, "stream": False,
             "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
@@ -22,12 +27,15 @@ def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
         return strip_think(r.json()["message"]["content"])
 
 def chat_stream(messages: list[dict], temperature: float = 0.3,
-                max_tokens: int | None = None, num_ctx: int = 16384):
-    """Yield content deltas."""
+                max_tokens: int | None = None, num_ctx: int = 16384, *,
+                level: Level = Level.CHAT):
+    """Yield content deltas. The claim and the gate are held for the whole
+    stream: the model is working until the last token."""
     options: dict = {"temperature": temperature, "num_ctx": num_ctx}
     if max_tokens is not None:
         options["num_predict"] = max_tokens
-    with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
+    with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
+            httpx.Client(timeout=config.LLM_TIMEOUT) as client:
         with client.stream("POST", f"{config.CHAT_URL}/api/chat", json={
             "model": config.CHAT_MODEL, "messages": messages, "stream": True,
             "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
@@ -66,7 +74,7 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
     )
     try:
         raw = chat([{"role": "user", "content": prompt}], temperature=0.0,
-                   max_tokens=max(600, 40 * len(targets)))
+                   max_tokens=max(600, 40 * len(targets)), level=Level.TRANSLATE)
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.strip("`")
@@ -276,7 +284,7 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
                    # flattened text would quietly tighten a budget nobody
                    # had re-measured.
                    max_tokens=max(600, 2 * sum(len(t) for t in texts) // 3 + 200),
-                   num_ctx=16384)
+                   num_ctx=16384, level=Level.TRANSLATE)
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.strip("`")
@@ -334,4 +342,4 @@ def translate_stream(text: str, lang: str):
         f"of it, do not summarise, do not add commentary. Reply with ONLY the "
         f"translation.\n\n{flatten_whitespace(text)}")
     yield from chat_stream([{"role": "user", "content": prompt}], temperature=0.0,
-                           max_tokens=max(600, len(text) + 200))
+                           max_tokens=max(600, len(text) + 200), level=Level.TRANSLATE)

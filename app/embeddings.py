@@ -6,6 +6,7 @@ slots). EMBED_CONCURRENCY sub-batches are kept in flight to saturate those
 slots; order is preserved. Vectors are stored float16 when EMBED_DTYPE=f16
 (half the disk, no practical retrieval-quality cost).
 """
+import contextvars
 import hashlib
 import math
 import re
@@ -21,7 +22,7 @@ import numpy as np
 import pyarrow as pa
 
 from . import collections as collections_mod
-from . import config
+from . import config, dispatch
 
 TABLE = "chunks"
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
@@ -39,18 +40,24 @@ def _conn(collection=None):
 
 def _request_vectors(batch: list[str], timeout: float,
                      recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
-    if recipe.api == "openai":
-        r = httpx.post(f"{recipe.url}/v1/embeddings",
+    # Every request passes its server's gate (app/dispatch.py): at most the
+    # server's concurrency at a time, the highest level first, and corpus
+    # work standing aside while anything interactive runs on the node. The
+    # wait is bounded by this request's own timeout.
+    g = dispatch.gate(recipe.url, recipe.concurrency, gpu=recipe.spends == "gpu")
+    with g.admit(timeout=timeout):
+        if recipe.api == "openai":
+            r = httpx.post(f"{recipe.url}/v1/embeddings",
+                           json={"model": recipe.model, "input": batch},
+                           timeout=timeout)
+            r.raise_for_status()
+            data = sorted(r.json()["data"], key=lambda d: d["index"])
+            return [d["embedding"] for d in data]
+        r = httpx.post(f"{recipe.url}/api/embed",
                        json={"model": recipe.model, "input": batch},
                        timeout=timeout)
         r.raise_for_status()
-        data = sorted(r.json()["data"], key=lambda d: d["index"])
-        return [d["embedding"] for d in data]
-    r = httpx.post(f"{recipe.url}/api/embed",
-                   json={"model": recipe.model, "input": batch},
-                   timeout=timeout)
-    r.raise_for_status()
-    return r.json()["embeddings"]
+        return r.json()["embeddings"]
 
 def _invalid(v) -> bool:
     return not v or any(x is None or not math.isfinite(x) for x in v)
@@ -163,13 +170,20 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
     if query and recipe.query_url:
         recipe = collections_mod.EmbedRecipe(
             url=recipe.query_url, api=recipe.api, model=recipe.model,
-            dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim)
+            dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
+            concurrency=recipe.concurrency, device=recipe.device)
     batches = [texts[i:i + config.EMBED_BATCH]
                for i in range(0, len(texts), config.EMBED_BATCH)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
     if workers > 1:
+        # a pool thread starts with an EMPTY context: without handing over
+        # the caller's, its requests would reach the gate at the process
+        # default level instead of the caller's (one copy per task — a
+        # Context cannot be entered by two threads at once)
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = list(ex.map(lambda b: _embed_batch(b, timeout, recipe), batches))
+            futures = [ex.submit(contextvars.copy_context().run,
+                                 _embed_batch, b, timeout, recipe) for b in batches]
+            results = [f.result() for f in futures]
     else:
         results = [_embed_batch(b, timeout, recipe) for b in batches]
     return [v for part in results for v in part]
