@@ -168,7 +168,7 @@ def test_removed_collection_drops_its_pending_scan(isolated_config, config_dir,
     """A scan queued for a collection that is then removed must not run —
     its connection is closed and its data is no longer the worker's."""
     from app import collections as collections_mod, spaces
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     monkeypatch.setattr(worker, "_discover", lambda con, c, reason: None)
     d = config_dir / "collections"
     d.mkdir(parents=True, exist_ok=True)

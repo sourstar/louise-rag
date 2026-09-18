@@ -24,7 +24,7 @@ def confirmed_space(monkeypatch):
     test_weak_model_hash_is_refused_but_retryable, which patches this back.
     """
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("c0ffee00c0ffee00", False))
+                        lambda *a: ("c0ffee00c0ffee00", False))
 
 
 @pytest.fixture

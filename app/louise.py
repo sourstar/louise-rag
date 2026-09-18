@@ -86,19 +86,19 @@ def cmd_create(a) -> int:
         spec.setdefault("kind", cx.CODEX_KIND)
         spec.setdefault("version", cx.CODEX_VERSION)
         codex = col.create(a.root, cx.from_dict(spec))
-        print(f"held: {_write_held_file(a.root, codex)}", file=sys.stderr)
+        print(f"held: {_write_held_file(a.root, codex, a.encoder)}", file=sys.stderr)
         print(codex.collection_id)
         return 0
     codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
                               platform_image=a.platform_image,
-                              space_from=a.space_from)
+                              space_from=a.space_from, encoder=a.encoder)
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
 
 
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
-                space_from: str | None = None):
+                space_from: str | None = None, encoder: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -151,7 +151,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     codex = col.create_from_recipe(root, plugin, recipe,
                                    key=node_keys.load_signing_key(), now=_utc_now(),
                                    platform_image=platform_image,
-                                   embed=_embed_for_recipe(recipe["space"]),
+                                   embed=_embed_for_recipe(recipe["space"], encoder),
                                    credits=credits)
     if space_from and (codex.space.envelope,
                        codex.space.calibration.vectors) != drifted:
@@ -161,19 +161,19 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
               f"in space {codex.space_id} â calibration is not inside "
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
-    return codex, _write_held_file(root, codex)
+    return codex, _write_held_file(root, codex, encoder)
 
 
-def _write_held_file(root, codex) -> Path:
+def _write_held_file(root, codex, encoder: str | None = None) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
     It says what a new collection holds before anything is fetched: no
     slice yet (`records fetch` records the ones it takes, 07 §7.3), the
-    default kinds, nothing spent on embedding, nothing shared. The encoder
-    endpoint is left to §7.8's resolution order — the collection's
-    `[encoder]` once an operator writes one, else
-    `[encoder_defaults.<plugin>]`, else EMBED_URL — rather than frozen here.
+    default kinds, nothing spent on embedding, nothing shared — and the
+    encoder it was created with, in `[encoder]`: a collection names its
+    own, and a file that names none is refused (no default encoder,
+    operator 2026-09-18).
 
     Where: `<root>/<name>.toml`, the spec's path. On a node whose files
     live in CONFIG_DIR rather than under LOUISE_ROOT (the reference node:
@@ -204,7 +204,10 @@ def _write_held_file(root, codex) -> Path:
                    "slices = []\n"
                    'kinds = ["records", "vectors"]\n'
                    'embed = "off"\n'
-                   "share = false\n", encoding="utf-8")
+                   "share = false\n"
+                   + (f'\n[encoder]\nurl = "{encoder}"\napi = "openai"\n'
+                      if encoder else ""),
+                   encoding="utf-8")
     tmp.replace(path)
     return path
 
@@ -222,23 +225,24 @@ def _utc_now() -> str:
         microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _embed_for_recipe(space: dict):
+def _embed_for_recipe(space: dict, url: str | None):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
     There is no Codex yet â the two hashes this produces are Codex
     fields â so the endpoint is resolved from the RECIPE's space block.
-    Same three-step resolution as `_recipe_for`, and for now the same
-    single available step: EMBED_URL.
+    The endpoint is `--encoder URL`, the one the new file will name. It
+    was EMBED_URL; there is no default encoder now (operator, 2026-09-18).
 
     An unreachable encoder here is not `GateDeferred`: there is no
     collection to defer a check on. It is a plain refusal to create.
     """
     from app import collections as collections_mod, embeddings
 
-    url = os.environ.get("EMBED_URL")
     if not url:
         raise CodexError(
-            "EMBED_URL is unset. `hold collection create` embeds the "
+            "name the encoder: --encoder URL. There is no default encoder "
+            "(operator, 2026-09-18), and the new collection's file names the one "
+            "it was created with. `hold collection create` embeds the "
             "512-text calibration set with the encoder the recipe names "
             "and writes the reference vectors' hash into the Codex "
             "(06 Â§6.6); there is no offline path that produces a valid "
@@ -1194,8 +1198,8 @@ def cmd_embedder_calibrate(a) -> int:
 
 def _gate(a):
     """Run the gate for a collection, resolving its encoder the way 07 Â§7.8
-    resolves one: the collection's own endpoint, then the platform default,
-    then EMBED_URL."""
+    resolves one: the collection's own endpoint, and nothing else — there
+    is no default encoder (operator, 2026-09-18)."""
     from app import embeddings
     from app.hold import collection as col, drag, embedder as emb
 
@@ -1237,15 +1241,15 @@ def _read_reference(member, codex):
 def _recipe_for(codex, name):
     """The endpoint that serves this space's encoder.
 
-    07 §7.8 resolves it in three steps, "each a fallback for the one before
-    it, never an override": the collection's `[encoder]`, then
-    `platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. A
-    collection this node runs resolves through `collections.recipe_for`,
-    THE resolution its worker embeds with (invariant 10). A collection held
-    without a file of its own takes the node's default for the Codex's
-    plugin, then `EMBED_URL`.
+    The one the collection's own file names, through
+    `collections.recipe_for` — THE resolution its worker embeds with
+    (invariant 10). A collection whose file names none, or that has no
+    file, is non-compliant: everything that needs its encoder defers (exit
+    3) and says why. There were two fallbacks, `[encoder_defaults.<plugin>]`
+    and EMBED_URL, until "a default embedder is wrong" (operator,
+    2026-09-18).
 
-    This used to read `EMBED_URL` alone. On the node that is the Qwen3-4B
+    It once read `EMBED_URL` alone. On the node that is the Qwen3-4B
     endpoint, so `hold check pubmed` sent MedCPT's texts there ("the encoder
     returned 2560 dimensions, the space is 768", 2026-09-18) and its
     calibration and vectors-sample could never pass. Behind a 768-wide
@@ -1258,25 +1262,13 @@ def _recipe_for(codex, name):
     """
     from dataclasses import replace
     from app import collections as collections_mod
+    from app.hold import embedder as emb
     collection = collections_mod.by_name(name)
-    plugin = collection.plugin if collection is not None else codex.plugin
-    if collection is not None and (getattr(collection, "embed", None) is not None
-                                   or collections_mod.default_recipe_for_plugin(plugin)):
-        recipe = collections_mod.recipe_for(collection)
-    else:
-        # Nothing configured: the env tier, which DEFERS when unset rather
-        # than taking config's built-in default (07 §7.8, exit 3).
-        recipe = collections_mod.default_recipe_for_plugin(plugin)
-        if recipe is None:
-            url = os.environ.get("EMBED_URL")
-            if not url:
-                from app.hold import embedder as emb
-                raise emb.GateDeferred(
-                    "EMBED_URL is unset and no collection endpoint is configured; "
-                    "07 §7.8: everything that needs an encoder defers (exit 3)")
-            recipe = collections_mod.EmbedRecipe(
-                url=url, api="openai", model=codex.space.encoder.label or "",
-                dtype=codex.space.dtype, ctx=codex.space.ctx, dim=codex.space.dim)
+    if collection is None or getattr(collection, "embed", None) is None:
+        # non-compliant: it names no encoder, and there is no default one
+        # (operator, 2026-09-18) — everything that needs it defers, exit 3
+        raise emb.GateDeferred(f"{name}: {collections_mod.NO_ENCODER}")
+    recipe = collections_mod.recipe_for(collection)
     return replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
                    dim=int(codex.space.dim))
 
@@ -1334,6 +1326,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--platform-image", default=None,
                    help="the digest of the platform image this command runs in "
                         "(required with --recipe; hashed into collection_id)")
+    p.add_argument("--encoder", default=None, metavar="URL",
+                   help="this node's endpoint for the recipe's encoder: it embeds the "
+                        "calibration set, and the collection file names it (a "
+                        "collection names its own encoder; there is no default)")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")

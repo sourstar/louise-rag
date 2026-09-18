@@ -9,7 +9,7 @@ from app import collections as collections_mod, config, db, spaces
 
 
 def _patch_hash(monkeypatch, value="abc123", weak=False):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: (value, weak))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: (value, weak))
 
 
 def test_first_boot_pins(isolated_config, monkeypatch):

@@ -44,6 +44,7 @@ from starlette.background import BackgroundTask
 
 from . import (auth, collections as collections_mod, config, db, discovery, llm,
                 node_state, platform_config, query_service, reader, retrieval, spaces)
+from . import translate as mt
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import claim
@@ -190,6 +191,9 @@ class AskQueryBody(BaseModel):
     # 2026-09-18): 05 §5.4's `limit` and §5.6's depth, per request
     limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
     rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    # the question into EVERY language held, not only the main ones — only
+    # when asked (operator, 2026-09-18)
+    all_languages: bool = False
 
 
 # "show results in" — the CONTENT languages the Ask page offers. The
@@ -266,6 +270,29 @@ def _remember(lang: str, text: str, value: str) -> None:
     _translation_cache[(lang, text)] = value
 
 
+def _mt_items(lang: str, items: list[tuple[str, str, str]]
+              ) -> tuple[dict[str, str], list[str]] | None:
+    """(id, text, src) items through the translation model (app/translate.py):
+    ({id: translation}, missed ids), or None when it could not be asked — the
+    caller then falls back to the chat model. An output equal to its input
+    is a translation here: the model is deterministic, so a name that
+    stays a name is its answer, not the chat model's copy-through."""
+    if not items:
+        return {}, []
+    got = mt.translate([(text, lang) for _cid, text, _src in items])
+    if not got:
+        return None
+    out: dict[str, str] = {}
+    missed: list[str] = []
+    for (cid, text, _src), value in zip(items, got):
+        if value is None:
+            missed.append(cid)
+            continue
+        out[cid] = value
+        _remember(lang, text, value)
+    return out, missed
+
+
 def _translate_items(body: TranslateBody) -> list[tuple[str, str, str]]:
     """(id, text, source language) for every item with something to say."""
     return [(str(i.get("id", "")), str(i.get("text", "")),
@@ -273,11 +300,19 @@ def _translate_items(body: TranslateBody) -> list[tuple[str, str, str]]:
             for i in body.items if str(i.get("text", "")).strip()]
 
 
-def _translate_batch(lang: str, items: list[tuple[str, str, str]]
+def _translate_batch(lang: str, items: list[tuple[str, str, str]], use_mt: bool = True
                      ) -> tuple[dict[str, str], bool, list[str]]:
     """Short items into `lang`, batched: ({id: translation}, failed, missed).
     `failed` means nothing came back at all; `missed` names the items that
     did not while others did."""
+    if use_mt and mt.available():
+        via = _mt_items(lang, [it for it in items if (lang, it[1]) not in _translation_cache])
+        if via is not None:
+            got, missed = via
+            done = {cid: got.get(cid) or _translation_cache.get((lang, text))
+                    for cid, text, _src in items}
+            done = {cid: v for cid, v in done.items() if v is not None}
+            return done, not done and bool(missed), missed
     out: dict[str, str] = {}
     groups: dict[str, list[tuple[str, str]]] = {}
     for cid, text, src in items:
@@ -429,17 +464,44 @@ def ask_translate_stream(body: TranslateBody):
             return
         got = 0
         missed: list[str] = []
-        short: list[tuple[str, str, str]] = []
-        long_: list[tuple[str, str, str]] = []
+        pending: list[tuple[str, str, str]] = []
         for cid, text, src in items:
             hit = _translation_cache.get((lang, text))
             if hit is not None:
                 got += 1
                 yield line({"id": cid, "text": hit})
             else:
-                (long_ if len(text) > _STREAM_OVER else short).append((cid, text, src))
+                pending.append((cid, text, src))
+        if mt.available():
+            # THE TRANSLATION MODEL, in the page's order and in rounds the
+            # page can watch arrive: the short items in one call (titles,
+            # headings — measured 1.1 s for six), the first long one alone
+            # (the answer, or the top entry: 5.9 s for a whole 3.8 kB entry),
+            # then the entries three at a time, each round a batch on the GPU.
+            short = [it for it in pending if len(it[1]) <= _STREAM_OVER]
+            long_ = [it for it in pending if len(it[1]) > _STREAM_OVER]
+            rounds = ([short] if short else []) + [long_[:1]] * bool(long_) + \
+                [long_[i:i + 3] for i in range(1, len(long_), 3)]
+            pending = []
+            for n, round_ in enumerate(rounds):
+                via = _mt_items(lang, round_)
+                if via is None:
+                    # unreachable: what is left goes to the chat model below
+                    pending = [it for r in rounds[n:] for it in r]
+                    break
+                out, round_missed = via
+                for cid, _text, _src in round_:
+                    if cid in out:
+                        got += 1
+                        yield line({"id": cid, "text": out[cid]})
+                    else:
+                        yield line({"id": cid, "missed": True})
+                missed += round_missed
+        short = [it for it in pending if len(it[1]) <= _STREAM_OVER]
+        long_ = [it for it in pending if len(it[1]) > _STREAM_OVER]
         if short:
-            out, _failed, short_missed = _translate_batch(lang, short)
+            # the translation model already failed or is not there
+            out, _failed, short_missed = _translate_batch(lang, short, use_mt=False)
             for cid, _text, _src in short:
                 if cid in out:
                     got += 1
@@ -512,7 +574,8 @@ def help_page(request: Request):
 @ask_router.post("/ask/query", response_class=HTMLResponse)
 def ask_query(request: Request, body: AskQueryBody):
     result = query_service.run_search(body.collections, body.query, body.limit, body.mode, True,
-                                      rerank_depth=body.rerank_depth)
+                                      rerank_depth=body.rerank_depth,
+                                      all_languages=body.all_languages)
     # every hit names its COLLECTION for the reader panel: federated hits
     # carry it; a single-collection hit is resolved from its source prefix
     # (the plugin id) to the first collection of that plugin
@@ -2223,6 +2286,22 @@ class CreateCollectionBody(BaseModel):
     # older clients; the dropdown value wins when given.
     acquire_source: str = ""
     peer_source: str = ""
+    # THE ENCODER, an [encoder]-shaped table ({url, api, model, dtype, ctx}):
+    # a collection names its own and there is no default one (operator,
+    # 2026-09-18) — this route used to take the plugin default or EMBED_URL
+    encoder: dict | None = None
+    companion_encoder: dict | None = None
+
+
+def _requested_encoder(raw, what: str):
+    """The request's own encoder table, or a 400 saying it must name one."""
+    try:
+        recipe = collections_mod.parse_recipe(raw, where=f"the {what}'s encoder")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    if recipe is None:
+        raise HTTPException(400, f"the {what}: {collections_mod.NO_ENCODER}")
+    return recipe
 
 
 def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
@@ -2417,7 +2496,9 @@ def new_collection_create(body: CreateCollectionBody):
                          "pre-embedded companion carries its own license "
                          "terms (embedded plugin)") from None
             raise
-        companion = (companion_name, companion_dir, companion_ack)
+        # its encoder too, BEFORE either file is written: no half a creation
+        companion = (companion_name, companion_dir, companion_ack,
+                     _requested_encoder(body.companion_encoder, "companion"))
 
     # default ON: a plugin with a known published-embeddings archive gets it
     # declared, so the worker reuses pre-embedded data before spending GPU.
@@ -2425,6 +2506,8 @@ def new_collection_create(body: CreateCollectionBody):
     from .bundles.genesis import DEFAULT_ARCHIVE_BY_PLUGIN
     genesis_archive = DEFAULT_ARCHIVE_BY_PLUGIN.get(body.plugin)
 
+    # the last check before anything is written: its own encoder
+    embed = _requested_encoder(body.encoder, "collection")
     base = config.DATA_DIR / body.name
     _write_collection_toml(
         toml_path, codex=None,
@@ -2445,14 +2528,13 @@ def new_collection_create(body: CreateCollectionBody):
         # a Qwen3 text space over DNA before anyone noticed; a genome
         # collection embedded with a language model is not a worse choice,
         # it is a wrong one.
-        embed=(collections_mod.default_recipe_for_plugin(body.plugin)
-               or collections_mod.env_recipe()),
+        embed=embed,
         extras=tuple(body.extras),
         peer_source=(body.peer_source.strip() or None))
 
     companion_note = ""
     if companion is not None:
-        companion_name, companion_dir, companion_ack = companion
+        companion_name, companion_dir, companion_ack, companion_embed = companion
         companion_base = config.DATA_DIR / companion_name
         _write_collection_toml(
             collections_mod.config_toml_path(companion_name),
@@ -2463,8 +2545,7 @@ def new_collection_create(body: CreateCollectionBody):
             fts=companion_base / "fts", lancedb=companion_base / "lancedb",
             license_ack=companion_ack,
             genesis_archive=DEFAULT_ARCHIVE_BY_PLUGIN.get("embedded"),
-            embed=(collections_mod.default_recipe_for_plugin("embedded")
-                   or collections_mod.env_recipe()),
+            embed=companion_embed,
             # 'fix' from birth: everything arrives pre-embedded via genesis;
             # the local encoder only mops up what the archive cannot cover
             # (shard-boundary straddlers), which is minutes of CPU, once
@@ -2947,19 +3028,13 @@ def _reranker_label(recipe) -> str:
 
 def _encoder_label(c) -> str:
     """The encoder the collection RUNS — `collections.recipe_for`, the one
-    resolution the worker and search use — and which tier named it. It
-    said "(node default)" for a plugin default and for EMBED_URL alike, and
-    named neither."""
+    resolution the worker and search use: its own file's, since there is no
+    default one (operator, 2026-09-18)."""
     try:
         r = collections_mod.recipe_for(c)
-        where = ("collection file" if c.embed is not None
-                 else f"platform.toml [encoder_defaults.{c.plugin}]"
-                 if collections_mod.default_recipe_for_plugin(c.plugin) is not None
-                 else "EMBED_URL")
-    except ValueError as e:       # a malformed table: say so, never guess
-        return f"(unreadable: {e})"
-    return (f"{r.model} @ {r.url}" + (" (+query encoder)" if r.query_url else "")
-            + f" — {where}")
+    except collections_mod.NoEncoder:
+        return "(none — non-compliant)"
+    return f"{r.model} @ {r.url}" + (" (+query encoder)" if r.query_url else "")
 
 
 def _falls_back(names: list[str]) -> str:
@@ -2971,24 +3046,16 @@ def _effective_config() -> dict:
     # ONLY WHAT IS GLOBAL (operator, 2026-09-18). The page listed
     # EMBED_MODEL, CHUNK_TOKENS, CHUNK_OVERLAP, CHUNK_VERSION and
     # CLEANING_VERSION as the node's, while each collection's encoder comes
-    # from its own file or its plugin's defaults and its chunker and
-    # cleaning from its Codex — a column of values that decided nothing it
-    # appeared to decide. What each collection runs is Tier 2, below. The
-    # two env fallbacks stay, saying whether any collection reaches them.
+    # from its own file and its chunker and cleaning from its Codex — a
+    # column of values that decided nothing it appeared to decide. What
+    # each collection runs is Tier 2, below. EMBED_URL is gone altogether:
+    # there is no default encoder. RERANK_URL stays, saying who reaches it.
     cols = collections_mod.load_all()
-    embed_users = []
-    for c in cols:
-        try:
-            if c.embed is None and collections_mod.default_recipe_for_plugin(c.plugin) is None:
-                embed_users.append(c.name)
-        except ValueError:      # a malformed platform.toml table is Tier 2's to show
-            continue
     rerank_users = [c.name for c in cols if getattr(c, "reranker", None) is None]
     tier1 = {
         "CHAT_URL": config.CHAT_URL,
         "CHAT_MODEL": config.CHAT_MODEL,
-        "EMBED_URL": f"{config.EMBED_MODEL} @ {config.EMBED_URL} — the encoder of last "
-                     f"resort, {_falls_back(embed_users)}",
+        "TRANSLATE_URL": config.TRANSLATE_URL or "(unset — the chat model translates, slowly)",
         "RERANK_URL": (f"{config.RERANK_URL} — the reranker of last resort, "
                        f"{_falls_back(rerank_users)}") if config.RERANK_URL
                       else "(unset — a collection with no [reranker] keeps its fused order)",
@@ -3024,6 +3091,12 @@ def _effective_config() -> dict:
         "transfer.segments_per_file": pc.transfer.segments_per_file,
         "ask.latency_budget_ms": pc.ask.latency_budget_ms,
     }
+    if pc.embed_defaults:
+        # still parsed, so an older platform.toml loads — and said to be
+        # ignored, so nobody believes it decides anything
+        tier2_platform["encoder_defaults"] = (
+            f"IGNORED ({', '.join(sorted(pc.embed_defaults))}): there is no default "
+            f"encoder — a collection names its own in its file (operator, 2026-09-18)")
 
     # the node's overrides from THE resolution the worker uses
     # (app/node_state.py); scope is per-collection and stays in its manifest
@@ -3049,7 +3122,8 @@ def _ping(url: str) -> bool:
 def _health_pings() -> list[dict]:
     endpoints: dict[str, list[str]] = {}
     endpoints.setdefault(config.CHAT_URL, []).append("CHAT_URL")
-    endpoints.setdefault(config.EMBED_URL, []).append("EMBED_URL")
+    if config.TRANSLATE_URL:
+        endpoints.setdefault(config.TRANSLATE_URL + "/health", []).append("TRANSLATE_URL")
     if config.RERANK_URL:
         endpoints.setdefault(config.RERANK_URL, []).append("RERANK_URL")
     # per-collection [embed] recipes (doc amendment 9): each declared
@@ -3108,6 +3182,10 @@ def system_page(request: Request):
     collections = collections_mod.load_all()
     return TEMPLATES.TemplateResponse(request, "system.html", {
         "active": "system",
+        # what load_all refused, and why — Refusal's own docstring promised
+        # this page and nothing showed it; a collection naming no encoder is
+        # one (operator, 2026-09-18: "a non compliant collection")
+        "refusals": collections_mod.refusals(),
         "effective": _effective_config(),
         "boot_report": spaces.report_boot_status(collections),
         "health": _health_pings(),

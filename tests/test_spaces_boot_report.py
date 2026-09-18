@@ -7,7 +7,7 @@ from app import collections as collections_mod, spaces
 
 
 def _patch_hash(monkeypatch, value="abc123", weak=False):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: (value, weak))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: (value, weak))
 
 
 def test_report_is_read_only_and_never_pins(isolated_config, monkeypatch):

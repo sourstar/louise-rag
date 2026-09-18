@@ -66,7 +66,7 @@ def test_health_search_and_the_worker_agree_when_the_gate_itself_fails(isolated_
 
 def test_the_librarys_ack_button_does_not_pretend_for_a_codex_collection(isolated_config,
                                                                          monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
     monkeypatch.setattr(web, "_collection_or_404", lambda name: _codex_collection("yellow"))
@@ -95,7 +95,6 @@ def test_every_tool_refuses_at_its_own_call_site(isolated_config, tmp_path, monk
                                                  tool, run):
     module = importlib.import_module(f"tools.{tool}")
     # a gate removed must fail fast here, never hang on an encoder
-    monkeypatch.setattr(config, "EMBED_URL", "http://127.0.0.1:9")
     _withheld(monkeypatch)
     name = collections_mod.load_all()[0].name
     with pytest.raises(SystemExit) as e:

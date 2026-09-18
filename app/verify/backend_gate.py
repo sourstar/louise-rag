@@ -190,14 +190,15 @@ def check(collection, embed_fn=None) -> dict:
         if len(fresh) != baseline["dim"]:
             raise BackendGateError(
                 f"endpoint dim {len(fresh)} != baseline dim {baseline['dim']} — "
-                f"the backend behind EMBED_URL is a different model")
+                f"the backend behind the collection's encoder is a different model")
         cosines[name] = _cos(fresh, entry["vector"])
     worst_name = min(cosines, key=cosines.get)
     if cosines[worst_name] < TAU:
         detail = " ".join(f"{k}={v:.4f}" for k, v in cosines.items())
         raise BackendGateError(
             f"embedding backend no longer reproduces its baseline ({detail}; "
-            f"tau={TAU}). The model, build, or pooling behind EMBED_URL changed. "
+            f"tau={TAU}). The model, build, or pooling behind the collection's "
+            f"encoder changed. "
             f"Refusing to write vectors — fix the endpoint (pin its image!) or "
             f"accept the new backend with `python -m app.cli backend rebaseline` "
             f"and re-embed the collection")

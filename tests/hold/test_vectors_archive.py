@@ -117,6 +117,7 @@ def test_shards_are_passed_through(isolated_config, tmp_path, monkeypatch):
     assert seen["shards"] == ["7"]
 
 
+@pytest.mark.strict_encoder
 def test_no_encoder_defers_rather_than_failing(isolated_config, tmp_path,
                                                monkeypatch, capsys):
     """The archive route's same-function proof needs the encoder, and

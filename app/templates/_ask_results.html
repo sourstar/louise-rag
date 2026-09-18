@@ -19,7 +19,10 @@
 {% endif %}
 <div class="note">
   {% for k,v in (result.timings or {}).items() if k != 'per_collection' %}<span class="badge">{{ k }} {{ v }} ms</span>{% endfor %}
-  {% if result.translations %}<span class="badge lapis">fan-out: {{ result.translations.keys()|join(', ') }}</span>{% endif %}
+  {# how many languages the question went out in, and who translated it —
+     fifty codes in a row buried the rest of this line; they stay in the
+     tooltip #}
+  {% if result.translations %}<span class="badge lapis" title="{{ result.translations.keys()|sort|join(', ') }}">fan-out: {{ result.translations|length }} {{ 'languages, every one held' if result.language and result.language.every else 'main languages' }}{% if result.language and result.language.by %}, by the {{ result.language.by }}{% endif %}</span>{% endif %}
   {# THE LANGUAGE RULE, SAID ON THE PAGE (operator, 2026-09-18): every
      language is searched unless the query limits it. A limit is a filter
      that hides records, so it is named, never silent — and so is a search
@@ -27,7 +30,7 @@
   {% if result.language and result.language.only %}
   <span class="badge brass" id="lang-only" title="the query asked for documents in these languages only — remove that from the question to search every language">only: {{ result.language.only|join(', ') }}</span>
   {% elif result.language and result.language.status == 'unavailable' %}
-  <span class="badge err" title="the chat model could not be asked: every language was searched with the question as typed, untranslated">languages: query not translated</span>
+  <span class="badge err" title="no model could translate the question: every language was searched with it as typed">languages: query not translated</span>
   {% endif %}
 </div>
 

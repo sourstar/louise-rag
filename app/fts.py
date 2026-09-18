@@ -106,6 +106,44 @@ def existing_groups(collection=None) -> list[str]:
     return sorted(p.name for p in collection.fts_dir.iterdir()
                   if p.is_dir() and (p / "meta.json").exists())
 
+#: (meta.json path, its mtime_ns) -> the languages that index holds
+_group_langs: dict[tuple[str, int], list[str]] = {}
+#: stored `lang` values that name no language to translate into
+_NOT_LANGUAGES = {"", "und", "zxx", "mul", "mis"}
+
+
+def group_languages(group: str, collection=None) -> list[str]:
+    """The languages a group's index holds. A one-language group is its own
+    language; a MIXED group (cjk, other) holds whatever its documents say,
+    read off the `lang` field's term dictionary — gutenberg's `other` holds
+    some forty (Latin, Esperanto, Tagalog, Welsh, …). Cached on the index's
+    own meta.json, path and mtime: a commit changes it, a name never does."""
+    if group not in ("cjk", "other"):
+        return [group]
+    if collection is None:
+        collection = collections_mod.default_collection()
+    meta = collection.fts_dir / group / "meta.json"
+    try:
+        key = (str(meta), meta.stat().st_mtime_ns)
+    except OSError:
+        return []
+    hit = _group_langs.get(key)
+    if hit is not None:
+        return hit
+    try:
+        idx = get_index(group, collection)
+        idx.reload()
+        terms = idx.searcher().terms_with_prefix("lang", "")
+    except Exception:   # noqa: BLE001 — an unreadable index holds nothing we can name
+        return []
+    langs = sorted({str(t).split("-")[0].lower() for t, n in terms if n > 0}
+                   - _NOT_LANGUAGES)
+    if len(_group_langs) > 256:
+        _group_langs.clear()
+    _group_langs[key] = langs
+    return langs
+
+
 def group_sizes(collection=None) -> dict[str, int]:
     """Chunks indexed per language group, from each index's own searcher —
     what query translation orders its languages by, largest first. An

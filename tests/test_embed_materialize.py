@@ -1,9 +1,9 @@
-"""Env→TOML migration of the embed recipe (invariant 10: TOML is desired
-state). `app.cli embed materialize` writes a collection's EFFECTIVE recipe
-into its TOML byte-equal — same recipe, same space id, the pin never
-notices — and every web TOML rewrite materializes the effective recipe the
-same way, so an env-fallback collection becomes explicit on first touch.
+"""`app.cli embed materialize` wrote a collection's env-fallback recipe
+into its TOML. There is no fallback now — a collection names its own
+encoder or is refused (operator, 2026-09-18) — so the command has nothing
+to write, and says so; the writer still round-trips an explicit block.
 """
+import pytest
 from pathlib import Path
 
 from app import cli, collections as collections_mod
@@ -17,28 +17,29 @@ def _declare(config_dir: Path, name: str, body: str) -> Path:
     return path
 
 
-def test_materialize_writes_the_env_recipe_verbatim(isolated_config, config_dir):
-    _declare(config_dir, "gutenberg",
-             'plugin = "gutenberg"\ncorpus_dir = "/corpora/x"\n')
-    before = collections_mod.load_all()[0]
-    assert before.embed is None
-    effective = collections_mod.recipe_for(before)
+EXPLICIT = ('plugin = "gutenberg"\ncorpus_dir = "/corpora/x"\n'
+            '[embed]\nurl = "http://e:1"\napi = "openai"\nmodel = "m"\n'
+            'dtype = "f16"\nctx = 512\n')
 
+
+def test_materialize_has_nothing_to_write_for_a_file_that_names_its_encoder(
+        isolated_config, config_dir, capsys):
+    _declare(config_dir, "gutenberg", EXPLICIT)
+    before = (config_dir / "collections" / "gutenberg.toml").read_text(encoding="utf-8")
     assert cli.main(["embed", "materialize", "gutenberg"]) == 0
-
-    after = collections_mod.load_all()[0]
-    assert after.embed is not None
-    assert collections_mod.recipe_for(after) == effective, \
-        "materialization must be byte-equal — same recipe, same space id"
+    assert "nothing to do" in capsys.readouterr().out
+    assert (config_dir / "collections" / "gutenberg.toml").read_text(
+        encoding="utf-8") == before
 
 
-def test_materialize_is_idempotent(isolated_config, config_dir):
-    _declare(config_dir, "gutenberg",
-             'plugin = "gutenberg"\ncorpus_dir = "/corpora/x"\n')
-    assert cli.main(["embed", "materialize", "gutenberg"]) == 0
-    first = collections_mod.load_all()[0].embed
-    assert cli.main(["embed", "materialize", "gutenberg"]) == 0
-    assert collections_mod.load_all()[0].embed == first
+@pytest.mark.strict_encoder
+def test_a_file_that_names_no_encoder_is_not_given_one(isolated_config, config_dir):
+    """The collection is refused at load, and no default is invented for it."""
+    _declare(config_dir, "gutenberg", 'plugin = "gutenberg"\ncorpus_dir = "/corpora/x"\n')
+    with pytest.raises(SystemExit):
+        cli.main(["embed", "materialize", "gutenberg"])
+    assert "[embed]" not in (config_dir / "collections" / "gutenberg.toml").read_text(
+        encoding="utf-8")
 
 
 def test_writer_round_trips_concurrency(isolated_config, config_dir, tmp_path):

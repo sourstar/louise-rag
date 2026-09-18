@@ -251,11 +251,11 @@ def test_weak_pin_upgrades_when_the_endpoint_comes_up(tmp_path, monkeypatch):
     collection = make_collection(tmp_path / "n", name="gutenberg")
 
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("weak-name-hash00", True))
+                        lambda *a: ("weak-name-hash00", True))
     spaces.validate_boot([collection])                       # first boot: endpoint down
 
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("confirmed-digest0", False))
+                        lambda *a: ("confirmed-digest0", False))
     spaces.validate_boot([collection])                       # must NOT refuse
 
     con = db.connect(collection)
@@ -267,6 +267,6 @@ def test_weak_pin_upgrades_when_the_endpoint_comes_up(tmp_path, monkeypatch):
 
     # ...and a LATER confirmed change still refuses, exactly as before
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("a-different-model", False))
+                        lambda *a: ("a-different-model", False))
     with pytest.raises(spaces.BootValidationError):
         spaces.validate_boot([collection])

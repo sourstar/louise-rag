@@ -139,15 +139,14 @@ def test_the_encoder_table_names_an_endpoint_not_a_space(node):
         load(head + f"ctx = {cx.space.ctx * 2}\n")
 
 
-def test_an_endpoint_from_the_defaults_brings_no_window(node, monkeypatch):
-    """No `[encoder]`: the ENDPOINT falls back through 07 §7.8's order, and
-    the space stays the Codex's."""
+@pytest.mark.strict_encoder
+def test_no_encoder_table_is_no_encoder(node):
+    """No `[encoder]`, no endpoint: there is no default one to fall back on
+    (operator, 2026-09-18) — the collection is non-compliant."""
     _, make, load = node
     cx = make()
-    monkeypatch.setattr(collections_mod.config, "EMBED_CTX", cx.space.ctx * 16)
-    r = collections_mod.recipe_for(load(f'codex = "{cx.collection_id}"\n')[1])
-    assert r.url == collections_mod.env_recipe().url
-    assert r.ctx == cx.space.ctx
+    with pytest.raises(collections_mod.NoEncoder, match="non-compliant"):
+        collections_mod.recipe_for(load(f'codex = "{cx.collection_id}"\n')[1])
 
 
 # ---- the files already on disk --------------------------------------------
@@ -165,6 +164,7 @@ def test_the_old_shape_loads_as_it_did(node):
     assert (c.slices, c.profile) == ("all", "full")
 
 
+@pytest.mark.strict_encoder
 def test_a_rewrite_drops_every_key_the_codex_answers(node):
     root, make, load = node
     cx = make(credits=(a_credit(ARCHIVE),))

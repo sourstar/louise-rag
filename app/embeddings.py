@@ -148,15 +148,18 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
                 query: bool = False) -> list[list[float]]:
     """EMBED_CONCURRENCY sub-batches in flight; result order matches input.
 
-    `recipe` selects the embedding backend (per-collection [embed] block via
-    collections.recipe_for(); None = the Tier-1 env recipe, which keeps every
-    pre-multi-space caller working unchanged). `query=True` routes through
+    `recipe` is the collection's encoder (collections.recipe_for()), and it
+    is required: there is no default encoder to fall back on (operator,
+    2026-09-18). `query=True` routes through
     the recipe's query encoder when one is declared — bi-encoder pairs like
     MedCPT embed documents and queries with DIFFERENT models, and a query
     embedded with the article encoder would search a coherent-looking wrong
     neighborhood. EMBED_BATCH/EMBED_CONCURRENCY stay node-level throughput
     knobs, deliberately not part of the recipe (they change no vector)."""
-    recipe = recipe or collections_mod.env_recipe()
+    if recipe is None:
+        raise collections_mod.NoEncoder(
+            "embed_texts: no encoder recipe — a collection names its own, and "
+            "there is no default")
     if query and recipe.query_url:
         recipe = collections_mod.EmbedRecipe(
             url=recipe.query_url, api=recipe.api, model=recipe.model,

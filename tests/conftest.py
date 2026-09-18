@@ -17,9 +17,10 @@ def fresh_worker_state():
     """Module-level cursors and memos are per PROCESS, so one test's
     completed walk must not decide the next test's selection (that leak
     is exactly the bug the re-index cursor's key had in production)."""
-    from app import language_plan, parallel, sched, sizing, worker
+    from app import language_plan, parallel, sched, sizing, translate, worker
     from app.bundles import genesis
     language_plan.reset()
+    translate.reset()
     sched.scheduler().reset()
     sizing.sizer().reset()
     worker.reset_reindex_cursors()
@@ -95,7 +96,7 @@ def config_dir(tmp_path) -> Path:
 
 
 @pytest.fixture
-def isolated_config(monkeypatch, corpus_dir, data_dir, config_dir):
+def isolated_config(request, monkeypatch, corpus_dir, data_dir, config_dir):
     """Point app.config at temp dirs for the duration of one test."""
     from app import config
 
@@ -111,5 +112,70 @@ def isolated_config(monkeypatch, corpus_dir, data_dir, config_dir):
     # other test runs the in-process serial path — same results, no children
     monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
+    # NO DEFAULT ENCODER (operator, 2026-09-18): the synthesized legacy
+    # collection names none, and a collection that names none is refused.
+    # The tests that embed with it name one HERE, explicitly — the values
+    # the removed env defaults had, so what those tests assert still holds.
+    import dataclasses
+    from app import collections as collections_mod
+    if not request.node.get_closest_marker("strict_encoder"):
+        synthesized = collections_mod._default_gutenberg_collection
+        monkeypatch.setattr(collections_mod, "_default_gutenberg_collection",
+                            lambda: dataclasses.replace(synthesized(), embed=TEST_ENCODER))
     config.ensure_dirs()
     return config
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "strict_encoder: load collection files as the node does — a file "
+                   "naming no [encoder] is refused, never given the test encoder")
+
+
+@pytest.fixture(autouse=True)
+def test_collection_files_name_an_encoder(request, monkeypatch):
+    """The suite's collection files predate "a collection names its own
+    encoder, there is no default" (operator, 2026-09-18) and most name
+    none: they were served the env default. Here each such file is given
+    the TEST encoder, explicitly — what the removed default was — so the
+    hundreds of tests about other things keep testing those things. A test
+    about the rule itself is marked `strict_encoder` and loads files as the
+    node does (tests/test_no_default_encoder.py)."""
+    if request.node.get_closest_marker("strict_encoder"):
+        return
+    import dataclasses
+    from app import collections as collections_mod
+    real = collections_mod._load_one
+
+    def load(path):
+        c = real(path)
+        if c.embed is not None:
+            return c
+        if c.codex is not None:
+            # a Codex file's encoder carries the Codex's space, as the real one
+            embed = collections_mod._codex_encoder(
+                {"url": TEST_ENCODER.url, "api": TEST_ENCODER.api}, c.codex, str(path))
+        else:
+            embed = TEST_ENCODER
+        return dataclasses.replace(c, embed=embed)
+    monkeypatch.setattr(collections_mod, "_load_one", load)
+
+    # and a Collection a test builds by hand, with no encoder, is resolved
+    # to the same test encoder rather than refused
+    real_recipe_for = collections_mod.recipe_for
+
+    def recipe_for(collection):
+        try:
+            return real_recipe_for(collection)
+        except collections_mod.NoEncoder:
+            return TEST_ENCODER
+    monkeypatch.setattr(collections_mod, "recipe_for", recipe_for)
+
+
+def _test_encoder():
+    from app.collections import EmbedRecipe
+    return EmbedRecipe(url="http://host.docker.internal:11434", api="ollama",
+                       model="qwen3-embedding-8k:latest", dtype="f32", ctx=8192)
+
+
+TEST_ENCODER = _test_encoder()

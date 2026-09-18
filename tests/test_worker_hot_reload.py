@@ -23,7 +23,7 @@ def quiet_discover(monkeypatch):
 
 def test_added_collection_joins_within_one_sync(isolated_config, config_dir,
                                                  quiet_discover, monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     start = collections_mod.load_all()
     cons = {c.name: db.connect(c) for c in start}
     last_discover = {c.name: 0.0 for c in start}
@@ -42,7 +42,7 @@ def test_added_collection_joins_within_one_sync(isolated_config, config_dir,
 
 def test_removed_collection_leaves_and_its_con_closes(isolated_config, config_dir,
                                                        quiet_discover, monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "a")
     _write_toml(config_dir, "b")
     start = collections_mod.load_all()
@@ -107,7 +107,7 @@ def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir
     """An ack recorded (or acquisition toggled) on an EXISTING collection
     must not sit inert until the interval scan — the round's hot-reload
     notices and re-discovers immediately."""
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "pm")
     start = collections_mod.load_all()
     cons = {c.name: db.connect(c) for c in start}
@@ -126,7 +126,7 @@ def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir
 
 def test_invalid_new_collection_is_skipped_not_fatal(isolated_config, config_dir,
                                                       quiet_discover, monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "good")
     start = collections_mod.load_all()
     cons = {c.name: db.connect(c) for c in start}
@@ -164,7 +164,7 @@ def test_a_pipeline_thread_sees_the_edit_and_not_its_startup_object(
     Tier-2 field it reads froze with it. The object is republished each
     round and re-read at the top of the loop instead.
     """
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
     start = worker._sync_collections([], {}, {})
     stale = next(c for c in start if c.name == "growing")
@@ -188,7 +188,7 @@ def test_repointed_paths_still_need_a_restart(isolated_config, config_dir,
     connection to the manifest it was started against; swapping the object
     under it would leave the thread writing one database and the main loop
     another."""
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "moving")
     start = worker._sync_collections([], {}, {})
     held = next(c for c in start if c.name == "moving")
@@ -215,7 +215,7 @@ def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
     the round loop logged a traceback every five seconds and served
     NOTHING. pubmed's archive import stopped with it.
     """
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "fine")
     _write_toml(config_dir, "broken")
     start = worker._sync_collections([], {}, {})
@@ -239,7 +239,7 @@ def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
 
 def test_the_broken_file_is_reported_once_not_every_round(
         isolated_config, config_dir, quiet_discover, monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "fine")
     _write_toml(config_dir, "broken")
     start = worker._sync_collections([], {}, {})

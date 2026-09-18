@@ -76,7 +76,8 @@ def withheld_from(names: list[str] | None) -> list[dict]:
 
 def run_search(collection_names: list[str] | None, query: str, k: int, mode: str,
                translate: bool, verify: bool = False,
-               rerank_depth: int = retrieval.RERANK_TOP_N) -> dict:
+               rerank_depth: int = retrieval.RERANK_TOP_N,
+               all_languages: bool = False) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per
@@ -91,14 +92,16 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
     if len(participants) == 1:
         con = db.connect(participants[0])
         result = retrieval.search(con, query, k=k, mode=mode, translate=translate,
-                                   collection=participants[0], rerank_depth=rerank_depth)
+                                   collection=participants[0], rerank_depth=rerank_depth,
+                                   all_languages=all_languages)
         if verify:
             result["verification"] = _verify_hits(con, participants[0], result["hits"])
         if withheld:
             result["withheld"] = withheld
         return result
     result = retrieval.federated_search(participants, query, k=k, mode=mode,
-                                         translate=translate, rerank_depth=rerank_depth)
+                                         translate=translate, rerank_depth=rerank_depth,
+                                         all_languages=all_languages)
     if withheld:
         result["withheld"] = withheld
     if verify:

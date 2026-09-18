@@ -72,7 +72,7 @@ def test_corrupted_space_bundle(two_nodes, tmp_path, monkeypatch):
 
     from app import spaces
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("0000dead0000beef", False))   # consumer's space moved
+                        lambda *a: ("0000dead0000beef", False))   # consumer's space moved
     result = importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")
     assert result["error_class"] == "BundleSpaceMismatch"
     assert ledger.recent(consumer_con)[0]["state"] == ledger.REJECTED

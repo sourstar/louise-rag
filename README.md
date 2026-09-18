@@ -121,8 +121,8 @@ away from it.
 
 - **Tier 1 — env** (identity/infrastructure, restart to change): paths, ports,
   `CHAT_URL` (the chat model; `OLLAMA_URL` is its old name, still read), `CHAT_MODEL`,
-  `EMBED_URL`/`RERANK_URL` as the fallbacks behind each collection's own encoder
-  and reranker, `EMBED_MODEL`, version bumps
+  `TRANSLATE_URL` (the translation model; unset, the chat model translates),
+  `RERANK_URL` as the fallback behind each collection's own reranker, version bumps
   (`CHUNK_VERSION`…), `ADMIN_TOKEN_FILE` (preferred; a path — wins over
   `ADMIN_TOKEN`), `NODE_KEY_PATH` (path to the Ed25519 node key — the key
   *location*, never key material).
@@ -179,8 +179,9 @@ design — keep the app on LAN/Tailscale; don't tunnel it to the internet.
 
 ## Model endpoints
 
-- **Chat + embeddings via Ollama** (or anything OpenAI-compatible with
-  `EMBED_API=openai`). For corpus-scale embedding, run a dedicated instance:
+- **Chat via Ollama; embeddings from each collection's own encoder** — the
+  collection file's `[encoder]` names it, and there is no default one. For
+  corpus-scale embedding with Ollama, run a dedicated instance:
 
   ```
   OLLAMA_NUM_PARALLEL: "16"
@@ -190,9 +191,11 @@ design — keep the app on LAN/Tailscale; don't tunnel it to the internet.
   OLLAMA_FLASH_ATTENTION: "1"
   ```
 
-  and point `EMBED_URL` at it, keeping `EMBED_BATCH × EMBED_CONCURRENCY ≥`
-  its `NUM_PARALLEL`. Changing the embedding model or `EMBED_DTYPE` changes
-  the embedding *space*: wipe `lancedb/` and bump `EMBED_VERSION`.
+  and name it in the collection's `[encoder]`, keeping `EMBED_BATCH ×
+  EMBED_CONCURRENCY ≥` its `NUM_PARALLEL`. Changing a collection's encoder
+  or dtype changes its embedding *space* (invariant 1).
+- **Translation**: MADLAD-400 on the GPU (`deploy/madlad-translate`); set
+  `TRANSLATE_URL` to it. Unset, the chat model translates, much slower.
 - **Optional reranker**: a TEI container (`BAAI/bge-reranker-v2-m3`, CPU is
   fine); set `RERANK_URL` to its `/rerank`. Unset = skipped gracefully.
 - **Open WebUI**: add an OpenAI connection to `http://<nas>:8742/v1`; the

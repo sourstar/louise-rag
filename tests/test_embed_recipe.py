@@ -45,11 +45,10 @@ def test_embed_block_requires_url_and_model(isolated_config, config_dir):
         collections_mod.load_all()
 
 
-def test_recipe_fallback_is_the_env_recipe(isolated_config, monkeypatch):
-    monkeypatch.setattr(config, "EMBED_URL", "http://env-host:1")
-    monkeypatch.setattr(config, "EMBED_MODEL", "env-model")
+def test_no_collection_named_means_the_default_collections_own(isolated_config):
+    """`recipe_for(None)` is the default collection's own encoder — never a
+    node-wide default, which no longer exists (operator, 2026-09-18)."""
     r = collections_mod.recipe_for(collections_mod.default_collection())
-    assert r.url == "http://env-host:1" and r.model == "env-model"
     assert collections_mod.recipe_for(None) == r
 
 
@@ -80,14 +79,11 @@ def test_embed_texts_routes_through_the_recipe(isolated_config, monkeypatch):
     assert calls[0]["url"] == "http://medcpt:8080/v1/embeddings"
     assert calls[0]["json"]["model"] == "medcpt-article"
 
-    # no recipe -> env recipe, unchanged legacy behavior
+    # no recipe -> no default to fall back on: refused, nothing sent
     calls.clear()
-    monkeypatch.setattr(config, "EMBED_URL", "http://env:1")
-    monkeypatch.setattr(config, "EMBED_API", "openai")
-    monkeypatch.setattr(config, "EMBED_MODEL", "env-model")
-    embeddings.embed_texts(["hello"])
-    assert calls[0]["url"] == "http://env:1/v1/embeddings"
-    assert calls[0]["json"]["model"] == "env-model"
+    with pytest.raises(collections_mod.NoEncoder):
+        embeddings.embed_texts(["hello"])
+    assert calls == []
 
 
 def test_query_routing_uses_the_query_encoder(isolated_config, monkeypatch):
@@ -221,14 +217,16 @@ def test_space_components_come_from_the_recipe(isolated_config, config_dir):
     # space_id moves if the query encoder changes (§3 query_encoder_hash)
     assert comp.query_encoder_hash != comp.embed_model_hash
 
-    # env-fallback collections keep the symmetric behavior
-    default = collections_mod.Collection(
+    # a symmetric encoder keeps the symmetric behavior
+    symmetric = collections_mod.Collection(
         name="d", plugin="gutenberg", profile=None, embed_mode_default=None,
         corpus_dir=c.corpus_dir, manifest_path=c.manifest_path,
-        fts_dir=c.fts_dir, lance_dir=c.lance_dir)
-    comp2 = spaces.gather_components(default)
+        fts_dir=c.fts_dir, lance_dir=c.lance_dir,
+        embed=collections_mod.EmbedRecipe(url="http://s:1", api="openai", model="s",
+                                          dtype="f32", ctx=512))
+    comp2 = spaces.gather_components(symmetric)
     assert comp2.query_encoder_hash == comp2.embed_model_hash
-    assert comp2.dtype == config.EMBED_DTYPE
+    assert comp2.dtype == "f32"
 
 
 def test_two_collections_two_spaces_distinct_ids(isolated_config, config_dir):
@@ -245,7 +243,6 @@ def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, config_dir,
                                                  monkeypatch, tmp_path):
     _write_toml(config_dir, "medcpt", MEDCPT_TOML)
     collection = collections_mod.by_name("medcpt")
-    monkeypatch.setattr(config, "EMBED_DTYPE", "f32")   # env says f32...
     monkeypatch.setattr(
         embeddings, "embed_texts",
         lambda texts, timeout=300, recipe=None, query=False:
@@ -255,7 +252,7 @@ def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, config_dir,
     embeddings.upsert_book(1, "en", chunks, collection)
     tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
     import pyarrow as pa
-    # ...but the recipe says f16, and the recipe wins for ITS collection
+    # the recipe says f16, and the table is the recipe's
     assert pa.types.is_float16(tbl.schema.field("vector").type.value_type)
 
 

@@ -78,15 +78,17 @@
       provenance badges: <b>local ✓</b> (computed here), <b>imported ◌</b>
       (from a bundle, unverified), <b>verified ✓</b> (spot-checked against
       the local model), <b>⚠ failed</b> (verification failed).
-      Every search covers <b>every language</b> the collections hold — the
-      question is translated into each — unless the question limits it:
+      A search covers the <b>main languages</b> the collections hold — those
+      with an index of their own; the question is translated into each —
+      and <b>all languages</b> (tick it, or write <code>lang:all</code>) adds
+      every other one they hold. The question can also limit it:
       "… only texts in German", "… solo fonti in francese", or
       <code>lang:de</code> (<code>lang:de,fr</code> for several). A limit
       is shown as an <b>only: de</b> badge above the hits.
       <b>Show results in …</b> is the language of the answer and of every
       entry returned, translated IN FULL — its title, headings and whole
-      text; changing it translates the page as it stands, the words
-      appearing as the model writes them (authors, ids and this interface
+      text; changing it translates the page as it stands, each entry
+      appearing as it is done (authors, ids and this interface
       stay as they are; the original text stays in the provenance drawer;
       a small "translated from" badge says what happened; <b>more</b>
       opens an entry clamped to a few lines). <b>results</b> is how many
@@ -242,9 +244,11 @@
       as their own blocks above the ranked hits: they are never ranked,
       never fused with passages, and carry no <b>[n]</b> citation.</li>
     <li><b>Show results in …</b> translates with the node's own local
-      model, not an external service. That model writes one thing at a
-      time, so a page of whole entries takes minutes to finish: titles and
-      headings come first, then the answer, then the entries by rank.</li>
+      model, not an external service: the translation model (MADLAD-400,
+      <code>TRANSLATE_URL</code>) where the node has one — about a second for
+      a question into every main language, six for a whole entry — else the
+      chat model, which takes minutes for a page. Titles and headings come
+      first, then the answer, then the entries by rank.</li>
     <li><b>A language limit is read from the question by the same model</b>
       and taken only when the words it names are really in the question
       and are not the whole of it — so "German history of whaling" is a
@@ -725,9 +729,9 @@ embed  = "off"                 # off | on-demand | all: what this node spends
 share  = false
 # title = "…"                  # this node's own listing name, never published
 
-[encoder]                      # optional: where this node reaches the Codex's encoder
-url = "http://…"               # (+ query_url for a bi-encoder); else platform.toml's
-                               # [encoder_defaults.&lt;plugin&gt;], else EMBED_URL
+[encoder]                      # REQUIRED: where this node reaches the Codex's encoder
+url = "http://…"               # (+ query_url for a bi-encoder). There is no default:
+                               # a file that names none is refused (System page)
 
 [reranker]                     # optional: this node's reranker for this collection
 url = "http://…/v1/rerank"     # the full endpoint; else RERANK_URL, else none

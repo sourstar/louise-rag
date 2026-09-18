@@ -25,8 +25,8 @@
        understand a title in Arabic or Hindi?" — the switch is reversible,
        so the published title is always one selection back, and it stays
        in the hit's tooltip meanwhile). It chooses how results READ, never
-       which are found: every search covers every language unless the
-       question itself limits it (app/language_plan.py).
+       which are found: a search covers the main languages, every language
+       when asked, unless the question limits it (app/language_plan.py).
 
        EACH OPTION IS WRITTEN IN THE LANGUAGE IT SELECTS (operator,
        2026-09-12) — the one carve-out from "the chrome never changes
@@ -35,7 +35,7 @@
        fallback for a code added to the TOML with no phrase, and
        dir="auto" is what keeps the Persian row from rendering backwards
        inside an LTR select. #}
-    <select id="lang" style="width:auto" onchange="applyLanguage()" title="the language of the answer and of every entry — the search itself always covers every language">
+    <select id="lang" style="width:auto" onchange="applyLanguage()" title="the language of the answer and of every entry — not which languages are searched">
       <option value="original">results in their own language</option>
       {% for lang in result_languages %}
       <option value="{{ lang[0] }}" dir="auto">{{ lang[2] if lang|length > 2 else lang[1] }}</option>
@@ -51,6 +51,12 @@
     <label class="inline" title="candidates per list the reranker orders, before reranking (default {{ default_rerank_depth }})">reranked from
       <input id="rerank-depth" type="number" min="1" max="{{ max_results }}" value="{{ default_rerank_depth }}"
              data-default="{{ default_rerank_depth }}" style="width:4.5em" onchange="rememberCounts()"></label>
+    {# EVERY LANGUAGE ONLY WHEN ASKED (operator, 2026-09-18): a search goes
+       out in the main languages; this, or `lang:all` in the question, adds
+       every other language the collections hold. Not remembered: it is a
+       request, made each time. #}
+    <label class="inline" title="translate the question into every language the collections hold, not only the main ones">
+      <input id="all-langs" type="checkbox"> all languages</label>
     <button class="primary" onclick="search()">Search</button>
     <button onclick="ask()">Ask (RAG)</button>
   </div>
@@ -118,7 +124,8 @@ function count(id){
   if(!ok)el.value=el.dataset.default;
   return ok?n:+el.dataset.default;
 }
-function counts(){return {limit:count('limit'),rerank_depth:count('rerank-depth')}}
+function counts(){return {limit:count('limit'),rerank_depth:count('rerank-depth'),
+                         all_languages:document.getElementById('all-langs').checked}}
 // remembered in this browser only; a private window starts from the defaults
 function rememberCounts(){try{localStorage.setItem('ask.counts',JSON.stringify(counts()))}catch(e){}}
 (function restoreCounts(){

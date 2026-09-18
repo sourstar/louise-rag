@@ -27,7 +27,7 @@ from app.api import app
 
 @pytest.fixture
 def client(isolated_config, monkeypatch, tmp_path):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
     monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", tmp_path / "corpora")
@@ -35,6 +35,12 @@ def client(isolated_config, monkeypatch, tmp_path):
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
+
+
+# a collection names its own encoder; there is no default one (operator,
+# 2026-09-18), so every create here names one
+ENC = {"url": "http://enc.invalid:8080", "api": "openai", "model": "m",
+       "dtype": "f16", "ctx": 512}
 
 
 def _mount(name):
@@ -47,7 +53,7 @@ def _create(client, **body):
     payload = {"name": "wiki", "plugin": "wikipedia", "profile": "demo",
                "corpus_dir": _mount("wiki"),
                # wikipedia is yellow; the gate no longer keys on acquisition
-               "acknowledge_terms": True}
+               "acknowledge_terms": True, "encoder": ENC, "companion_encoder": ENC}
     payload.update(body)
     return client.post("/admin/library/new/create", json=payload)
 
@@ -110,6 +116,7 @@ def test_hand_populated_profile_creates_without_acquisition(client):
     fetches BY."""
     r = client.post("/admin/library/new/create", json={
         "name": "handy", "plugin": "gutenberg", "profile": "hand-populated",
+        "encoder": ENC, "companion_encoder": ENC,
         "corpus_dir": _mount("handy"), "acquire_enabled": True})
     assert r.status_code == 200, r.json()
     raw = tomllib.loads(
@@ -129,6 +136,7 @@ def test_snapshot_pin_survives_ui_rewrites(client):
     irreproducibility the pin exists to prevent."""
     r = client.post("/admin/library/new/create", json={
         "name": "wp", "plugin": "wikipedia", "profile": "demo",
+        "encoder": ENC, "companion_encoder": ENC,
         "corpus_dir": _mount("wp"), "acknowledge_terms": True})
     assert r.status_code == 200
     toml_path = collections_mod.config_toml_path("wp")
@@ -149,6 +157,7 @@ def test_embed_mode_survives_the_ack_rewrite(client):
     comp = _mount("wv2")
     r = client.post("/admin/library/new/create", json={
         "name": "wiki2", "plugin": "wikipedia", "profile": "demo",
+        "encoder": ENC, "companion_encoder": ENC,
         "corpus_dir": _mount("wiki2"), "companion_corpus_dir": comp,
         "acknowledge_companion_terms": True, "acknowledge_terms": True})
     assert r.status_code == 200

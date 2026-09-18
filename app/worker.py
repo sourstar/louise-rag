@@ -2697,7 +2697,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         _gone.pop(added.name, None)
         try:
             spaces.validate_boot([added])
-        except spaces.BootValidationError as e:
+        except (spaces.BootValidationError, collections_mod.NoEncoder) as e:
             if cons:
                 db.log_event(next(iter(cons.values())), "error", "worker",
                              f"new collection {added.name!r} failed boot "

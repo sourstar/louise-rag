@@ -163,7 +163,7 @@ def test_an_immutable_collections_space_id_does_not_move(isolated_config, tmp_pa
     """The whole point of scoping. If this fails, adopting CDC re-pins
     gutenberg, pubmed AND the pre-embedded collections — and the last of
     those cannot be recomputed by re-chunking at all."""
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     for plugin in ("gutenberg", "pubmed", "embedded"):
         collection = _collection(tmp_path, plugin, plugin)
         components = spaces.gather_components(collection)
@@ -172,7 +172,7 @@ def test_an_immutable_collections_space_id_does_not_move(isolated_config, tmp_pa
 
 def test_a_mutable_collection_gets_the_cdc_version(isolated_config, tmp_path,
                                                     monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     collection = _collection(tmp_path, "wikipedia", "wikipedia")
     assert spaces.gather_components(collection).chunk_version == \
         chunking.CDC_CHUNK_VERSION
@@ -184,7 +184,7 @@ def test_the_chunker_is_part_of_the_space_identity(isolated_config, tmp_path,
     CDC launched at version 1 and so is the fixed-width family, so the two
     payloads were byte-identical and wikipedia would have booted happily
     while mixing two incompatible segmentations in one space."""
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     book = spaces.gather_components(_collection(tmp_path, "gutenberg", "gutenberg"))
     cdc = spaces.gather_components(_collection(tmp_path, "wikipedia", "wikipedia"))
 
@@ -202,7 +202,7 @@ def test_adding_the_chunker_field_repins_nothing(isolated_config, tmp_path,
     """Grandfathering, asserted: every chunker that existed when the space
     format was frozen must be omitted from the payload, so a space pinned
     before this change keeps exactly the id it already had."""
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     components = spaces.gather_components(_collection(tmp_path, "g", "gutenberg"))
 
     for name in ("book", "verbatim"):

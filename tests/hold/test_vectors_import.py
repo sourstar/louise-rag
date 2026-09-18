@@ -23,6 +23,11 @@ from tests.hold.test_admit import (chunk_texts, made, mine_of,  # noqa: F401
 from tests.hold.test_vectors_export import build_drag, first_shard
 
 
+
+# Written for a node with no encoder (EMBED_URL unset): with no default
+# encoder now, that is a collection that names none (operator, 2026-09-18)
+pytestmark = pytest.mark.strict_encoder
+
 def _member(root, codex, ref, env):
     """Rewrite this peer's calibration member so its reference is the one
     `space_embed` produces.

@@ -35,7 +35,10 @@ def main() -> int:
         if not row["fts_done"]:
             worker.stage_fts(con, row, collection)
     db.set_scope(con, {"embed_mode": "off"})
-    db.set_worker_state(con, "running")
+    # the node's mode lives in state/node.sqlite since 2026-09-13 (app/node_state.py);
+    # set in the manifest it left the worker PAUSED and nothing was ever imported
+    from app import node_state
+    node_state.set_worker_state("running")
 
     # every un-embedded document is demand: enqueue, then publish the queue
     now = int(time.time())

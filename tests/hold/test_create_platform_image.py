@@ -66,8 +66,8 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
         return SimpleNamespace(collection_id="sha256:" + "cd" * 32)
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: None)
     monkeypatch.setattr(col, "create_from_recipe", fake_create)
-    monkeypatch.setattr(louise, "_write_held_file", lambda root, codex: root)
-    monkeypatch.setenv("EMBED_URL", "http://encoder.invalid")
+    monkeypatch.setattr(louise, "_write_held_file",
+                        lambda root, codex, encoder=None: root)
 
     extra, recipe = (), '[space]\ndim = 8\ndtype = "f16"\nctx = 512\n'
     if where == "flag":
@@ -76,5 +76,6 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
         monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", IMG)
     else:
         recipe = f'[toolchain]\nplatform_image = "{IMG}"\n\n' + recipe
-    assert _create(tmp_path, recipe, *extra) == 0
+    # the encoder is named: a collection names its own, there is no default
+    assert _create(tmp_path, recipe, "--encoder", "http://encoder.invalid", *extra) == 0
     assert seen["platform_image"] == IMG

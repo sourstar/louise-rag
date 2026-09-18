@@ -434,10 +434,10 @@ def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
     nothing on the way (the report used to fill in the pinned width and log
     events)."""
     from app import collections as collections_mod, db, spaces
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("model-a", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("model-a", False))
     c = collections_mod.default_collection()
     spaces.validate_boot([c])                   # the worker's boot pins model-a
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("model-b", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("model-b", False))
     monkeypatch.setattr(spaces, "known_lance_dim", lambda d: 768)
     con = db.connect(c)
 

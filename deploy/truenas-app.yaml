@@ -97,11 +97,9 @@ services:
       # ── model endpoints (unchanged from the legacy app) ──
       CHAT_URL: http://192.168.178.10:30068
       CHAT_MODEL: qwen3:8b
-      EMBED_URL: http://192.168.178.10:30437
-      EMBED_API: openai
-      EMBED_MODEL: embed
-      EMBED_CTX: '8192'
-      EMBED_DTYPE: f16
+      TRANSLATE_URL: http://192.168.178.10:30448
+      # no EMBED_URL: a collection names its own encoder in its file's
+      # [encoder], and one that names none is refused (2026-09-18)
       # EMBED_BATCH=1 is LOAD-BEARING: llama-server corrupts long sequences
       # in multi-text embedding requests (see header). Parallel single-text
       # requests are verified safe — concurrency drives the -np 4 slots.

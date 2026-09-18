@@ -25,7 +25,7 @@ FTS_DIR = DATA_DIR / "fts"
 LANCE_DIR = DATA_DIR / "lancedb"
 
 # The chat model's endpoint — named for what it serves (docs/07 §7.8: CHAT_URL,
-# beside EMBED_URL and RERANK_URL), not for the server behind it (operator,
+# beside TRANSLATE_URL and RERANK_URL), not for the server behind it (operator,
 # 2026-09-18). OLLAMA_URL, its old name, is still read so a node whose
 # environment says OLLAMA_URL keeps its chat model until it is renamed.
 def _chat_url() -> str:
@@ -34,10 +34,16 @@ def _chat_url() -> str:
 
 
 CHAT_URL = _chat_url()
-# The encoder of last resort: a collection's own [encoder], then its
-# plugin's platform.toml [encoder_defaults.<plugin>], then this.
-EMBED_URL = (os.getenv("EMBED_URL") or CHAT_URL).rstrip("/")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding-8k:latest")
+# The node's translation model (app/translate.py, deploy/madlad-translate):
+# every query translation and every translation on the Ask page. Unset, the
+# chat model translates, slowly (operator, 2026-09-18).
+TRANSLATE_URL = os.getenv("TRANSLATE_URL", "").rstrip("/")
+# NO DEFAULT ENCODER (operator, 2026-09-18): "A default embedder is wrong,
+# remove EMBED_URL. A collection that does not specify an embedder is a non
+# compliant collection." A collection names its own in its file's
+# [encoder]; one that does not is refused (app/collections.py). EMBED_URL,
+# EMBED_MODEL, EMBED_API, EMBED_DTYPE, EMBED_CTX and platform.toml's
+# [encoder_defaults.<plugin>] are gone with it.
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen3.6-35b-a3b:latest")
 RERANK_URL = os.getenv("RERANK_URL", "")  # optional TEI-style /rerank endpoint; empty = disabled
 
@@ -64,9 +70,6 @@ EMBED_SLICE_CHUNKS = int(os.getenv("EMBED_SLICE_CHUNKS", "64"))
 # probe baseline — the check the weak (name-derived) model hash cannot do.
 # "off" disables it; there is deliberately no per-collection toggle.
 BACKEND_GATE = os.getenv("BACKEND_GATE", "on")
-EMBED_DTYPE = os.getenv("EMBED_DTYPE", "f32")  # f32 | f16 (halves vector storage)
-EMBED_API = os.getenv("EMBED_API", "ollama")  # ollama (/api/embed) | openai (/v1/embeddings, e.g. llama-server)
-EMBED_CTX = int(os.getenv("EMBED_CTX", "8192"))
 
 # Bump these to force selective reprocessing of the corresponding stage.
 CHUNK_VERSION = int(os.getenv("CHUNK_VERSION", "1"))

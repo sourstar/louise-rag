@@ -142,7 +142,7 @@ def status():
         "embed_queue": queue,
         "vectors": _safe_vectors(),
         "config": {
-            "embed_model": config.EMBED_MODEL, "chat_model": config.CHAT_MODEL,
+            "chat_model": config.CHAT_MODEL,
             "chunk_tokens": config.CHUNK_TOKENS,
             "versions": {"chunk": config.CHUNK_VERSION, "fts": config.FTS_VERSION,
                          "embed": config.EMBED_VERSION},
@@ -205,6 +205,7 @@ class HoldCreateBody(BaseModel):
     recipe: str | dict           # the recipe TOML's text, or the table itself
     space_from: str | None = None
     platform_image: str | None = None
+    encoder: str | None = None   # this node's endpoint for it — required, no default
 
 
 @app.post("/api/hold/collection/create", dependencies=[Depends(auth.require_admin)])
@@ -229,10 +230,11 @@ def hold_collection_create(body: HoldCreateBody):
     try:
         codex, held = louise.create_from(root, body.plugin, recipe,
                                          platform_image=body.platform_image,
-                                         space_from=body.space_from)
+                                         space_from=body.space_from,
+                                         encoder=body.encoder)
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
-    cli = f"louise hold collection create {body.plugin} --recipe FILE"
+    cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"
     if body.space_from:
         cli += f" --space-from {body.space_from}"
     return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
@@ -398,11 +400,13 @@ class SearchBody(BaseModel):
     verify: bool = False                   # blocking verify-on-use (§6 T4)
     # 05 §5.6: how many of each list the reranker orders — 50 by default
     rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    all_languages: bool = False            # every language held, not only the main ones
 
 @app.post("/api/search")
 def api_search(body: SearchBody):
     result = _run_search(body.collections, body.query, body.k, body.mode, body.translate,
-                          verify=body.verify, rerank_depth=body.rerank_depth)
+                          verify=body.verify, rerank_depth=body.rerank_depth,
+                          all_languages=body.all_languages)
     con = _con()   # query_log lives in the default collection's manifest regardless
     db.log_query(con, "search", body.query, body.mode, body.k, result["timings"],
                  len(result["hits"]), _source_qualified_ids(result["hits"]))
@@ -450,6 +454,7 @@ class ChatBody(BaseModel):
     # page's hits come from the same search
     limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
     rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    all_languages: bool = False            # the page's own choice, so both searches match
 
 @app.post("/v1/chat/completions")
 def chat_completions(body: ChatBody):
@@ -460,7 +465,7 @@ def chat_completions(body: ChatBody):
     query = str(user_msgs[-1].get("content", ""))
     t0 = time.time()
     result = _run_search(body.collections, query, body.limit, "hybrid", True, verify=body.verify,
-                         rerank_depth=body.rerank_depth)
+                         rerank_depth=body.rerank_depth, all_languages=body.all_languages)
     messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
     # keep prior turns for conversational context (before the sources turn)
     history = [m for m in body.messages[:-1] if m.get("role") in ("user", "assistant")]

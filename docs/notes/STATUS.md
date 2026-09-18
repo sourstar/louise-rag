@@ -2565,6 +2565,61 @@ gutenberg's, the first collection since genome left. `db.NODE_STAGES` now
 labels them `node` on stdout and in the System log. Where they are
 stored is unchanged; `tools/sched_report.py` already read them that way.
 
+### A translation model; main languages by default; no default encoder (2026-09-18, evening)
+
+**The translation model.** MADLAD-400-3B-MT runs on the Arc in its own
+container (`deploy/madlad-translate`, TrueNAS app `translate-gpu-madlad`,
+:30448), and `TRANSLATE_URL` points the app at it (`app/translate.py`). It
+does every translation: the query fan-out, and the Ask page's titles,
+headings, whole entries and the answer. The chat model is the fallback.
+Measured on the node:
+
+| | MADLAD on the Arc | qwen3:8b (chat) |
+|---|---|---|
+| question into the 19 main languages | 0.76–1.75 s | 56–192 s, GPU busy |
+| question into 51 languages | 1.3–1.5 s | 34.3 s idle (59) |
+| one whole 3.8 kB entry | 5.9 s | 58–84 s |
+| twelve entries in one call | 33.6 s | minutes |
+
+- VRAM at batch 32: 8.0 GB at peak and 8.9 GB idle; about 14 GB is free
+  with every other model loaded. Batch 256 reached 26 GB, and was stopped.
+- Its quality is good in the main languages. In the tail it is weak: Welsh
+  gave "the red dragon", Latin nonsense. The chat model made the white
+  whale a white shark.
+- **The GGUF routes failed.** Ollama loads the model and then hangs.
+  llama-server runs no encoder (`<2cs>…`). llama.cpp's completion tool is
+  correct, but it has no server and no batching.
+- **transformers must be 4.46.3.** Version 5.17 leaves the decoder's
+  embedding untied, and every output came back `ě ě ě …`.
+
+**Main languages by default** (operator). A search goes out in the
+languages that have an index of their own, plus CJK's three. "Every
+language held" happens only on request: the Ask page's *all languages*,
+`all_languages` on the API, or `lang:all` in the question.
+
+**No default encoder** (operator: "A default embedder is wrong, remove
+EMBED_URL. A collection that does not specify an embedder is a non
+compliant collection").
+- EMBED_URL, EMBED_MODEL, EMBED_API, EMBED_DTYPE, EMBED_CTX and
+  `[encoder_defaults]` are gone. `platform.toml` still parses the table, and
+  the System page says it is IGNORED.
+- A file that names no `[encoder]` is refused at load. The System page now
+  shows refusals, which it never did.
+- The boot refuses such a collection instead of dying, as the worker did.
+- `hold collection create` needs `--encoder URL` and writes it into the
+  file. `embed materialize` has nothing left to write.
+- The live collections all name their own encoder, so nothing live changed.
+- Tests: tests/conftest.py gives a test collection that names no encoder
+  the TEST encoder, explicitly. The rule's own tests are marked
+  `strict_encoder` (tests/test_no_default_encoder.py).
+
+**Found, not caused: the two-node harness fails.**
+`tests/integration/two_node` failed identically on 09743e9. Its consumer
+set the node's mode in the manifest, which the worker stopped reading on
+2026-09-13, so it stayed paused. That is fixed, and the harness's collection
+now names its encoder. The consumer still never imports the delivered
+bundle. Open.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

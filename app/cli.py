@@ -145,50 +145,19 @@ def cmd_grow(args) -> int:
 
 
 def cmd_embed_materialize(args) -> int:
-    """Env→TOML migration for the embed recipe (invariant 10: TOML is
-    desired state). Writes the collection's EFFECTIVE recipe into its TOML
-    explicitly. The recipe is byte-equal to what the collection already
-    uses, so the space id — and therefore the pin — does not change; what
-    changes is that a later env edit can no longer silently retarget this
-    collection's space."""
+    """Was the env→TOML migration: it wrote the env-fallback recipe into
+    the collection's file. There is no fallback now — a collection names
+    its own encoder, and a file that names none is refused at load
+    (operator, 2026-09-18) — so a collection this finds already names its
+    encoder, and there is nothing to write."""
     collection = _collection_by_name(args.collection)
     toml_path = collections_mod.config_toml_path(collection.name)
     if collection.embed is not None:
         print(f"{collection.name}: [embed] is already explicit in "
               f"{toml_path} — nothing to do")
         return 0
-    if not toml_path.exists():
-        print(f"{collection.name}: no TOML file (synthesized default) — "
-              f"declare the collection first (the web UI's create flow, or "
-              f"corpus add)")
-        return 1
-    recipe = collections_mod.recipe_for(collection)
-    from .web import _write_collection_toml, _codex_id
-    _write_collection_toml(
-        toml_path, codex=_codex_id(collection),
-        plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=collection.acquire_enabled,
-        corpus_dir=collection.corpus_dir,
-        manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=collection.license_ack,
-        genesis_archive=collection.genesis_archive, embed=recipe,
-        # Everything else the TOML already declared has to be carried, or
-        # "make the recipe explicit" quietly un-declares the rest: layers
-        # are part of space_id (invariant 1), a dropped snapshot moves the
-        # collection back to "whatever the origin calls latest", a dropped
-        # embed_mode resets it to 'lazy' at the next boot, and a dropped
-        # peer_source sends acquisition back to the origin.
-        embed_mode=collection.embed_mode_default, layers=collection.layers,
-        snapshot=collection.snapshot, extras=collection.extras,
-        peer_source=collection.peer_source, title=collection.title,
-        slices=collection.slices, kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker)
-    print(f"{collection.name}: materialized the env recipe into {toml_path}")
-    print(f"  model={recipe.model} url={recipe.url} api={recipe.api} "
-          f"dtype={recipe.dtype} ctx={recipe.ctx} dim={recipe.dim}")
-    print("  space id unchanged (byte-equal recipe); hot-reload applies it "
-          "within one round")
-    return 0
+    print(f"{collection.name}: {collections_mod.NO_ENCODER}")
+    return 1
 
 
 def cmd_space_repin(args) -> int:

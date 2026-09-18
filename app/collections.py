@@ -66,12 +66,16 @@ class EmbedRecipe:
         return "cpu" if self.concurrency > 1 else "gpu"
 
 
-def env_recipe() -> EmbedRecipe:
-    """The Tier-1 fallback, built at call time so env/monkeypatched config
-    changes are always honored."""
-    return EmbedRecipe(url=config.EMBED_URL, api=config.EMBED_API,
-                        model=config.EMBED_MODEL, dtype=config.EMBED_DTYPE,
-                        ctx=config.EMBED_CTX)
+#: why a collection that names no encoder is not served
+NO_ENCODER = (
+    "non-compliant: its file names no [encoder]. A collection names its own "
+    "embedder and there is no default one — no EMBED_URL, no per-plugin "
+    "default (operator, 2026-09-18). Add [encoder] url = \"…\" to the file "
+    "(07 §7.8)")
+
+
+class NoEncoder(ValueError):
+    """A collection with no encoder of its own: non-compliant, never served."""
 
 
 def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
@@ -144,47 +148,24 @@ def reranker_for(collection) -> RerankRecipe | None:
     return RerankRecipe(url=config.RERANK_URL) if config.RERANK_URL else None
 
 
-def default_recipe_for_plugin(plugin: str) -> EmbedRecipe | None:
-    """The node's default recipe for a PLUGIN, from platform.toml's
-    [encoder_defaults.<plugin>] — or None when the node declares none.
-    (`[embed_defaults.<plugin>]` is the deprecated alias for the same
-    table; platform_config reads both and the spec name wins.)
-
-    Why per plugin: a genome collection embedded with the node's text
-    encoder is not a worse choice, it is a wrong one — DNA is not a
-    language, and the two spaces are not comparable. The endpoint URL is
-    deployment-specific (someone's LAN), so it belongs in Tier-2 node
-    config, never in this repo and never in a plugin's source.
-
-    Tier-2 file, not env and not the DB: it is desired state (invariant 10)."""
-    from . import platform_config
-    raw = platform_config.load().embed_defaults.get(plugin)
-    return parse_recipe(raw, where=f"platform.toml [encoder_defaults.{plugin}]")
-
-
 def recipe_for(collection) -> EmbedRecipe:
-    """THE way to resolve a collection's embedding recipe.
+    """THE way to resolve a collection's embedding recipe: its own file's
+    `[encoder]` (a Codex file's carries the Codex's space — `dtype`, `ctx`
+    and `dim` — already, `_codex_encoder`), and nothing else.
 
-    Order: the collection's own [embed] block, then the node's per-plugin
-    default, then the Tier-1 env recipe. Each step is a fallback for the
-    one before it, never an override of it (invariant 10).
-
-    A Codex collection's SPACE is the Codex's (02 §2.4): whichever step
-    names the endpoint, `dtype`, `ctx` and `dim` are its space's, so an
-    endpoint that falls back to the node's default does not bring the
-    default's window with it."""
-    if collection is not None and getattr(collection, "embed", None) is not None:
-        return collection.embed
-    recipe = None
-    if collection is not None and getattr(collection, "plugin", None):
-        recipe = default_recipe_for_plugin(collection.plugin)
-    recipe = recipe or env_recipe()
-    codex = getattr(collection, "codex", None) if collection is not None else None
-    if codex is not None:
-        from dataclasses import replace
-        recipe = replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
-                         dim=int(codex.space.dim))
-    return recipe
+    There used to be two fallbacks behind it: the node's per-plugin
+    `[encoder_defaults]`, then EMBED_URL. "A default embedder is wrong …
+    A collection that does not specify an embedder is a non compliant
+    collection" (operator, 2026-09-18): `load_all` refuses such a file,
+    and anything else that reaches here without an encoder is told so."""
+    if collection is None:
+        # the single-collection call sites that predate federation name no
+        # collection and mean the default one — never "no encoder"
+        collection = default_collection()
+    embed = getattr(collection, "embed", None)
+    if embed is None:
+        raise NoEncoder(f"{getattr(collection, 'name', 'this collection')}: {NO_ENCODER}")
+    return embed
 
 
 # What the worker may SPEND on a collection's local encoder (never what
@@ -750,6 +731,12 @@ def load_all(*, skip_unreadable: bool = False):
             if not skip_unreadable:
                 raise
             unreadable.append((name, f"{type(e).__name__}: {e}"))
+            continue
+        if c.embed is None:
+            # NON-COMPLIANT, and said so where the operator looks (the
+            # System page's refusals, `hold collection show`), never a
+            # default quietly standing in for the encoder it did not name
+            refused.append(Refusal(name, p, NO_ENCODER))
             continue
         if only_codex and c.codex is None:
             refused.append(Refusal(

@@ -18,7 +18,7 @@ from app.bundles import importer as bundle_importer
 
 @pytest.fixture
 def client(isolated_config, monkeypatch, tmp_path):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc123", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
     # every test here creates collections, and a collection now requires a
@@ -28,6 +28,12 @@ def client(isolated_config, monkeypatch, tmp_path):
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
+
+
+# a collection names its own encoder; there is no default one (operator,
+# 2026-09-18), so every create here names one
+ENC = {"url": "http://enc.invalid:8080", "api": "openai", "model": "m",
+       "dtype": "f16", "ctx": 512}
 
 
 def create(client, name, plugin="pubmed", *, corpus=None, **body):
@@ -48,6 +54,7 @@ def create(client, name, plugin="pubmed", *, corpus=None, **body):
     # does not, and every test here that is about something ELSE has to
     # acknowledge. The tests that are about the GATE pass it explicitly.
     body.setdefault("acknowledge_terms", True)
+    body.setdefault("encoder", ENC)
     return client.post("/admin/library/new/create",
                        json={"name": name, "plugin": plugin,
                              "corpus_dir": corpus, **body})
@@ -84,7 +91,7 @@ def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
 
     chosen = (mounts_root / "pubmed").as_posix()
     r = client.post("/admin/library/new/create",
-                    json={"name": "withdir", "plugin": "pubmed",
+                    json={"name": "withdir", "plugin": "pubmed", "encoder": ENC,
                            "corpus_dir": chosen, "acknowledge_terms": True})
     assert r.status_code == 200
     assert r.json()["corpus_mounted"] is True

@@ -27,25 +27,46 @@ def client(tmp_path, isolated_config, monkeypatch):
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     # the calibration set is embedded by the recipe's encoder; offline, the
     # hold fixtures' deterministic stand-in (tests/hold/conftest.py)
-    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space: fake_embed)
+    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url=None: fake_embed)
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
 
 
-def test_the_route_is_the_command(client):
+ENC = "http://enc:8080"
+_REAL_EMBED_FOR_RECIPE = louise._embed_for_recipe
+
+
+def c_encoder_url(held: str) -> str:
+    import tomllib
+    return tomllib.loads(open(held, encoding="utf-8").read())["encoder"]["url"]
+
+
+def test_a_create_that_names_no_encoder_is_refused_and_writes_nothing(client, monkeypatch):
+    """A collection names its own encoder, and there is no default one
+    (operator, 2026-09-18)."""
+    monkeypatch.setattr(louise, "_embed_for_recipe", _REAL_EMBED_FOR_RECIPE)
     r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe()})
+    assert r.status_code == 409 and "--encoder" in r.json()["detail"]
+    assert not collections_mod.config_toml_path("gutenberg").exists()
+
+
+def test_the_route_is_the_command(client):
+    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
+                                 "encoder": ENC})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["exit"] == 0 and d["name"] == "gutenberg"
     assert d["held"] == str(collections_mod.config_toml_path("gutenberg"))
-    assert d["cli"] == "louise hold collection create gutenberg --recipe FILE"
+    assert d["cli"] == f"louise hold collection create gutenberg --recipe FILE --encoder {ENC}"
+    assert c_encoder_url(d["held"]) == ENC, "the file names the encoder it was created with"
     c = collections_mod.by_name("gutenberg")
     assert c.codex is not None and c.codex.collection_id == d["collection_id"]
     assert (c.slices, c.acquire_enabled, c.share, c.embed_mode_default) == \
         ((), False, False, "off"), "a new collection holds nothing and spends nothing"
 
-    again = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe()})
+    again = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
+                                     "encoder": ENC})
     assert again.status_code == 200
     assert again.json()["collection_id"] == d["collection_id"], "the hash is the identity"
 

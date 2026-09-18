@@ -21,7 +21,7 @@ from app.api import app
 
 @pytest.fixture
 def client(isolated_config, monkeypatch):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("abc", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
     with TestClient(app) as c:

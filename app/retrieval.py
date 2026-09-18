@@ -222,9 +222,10 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         for group in fts.existing_groups(collection):
             if not plan.searches(group):
                 continue
+            held = fts.group_languages(group, collection)
             hits = _best_rank([fts.search(group, q, limit=limit, collection=collection,
                                           langs=plan.lang_filter(group))
-                               for q in plan.variants(group)], limit)
+                               for q in plan.variants(group, held)], limit)
             if hits:
                 lists.append(hits)
         timings["fts"] = round((time.time() - t0) * 1000, 1)
@@ -342,7 +343,7 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
 
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None,
-           rerank_depth: int = RERANK_TOP_N) -> dict:
+           rerank_depth: int = RERANK_TOP_N, all_languages: bool = False) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
     behavior/signature from pre-P0.5. See federated_search() for N&gt;1.
     `k` results after the reranker, which orders the top `rerank_depth`."""
@@ -361,7 +362,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     tagged_book_ids = _tagged_book_ids(con, collection, [e.entity_id for e in entities_found])
 
     t0 = time.time()
-    plan = language_plan.plan(query, [collection], translate)
+    plan = language_plan.plan(query, [collection], translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
     partial = _search_one_collection(con, collection, query, k, mode, translate,
                                      tagged_book_ids, plan, rerank_depth)
@@ -408,7 +409,8 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
 
 
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
-                      translate: bool = True, rerank_depth: int = RERANK_TOP_N) -> dict:
+                      translate: bool = True, rerank_depth: int = RERANK_TOP_N,
+                      all_languages: bool = False) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -433,7 +435,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     # collection used to ask for its own — serialised anyway, since the
     # node's Ollama runs one request at a time (OLLAMA_NUM_PARALLEL=1).
     t0 = time.time()
-    plan = language_plan.plan(query, collections, translate)
+    plan = language_plan.plan(query, collections, translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
 
     def _run_one(collection):

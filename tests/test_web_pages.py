@@ -16,7 +16,7 @@ from app.api import app
 
 
 def _patch_hash(monkeypatch, value="abc123", weak=False):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: (value, weak))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: (value, weak))
 
 
 def _patch_health_pings(monkeypatch):
@@ -1011,14 +1011,18 @@ def test_the_ask_page_sets_how_many_before_and_after_reranking(client, monkeypat
 
     seen = {}
 
-    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50):
-        seen.update(k=k, rerank_depth=rerank_depth)
+    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50,
+                        all_languages=False):
+        seen.update(k=k, rerank_depth=rerank_depth, all_languages=all_languages)
         return {"hits": [], "timings": {}, "facts": [], "catalog": []}
     monkeypatch.setattr(web.query_service, "run_search", fake_run_search)
-    client.post("/ask/query", json={"query": "q", "limit": 25, "rerank_depth": 80})
-    assert seen == {"k": 25, "rerank_depth": 80}
+    client.post("/ask/query", json={"query": "q", "limit": 25, "rerank_depth": 80,
+                                    "all_languages": True})
+    assert seen == {"k": 25, "rerank_depth": 80, "all_languages": True}
     client.post("/ask/query", json={"query": "q"})
-    assert seen == {"k": 10, "rerank_depth": 50}, "the defaults"
+    assert seen == {"k": 10, "rerank_depth": 50, "all_languages": False}, \
+        "the defaults: the main languages only, unless asked"
+    assert 'id="all-langs" type="checkbox"' in page and "all_languages:" in page
     for bad in ({"limit": 0}, {"limit": 101}, {"rerank_depth": 0}, {"rerank_depth": 500}):
         assert client.post("/ask/query", json={"query": "q", **bad}).status_code == 422
 
@@ -1027,7 +1031,8 @@ def test_the_answers_search_takes_the_same_counts(client, monkeypatch):
     from app import api
     seen = {}
 
-    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50):
+    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50,
+                        all_languages=False):
         seen.update(k=k, rerank_depth=rerank_depth)
         return {"hits": [], "timings": {"total": 1.0}, "facts": [], "catalog": []}
     monkeypatch.setattr(api, "_run_search", fake_run_search)
@@ -1043,17 +1048,18 @@ def test_the_answers_search_takes_the_same_counts(client, monkeypatch):
 def test_tier_one_shows_only_what_is_global(isolated_config, monkeypatch):
     """The page listed EMBED_MODEL, CHUNK_TOKENS, CHUNK_OVERLAP,
     CHUNK_VERSION and CLEANING_VERSION as the node's, while each
-    collection's encoder comes from its own file or its plugin's defaults
-    and its chunker and cleaning from its Codex."""
+    collection's encoder comes from its own file and its chunker and
+    cleaning from its Codex. EMBED_URL is gone too: there is no default
+    encoder (operator, 2026-09-18)."""
     tier1 = web._effective_config()["tier1"]
-    for gone in ("OLLAMA_URL", "EMBED_MODEL", "CHUNK_TOKENS", "CHUNK_OVERLAP",
+    for gone in ("OLLAMA_URL", "EMBED_URL", "EMBED_MODEL", "CHUNK_TOKENS", "CHUNK_OVERLAP",
                  "CHUNK_VERSION", "CLEANING_VERSION"):
         assert gone not in tier1, gone
-    for kept in ("CHAT_URL", "CHAT_MODEL", "EMBED_URL", "RERANK_URL", "ADMIN_TOKEN"):
+    for kept in ("CHAT_URL", "CHAT_MODEL", "TRANSLATE_URL", "RERANK_URL", "ADMIN_TOKEN"):
         assert kept in tier1, kept
 
 
-def test_the_env_fallbacks_say_who_reaches_them(isolated_config, monkeypatch):
+def test_the_reranker_fallback_says_who_reaches_it(isolated_config, monkeypatch):
     import dataclasses
     c = collections_mod.default_collection()
     own = collections_mod.EmbedRecipe(url="http://gpu:30437", api="openai", model="qwen3-4b",
@@ -1063,16 +1069,14 @@ def test_the_env_fallbacks_say_who_reaches_them(isolated_config, monkeypatch):
 
     monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [c])
     eff = web._effective_config()
-    assert f"used by {c.name}" in eff["tier1"]["EMBED_URL"]
     assert f"used by {c.name}" in eff["tier1"]["RERANK_URL"]
-    assert eff["tier2"][0]["embed_recipe"].endswith("— EMBED_URL")
 
     named = dataclasses.replace(c, embed=own, reranker=rr)
     monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [named])
     eff = web._effective_config()
-    assert "used by no collection" in eff["tier1"]["EMBED_URL"]
     assert "used by no collection" in eff["tier1"]["RERANK_URL"]
-    assert eff["tier2"][0]["embed_recipe"] == "qwen3-4b @ http://gpu:30437 — collection file"
+    assert eff["tier2"][0]["embed_recipe"] == "qwen3-4b @ http://gpu:30437", \
+        "the encoder the collection runs — its own file's, there is no other"
 
 
 def test_chat_url_is_the_name_and_ollama_url_is_still_read(monkeypatch):

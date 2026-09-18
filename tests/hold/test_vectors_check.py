@@ -21,6 +21,11 @@ from tests.hold.test_vectors_import import _member, _stored, importable  # noqa:
 SEED = b"\x01" * 32
 
 
+
+# Written for a node with no encoder (EMBED_URL unset): with no default
+# encoder now, that is a collection that names none (operator, 2026-09-18)
+pytestmark = pytest.mark.strict_encoder
+
 @pytest.fixture
 def stocked(importable):
     """A collection whose Lance table holds the bundle's vectors."""

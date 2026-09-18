@@ -283,13 +283,17 @@
     </div>
     <div><label>Space from (optional)</label>
       <input id="nc_space_from" placeholder="a held collection's name or id"></div>
+    {# a collection names its own encoder — there is no default one
+       (operator, 2026-09-18) — and the file it gets names this one #}
+    <div><label>Encoder (this node's endpoint)</label>
+      <input id="nc_encoder" placeholder="http://nas:30437"></div>
   </div>
   <label>Recipe (TOML)</label>
   <textarea id="nc_recipe" rows="10" style="width:100%" placeholder="[space]&#10;…&#10;&#10;[work]&#10;…"></textarea>
   <div class="actions">
     <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE [--space-from &lt;collection&gt;]</pre>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--space-from &lt;collection&gt;]</pre>
   <div id="nc_result"></div>
 </div>
 {% endblock %}
@@ -456,11 +460,13 @@ async function createCollection(){
   const plugin=document.getElementById('nc_plugin').value;
   const recipe=document.getElementById('nc_recipe').value;
   const space_from=document.getElementById('nc_space_from').value.trim()||null;
+  const encoder=document.getElementById('nc_encoder').value.trim();
   const box=document.getElementById('nc_result');
   if(!recipe.trim()){toast('paste the recipe');return}
+  if(!encoder){toast('name the encoder: a collection names its own');return}
   box.innerHTML='<div class="note">creating — the calibration set is embedded first…</div>';
   try{
-    const d=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from});
+    const d=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder});
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
       file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;

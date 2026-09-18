@@ -55,8 +55,7 @@ services:
       DATA_DIR: /data
       CORPUS_DIR: /corpus
       CHAT_URL: http://mock-embed:11434
-      EMBED_MODEL: mock-model
-      EMBED_DTYPE: f32
+      CONFIG_DIR: /srv/tests/integration/two_node/config   # names the encoder
       PYTHONPATH: /srv
     depends_on:
       mock-embed: { condition: service_healthy }

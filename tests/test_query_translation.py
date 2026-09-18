@@ -176,7 +176,8 @@ def test_an_unreachable_model_searches_every_language_and_says_so(isolated_confi
     monkeypatch.setattr(llm, "language_restriction", lambda q: None)
     monkeypatch.setattr(llm, "translate_query", lambda q, langs: {})
     plan = language_plan.plan("q", [c], True)
-    assert plan.summary() == {"core": "q", "only": [], "status": "unavailable"}
+    assert plan.summary() == {"core": "q", "only": [], "status": "unavailable", "by": "",
+                              "every": False}
     assert language_plan.plan("q", [c], True) is not plan, "a failure is never cached"
 
 

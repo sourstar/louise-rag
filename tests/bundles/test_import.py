@@ -265,7 +265,7 @@ def test_wrong_space_is_refused(bundle, con, collection, monkeypatch):
     the local computation, not in the space table."""
     from app import spaces
     path, _, rows = bundle
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: ("d1ffe4e17", False))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("d1ffe4e17", False))
     result = _import(con, collection, path, rows)
     assert not result["ok"] and result["error_class"] == "BundleSpaceMismatch"
 

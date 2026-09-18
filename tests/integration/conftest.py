@@ -41,7 +41,7 @@ def model_embed(texts, *, salt="model-A", **kwargs):
 @pytest.fixture(autouse=True)
 def confirmed_space(monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash",
-                        lambda: ("f1f1f1f1f1f1f1f1", False))
+                        lambda *a: ("f1f1f1f1f1f1f1f1", False))
 
 
 @pytest.fixture

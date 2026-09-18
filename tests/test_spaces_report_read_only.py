@@ -13,7 +13,7 @@ from app import collections as collections_mod, db, spaces
 
 
 def _hash(monkeypatch, value, weak=False):
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda: (value, weak))
+    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: (value, weak))
 
 
 def _events(con):

@@ -30,29 +30,26 @@ def _collection(embed):
 
 
 def test_a_collection_the_node_runs_uses_the_workers_encoder(monkeypatch):
-    monkeypatch.setenv("EMBED_URL", "http://qwen3-4b:8080")
     monkeypatch.setattr(collections_mod, "by_name", lambda name: _collection(MEDCPT))
     r = louise._recipe_for(_codex(), "pubmed")
     assert r == replace(collections_mod.recipe_for(_collection(MEDCPT)),
                         dtype="f16", ctx=512, dim=768), "the worker's, in the Codex's space"
-    assert r.url == MEDCPT.url != "http://qwen3-4b:8080"
+    assert r.url == MEDCPT.url
 
 
-def test_without_its_own_encoder_it_falls_back_as_the_worker_does(monkeypatch):
-    node_default = collections_mod.EmbedRecipe(url="http://node-default:8080", api="openai",
-                                               model="m", dtype="f32", ctx=1024)
+@pytest.mark.strict_encoder
+def test_without_its_own_encoder_it_defers_and_says_why(monkeypatch):
+    """No fallback: "a default embedder is wrong … a collection that does
+    not specify an embedder is a non compliant collection" (operator,
+    2026-09-18). It used to take the plugin default, then EMBED_URL."""
     monkeypatch.setattr(collections_mod, "by_name", lambda name: _collection(None))
-    monkeypatch.setattr(collections_mod, "default_recipe_for_plugin",
-                        lambda plugin: node_default if plugin == "pubmed" else None)
-    assert louise._recipe_for(_codex(), "pubmed").url == "http://node-default:8080"
+    with pytest.raises(emb.GateDeferred, match="names no \\[encoder\\]"):
+        louise._recipe_for(_codex(), "pubmed")
 
 
-def test_a_collection_held_without_a_file_takes_the_plugin_default_then_env(monkeypatch):
+@pytest.mark.strict_encoder
+def test_a_collection_held_without_a_file_defers_too(monkeypatch):
     monkeypatch.setattr(collections_mod, "by_name", lambda name: None)
-    monkeypatch.setattr(collections_mod, "default_recipe_for_plugin", lambda plugin: None)
-    monkeypatch.setenv("EMBED_URL", "http://env:8080")
-    r = louise._recipe_for(_codex(), "pubmed")
-    assert (r.url, r.model, r.dim) == ("http://env:8080", "medcpt", 768)
-    monkeypatch.delenv("EMBED_URL")
-    with pytest.raises(emb.GateDeferred):
+    monkeypatch.setenv("EMBED_URL", "http://env:8080")   # read by nothing now
+    with pytest.raises(emb.GateDeferred, match="non-compliant"):
         louise._recipe_for(_codex(), "pubmed")

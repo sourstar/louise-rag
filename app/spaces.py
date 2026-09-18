@@ -65,12 +65,13 @@ def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
     unreachable) — boot validation treats a weak hash as unconfirmable, never
     as a mismatch, so process startup never couples to embed-server liveness.
 
-    `recipe=None` reads the Tier-1 env recipe. Callers resolving a
-    collection with its own [embed] block pass that recipe; env-fallback
-    callers keep the no-arg form (which also keeps every existing
-    monkeypatched zero-arg stub working)."""
+    `recipe` is the collection's own encoder (collections.recipe_for);
+    there is no default to read when none is given."""
     from . import collections as collections_mod
-    recipe = recipe or collections_mod.env_recipe()
+    if recipe is None:
+        raise collections_mod.NoEncoder(
+            "resolve_embed_model_hash: no encoder recipe — a collection names "
+            "its own, and there is no default")
     if recipe.api == "ollama":
         try:
             with httpx.Client(timeout=10) as client:
@@ -108,13 +109,8 @@ def resolve_embed_model_hash(recipe=None) -> tuple[str, bool]:
 
 def gather_components(collection=None) -> SpaceComponents:
     from . import collections as collections_mod
-    recipe = collections_mod.recipe_for(collection)
-    own_block = collection is not None and getattr(collection, "embed", None) is not None
-    # env-fallback path calls with NO argument on purpose — existing tests
-    # (and any operator tooling) stub resolve_embed_model_hash as a zero-arg
-    # callable, and the env recipe is exactly what the no-arg form reads
-    model_hash, weak = (resolve_embed_model_hash(recipe) if own_block
-                        else resolve_embed_model_hash())
+    recipe = collections_mod.recipe_for(collection)      # NoEncoder when it names none
+    model_hash, weak = resolve_embed_model_hash(recipe)
     if recipe.query_url:
         # bi-encoder pair (MedCPT): the query side is a DIFFERENT model, so
         # its identity must move the space_id (§3's query_encoder_hash)
@@ -310,13 +306,16 @@ def refuse_boot(collections: list) -> list[tuple]:
     Returns [(collection, reason)] so the caller can drop them from the
     served set and NAME the reason, which the invariant also requires.
     """
+    from . import collections as collections_mod
     validate_chunking_config()
     refused: list[tuple] = []
     for collection in collections:
         con = db.connect(collection)
         try:
             _validate_one(con, collection)
-        except BootValidationError as e:
+        except (BootValidationError, collections_mod.NoEncoder) as e:
+            # a collection naming no encoder is refused like a space
+            # mismatch — that one, never the node (it used to kill the boot)
             refused.append((collection, str(e)))
         finally:
             con.close()
@@ -343,6 +342,12 @@ def report_boot_status(collections: list) -> list[dict]:
                             "message": "space pinned & consistent" if pinned
                             else "space unpinned — pins at next worker boot"})
         except BootValidationError as e:
+            report.append({"collection": collection.name, "ok": False, "message": str(e)})
+        except ValueError as e:
+            # NoEncoder among them: a verdict (non-compliant), not a failure
+            # to check — so it is reported as one
+            if type(e).__name__ != "NoEncoder":
+                raise
             report.append({"collection": collection.name, "ok": False, "message": str(e)})
         except Exception as e:   # noqa: BLE001 — one collection, never the report
             # PER COLLECTION. `db.connect` sat outside the try, so one
