@@ -1237,28 +1237,48 @@ def _read_reference(member, codex):
 def _recipe_for(codex, name):
     """The endpoint that serves this space's encoder.
 
-    07 Â§7.8 resolves it in three steps, "each a fallback for the one before
+    07 §7.8 resolves it in three steps, "each a fallback for the one before
     it, never an override": the collection's `[encoder]`, then
-    `platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`.
-    Only the third is available here, because the first two live in
-    `collections/<name>.toml` and `platform.toml`, which `hold config` will
-    write and this branch does not yet read. So this is the ENV fallback
-    alone, and the two file tiers arrive with `hold config`.
+    `platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. A
+    collection this node runs resolves through `collections.recipe_for`,
+    THE resolution its worker embeds with (invariant 10). A collection held
+    without a file of its own takes the node's default for the Codex's
+    plugin, then `EMBED_URL`.
+
+    This used to read `EMBED_URL` alone. On the node that is the Qwen3-4B
+    endpoint, so `hold check pubmed` sent MedCPT's texts there ("the encoder
+    returned 2560 dimensions, the space is 768", 2026-09-18) and its
+    calibration and vectors-sample could never pass. Behind a 768-wide
+    endpoint the check would have compared pubmed's vectors with another
+    model's.
 
     The rest of the recipe comes from the Codex and not from any file: the
     dtype, ctx and dim are inside `space_id`, so a file that disagreed with
-    them would be describing another space (02 Â§2.4).
+    them would be describing another space (02 §2.4).
     """
+    from dataclasses import replace
     from app import collections as collections_mod
-    url = os.environ.get("EMBED_URL")
-    if not url:
-        from app.hold import embedder as emb
-        raise emb.GateDeferred(
-            "EMBED_URL is unset and no collection endpoint is configured; "
-            "07 Â§7.8: everything that needs an encoder defers (exit 3)")
-    return collections_mod.EmbedRecipe(
-        url=url, api="openai", model=codex.space.encoder.label or "",
-        dtype=codex.space.dtype, ctx=codex.space.ctx, dim=codex.space.dim)
+    collection = collections_mod.by_name(name)
+    plugin = collection.plugin if collection is not None else codex.plugin
+    if collection is not None and (getattr(collection, "embed", None) is not None
+                                   or collections_mod.default_recipe_for_plugin(plugin)):
+        recipe = collections_mod.recipe_for(collection)
+    else:
+        # Nothing configured: the env tier, which DEFERS when unset rather
+        # than taking config's built-in default (07 §7.8, exit 3).
+        recipe = collections_mod.default_recipe_for_plugin(plugin)
+        if recipe is None:
+            url = os.environ.get("EMBED_URL")
+            if not url:
+                from app.hold import embedder as emb
+                raise emb.GateDeferred(
+                    "EMBED_URL is unset and no collection endpoint is configured; "
+                    "07 §7.8: everything that needs an encoder defers (exit 3)")
+            recipe = collections_mod.EmbedRecipe(
+                url=url, api="openai", model=codex.space.encoder.label or "",
+                dtype=codex.space.dtype, ctx=codex.space.ctx, dim=codex.space.dim)
+    return replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
+                   dim=int(codex.space.dim))
 
 
 def _write_statement(a, run, codex):
