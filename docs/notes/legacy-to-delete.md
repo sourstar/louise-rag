@@ -91,7 +91,7 @@ until 1–3 hold: it is the one-`cp` way back.
 
 ---
 
-## 2. `pubmed` — MIGRATING, nothing to delete yet
+## 2. `pubmed` — MIGRATED; legacy DELETED 2026-09-18
 
 `collection_id sha256:02da1b554313670c…`, acknowledged, records build
 running. Its legacy side stays untouched until it has been through the
@@ -226,6 +226,35 @@ confirmation is a person searching the collection and getting the right
 answer back, plus the counts agreeing.
 
 ## Already deleted, for the record
+
+pubmed's legacy collection (2026-09-18, operator: "check and in case you
+can delete them, delete"). Deleted `data/pubmed` (134 G: its manifest, text
+index, vector table, genesis state and cursor) and the three parked config
+files that pointed at it (`collections-legacy/pubmed.toml` and two under
+`collections/_removed-2026-09-10/`). `data/pubmed-pack` stays: it is the
+live pipeline's record cache, not the legacy collection.
+
+Every condition in §2 held, checked that day:
+- **Full text index (1).** Complete: 39,994,988 of 39,994,988 documents,
+  what the legacy manifest reached. The 09-15 re-pin's backlog cleared at
+  15:44 UTC.
+- **Search (2).** It returns relevant papers. "aspirin platelet
+  aggregation" finds PMIDs 3370916, 7379449 and 427005.
+- **`hold check` (3).** roots, records (2,023,216 over 68 shards),
+  chunks, license and signature pass. `records-vs-origin` is inconclusive
+  without `--origin`.
+- **Nobody else's (4).** No process had the files open; only the three
+  parked config files named the path.
+- **Vectors (5).** 35,417,887 held inside the archive's range. Calibration
+  passes 16/16 (median 1.0000), and vectors-sample reproduces 1,088 chunks
+  over 68 shards at 0.95. Both first needed e8e2751: the check had been
+  embedding with `EMBED_URL` (the node's Qwen3-4B, 2560-wide) instead of
+  pubmed's MedCPT.
+- **The count gap (6).** It no longer exists. Both manifests hold
+  39,994,988 documents, and 20,000 random legacy uids are all in the
+  migrated one. Why the migrated scan read 35,494,988 on 09-10 was not
+  re-derived. What the condition guards against, deleting the only copy of
+  documents the new collection lacks, no longer applies.
 
 gutenberg's legacy tree (2026-09-18, operator: "proceed"). Deleted:
 `data/fts` (35 G), `data/manifest.db` with its WAL, the empty
