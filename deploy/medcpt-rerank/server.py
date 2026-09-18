@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -161,6 +162,11 @@ def main() -> None:
     t0 = time.monotonic()
     Handler.reranker.logits("warm-up", ["the first inference compiles its kernels"])
     print(f"{Handler.model}: warm in {time.monotonic() - t0:.1f}s", file=sys.stderr, flush=True)
+    # PID 1 in its container, where the kernel gives SIGTERM no default
+    # action: without a handler every `docker stop` sat out the 10 s grace
+    # and ended in SIGKILL (each NAS poweroff, 2026-09-16 and -17). Nothing
+    # here holds state, so it stops at once.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
 
 

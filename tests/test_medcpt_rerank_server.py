@@ -85,3 +85,43 @@ def test_the_platform_reads_it_as_tei_end_to_end():
         assert httpx.get(url, timeout=5).status_code == 200, "the health ping"
     finally:
         httpd.shutdown()
+
+
+def test_sigterm_stops_the_server_at_once(tmp_path):
+    """It runs as PID 1, where SIGTERM has no default action: without its own
+    handler every `docker stop` waited 10 s and ended in SIGKILL. Here it is
+    not PID 1, so a missing handler shows as death BY the signal (-15)
+    instead of the clean exit 0 the handler gives."""
+    import signal
+    import socket
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    script = tmp_path / "run.py"
+    script.write_text(
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('srv', {str(_spec.origin)!r})\n"
+        "srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)\n"
+        "srv.make_encoder = lambda path: (lambda pairs: pairs)\n"
+        "srv.make_infer = lambda xml, device: (lambda pairs: [0.0] * len(pairs))\n"
+        "srv.main()\n")
+    proc = subprocess.Popen([sys.executable, str(script)], env={"PORT": str(port), "PATH": ""},
+                            stderr=subprocess.PIPE)
+    try:
+        deadline = time.time() + 20
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+                break
+            except OSError:
+                assert proc.poll() is None and time.time() < deadline, proc.stderr.read()
+                time.sleep(0.1)
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=5) == 0
+    finally:
+        proc.kill()
+        proc.wait()
