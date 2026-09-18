@@ -68,6 +68,21 @@ def test_the_status_is_the_one_sys_exit_would_give(tmp_path, capsys):
     _out, err = proc.communicate(timeout=60)
     assert proc.returncode == 1
     assert "RuntimeError: the command failed" in err and "Traceback" in err
+    proc = _child(tmp_path, """
+        from app import process_exit
+        def main():
+            raise KeyboardInterrupt
+        process_exit.run(main)
+    """, name="ctrl_c.py")
+    _out, err = proc.communicate(timeout=60)
+    assert proc.returncode == 130 and "KeyboardInterrupt" in err
+    proc = _child(tmp_path, """
+        import sys
+        from app import process_exit
+        process_exit.run(lambda: sys.exit("no such collection"))
+    """, name="message.py")
+    _out, err = proc.communicate(timeout=60)
+    assert proc.returncode == 1 and err == "no such collection\n"
 
 
 def test_processes_that_used_lancedb_exit_with_their_own_status(tmp_path):
