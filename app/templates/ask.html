@@ -18,12 +18,15 @@
       <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
       <option value="dense">dense only</option><option value="catalog">catalog only</option>
     </select>
-    {# "show results in": CONTENT only — snippets, the TITLE and the
-       answer are translated into this language; authors, chapters, ids
-       and the page itself never change (STATUS 5j, amended 2026-09-12:
-       "how am I supposed to understand a title in Arabic or Hindi?" —
-       the switch is reversible, so the published title is always one
-       selection back, and it stays in the hit's tooltip meanwhile).
+    {# "show results in": CONTENT only — the answer and every entry IN
+       FULL, its title and headings included, are translated into this
+       language (operator, 2026-09-18); authors, ids and the page itself
+       never change (STATUS 5j, amended 2026-09-12: "how am I supposed to
+       understand a title in Arabic or Hindi?" — the switch is reversible,
+       so the published title is always one selection back, and it stays
+       in the hit's tooltip meanwhile). It chooses how results READ, never
+       which are found: every search covers every language unless the
+       question itself limits it (app/language_plan.py).
 
        EACH OPTION IS WRITTEN IN THE LANGUAGE IT SELECTS (operator,
        2026-09-12) — the one carve-out from "the chrome never changes
@@ -32,12 +35,22 @@
        fallback for a code added to the TOML with no phrase, and
        dir="auto" is what keeps the Persian row from rendering backwards
        inside an LTR select. #}
-    <select id="lang" style="width:auto" onchange="applyLanguage()" title="content language of snippets and answer">
+    <select id="lang" style="width:auto" onchange="applyLanguage()" title="the language of the answer and of every entry — the search itself always covers every language">
       <option value="original">results in their own language</option>
       {% for lang in result_languages %}
       <option value="{{ lang[0] }}" dir="auto">{{ lang[2] if lang|length > 2 else lang[1] }}</option>
       {% endfor %}
     </select>
+    {# HOW MANY, before and after the reranker (operator, 2026-09-18),
+       defaulting to the documents' own numbers: 05 §5.4's limit of 10
+       and §5.6's top 50. The same two go to the answer's search, so its
+       [n] and the hits on the page come from one list. #}
+    <label class="inline" title="results shown, after reranking (default {{ default_results }})">results
+      <input id="limit" type="number" min="1" max="{{ max_results }}" value="{{ default_results }}"
+             data-default="{{ default_results }}" style="width:4.5em" onchange="rememberCounts()"></label>
+    <label class="inline" title="candidates per list the reranker orders, before reranking (default {{ default_rerank_depth }})">reranked from
+      <input id="rerank-depth" type="number" min="1" max="{{ max_results }}" value="{{ default_rerank_depth }}"
+             data-default="{{ default_rerank_depth }}" style="width:4.5em" onchange="rememberCounts()"></label>
     <button class="primary" onclick="search()">Search</button>
     <button onclick="ask()">Ask (RAG)</button>
   </div>
@@ -78,6 +91,13 @@
   .hit .snip,.hit .head b{cursor:pointer}
   .hit .snip:hover{text-decoration:underline dotted}
   .translated-from{margin-left:6px}
+  .actions label.inline{display:inline-flex;align-items:center;gap:5px;margin:0}
+  /* the whole entry is on the page, clamped until "more" opens it */
+  .hit .snip{max-height:7.5em;overflow:hidden}
+  .hit.open .snip{max-height:none}
+  .hit .more{font-size:11px;padding:0 6px;margin:3px 0 0 28px}
+  /* being written by the model right now */
+  .tr.translating,#answer.translating{border-left:2px solid var(--lapis,#3a6ea5);padding-left:4px}
   a.cite{cursor:pointer;text-decoration:underline dotted}
   @media (max-width:900px){ #reader{width:100vw} }
 </style>
@@ -91,32 +111,59 @@ function scopeCollections(){
   return on.length===chips.length ? null : on;   // null = all enabled (server default)
 }
 function selectedLang(){const v=document.getElementById('lang').value;return v==='original'?null:v}
-async function search(){
-  const q=document.getElementById('q').value.trim(); if(!q)return;
+// the two counts: a number in range, else the default the page was given
+function count(id){
+  const el=document.getElementById(id), n=parseInt(el.value,10);
+  const ok=Number.isFinite(n) && n>=+el.min && n<=+el.max;
+  if(!ok)el.value=el.dataset.default;
+  return ok?n:+el.dataset.default;
+}
+function counts(){return {limit:count('limit'),rerank_depth:count('rerank-depth')}}
+// remembered in this browser only; a private window starts from the defaults
+function rememberCounts(){try{localStorage.setItem('ask.counts',JSON.stringify(counts()))}catch(e){}}
+(function restoreCounts(){
+  try{const c=JSON.parse(localStorage.getItem('ask.counts')||'null');
+    if(c){document.getElementById('limit').value=c.limit;
+          document.getElementById('rerank-depth').value=c.rerank_depth;count('limit');count('rerank-depth')}
+  }catch(e){}
+})();
+async function search(opts){
+  const q=document.getElementById('q').value.trim(); if(!q)return false;
+  // the node's model answers one request at a time: a translation still
+  // running for the OLD page would make this search wait behind it
+  stopTranslating();
   // A NEW HIT SET INVALIDATES THE OLD ANSWER. Search alone used to leave
   // the previous answer above fresh hits, and linkCitations() then wired
   // its [n] to the NEW hits by position - a link that looks right and
   // opens the wrong document.
-  answerRaw=''; answerLang=null;
+  answerRaw=''; answerLang=null; answerShown=null; answerNote='';
   document.getElementById('answer-pane').style.display='none';
   document.getElementById('answer').textContent='';
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value})});
+    body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value,
+                         ...counts()})});
   document.getElementById('results').innerHTML=await r.text();
   wireHits();
-  await applyLanguage();
+  const t=applyLanguage(opts);
+  if(opts&&opts.shortOnly)await t;
+  return true;
 }
 async function ask(){
-  const q=document.getElementById('q').value.trim(); if(!q)return;
-  await search();
+  const want=selectedLang();
+  // THE ANSWER BEFORE THE ENTRIES. The model is one queue, and the entries
+  // in full are minutes of it: translated first, they would hold the
+  // answer back for all of that. So the titles and headings go first
+  // (seconds — the page is readable at a glance), then the answer, written
+  // directly in the chosen language, then the entries.
+  if(!await search({shortOnly:true}))return;
+  const q=document.getElementById('q').value.trim();
   const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
   pane.style.display='block'; a.textContent='thinking…';
   const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
-                         answer_lang:selectedLang()})});
+                         answer_lang:want,...counts()})});
   const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
-  answerLang=selectedLang();
   for(;;){const {done,value}=await reader.read(); if(done)break;
     buf+=dec.decode(value,{stream:true});
     let i; while((i=buf.indexOf('\n\n'))>=0){
@@ -127,32 +174,49 @@ async function ask(){
     }}
   // the answer AS GENERATED, so a later switch has something to translate
   // and switching back to "original" restores it byte for byte
-  answerRaw=a.textContent;
+  answerRaw=a.textContent; answerLang=want; answerShown=want;
   linkCitations();
+  applyLanguage();       // the entries in full, now that the answer is out
 }
 // ---- translated content -------------------------------------------------
 //
-// The switch reaches the hit snippets, the TITLES and the answer, and it
-// reaches what is ALREADY on screen, not only the next query (operator,
-// 2026-09-12). Authors, chapters, ids, the drawer original and the page
-// chrome never change (STATUS 5j as amended: a personal name is not
-// translated in any language and an id is not language at all).
+// THE RULE (operator, 2026-09-18): the language in the drop-down is the
+// language of the answer AND of every entry returned, the entries are
+// translated IN FULL, and changing it translates everything on the page
+// at once. "Everything" is every `.tr` element — titles, chapter and
+// section headings, the entries' whole text, catalog titles — and the
+// answer. Authors, ids, the drawer's original and the page chrome never
+// change (STATUS 5j: a personal name is not translated in any language
+// and an id is not language at all).
 //
-// Every item carries its SOURCE language, because the server batches by
-// it: a mixed batch of short items comes back with some copied through
-// untranslated, and grouping removes the comparison that invites it.
+// STREAMED. A whole entry measured 58.6 s on the node and the model runs
+// one request at a time, so a page is minutes of work; the words appear
+// as they are written instead — the first after about 2 s. The server
+// sends what it has cached first, then the short items, then each long
+// one in the order sent here: the answer, then the entries by rank.
+//
+// Items are sent once per distinct (source language, text): two passages
+// of one book share its title and must not pay twice or come back
+// disagreeing.
 //
 // The answer is POST-TRANSLATED here rather than re-asked. A re-ask
 // returns a different answer, and the request was to read the SAME
 // result in another language; `answer_lang` still produces the first
 // answer natively at ask time, which costs no extra call and is the
-// better text. `build_answer_messages` warned that post-translation can
-// disturb the [n] citations, so the markers are counted before and after
-// and a translation that lost or invented one is refused.
-let answerRaw='', answerLang=null, langToken=0;
+// better text. Post-translation can disturb the [n] citations, so the
+// markers are counted before and after and a translation that lost or
+// invented one is refused.
+let answerRaw='', answerLang=null, answerShown=null, answerNote='', langToken=0, langAbort=null;
 const ANSWER_ID='__answer__';
+// = web._STREAM_OVER: at or under it an item is batched (a title), over it streamed
+const SHORT_ITEM=400;
 
 function markers(t){const m=t.match(/\[\d+\]/g)||[];return m.slice().sort().join(',')}
+
+function stopTranslating(){
+  ++langToken;                              // nothing from the old request may paint
+  if(langAbort){langAbort.abort();langAbort=null}   // and the model stops writing it
+}
 
 function langNote(text){
   // ONE note, in its own container. It used to be prepended to #hits
@@ -166,97 +230,128 @@ function langNote(text){
   n.textContent=text;
 }
 
-async function applyLanguage(){
+function restoreUnit(u){
+  u.textContent=u.dataset.orig; delete u.dataset.tl; u.classList.remove('translating');
+  if(u.dataset.otitle)u.title=u.dataset.otitle; else u.removeAttribute('title');
+  const b=u.nextElementSibling; if(b&&b.classList.contains('translated-from'))b.remove();
+}
+
+function markTranslated(u,text,lang){
+  u.classList.remove('translating');
+  if(!text||text===u.dataset.orig){u.textContent=u.dataset.orig;return}
+  u.textContent=text; u.dataset.tl=lang;
+  // the PUBLISHED text stays one hover away — the operator's "copy the
+  // original title for reference" without switching the page back
+  u.title='published as: '+u.dataset.orig+(u.dataset.otitle?' — '+u.dataset.otitle:'');
+  if(u.classList.contains('snip')){
+    const b=document.createElement('span'); b.className='badge translated-from';
+    b.title='original in the provenance drawer';
+    b.textContent='translated from '+(u.dataset.lang||'?');
+    u.parentElement.insertBefore(b,u.nextSibling);
+  }
+}
+
+function showAnswer(text,lang){
+  const a=document.getElementById('answer');
+  a.classList.remove('translating'); a.textContent=text; answerShown=lang; linkCitations();
+}
+
+async function applyLanguage(opts){
   const lang=selectedLang();
-  const mine=++langToken;                 // only the newest switch may paint
-  const snips=[...document.querySelectorAll('#hits .snip[data-cid]')];
-  const titles=[...document.querySelectorAll('#hits .doc-title[data-tid]')];
+  const shortOnly=!!(opts&&opts.shortOnly);
+  stopTranslating();
+  const mine=langToken;
+  const units=[...document.querySelectorAll('#results .tr')];
   const a=document.getElementById('answer');
   const haveAnswer=answerRaw && document.getElementById('answer-pane').style.display!=='none';
 
-  for(const s of snips){
-    if(s.dataset.orig===undefined)s.dataset.orig=s.textContent;
-    const badge=s.parentElement.querySelector('.translated-from'); if(badge)badge.remove();
-    if(!lang)s.textContent=s.dataset.orig;
+  // Back to the original wherever the page shows another language, or a
+  // translation that was still being written when it was interrupted.
+  for(const u of units){
+    if(u.dataset.orig===undefined){u.dataset.orig=u.textContent; u.dataset.otitle=u.getAttribute('title')||''}
+    if(u.dataset.tl!==lang || !lang)restoreUnit(u);
   }
-  // THE TITLE TOO (5j as amended). The published title stays in
-  // `data-orig` and in the tooltip, so "original" restores it exactly
-  // and it can be copied for a reference without switching back at all.
-  for(const t of titles){
-    if(t.dataset.orig===undefined)t.dataset.orig=t.textContent;
-    if(!lang){t.textContent=t.dataset.orig; t.title='open the document'}
-  }
+  if(haveAnswer && answerShown!==lang && answerShown!==answerLang)showAnswer(answerRaw,answerLang);
   if(!lang){
     langNote('');
-    // back to the answer as generated, byte for byte
-    if(haveAnswer){a.textContent=answerRaw;linkCitations()}
+    if(haveAnswer)showAnswer(answerRaw,answerLang);   // byte for byte
     return;
   }
-  // A hit already IN the target language is not sent to the model: it
+  // A unit already IN the target language is not sent to the model: it
   // would pay for a no-op and earn a "translated from it" badge on text
   // that was always Italian.
-  const items=snips.filter(s=>(s.dataset.lang||'?')!==lang)
-                   .map(s=>({id:s.dataset.cid,text:s.dataset.orig,src:s.dataset.lang||'?'}));
-  // Titles ride the SAME call as the snippets, so translating them costs
-  // no extra round trip — and deduplicated by `data-tid`, because two
-  // passages of one book share its title and must not pay twice or come
-  // back disagreeing.
-  const seenTid=new Set();
-  for(const t of titles){
-    if((t.dataset.lang||'?')===lang || seenTid.has(t.dataset.tid))continue;
-    seenTid.add(t.dataset.tid);
-    items.push({id:t.dataset.tid,text:t.dataset.orig,src:t.dataset.lang||'?'});
+  const groups=new Map();
+  for(const u of units){
+    const src=u.dataset.lang||'?';
+    if(src===lang || u.dataset.tl===lang)continue;
+    if(shortOnly && u.dataset.orig.length>SHORT_ITEM)continue;
+    const key=JSON.stringify([src,u.dataset.orig]);
+    let g=groups.get(key);
+    if(!g){g={id:'t'+groups.size,text:u.dataset.orig,src:src,els:[]};groups.set(key,g)}
+    g.els.push(u);
   }
-  if(haveAnswer && answerLang!==lang)items.push({id:ANSWER_ID,text:answerRaw,src:answerLang||'?'});
+  const byId=new Map([...groups.values()].map(g=>[g.id,g]));
+  const items=[];
+  answerNote='';
+  if(haveAnswer && !shortOnly && answerShown!==lang)
+    items.push({id:ANSWER_ID,text:answerRaw,src:answerLang||'?'});
+  for(const g of groups.values())items.push({id:g.id,text:g.text,src:g.src});
   if(!items.length){langNote('');return}
 
   // SAY SO BEFORE THE WAIT, NOT AFTER IT. One model call for a page of
   // passages measured 78 s on this node, and every word on screen stayed
   // exactly as it was for the whole of it — so switching language read as
   // doing nothing at all, which is what the operator reported (twice).
-  // The note is the only thing that can distinguish "working" from
-  // "broken" here, and it has to arrive first.
   langNote('translating ' + items.length + ' item(s) into ' + lang
-           + '… this takes a while');
+           + '… each changes as it is written');
 
-  let d=null;
-  try{const r=await fetch('/ask/translate',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({lang,items})}); d=await r.json();}catch(e){d=null}
-  if(mine!==langToken)return;             // a later switch already won
-  if(!d||d.failed){
-    langNote('translation into '+lang+' unavailable — showing the originals');
-    return;
-  }
-  for(const s of snips){
-    const t=d.items[s.dataset.cid]; if(!t||t===s.dataset.orig)continue;
-    s.textContent=t;
-    const b=document.createElement('span'); b.className='badge translated-from';
-    b.title='original in the provenance drawer';
-    b.textContent='translated from '+(s.dataset.lang||'?');
-    s.parentElement.insertBefore(b,s.nextSibling);
-  }
-  // One translation paints every hit that shares the document, since the
-  // key is the document. The tooltip becomes the PUBLISHED title — the
-  // operator's "copy the original title for reference", without having to
-  // switch the whole page back to do it.
-  for(const t of titles){
-    const got=d.items[t.dataset.tid]; if(!got||got===t.dataset.orig)continue;
-    t.textContent=got;
-    t.title='published as: '+t.dataset.orig+' — click to open the document';
-  }
-  if(haveAnswer){
-    const t=d.items[ANSWER_ID];
-    if(answerLang===lang){ /* generated in this language: leave it */ }
-    else if(t && markers(t)===markers(answerRaw)){a.textContent=t;linkCitations()}
-    else if(t){
-      // the citations moved: the answer is worth less than its links
-      a.textContent=answerRaw;linkCitations();
-      langNote('the answer kept its original language — translating it '
-               +'would have broken its [n] citations');
+  const ctl=new AbortController(); langAbort=ctl;
+  const acc={}; let failed=false, missed=0;
+  try{
+    const r=await fetch('/ask/translate/stream',{method:'POST',signal:ctl.signal,
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({lang,items})});
+    const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
+    for(;;){
+      const {done,value}=await reader.read(); if(done)break;
+      if(mine!==langToken)return;           // a later switch already won
+      buf+=dec.decode(value,{stream:true});
+      let i; while((i=buf.indexOf('\n'))>=0){
+        const ln=buf.slice(0,i); buf=buf.slice(i+1); if(!ln.trim())continue;
+        let m; try{m=JSON.parse(ln)}catch(e){continue}
+        if(m.done){failed=!!m.failed; missed=(m.missed||[]).filter(id=>id!==ANSWER_ID).length; continue}
+        if(m.id===ANSWER_ID){
+          if(m.delta!==undefined){acc[m.id]=(acc[m.id]||'')+m.delta; a.textContent=acc[m.id]; a.classList.add('translating')}
+          else if(m.text!==undefined && markers(m.text)===markers(answerRaw))showAnswer(m.text,lang);
+          else{
+            showAnswer(answerRaw,answerLang);
+            // the citations moved: the answer is worth less than its links
+            if(m.text!==undefined)answerNote='the answer kept its original language — translating it '
+                                             +'would have broken its [n] citations';
+          }
+          continue;
+        }
+        const g=byId.get(m.id); if(!g)continue;
+        if(m.delta!==undefined){
+          acc[m.id]=(acc[m.id]||'')+m.delta;
+          for(const u of g.els){u.textContent=acc[m.id]; u.classList.add('translating')}
+        }else if(m.text!==undefined){for(const u of g.els)markTranslated(u,m.text,lang)}
+        else if(m.missed){for(const u of g.els)restoreUnit(u)}
+      }
     }
+  }catch(e){
+    if(mine!==langToken)return;             // aborted by a later switch or search
+    failed=true;
   }
-  const missed=(d.missed||[]).filter(id=>id!==ANSWER_ID).length;
-  langNote(missed?missed+' passage(s) could not be translated — showing those originals':'');
+  if(mine!==langToken)return;
+  langAbort=null;
+  // whatever was still being written when the stream ended is not a translation
+  for(const g of groups.values())for(const u of g.els)if(u.dataset.tl!==lang)restoreUnit(u);
+  if(a.classList.contains('translating'))showAnswer(answerRaw,answerLang);
+  if(failed){langNote('translation into '+lang+' unavailable — showing the originals');return}
+  const notes=[];
+  if(missed)notes.push(missed+' item(s) could not be translated — showing those originals');
+  if(answerNote)notes.push(answerNote);
+  langNote(notes.join(' · '));
 }
 // ---- reader panel ----
 function wireHits(){

@@ -149,7 +149,7 @@ def test_the_budget_is_platform_toml_ask_latency_budget_ms(tmp_path):
 
 def _stub_pipeline(monkeypatch, lists):
     monkeypatch.setattr(retrieval, "_search_one_collection",
-                        lambda con, c, q, k, mode, tr, tagged: {
+                        lambda con, c, q, k, mode, tr, tagged, plan=None, depth=0: {
                             "catalog": [], "merged": lists[c.name], "translations": {},
                             "timings": {"catalog": 0.0}, "scope": {}})
     monkeypatch.setattr(retrieval, "_tagged_book_ids", lambda con, c, ids: set())
@@ -199,3 +199,56 @@ def test_search_says_whether_its_list_was_reranked(isolated_config, monkeypatch,
     _server(monkeypatch, fail=httpx.ReadTimeout("over budget"))
     out = retrieval.search(db.connect(c), "q", k=3, collection=c)
     assert out["reranked"] is False and [h["book_id"] for h in out["hits"]] == [0, 1, 2]
+
+
+# ---------------- how many, before and after (operator, 2026-09-18) ----------------
+
+
+def test_the_depth_is_the_requests_and_the_rest_keep_the_fused_order(monkeypatch):
+    calls = _server(monkeypatch)
+    out, ok = retrieval._rerank_list("q", _hits("c", 30), JINA, 0.4, depth=10)
+    assert ok and len(calls[0]["json"]["documents"]) == 10
+    assert [h["book_id"] for h in out[:10]] == list(range(9, -1, -1))
+    assert [h["book_id"] for h in out[10:]] == list(range(10, 30))
+
+
+def test_a_federated_search_reranks_as_deep_as_it_was_asked(isolated_config, monkeypatch,
+                                                            tmp_path):
+    """The per-collection budget (40) used to cut each list before the
+    reranker, so the default 50 was a claim about 40."""
+    a = _col(tmp_path, "a", JINA)
+    b = _col(tmp_path, "b", dataclasses.replace(JINA, url="http://b/v1/rerank"))
+    _stub_pipeline(monkeypatch, {"a": _hits("a", 80), "b": _hits("b", 80)})
+    calls = _server(monkeypatch)
+    out = retrieval.federated_search([a, b], "q", k=7)
+    assert sorted(len(c["json"]["documents"]) for c in calls) == [50, 50], "the default"
+    assert len(out["hits"]) == 7, "and k after it"
+    calls.clear()
+    retrieval.federated_search([a, b], "q", k=7, rerank_depth=70)
+    assert sorted(len(c["json"]["documents"]) for c in calls) == [70, 70]
+
+
+def test_every_leg_goes_as_deep_as_the_reranker_needs(isolated_config, monkeypatch):
+    from app import embeddings, fts
+    c = collections_mod.default_collection()
+    monkeypatch.setattr(fts, "existing_groups", lambda collection=None: ["en"])
+    asked = []
+    monkeypatch.setattr(fts, "search", lambda group, q, limit=20, collection=None, langs=None:
+                        asked.append(("fts", limit)) or [])
+    monkeypatch.setattr(embeddings, "search",
+                        lambda q, k=20, langs=None, collection=None, book_ids=None:
+                        asked.append(("dense", k)) or [])
+    retrieval._search_one_collection(db.connect(c), c, "q", 10, "hybrid", False, set(),
+                                     None, 70)
+    assert asked == [("fts", 70), ("dense", 70)]
+
+
+def test_a_long_result_list_never_overflows_the_answers_context():
+    """Ollama drops the START of a prompt that does not fit — the
+    instructions first — and the results count is the reader's to set."""
+    hits = [{"chunk_id": f"g:{i}:0:1", "book_id": i, "text": "x" * 1800, "title": "t",
+             "authors": "a", "lang": "en"} for i in range(100)]
+    msg = retrieval.build_answer_messages("q", {"hits": hits, "catalog": []})[1]["content"]
+    assert "[13]" in msg and "[14]" not in msg, "24,000 characters of passages, in page order"
+    ten = retrieval.build_answer_messages("q", {"hits": hits[:10], "catalog": []})[1]["content"]
+    assert "[10]" in ten, "the default ten always fit"

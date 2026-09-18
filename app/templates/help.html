@@ -78,11 +78,24 @@
       provenance badges: <b>local ✓</b> (computed here), <b>imported ◌</b>
       (from a bundle, unverified), <b>verified ✓</b> (spot-checked against
       the local model), <b>⚠ failed</b> (verification failed).
-      <b>Show results in …</b> translates the CONTENT — snippets and the
-      answer — into the chosen language (titles, authors, ids and this
-      interface stay as they are; the original text stays in the
-      provenance drawer; a small "translated from" badge says what
-      happened). Clicking a hit's title, its snippet, or a <b>[n]</b>
+      Every search covers <b>every language</b> the collections hold — the
+      question is translated into each — unless the question limits it:
+      "… only texts in German", "… solo fonti in francese", or
+      <code>lang:de</code> (<code>lang:de,fr</code> for several). A limit
+      is shown as an <b>only: de</b> badge above the hits.
+      <b>Show results in …</b> is the language of the answer and of every
+      entry returned, translated IN FULL — its title, headings and whole
+      text; changing it translates the page as it stands, the words
+      appearing as the model writes them (authors, ids and this interface
+      stay as they are; the original text stays in the provenance drawer;
+      a small "translated from" badge says what happened; <b>more</b>
+      opens an entry clamped to a few lines). <b>results</b> is how many
+      hits a search returns after reranking (10 by default) and
+      <b>reranked from</b> how many candidates of each collection's list
+      the reranker orders first (50 by default); both at most 100,
+      remembered in this browser, and the answer is written from the
+      same list — from as many of its first passages as fit the model.
+      Clicking a hit's title, its snippet, or a <b>[n]</b>
       citation in the answer opens the <b>reader</b>: the whole document
       from the index stores with the matched passage highlighted, a
       reference line, a link to the source, and "open in its own tab"
@@ -229,7 +242,14 @@
       as their own blocks above the ranked hits: they are never ranked,
       never fused with passages, and carry no <b>[n]</b> citation.</li>
     <li><b>Show results in …</b> translates with the node's own local
-      model, not an external service.</li>
+      model, not an external service. That model writes one thing at a
+      time, so a page of whole entries takes minutes to finish: titles and
+      headings come first, then the answer, then the entries by rank.</li>
+    <li><b>A language limit is read from the question by the same model</b>
+      and taken only when the words it names are really in the question
+      and are not the whole of it — so "German history of whaling" is a
+      topic, never a limit. When a limit you wrote was not taken, write
+      <code>lang:de</code>, which is never guessed.</li>
     <li><b>No hits</b> usually means the lexical index has not been built
       for the languages currently in scope — check the collection's
       <i>indexed (lexical)</i> stage and the scope languages before

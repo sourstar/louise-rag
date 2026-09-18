@@ -39,11 +39,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import (auth, collections as collections_mod, config, db, discovery, llm,
-                node_state, platform_config, query_service, reader, spaces)
+                node_state, platform_config, query_service, reader, retrieval, spaces)
 from .transfer import manager as transfer_manager
 from .transfer import schedule as transfer_schedule
 from .acquire import claim
@@ -185,6 +185,11 @@ class AskQueryBody(BaseModel):
     query: str
     collections: list[str] | None = None
     mode: str = "hybrid"
+    # "the maximum number of results a query returns before and after
+    # reranking, with as default the recommended amount" (operator,
+    # 2026-09-18): 05 §5.4's `limit` and §5.6's depth, per request
+    limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
 
 
 # "show results in" — the CONTENT languages the Ask page offers. The
@@ -225,42 +230,60 @@ RESULT_LANGUAGES = (
 def ask_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "ask.html", {
         "active": "ask", "collections": collections_mod.load_all(), "result": None,
-        "result_languages": RESULT_LANGUAGES})
+        "result_languages": RESULT_LANGUAGES,
+        "default_results": retrieval.DEFAULT_RESULTS,
+        "default_rerank_depth": retrieval.RERANK_TOP_N,
+        "max_results": retrieval.MAX_RESULTS})
 
 
 class TranslateBody(BaseModel):
     lang: str
-    items: list[dict]          # [{"id": ..., "text": ...}]
+    items: list[dict]          # [{"id": ..., "text": ..., "src": <its language>}]
 
 
-# (chunk_id, lang) -> translation. Toggling the drop-down back and forth
-# must not pay the model twice; bounded so a long session cannot grow it.
+# (lang, text) -> translation. Toggling the drop-down back and forth must
+# not pay the model twice; bounded so a long session cannot grow it.
+#
+# KEYED ON THE TEXT, not the item's id. It was (id, lang), and the answer's
+# id is one fixed string for every question — so switching a SECOND answer
+# into a language the first had been switched into was served the FIRST
+# answer's translation. A key on what is translated cannot do that, and
+# two items with one text (a title two hits share, "CHAPTER I") share one
+# translation for free.
 _translation_cache: dict = {}
 _TRANSLATION_CACHE_MAX = 4000
 #: retry batch size for items the model returned verbatim. Three, because
 #: three is the size measured to work where eleven did not.
 _RETRY_BATCH = 3
+#: above this many characters an item is translated ALONE and streamed —
+#: an entry in full, the answer; at or below it, batched like a title
+_STREAM_OVER = 400
 
 
-@ask_router.post("/ask/translate")
-def ask_translate(body: TranslateBody):
-    """Translate result CONTENT (snippets, drawer text) into `lang` — never
-    titles, authors or ids, never the interface. One model call per page
-    of results; failure degrades to the originals with `failed` set so the
-    page can say so instead of pretending."""
-    lang = body.lang.strip().lower()
-    if not lang or lang == "original":
-        return {"lang": lang, "items": {}, "failed": False}
+def _remember(lang: str, text: str, value: str) -> None:
+    if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
+        _translation_cache.clear()
+    _translation_cache[(lang, text)] = value
+
+
+def _translate_items(body: TranslateBody) -> list[tuple[str, str, str]]:
+    """(id, text, source language) for every item with something to say."""
+    return [(str(i.get("id", "")), str(i.get("text", "")),
+             str(i.get("src", "") or "?").lower())
+            for i in body.items if str(i.get("text", "")).strip()]
+
+
+def _translate_batch(lang: str, items: list[tuple[str, str, str]]
+                     ) -> tuple[dict[str, str], bool, list[str]]:
+    """Short items into `lang`, batched: ({id: translation}, failed, missed).
+    `failed` means nothing came back at all; `missed` names the items that
+    did not while others did."""
     out: dict[str, str] = {}
     groups: dict[str, list[tuple[str, str]]] = {}
-    for item in body.items:
-        key = (str(item.get("id", "")), lang)
-        text = str(item.get("text", ""))
-        if not text.strip():
-            continue
-        hit = _translation_cache.get(key)
+    for cid, text, src in items:
+        hit = _translation_cache.get((lang, text))
         if hit is not None:
-            out[key[0]] = hit
+            out[cid] = hit
         else:
             # ONE BATCH PER SOURCE LANGUAGE. A mixed batch of SHORT items
             # comes back with some of them copied through untranslated —
@@ -278,8 +301,7 @@ def ask_translate(body: TranslateBody):
             # (which reads as covering titles) changed nothing, and
             # telling the model every item must come back translated took
             # unchanged from 7 to 9.
-            groups.setdefault(str(item.get("src", "") or "?").lower(),
-                              []).append((key[0], text))
+            groups.setdefault(src, []).append((cid, text))
     failed = False
     missed: list[str] = []
     retry: list[tuple[str, str]] = []
@@ -312,21 +334,18 @@ def ask_translate(body: TranslateBody):
                 # A DROPPED PASSAGE IS NEVER CACHED, and never reported as
                 # a translation. `translate_texts` returns None for one,
                 # and it used to return the original — which this then
-                # stored as the translation for (cid, lang), so the
-                # passage could never be translated again for the life of
-                # the process. Re-selecting the language could not repair
-                # it, which is exactly what the switch is supposed to be
-                # able to do. A value equal to its own input is refused
-                # too: the same permanent-miss shape, arriving by a
-                # different route.
+                # stored as the translation, so the passage could never be
+                # translated again for the life of the process.
+                # Re-selecting the language could not repair it, which is
+                # exactly what the switch is supposed to be able to do. A
+                # value equal to its own input is refused too: the same
+                # permanent-miss shape, arriving by a different route.
                 if value is None or value == original:
                     missed.append(cid)
                     retry.append((cid, original))
                     continue
                 out[cid] = value
-                if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
-                    _translation_cache.clear()
-                _translation_cache[(cid, lang)] = value
+                _remember(lang, original, value)
 
     # ONE RETRY, IN SMALL BATCHES — the correction loop, not a fourth
     # guess about the model. A batch that comes back with short items
@@ -355,15 +374,108 @@ def ask_translate(body: TranslateBody):
                     continue
                 out[cid] = value
                 missed = [m for m in missed if m != cid]
-                if len(_translation_cache) >= _TRANSLATION_CACHE_MAX:
-                    _translation_cache.clear()
-                _translation_cache[(cid, lang)] = value
+                _remember(lang, original, value)
+    return out, failed, missed
+
+
+@ask_router.post("/ask/translate")
+def ask_translate(body: TranslateBody):
+    """Translate result CONTENT into `lang` in one reply — never authors or
+    ids, never the interface. The Ask page uses the streaming route below;
+    this stays for a client that wants the whole answer at once. Failure
+    degrades to the originals with `failed` set so the page can say so
+    instead of pretending."""
+    lang = body.lang.strip().lower()
+    if not lang or lang == "original":
+        return {"lang": lang, "items": {}, "failed": False}
     # `failed` stays a BOOL: it means "nothing came back", which is what
     # the page says "translation unavailable" about. `missed` is the
     # partial case — some passages translated, some did not — and the page
     # shows what it got and names the rest rather than discarding good
     # content for the sake of a uniform screen.
+    out, failed, missed = _translate_batch(lang, _translate_items(body))
     return {"lang": lang, "items": out, "failed": failed, "missed": missed}
+
+
+@ask_router.post("/ask/translate/stream")
+def ask_translate_stream(body: TranslateBody):
+    """Everything on the Ask page into `lang`, AS IT IS WRITTEN — one JSON
+    object per line:
+
+        {"id", "text"}      an item's finished translation
+        {"id", "delta"}     the next piece of a long item's translation
+        {"id", "missed"}    no usable translation: show the original
+        {"done", "failed", "missed"}   the end; `failed` = nothing came back
+
+    The entries are translated IN FULL (operator, 2026-09-18), and one
+    whole chunk measured 58.6 s on the node — its first words after
+    1.96 s. The node's Ollama runs one request at a time, so a page of
+    entries is minutes of model time however it is split; what can be
+    immediate is that the page starts changing at once. So: what is cached
+    first, then the short items in one batch per source language (titles,
+    chapters — the page is readable at a glance within seconds), then each
+    long item streamed in the order the page sent them (the answer, then
+    the entries by rank). A page that switches again aborts this request,
+    and the model stops with it."""
+    lang = body.lang.strip().lower()
+    items = _translate_items(body)
+
+    def line(obj: dict) -> str:
+        return json.dumps(obj, ensure_ascii=False) + "\n"
+
+    def gen():
+        if not lang or lang == "original":
+            yield line({"done": True, "failed": False, "missed": []})
+            return
+        got = 0
+        missed: list[str] = []
+        short: list[tuple[str, str, str]] = []
+        long_: list[tuple[str, str, str]] = []
+        for cid, text, src in items:
+            hit = _translation_cache.get((lang, text))
+            if hit is not None:
+                got += 1
+                yield line({"id": cid, "text": hit})
+            else:
+                (long_ if len(text) > _STREAM_OVER else short).append((cid, text, src))
+        if short:
+            out, _failed, short_missed = _translate_batch(lang, short)
+            for cid, _text, _src in short:
+                if cid in out:
+                    got += 1
+                    yield line({"id": cid, "text": out[cid]})
+            for cid in short_missed:
+                yield line({"id": cid, "missed": True})
+            missed += short_missed
+        # A MODEL THAT CANNOT BE REACHED IS ASKED ONCE, not once per entry:
+        # a call that raised before writing a word marks the rest missed
+        # instead of queueing each behind the same failure.
+        down = False
+        for cid, text, _src in long_:
+            if down:
+                missed.append(cid)
+                yield line({"id": cid, "missed": True})
+                continue
+            parts: list[str] = []
+            try:
+                for delta in llm.translate_stream(text, lang):
+                    parts.append(delta)
+                    yield line({"id": cid, "delta": delta})
+            except Exception:   # noqa: BLE001 — the item is a miss, the page says so
+                down = not parts
+            value = "".join(parts).strip()
+            if llm.is_translation(value, text, lang):
+                _remember(lang, text, value)
+                got += 1
+                yield line({"id": cid, "text": value})
+            else:
+                missed.append(cid)
+                yield line({"id": cid, "missed": True})
+        yield line({"done": True, "failed": got == 0 and bool(missed), "missed": missed})
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 @ask_router.get("/read/{collection}/{book_id}", response_class=HTMLResponse)
@@ -399,7 +511,8 @@ def help_page(request: Request):
 
 @ask_router.post("/ask/query", response_class=HTMLResponse)
 def ask_query(request: Request, body: AskQueryBody):
-    result = query_service.run_search(body.collections, body.query, 12, body.mode, True)
+    result = query_service.run_search(body.collections, body.query, body.limit, body.mode, True,
+                                      rerank_depth=body.rerank_depth)
     # every hit names its COLLECTION for the reader panel: federated hits
     # carry it; a single-collection hit is resolved from its source prefix
     # (the plugin id) to the first collection of that plugin
@@ -430,7 +543,7 @@ def ask_query(request: Request, body: AskQueryBody):
     # returns {hits, withheld} with no `timings` at all, and a KeyError
     # here answered the whole query with a 500 — the licence gate's own
     # message replaced by a crash (invariant 9's silence, again).
-    db.log_query(con, "ask", body.query, body.mode, 12, result.get("timings") or {},
+    db.log_query(con, "ask", body.query, body.mode, body.limit, result.get("timings") or {},
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))
     return TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
 

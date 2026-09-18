@@ -2494,6 +2494,60 @@ excludes.
 - `ix-apps/docker` there holds 123 G in snapshots, 35 G of it pinned by
   the off-schedule `@auto-2026-07-29_00-40` on 47 datasets.
 
+### Ask: every language, entries in full, how many (operator, 2026-09-18)
+
+The operator's rules for the Ask tab, for every collection a search
+touches: (1) a search covers all languages unless the query limits it;
+(2) the drop-down is the language of the answer AND the entries; (3)
+entries are translated in full; (4) changing it translates everything at
+once. And: the number of results before and after reranking is the
+reader's to set, defaulting to the documents' own numbers.
+
+**What was wrong, live.** "la caccia alla balena bianca" was never
+translated into English: the fan-out excluded `en`, capped at the six
+largest groups, and skipped any collection holding one group. So it ran
+untranslated against gutenberg's English index and all of PubMed, which
+answered "Libro della caccia" and "Balena's method". The page showed and
+translated only the first 420 characters of an entry.
+
+**What changed.**
+- `app/language_plan.py`: one plan per search, shared by every
+  collection. The query goes into every language the text indexes hold
+  (cjk as zh/ja/ko, ranked by each record's best variant; `other` as
+  typed). `TRANSLATE_MAX_LANGS` is gone. The plan is cached, so the
+  answer's search makes no second model call.
+- A restriction comes from `lang:de` (no model call) or from
+  `llm.language_restriction`, and is a prefilter on every leg and the
+  catalog. The page shows `only: de`, and shows when the model could not
+  be asked.
+- Entries are on the page whole (clamped, "more" opens them). Titles,
+  headings, entries, catalog titles and the answer are translated through
+  `POST /ask/translate/stream` (NDJSON), in this order: cached items,
+  short items batched, then each long one streamed, the answer first. A
+  new switch or search aborts the stream. The translation cache is keyed
+  on (lang, text); keyed on (id, lang) it served a second answer the
+  first answer's translation.
+- `results` (after the reranker, default 10) and `reranked from` (its
+  depth, default 50), per request, 1–100. Legs go at least as deep, and
+  the federation budget no longer cuts below the depth: 40 under 50 made
+  "50" a claim about 40. The answer gets at most 24,000 characters of
+  passages, because Ollama drops the START of a prompt that overflows.
+
+**Measured on the node (qwen3:8b, `OLLAMA_NUM_PARALLEL=1`).**
+- The restriction, asked for codes alone, got "Russian novels about war",
+  "lingua latina grammatica" and a plain Italian query wrong. The model now
+  quotes the instruction, and one that is absent from the query, or is the
+  whole query, is refused. Live, six phrasings were all right, at about
+  1 s each.
+- Query translation into 19 languages: 9.2 s idle, 17–23 s with the
+  encoders busy, against 2.7 s / 7.6 s for the old six. 59 languages
+  (`other`'s tail too) would be 34.3 s idle, which is why `other` is
+  searched as typed. **A search pays about +7 s idle for "every
+  language"**; the Ask flow's second search now pays nothing.
+- One whole 3.8 kB entry: first words after 1.6–2.0 s, done after
+  58–84 s. A page of twelve takes minutes of model time whatever the
+  order. Hence the streaming, and the answer before the entries.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

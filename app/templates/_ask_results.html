@@ -20,6 +20,15 @@
 <div class="note">
   {% for k,v in (result.timings or {}).items() if k != 'per_collection' %}<span class="badge">{{ k }} {{ v }} ms</span>{% endfor %}
   {% if result.translations %}<span class="badge lapis">fan-out: {{ result.translations.keys()|join(', ') }}</span>{% endif %}
+  {# THE LANGUAGE RULE, SAID ON THE PAGE (operator, 2026-09-18): every
+     language is searched unless the query limits it. A limit is a filter
+     that hides records, so it is named, never silent — and so is a search
+     whose limit could not be checked because the model was unreachable. #}
+  {% if result.language and result.language.only %}
+  <span class="badge brass" id="lang-only" title="the query asked for documents in these languages only — remove that from the question to search every language">only: {{ result.language.only|join(', ') }}</span>
+  {% elif result.language and result.language.status == 'unavailable' %}
+  <span class="badge err" title="the chat model could not be asked: every language was searched with the question as typed, untranslated">languages: query not translated</span>
+  {% endif %}
 </div>
 
 {% if result.facts is defined and result.facts %}
@@ -38,7 +47,7 @@
 {% endif %}
 
 {% if result.catalog is defined and result.catalog %}
-<div class="note">catalog matches: {% for c in result.catalog[:5] %}{{ c.title }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+<div class="note">catalog matches: {% for c in result.catalog[:5] %}<span class="cat-title tr" data-lang="{{ c.lang or '?' }}" dir="auto">{{ c.title }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</div>
 {% endif %}
 
 <div id="hits">
@@ -46,15 +55,14 @@
 <div class="hit" data-collection="{{ h.source_collection or (h.chunk_id.split(':')[0]) }}" data-book="{{ h.book_id }}" data-cid="{{ h.chunk_id }}" data-title="{{ h.title or ('#' ~ h.book_id) }}">
   <div class="head">
     {# THE TITLE IS TRANSLATED (STATUS 5j, amended 2026-09-12: "how am I
-       supposed to understand a title in Arabic or Hindi?"). `data-tid`
-       keys the translation cache on the DOCUMENT, not the chunk — several
-       hits can be different passages of one book, and they must not pay
-       for the same title N times or disagree about it. `data-orig` holds
-       the published title: switching back to "original" restores it, and
-       the tooltip carries it meanwhile so it can be copied for a
-       reference without switching at all. #}
-    <span><b class="doc-title" data-tid="title:{{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}"
-       data-lang="{{ h.lang or '?' }}"
+       supposed to understand a title in Arabic or Hindi?"). Every `.tr`
+       element is translated, and the page sends each distinct TEXT once —
+       several hits can be passages of one book, and they must not pay for
+       the same title N times or disagree about it. `data-orig` (set by the
+       page) holds the published title: switching back to "original"
+       restores it, and the tooltip carries it meanwhile so it can be
+       copied for a reference without switching at all. #}
+    <span><b class="doc-title tr" data-lang="{{ h.lang or '?' }}" dir="auto"
        title="open the document">{{ h.title or ('#' ~ h.book_id) }}</b></span>
     {# A BADGE WITH NOTHING IN IT IS STILL A BADGE. These two rendered
        unconditionally, so every hit drew an empty pill for `authors` and
@@ -66,7 +74,9 @@
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
-    {% if h.chapter %}<span class="badge">{{ h.chapter }}</span>{% endif %}
+    {# the chapter or section heading is the document's own words, so it
+       is translated with the entry (operator, 2026-09-18: "in full") #}
+    {% if h.chapter %}<span class="badge chap tr" data-lang="{{ h.lang or '?' }}" dir="auto">{{ h.chapter }}</span>{% endif %}
     {# The link to the REAL THING — pubmed.ncbi.nlm.nih.gov for an article,
        gutenberg.org for a book. The title opens this node's reader (which
        is the point of the reader: the passage highlighted in context);
@@ -87,8 +97,14 @@
      [3] INSIDE a passage is content and still travels with it.
 
      dir="auto" because fa is in the picker: an RTL translation in an LTR
-     block renders its punctuation in the wrong place without it. #}
-  <div class="sniprow"><span class="rank">[{{ loop.index }}]</span><div class="snip" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" dir="auto" title="open the document at this passage">{{ h.text[:420] }}…</div></div>
+     block renders its punctuation in the wrong place without it.
+
+     THE WHOLE ENTRY, NOT A SNIPPET (operator, 2026-09-18: "the returned
+     entries have to be translated in full"). It was the first 420
+     characters, and those were all that was ever translated. The block is
+     clamped to a few lines so the list stays scannable; "more" opens it. #}
+  <div class="sniprow"><span class="rank">[{{ loop.index }}]</span><div class="snip tr" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" dir="auto" title="open the document at this passage">{{ h.text }}</div></div>
+  <button class="more" type="button" onclick="this.closest('.hit').classList.toggle('open')">more / less</button>
   <details class="drawer">
     <summary>provenance</summary>
     <div>uid: {{ h.chunk_id.split(':')[0] }}:{{ h.book_id }}</div>
@@ -115,7 +131,7 @@
        translation against. STATUS 5j says both things in one paragraph;
        this is the side the badge's own tooltip already committed to. #}
     <div>original text ({{ h.lang or '?' }}):</div>
-    <div style="margin-top:6px;white-space:pre-wrap" dir="auto">{{ h.text[:1200] }}</div>
+    <div style="margin-top:6px;white-space:pre-wrap" dir="auto">{{ h.text }}</div>
   </details>
 </div>
 {% else %}

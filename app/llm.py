@@ -21,13 +21,17 @@ def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
         r.raise_for_status()
         return strip_think(r.json()["message"]["content"])
 
-def chat_stream(messages: list[dict], temperature: float = 0.3):
+def chat_stream(messages: list[dict], temperature: float = 0.3,
+                max_tokens: int | None = None, num_ctx: int = 16384):
     """Yield content deltas."""
+    options: dict = {"temperature": temperature, "num_ctx": num_ctx}
+    if max_tokens is not None:
+        options["num_predict"] = max_tokens
     with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
         with client.stream("POST", f"{config.OLLAMA_URL}/api/chat", json={
             "model": config.CHAT_MODEL, "messages": messages, "stream": True,
             "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
-            "options": {"temperature": temperature, "num_ctx": 16384},
+            "options": options,
         }) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -44,8 +48,13 @@ def chat_stream(messages: list[dict], temperature: float = 0.3):
                     return
 
 def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
-    """One prompt, N translations, JSON out. Failure degrades to no fan-out."""
-    targets = [l for l in target_langs if l][:12]
+    """One prompt, N translations, JSON out. Failure degrades to no fan-out.
+
+    NO CAP ON N. A search goes out in every language its text indexes hold
+    (docs/05 §5.2; operator, 2026-09-18), and this used to keep the first
+    twelve codes it was handed, silently. The budget grows with the list
+    instead: 19 languages measured 300 tokens, 59 measured 1,020."""
+    targets = [l for l in target_langs if l]
     if not targets:
         return {}
     prompt = (
@@ -56,7 +65,8 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
         'e.g. {"fr": "...", "de": "..."}.'
     )
     try:
-        raw = chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=600)
+        raw = chat([{"role": "user", "content": prompt}], temperature=0.0,
+                   max_tokens=max(600, 40 * len(targets)))
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.strip("`")
@@ -65,6 +75,77 @@ def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
         return {k: str(v) for k, v in obj.items() if isinstance(v, str)}
     except Exception:
         return {}
+
+
+# A query may limit its results to documents WRITTEN IN some languages
+# ("… solo testi in tedesco"); every other query searches all of them
+# (operator, 2026-09-18). The model names the instruction VERBATIM and the
+# code checks it, because qwen3:8b asked only for codes (measured on the
+# node that day) restricted "Russian novels about war" to Russian, "lingua
+# latina grammatica" to Latin, a plain Italian query to Italian, and
+# rarely removed the instruction from the query. Returning the phrase made
+# those misses — "Geschichte des Walfangs" still came back as the phrase
+# for German — and a phrase that is the whole query, or is not in it, is
+# refused: the failure is then a search over every language, which is the
+# default, never a silent narrowing.
+_RESTRICT_SYSTEM = (
+    "You find, in a search query, an explicit instruction limiting the results to "
+    "documents WRITTEN IN certain languages, such as 'only texts in German' or 'solo "
+    "fonti in francese'. A language, nation or people that is the TOPIC of the search "
+    "is not such an instruction ('Russian novels', 'German history', 'Latin grammar' "
+    "are topics), and neither is the language the query itself is written in, nor the "
+    "language of the answer. "
+    'Reply with ONLY JSON: {"phrase": "<the instruction copied verbatim from the query, '
+    'or empty>", "only": [<ISO 639-1 codes it names>]}.')
+_RESTRICT_SHOTS = (
+    ("German history of whaling", {"phrase": "", "only": []}),
+    ("whaling history, only sources in German",
+     {"phrase": "only sources in German", "only": ["de"]}),
+    ("romanzi russi sulla guerra", {"phrase": "", "only": []}),
+    ("poesia dell'Ottocento, solo testi in francese o spagnolo",
+     {"phrase": "solo testi in francese o spagnolo", "only": ["fr", "es"]}),
+    ("explain the causes of scurvy, answer in Italian", {"phrase": "", "only": []}),
+)
+_LANG_CODE = re.compile(r"[a-z]{2,3}")
+#: what is left around a removed instruction: "whales, only in German" -> "whales"
+_JOIN_EDGES = " \t\n,;:.-–—/|，、。；："
+
+
+def strip_instruction(query: str, start: int, end: int) -> str:
+    """`query` without `query[start:end]`, and the separators it leaves."""
+    return re.sub(r"\s+", " ", query[:start] + " " + query[end:]).strip(_JOIN_EDGES)
+
+
+def language_restriction(query: str) -> tuple[list[str], str] | None:
+    """(codes, the query without the instruction) when `query` limits its
+    results to documents written in those languages; ([], query) when it
+    does not; None when the model could not be asked or answered nothing
+    parseable — the caller searches every language and says so."""
+    messages = [{"role": "system", "content": _RESTRICT_SYSTEM}]
+    for q, a in _RESTRICT_SHOTS:
+        messages += [{"role": "user", "content": q},
+                     {"role": "assistant", "content": json.dumps(a, ensure_ascii=False)}]
+    messages.append({"role": "user", "content": query})
+    try:
+        raw = chat(messages, temperature=0.0, max_tokens=120, num_ctx=4096)
+        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        if not isinstance(obj, dict):
+            return None
+    except Exception:
+        return None
+    phrase = obj.get("phrase") if isinstance(obj.get("phrase"), str) else ""
+    only = obj.get("only") if isinstance(obj.get("only"), list) else []
+    codes = sorted({c.strip().lower() for c in only if isinstance(c, str)
+                    and _LANG_CODE.fullmatch(c.strip().lower())})
+    phrase = phrase.strip()
+    found = re.search(re.escape(phrase), query, re.I) if phrase else None
+    if not codes or found is None:
+        return [], query
+    core = strip_instruction(query, found.start(), found.end())
+    if not core:
+        # the whole query called an instruction: the topic, misread
+        return [], query
+    return codes, core
 
 
 # NAME THE LANGUAGE, NEVER JUST THE CODE. Asked to translate "into the
@@ -212,12 +293,45 @@ def translate_texts(texts: list[str], lang: str) -> list[str | None]:
     # An answer that is only the language's code or name is the echo
     # described above, not a translation. Belt and braces behind
     # `language_phrase`: it must surface as a MISS, never as content.
-    echo = {lang.strip().lower(), (LANGUAGE_NAMES.get(lang.lower()) or "").lower()}
-    echo.discard("")
     out: list[str | None] = []
     for i, _original in enumerate(items):
         value = obj.get(str(i + 1))
         ok = (isinstance(value, str) and value.strip()
-              and value.strip().lower() not in echo)
+              and not _is_echo(value, lang))
         out.append(value if ok else None)
     return out
+
+
+def _is_echo(value: str, lang: str) -> bool:
+    echo = {lang.strip().lower(), (LANGUAGE_NAMES.get(lang.lower()) or "").lower()}
+    echo.discard("")
+    return value.strip().lower() in echo
+
+
+def is_translation(value: str, original: str, lang: str) -> bool:
+    """Whether a model's output for `original` may be shown and cached as
+    its translation: not empty, not the language's name or code, and not
+    the input handed back (compared as it was sent — flattened)."""
+    return (bool(value.strip()) and not _is_echo(value, lang)
+            and flatten_whitespace(value) != flatten_whitespace(original))
+
+
+def translate_stream(text: str, lang: str):
+    """ONE passage into ISO language `lang`, yielded as the model writes it.
+
+    The Ask page translates its entries IN FULL (operator, 2026-09-18),
+    and a whole chunk measured 58.6 s on the node (3,819 characters, 1,266
+    tokens at 22 tok/s) — so a page of them is minutes, and the only way
+    the switch can act "immediately" is to show the words as they come:
+    the first arrived after 1.96 s. Plain text, not numbered JSON: one
+    passage has no neighbours to keep apart, and JSON cannot be painted
+    until it closes. The budget is the input's length in tokens, which no
+    measured language pair has approached (1,266 tokens for 3,819 chars).
+    """
+    prompt = (
+        f"Translate the passage below into {language_phrase(lang)}. Keep numbers, "
+        f"names, citations like [3] and paragraph breaks as they are; translate all "
+        f"of it, do not summarise, do not add commentary. Reply with ONLY the "
+        f"translation.\n\n{flatten_whitespace(text)}")
+    yield from chat_stream([{"role": "user", "content": prompt}], temperature=0.0,
+                           max_tokens=max(600, len(text) + 200))

@@ -278,7 +278,7 @@ def test_system_log_fragment_renders(client):
 
 @pytest.fixture(autouse=True)
 def _fresh_translation_cache():
-    """`web._translation_cache` is process-global and keyed (id, lang), so
+    """`web._translation_cache` is process-global and keyed (lang, text), so
     one test's translation is served to the next for the same pair. Found
     by a test that passed alone and failed in the file — the same coupling
     a long-running node has, one test apart."""
@@ -486,7 +486,7 @@ def test_the_rank_marker_is_outside_the_translated_snippet(client):
     _seed_one_book()
     r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
     assert '<span class="rank">[1]</span>' in r.text
-    snip = r.text.split('class="snip"', 1)[1]
+    snip = r.text.split('class="snip tr"', 1)[1]
     assert not snip.lstrip('"> ').startswith("[1]"), "the marker is not in the unit"
 
 
@@ -700,11 +700,12 @@ def test_the_language_switch_says_it_is_working_before_the_wait(client):
     assert note < fetch, "the note must be painted BEFORE the model call, not after"
 
 
-def test_the_title_is_translatable_and_keyed_on_the_document(client):
+def test_the_title_is_translatable_and_sent_once_per_text(client):
     """STATUS 5j, amended 2026-09-12 — "how am I supposed to understand a
-    title in Arabic or Hindi?" The key is the DOCUMENT, not the chunk: two
-    passages of one book share its title and must not be translated twice
-    or come back disagreeing."""
+    title in Arabic or Hindi?" Two passages of one book share its title
+    and must not be translated twice or come back disagreeing: the page
+    sends each distinct (source language, text) once and paints every
+    element that carries it."""
     tpl = web.TEMPLATES.env.get_template("_ask_results.html")
     hits = [{"chunk_id": "gutenberg:76511:0:1", "book_id": 76511, "lang": "fi",
              "title": "Ties mikä lie!", "authors": "Malinen, Vilho", "chapter": "",
@@ -713,10 +714,11 @@ def test_the_title_is_translatable_and_keyed_on_the_document(client):
              "title": "Ties mikä lie!", "authors": "Malinen, Vilho", "chapter": "",
              "text": "b", "origin_url": None}]
     html = tpl.render(result={"hits": hits, "timings": {"fts": 1}})
-    assert html.count('data-tid="title:gutenberg:76511"') == 2, \
-        "both passages carry the SAME document key"
-    assert 'class="doc-title"' in html
-    assert 'data-lang="fi"' in html, "so a title already in the target is not sent"
+    assert html.count('class="doc-title tr" data-lang="fi"') == 2, \
+        "both titles are translatable, and say what language they are in"
+    js = client.get("/ask").text
+    assert "const key=JSON.stringify([src,u.dataset.orig])" in js, "one item per distinct text"
+    assert "g.els.push(u)" in js, "painted onto every element that carries it"
 
 
 def test_authors_and_ids_are_not_given_a_translation_hook(client):
@@ -727,24 +729,24 @@ def test_authors_and_ids_are_not_given_a_translation_hook(client):
            "authors": "Curie M", "chapter": "", "text": "x", "origin_url": None}
     html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
     authors_span = html.split("Curie M")[0].rsplit("<span", 1)[-1]
-    assert "data-tid" not in authors_span and "data-cid" not in authors_span
+    assert "data-cid" not in authors_span and " tr" not in authors_span
 
 
-def test_the_switch_sends_titles_in_the_same_call_as_the_snippets(client):
-    """One model call for the page. A separate call per title would
-    multiply a 78 s wait by the number of hits."""
+def test_the_switch_sends_everything_in_one_request(client):
+    """One request for the page — titles, headings, entries and the answer
+    — gathered before it is sent. A separate request per item would
+    multiply the wait by the number of hits."""
     js = client.get("/ask").text
-    collect_snips = js.index("snips.filter(s=>(s.dataset.lang||'?')!==lang)")
-    collect_titles = js.index("items.push({id:t.dataset.tid")
-    the_call = js.index("/ask/translate")
-    assert collect_snips < the_call and collect_titles < the_call, \
-        "both are gathered BEFORE the single fetch"
-    assert "seenTid" in js, "and titles are deduplicated per document"
+    collect = js.index("document.querySelectorAll('#results .tr')")
+    the_answer = js.index("items.push({id:ANSWER_ID")
+    the_call = js.index("fetch('/ask/translate/stream'")
+    assert collect < the_call and the_answer < the_call, \
+        "every item is gathered BEFORE the single fetch"
 
 
-def test_original_restores_the_published_title(client):
+def test_original_restores_the_published_text(client):
     js = client.get("/ask").text
-    assert "t.textContent=t.dataset.orig" in js, "switching back restores it exactly"
+    assert "u.textContent=u.dataset.orig" in js, "switching back restores it exactly"
     assert "published as: " in js, "and the tooltip carries it while translated"
 
 
@@ -804,8 +806,8 @@ def test_every_source_language_failing_is_a_failure(client, monkeypatch):
 
 def test_the_client_sends_each_items_source_language(client):
     js = client.get("/ask").text
-    assert "src:s.dataset.lang" in js, "snippets"
-    assert "src:t.dataset.lang" in js, "titles"
+    assert "const src=u.dataset.lang||'?'" in js, "every translatable element"
+    assert "text:g.text,src:g.src" in js, "sent with its item"
     assert "src:answerLang" in js, "and the answer"
 
 
@@ -848,3 +850,188 @@ def test_what_the_retry_cannot_save_is_still_an_honest_miss(client, monkeypatch)
         {"id": "a", "text": "stubborn", "src": "en"}]}).json()
     assert body["items"] == {} and body["missed"] == ["a"]
     assert body["failed"] is False, "the model answered; it just did not translate"
+
+
+# ---------------- 2026-09-18: every language, entries in full, streamed ----------------
+
+
+def _stream(client, body):
+    import json as _json
+    r = client.post("/ask/translate/stream", json=body)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/x-ndjson")
+    return [_json.loads(ln) for ln in r.text.splitlines() if ln.strip()]
+
+
+def test_an_entry_is_on_the_page_in_full_not_as_a_snippet(client):
+    """"The returned entries have to be translated in full" (operator,
+    2026-09-18). The page held the first 420 characters, and those were all
+    that was ever sent to the model."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    long_text = "word " * 400 + "THE END"
+    hit = {"chunk_id": "gutenberg:1:0:1", "book_id": 1, "lang": "en", "title": "T",
+           "authors": "", "chapter": "Chapter I", "text": long_text, "origin_url": None}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    snip = html.split('class="snip tr"', 1)[1].split("</div>", 1)[0]
+    assert "THE END" in snip, "the whole entry, to its last word"
+    assert 'class="badge chap tr" data-lang="en"' in html, \
+        "the chapter heading is the document's words, translated with it"
+    assert "more / less" in html, "clamped on screen, opened by a click"
+
+
+def test_the_stream_sends_short_items_first_then_streams_long_ones_in_order(client, monkeypatch):
+    from app import llm
+    batched = []
+    monkeypatch.setattr(llm, "translate_texts",
+                        lambda texts, lang: batched.append(list(texts)) or
+                        [f"<{lang}> {t}" for t in texts])
+    streamed = []
+
+    def fake_stream(text, lang):
+        streamed.append(text[:6])
+        yield f"<{lang}> "
+        yield text
+
+    monkeypatch.setattr(llm, "translate_stream", fake_stream)
+    answer = "the answer, long enough to stream " * 20
+    entry = "an entry in full, long enough to stream " * 20
+    lines = _stream(client, {"lang": "it", "items": [
+        {"id": "__answer__", "text": answer, "src": "en"},
+        {"id": "t0", "text": "A Title", "src": "en"},
+        {"id": "t1", "text": entry, "src": "en"}]})
+    ids = [m.get("id") for m in lines if "text" in m]
+    assert ids == ["t0", "__answer__", "t1"], \
+        "the title first, then the long ones in the order the page sent"
+    assert batched == [["A Title"]], "the short one batched, the long ones never"
+    assert streamed == ["the an", "an ent"]
+    deltas = [m for m in lines if m.get("id") == "t1" and "delta" in m]
+    assert "".join(m["delta"] for m in deltas) == f"<it> {entry}", \
+        "the words arrive as they are written"
+    assert lines[-1] == {"done": True, "failed": False, "missed": []}
+
+    # the second switch to the same language pays nothing
+    monkeypatch.setattr(llm, "translate_stream",
+                        lambda text, lang: (_ for _ in ()).throw(AssertionError("paid twice")))
+    again = _stream(client, {"lang": "it", "items": [{"id": "x", "text": entry, "src": "en"}]})
+    assert again[0] == {"id": "x", "text": f"<it> {entry}".strip()}
+
+
+def test_the_cache_is_keyed_on_the_text_so_a_second_answer_is_not_served_the_first(
+        client, monkeypatch):
+    """It was keyed (id, lang), and the answer's id is one fixed string: a
+    second question's answer switched into Italian came back as the FIRST
+    answer's Italian."""
+    from app import llm
+    monkeypatch.setattr(llm, "translate_stream", lambda text, lang: iter([f"<{lang}> {text}"]))
+    first = "the first answer [1] " * 30
+    second = "a different answer [2] " * 30
+    _stream(client, {"lang": "it", "items": [{"id": "__answer__", "text": first}]})
+    got = _stream(client, {"lang": "it", "items": [{"id": "__answer__", "text": second}]})
+    final = [m for m in got if "text" in m][0]
+    assert final["text"] == f"<it> {second}".strip()
+
+
+def test_a_stream_that_echoes_or_breaks_is_a_miss_and_an_unreachable_model_is_asked_once(
+        client, monkeypatch):
+    from app import llm
+    long_a, long_b, long_c = ("alpha " * 100), ("bravo " * 100), ("charlie " * 100)
+    monkeypatch.setattr(llm, "translate_stream", lambda text, lang: iter([text]))
+    lines = _stream(client, {"lang": "it", "items": [{"id": "a", "text": long_a}]})
+    assert {"id": "a", "missed": True} in lines, "the input handed back is not a translation"
+    assert lines[-1]["failed"] is True, "nothing came back"
+
+    calls = []
+
+    def down(text, lang):
+        calls.append(text)
+        raise httpx.ConnectError("refused")
+        yield  # pragma: no cover — a generator that fails on first use
+    import httpx
+    monkeypatch.setattr(llm, "translate_stream", down)
+    lines = _stream(client, {"lang": "it", "items": [
+        {"id": "a", "text": long_a}, {"id": "b", "text": long_b}, {"id": "c", "text": long_c}]})
+    assert len(calls) == 1, "the rest are not queued behind the same failure"
+    assert lines[-1] == {"done": True, "failed": True, "missed": ["a", "b", "c"]}
+
+
+def test_original_through_the_stream_translates_nothing(client, monkeypatch):
+    from app import llm
+    monkeypatch.setattr(llm, "translate_texts",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("called")))
+    assert _stream(client, {"lang": "original", "items": [{"id": "a", "text": "x"}]}) == \
+        [{"done": True, "failed": False, "missed": []}]
+
+
+def test_the_page_and_the_server_agree_on_what_is_short(client):
+    js = client.get("/ask").text
+    assert f"const SHORT_ITEM={web._STREAM_OVER};" in js
+
+
+def test_ask_writes_the_answer_before_translating_the_entries(client):
+    """The model is one queue (OLLAMA_NUM_PARALLEL=1 on the node) and the
+    entries in full are minutes of it: translated first, they would hold
+    the answer back for all of that."""
+    js = client.get("/ask").text
+    body = js[js.index("async function ask()"):]
+    titles = body.index("search({shortOnly:true})")
+    answer = body.index("fetch('/v1/chat/completions'")
+    entries = body.index("applyLanguage();")
+    assert titles < answer < entries
+
+
+def test_a_new_search_or_switch_stops_the_translation_in_flight(client):
+    js = client.get("/ask").text
+    assert "langAbort.abort()" in js and "signal:ctl.signal" in js
+    search = js[js.index("async function search(opts)"):js.index("async function ask()")]
+    assert search.index("stopTranslating()") < search.index("fetch('/ask/query'"), \
+        "the model is freed before the search needs it"
+
+
+def test_the_page_names_a_language_restriction_and_a_failed_plan():
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    base = {"hits": [], "timings": {"fts": 1}}
+    html = tpl.render(result={**base, "language": {"core": "q", "only": ["de", "fr"],
+                                                   "status": "ok"}})
+    assert "only: de, fr" in html
+    html = tpl.render(result={**base, "language": {"core": "q", "only": [],
+                                                   "status": "unavailable"}})
+    assert "query not translated" in html
+    html = tpl.render(result={**base, "language": {"core": "q", "only": [], "status": "ok"}})
+    assert "only:" not in html and "not translated" not in html
+
+
+def test_the_ask_page_sets_how_many_before_and_after_reranking(client, monkeypatch):
+    """"I want to be able to set the maximum number of results a query
+    returns before and after reranking, with as default the recommended
+    amount" (operator, 2026-09-18): 05 §5.4's 10 and §5.6's 50."""
+    page = client.get("/ask").text
+    assert 'id="limit" type="number" min="1" max="100" value="10"' in page
+    assert 'id="rerank-depth" type="number" min="1" max="100" value="50"' in page
+    assert page.count("...counts()") == 2, "the page's search AND the answer's search"
+
+    seen = {}
+
+    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50):
+        seen.update(k=k, rerank_depth=rerank_depth)
+        return {"hits": [], "timings": {}, "facts": [], "catalog": []}
+    monkeypatch.setattr(web.query_service, "run_search", fake_run_search)
+    client.post("/ask/query", json={"query": "q", "limit": 25, "rerank_depth": 80})
+    assert seen == {"k": 25, "rerank_depth": 80}
+    client.post("/ask/query", json={"query": "q"})
+    assert seen == {"k": 10, "rerank_depth": 50}, "the defaults"
+    for bad in ({"limit": 0}, {"limit": 101}, {"rerank_depth": 0}, {"rerank_depth": 500}):
+        assert client.post("/ask/query", json={"query": "q", **bad}).status_code == 422
+
+
+def test_the_answers_search_takes_the_same_counts(client, monkeypatch):
+    from app import api
+    seen = {}
+
+    def fake_run_search(names, query, k, mode, translate, verify=False, rerank_depth=50):
+        seen.update(k=k, rerank_depth=rerank_depth)
+        return {"hits": [], "timings": {"total": 1.0}, "facts": [], "catalog": []}
+    monkeypatch.setattr(api, "_run_search", fake_run_search)
+    monkeypatch.setattr(api.llm, "chat", lambda *a, **k: "no sources")
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "q"}], "limit": 30, "rerank_depth": 60})
+    assert r.status_code == 200 and seen == {"k": 30, "rerank_depth": 60}

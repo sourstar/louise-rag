@@ -197,11 +197,13 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
 def search(group: str, query: str, limit: int = 20, collection=None,
-           book_ids: list[int] | None = None) -> list[dict]:
+           book_ids: list[int] | None = None, langs: list[str] | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter (Tantivy term-set query
     ANDed with the text query) — not used by retrieval.search()'s default
     entity-boost wiring (a soft score bonus instead), but a real, directly
-    testable primitive for a future "search only within this entity" mode."""
+    testable primitive for a future "search only within this entity" mode.
+    `langs` is the same kind of prefilter on the stored `lang`, for the
+    mixed groups (cjk, other) when a query is restricted to languages."""
     try:
         idx = get_index(group, collection)
         idx.reload()
@@ -226,6 +228,9 @@ def search(group: str, query: str, limit: int = 20, collection=None,
         if book_ids:
             id_filter = tantivy.Query.term_set_query(idx.schema, "book_id", book_ids)
             q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, id_filter)])
+        if langs:
+            lang_filter = tantivy.Query.term_set_query(idx.schema, "lang", list(langs))
+            q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, lang_filter)])
         searcher = idx.searcher()
         hits = searcher.search(q, limit).hits
         out = []

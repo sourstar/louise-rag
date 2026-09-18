@@ -31,7 +31,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import auth, collections as collections_mod, query_service, web
 from . import config, db, discovery, retrieval, llm, summarize, embeddings, fts, spaces
@@ -396,11 +396,13 @@ class SearchBody(BaseModel):
     translate: bool = True
     collections: list[str] | None = None   # None = all enabled
     verify: bool = False                   # blocking verify-on-use (§6 T4)
+    # 05 §5.6: how many of each list the reranker orders — 50 by default
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
 
 @app.post("/api/search")
 def api_search(body: SearchBody):
     result = _run_search(body.collections, body.query, body.k, body.mode, body.translate,
-                          verify=body.verify)
+                          verify=body.verify, rerank_depth=body.rerank_depth)
     con = _con()   # query_log lives in the default collection's manifest regardless
     db.log_query(con, "search", body.query, body.mode, body.k, result["timings"],
                  len(result["hits"]), _source_qualified_ids(result["hits"]))
@@ -443,6 +445,11 @@ class ChatBody(BaseModel):
     collections: list[str] | None = None   # None = all enabled
     verify: bool = False                   # blocking verify-on-use (§6 T4)
     answer_lang: str | None = None         # ISO code: answer in this language (Ask's "show results in")
+    # the sources' search: results after the reranker and its depth — the
+    # Ask page sends its own two settings, so the answer's [n] and the
+    # page's hits come from the same search
+    limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
 
 @app.post("/v1/chat/completions")
 def chat_completions(body: ChatBody):
@@ -452,7 +459,8 @@ def chat_completions(body: ChatBody):
         raise HTTPException(400, "no user message")
     query = str(user_msgs[-1].get("content", ""))
     t0 = time.time()
-    result = _run_search(body.collections, query, 10, "hybrid", True, verify=body.verify)
+    result = _run_search(body.collections, query, body.limit, "hybrid", True, verify=body.verify,
+                         rerank_depth=body.rerank_depth)
     messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
     # keep prior turns for conversational context (before the sources turn)
     history = [m for m in body.messages[:-1] if m.get("role") in ("user", "assistant")]
@@ -463,7 +471,7 @@ def chat_completions(body: ChatBody):
         answer = llm.chat(messages, temperature=body.temperature)
         result["timings"]["llm"] = round((time.time() - t0) * 1000 - result["timings"]["total"], 1)
         result["timings"]["total"] = round((time.time() - t0) * 1000, 1)
-        db.log_query(con, "chat", query, "hybrid", 10, result["timings"],
+        db.log_query(con, "chat", query, "hybrid", body.limit, result["timings"],
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
         return {
             "id": rid, "object": "chat.completion", "created": int(time.time()),
@@ -492,7 +500,7 @@ def chat_completions(body: ChatBody):
         yield "data: [DONE]\n\n"
         timings = dict(result["timings"])
         timings["total"] = round((time.time() - t0) * 1000, 1)
-        db.log_query(con, "chat", query, "hybrid", 10, timings,
+        db.log_query(con, "chat", query, "hybrid", body.limit, timings,
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
 
     return StreamingResponse(sse(), media_type="text/event-stream")

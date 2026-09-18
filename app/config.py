@@ -230,11 +230,8 @@ LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 # gutenberg search reloaded qwen3:8b (6.4 GB) before translating its query,
 # ~19 s of a 24 s search (2026-09-15; the warm call is 1–6 s).
 LLM_KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE", "30m")
-# How many language groups a search translates its query into, the LARGEST
-# first (chunks indexed). Each costs the chat model ~0.5 s: 12 took 6.3 s
-# warm and 4 took 2.1 s (qwen3:8b, 2026-09-15). The dense leg is
-# multilingual, so the smaller languages are still reached through it.
-TRANSLATE_MAX_LANGS = int(os.getenv("TRANSLATE_MAX_LANGS", "6"))
+# (TRANSLATE_MAX_LANGS is gone: a search goes out in EVERY language its
+# text indexes hold — app/language_plan.py, operator 2026-09-18.)
 
 # The PARSE POOL (app/parallel.py): fetch/parse/chunk per document is pure
 # Python and every collection's pipeline thread shares ONE interpreter
