@@ -2714,7 +2714,11 @@ the worker, which parses untrusted origin data, must not have that.
 - Docker's default capabilities were enough to read the other
   containers' fdinfo; `SYS_PTRACE` was not needed.
 
-**Not deployed.** The live compose needs the service and `GPU_PROBE_URL`.
+**Deployed 2026-09-18 21:30 UTC** (image `f144fb38`; the one before is
+tagged `louise-rag:pre-gpu-probe`). Web, worker and probe run the same
+image, and the panel loaded both cards through the web. The live compose
+gained the `gpu-probe` service and web's `GPU_PROBE_URL`; the config it
+replaced is `/root/louise-rag-compose-before-gpu-probe.json` on the node.
 
 **Seen on the first reading.** Pubmed's MedCPT *Article* encoder has
 568 KiB in VRAM and 418 MiB of GPU buffers in host RAM. Its twin, the
