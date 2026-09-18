@@ -2583,6 +2583,16 @@ Measured on the node:
 
 - VRAM at batch 32: 8.0 GB at peak and 8.9 GB idle; about 14 GB is free
   with every other model loaded. Batch 256 reached 26 GB, and was stopped.
+- **RAM: 2.96 GiB, from 7.1 GB** ("why the translator taked 12.26GB of
+  RAM???"). The weights were loaded into host memory, then moved to the
+  GPU, and glibc kept the 4.6 GB it freed. The 12.26 GB also held the file
+  cache of the 11.8 GB float32 file.
+  - The weights now load straight onto the device (`device_map`), and the
+    host heap is trimmed after warm-up.
+  - A bfloat16 copy (5.5 GB, `deploy/madlad-translate/to_bf16.py`) is what
+    runs. Its translations are identical.
+  - What remains is the GPU runtime's compiled kernels, about 2.5 GB after
+    the first pass.
 - Its quality is good in the main languages. In the tail it is weak: Welsh
   gave "the red dragon", Latin nonsense. The chat model made the white
   whale a white shark.

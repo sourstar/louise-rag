@@ -6,23 +6,30 @@
 # query into every language, the Ask page's titles, entries and answer.
 # Measured on the node, 2026-09-18: the question into 19 main languages in
 # 0.8–1.8 s (the chat model: 56–192 s with the GPU busy), one whole 3.8 kB
-# entry in 5.9 s (58–84 s), at 8 GB of VRAM at peak.
+# entry in 5.9 s (58–84 s), at 8 GB of VRAM at peak and ~2.9 GB of RAM.
 #
 # Before installing:
 #   1. the image, built on the node from deploy/madlad-translate:
 #        docker build -t madlad-translate:xpu deploy/madlad-translate
-#   2. the weights, once, into the model directory (11.8 GB fp32, loaded bf16):
+#   2. the weights, once (11.8 GB, float32):
 #        D=/mnt/ssd5/apps/madlad-models/madlad400-3b-mt; mkdir -p $D; cd $D
 #        for f in config.json generation_config.json special_tokens_map.json \
 #          tokenizer_config.json added_tokens.json tokenizer.json spiece.model \
 #          model.safetensors; do
 #          curl -fsSL -o $f https://huggingface.co/google/madlad400-3b-mt/resolve/main/$f
 #        done
-#   3. then TRANSLATE_URL=http://<nas>:30448 on the louise-rag app.
+#   3. their bfloat16 copy (5.5 GB), which is what runs — half the read and
+#      half the file cache at every start, identical translations (checked
+#      by the script itself):
+#        docker run --rm --device /dev/dri -v /mnt/ssd5/apps/madlad-models:/data \
+#          -e HF_HUB_OFFLINE=1 --entrypoint python3 \
+#          -v $PWD/deploy/madlad-translate/to_bf16.py:/to_bf16.py:ro \
+#          madlad-translate:xpu /to_bf16.py
+#   4. then TRANSLATE_URL=http://<nas>:30448 on the louise-rag app.
 #
-# Ollama cannot run it (it serves decoder-only models, and a MADLAD GGUF
-# loads, then hangs), and llama-server runs no encoder for it (the output is
-# `<2cs><2cs>…`): measured on the node, 2026-09-18.
+# Ollama cannot run it (a MADLAD GGUF loads, then hangs), and llama-server
+# runs no encoder for it (the output is `<2cs><2cs>…`): measured on the node,
+# 2026-09-18.
 
 services:
   madlad-translate:
@@ -31,7 +38,7 @@ services:
     devices:
       - /dev/dri
     environment:
-      MODEL_ID: /data/madlad400-3b-mt
+      MODEL_ID: /data/madlad400-3b-mt-bf16
       HF_HUB_OFFLINE: '1'
       BATCH: '32'            # 8 GB at peak; the card is shared (server.py)
       MAX_SEG_TOKENS: '96'

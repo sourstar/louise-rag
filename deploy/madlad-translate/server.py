@@ -177,8 +177,13 @@ def load(model_id: str, device: str, dtype_name: str):
     from transformers import AutoTokenizer, T5ForConditionalGeneration
     dtype = getattr(torch, dtype_name)
     tok = AutoTokenizer.from_pretrained(model_id)
+    # STRAIGHT ONTO THE DEVICE. Loaded into host memory and then moved, the
+    # weights left 4.6 GB the allocator never handed back: the container sat
+    # at 7.1 GB of RSS with the model on the GPU (the operator saw 12.26 GB
+    # during the load, 2026-09-18). device_map puts each tensor on the
+    # device as it is read: 364 MB of RSS after the load, measured.
     model = T5ForConditionalGeneration.from_pretrained(
-        model_id, torch_dtype=dtype, low_cpu_mem_usage=True).to(device).eval()
+        model_id, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=device).eval()
     unk = tok.unk_token_id
     vocab = tok.get_vocab()
     codes = {t[2:-1] for t in vocab if t.startswith("<2") and t.endswith(">")}
@@ -209,6 +214,20 @@ def load(model_id: str, device: str, dtype_name: str):
         return peak
 
     return count, generate, known, languages, release
+
+
+def _release_host_memory() -> None:
+    """Hand the host allocator's freed pages back to the system. The GPU
+    runtime's first pass compiles its kernels and keeps ~2.5 GB of that
+    (2,892 MB of RSS after it, measured); what it freed stays with glibc
+    otherwise."""
+    import ctypes
+    import gc
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -274,6 +293,7 @@ def main() -> None:
     t0 = time.monotonic()
     Handler.translator.translate([("the first pass compiles its kernels", "de")])
     print(f"warm in {time.monotonic() - t0:.1f}s", file=sys.stderr, flush=True)
+    _release_host_memory()
     # PID 1 in its container: without a handler every `docker stop` sat out
     # the grace period and ended in SIGKILL (medcpt-rerank, 2026-09-16).
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
