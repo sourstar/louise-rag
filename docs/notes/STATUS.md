@@ -2722,9 +2722,20 @@ replaced is `/root/louise-rag-compose-before-gpu-probe.json` on the node.
 
 **Seen on the first reading.** Pubmed's MedCPT *Article* encoder has
 568 KiB in VRAM and 418 MiB of GPU buffers in host RAM. Its twin, the
-Query encoder, has 269 MiB in VRAM. The Article encoder's weights look
-evicted, perhaps when MADLAD's batch-256 test reached 26 GB. Not yet
-investigated.
+Query encoder, has 269 MiB in VRAM. The two run the same build with the
+same flags and started in the same second, so the Article encoder's
+weights were moved out after loading. That was most likely MADLAD's
+batch-256 test reaching 26 GB.
+- It cost nothing measurable. On a 1.3 kB abstract, 20 requests each, the
+  evicted Article encoder took a median 6.0 ms and the Query encoder
+  7.9 ms, at the same moment. The model is small (110M parameters).
+- Restarted anyway (operator, 21:50 UTC). The weights came back:
+  294 MiB in VRAM, 44 MiB in host RAM. The vector for the same input is
+  bit-identical before and after.
+- The latency after the restart (both encoders around 62 ms) measured the
+  shared GPU's other work, not the placement.
+- Its 2,300 "input too large" 500s since 10:40 UTC are b1e56ab's protocol
+  (the client shortens its cut on refusal), not a fault.
 
 The container column shows Docker's 12-character id. Setting `hostname:`
 in a model app's YAML makes it show that name instead.
