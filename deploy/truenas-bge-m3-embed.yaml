@@ -13,7 +13,7 @@
 # Serves OpenAI-compatible /v1/embeddings; BGE pools on [CLS], hence
 # --pooling cls. Weights (~2.3 GB) download from the HF Hub on first start
 # into the mapped cache (create the dataset first:
-# /mnt/ssd4/apps/bge-m3-models).
+# /mnt/ssd5/apps/bge-m3-models).
 #
 # GPU NOTE: TEI also publishes an Intel-optimized container path with XPU
 # (Intel Arc) builds — see docs/source/en/intel_container.md in the TEI
@@ -67,4 +67,4 @@ services:
     ports:
       - '30442:8080'
     volumes:
-      - /mnt/ssd4/apps/bge-m3-models:/data
+      - /mnt/ssd5/apps/bge-m3-models:/data

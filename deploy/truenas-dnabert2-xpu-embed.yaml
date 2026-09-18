@@ -61,4 +61,4 @@ services:
     volumes:
       # The same HF cache the CPU app uses: the weights and the pinned
       # revision are already there, so this starts without downloading.
-      - /mnt/ssd4/apps/dnabert2-models:/data
+      - /mnt/ssd5/apps/dnabert2-models:/data

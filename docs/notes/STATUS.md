@@ -2401,6 +2401,48 @@ The audit of the other collections is in the suite too
 vector_index and spaces: one layer and one maintenance regime for every
 collection.
 
+### ssd4 is louise-rag's pool; one hourly restore point (2026-09-18)
+
+The operator wants a restore point for an SSD failure, not a time machine.
+
+**What changed.** ssd4 now holds only `ssd4/apps/louise-rag` (plus the
+system dataset).
+- The model caches (`bge-m3-models`, `medcpt-models`, `dnabert2-models`),
+  `comfyui` with its three children, and the `ita-legal-embed` directory
+  moved to `ssd5/apps/`.
+  - Each copy was a `zfs send -p` of one snapshot, compared file by file
+    (path, size, mode, owner) before the original was destroyed.
+- Every consumer was repointed:
+  - `embed-gpu-medcpt` and `embed-gpu-bge-m3` were redeployed and are
+    healthy.
+  - The stopped `embed-cpu-*` and `comfyui` apps were updated in place and
+    are still stopped.
+  - The stopped standalone container `dnabert2-xpu` was recreated with the
+    same settings.
+  - The SMB share `comfyui` now points at ssd5.
+  - The reference compose files in `deploy/` were updated too.
+
+**Snapshots and replication.** Task 4 and replication 6 (louise-rag's own)
+are gone. Task 3 now covers all of ssd4: hourly at :00, kept 2 h, no
+excludes.
+- Replication 5 holds pending snapshots, so a snapshot is not dropped
+  before it is sent, and its retention follows the source.
+- `tank/backup/louise-rag` was renamed to
+  `tank/backup/ssd4/apps/louise-rag`. The common snapshots came with it, so
+  the first run was incremental (6 s), not a 1.3 T send.
+- `louise-rag@auto-2026-09-15_15-33` was destroyed. No task owned it (off
+  schedule, so no retention would ever have removed it), the backup did not
+  hold it, and it pinned 124 G.
+
+**Left as they are.**
+- `tank/backup/ssd4/apps/{bge-m3-models,medcpt-models,dnabert2-models,
+  comfyui}` are the only backups of those datasets until ssd5's daily
+  replication sends them from their new home (01:00). They are stale
+  after that.
+- ssd5 keeps its daily snapshots for a week.
+- `ix-apps/docker` there holds 123 G in snapshots, 35 G of it pinned by
+  the off-schedule `@auto-2026-07-29_00-40` on 47 datasets.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

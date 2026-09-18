@@ -11,7 +11,7 @@
 #
 # Both serve OpenAI-compatible /v1/embeddings; MedCPT pools on [CLS], hence
 # --pooling cls. Models download from the HF Hub on first start into the
-# mapped cache (create the dataset first: /mnt/ssd4/apps/medcpt-models).
+# mapped cache (create the dataset first: /mnt/ssd5/apps/medcpt-models).
 #
 # AFTER INSTALL — wiring the pubmed collection into the MedCPT space:
 #
@@ -49,7 +49,7 @@ services:
     ports:
       - '30440:8080'
     volumes:
-      - /mnt/ssd4/apps/medcpt-models:/data
+      - /mnt/ssd5/apps/medcpt-models:/data
 
   medcpt-query:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
@@ -58,4 +58,4 @@ services:
     ports:
       - '30441:8080'
     volumes:
-      - /mnt/ssd4/apps/medcpt-models:/data
+      - /mnt/ssd5/apps/medcpt-models:/data

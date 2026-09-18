@@ -13,7 +13,7 @@
 #
 # BEFORE INSTALL — the image is built locally, not pulled:
 #   1. cd /mnt/ssd4/apps/louise-rag/src && docker build -t dnabert2-embed:local deploy/dnabert2
-#   2. Create the weights-cache dataset: /mnt/ssd4/apps/dnabert2-models
+#   2. Create the weights-cache dataset: /mnt/ssd5/apps/dnabert2-models
 #      (~450 MB downloads on first start)
 #
 # AFTER INSTALL — wiring the genome collection into the DNA space:
@@ -51,4 +51,4 @@ services:
     environment:
       - TORCH_THREADS=4
     volumes:
-      - /mnt/ssd4/apps/dnabert2-models:/data
+      - /mnt/ssd5/apps/dnabert2-models:/data
