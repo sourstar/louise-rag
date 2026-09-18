@@ -10,7 +10,7 @@ condition below is met: about 587 GB.**
 
 ---
 
-## 1. `gutenberg` — SWITCHED 2026-09-10, on its Codex since 2026-09-11
+## 1. `gutenberg` — SWITCHED 2026-09-10; legacy DELETED 2026-09-18
 
 The collection runs from its Codex (`sha256:dd528265706eddb1…`);
 `config/collections/gutenberg.toml` names it in a `codex` key and the
@@ -226,6 +226,24 @@ confirmation is a person searching the collection and getting the right
 answer back, plus the counts agreeing.
 
 ## Already deleted, for the record
+
+gutenberg's legacy tree (2026-09-18, operator: "proceed"). Deleted:
+`data/fts` (35 G), `data/manifest.db` with its WAL, the empty
+`data/lancedb`, `backend_baseline-gutenberg.json`,
+`gutenberg_scan_cursor.json` and `config/collections/_replaced-2026-09-10/`.
+
+The conditions in §1, as they stood that day:
+- The migrated index was complete (condition 1, met on 2026-09-11).
+- A search through the app's own search code returned gutenberg results.
+  Moby Dick (2701) is indexed with 433 chunks and is found for "Ahab".
+  The operator gave the go-ahead (condition 2).
+- `hold check` could not run: gutenberg has had no DRAG snapshot since its
+  replacement on 09-12. It checks the DRAG, which these files never
+  touched, so it was dropped as a condition (condition 3).
+- No code reads `config.DB_PATH`, `LANCE_DIR` or `FTS_DIR` directly, and no
+  process had the files open (condition 4).
+
+The ssd4 snapshots held the space for 2 more hours.
 
 A second Gutenberg tree on the archive pool, `louise-corpora/gutenberg`
 (2026-09-15, operator: "if none of the files are missing, delete"): a
