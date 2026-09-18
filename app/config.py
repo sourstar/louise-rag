@@ -192,6 +192,11 @@ BATCH_TARGET_S = float(os.getenv("BATCH_TARGET_S", "3"))
 # on how many rows the window happens to hold. Measured live at 498 ms
 # (pubmed) for a fixed 200k window; the width is now adjusted to hit this.
 REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
+# The embed backfill walks the same kind of windows (worker._cursor_page),
+# and one CALL stops after this much walking even if the sweep is not
+# finished — the next call carries on from the cursor. Measured live
+# before it existed: 105-153 s per call on pubmed, for nothing found.
+BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
 # The phase controller's low watermark (worker._archive_yields): when fewer
 # than this many documents are waiting for a vector AND fts has work ready,
 # fts takes the collection's thread ahead of an archive pass. Feeding the

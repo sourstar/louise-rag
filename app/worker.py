@@ -697,8 +697,23 @@ _REEMBED_SQL = (
     "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 "
     "AND fts_done=1 AND embed_done=1 AND embed_version<? AND error IS NULL "
     "AND retries<? AND rowid>? ORDER BY rowid LIMIT ?")
+# The same two selections over ONE rowid window, for the cursor walk. The
+# `+` keeps the planner on the rowid range instead of the scope index: the
+# window is what bounds the call, and a scope-index walk from the cursor has
+# no end short of the table's (the `_FTS_REINDEX_WINDOWED` rule).
+_BACKFILL_WINDOWED = (
+    "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
+    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=0 "
+    "AND error IS NULL AND retries<? {covered} ORDER BY rowid LIMIT ?")
+_REEMBED_WINDOWED = (
+    "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
+    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=1 "
+    "AND embed_version<? AND error IS NULL AND retries<? ORDER BY rowid LIMIT ?")
+_BACKFILL_WINDOW = 200_000       # the starting width; sizing.py adjusts it
 _BACKFILL_CURSOR_TTL_S = 120
-_backfill_cursor: dict[tuple[str, str], tuple[int, float, int]] = {}  # (path, kind) -> (epoch, since, rowid)
+# (path, kind) -> (epoch, cursor rowid, sweep's top rowid, found in this
+# sweep, idle since) — `idle since` is set when a whole sweep found nothing
+_backfill_cursor: dict[tuple[str, str], tuple[int, int, int, bool, float | None]] = {}
 _backfill_cursor_lock = threading.Lock()
 
 
@@ -734,26 +749,37 @@ def _backfill_rows(con, collection, limit: int) -> list:
     declared, both walked from the start otherwise."""
     ranges = _covered_ranges(con, collection)
     key = str(collection.manifest_path) if collection is not None else ""
-    covered, params = "", []
-    if ranges:
-        spans_sql, params = bundle_genesis.in_spans_sql(ranges)
-        covered = "AND NOT " + spans_sql
+    if collection is not None:
+        _remember_label(key, collection.name)
+    if not ranges:
+        rows = con.execute(_BACKFILL_SQL.format(covered=""),
+                           (config.MAX_RETRIES, -1, limit)).fetchall()
+        if len(rows) < limit:
+            rows += con.execute(_REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES,
+                                               -1, limit - len(rows))).fetchall()
+        return rows
+    spans_sql, params = bundle_genesis.in_spans_sql(ranges)
+    new_sql = _BACKFILL_WINDOWED.format(covered="AND NOT " + spans_sql)
+    # ONE budget for the whole call, both walks: a call that finds nothing
+    # must cost a bounded slice of the encoder's turn, never a sweep
+    deadline = time.monotonic() + config.BACKFILL_WALK_BUDGET_S
     rows = _cursor_page(
-        con, key, "new", bool(ranges),
-        lambda start, n: con.execute(_BACKFILL_SQL.format(covered=covered),
-                                     (config.MAX_RETRIES, start, *params, n)).fetchall(),
-        limit)
-    if ranges and len(rows) < limit:
+        con, key, "new",
+        lambda start, end, n: con.execute(
+            new_sql, (start, end, config.MAX_RETRIES, *params, n)).fetchall(),
+        limit, deadline)
+    if len(rows) < limit:
         archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
         if archive is not None and archive.local:
             rows += _residual_rows(con, collection, limit - len(rows),
                                    {r["uid"] for r in rows})
     if len(rows) < limit:
         rows += _cursor_page(
-            con, key, "ver", bool(ranges),
-            lambda start, n: con.execute(_REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES,
-                                                        start, n)).fetchall(),
-            limit - len(rows))
+            con, key, "ver",
+            lambda start, end, n: con.execute(
+                _REEMBED_WINDOWED, (start, end, config.EMBED_VERSION,
+                                    config.MAX_RETRIES, n)).fetchall(),
+            limit - len(rows), deadline)
     return rows
 
 
@@ -779,23 +805,80 @@ def _residual_rows(con, collection, limit: int, seen: set) -> list:
     return out[:limit]
 
 
-def _cursor_page(con, key: str, kind: str, use_cursor: bool, query, limit: int) -> list:
-    if not use_cursor:
-        return query(-1, limit)
-    epoch, now = bundle_genesis.coverage_epoch(), time.time()
+def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -> list:
+    """One bounded step of the backfill walk: rowid windows from the
+    cursor, until a window holds candidates, the sweep reaches the rowid it
+    started at the top of, or `deadline` passes — whichever is first.
+
+    WHY WINDOWS. Measured live on pubmed (40M rows, 2026-09-19): one call
+    that found nothing took 153 s cold and 105 s "warm", every call. The
+    walk went to the end of the table in ONE query, and the cursor's age was
+    stamped BEFORE that query, so a 105 s walk against a 120 s TTL left a
+    cursor already expired when it was stored — every call re-walked all 40M
+    rows. Its turns on the encoder rotation cost 250 s in ten minutes for
+    zero documents, and the serial main loop idled the other encoders
+    through all of it. Now a call costs at most BACKFILL_WALK_BUDGET_S, and
+    the sweep carries on at the next call from where this one stopped.
+
+    A sweep that FOUND NOTHING waits _BACKFILL_CURSOR_TTL_S from its END
+    before the next one starts, since nothing below it can have become
+    eligible faster than that matters. A sweep that found rows restarts at
+    once, because documents below the cursor may have become eligible while
+    it walked. Resetting on a new coverage epoch is unchanged: a shard going
+    final releases documents below the cursor.
+    """
+    epoch = bundle_genesis.coverage_epoch()
     with _backfill_cursor_lock:
         cur = _backfill_cursor.get((key, kind))
-    live = cur is not None and cur[0] == epoch and now - cur[1] < _BACKFILL_CURSOR_TTL_S
-    rows = query(cur[2] if live else -1, limit)
-    if rows:
-        # resume FROM the first returned row: if it is deferred rather than
-        # embedded it is selected again; everything before it was covered
-        nxt = int(rows[0]["rid"]) - 1
-    else:
-        # nothing eligible below the end: skip to it until the cursor expires
-        nxt = int(con.execute("SELECT COALESCE(MAX(rowid), -1) FROM documents").fetchone()[0])
+
+    def fresh():
+        top = int(con.execute("SELECT COALESCE(MAX(rowid), -1) FROM documents").fetchone()[0])
+        return (epoch, -1, top, False, None)
+
+    if cur is None or cur[0] != epoch:
+        cur = fresh()
+    elif cur[4] is not None:
+        if time.time() - cur[4] < _BACKFILL_CURSOR_TTL_S:
+            return []               # the last sweep found nothing: not yet
+        cur = fresh()
+    _, pos, top, found, _ = cur
+    wkey = f"{key}|backfill-{kind}"
+    name = _sizing_names.get(key)
+    if name:
+        _remember_label(wkey, f"backfill ({kind}) {name}")
+    rows: list = []
+    restarted = False
+    while True:
+        if pos >= top:
+            if found and not restarted:
+                # this sweep found work: start the next one now, from the
+                # beginning, for what became eligible below the cursor
+                _, pos, top, found, _ = fresh()
+                restarted = True
+                continue
+            cur = (epoch, pos, top, found, None if found else time.time())
+            break
+        width = sizing.sizer().window(wkey, default=_BACKFILL_WINDOW,
+                                      lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
+        end = min(pos + width, top)
+        probe = time.monotonic()
+        rows = query(pos, end, limit)
+        sizing.sizer().note_window(
+            wkey, seconds=time.monotonic() - probe,
+            target_s=config.REINDEX_PROBE_TARGET_S, default=_BACKFILL_WINDOW,
+            lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
+        if rows:
+            # resume FROM the first returned row: if it is deferred rather
+            # than embedded it is selected again; everything before it was
+            # covered
+            cur = (epoch, int(rows[0]["rid"]) - 1, top, True, None)
+            break
+        pos = end
+        if time.monotonic() >= deadline and pos < top:
+            cur = (epoch, pos, top, found, None)
+            break
     with _backfill_cursor_lock:
-        _backfill_cursor[(key, kind)] = (epoch, cur[1] if live else now, nxt)
+        _backfill_cursor[(key, kind)] = cur
     return rows
 
 

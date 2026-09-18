@@ -95,13 +95,14 @@ def queries(names) -> bool:
             ("local-archive candidates page", genesis._CANDIDATES_PAGE_SQL, (-1, 2048)),
         ]
         # the encoder's backfill with the archive's range held back — the
-        # worker's own predicate, from the cursor's cold start (-1)
+        # worker's own predicate, ONE window from the cursor's cold start
+        # (-1) at the starting width: what a call pays per window
         ranges = worker._covered_ranges(con, col)
         if ranges:
             spans_sql, span_params = genesis.in_spans_sql(ranges)
-            checks.append(("embed backfill (archive range held)",
-                           worker._BACKFILL_SQL.format(covered="AND NOT " + spans_sql),
-                           (config.MAX_RETRIES, -1, *span_params, 64)))
+            checks.append(("embed backfill window (archive range held)",
+                           worker._BACKFILL_WINDOWED.format(covered="AND NOT " + spans_sql),
+                           (-1, worker._BACKFILL_WINDOW, config.MAX_RETRIES, *span_params, 64)))
         if anchor is not None:
             checks.append(("prefetch probe (rdf)", worker._RDF_AHEAD,
                            (anchor[0], config.MAX_RETRIES, 40_000)))

@@ -285,8 +285,9 @@ def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch)
     rows = worker._backfill_rows(con, c, 1)
     assert rows, "an uncovered candidate exists"
     first = rows[0]
-    epoch, since, rid = worker._backfill_cursor[key]
+    epoch, rid, top, found, idle_since = worker._backfill_cursor[key]
     assert rid == int(first["rid"]) - 1, "resume FROM the first returned row"
+    assert found and idle_since is None
     # the covered prefix lies below the cursor
     below = con.execute("SELECT COUNT(*) FROM documents WHERE rowid<=? AND CAST(native_id AS INTEGER)<=10001",
                         (rid,)).fetchone()[0]
@@ -319,6 +320,107 @@ def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkey
         plan = _plan(con, sql, params)
         assert "TEMP B-TREE" not in plan.upper(), f"backfill sorts the candidate set: {plan}"
         assert "idx_documents_scope" in plan, plan
+    # the cursor walk's windows: bounded by the rowid RANGE, never by an
+    # index walk that only the table's end can stop
+    for sql, params in (
+            (worker._BACKFILL_WINDOWED.format(covered=covered),
+             (-1, 1000, config.MAX_RETRIES, 0, 19, 1)),
+            (worker._REEMBED_WINDOWED,
+             (-1, 1000, config.EMBED_VERSION, config.MAX_RETRIES, 1))):
+        plan = _plan(con, sql, params)
+        assert "TEMP B-TREE" not in plan.upper(), f"window sorts: {plan}"
+        assert "INTEGER PRIMARY KEY" in plan.upper(), f"window is not a rowid range: {plan}"
+        assert "idx_documents_scope" not in plan, plan
+
+
+# --- the cursor walk is bounded per call (measured live, 2026-09-19) --------
+
+def _embedded_bulk(con, n, *, first_id=20_000):
+    """n documents beyond the archive's range, all already embedded at the
+    current version: the shape of pubmed's tail, where a sweep finds
+    nothing at all."""
+    con.executemany(
+        "INSERT INTO documents(uid, source, native_id, path, in_scope, rdf_done, "
+        "fts_done, embed_done, embed_version) VALUES(?,?,?,?,1,1,1,1,?)",
+        [(f"gutenberg:{i}", "gutenberg", str(i), f"/nowhere/{i}", config.EMBED_VERSION)
+         for i in range(first_id, first_id + n)])
+    con.execute("UPDATE documents SET embed_done=1, embed_version=?", (config.EMBED_VERSION,))
+    con.commit()
+
+
+def _fixed_windows(monkeypatch, width):
+    from app import sizing
+    monkeypatch.setattr(sizing.sizer(), "window", lambda key, **kw: width)
+    monkeypatch.setattr(sizing.sizer(), "note_window", lambda key, **kw: width)
+
+
+def _window_queries(con):
+    seen: list[str] = []
+    con.set_trace_callback(lambda s: seen.append(s) if "rowid>" in s and "rowid<=" in s else None)
+    return seen
+
+
+def test_a_backfill_call_that_finds_nothing_walks_its_budget_not_the_table(tmp_path, monkeypatch):
+    """Measured live on pubmed (40M rows): one call that found nothing took
+    105-153 s, and every call did, because the whole table was one query.
+    A call now walks windows until its budget is spent and stops; the
+    sweep carries on from the cursor at the next call."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    _embedded_bulk(con, 5000)
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 0.0)
+    worker.reset_backfill_cursors()
+    seen = _window_queries(con)
+    assert worker._backfill_rows(con, c, 10) == []
+    # zero budget: ONE window per walk (new, then ver), not the table
+    assert len(seen) == 2, seen
+    new = worker._backfill_cursor[(str(c.manifest_path), "new")]
+    assert new[1] == -1 + 1000 and new[4] is None, "one window on, sweep not over"
+    seen.clear()
+    worker._backfill_rows(con, c, 10)
+    assert len(seen) == 2 and worker._backfill_cursor[(str(c.manifest_path), "new")][1] == 1999
+
+
+def test_an_empty_sweep_waits_its_ttl_from_its_end(tmp_path, monkeypatch):
+    """The defect: the cursor's age was stamped BEFORE the walk, so a walk
+    longer than the TTL stored a cursor already expired. The idle wait now
+    runs from the moment the sweep ENDED, and costs no query at all."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    _embedded_bulk(con, 5000)
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    worker.reset_backfill_cursors()
+    key = (str(c.manifest_path), "new")
+    assert worker._backfill_rows(con, c, 10) == []
+    epoch, pos, top, found, idle_since = worker._backfill_cursor[key]
+    assert pos >= top and not found and idle_since is not None, "a whole empty sweep"
+    seen = _window_queries(con)
+    assert worker._backfill_rows(con, c, 10) == []
+    assert seen == [], "inside the TTL an empty sweep is not repeated"
+    # the TTL counted from the sweep's end has passed: a new sweep starts
+    worker._backfill_cursor[key] = (epoch, pos, top, found,
+                                    idle_since - worker._BACKFILL_CURSOR_TTL_S - 1)
+    worker._backfill_rows(con, c, 10)
+    assert seen, "after the TTL the walk starts again"
+
+
+def test_a_sweep_that_found_work_restarts_for_what_became_eligible_below(tmp_path, monkeypatch):
+    """Documents BELOW the cursor can become eligible while it walks (fts
+    finishing on earlier rowids). A sweep that found work therefore starts
+    the next one at once, from the beginning, instead of idling."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    _embedded_bulk(con, 3000)
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    worker.reset_backfill_cursors()
+    late, early = "gutenberg:22500", "gutenberg:20100"
+    con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (late,))
+    con.commit()
+    assert [r["uid"] for r in worker._backfill_rows(con, c, 1)] == [late]
+    con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (late,))
+    con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (early,))
+    con.commit()
+    assert [r["uid"] for r in worker._backfill_rows(con, c, 1)] == [early]
 
 
 def test_the_prefetch_probe_walks_forward_from_the_current_document(tmp_path):
