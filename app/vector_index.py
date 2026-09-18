@@ -305,13 +305,13 @@ def prune(collection, con=None, *, log=None) -> dict:
     keep = timedelta(hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H))
     ds = _dataset(tbl)
     if ds is not None:
-        before = _versions(tbl)
         t0 = time.monotonic()
         try:
             # `delete_unverified` stays FALSE by omission: it would remove
             # files Lance cannot prove are unreferenced, which is exactly
             # the file a concurrent writer has written and not yet
-            # committed. Deleting only, so no headroom is needed.
+            # committed. This only deletes, so it needs no headroom — and
+            # on a tight pool it is the work that relieves it.
             st = ds.cleanup_old_versions(older_than=keep)
         except Exception as e:                          # noqa: BLE001
             msg = f"version prune skipped: {type(e).__name__}: {e}"
@@ -321,20 +321,23 @@ def prune(collection, con=None, *, log=None) -> dict:
                 log(msg)
             return {"pruned": False, "reason": str(e)}
         dt = time.monotonic() - t0
+        # NO VERSION LISTING HERE. `list_versions()` walks every retained
+        # manifest — 10.3 s on wikipedia's 7,891 of them (2026-09-18) —
+        # which would have doubled the cost of an 18.5 s cleanup to fill in
+        # a log line. What the call returns already says what went.
         removed = int(getattr(st, "old_versions", 0) or 0)
         freed = int(getattr(st, "bytes_removed", 0) or 0)
-        after = _versions(_table(collection) or tbl)
-        out = {"pruned": True, "seconds": round(dt, 1), "versions_before": before,
-               "versions_after": after, "versions_removed": removed,
-               "bytes_freed": freed}
+        out = {"pruned": True, "seconds": round(dt, 1),
+               "versions_removed": removed, "bytes_freed": freed}
         if removed:
-            msg = (f"pruned {removed} superseded Lance version(s), {after} kept "
-                   f"({dt:.0f}s, {freed / 2**30:.1f} GiB)")
+            msg = (f"pruned {removed} superseded Lance version(s) "
+                   f"({dt:.0f}s, {freed / 2**30:.1f} GiB freed)")
             if con is not None:
                 db.log_event(con, "info", "index", msg)
             elif log:
                 log(msg)
         return out
+
     if not headroom_ok(collection, tbl):
         # `optimize` compacts as well as prunes (see the docstring), so it
         # does need headroom. What it must not have is a flat floor no

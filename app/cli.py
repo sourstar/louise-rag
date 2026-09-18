@@ -736,8 +736,13 @@ def cmd_vindex_prune(args) -> int:
         print(f"not pruned: {out.get('reason')}", file=sys.stderr)
         return 1
     after = vector_index.table_bytes(collection) or 0
-    print(f"versions {out.get('versions_before')} -> {out.get('versions_after')}; "
-          f"{(size - after) / 2**30:+.1f} GiB freed in {out.get('seconds')}s")
+    if out.get("versions_before") is not None:      # the welded fallback counts them
+        print(f"versions {out.get('versions_before')} -> {out.get('versions_after')}; "
+              f"{(size - after) / 2**30:+.1f} GiB freed in {out.get('seconds')}s")
+    else:
+        # the cleanup-only path does not list versions (vector_index.prune)
+        print(f"dropped {out.get('versions_removed', 0)} superseded version(s); "
+              f"{(size - after) / 2**30:+.1f} GiB freed in {out.get('seconds')}s")
     st2 = vector_index.stats(collection)
     if st2 and st2["rows"] != st["rows"]:
         print(f"ROW COUNT CHANGED: {st['rows']} -> {st2['rows']} — investigate",
