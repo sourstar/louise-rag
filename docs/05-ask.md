@@ -276,8 +276,8 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, filters?, limit?, as_of?,
-              freshness?, translate?)
+louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
+              as_of?, freshness?, translate?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}], translations: [...]}
@@ -293,7 +293,9 @@ louise_traverse(id, relation?, depth?)
 and defaults to every collection the peer holds and may use; `space`
 restricts the search to the collections in one space; `limit` is the
 number of results per list, 10 by default and at most 100, the depth
-of a leg. `louise_lookup` takes no `as_of`: `--as-of` selects among
+of a leg. `rerank_depth` is how many of each list the reranker orders
+(§5.6), 50 by default and at most 100; a leg goes at least that deep,
+so the reranker has that many candidates. `louise_lookup` takes no `as_of`: `--as-of` selects among
 snapshots (§5.1) and a reference source has none — it is node-local
 tables synced from the origin (06 §6.5) — so every fact names its
 `ref_version` instead. It takes one canonical id and answers from the
@@ -355,9 +357,12 @@ travels. A reranker may influence *which* records a peer embeds next
 under on-demand embedding; it never influences *what* a vector or a
 record is.
 
-It runs after fusion, over the top 50 of **one** ranked list, and
-re-orders those; the rest of the list keeps the fused order below
-them. It never runs over facts, and never across lists — each list of
+It runs after fusion, over the top `rerank_depth` of **one** ranked
+list — 50 unless the request says otherwise (§5.4) — and re-orders
+those; the rest of the list keeps the fused order below them. The
+depth is the caller's, like `limit`: the reranker is the asking peer's
+own and so is the time it spends, and the latency budget below still
+bounds it. It never runs over facts, and never across lists — each list of
 §5.1 is reranked on its own, so two spaces or two questions are never
 put on one score scale. A candidate is sent whole: the text of the
 record's best chunk, never truncated. The reranker's modality must be

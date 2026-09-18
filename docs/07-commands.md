@@ -111,7 +111,7 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE] [--freshness] [--translate] [--<facet> VALUE | --not-<facet> VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate] [--<facet> VALUE | --not-<facet> VALUE …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); a facet flag restricts the legs and never ranks (§5.2, §5.7)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
