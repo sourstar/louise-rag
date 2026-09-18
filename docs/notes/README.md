@@ -22,7 +22,7 @@ What is here, and why it is kept:
 | `gazzetta-plugin.md`, `eli-legal-plugins.md` | the Italian law corpus researched to a design, and ELI adopted as the template for EU legal plugins — with the clash check that found the pack format compatible |
 | `collection-classes.md`, `embedder-choice-and-supersession.md`, `reranker-scope.md` | the three general questions that corpus forced: what a collection must declare about its bytes, who chooses the encoder and what is done when the choice was wrong, and whether a pack may ever require a reranker |
 | `embedder-pool-spec.md` | the external container that serves embeddings for query and creation — specified, not built |
-| `model-pool.md` | one app to add, load, unload and remove every model, whatever its runtime or device: the existing managers surveyed, and llama-swap proposed as orchestrator of digest-pinned runtime images — proposal, not built |
+| `model-pool.md` | one app to add, load, unload and remove every model, whatever its runtime or device: the existing managers surveyed, and one image proposed, with llama-swap supervising the runtimes proven on the Arc — proposal, not built |
 | `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
 | `migration-plan.md` | the ordered steps from the current code to the documented architecture, for the `louise` branch; deleted when the last step lands |
 

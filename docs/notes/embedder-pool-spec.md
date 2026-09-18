@@ -6,8 +6,7 @@ the design decisions; it is not yet an implementation.
 
 *2026-09-19: the node now runs PyTorch, OpenVINO and Ollama models beside
 llama.cpp. [`model-pool.md`](model-pool.md) extends this design to every
-runtime and every model kind; its §2.1 constrains how the pool may
-launch them.*
+runtime and every model kind, in one image.*
 
 ## 1. Purpose
 
