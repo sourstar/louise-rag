@@ -55,7 +55,10 @@ def test_pylance_threads_inherit_it_and_lancedbs_do_not(tmp_path):
         t = threading.Thread(target=maintainer); t.start(); t.join()
         print("BASE", os.getpriority(os.PRIO_PROCESS, threading.get_native_id()))
         for tid in os.listdir("/proc/self/task"):
-            stat = open(f"/proc/self/task/{{tid}}/stat").read()
+            try:
+                stat = open(f"/proc/self/task/{{tid}}/stat").read()
+            except (FileNotFoundError, ProcessLookupError):
+                continue     # ended after the listing (seen on the node, 2026-09-18)
             name = stat[stat.index("(") + 1:stat.rindex(")")].rstrip("0123456789")
             nice = int(stat[stat.rindex(")") + 2:].split()[16])
             print(name, nice)
