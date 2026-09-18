@@ -2754,6 +2754,49 @@ batch-256 test reaching 26 GB.
 The container column shows Docker's 12-character id. Setting `hostname:`
 in a model app's YAML makes it show that name instead.
 
+### The catalog leg: an index, not a scan (2026-09-19)
+
+**What was wrong.** A search's catalog leg (titles, authors and subjects)
+was an SQLite FTS5 query ranked by `bm25`. FTS5 scores every match before
+keeping the top k, and the query joined every match to `documents`
+before its LIMIT. On pubmed's 40M records, measured on the node:
+
+| query | matches | leg |
+|---|---|---|
+| aspirin platelet aggregation | 15,078 | 4.0 s (1.45 s scoring, 2.6 s the join) |
+| cancer treatment | 183,608 | 9.1 s |
+| cancer | 1,476,347 | 57.3 s |
+
+A hybrid search spent 18.9 of its 21.6 s here. That is a per-search cost
+that grew with the corpus (CLAUDE.md), and the architecture had already
+given the catalog to tantivy (architecture-v2.md, "catalog FTS").
+
+**What changed (operator: option A).** `app/catalog.py` keeps the catalog
+in tantivy at `index/_catalog`, one index per collection.
+- **Fields and matching.** It holds title, authors and subjects (analysed
+  as FTS5's `unicode61` did: split, lowercase, accents folded, no
+  stemming), plus lang for the restriction and the document's rowid. Every
+  word must match, as in FTS5.
+- **Search.** `catalog_search` takes the top k and reads only those k rows
+  from the manifest.
+- **Measured before building it:** 1M and 4M pubmed records, 66,000
+  records/s, 96 bytes a record, and a top 10 in 1.2–2.9 ms at 4M.
+- **Writers.**
+  - The rdf stage commits each batch's entries before the marks, through
+    one long-lived writer per collection, so merges never happen inside
+    the manifest transaction. A failure raises `CatalogUnavailable`, which
+    is a deferral.
+  - The index maintainer runs the BACKFILL in rowid windows of 200,000,
+    60 s per turn, reading each window under the writer lock. Its state
+    and a generation live in `index/_catalog/louise-catalog.json`.
+- **Fallback.** Until a collection's backfill is complete, the SQLite
+  catalog answers, now joined after its LIMIT when no language restriction
+  needs the join. The SQLite catalog is still written.
+- **Retiring the SQLite catalog is a separate step.** Its 16.8 GiB (pubmed
+  15.7, wikipedia 1.06) is only freed inside the manifests, which are
+  never vacuumed (invariant 6). Dropping it takes the manifest's write
+  lock for as long as the drop lasts.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

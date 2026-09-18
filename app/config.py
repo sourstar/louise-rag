@@ -339,6 +339,13 @@ VECTOR_INDEX_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_COMPACT_FRAGMENTS",
 #: default). Bounding the output is what keeps one pass from rewriting the
 #: table into a shape the next pass has to undo.
 VECTOR_INDEX_FRAGMENT_ROWS = int(os.getenv("VECTOR_INDEX_FRAGMENT_ROWS", "1048576"))
+#: The catalog index's backfill (app/catalog.py), on the index maintainer's
+#: turn: rowids per WINDOW (one bounded range of the documents b-tree, one
+#: commit) and seconds per turn. Measured 2026-09-18 on the node: ~66,000
+#: catalog rows/s into tantivy, so a 60 s turn covers ~4M documents and
+#: pubmed's 40M take about ten turns.
+CATALOG_BACKFILL_WINDOW = int(os.getenv("CATALOG_BACKFILL_WINDOW", "200000"))
+CATALOG_BACKFILL_BUDGET_S = float(os.getenv("CATALOG_BACKFILL_BUDGET_S", "60"))
 # The well-known root where PACKS are mounted (pack-format.md). The create
 # dialog offered them to the `packed` plugin, boxed in attic/ (2026-09-14).
 PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))

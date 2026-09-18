@@ -33,7 +33,7 @@ from pathlib import Path
 
 import httpx
 
-from . import (chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
+from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
                 embeddings, entities, fts, node_state, plugin_io, refs, sched, sizing,
                 spaces, stats)
 from .acquire import engine as acquire_engine
@@ -91,7 +91,7 @@ def _batch_log(con, stage: str, collection, msg: str) -> None:
         db.log_event(con, "info", stage, msg)
 
 
-def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -> None:
+def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -> tuple:
     if meta is None:
         meta = plugin_io.metadata(plugin, row)
     con.execute(
@@ -105,12 +105,14 @@ def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -
     # linearly with the catalog (O(N²) for a whole corpus). REPLACE by rowid
     # is one b-tree probe and keeps the same idempotence.
     # db.ensure_catalog_rowids realigned pre-existing rows to this scheme.
+    rowid = con.execute("SELECT rowid FROM documents WHERE uid=?", (row["uid"],)).fetchone()[0]
     con.execute(
         "INSERT OR REPLACE INTO catalog_fts"
-        "(rowid,uid,title,authors,subjects,bookshelves) "
-        "VALUES((SELECT rowid FROM documents WHERE uid=?),?,?,?,?,?)",
-        (row["uid"], row["uid"], meta["title"], meta["authors"],
+        "(rowid,uid,title,authors,subjects,bookshelves) VALUES(?,?,?,?,?,?)",
+        (rowid, row["uid"], meta["title"], meta["authors"],
          meta["subjects"], meta["bookshelves"]))
+    # the catalog index's row (app/catalog.py), written by the caller
+    return (rowid, meta["title"], meta["authors"], meta["subjects"], meta["lang"])
 
 
 def _batch_key(collection, stage: str) -> str:
@@ -191,16 +193,20 @@ def stage_rdf(con, row, collection) -> None:
     ok, first = metas[0]
     if not ok:
         parallel.raise_for(first)            # unguarded: its failure IS the round's
-    _rdf_one(con, row, collection, plugin, now, meta=first)
+    entries = [_rdf_one(con, row, collection, plugin, now, meta=first)]
     n = 1
     for peer, (ok, meta) in zip(peers, metas[1:]):
         if not ok:
             continue                        # a peer never fails the round
         try:
-            _rdf_one(con, peer, collection, plugin, now, meta=meta)
+            entries.append(_rdf_one(con, peer, collection, plugin, now, meta=meta))
             n += 1
         except Exception:   # noqa: BLE001
             continue
+    # The catalog index is committed HERE, before the caller commits the
+    # marks (invariant 2). A failure is CatalogUnavailable: the transaction
+    # rolls back and the batch is deferred, never recorded as an error.
+    catalog.write(collection, entries)
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "rdf"), n, took)
     if n > 1:
@@ -1412,6 +1418,33 @@ def _maintain_vector_index(con, collection) -> bool:
     return bool(out)
 
 
+def _maintain_catalog(con, collection) -> bool:
+    """The catalog index's backfill (app/catalog.py): on the maintainer's
+    turn and at its priority, one rowid window at a time for at most
+    CATALOG_BACKFILL_BUDGET_S. Nothing to do once the collection's catalog
+    is complete — the rdf stage keeps it current from then on. Returns True
+    when it covered anything."""
+    if not _maintenance_allowed():
+        return False
+    try:
+        out = catalog.backfill(con, collection, may_continue=_maintenance_allowed)
+    except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
+        db.log_event(con, "warn", "index",
+                     f"catalog index backfill deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    if not out or not out["windows"]:
+        return False
+    if out["complete"]:
+        db.log_event(con, "info", "index",
+                     f"catalog index complete ({out['cursor']:,} rowids); "
+                     f"catalog searches use it from now on")
+    else:
+        db.log_event(con, "info", "index",
+                     f"catalog index: {out['written']:,} documents in {out['windows']} "
+                     f"window(s) ({out['secs']}s), rowid {out['cursor']:,} of {out['top']:,}")
+    return True
+
+
 def _vector_writes_allowed(collection) -> bool:
     """Whether this collection's vector writers may run.
 
@@ -1530,6 +1563,7 @@ def _index_maintainer() -> None:
                     cons[key] = db.connect(c)
                 t0 = time.monotonic()
                 did = _maintain_vector_index(cons[key], c)
+                did = _maintain_catalog(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work
@@ -2061,6 +2095,13 @@ def _execute_step(con, collection, stage, row) -> bool:
             db.log_event(con, "warn", stage,
                          f"{stage} deferred — manifest busy ({e}); "
                          f"the document is untouched and will be retried")
+            return False
+        if isinstance(e, catalog.CatalogUnavailable):
+            # the catalog index could not take the batch's entries: the
+            # marks rolled back with them, nothing is wrong with the documents
+            db.log_event(con, "warn", stage,
+                         f"{stage} deferred — {e}; the documents are untouched "
+                         f"and will be retried")
             return False
         if vector_store_contended(e):
             # the vector store's optimistic concurrency: another writer or

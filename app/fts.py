@@ -104,7 +104,8 @@ def existing_groups(collection=None) -> list[str]:
     if not collection.fts_dir.is_dir():
         return []
     return sorted(p.name for p in collection.fts_dir.iterdir()
-                  if p.is_dir() and (p / "meta.json").exists())
+                  if p.is_dir() and (p / "meta.json").exists()
+                  and not p.name.startswith("_"))   # `_catalog` is app/catalog.py's, not a group
 
 #: (meta.json path, its mtime_ns) -> the languages that index holds
 _group_langs: dict[tuple[str, int], list[str]] = {}

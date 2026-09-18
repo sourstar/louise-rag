@@ -179,3 +179,12 @@ def _test_encoder():
 
 
 TEST_ENCODER = _test_encoder()
+
+
+@pytest.fixture(autouse=True)
+def _catalog_writers_closed():
+    """app/catalog.py keeps one writer per collection for the worker's life;
+    a test's collection lives for one test."""
+    yield
+    from app import catalog
+    catalog.close_all()

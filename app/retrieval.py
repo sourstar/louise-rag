@@ -8,7 +8,8 @@ Pipeline per query:
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
      for the LLM context (never ranked, never in RRF); doc_keys-tagged hits
      get a soft RRF boost.
-  1. catalog search (SQLite FTS5 over title/author/subjects — subjects are
+  1. catalog search (the catalog index over title/author/subjects, app/catalog.py;
+     SQLite FTS5 until a collection's index is complete — subjects are
      English LoC headings for every language, so this is cross-lingual for free)
   2. lexical fan-out: the query in every language the indexes hold, BM25
      each group with its own (app/language_plan.py — once per search)
@@ -27,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import httpx
-from . import (collections as collections_mod, config, db, embeddings, fts,
+from . import (catalog, collections as collections_mod, config, db, embeddings, fts,
                language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
@@ -50,22 +51,42 @@ class PinnedFact:
     fields: dict
 
 def catalog_search(con, query: str, limit: int = 10,
-                   langs: tuple[str, ...] | list[str] = ()) -> list[dict]:
+                   langs: tuple[str, ...] | list[str] = (), collection=None) -> list[dict]:
     """`langs`, when given, keeps only documents written in those languages
-    (a query's language restriction, app/language_plan.py)."""
+    (a query's language restriction, app/language_plan.py).
+
+    The collection's catalog INDEX answers once its backfill is complete
+    (app/catalog.py): top-k without scoring every match. Until then the
+    SQLite FTS5 catalog does — which ranks EVERY match (57.3 s for "cancer"
+    on pubmed), so it at least joins only the top `limit` to `documents`
+    when no language restriction needs the join to filter (4.0 → 1.5 s for
+    "aspirin platelet aggregation", 15,078 matches)."""
     q = " ".join(t for t in query.split() if t.isalnum() or t.replace("'", "").isalnum())
     if not q:
         return []
-    lang_clause = ""
-    if langs:
-        lang_clause = f" AND d.lang IN ({','.join('?' for _ in langs)})"
+    if collection is not None:
+        try:
+            hits = catalog.search(con, collection, q, limit, langs=langs)
+        except Exception:   # noqa: BLE001 — an index problem falls back, never fails a search
+            hits = None
+        if hits is not None:
+            return hits
     try:
-        rows = con.execute(
-            "SELECT d.native_id AS book_id, f.title, f.authors, f.subjects, d.lang, "
-            "bm25(catalog_fts) AS rank "
-            "FROM catalog_fts f JOIN documents d ON d.uid = f.uid "
-            f"WHERE catalog_fts MATCH ?{lang_clause} ORDER BY rank LIMIT ?",
-            (q, *langs, limit)).fetchall()
+        if langs:
+            rows = con.execute(
+                "SELECT d.native_id AS book_id, f.title, f.authors, f.subjects, d.lang, "
+                "bm25(catalog_fts) AS rank "
+                "FROM catalog_fts f JOIN documents d ON d.uid = f.uid "
+                f"WHERE catalog_fts MATCH ? AND d.lang IN ({','.join('?' for _ in langs)}) "
+                "ORDER BY rank LIMIT ?",
+                (q, *langs, limit)).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT d.native_id AS book_id, f.title, f.authors, f.subjects, d.lang "
+                "FROM (SELECT uid, title, authors, subjects, bm25(catalog_fts) AS rank "
+                "      FROM catalog_fts WHERE catalog_fts MATCH ? ORDER BY rank LIMIT ?) f "
+                "JOIN documents d ON d.uid = f.uid ORDER BY f.rank",
+                (q, limit)).fetchall()
     except Exception:
         return []
     return [{"book_id": int(r["book_id"]), "title": r["title"], "authors": r["authors"],
@@ -211,8 +232,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     core = plan.core
 
     t0 = time.time()
-    catalog = (catalog_search(con, core, langs=plan.only)
-               if mode in ("hybrid", "catalog") else [])
+    catalog_hits = (catalog_search(con, core, langs=plan.only, collection=collection)
+                    if mode in ("hybrid", "catalog") else [])
     timings["catalog"] = round((time.time() - t0) * 1000, 1)
 
     lists: list[list[dict]] = []
@@ -263,7 +284,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 m["rrf"] += ENTITY_BOOST
         merged.sort(key=lambda x: -x["rrf"])
 
-    return {"catalog": catalog, "merged": merged, "translations": plan.translations,
+    return {"catalog": catalog_hits, "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope}
 
 
