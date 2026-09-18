@@ -2632,12 +2632,21 @@ compliant collection").
   the TEST encoder, explicitly. The rule's own tests are marked
   `strict_encoder` (tests/test_no_default_encoder.py).
 
-**Found, not caused: the two-node harness fails.**
-`tests/integration/two_node` failed identically on 09743e9. Its consumer
-set the node's mode in the manifest, which the worker stopped reading on
-2026-09-13, so it stayed paused. That is fixed, and the harness's collection
-now names its encoder. The consumer still never imports the delivered
-bundle. Open.
+**The two-node harness passes again, twice in a row.** It had failed since
+the code moved under it, and the product was never the cause. Three harness
+defects, one behind the other:
+1. The node's mode was set in the manifest, which the worker stopped reading
+   on 2026-09-13, so the worker stayed paused. It is now set in
+   `node_state`.
+2. The stage functions were called bare. `stage_fts` opens `BEGIN
+   IMMEDIATE` and leaves the commit to `_execute_step`, so the consumer
+   held the manifest's write lock for good (byte 120 of `-shm`, in its own
+   PID). Its worker then waited 60 s on every write and never imported
+   anything. Both nodes now run each stage through `_execute_step`.
+3. `embed_mode=off` was set in the manifest. That is Tier 3, which the
+   worker resets to the file at its start (invariant 10). The consumer
+   embedded the documents itself, and its hits were rightly `local`.
+   `config-consumer/` now sets it in the TOML.
 
 ### What is waiting on the operator
 

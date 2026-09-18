@@ -45,17 +45,16 @@ def main() -> int:
     con = db.connect(collection)
     discovery.sync_collection(con, collection)
 
-    # rdf -> fts -> embed, through the real stage functions and the mock endpoint
-    for row in con.execute("SELECT * FROM documents WHERE in_scope=1"):
-        row = dict(row)
-        if not row["rdf_done"]:
-            worker.stage_rdf(con, row, collection)
+    # rdf -> fts -> embed, through the worker's own step (it commits what a
+    # stage leaves open — entry_consumer.py says why) and the mock endpoint
+    for uid in [r["uid"] for r in con.execute(
+            "SELECT uid FROM documents WHERE in_scope=1")]:
+        for stage in ("rdf", "fts", "embed"):
             row = dict(con.execute("SELECT * FROM documents WHERE uid=?",
-                                    (row["uid"],)).fetchone())
-        if not row["fts_done"]:
-            worker.stage_fts(con, row, collection)
-        if not row["embed_done"]:
-            worker.stage_embed(con, row, collection)
+                                   (uid,)).fetchone())
+            if not row[f"{stage}_done"]:
+                worker._execute_step(con, collection, stage, row)
+    assert not con.in_transaction, "a stage left the manifest's write lock held"
     total = con.execute(
         "SELECT COUNT(*) c FROM documents WHERE embed_done=1").fetchone()["c"]
     print(f"producer: {total} documents embedded", flush=True)

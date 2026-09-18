@@ -69,7 +69,9 @@ services:
       - ../../..:/srv
       - ../../fixtures/gutenberg-mini/corpus:/corpus:ro
       - consumer-data:/data
-    environment: *node_env
+    environment:
+      <<: *node_env
+      CONFIG_DIR: /srv/tests/integration/two_node/config-consumer   # embed_mode = "off"
     depends_on:
       mock-embed: { condition: service_healthy }
       coordinator: { condition: service_healthy }

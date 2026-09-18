@@ -24,17 +24,23 @@ def main() -> int:
     discovery.sync_collection(con, collection)
 
     # metadata + lexical index so search works; embed_mode=off makes vectors
-    # importable-only, which is the state this flow exists to prove
+    # importable-only, which is the state this flow exists to prove.
+    # Through the worker's own step: a stage leaves its commit to the caller
+    # (fts opens BEGIN IMMEDIATE late and _execute_step commits it), and
+    # called bare it kept the manifest's write lock for good — the worker
+    # below then waited 60 s on every write and never imported the bundle.
     from app import worker
-    for row in con.execute("SELECT * FROM documents WHERE in_scope=1"):
-        row = dict(row)
-        if not row["rdf_done"]:
-            worker.stage_rdf(con, row, collection)
+    for uid in [r["uid"] for r in con.execute(
+            "SELECT uid FROM documents WHERE in_scope=1")]:
+        for stage in ("rdf", "fts"):
             row = dict(con.execute("SELECT * FROM documents WHERE uid=?",
-                                    (row["uid"],)).fetchone())
-        if not row["fts_done"]:
-            worker.stage_fts(con, row, collection)
-    db.set_scope(con, {"embed_mode": "off"})
+                                   (uid,)).fetchone())
+            if not row[f"{stage}_done"]:
+                worker._execute_step(con, collection, stage, row)
+    assert not con.in_transaction, "a stage left the manifest's write lock held"
+    # embed_mode=off is the collection file's (config-consumer/): the worker
+    # resets a manifest override to the file at its start (invariant 10)
+    assert collection.embed_mode_default == "off", "the consumer would embed"
     # the node's mode lives in state/node.sqlite since 2026-09-13 (app/node_state.py);
     # set in the manifest it left the worker PAUSED and nothing was ever imported
     from app import node_state
