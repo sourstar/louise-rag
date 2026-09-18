@@ -2676,6 +2676,55 @@ the session's scratchpad, not the repository: it needs Node and
 Chromium, which the toolchain does not have. The committed tests check
 the wiring (tests/test_web_pages.py).
 
+### The GPU panel on the System page (2026-09-18, night)
+
+The operator asked for the GPU's model, its VRAM and what is used and
+free. They also wanted "the memory used by each model" if it was not too
+hard. It was not. The System page now shows each card's name, a bar, and
+total, used and free. Under that is one row per process holding memory:
+the model it serves, its container, its VRAM, its share of the card, and
+its GPU buffers in host RAM.
+
+**Where the figures come from.** Measured on the node (kernel 6.18, `xe`):
+- The card's used memory comes from the driver's own query
+  (`DRM_IOCTL_XE_DEVICE_QUERY`). It equals the debugfs `vram0_mm` usage to
+  the byte: 25,746,759,680. The driver reports it only to `CAP_PERFMON`.
+  Without that capability the panel uses the processes' sum and says so.
+- Each process's figures come from the kernel's DRM fdinfo, summed per
+  client. The eight model servers add up to the driver's count less
+  24.6 MB. The panel shows that remainder as its own row.
+- The model name comes from the command line. For llama-server that is
+  its `-m`; for a Python server, its directory. Ollama's runner names only
+  a blob, which its manifest resolves (`qwen3:8b (ollama)`).
+- A snapshot takes 98 ms, 81 ms of it scanning `/proc`. The page asks
+  every 5 s, and only while the System tab is open.
+- The card's name comes from pci.ids, pinned by commit and checksum in the
+  Dockerfile. The node's own copy calls the Arc Pro B70 "Battlemage G21".
+
+**Why a third container.** A per-process figure needs the host's PID
+namespace. Any container that has it can also read every other
+container's files and environment through `/proc`. The LAN-facing web and
+the worker, which parses untrusted origin data, must not have that.
+- `app/gpu_probe.py` runs from the same image as the `gpu-probe` service
+  in `deploy/truenas-app.yaml`: `pid: host`, `/dev/dri`, `PERFMON`, and no
+  volumes, environment or port.
+- The web asks it at `GPU_PROBE_URL` with a 1.5 s bound (`app/gpu.py`).
+- A test fails if any other module imports the probe
+  (`tests/test_gpu_panel.py`).
+- Docker's default capabilities were enough to read the other
+  containers' fdinfo; `SYS_PTRACE` was not needed.
+
+**Not deployed.** The live compose needs the service and `GPU_PROBE_URL`.
+
+**Seen on the first reading.** Pubmed's MedCPT *Article* encoder has
+568 KiB in VRAM and 418 MiB of GPU buffers in host RAM. Its twin, the
+Query encoder, has 269 MiB in VRAM. The Article encoder's weights look
+evicted, perhaps when MADLAD's batch-256 test reached 26 GB. Not yet
+investigated.
+
+The container column shows Docker's 12-character id. Setting `hostname:`
+in a model app's YAML makes it show that name instead.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

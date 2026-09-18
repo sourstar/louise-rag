@@ -1,0 +1,36 @@
+{% if state == "unset" %}
+<div class="note">GPU_PROBE_URL is unset — there is no probe to ask (the <code>gpu-probe</code> service, deploy/truenas-app.yaml).</div>
+{% elif state == "unreachable" %}
+<div><span class="badge err">unreachable</span> <span class="note">{{ url }} — {{ error }}</span></div>
+{% else %}
+{% for d in devices %}
+<div class="gpu-card">
+  <div><b>{{ d.name or (d.vendor_id ~ ':' ~ d.device_id) }}</b>
+    <span class="note">{{ d.vendor or '' }} · {{ d.driver }} · {{ d.pdev }}</span></div>
+  {% if d.vram_total %}
+  <div class="gpu-bar" title="{{ '%.0f'|format(d.used_pct) }}% used"><span style="width:{{ '%.1f'|format(d.used_pct) }}%"></span></div>
+  <div>VRAM {{ d.vram_total|size }} · used {{ d.used|size }}{% if d.vram_used is none %} <span class="note">(sum of the processes)</span>{% endif %} · free {{ d.free|size }}</div>
+  {% else %}
+  <div class="note">VRAM not read for the {{ d.driver }} driver</div>
+  {% endif %}
+  {% if d.processes %}
+  <table style="margin-top:8px"><tr><th>model</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
+    <th title="GPU buffers this process holds in host memory (GTT, system)">in host RAM</th></tr>
+    {% for p in d.processes %}
+    <tr><td title="{{ p.command }}">{{ p.label }}</td><td>{{ p.container }}</td><td>{{ p.pid }}</td>
+      <td>{{ p.vram|size }}</td><td>{{ '%.1f'|format(d.share(p.vram)) }}%</td><td>{{ p.host|size }}</td></tr>
+    {% endfor %}
+    {% if d.unattributed %}
+    <tr class="note"><td>not held by any process shown</td><td></td><td></td>
+      <td>{{ d.unattributed|size }}</td><td>{{ '%.1f'|format(d.share(d.unattributed)) }}%</td><td></td></tr>
+    {% endif %}
+  </table>
+  {% elif d.vram_total %}
+  <div class="note">no process holds memory on this card</div>
+  {% endif %}
+</div>
+{% else %}
+<div class="note">the probe found no GPU</div>
+{% endfor %}
+{% for n in notes %}<div class="note">{{ n }}</div>{% endfor %}
+{% endif %}

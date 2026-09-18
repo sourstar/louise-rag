@@ -42,7 +42,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import (auth, collections as collections_mod, config, db, discovery, llm,
+from . import (auth, collections as collections_mod, config, db, discovery, gpu, llm,
                 node_state, platform_config, query_service, reader, retrieval, spaces)
 from . import translate as mt
 from .transfer import manager as transfer_manager
@@ -93,6 +93,7 @@ TEMPLATES.env.globals["asset_v"] = _asset_version()
 # everywhere a count is shown.
 TEMPLATES.env.filters["num"] = (
     lambda n: "" if n is None else f"{int(n):,}".replace(",", "."))
+TEMPLATES.env.filters["size"] = gpu.size
 
 
 #: What the ETA slot shows when work REMAINS and there is no rate to stand
@@ -3056,6 +3057,7 @@ def _effective_config() -> dict:
         "CHAT_URL": config.CHAT_URL,
         "CHAT_MODEL": config.CHAT_MODEL,
         "TRANSLATE_URL": config.TRANSLATE_URL or "(unset — the chat model translates, slowly)",
+        "GPU_PROBE_URL": config.GPU_PROBE_URL or "(unset — no GPU panel)",
         "RERANK_URL": (f"{config.RERANK_URL} — the reranker of last resort, "
                        f"{_falls_back(rerank_users)}") if config.RERANK_URL
                       else "(unset — a collection with no [reranker] keeps its fused order)",
@@ -3197,3 +3199,11 @@ def system_page(request: Request):
 def system_log_fragment(request: Request):
     return TEMPLATES.TemplateResponse(request, "_fragments/log_rows.html",
                                        {"events": _recent_events_all()})
+
+
+@admin_router.get("/system/gpu", response_class=HTMLResponse)
+def system_gpu_fragment(request: Request):
+    # asked of the probe over HTTP, bounded (app/gpu.py): this process never
+    # reads /proc — only the gpu-probe container may see the host's processes
+    return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
+                                       gpu.panel(config.GPU_PROBE_URL))

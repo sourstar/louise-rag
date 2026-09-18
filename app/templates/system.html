@@ -4,6 +4,11 @@
 <h1>System</h1>
 
 <div class="panel">
+  <h2>GPU</h2>
+  <div id="gpu" hx-get="/admin/system/gpu" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+</div>
+
+<div class="panel">
   <h2>Effective configuration</h2>
   <div class="note">Tier 1 — env, what is global to the node (restart to change); what each collection runs is Tier 2:</div>
   <table><tr><th>key</th><th>value</th></tr>

@@ -98,6 +98,8 @@ services:
       CHAT_URL: http://192.168.178.10:30068
       CHAT_MODEL: qwen3:8b
       TRANSLATE_URL: http://192.168.178.10:30448
+      # the System page's GPU panel — the gpu-probe service below, by name
+      GPU_PROBE_URL: http://gpu-probe:8080
       # no EMBED_URL: a collection names its own encoder in its file's
       # [encoder], and one that names none is refused (2026-09-18)
       # EMBED_BATCH=1 is LOAD-BEARING: llama-server corrupts long sequences
@@ -137,3 +139,29 @@ services:
       - /mnt/ssd4/apps/louise-rag/data:/data
       - /mnt/ssd4/apps/louise-rag/config:/config
     stop_grace_period: 120s
+
+  # THE GPU PROBE (app/gpu_probe.py): each card's memory and every process's
+  # share, for the System page's GPU panel. The ONE container that sees the
+  # host's processes (pid: host) — which also lets it read every other
+  # container's files and environment through /proc — so it gets nothing
+  # else: no volumes, no environment (never *env, which carries
+  # ADMIN_TOKEN), no port. The web reaches it by service name.
+  # PERFMON: the xe driver reports the card's used memory only to it;
+  # without it the panel shows the processes' sum instead. No init: with the
+  # host's PID namespace it is not PID 1, and it starts no children.
+  gpu-probe:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    command: ['python', '-m', 'app.gpu_probe', '--port', '8080']
+    pid: host
+    devices:
+      - /dev/dri
+    cap_add:
+      - PERFMON
+    read_only: true
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

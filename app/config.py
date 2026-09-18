@@ -38,6 +38,10 @@ CHAT_URL = _chat_url()
 # every query translation and every translation on the Ask page. Unset, the
 # chat model translates, slowly (operator, 2026-09-18).
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "").rstrip("/")
+# The GPU probe (app/gpu_probe.py, the `gpu-probe` service): the System
+# page's GPU panel asks it for each card's memory and every process's
+# share. Unset, the panel says so and nothing else changes.
+GPU_PROBE_URL = os.getenv("GPU_PROBE_URL", "").rstrip("/")
 # NO DEFAULT ENCODER (operator, 2026-09-18): "A default embedder is wrong,
 # remove EMBED_URL. A collection that does not specify an embedder is a non
 # compliant collection." A collection names its own in its file's
