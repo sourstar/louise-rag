@@ -2320,6 +2320,64 @@ marks a FRAGMENT REWRITE specifically, and the writer gate defers for that
 and nothing else: builds and refreshes keep their concurrency, a
 compaction — rare by construction — gets the table to itself.
 
+The two open questions above are answered by the same day's log. The fold
+was `optimize_indices` in flight: it returned at 07:41 UTC (2,252,059 rows,
+2,707 s) and again at 08:57 (2,115,347 rows, 2,576 s). The `lance_backgroun`
+cores were that call, running on pylance's own runtime — a fixed 13–14
+threads per process (30 `to_lance()` calls in a row add none; the 377 seen
+once were Tokio's blocking-I/O threads, which exit after 10 s idle).
+
+### Worker crashes: pubmed's pack shared one reader — fixed 2026-09-18
+
+**Symptom.** pubmed embedded 38–41 docs/s on 09-17 and 23–35 on 09-18,
+and the worker restarted three times in three hours (06:21, 07:42 and
+09:00 UTC), each time refilling the fts and rdf backlogs before embed got
+its share back.
+
+**Evidence.**
+- 06:21: kernel SIGSEGV in `libarrow.so.2500` at +0xabbcab.
+- 06:57: `ArrowInvalid: ReadRangeCache did not find matching cache entry`
+  recorded as an embed error on pubmed:40963103. The document has since
+  been embedded; nothing was left erred.
+- 07:42: glibc `double free or corruption (fasttop)`.
+- 09:00: a general protection fault at the same libarrow offset.
+
+**Cause.** `pack._open` cached one `pq.ParquetFile` per pack and handed it to
+every thread. pyarrow 25 enables `pre_buffer` by default, so every read
+replaces the reader's ReadRangeCache while another thread's read is still
+in it. pubmed's fts and rdf stages and its four embed workers read the same
+packs at once.
+
+**Fix (fd190d9, deployed 10:06 UTC, image `1e8575b…`).** Every read opens its
+own reader and closes it: one footer parse per 1,000-record row group. The
+new test runs six threads over one pack. Against the old module it fails
+with the exact error seen live, and it passes with the fix.
+
+**What it was not.**
+- *Not the shutdown.* The 09-17 poweroff was clean: systemd synced the
+  filesystems, and every pool reports no errors. The worker logged `worker
+  stopped (signal)` at 07:03:36 UTC after committing its last batches
+  (1,534 pubmed documents and a wikipedia import batch), inside its 120 s
+  grace.
+- *Not pylance.* pyarrow was already pinned to 25.0.1, the crash is inside
+  pyarrow's C++ reader, and the test reproduces it with no Lance at all.
+- *Not louise's worker being killed.* The one container Docker SIGKILLed at
+  every poweroff was the MedCPT reranker: a Python PID 1 with no SIGTERM
+  handler. It now stops on the signal (165c778; exits 0 at once).
+
+**Also found, upstream and bounded: lancedb 0.38 crashes at interpreter
+exit.** A `lancedb-tokio-w` thread calls into libpython during finalization
+(`_lancedb.abi3.so`+0x8dc90ab → `libpython3.12.so`+0x273130). This explains
+the kernel lines at 06:48:38 and 07:07:56 UTC: a staging check and a probe.
+- Measured on short-lived processes that ran a search: 9 of 80 exits
+  segfaulted, 5 of 40 with pylance installed and 4 of 40 without.
+- Effect: exit code 139 *after* the work is committed. It hits CLI runs,
+  deploy checks and test runs; a long-running worker meets it once per stop.
+- No data is touched, and no newer lancedb exists: `lancedb>=0.15`
+  resolves to 0.38.0.
+- Anything that scripts on a louise exit code must read 139 after a clean
+  run as this, until lancedb fixes it.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
