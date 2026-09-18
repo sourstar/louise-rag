@@ -11,6 +11,7 @@ import hashlib
 import os
 import shutil
 import threading
+import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -209,3 +210,61 @@ def test_reader_fields_come_from_the_pack(tmp_path):
     # PACK_VERSION and rebuild all 1,334 containers' packs for no gain.
     assert fields["date"] == "2023-Jan" and doc.date == "2023-01"
     assert set(fields) == {"pmid", "title", "abstract", "journal", "date", "authors"}
+
+
+def test_no_parquet_reader_is_shared_between_threads(tmp_path, monkeypatch):
+    """A ParquetFile is not safe for concurrent use (pre_buffer, pyarrow
+    25's default, swaps the reader's ReadRangeCache under a read in
+    progress). One cached per pack was shared by pubmed's fts stage and its
+    four embed workers until 2026-09-18: a ReadRangeCache error recorded on
+    a healthy document, a double free, two segfaults in libarrow. Every read
+    must go through a reader no other thread holds — and still return the
+    right record."""
+    monkeypatch.setattr(pack, "ROW_GROUP", 2)          # 11 records -> 6 groups
+    corpus = _corpus(tmp_path)
+    container = corpus / "pubmed25n0001.xml"
+    expected = _dom_records(container)
+    pack.record_fields(container, 0)                   # a cache, if any, is warm
+    real = pq.ParquetFile
+    guard = threading.Lock()
+    active: dict[int, int] = {}
+    shared = []
+
+    class Watched(real):
+        def read_row_group(self, *a, **k):
+            with guard:
+                active[id(self)] = active.get(id(self), 0) + 1
+                if active[id(self)] > 1:
+                    shared.append(id(self))
+            try:
+                time.sleep(0.01)                       # widen the window
+                return super().read_row_group(*a, **k)
+            finally:
+                with guard:
+                    active[id(self)] -= 1
+
+    monkeypatch.setattr(pack.pq, "ParquetFile", Watched)
+    articles = [i for i, tag, _pmid, _dels in pack.index_columns(container)
+                if tag == "PubmedArticle"]
+    start = threading.Barrier(6)
+    wrong, failed = [], []
+
+    def reader(k: int) -> None:
+        start.wait()
+        try:
+            for i in range(len(expected)):
+                j = (i + k) % len(expected)
+                if pack.record_xml(container, j) != expected[j]:
+                    wrong.append(j)
+                if j in articles:
+                    pack.record_fields(container, j)
+        except Exception as e:                         # noqa: BLE001
+            failed.append(repr(e))
+
+    threads = [threading.Thread(target=reader, args=(k,)) for k in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert not failed and not wrong, (failed, wrong)
+    assert not shared, f"{len(shared)} read(s) entered a reader another thread was using"

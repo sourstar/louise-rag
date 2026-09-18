@@ -66,10 +66,8 @@ SCHEMA = pa.schema([
 
 _build_locks: dict[str, threading.Lock] = {}
 _build_locks_guard = threading.Lock()
-_files_lock = threading.Lock()
-_files: OrderedDict = OrderedDict()          # pack path -> (mtime_ns, ParquetFile)
+_files_lock = threading.Lock()              # guards the dict caches below
 _groups: OrderedDict = OrderedDict()         # (pack path, row group) -> {index: xml}
-_MAX_FILES = 8
 _MAX_GROUPS = 4                              # ~10 MB of XML each
 
 
@@ -228,33 +226,30 @@ _fresh: dict[str, tuple[tuple[int, int], int, str]] = {}   # container -> (signa
 
 def _forget(path: Path) -> None:
     with _files_lock:
-        _files.pop(str(path), None)
         for key in [k for k in _groups if k[0] == str(path)]:
             _groups.pop(key, None)
 
 
 def _open(path: Path) -> pq.ParquetFile:
-    key = str(path)
-    mtime = path.stat().st_mtime_ns
-    with _files_lock:
-        hit = _files.get(key)
-        if hit is not None and hit[0] == mtime:
-            _files.move_to_end(key)
-            return hit[1]
-    pf = pq.ParquetFile(path)
-    with _files_lock:
-        _files[key] = (mtime, pf)
-        _files.move_to_end(key)
-        while len(_files) > _MAX_FILES:
-            _files.popitem(last=False)
-    return pf
+    """A ParquetFile of the caller's own, to be closed after the read —
+    never one shared between threads. A ParquetFile is not safe for
+    concurrent use: with pre_buffer (pyarrow 25's default) every read
+    replaces the reader's ReadRangeCache while another thread's read is
+    still using it. They were shared (one cached per pack) until
+    2026-09-18, when pubmed's fts stage and its four embed workers read the
+    same packs at once on the node: `ArrowInvalid: ReadRangeCache did not
+    find matching cache entry` recorded as an error on a healthy document,
+    glibc aborting on a double free, and two segfaults at the same
+    libarrow instruction — three worker restarts in three hours. Opening
+    costs one footer parse, paid once per ROW_GROUP records."""
+    return pq.ParquetFile(path)
 
 
 def index_columns(container: Path) -> list[tuple[int, str, str | None, list[str]]]:
     """(index, tag, pmid, delete_pmids) for every child, in order — what
     discovery enumerates. Three small columns, never the XML."""
-    pf = _open(ensure(container))
-    table = pf.read(columns=["index", "tag", "pmid", "delete_pmids"])
+    with _open(ensure(container)) as pf:
+        table = pf.read(columns=["index", "tag", "pmid", "delete_pmids"])
     out = []
     for idx, tag, pmid, dels in zip(table.column("index").to_pylist(),
                                      table.column("tag").to_pylist(),
@@ -275,10 +270,10 @@ def record_xml(container: Path, index: int) -> bytes:
         if group is not None:
             _groups.move_to_end(key)
     if group is None:
-        pf = _open(path)
-        if rg >= pf.num_row_groups:
-            raise IndexError(f"{container.name}: record {index} beyond the pack")
-        table = pf.read_row_group(rg, columns=["index", "xml"])
+        with _open(path) as pf:
+            if rg >= pf.num_row_groups:
+                raise IndexError(f"{container.name}: record {index} beyond the pack")
+            table = pf.read_row_group(rg, columns=["index", "xml"])
         group = dict(zip(table.column("index").to_pylist(), table.column("xml").to_pylist()))
         with _files_lock:
             _groups[key] = group
@@ -294,10 +289,10 @@ def record_xml(container: Path, index: int) -> bytes:
 def record_fields(container: Path, index: int) -> dict:
     """The reader's view of one record (no XML): pmid, title, abstract,
     journal, date, authors."""
-    pf = _open(ensure(container))
     rg = index // ROW_GROUP
-    table = pf.read_row_group(rg, columns=["index", "pmid", "title", "abstract",
-                                           "journal", "date", "authors"])
+    with _open(ensure(container)) as pf:
+        table = pf.read_row_group(rg, columns=["index", "pmid", "title", "abstract",
+                                               "journal", "date", "authors"])
     rows = table.to_pylist()
     for row in rows:
         if row["index"] == index:
@@ -323,7 +318,8 @@ def record_dates(container: Path) -> dict[int, str | None]:
         if hit is not None:
             _dates.move_to_end(key)
             return hit
-    table = _open(path).read(columns=["index", "date"])
+    with _open(path) as pf:
+        table = pf.read(columns=["index", "date"])
     out = dict(zip(table.column("index").to_pylist(), table.column("date").to_pylist()))
     with _files_lock:
         _dates[key] = out
@@ -350,7 +346,8 @@ def record_authors(container: Path) -> dict[str, str]:
     comes back, and a 30k-entry dict per container is not worth a slot
     that `record_dates` needs for the pack planner.
     """
-    table = _open(ensure(container)).read(columns=["pmid", "authors"])
+    with _open(ensure(container)) as pf:
+        table = pf.read(columns=["pmid", "authors"])
     out: dict[str, str] = {}
     for pmid, authors in zip(table.column("pmid").to_pylist(),
                              table.column("authors").to_pylist()):
@@ -361,7 +358,6 @@ def record_authors(container: Path) -> dict[str, str]:
 
 def reset_caches() -> None:
     with _files_lock:
-        _files.clear()
         _groups.clear()
         _fresh.clear()
         _dates.clear()
