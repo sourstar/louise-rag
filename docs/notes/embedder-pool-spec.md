@@ -4,6 +4,11 @@ Status: specification. Scope: the external container that serves embeddings
 to Louise for both query and creation, on one machine. This document fixes
 the design decisions; it is not yet an implementation.
 
+*2026-09-19: the node now runs PyTorch, OpenVINO and Ollama models beside
+llama.cpp. [`model-pool.md`](model-pool.md) extends this design to every
+runtime and every model kind; its §2.1 constrains how the pool may
+launch them.*
+
 ## 1. Purpose
 
 Louise does not re-embed shared corpora — vectors travel between peers ready

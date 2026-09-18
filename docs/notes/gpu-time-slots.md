@@ -4,6 +4,11 @@
 the llama server hosting multiple embedders is designed, because the two
 decisions are the same decision seen from either end.*
 
+*2026-09-19: the premise below that "the Arc fits one model server at a
+time" is stale. The GPU panel measured eight servers resident at once,
+25.7 of 34.2 GB (STATUS.md, 2026-09-18). A slot is now the fallback for
+whatever does not fit together — [`model-pool.md`](model-pool.md) §5.*
+
 ## The idea, in the operator's terms
 
 Use the GPU only for the **heavy lifting**, and dedicate it to one
