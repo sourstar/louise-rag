@@ -396,8 +396,7 @@ Not `tolerance`, not `calibration`, not `envelope`, not `evaluation`,
 not `work`: those are the contract around the function, not the
 function. Not the `engine` and not the `label`: the engine is how the
 reference was computed. Whether another engine computes the same
-function is measured (03 §3.3), never declared, and two creators on
-different engines meet in one space (02 §2.4, 05 §5.1). `space_from` copies `space` and `layers` byte for byte and
+function is measured (03 §3.3), never declared (02 §2.4). `space_from` copies `space` and `layers` byte for byte and
 never `cleaning_version`, which stays the mother's (07 §7.3); `derive`
 refuses when the named Codex's `cleaning_version` differs from hers, and
 refuses in any case when the resulting `space_id` differs from the
@@ -431,12 +430,9 @@ default (06 §6.6); the recipe is input, never hashed, never shared.
 hash, signatures: integer, held: boolean}], holdings: {slices: [...],
 kinds: [...], members: integer}, license: {class, acknowledged: boolean,
 time}, trust_level, certification: {certified_by, anchor_state} or null,
-vitality: "actively-held" · "dormant", apart_from: [collection_id…],
-refused: string or null}`. `apart_from` names the collections in the
-same space that this one is searched apart from, because their
-reference vectors disagree (05 §5.1); `[]` when there are none.
-`refused` is the reason the collection is not served when
-refuse-to-start applies to it (07 §7.8).
+vitality: "actively-held" · "dormant", refused: string or null}`; the
+last is the reason the collection is not served when refuse-to-start
+applies to it (07 §7.8).
 
 **Worked example.** The PubMed collection's Codex, abbreviated to the
 fields that carry its choices (every other field is present in the file):

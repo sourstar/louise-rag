@@ -491,10 +491,10 @@ faster, another engine, another device, a quantised variant: each
 contributes to the space once it passes, stays a distinct producer in
 provenance, and never makes a new space. Unlike two derivations, two
 engines do not produce the same numbers; they produce numbers within
-tolerance of one reference, which is all a space promises (§3.1). So two
-creators who choose the same weights and settings on different engines
-land in one space, and their reference vectors are compared before
-their collections are searched as one list (05 §5.1). The query side is
+tolerance of one reference, which is all a space promises (§3.1).
+Collections meant to be searched together reach one space through
+`space_from` (§2.7), which copies the engine with the rest, so they
+share one reference. The query side is
 in the space the same way: its weights and its instruction, never its
 engine.
 
