@@ -3093,7 +3093,9 @@ def _recent_events_all(limit: int = 60) -> list[dict]:
             for r in con.execute(
                     "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)):
                 event = dict(r)
-                event["collection"] = collection.name
+                # the manifest that STORES a node-wide line is not its subject
+                event["collection"] = ("node" if event.get("stage") in db.NODE_STAGES
+                                       else collection.name)
                 rows.append(event)
         except Exception:   # noqa: BLE001 — same reasoning per collection
             continue

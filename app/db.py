@@ -727,14 +727,25 @@ NODE_CONTROL_KEYS = (WORKER_STATE_KEY, BANDWIDTH_OVERRIDE_KEY)
 
 # ---------------- events ----------------
 
+#: stages whose lines are about the NODE, not about the collection whose
+#: manifest stores them — see `log_event`'s `node` below
+NODE_STAGES = frozenset({"sched"})
+
+
 def log_event(con, level, stage, message, doc_uid=None):
     """stdout line: `HH:MM:SS [<collection> level:stage #uid] message`. The
     collection comes from the connection (ManifestConnection), so no caller
     has to pass it and no line can omit it; connections opened some other
-    way (tests, tools) simply print without it."""
+    way (tests, tools) simply print without it.
+
+    A NODE_STAGES line says `node` instead. The fair-share lines cover every
+    collection and are written through the first collection's manifest —
+    the node has no event log of its own — so they printed as gutenberg's
+    ("why is gutenberg logging about the other plugins?", operator,
+    2026-09-18)."""
     stamp = time.strftime("%H:%M:%S")
     tag = f" #{doc_uid}" if doc_uid else ""
-    who = getattr(con, "collection_name", "")
+    who = "node" if stage in NODE_STAGES else getattr(con, "collection_name", "")
     prefix = f"{who} " if who else ""
     print(f"{stamp} [{prefix}{level}:{stage}{tag}] {message}", flush=True)
     try:

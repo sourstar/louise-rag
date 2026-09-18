@@ -1084,3 +1084,19 @@ def test_chat_url_is_the_name_and_ollama_url_is_still_read(monkeypatch):
     monkeypatch.setenv("CHAT_URL", "http://new:30068")
     assert config._chat_url() == "http://new:30068", "the new name wins"
     assert not hasattr(config, "OLLAMA_URL")
+
+
+def test_node_wide_lines_are_the_nodes_not_the_first_collections(isolated_config, capsys):
+    """"Why is gutenberg logging about the other plugins?" (operator,
+    2026-09-18). The fair-share lines cover every collection and are
+    stored in the first collection's manifest, so the stdout line and the
+    System log both named that collection as their subject."""
+    c = collections_mod.default_collection()
+    con = db.connect(c)
+    db.log_event(con, "info", "sched", "index — a: 50%; b: 50%")
+    db.log_event(con, "info", "fts", "indexed 3 documents")
+    out = capsys.readouterr().out
+    assert "[node info:sched]" in out
+    assert f"[{c.name} info:fts]" in out, "a collection's own line still names it"
+    tagged = {e["stage"]: e["collection"] for e in web._recent_events_all()}
+    assert tagged["sched"] == "node" and tagged["fts"] == c.name

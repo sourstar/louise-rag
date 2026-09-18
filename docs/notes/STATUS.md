@@ -2548,6 +2548,23 @@ translated only the first 420 characters of an entry.
   58–84 s. A page of twelve takes minutes of model time whatever the
   order. Hence the streaming, and the answer before the entries.
 
+**Deployed 2026-09-18 ~15:20 UTC (732e22d, image `b1674ab…`).** The node
+suite passed on the staged tree (2,841). Web and worker run one image.
+The node's `OLLAMA_URL` is now `CHAT_URL`, with the value kept. Live:
+- The morning's query now went out in 19 languages, English included.
+  Total 37.6 s with the encoders busy, of which the language plan was
+  28.6 s (the morning: 27.7 s in total).
+- "…, solo testi in tedesco" returned `only: de` and ten German hits, in
+  13.3 s.
+
+**The `[sched]` lines are the node's.** "Why is gutenberg logging about
+the other plugins?" The fair-share lines cover every collection. The
+stats thread writes them through `collections[0]`'s manifest, and the node
+has no event log of its own. So they were printed and listed as
+gutenberg's, the first collection since genome left. `db.NODE_STAGES` now
+labels them `node` on stdout and in the System log. Where they are
+stored is unchanged; `tools/sched_report.py` already read them that way.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
