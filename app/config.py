@@ -24,9 +24,19 @@ DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"
 LANCE_DIR = DATA_DIR / "lancedb"
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434").rstrip("/")
-# Optional separate Ollama instance for embeddings (parallel slots, small ctx).
-EMBED_URL = (os.getenv("EMBED_URL") or OLLAMA_URL).rstrip("/")
+# The chat model's endpoint — named for what it serves (docs/07 §7.8: CHAT_URL,
+# beside EMBED_URL and RERANK_URL), not for the server behind it (operator,
+# 2026-09-18). OLLAMA_URL, its old name, is still read so a node whose
+# environment says OLLAMA_URL keeps its chat model until it is renamed.
+def _chat_url() -> str:
+    return (os.getenv("CHAT_URL") or os.getenv("OLLAMA_URL")
+            or "http://host.docker.internal:11434").rstrip("/")
+
+
+CHAT_URL = _chat_url()
+# The encoder of last resort: a collection's own [encoder], then its
+# plugin's platform.toml [encoder_defaults.<plugin>], then this.
+EMBED_URL = (os.getenv("EMBED_URL") or CHAT_URL).rstrip("/")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding-8k:latest")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen3.6-35b-a3b:latest")
 RERANK_URL = os.getenv("RERANK_URL", "")  # optional TEI-style /rerank endpoint; empty = disabled

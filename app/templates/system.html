@@ -5,12 +5,12 @@
 
 <div class="panel">
   <h2>Effective configuration</h2>
-  <div class="note">Tier 1 — env (restart to change):</div>
+  <div class="note">Tier 1 — env, what is global to the node (restart to change); what each collection runs is Tier 2:</div>
   <table><tr><th>key</th><th>value</th></tr>
     {% for k,v in effective.tier1.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
   <div class="note" style="margin-top:12px">Tier 2 — collections/*.toml (file value):</div>
-  <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th><th>embed recipe</th><th>reranker</th></tr>
+  <table><tr><th>collection</th><th>plugin</th><th>profile</th><th>embed_mode</th><th>acquire_enabled</th><th>license_ack</th><th>encoder — and who named it</th><th>reranker</th></tr>
     {% for c in effective.tier2 %}
     <tr><td>{{ c.collection }}</td><td>{{ c.plugin }}</td><td>{{ c.profile or '(default)' }}</td>
       <td>{{ c.embed_mode or '(default)' }}</td><td>{{ c.acquire_enabled }}</td><td>{{ c.license_ack }}</td>

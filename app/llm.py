@@ -12,7 +12,7 @@ def strip_think(text: str) -> str:
 def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
          num_ctx: int = 16384) -> str:
     with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
-        r = client.post(f"{config.OLLAMA_URL}/api/chat", json={
+        r = client.post(f"{config.CHAT_URL}/api/chat", json={
             "model": config.CHAT_MODEL, "messages": messages, "stream": False,
             "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
             "options": {"temperature": temperature, "num_predict": max_tokens,
@@ -28,7 +28,7 @@ def chat_stream(messages: list[dict], temperature: float = 0.3,
     if max_tokens is not None:
         options["num_predict"] = max_tokens
     with httpx.Client(timeout=config.LLM_TIMEOUT) as client:
-        with client.stream("POST", f"{config.OLLAMA_URL}/api/chat", json={
+        with client.stream("POST", f"{config.CHAT_URL}/api/chat", json={
             "model": config.CHAT_MODEL, "messages": messages, "stream": True,
             "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
             "options": options,

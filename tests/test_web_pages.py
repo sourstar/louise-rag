@@ -1035,3 +1035,52 @@ def test_the_answers_search_takes_the_same_counts(client, monkeypatch):
     r = client.post("/v1/chat/completions", json={
         "messages": [{"role": "user", "content": "q"}], "limit": 30, "rerank_depth": 60})
     assert r.status_code == 200 and seen == {"k": 30, "rerank_depth": 60}
+
+
+# ---------------- System: only what is global (operator, 2026-09-18) ----------------
+
+
+def test_tier_one_shows_only_what_is_global(isolated_config, monkeypatch):
+    """The page listed EMBED_MODEL, CHUNK_TOKENS, CHUNK_OVERLAP,
+    CHUNK_VERSION and CLEANING_VERSION as the node's, while each
+    collection's encoder comes from its own file or its plugin's defaults
+    and its chunker and cleaning from its Codex."""
+    tier1 = web._effective_config()["tier1"]
+    for gone in ("OLLAMA_URL", "EMBED_MODEL", "CHUNK_TOKENS", "CHUNK_OVERLAP",
+                 "CHUNK_VERSION", "CLEANING_VERSION"):
+        assert gone not in tier1, gone
+    for kept in ("CHAT_URL", "CHAT_MODEL", "EMBED_URL", "RERANK_URL", "ADMIN_TOKEN"):
+        assert kept in tier1, kept
+
+
+def test_the_env_fallbacks_say_who_reaches_them(isolated_config, monkeypatch):
+    import dataclasses
+    c = collections_mod.default_collection()
+    own = collections_mod.EmbedRecipe(url="http://gpu:30437", api="openai", model="qwen3-4b",
+                                      dtype="f16", ctx=8192)
+    rr = collections_mod.RerankRecipe(url="http://gpu:30447/v1/rerank", api="jina")
+    monkeypatch.setattr(config, "RERANK_URL", "http://env/rerank")
+
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [c])
+    eff = web._effective_config()
+    assert f"used by {c.name}" in eff["tier1"]["EMBED_URL"]
+    assert f"used by {c.name}" in eff["tier1"]["RERANK_URL"]
+    assert eff["tier2"][0]["embed_recipe"].endswith("— EMBED_URL")
+
+    named = dataclasses.replace(c, embed=own, reranker=rr)
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [named])
+    eff = web._effective_config()
+    assert "used by no collection" in eff["tier1"]["EMBED_URL"]
+    assert "used by no collection" in eff["tier1"]["RERANK_URL"]
+    assert eff["tier2"][0]["embed_recipe"] == "qwen3-4b @ http://gpu:30437 — collection file"
+
+
+def test_chat_url_is_the_name_and_ollama_url_is_still_read(monkeypatch):
+    """CHAT_URL is the name the documents give it (07 §7.8); a node whose
+    environment still says OLLAMA_URL must keep its chat model."""
+    monkeypatch.delenv("CHAT_URL", raising=False)
+    monkeypatch.setenv("OLLAMA_URL", "http://old:11434/")
+    assert config._chat_url() == "http://old:11434"
+    monkeypatch.setenv("CHAT_URL", "http://new:30068")
+    assert config._chat_url() == "http://new:30068", "the new name wins"
+    assert not hasattr(config, "OLLAMA_URL")

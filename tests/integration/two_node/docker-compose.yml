@@ -54,7 +54,7 @@ services:
     environment: &node_env
       DATA_DIR: /data
       CORPUS_DIR: /corpus
-      OLLAMA_URL: http://mock-embed:11434
+      CHAT_URL: http://mock-embed:11434
       EMBED_MODEL: mock-model
       EMBED_DTYPE: f32
       PYTHONPATH: /srv

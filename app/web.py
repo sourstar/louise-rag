@@ -2945,14 +2945,54 @@ def _reranker_label(recipe) -> str:
     return f"{recipe.model or '(model not named)'} @ {recipe.url} ({recipe.api})"
 
 
+def _encoder_label(c) -> str:
+    """The encoder the collection RUNS — `collections.recipe_for`, the one
+    resolution the worker and search use — and which tier named it. It
+    said "(node default)" for a plugin default and for EMBED_URL alike, and
+    named neither."""
+    try:
+        r = collections_mod.recipe_for(c)
+        where = ("collection file" if c.embed is not None
+                 else f"platform.toml [encoder_defaults.{c.plugin}]"
+                 if collections_mod.default_recipe_for_plugin(c.plugin) is not None
+                 else "EMBED_URL")
+    except ValueError as e:       # a malformed table: say so, never guess
+        return f"(unreadable: {e})"
+    return (f"{r.model} @ {r.url}" + (" (+query encoder)" if r.query_url else "")
+            + f" — {where}")
+
+
+def _falls_back(names: list[str]) -> str:
+    return ("used by " + ", ".join(names)) if names else \
+        "used by no collection — each names its own"
+
+
 def _effective_config() -> dict:
+    # ONLY WHAT IS GLOBAL (operator, 2026-09-18). The page listed
+    # EMBED_MODEL, CHUNK_TOKENS, CHUNK_OVERLAP, CHUNK_VERSION and
+    # CLEANING_VERSION as the node's, while each collection's encoder comes
+    # from its own file or its plugin's defaults and its chunker and
+    # cleaning from its Codex — a column of values that decided nothing it
+    # appeared to decide. What each collection runs is Tier 2, below. The
+    # two env fallbacks stay, saying whether any collection reaches them.
+    cols = collections_mod.load_all()
+    embed_users = []
+    for c in cols:
+        try:
+            if c.embed is None and collections_mod.default_recipe_for_plugin(c.plugin) is None:
+                embed_users.append(c.name)
+        except ValueError:      # a malformed platform.toml table is Tier 2's to show
+            continue
+    rerank_users = [c.name for c in cols if getattr(c, "reranker", None) is None]
     tier1 = {
-        "OLLAMA_URL": config.OLLAMA_URL, "EMBED_URL": config.EMBED_URL,
-        "EMBED_MODEL": config.EMBED_MODEL, "CHAT_MODEL": config.CHAT_MODEL,
-        "RERANK_URL": config.RERANK_URL or "(disabled)",
-        "CHUNK_TOKENS": config.CHUNK_TOKENS, "CHUNK_OVERLAP": config.CHUNK_OVERLAP,
-        "CHUNK_VERSION": config.CHUNK_VERSION, "FTS_VERSION": config.FTS_VERSION,
-        "EMBED_VERSION": config.EMBED_VERSION, "CLEANING_VERSION": config.CLEANING_VERSION,
+        "CHAT_URL": config.CHAT_URL,
+        "CHAT_MODEL": config.CHAT_MODEL,
+        "EMBED_URL": f"{config.EMBED_MODEL} @ {config.EMBED_URL} — the encoder of last "
+                     f"resort, {_falls_back(embed_users)}",
+        "RERANK_URL": (f"{config.RERANK_URL} — the reranker of last resort, "
+                       f"{_falls_back(rerank_users)}") if config.RERANK_URL
+                      else "(unset — a collection with no [reranker] keeps its fused order)",
+        "FTS_VERSION": config.FTS_VERSION, "EMBED_VERSION": config.EMBED_VERSION,
         "ENTITY_VERSION": config.ENTITY_VERSION, "FETCH_VERSION": config.FETCH_VERSION,
         "DISCOVER_INTERVAL_MIN": config.DISCOVER_INTERVAL_MIN,
         "ADMIN_TOKEN": "(set)" if config.ADMIN_TOKEN else "(unset — admin routes locked)",
@@ -2961,13 +3001,11 @@ def _effective_config() -> dict:
         "collection": c.name, "plugin": _plugin_label(c.plugin), "profile": c.profile,
         "embed_mode": c.embed_mode_default, "acquire_enabled": c.acquire_enabled,
         "license_ack": "(recorded)" if c.license_ack else "(none)",
-        "embed_recipe": (f"{c.embed.model} @ {c.embed.url}"
-                          + (" (+query encoder)" if c.embed.query_url else "")
-                          if c.embed else "(node default)"),
+        "embed_recipe": _encoder_label(c),
         # THE resolution search uses (collections.reranker_for): the
         # collection's [reranker], else RERANK_URL, else none
         "reranker": _reranker_label(collections_mod.reranker_for(c)),
-    } for c in collections_mod.load_all()]
+    } for c in cols]
 
     # platform.toml is the OTHER Tier-2 file (architecture-v2.md §14). Shown
     # separately from collections/*.toml because it is node-level, not
@@ -3010,7 +3048,7 @@ def _ping(url: str) -> bool:
 
 def _health_pings() -> list[dict]:
     endpoints: dict[str, list[str]] = {}
-    endpoints.setdefault(config.OLLAMA_URL, []).append("OLLAMA_URL")
+    endpoints.setdefault(config.CHAT_URL, []).append("CHAT_URL")
     endpoints.setdefault(config.EMBED_URL, []).append("EMBED_URL")
     if config.RERANK_URL:
         endpoints.setdefault(config.RERANK_URL, []).append("RERANK_URL")

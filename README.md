@@ -120,7 +120,9 @@ away from it.
 ## Configuration, in three tiers
 
 - **Tier 1 — env** (identity/infrastructure, restart to change): paths, ports,
-  `OLLAMA_URL`/`EMBED_URL`/`RERANK_URL`, `EMBED_MODEL`, version bumps
+  `CHAT_URL` (the chat model; `OLLAMA_URL` is its old name, still read), `CHAT_MODEL`,
+  `EMBED_URL`/`RERANK_URL` as the fallbacks behind each collection's own encoder
+  and reranker, `EMBED_MODEL`, version bumps
   (`CHUNK_VERSION`…), `ADMIN_TOKEN_FILE` (preferred; a path — wins over
   `ADMIN_TOKEN`), `NODE_KEY_PATH` (path to the Ed25519 node key — the key
   *location*, never key material).
@@ -168,7 +170,7 @@ The coordinator is optional and standalone:
    uses that tag with `pull_policy: never`).
 3. Apps → Discover → Custom App → Install via YAML → paste
    [`docker-compose.yaml`](docker-compose.yaml). Adjust the volume host paths,
-   `OLLAMA_URL` (LAN IP, not localhost) and set `ADMIN_TOKEN`.
+   `CHAT_URL` (LAN IP, not localhost) and set `ADMIN_TOKEN`.
 4. Open `http://<nas>:8742` → `/ask`.
 
 `/data` must be a **local** filesystem (SQLite WAL + LanceDB do not tolerate
