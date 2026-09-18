@@ -2648,6 +2648,34 @@ defects, one behind the other:
    embedded the documents itself, and its hits were rightly `local`.
    `config-consumer/` now sets it in the TOML.
 
+**The reader is translated as it is read** (operator, 2026-09-18). Opened
+from Ask with a language selected, it translates in this order:
+- what is on screen, with the panel's title;
+- then as many characters again below and above the view;
+- then, while scrolling, a screenful ahead in the direction of the scroll.
+
+Only one request is in flight at a time. If a request busy with text off
+screen is running when untranslated text comes into view, it is aborted
+and the visible text is requested instead. Text above the view that
+changes length would move the passage being read, so the page holds the
+view on its first visible unit, and the browser's own anchoring is off
+for the panel.
+
+Checked in headless Chromium, on the real page and a real 150-paragraph
+fragment, with the endpoint faked and every request recorded:
+- the first request was exactly the title plus the visible units;
+- the second was the window below and then above, and did not move the view;
+- scrolling down sent only text below, and scrolling up only text above;
+- a jump was asked for within 130 ms, and the busy request's text was
+  never painted;
+- changing the language started over from the screen, and "original"
+  restored every unit byte for byte.
+
+Over a long read, 40 of the 150 paragraphs were sent. The harness is in
+the session's scratchpad, not the repository: it needs Node and
+Chromium, which the toolchain does not have. The committed tests check
+the wiring (tests/test_web_pages.py).
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

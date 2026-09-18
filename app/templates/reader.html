@@ -5,7 +5,7 @@
    standalone (a tab of its own) and as the inner HTML of the Ask page's
    reader panel (?fragment=1). The text comes from the index stores, never
    from the corpus file. #}
-<div class="reader-doc" data-collection="{{ collection }}" data-book="{{ book_id }}">
+<div class="reader-doc" data-collection="{{ collection }}" data-book="{{ book_id }}" data-lang="{{ doc.header.lang }}">
   <div class="reader-head">
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
       <h2 style="margin:0">{{ doc.header.title }}</h2>

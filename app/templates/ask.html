@@ -76,7 +76,7 @@
    /read/<collection>/<id> for a new tab. #}
 <aside id="reader" style="display:none">
   <div id="reader-bar">
-    <span id="reader-title" class="note"></span>
+    <span><span id="reader-title" class="note"></span> <span id="reader-lang" class="note"></span></span>
     <span>
       <a id="reader-tab" href="#" target="_blank" rel="noopener" title="open in its own tab">↗</a>
       <button onclick="closeReader()" title="close">✕</button>
@@ -90,7 +90,11 @@
     display:flex;flex-direction:column}
   #reader-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line,#ccc)}
   #reader-bar button{padding:2px 8px}
-  #reader-content{overflow:auto;padding:12px 16px;flex:1}
+  /* the page holds the view itself while text above it is translated
+     (readerPaint): the browser's own anchoring would correct it twice */
+  #reader-content{overflow:auto;padding:12px 16px;flex:1;overflow-anchor:none}
+  #reader-lang{margin-left:8px}
+  #reader .translating{border-left:2px solid var(--lapis,#3a6ea5);padding-left:4px}
   .reader-chunk{white-space:pre-wrap;line-height:1.55;margin:0 0 12px}
   .reader-chunk.hl{background:rgba(246,196,83,.22);border-left:3px solid var(--brass);padding:6px 8px;border-radius:4px}
   .reader-body h3{margin:16px 0 6px}
@@ -267,6 +271,7 @@ async function applyLanguage(opts){
   const lang=selectedLang();
   const shortOnly=!!(opts&&opts.shortOnly);
   stopTranslating();
+  readerTranslate();        // the open document too, on its own request
   const mine=langToken;
   const units=[...document.querySelectorAll('#results .tr')];
   const a=document.getElementById('answer');
@@ -373,13 +378,196 @@ async function openReader(collection,book,cid,title){
   document.getElementById('reader-title').textContent=title||'';
   const url='/read/'+encodeURIComponent(collection)+'/'+encodeURIComponent(book)+(cid?'?hl='+encodeURIComponent(cid):'');
   document.getElementById('reader-tab').href=url;
+  readerStop(); rd.doc=null; readerNote('');
   panel.style.display='flex'; body.innerHTML='<div class="note">loading…</div>';
   try{
     const r=await fetch(url+(cid?'&':'?')+'fragment=1'); body.innerHTML=await r.text();
+    body.scrollTop=0;       // a new document starts at its top, not where the last one was left
     const hl=body.querySelector('.reader-chunk.hl'); if(hl)hl.scrollIntoView({block:'center'});
+    readerOpen();
   }catch(e){body.innerHTML='<div class="note">could not load the document: '+e+'</div>'}
 }
-function closeReader(){document.getElementById('reader').style.display='none'}
+function closeReader(){readerStop(); rd.doc=null; document.getElementById('reader').style.display='none'}
+
+// ---- the reader, translated as it is read ----
+//
+// THE RULE (operator, 2026-09-18): in another language the document in the
+// reader is translated too — what is on screen first, then as much text
+// again below and above it, then, as the reader scrolls, more in the
+// direction of the scroll. The least model time for a translation nobody
+// waits on: a whole book is never sent, only a window around the eyes.
+//
+// One request at a time, and WHAT IS ON SCREEN WINS: a request still busy
+// with text off screen gives way when untranslated text comes into view.
+// A paragraph above the view that changes length would move the text being
+// read, so the view is held on its first visible paragraph (readerPaint).
+const READER_MIN_CHARS=1200;   // the window's floor when little text is on screen
+const rd={doc:null,bar:null,units:[],src:'?',lang:null,token:0,ctl:null,inflight:new Set(),
+          missed:new Set(),same:new Set(),first:true,dir:1,lastTop:0,timer:null};
+
+// What the next request carries, as indices into the document's units: the
+// visible ones not yet translated; else the window beyond them — as many
+// characters as are on screen (READER_MIN_CHARS at least), below and above
+// at first, then only in the direction of the scroll. Pure: lengths and
+// flags in, indices out.
+function readerPlan(lens,pending,i0,i1,first,dir,minChars){
+  const vis=[];
+  for(let i=i0;i<=i1;i++)if(pending[i])vis.push(i);
+  if(vis.length)return {visible:true,units:vis};
+  let span=0; for(let i=i0;i<=i1;i++)span+=lens[i];
+  span=Math.max(span,minChars);
+  const out=[];
+  for(const d of (first?[1,-1]:[dir])){
+    let n=0;
+    for(let i=d>0?i1+1:i0-1; i>=0 && i<lens.length && n<span; i+=d){n+=lens[i]; if(pending[i])out.push(i)}
+  }
+  return {visible:false,units:out};
+}
+
+function readerNote(text){document.getElementById('reader-lang').textContent=text}
+
+function readerPending(u){
+  return !!u && !!u.dataset.orig && !!u.dataset.orig.trim() && u.dataset.tl!==rd.lang
+    && !rd.inflight.has(u) && !rd.missed.has(u) && !rd.same.has(u);
+}
+
+// [first, last] visible unit: the units are in document order, so a binary
+// search finds the first, and the walk stops at the bottom edge
+function readerVisible(){
+  const us=rd.units, box=document.getElementById('reader-content').getBoundingClientRect();
+  let lo=0, hi=us.length-1, first=us.length;
+  while(lo<=hi){const m=(lo+hi)>>1; if(us[m].getBoundingClientRect().bottom>box.top){first=m;hi=m-1}else lo=m+1}
+  let last=first-1;
+  while(last+1<us.length && us[last+1].getBoundingClientRect().top<box.bottom)last++;
+  return [first,last];
+}
+
+// Change a unit, keeping the text being read where it is: a unit above the
+// view that grows or shrinks moves everything below it, so the view follows
+// its first visible unit by exactly that much.
+function readerPaint(u,fn){
+  const c=document.getElementById('reader-content');
+  if(u===rd.bar || u.getBoundingClientRect().bottom>c.getBoundingClientRect().top){fn();return}
+  const a=rd.units[readerVisible()[0]], before=a?a.getBoundingClientRect().top:0;
+  fn();
+  if(a){const d=a.getBoundingClientRect().top-before; if(d){c.scrollTop+=d; rd.lastTop=c.scrollTop}}
+}
+
+function readerStop(){
+  rd.token++;
+  if(rd.ctl){rd.ctl.abort(); rd.ctl=null}
+  for(const u of rd.inflight)readerPaint(u,()=>restoreUnit(u));
+  rd.inflight.clear();
+}
+
+// the fragment is in and scrolled to the passage: its units, in the original
+function readerOpen(){
+  readerStop();
+  const c=document.getElementById('reader-content'), doc=c.querySelector('.reader-doc');
+  rd.doc=doc; rd.bar=document.getElementById('reader-title');
+  rd.src=((doc&&doc.dataset.lang)||'?').toLowerCase();
+  rd.units=doc?[...doc.querySelectorAll('.reader-head h2, .reader-body h3, .reader-chunk')]:[];
+  for(const u of [rd.bar,...rd.units]){
+    u.dataset.orig=u.textContent; u.dataset.otitle=''; delete u.dataset.tl;
+    u.removeAttribute('title'); u.classList.remove('translating');
+  }
+  rd.lang=null; rd.first=true; rd.dir=1; rd.lastTop=c.scrollTop;
+  readerTranslate();
+}
+
+// the drop-down's language, for the open document: a new language starts
+// over from what is on screen; the same one only carries on
+function readerTranslate(){
+  if(!rd.doc || document.getElementById('reader').style.display==='none')return;
+  const lang=selectedLang();
+  if(lang!==rd.lang){
+    readerStop();
+    rd.lang=lang; rd.missed=new Set(); rd.same=new Set(); rd.first=true;
+    for(const u of [rd.bar,...rd.units])if(u.dataset.tl && u.dataset.tl!==lang)readerPaint(u,()=>restoreUnit(u));
+  }
+  if(!lang || lang===rd.src){readerNote('');return}
+  readerPump();
+}
+
+function readerPump(){
+  if(!rd.doc || !rd.lang || rd.lang===rd.src)return;
+  const us=rd.units, [i0,i1]=readerVisible();
+  const plan=readerPlan(us.map(u=>u.dataset.orig.length),us.map(readerPending),
+                        i0,i1,rd.first,rd.dir,READER_MIN_CHARS);
+  if(rd.ctl){
+    if(!plan.visible)return;                          // the next pump takes it
+    for(let i=i0;i<=i1;i++)if(rd.inflight.has(us[i]))return;   // on screen already coming
+    readerStop();                                     // off-screen work gives way
+    return readerPump();
+  }
+  const units=plan.units.map(i=>us[i]);
+  if(readerPending(rd.bar))units.unshift(rd.bar);
+  if(!units.length){
+    rd.first=false;
+    readerNote('translated from '+rd.src+' as you read · the original on hover'
+               +(rd.missed.size?' · '+rd.missed.size+' passage(s) kept their original':''));
+    return;
+  }
+  readerRequest(units);
+}
+
+async function readerRequest(units){
+  const lang=rd.lang, src=rd.src, mine=++rd.token, ctl=new AbortController();
+  rd.ctl=ctl;
+  const groups=new Map();                  // one item per distinct text
+  for(const u of units){
+    rd.inflight.add(u);
+    let g=groups.get(u.dataset.orig);
+    if(!g){g={id:'r'+groups.size,text:u.dataset.orig,els:[]};groups.set(u.dataset.orig,g)}
+    g.els.push(u);
+  }
+  const byId=new Map([...groups.values()].map(g=>[g.id,g]));
+  readerNote('translating into '+lang+' as you read…');
+  const acc={}; let failed=false;
+  const settle=(u,fn)=>{rd.inflight.delete(u); readerPaint(u,fn)};
+  try{
+    const r=await fetch('/ask/translate/stream',{method:'POST',signal:ctl.signal,
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang,items:[...groups.values()].map(g=>({id:g.id,text:g.text,src}))})});
+    const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
+    for(;;){
+      const {done,value}=await reader.read(); if(done)break;
+      if(mine!==rd.token)return;
+      buf+=dec.decode(value,{stream:true});
+      let i; while((i=buf.indexOf('\n'))>=0){
+        const ln=buf.slice(0,i); buf=buf.slice(i+1); if(!ln.trim())continue;
+        let m; try{m=JSON.parse(ln)}catch(e){continue}
+        if(m.done){failed=!!m.failed; continue}
+        const g=byId.get(m.id); if(!g)continue;
+        if(m.delta!==undefined){
+          acc[m.id]=(acc[m.id]||'')+m.delta;
+          for(const u of g.els)readerPaint(u,()=>{u.textContent=acc[m.id]; u.classList.add('translating')});
+        }else if(m.text!==undefined){
+          // the same text back (a name, a numeral) is done too: never asked again
+          for(const u of g.els){settle(u,()=>markTranslated(u,m.text,lang)); if(u.dataset.tl!==lang)rd.same.add(u)}
+        }else if(m.missed){for(const u of g.els){rd.missed.add(u); settle(u,()=>restoreUnit(u))}}
+      }
+    }
+  }catch(e){
+    if(mine!==rd.token)return;             // given way to text on screen, or closed
+    failed=true;
+  }
+  if(mine!==rd.token)return;
+  rd.ctl=null;
+  // what the stream never finished is not a translation — and not asked again
+  for(const u of units)if(rd.inflight.has(u)){rd.missed.add(u); settle(u,()=>restoreUnit(u))}
+  if(failed){readerNote('translation into '+lang+' unavailable — showing the original');return}
+  readerPump();
+}
+
+function readerScrolled(){
+  const c=document.getElementById('reader-content'), d=c.scrollTop-rd.lastTop;
+  rd.lastTop=c.scrollTop;
+  if(!d || !rd.doc)return;
+  rd.dir=d>0?1:-1; rd.first=false;
+  if(!rd.timer)rd.timer=setTimeout(()=>{rd.timer=null; readerPump()},120);
+}
+document.getElementById('reader-content').addEventListener('scroll',readerScrolled,{passive:true});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeReader()});
 // [n] in the answer opens hit n in the reader
 function linkCitations(){

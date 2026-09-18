@@ -1000,6 +1000,39 @@ def test_the_page_names_a_language_restriction_and_a_failed_plan():
     assert "only:" not in html and "not translated" not in html
 
 
+def test_the_reader_fragment_names_its_language():
+    # the reader translates FROM the document's language; without it every
+    # document read as unknown, and one already in the target was sent anyway
+    tpl = web.TEMPLATES.env.get_template("reader.html")
+    doc = {"header": {"title": "T", "reference": "r", "lang": "de", "origin_url": None,
+                      "text_from": "lexical index"},
+           "chunks": [{"seq": 0, "chunk_id": "b:0", "chapter": "", "text": "Ein Satz."}]}
+    html = tpl.render(fragment=True, doc=doc, highlights=[], collection="c", book_id=1,
+                      plugin_label="Gutenberg")
+    assert 'data-lang="de"' in html and 'class="reader-chunk"' in html
+
+
+def test_the_reader_is_translated_as_it_is_read(client):
+    """"I want also that text to be translated, the visible part first, then
+    the same amount of text on bottom and top, then as I scroll, more text is
+    translated in the direction of the scrolling" (operator, 2026-09-18).
+    The behaviour was checked in headless Chromium (STATUS); here, that the
+    page is wired to do it."""
+    js = client.get("/ask").text
+    opener = js[js.index("async function openReader("):js.index("function closeReader(")]
+    assert opener.index("fragment=1") < opener.index("readerOpen();"), "once the text is in"
+    assert "readerStop()" in js[js.index("function closeReader("):js.index("function readerPlan(")]
+    apply = js[js.index("async function applyLanguage("):js.index("// ---- reader panel ----")]
+    assert "readerTranslate();" in apply, "the drop-down reaches the open document"
+    plan = js[js.index("function readerPlan("):js.index("function readerNote(")]
+    assert "if(vis.length)return" in plan, "what is on screen first"
+    assert "first?[1,-1]:[dir]" in plan, "both sides at first, then the scroll's side"
+    assert "addEventListener('scroll',readerScrolled" in js
+    assert "overflow-anchor:none" in js, "the view is held by the page alone"
+    request = js[js.index("async function readerRequest("):js.index("function readerScrolled(")]
+    assert "'/ask/translate/stream'" in request
+
+
 def test_the_fan_out_badge_counts_in_good_english():
     # "fan-out: 1 main languages" was live for `Rilke lang:de` (2026-09-18)
     tpl = web.TEMPLATES.env.get_template("_ask_results.html")
