@@ -612,32 +612,26 @@ between. The 895 expert questions are the honest metric; the 169k generated
 ones are training-scale, and using them as the *test* set would measure
 agreement with the generator.
 
-**Availability: NOT VERIFIED — this is an open item, see §12.4.** What is
-established: the paper is in the ACL Anthology
-(`2026.findings-eacl.221`), and a Hugging Face organisation `jurifindit`
-exists and has published at least one artifact from the work
-(`jurifindit/DAR-legal-it`, §7.1). What could **not** be established from
-this session — the egress policy blocks every page fetch, so only search
-summaries were readable — is the dataset's own repository URL, its licence,
-and its file format. The per-entry description implies a JSON/JSONL
-question file plus an article collection, i.e. a conventional qrels shape,
-**but that is inference, not verification.** Do not plan the pilot around
-it until someone has actually opened the page.
+**Availability: VERIFIED 2026-09-20 — published and in use; see §12 item 6
+for the full shape.** `jurifindit/JuriFindIT` on the Hub, parquet, four
+configs (`corpus` 23,617 · `questions` 716/179 · `synthetic` 21,469),
+**CC-BY-NC-SA-4.0**. The earlier draft of this paragraph inferred "a
+JSON/JSONL question file plus an article collection, i.e. a conventional
+qrels shape" and warned that this was inference. It was close but wrong in
+the way that mattered: the corpus is not a flat article list but an Akoma
+Ntoso **node tree** — placeholder nodes and all — so what counts as a
+retrievable document is a decision we make, not one the file makes for us,
+and it has to be made the same way for every candidate.
 
-Verification is three commands from any unrestricted machine:
+`tools/encoder_bakeoff.py` does the fetching, embedding and scoring.
 
-    # 1. does the org publish the dataset, and under what licence?
-    curl -s https://huggingface.co/api/datasets?author=jurifindit | jq .
-    curl -s https://huggingface.co/api/models?author=jurifindit  | jq .
-    # 2. the paper's own data-availability statement and repo link
-    curl -sL https://aclanthology.org/2026.findings-eacl.221.pdf -o jurifindit.pdf
-
-**If it turns out not to be downloadable**, the fallback is not "give up on
-measuring" — it is a smaller, hand-built set, and the plugin's own corpus
-makes that cheap: ~50–100 questions written against known articles of the
-codice civile and the CAD, with the article ID as ground truth. Lower
-statistical power, same shape, and it is the set we would want anyway
-(§7.2's third bullet). Secondary signals, both also unverified for
+**Had it not been downloadable**, the fallback would not have been "give up
+on measuring" — a smaller, hand-built set, ~50–100 questions written
+against known articles of the codice civile and the CAD with the article ID
+as ground truth. Lower statistical power, same shape, and it is the set we
+would want anyway (§7.2's third bullet) as a check that the public set's
+question style is not the only thing a winner is good at. Secondary
+signals, both still unverified for
 availability: **IT-RAG-Bench** (synthetic Italian, includes codice civile
 articles) and the **NLLP 2023** 363k-title classification corpus (§1.4),
 which is not retrieval but does give labelled Italian legislative text.
@@ -1153,12 +1147,37 @@ unresolved problems, both of which is why §2 puts it second:
    today, CC BY 4.0, structured AKN. The GU issue stream, Au.G.U.Sto and
    EUR-Lex were all considered and declined for now — recorded in §1 and
    §10 so they are not re-discovered as opportunities.
-6. **Verify JuriFindIT's availability, licence and format** (§7.2), from a
-   machine that can actually fetch pages. This gates the encoder bake-off:
-   with it, the choice is measured on article-level ground truth; without
-   it, the fallback is a hand-built 50–100 question set and the decision
-   rests on weaker evidence. Same visit answers §7.3's open fields for
-   `jurifindit/DAR-legal-it` (base model, dimension, licence).
+6. ~~**Verify JuriFindIT's availability, licence and format**~~ **RESOLVED
+   2026-09-20 — it is published, and the bake-off is built.**
+   `jurifindit/JuriFindIT` on the Hub, parquet, **CC-BY-NC-SA-4.0** (a
+   gated class: invariant 9 wants an ack before use). Four configs:
+   `corpus` 23,617 nodes, `questions` train 716 / validation 179 — the
+   895 expert questions, split — and `synthetic` 21,469.
+   `questions.relevant_doc_ids` is a LIST of corpus ids: **4.49 per
+   question on average, up to 128**, so recall@k and hit-rate are
+   different numbers and only the first is comparable to anything
+   published. The corpus is an Akoma Ntoso node tree, not a flat article
+   list — 159 rows are `<< file root node >>` placeholders and one node is
+   1.13 M characters, so a truncation policy is part of the measurement
+   and has to be identical across candidates.
+   §7.3's open fields are answered too: `jurifindit/DAR-legal-it` is
+   **305 M parameters, dim 768**, GTE architecture on
+   `Snowflake/snowflake-arctic-embed-m-v2.0`, `CachedMultipleNegativesRankingLoss`
+   over 24,661 pairs, `query: ` prefix — and **no licence is declared**,
+   which under `approved-encoders.md` bars it from owning a pinned space
+   until that is fixed, though not from being a reference row.
+   Its published validation scores: recall@10 **0.8037**, mrr@100
+   **0.7780**, ndcg@100 0.7459, map@100 0.7015. Note what is circulating
+   elsewhere as "77.80 for DAR+GIR" is this plain dense model's own
+   mrr@100 — the graph pipeline is not what the released weights are.
+   `tools/encoder_bakeoff.py` runs the §7.2 procedure against RAGE.
+   Its metric code reimplements sentence-transformers'
+   `InformationRetrievalEvaluator` (invariant 7 keeps torch out of the
+   image) and is pinned by hand-computed tests. **Still open:
+   DAR-legal-it's row is its published table, not a run of ours** — the
+   authors' truncation and their handling of the placeholder nodes are
+   unrecorded, so that row is a reference until the model is served here
+   and run through the same path.
 7. ~~**Fetch the corpus as *vigente-at-fetch-time*, or as *originaria + the
    modification graph*?**~~ **RESOLVED 2026-08-26 by ELI compliance**
    ([`eli-legal-plugins.md`](eli-legal-plugins.md) §5.1). It was only a
