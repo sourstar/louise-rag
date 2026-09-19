@@ -247,7 +247,10 @@ red-class result.
 Search continues over the certified subset of a collection marked
 *integrity violated* (§3.8), and over what the licence gate admits
 (§4.4); whatever either withholds is named in the response, per
-collection, as shards withheld and why — never a silent drop.
+collection, as shards withheld and why — never a silent drop. A copy in
+quarantine (§3.6) — not yet tested on this peer — enters no list, in
+either leg, and is named the same way: `shards` is `"all"` and the
+reason is the test or the acknowledgement it waits for.
 
 Facts are placed beside the lists, never in them. Every fact names the
 reference source and its `ref_version` (§6.5), the table, the canonical
@@ -291,7 +294,7 @@ louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
               as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
-       withheld: [{collection_id, shards, reason}], translations: [...]}
+       withheld: [{collection_id, shards, reason}], translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
     filters: {<facet field>: <value> | {not: <value>}}
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}

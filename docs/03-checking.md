@@ -181,11 +181,16 @@ is each a different run, and says so on its next answer.
 - **Searching**: the same runs, validated the same way. In a symmetric
   space the queries and the documents come from one run. An asymmetric
   space's query encoder is a run of its own, validated against the
-  query reference vectors (09 §9.12). A query answered by a run not yet
-  validated is used — a query vector is never published — and the gate
-  runs against that run meanwhile. A run that FAILS has its space's
-  vector leg withheld until a validated run answers, and the search
-  says so.
+  query reference vectors (09 §9.12). A run not yet tested answers no
+  query: while the gate runs against it — at once, and by itself — the
+  space's collections on this peer are in quarantine (§3.6), and an
+  answer that names such a run is discarded (operator, 2026-09-19;
+  until then a pending run's query vector was used, on the ground that
+  it is never published). A run that FAILS has been tested: its space's
+  vector leg is withheld until a validated run answers, the text leg
+  goes on, and the search says so — a peer that fails may still search
+  with what it holds (02 §2.4). An encoder that cannot be reached is a
+  deferral, and returns nothing to quarantine.
 
 An endpoint that states no run identity cannot be held to a validated
 run: a peer may search with it and writes nothing through it.
@@ -268,7 +273,10 @@ it flags nothing, and the image contributes nothing to that collection
 until it passes. Only a verifier running the Codex's own image, or an
 image with a passing equivalence attestation for the collection, can
 flag it (§3.6). A peer whose platform image is neither, for a
-collection it holds, searches and shares that collection and does not
+collection it holds, cannot run the origin check that lets a copy out
+of quarantine by itself — its failure would say nothing about the
+collection — so its operator decides (§3.6). The copy once in use, the
+peer searches and shares that collection and does not
 build its records, create its snapshots or contribute vectors to it
 until its own `records-vs-origin` and `chunks` pass under the image it
 runs; `hold collection show` says so and names the check to run.
@@ -350,7 +358,7 @@ an empty allow list, which is what an honest newcomer has (08 §8.1),
 admits every producer in existence. The deny side is not an admission
 rule either but a mute: a key this peer has explicitly denied is one it
 accepts no traffic from at all, bundles included (09 §9.2), and a
-quarantined key is one a proof of forgery burned. Only `hold vectors
+burned key is one a proof of forgery muted the same way. Only `hold vectors
 import --strict` reads the allow side about a bundle, and it is a local
 opt-in that admits nothing while the list is empty.
 
@@ -571,11 +579,15 @@ check `forgery` (09 §9.8) carrying the chunk id, the hash of the
 claimed vector, the hash of the recomputed vector and the encoder
 image, and for a red-class collection (04 §4.4) the record's
 `content_hash` in place of the chunk's text, which never travels. It
-**burns** the producer's key on the peer that found it: the key is
-quarantined there, its bundles are dropped from search — their chunks
+**burns** the producer's key on the peer that found it: its bundles
+are dropped from search — their chunks
 return to *without vectors* and the coverage map says so — and its
-attestations are not counted; the quarantine is permanent until an
-operator runs `hold key trust <key> --restore`. On every other peer the
+attestations are not counted; the burn is permanent until an
+operator runs `hold key trust <key> --restore`. (A burned key was
+also called *quarantined* until 2026-09-19. That word now means one
+thing, a copy not yet tested, §3.6; a key is *burned*, which is not
+*denied* — denying is an operator's act, and no command creates a
+burn.) On every other peer the
 proof is a claim until reproduced: a peer holding the record re-embeds
 the named chunk with its own compliant encoder, and a miss burns the
 key there too and yields its own proof; a peer that cannot re-embed
@@ -623,7 +635,7 @@ two honest peers running `roots` over the same shards must agree, and
 requiring them to differ would put `checked` out of reach for ever. A
 key is counted once. The trust list
 (`hold key trust`) is a local allow/deny filter over whose attestations
-are counted at all — a denied or quarantined key's are ignored — and is
+are counted at all — a denied or burned key's are ignored — and is
 never a weight: no key counts more than another, and an empty list
 counts everyone. A peer's own checks set its own level regardless of
 any list. There is no global consensus and no ballot to stuff. Keys
@@ -660,7 +672,9 @@ reproduce it — no origin, shard not held — shows it as a claim and
 counts it as a flag once two distinct keys report the same shard or
 the same chunks failing.
 
-A flagged collection stays searchable and is marked; its publisher's
+A flagged collection stays searchable and is marked — except on a peer
+whose OWN `records-vs-origin` failed on it, where the copy is in
+quarantine (below); its publisher's
 key loses standing on the peer that flagged it. A flag stands until a
 later snapshot passes the check that failed, or a corrective sister's
 defect is reproduced (below). Sybil resistance does not come from
@@ -702,6 +716,78 @@ parser that keeps more of the Gazzetta — states its case with a
 `space.evaluation` (02 §2.4). It is a claim, shown beside both
 collections; it moves no vectors, flags nothing and marks nothing
 superseded. Adoption decides (04 §4.6).
+
+**Quarantine: a peer's own tests come before any use** (operator,
+2026-09-19). A trust level says what strangers found. Quarantine says
+what THIS peer has found, and it comes first. Downloading a collection
+is its operator's decision; using it waits for the tests. A copy a peer
+holds is in one of three states, each DERIVED from what the peer holds
+— its attestations, its calibration statements, its acknowledgements —
+and written nowhere:
+
+| state | meaning | cleared by |
+|---|---|---|
+| **refused** | the copy cannot be right: the Codex's inner hash is not the id its file names, the vector table is not the Codex's space or width, the state database is another platform's (07 §7.8) | a person, and nothing else |
+| **quarantine** | the copy is not yet tested on this peer | the five tests below, by themselves; or the two acknowledgements |
+| **in use** | searched, extended and shared as its file says | — |
+
+A copy leaves quarantine when, on this peer:
+
+1. `roots` and `chunks` pass on every shard held;
+2. every vector bundle held passes T0, T1 and T2 (§3.5);
+3. the gate of §3.3 has RUN against the run its encoder states, and
+   against its query encoder's in an asymmetric space. A pass validates
+   the run; a failure withholds the vector leg and leaves the rest in
+   use (§3.3). What keeps a copy in quarantine is a run not yet tested;
+4. the licence acknowledgement exists where the class requires one
+   (04 §4.4);
+5. this peer's own `records-vs-origin` passes over the plan's sample
+   (§3.2) — the size the creator fixed, fetched within the peer's
+   budget (04 §4.3).
+
+All five are the peer's own work, against the Codex and the origin,
+needing nobody's word. They are possible because a copy carries what
+they need — the Codex with its calibration member, the signed snapshot
+with every shard's roots, the terms — which is also why a collection
+without them cannot be created (06 §6.6) and what makes one shareable:
+any peer that downloads it can test it.
+
+When the fifth CANNOT RUN — the origin is unreachable or past its
+bounded wait, or this peer's platform image is neither the Codex's nor
+equivalent (§3.4), so that its failure would say nothing about the
+collection — and the other four hold, the check is deferred and
+retried, and the peer asks its operator, showing what passed, what
+could not run and when it was last tried. `hold collection ack
+<collection> --origin-unchecked` records an informed decision, with its
+time and the peer's key, beside the licence acknowledgement, and the
+copy is then in use like any other, with no mark and no warning; `hold
+collection forget` rejects it. There is no timeout and no default, as
+there is none for a licence. The check still runs when it can, as it
+does on every copy in use, and the attestation the peer could not
+publish before is published then.
+
+While in quarantine a copy enters no search, in either leg, and the
+response names it as withheld with the reason (05 §5.3). It is not
+announced and not served; nothing is embedded for it, contributed to
+it, imported into it or certified. What goes on is what makes it
+testable: the fetch its operator asked for, the five tests, the gate.
+
+A copy RETURNS to quarantine in two cases. When its encoder states a
+run this peer has not tested — a model relaunched with another flag, a
+new image, a new driver — until the gate has run, which it does at
+once; every collection of that space on the peer goes with it. And
+when this peer's own `records-vs-origin`, under the Codex's image or an
+equivalent one, FAILS on a shard whose root matches the signed
+snapshot: the flag is published as above, and the copy is not used
+here until a person decides, because a copy that does not reproduce
+its origin is not one to search. A `roots` or `chunks` failure stays
+what this section already makes it, one shard's local fault. An
+encoder or an origin that cannot be reached is a deferral: it returns
+nothing to quarantine.
+
+`hold collection show` prints the state, every reason, and the test or
+the command that clears each (07 §7.8). Quarantine applies to a copy
+with a Codex: nothing else carries what the tests need.
 
 ## 3.7 Certified collections: the anchor and the seal
 

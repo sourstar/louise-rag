@@ -69,10 +69,11 @@ louise hold
               replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-weights D --engine FILE]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
+              ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes]                  stop holding: remove this peer's copy and its state
               list [--all]                                             collections held, by lineage; --all includes the dormant
-              show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, what refuses to start
+              show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
@@ -190,7 +191,17 @@ reader needs at the command line:
   The acknowledgement is written to the collection's state directory
   (§7.8). A yellow or red collection is not fetched, built, embedded,
   indexed, shared or searched until it exists: every such command exits
-  2 and names this one.
+  2 and names this one. `--origin-unchecked` is the other thing an
+  operator may acknowledge (03 §3.6): that this peer's own
+  `records-vs-origin` could not run — the origin unreachable, or this
+  platform image neither the Codex's nor equivalent (03 §3.4) — while
+  every other test of the copy passed. It prints what passed, what
+  could not run and when it was last tried, waits for consent as above,
+  and records the decision with its time and the peer's key beside the
+  licence acknowledgement; the copy is then in use like any other, with
+  no mark. It is refused (exit 2) while another test is still open or
+  has failed, and when the origin check has in fact run: a decision
+  stands in for a test that cannot run, never for one that failed.
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
   and the local state that goes with them; the Codex, this peer's
   attestations and anything another peer holds are untouched (01,
@@ -290,7 +301,9 @@ reader needs at the command line:
   keys of 04 §4.2, and returns; the node serves. With the node not
   running, exit 0 with a notice that nothing is served yet. What it
   publishes is exactly what `hold collection show` lists as held, never
-  more; `--stop` withdraws the announcement. It refuses (exit 2) a
+  more, and nothing of a copy that is refused or in quarantine (03
+  §3.6): what this peer has not tested it does not offer. `--stop`
+  withdraws the announcement. It refuses (exit 2) a
   `never-share` collection and announces a `restricted` one to trust-list
   peers only (04 §4.4). Sharing is automatic after a completed fetch for
   a `public` collection unless its file says `share = false`.
@@ -750,12 +763,24 @@ before the next embed. `hold config apply` is the same reload on demand
 and, with `--set`, the way a script or the web interface edits one value
 without opening the file; `--set` writes the file, then applies it.
 
-**Refuse-to-start is per collection.** A collection whose
+**A copy's state is per collection, and derived.** A copy is *refused*,
+in *quarantine* or *in use* (03 §3.6): computed at start and between
+rounds from what the peer holds, and stored nowhere.
+
+*Refused* — refuse-to-start — is a collection whose
 `drag/codex.json` has an inner hash other than its file's `codex`
 (09 §9.3), whose vector table's space or width
 is not its Codex's (02 §2.4), or whose state database carries a schema
-other than this platform's, is not served, not shared and not searched;
-the node keeps running its other collections, `node show` lists it, and
-`hold collection show` prints the reason. A missing acknowledgement is
-not this: the collection is held and withheld from every use until
-`hold collection ack` runs (04 §4.4).
+other than this platform's. Only a person clears it.
+
+*Quarantine* is a copy this peer has not finished testing: a check of
+03 §3.6 still open, an encoder stating a run not yet tested, a licence
+not acknowledged (04 §4.4), or an origin that could not be checked and
+awaits its operator's decision. It clears by itself as the tests pass,
+or by `hold collection ack` — for the licence, and with
+`--origin-unchecked` for the origin.
+
+Either way the copy is not served, not shared and not searched; the
+node keeps running its other collections, `node show` lists it with its
+state, and `hold collection show` prints every reason with the test or
+the command that clears it.

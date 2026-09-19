@@ -192,7 +192,7 @@ local, never signed, never sent:
 | `version` | `1` | yes | |
 | `allow` | list of keys | yes | keys whose attestations are counted when the list is used as an allow filter; empty means every key is counted. It is also what `hold vectors import --strict` consults locally (07 §7.3), the one place the allow side touches a bundle; a bundle's admission is otherwise 03 §3.5's ladder |
 | `deny` | list of keys | yes | keys whose attestations, digests and bundles are ignored |
-| `quarantined` | list of `{key, attestation, time}` | yes | keys burned on this peer by a proof of forgery (03 §3.5): `attestation` is the id of the `forgery` attestation; the entry is removed only by `hold key trust <key> --restore` |
+| `quarantined` | list of `{key, attestation, time}` | yes | keys burned on this peer by a proof of forgery (03 §3.5): `attestation` is the id of the `forgery` attestation; the entry is removed only by `hold key trust <key> --restore`. The field keeps the name it had when a burned key was called quarantined; in prose the word now means a copy not yet tested (03 §3.6), and a key is *burned* |
 
 A list is a filter over whose word is counted at all, never a weight
 (08 §8.1, 03 §3.6).
@@ -440,9 +440,14 @@ default (06 §6.6); the recipe is input, never hashed, never shared.
 hash, signatures: integer, held: boolean}], holdings: {slices: [...],
 kinds: [...], members: integer}, license: {class, acknowledged: boolean,
 time}, trust_level, certification: {certified_by, anchor_state} or null,
-vitality: "actively-held" · "dormant", refused: string or null}`; the
-last is the reason the collection is not served when refuse-to-start
-applies to it (07 §7.8).
+vitality: "actively-held" · "dormant", state: "refused" · "quarantine" ·
+"in-use", reasons: [string…], origin_check: "passed" · "pending" ·
+"acknowledged-unchecked" · "failed"}`. `state` is the copy's state on
+this peer (03 §3.6), derived when the command runs and stored nowhere;
+`reasons` is empty exactly when `state` is `"in-use"`, and otherwise
+names each test or acknowledgement the copy waits for, or why it is
+refused (07 §7.8). Until 2026-09-19 this object carried `refused:
+string or null` in their place.
 
 **Worked example.** The PubMed collection's Codex, abbreviated to the
 fields that carry its choices (every other field is present in the file):
