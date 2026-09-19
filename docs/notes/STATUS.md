@@ -2876,6 +2876,14 @@ completed.**
     also holds.
   - So the first boot after the deploy starts the pipeline about six
     minutes later, once. Reads, and so search, go on meanwhile.
+- **Deployed 09:28 UTC (1f2f219).** The first boot dropped gutenberg's
+  catalog in 0 s, pubmed's in 102 s (the live pages were warmer than the
+  clone's) and wikipedia's in 6 s. The pipeline threads started at
+  09:29:51, with no restart.
+  - Free inside the manifests afterwards: pubmed 15.7 GiB, wikipedia
+    1.3 GiB.
+  - pubmed's catalog leg, warm: 16–53 ms, as before. The first query of
+    each kind after the restart read the index cold (85 ms to 2.9 s).
 - A clone on ssd4 is swept into the hourly recursive snapshot. The first
   test clone was caught at 11:00 and its full send to tank (1.1 TiB) was
   aborted at 196 GiB. The partial copy, the clone and its snapshot were
