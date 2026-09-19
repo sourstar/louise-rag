@@ -16,7 +16,8 @@
   {% if d.sensors %}{% set s = d.sensors %}
   <div>{% if s.fans %}fan {{ s.fans|join(' / ') }} RPM{% endif %}
     {% for label, t in s.temps %} · {{ label }} {{ '%.0f'|format(t) }} °C{% endfor %}
-    {% if s.power_w is not none %} · {{ '%.0f'|format(s.power_w) }} W{% if s.power_cap_w %} of {{ '%.0f'|format(s.power_cap_w) }} W cap{% endif %}{% endif %}</div>
+    {% if s.power_w is not none %} · {{ '%.0f'|format(s.power_w) }} W{% if s.power_cap_w %} of {{ '%.0f'|format(s.power_cap_w) }} W cap{% endif %}{% endif %}
+    {% if s.clock_mhz is not none %} · clock {% if s.clock_mhz %}{{ s.clock_mhz }}{% if s.clock_max_mhz %} of {{ s.clock_max_mhz }}{% endif %} MHz{% else %}idle{% endif %}{% endif %}</div>
   {% endif %}
   {% if d.processes %}
   <table style="margin-top:8px"><tr><th>model</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
@@ -51,16 +52,4 @@
   <span class="note">{% if governor.pinned %}clock held at {{ governor.max_mhz }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ governor.max_mhz }} MHz while interactive work runs{% endif %}</span>
 {% endif %}
 </div>
-{% endif %}
-{% if history %}
-<table style="margin-top:8px" title="one sample a minute, kept by the GPU governor; a stuck fan is a high fan minimum in an hour that was idle and cool">
-  <tr><th>hour (UTC)</th><th>fan RPM</th><th>package °C</th><th>VRAM °C</th><th>power</th><th>idle</th><th>interactive</th></tr>
-  {% for h in history %}
-  <tr><td>{{ h.hour }}</td><td>{{ h.fan_min }}–{{ h.fan_max }}</td>
-    <td>{{ '%.0f'|format(h.pkg_max) if h.pkg_max is not none else '—' }}</td>
-    <td>{{ '%.0f'|format(h.vram_max) if h.vram_max is not none else '—' }}</td>
-    <td>{{ '%.0f W'|format(h.power_avg) if h.power_avg is not none else '—' }}</td>
-    <td>{{ '%.0f'|format(h.idle_pct) }}%</td><td>{{ '%.0f'|format(h.interactive_pct) }}%</td></tr>
-  {% endfor %}
-</table>
 {% endif %}

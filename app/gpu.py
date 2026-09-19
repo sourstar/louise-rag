@@ -34,12 +34,15 @@ class GpuProcess:
 class GpuSensors:
     """What the card's hwmon says: its fans (RPM), its temperatures (°C, by
     the driver's label: pkg, vram), its power over the last interval (W),
-    and its power cap (W). The xe driver exposes the fan read-only; nothing
-    here writes (docs/notes/scheduling.md §12, the stuck-fan issue)."""
+    and its power cap (W); and its clock now and at most (MHz, 0 = idle).
+    The xe driver exposes the fan read-only; nothing here writes
+    (docs/notes/scheduling.md §12, the stuck-fan issue)."""
     fans: tuple[int, ...] = ()
     temps: tuple[tuple[str, float], ...] = ()
     power_w: float | None = None
     power_cap_w: float | None = None
+    clock_mhz: int | None = None
+    clock_max_mhz: int | None = None
 
     def temp(self, label: str) -> float | None:
         return next((t for name, t in self.temps if name == label), None)
@@ -107,7 +110,8 @@ def from_json(data: dict) -> GpuSnapshot:
             return None
         return GpuSensors(fans=tuple(s.get("fans", ())),
                           temps=tuple((n, t) for n, t in s.get("temps", ())),
-                          power_w=s.get("power_w"), power_cap_w=s.get("power_cap_w"))
+                          power_w=s.get("power_w"), power_cap_w=s.get("power_cap_w"),
+                          clock_mhz=s.get("clock_mhz"), clock_max_mhz=s.get("clock_max_mhz"))
     return GpuSnapshot(
         devices=tuple(
             GpuDevice(**{**d, "processes": tuple(GpuProcess(**p) for p in d.get("processes", ())),
@@ -156,9 +160,19 @@ def energy_uj(hwmon) -> int | None:
     return first
 
 
-def read_sensors(hwmon, *, power_w: float | None = None) -> GpuSensors | None:
+def gt_clock(device_dir) -> tuple[int | None, int | None]:
+    """The xe card's clock now and at most, in MHz: its first GT's
+    `act_freq` (0 while the GT sleeps) and `rp0_freq`. The first GT is the
+    render and compute one (on the Arc Pro B70, gt0 up to 2,800 MHz; gt1 is
+    media, up to 1,500). (None, None) for a driver without these files."""
+    freq = Path(device_dir, "tile0", "gt0", "freq0")
+    return _num(freq / "act_freq"), _num(freq / "rp0_freq")
+
+
+def read_sensors(hwmon, *, power_w: float | None = None,
+                 clock: tuple[int | None, int | None] = (None, None)) -> GpuSensors | None:
     """The card's fans, temperatures and power cap from its hwmon; the power
-    over an interval is the caller's (two `energy_uj` readings)."""
+    over an interval and the clock (`gt_clock`) are the caller's."""
     if hwmon is None:
         return None
     fans = tuple(v for v in (_num(f) for f in sorted(hwmon.glob("fan*_input"))) if v is not None)
@@ -174,7 +188,8 @@ def read_sensors(hwmon, *, power_w: float | None = None) -> GpuSensors | None:
         temps.append((label, value / 1000.0))
     cap = _num(hwmon / "power1_cap")
     return GpuSensors(fans=fans, temps=tuple(temps), power_w=power_w,
-                      power_cap_w=None if cap is None else cap / 1e6)
+                      power_cap_w=None if cap is None else cap / 1e6,
+                      clock_mhz=clock[0], clock_max_mhz=clock[1])
 
 
 def size(n: int | None) -> str:
@@ -205,41 +220,6 @@ def panel(url: str) -> dict:
         return {"state": "unreachable", "url": url,   # state, never the page's
                 "error": f"{type(e).__name__}: {e}"}
     return {"state": "ok", "url": url, "devices": snapshot.devices, "notes": snapshot.notes}
-
-
-_HISTORY_SQL = """
-    SELECT ts / 3600 AS hour, COUNT(*) AS n,
-           MIN(fan_rpm) AS fan_min, MAX(fan_rpm) AS fan_max,
-           MAX(temp_pkg) AS pkg_max, MAX(temp_vram) AS vram_max,
-           AVG(power_w) AS power_avg,
-           AVG(CASE WHEN act_mhz = 0 THEN 1.0 ELSE 0.0 END) AS idle,
-           AVG(interactive) AS interactive
-    FROM gpu_samples WHERE ts >= ? GROUP BY hour ORDER BY hour DESC"""
-
-
-def history(hours: int = 12) -> list[dict]:
-    """The card's last `hours`, by the hour, newest first, from the samples
-    the GPU governor keeps (app/gpu_governor.py). `idle` is the share of
-    samples that found the card idle; a stuck fan is a high fan_min in an
-    hour that was idle and cool. [] with no governor or no samples."""
-    import time as _time
-
-    from . import node_state
-    try:
-        if not node_state.path().is_file():
-            return []
-        with closing(node_state.connect()) as con:
-            if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                           "AND name='gpu_samples'").fetchone() is None:
-                return []
-            rows = con.execute(_HISTORY_SQL, (int(_time.time()) - hours * 3600,)).fetchall()
-    except Exception:   # noqa: BLE001 — a bad reading must not break the page
-        return []
-    return [{"hour": _time.strftime("%H:00", _time.gmtime(r["hour"] * 3600)),
-             "samples": r["n"], "fan_min": r["fan_min"], "fan_max": r["fan_max"],
-             "pkg_max": r["pkg_max"], "vram_max": r["vram_max"],
-             "power_avg": r["power_avg"], "idle_pct": 100.0 * (r["idle"] or 0.0),
-             "interactive_pct": 100.0 * (r["interactive"] or 0.0)} for r in rows]
 
 
 def governor() -> dict:

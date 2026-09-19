@@ -2,10 +2,9 @@
 
 The xe driver's known issue: after a workload the fan stays high until a GPU
 process restarts, and the driver exposes the fan read-only (no pwm). What can
-be done is to see it: the live fan, temperatures and power in the GPU panel,
-and a week of one-a-minute samples, summed by the hour, where a stuck fan is a
-high fan minimum in an hour that was idle and cool (operator, 2026-09-20; the
-workaround belongs to RAGE only).
+be done is to see it: the live fan, temperatures, power and clock in the GPU
+panel, and a week of samples every 10 s, kept for a widget to come and not
+shown yet (operator, 2026-09-19/20; the workaround belongs to RAGE only).
 """
 import time
 from contextlib import closing
@@ -69,8 +68,7 @@ def store(isolated_config):
     return node_state.path()
 
 
-def test_the_governor_keeps_a_week_of_samples_and_the_tab_sums_them_by_hour(
-        tmp_path, store, monkeypatch):
+def test_the_governor_keeps_a_week_of_samples(tmp_path, store, monkeypatch):
     h = _hwmon(tmp_path)
     freq = tmp_path / "freq0"
     freq.mkdir()
@@ -93,29 +91,73 @@ def test_the_governor_keeps_a_week_of_samples_and_the_tab_sums_them_by_hour(
     (freq / "act_freq").write_text("0\n")         # idle again
     sampler.record(False)
     with closing(node_state.connect()) as con:
-        assert con.execute("SELECT COUNT(*) FROM gpu_samples WHERE fan_rpm=9999").fetchone()[0] == 0
-    hours = gpu.history(12)
-    assert len(hours) == 1 and hours[0]["samples"] == 3
-    assert hours[0]["fan_min"] == 1910 and hours[0]["pkg_max"] == 73.0
-    assert hours[0]["idle_pct"] == pytest.approx(200 / 3)
-    assert hours[0]["interactive_pct"] == pytest.approx(100 / 3)
+        rows = con.execute("SELECT fan_rpm, act_mhz FROM gpu_samples ORDER BY ts, rowid").fetchall()
+    assert [tuple(r) for r in rows] == [(1910, 0), (1910, 2800), (1910, 0)], "the stale one is gone"
 
 
-def test_no_samples_no_history(tmp_path, isolated_config):
-    assert gpu.history() == []
+def test_a_sample_every_10_s_and_the_store_stops_growing_at_a_week(tmp_path):
+    """Operator, 2026-09-19: every 10 s, deleted after a decent time so the
+    disk is never flooded. A week at 10 s is 60,480 rows, 3.6 MB; a second
+    day of insert-and-prune through the governor's own `store` leaves the
+    row count and the file where they were."""
+    import sqlite3
+    assert config.GOVERNOR_SAMPLE_S == 10
+    every, keep = int(config.GOVERNOR_SAMPLE_S), int(config.GOVERNOR_HISTORY_DAYS * 86400)
+    path = tmp_path / "node.sqlite"
+    con = sqlite3.connect(path, isolation_level=None)
+    con.execute("PRAGMA journal_mode=WAL")
+    for stmt in gpu_governor.SAMPLES_SCHEMA:
+        con.execute(stmt)
+
+    def sample(ts):
+        return (ts, 1900 + ts % 200, 70.5 + ts % 10, 75.5, 180.25 + ts % 50, 2350, 0)
+
+    def size():
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return path.stat().st_size
+
+    t0 = 1_700_000_000
+    con.execute("BEGIN")
+    con.executemany("INSERT INTO gpu_samples VALUES (?,?,?,?,?,?,?)",
+                    (sample(t0 + i * every) for i in range(keep // every)))
+    con.execute("COMMIT")
+    week = size()
+    assert week < 5e6, f"a week at 10 s is {week / 1e6:.2f} MB"
+    con.execute("BEGIN")
+    for i in range(86400 // every):                   # one more day, sample by sample
+        gpu_governor.store(con, sample(t0 + keep + i * every))
+    con.execute("COMMIT")
+    assert con.execute("SELECT COUNT(*) FROM gpu_samples").fetchone()[0] == keep // every + 1
+    assert size() <= week * 1.05, "pruned pages are reused: the file does not grow"
+    con.close()
 
 
-def test_the_tab_shows_the_sensors_and_the_history(isolated_config):
+def test_the_clock_is_the_first_gts(tmp_path):
+    dev = tmp_path / "device"
+    for gt, act, rp0 in (("gt0", 2350, 2800), ("gt1", 0, 1500)):
+        f = dev / "tile0" / gt / "freq0"
+        f.mkdir(parents=True)
+        (f / "act_freq").write_text(f"{act}\n")
+        (f / "rp0_freq").write_text(f"{rp0}\n")
+    assert gpu.gt_clock(dev) == (2350, 2800), "render and compute, not media"
+    assert gpu.gt_clock(tmp_path / "amd") == (None, None)
+
+
+def _render(sensors, **extra):
     from app import web
     dev = gpu.GpuDevice(card="card0", pdev="0000:03:00.0", driver="xe", vendor_id="8086",
                         device_id="e223", vendor="Intel", name="Arc Pro B70",
-                        vram_total=None, vram_used=None,
-                        sensors=gpu.GpuSensors(fans=(1910,), temps=(("pkg", 73.0), ("vram", 78.0)),
-                                               power_w=181.4, power_cap_w=230.0))
-    body = web.TEMPLATES.get_template("_fragments/gpu.html").render(
-        state="ok", url="x", devices=(dev,), notes=(), governor=None,
-        history=[{"hour": "07:00", "samples": 60, "fan_min": 1900, "fan_max": 2000,
-                  "pkg_max": 45.0, "vram_max": 50.0, "power_avg": 60.0,
-                  "idle_pct": 100.0, "interactive_pct": 0.0}])
+                        vram_total=None, vram_used=None, sensors=sensors)
+    return web.TEMPLATES.get_template("_fragments/gpu.html").render(
+        state="ok", url="x", devices=(dev,), notes=(), governor=None, **extra)
+
+
+def test_the_tab_shows_the_live_reading_and_no_history(isolated_config):
+    body = _render(gpu.GpuSensors(fans=(1910,), temps=(("pkg", 73.0), ("vram", 78.0)),
+                                  power_w=181.4, power_cap_w=230.0,
+                                  clock_mhz=2350, clock_max_mhz=2800))
     assert "fan 1910 RPM" in body and "pkg 73 °C" in body and "181 W of 230 W cap" in body
-    assert "hour (UTC)" in body and "1900–2000" in body and "100%" in body
+    assert "clock 2350 of 2800 MHz" in body
+    assert "<table" not in body and "hour" not in body, "the history waits for its widget"
+    assert "clock idle" in _render(gpu.GpuSensors(fans=(713,), clock_mhz=0, clock_max_mhz=2800))
+    assert "clock" not in _render(gpu.GpuSensors(fans=(713,))), "no clock files, no clock"

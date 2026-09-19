@@ -212,9 +212,10 @@ GOVERNOR_POLL_S = float(os.getenv("GOVERNOR_POLL_S", "0.25"))
 GOVERNOR_HEARTBEAT_S = float(os.getenv("GOVERNOR_HEARTBEAT_S", "5"))
 GOVERNOR_STALE_S = float(os.getenv("GOVERNOR_STALE_S", "30"))
 # ...and the card's history it keeps (fan, temperatures, power, clock): one
-# sample a minute, a week of them, found under this /sys/class/drm.
+# sample every 10 s, a week of them (3.6 MB, flat once pruning starts;
+# measured 2026-09-19), found under this /sys/class/drm.
 GOVERNOR_DRM_DIR = os.getenv("GOVERNOR_DRM_DIR", "/sys/class/drm")
-GOVERNOR_SAMPLE_S = float(os.getenv("GOVERNOR_SAMPLE_S", "60"))
+GOVERNOR_SAMPLE_S = float(os.getenv("GOVERNOR_SAMPLE_S", "10"))
 GOVERNOR_HISTORY_DAYS = float(os.getenv("GOVERNOR_HISTORY_DAYS", "7"))
 # Interactive endpoints are unbounded unless named here, `url=n,url=n`:
 # bounding one is what makes the ladder order it (chat before translation

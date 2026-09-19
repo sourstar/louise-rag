@@ -30,9 +30,12 @@ at the maximum to be that, and rests at the hardware floor (`rpn_freq`).
 THE CARD'S HISTORY. Every GOVERNOR_SAMPLE_S it also records the card's fan,
 temperatures, average power since the last sample, its clock at that
 instant (0 when idle) and whether the claim was live, in `gpu_samples` in
-the node store, keeping GOVERNOR_HISTORY_DAYS. The xe driver's known issue
-is a fan that stays high after a workload, until a GPU process restarts.
-The history shows when it happens: a high fan on a cool, idle card. The
+the node store, keeping GOVERNOR_HISTORY_DAYS (a week at 10 s is 3.6 MB,
+and pruning on write keeps it there). Nothing shows it yet: the System tab
+shows only the live reading, and the history is kept for a widget to come
+(operator, 2026-09-19). The xe driver's known issue is a fan that stays
+high after a workload, until a GPU process restarts; in the history it is
+a high fan on a cool, idle card. The
 fan cannot be set from here (xe exposes it read-only); the workaround,
 restarting an engine, belongs to RAGE and only to RAGE (operator,
 2026-09-20: never restart other apps).
@@ -97,11 +100,18 @@ class Sampler:
             with closing(node_state.connect()) as con:
                 for stmt in SAMPLES_SCHEMA:
                     con.execute(stmt)
-                con.execute("INSERT INTO gpu_samples VALUES (?,?,?,?,?,?,?)", row)
-                con.execute("DELETE FROM gpu_samples WHERE ts < ?",
-                            (row[0] - int(config.GOVERNOR_HISTORY_DAYS * 86400),))
+                store(con, row)
         except Exception:   # noqa: BLE001
             pass
+
+
+def store(con, row: tuple) -> None:
+    """One sample in, and everything older than GOVERNOR_HISTORY_DAYS out.
+    Pruning on every write is what bounds the file: SQLite reuses the freed
+    pages, so the store stops growing once it holds a week."""
+    con.execute("INSERT INTO gpu_samples VALUES (?,?,?,?,?,?,?)", row)
+    con.execute("DELETE FROM gpu_samples WHERE ts < ?",
+                (row[0] - int(config.GOVERNOR_HISTORY_DAYS * 86400),))
 
 
 class Governor:

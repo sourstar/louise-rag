@@ -39,8 +39,8 @@ from pathlib import Path, PurePosixPath
 import threading
 import time
 
-from .gpu import (GpuDevice, GpuProcess, GpuSnapshot, energy_uj, hwmon_dir, read_sensors,
-                  to_json)
+from .gpu import (GpuDevice, GpuProcess, GpuSnapshot, energy_uj, gt_clock, hwmon_dir,
+                  read_sensors, to_json)
 
 PROC = Path("/proc")
 SYS_DRM = Path("/sys/class/drm")
@@ -396,7 +396,7 @@ def snapshot() -> GpuSnapshot:
         total, used = card_vram(card, driver, notes)
         pdev = dev.resolve().name
         hwmon = hwmon_dir(dev)
-        sensors = read_sensors(hwmon, power_w=card_power(pdev, hwmon))
+        sensors = read_sensors(hwmon, power_w=card_power(pdev, hwmon), clock=gt_clock(dev))
         found.append((card.name, pdev, driver, vendor_id, device_id,
                       vendor, name, total, used, sensors))
     per_card = scan()     # after every query has closed its descriptor
