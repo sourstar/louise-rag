@@ -149,3 +149,36 @@ used. On the query side, a mismatch should run the gate automatically
 §3 (purge in-flight slices on a mismatch), §4 (the gate keeps batch
 integrity) and §5's accepted run per variant are corrections, not
 choices. They go into the spec with the answers.
+
+## 9. Decided (operator, 2026-09-20; specs on main, dd9bef4)
+
+The operator set the three questions aside for a simpler model:
+**validate the model and its settings once, then be sure that what
+serves each answer is the validated one.** The model container is a
+trusted processing platform.
+- It computes a **run identity** from what it actually launched: the
+  image's running digest, the weights, the args and env, the device, and
+  the driver and runtime.
+- It states that identity on every answer (`Louise-Run`).
+- A vector is written only from an answer naming a validated run,
+  checked per answer, BEFORE the write.
+- A new run is validated automatically.
+- Written vectors carry no identity: the operator declined a schema
+  change for it, and none is needed, because nothing unvalidated is
+  ever written.
+
+How that settles this note:
+- §2, the cost: no fingerprint during production. It is taken once, at
+  validation, as evidence.
+- §3, the resume hole: closed. Slices are written only from validated
+  answers; a document may mix two validated runs, both within tolerance.
+- §4, batch integrity: the gate measures it (`batch_invariant`).
+- §5, one accepted run per space: a statement per run, automatic.
+- §6, queries: the same runs. A pending run serves queries; a failed
+  run withholds the leg.
+- New: `query_vectors` in the calibration member, so pubmed's MedCPT
+  query encoder can be validated at all.
+
+It depends on the model pool: only a front we run can state the run on
+each answer (model-pool.md §4). Until then the worker keeps
+`backend_gate`.

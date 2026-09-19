@@ -128,12 +128,11 @@ specs now say:
 - **The space.** `space_id` hashes the weights and the settings, never
   the engine. A newer engine or pool build joins by passing the gate
   (03 §3.3).
-- **The fingerprint.** A hash of the endpoint's vectors for 16 fixed
-  calibration texts, recorded at `embedder check --accept`. It is taken
-  again after every batch, and the batch commits only on equality. It
-  replaces `app/verify/backend_gate.py`'s probe baseline and its 0.995
-  cosine threshold. A pool that reloads a model with a different `cmd`
-  is caught at the next batch boundary.
+- **The fingerprint** — superseded on 2026-09-20 (dd9bef4, §8 below).
+  A run is validated once. The pool states the run on every answer, and
+  a vector is written only under a validated run. The fingerprint is
+  kept as evidence in the statement and is no longer taken after every
+  batch; that would have cost 12.5–17 s per commit on gutenberg.
 
 Code to follow on `louise`:
 - `app/hold/codex.py`: Codex version 3 and the new `space_id`;
@@ -171,3 +170,20 @@ The pool image with bge-m3 (llama.cpp) and DNABERT-2 (torch), each in
 - load, unload and the device swap are timed;
 - the vectors match today's endpoints within the calibration tolerance;
 - wikipedia's calibration gate passes through `/upstream/…`.
+
+## 8. The pool states the run on every answer (2026-09-20)
+
+Specs dd9bef4 (03 §3.3, 09 §9.12) make the pool the node's trusted
+processing platform.
+- For each engine it launches, it computes the run identity from what
+  actually runs: the image's digest resolved at launch (never a tag), the
+  weights file's digest (hashed once at load, cached by path, size and
+  mtime), the exact argv and env, the device, and the driver and runtime
+  versions.
+- It adds `Louise-Run: <run_id>` to every response, and describes a run
+  at `GET /louise/runs/<run_id>`.
+
+llama-swap does neither, as far as known (to verify). So the pool's
+front is ours: a thin proxy that launches through llama-swap or replaces
+it. That is the first piece to prove along with §7's bge-m3 and
+DNABERT-2.
