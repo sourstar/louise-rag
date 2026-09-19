@@ -604,7 +604,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
 
@@ -630,9 +630,10 @@ its encoder (`vectors build`, T3, T4) defers (exit 3). `TRANSLATE_URL`
 unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
-`[reranker]` of its own. Secrets are named by path only — the key,
-the token — never by value in an environment variable, a file, a log
-line or a message.
+`[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
+panel empty and says why, and nothing else changes. Secrets are named
+by path only — the key, the token — never by value in an environment
+variable, a file, a log line or a message.
 
 **`platform.toml`** — the node:
 
