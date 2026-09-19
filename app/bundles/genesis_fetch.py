@@ -59,15 +59,31 @@ def shard_files(archive: GenesisArchive, cache: Path, shard: str) -> list[tuple[
     return [(shard, cache / shard)]
 
 
-def resident_bytes(con, archive: GenesisArchive) -> int:
+def resident_bytes(con, archive: GenesisArchive, collection) -> int:
     """Bytes the archive's non-final shards hold (or will hold) on disk: a
     shard still fetching counts at the declared size hint, a landed one
-    at the larger of its real size and the hint."""
+    at the larger of its real size and the hint — IF ITS FILES ARE HERE.
+
+    THE DEADLOCK THIS CLOSES. This used to count every row in a resident
+    state from the ledger alone. `reopen_finals_for_range` turns a final
+    shard back into `applied`, and a final shard's files were deleted when
+    it finalised, so the reopened shard is due for a re-fetch
+    (`next_shard_to_fetch`). But its row counted here at the full hint, so
+    the fetcher saw the cache as full and fetched nothing, while the drain
+    walks only shards on disk and so had nothing to apply. Meanwhile
+    `_covered_ranges` kept the local encoder out of those ranges, because
+    they belonged to the archive again. Measured on pubmed 2026-09-19: all
+    37 shards reopened, "105 GiB of shards on disk" against a 24 GiB bound,
+    an empty cache directory, and 38,324 documents that nothing could
+    embed. The ledger and the disk disagreed, and this was the consumer
+    that believed the ledger (`genesis._on_disk` has the history)."""
     total = 0
     for r in con.execute(
-            "SELECT bytes FROM genesis_imports WHERE archive=? "
+            "SELECT shard, state, bytes FROM genesis_imports WHERE archive=? "
             f"AND state IN ({','.join('?' * len(RESIDENT_STATES))})",
             (archive.archive_id, *RESIDENT_STATES)):
+        if r["state"] != "fetching" and not _files_present(collection, archive, r["shard"]):
+            continue            # nothing here: a re-fetch is what it waits for
         total += max(int(r["bytes"] or 0), archive.shard_bytes)
     return total
 
@@ -269,7 +285,7 @@ def run_fetcher(con, collection, *, stop=None, fetch=None, log_state: dict | Non
         shard = next_shard_to_fetch(con, archive, collection=collection)
         if shard is None:
             break
-        resident = resident_bytes(con, archive)
+        resident = resident_bytes(con, archive, collection)
         if resident + archive.shard_bytes > config.GENESIS_CACHE_BYTES:
             reason = "cache full"
             if log_state.get("cache") != resident:

@@ -635,6 +635,42 @@ as an error, because in both cases every component was doing exactly what
 it was told. **When a stage can declare itself done, ask what can still
 become true afterwards — and make the thing that becomes true say so.**
 
+### The re-fetch never came — found and fixed 2026-09-19
+
+The reopen fixed nothing on the node: from the recheck of 2026-09-13
+onwards, pubmed's 38,324 were still unembedded six days later ("pubmed
+embedding never ends"). All 37 shards sat `applied` with `pending`
+unknown and due. Every shard's files had been deleted when it finalised,
+and the cache directory held 1 KB. Yet the fetcher logged "105 GiB of
+shards on disk waiting to finalise" against its 24 GiB bound, and fetched
+nothing.
+
+`resident_bytes` counted every row in a resident state **from the ledger
+alone**, at the 2.9 GiB size hint: 37 × 2.9 GiB came to 105 GiB for files
+that did not exist. So the three parts locked each other:
+- the fetcher would not fetch until a shard finalised;
+- the drain walks only shards on disk, so it had nothing to finalise;
+- `_covered_ranges` still gave the ranges to the archive, so the local
+  encoder skipped all 38,324.
+
+This is the `applied` + files-gone family a fourth time. `_on_disk` was
+written for the drain on 2026-09-11, and the cache bound was the one
+consumer of the pair that still believed the ledger.
+
+The fix: a landed shard counts against the cache only if its files are
+on disk. A shard still `fetching` counts at the hint, because its download
+is coming. The regression test goes from three shards final, deleted and
+reopened to every vector imported. On the old code it fails with exactly
+the live symptom, `{'fetched': [], 'reason': 'cache full'}`.
+
+Once this is deployed, the fetcher re-fetches the shards, up to eight on
+disk at a time, then applies, finalises and deletes each one. That is
+about 105 GiB from NCBI: about 3–4 h at the 7.5–10.8 MB/s measured on
+2026-09-11. The alternative was to let the local encoder embed the 38,324,
+also about 3 h at pubmed's last measured 3.3–4 documents/s. It was not
+taken, because the reopen design already chose the published vectors and
+the fix completes it.
+
 ### `embed = "off"` is not "stuck", and the log now says which
 
 Three "pubmed is stuck" reports in two days were the same line:

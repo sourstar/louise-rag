@@ -738,12 +738,12 @@ def _on_disk(collection, archive, shard: str) -> bool:
         return False
 
 
-def _cache_is_full(con, archive) -> bool:
+def _cache_is_full(con, archive, collection) -> bool:
     """True when no further shard can be fetched until one goes final —
     genesis_fetch's own condition, asked from this side."""
     try:
         from . import genesis_fetch
-        resident = genesis_fetch.resident_bytes(con, archive)
+        resident = genesis_fetch.resident_bytes(con, archive, collection)
         return bool(resident + (archive.shard_bytes or 0)
                     > config.GENESIS_CACHE_BYTES)
     except Exception:       # noqa: BLE001 — a stall check must never raise
@@ -791,7 +791,7 @@ def _remote_drain_order(shards, rows, now: int, collection=None,
     # soonest-due shard, at most once per GENESIS_MAX_WAIT_SEC, which
     # bounds the cost to one `pending` recount (~9.5 s on pubmed) per ten
     # minutes and only while stalled.
-    if not _cache_is_full(con, archive):
+    if not _cache_is_full(con, archive, collection):
         return []
     key = str(collection.manifest_path)
     if now < _forced_revisit.get(key, 0.0):

@@ -357,7 +357,7 @@ def test_fetcher_is_bounded_by_the_cache_and_the_license(collection, monkeypatch
     monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", 1500)
     first = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
     assert first["fetched"] == ["0"] and first["reason"] == "cache full", first
-    resident = genesis_fetch.resident_bytes(con, archive)
+    resident = genesis_fetch.resident_bytes(con, archive, declared)
     assert resident > 0
     monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", resident + 1000)
     second = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
@@ -474,7 +474,7 @@ def test_a_fetched_shard_applies_now_revisits_and_finalises(collection, monkeypa
     assert genesis.import_shard(con, declared, archive, "0", fetch=_fake_fetch(cache),
                                 revisit=True)["state"] == "already-applied"
     # the fetcher may now land the next shard in the freed cache slot
-    assert genesis_fetch.resident_bytes(con, archive) == \
+    assert genesis_fetch.resident_bytes(con, archive, declared) == \
         con.execute("SELECT bytes FROM genesis_imports WHERE shard='1'").fetchone()[0]
 
 
@@ -1026,7 +1026,7 @@ def test_a_full_cache_forces_one_backed_off_shard(monkeypatch):
         shards = ("3", "4")
 
     genesis._forced_revisit.clear()
-    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: True)
+    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a, c: True)
     monkeypatch.setattr(genesis, "_on_disk", lambda c, a, s: True)
     # nothing is due — without the forcing this is an empty round, forever
     got = genesis._remote_drain_order(shards, rows, 1000, _C(), _A(), object())
@@ -1051,7 +1051,7 @@ def test_a_cache_with_room_still_respects_the_backoff(monkeypatch):
         shards = ("3",)
 
     genesis._forced_revisit.clear()
-    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a: False)
+    monkeypatch.setattr(genesis, "_cache_is_full", lambda con, a, c: False)
     monkeypatch.setattr(genesis, "_on_disk", lambda c, a, s: True)
     assert genesis._remote_drain_order(["3"], rows, 1000, _C(), _A(), object()) == []
 
@@ -1183,6 +1183,50 @@ def test_a_final_shard_is_never_re_fetched(collection, monkeypatch):
         "INSERT INTO genesis_imports(archive,shard,source_url,state,updated_at,"
         "pending,next_pass_at) VALUES('test-arc','0','http://arc','final',0,0,0)")
     assert genesis_fetch.next_shard_to_fetch(con, archive, collection=declared) is None
+
+
+def test_reopened_final_shards_are_fetched_again_not_counted_as_on_disk(
+        collection, monkeypatch):
+    """THE DEADLOCK of 2026-09-19 (genesis_fetch.resident_bytes). Every
+    shard final with its files deleted, then fts crosses their ranges and
+    `reopen_finals_for_range` makes them all `applied` again. The cache
+    bound counted them from the ledger at the full size hint: "105 GiB of
+    shards on disk" over an empty directory, so the fetcher fetched
+    nothing, the drain had nothing on disk, and the ranges stayed the
+    archive's. On pubmed that stranded 38,324 documents. What counts is
+    what is on disk, so they come back one cache's worth at a time and
+    every vector arrives."""
+    from dataclasses import replace
+    from app import config as config_mod
+    con = db.connect(collection)
+    db.ensure_browse_index(con)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 10))
+    _write_medcpt_shard(cache, "1", range(10, 20))
+    _write_medcpt_shard(cache, "2", range(20, 21))
+    archive = _declared_archive(["0", "1", "2"], shard_bytes=1000)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts, timeout=300, recipe=None, query=False:
+                            _same_function_embed(texts))
+    monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", 1500)   # one shard at a time
+    declared = replace(collection, genesis_archive="test-arc")
+    for shard in ("0", "1", "2"):
+        con.execute(
+            "INSERT INTO genesis_imports(archive,shard,source_url,state,updated_at,"
+            "pending,next_pass_at,bytes) VALUES('test-arc',?,'http://arc','final',0,0,0,0)",
+            (shard,))
+    assert genesis.reopen_finals_for_range(con, declared, [str(i) for i in range(1, 21)]) \
+        == ["0", "1", "2"]
+    assert genesis_fetch.resident_bytes(con, archive, declared) == 0, "the directory is empty"
+
+    for shard, docs in (("0", 9), ("1", 10), ("2", 1)):
+        fetched = genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
+        assert fetched["fetched"] == [shard], fetched
+        result = genesis.drain_next_shard(con, declared)
+        assert result["shard"] == shard and result["docs"] == docs
+        assert result["state"] == "final", "nothing left waiting: files deleted, slot freed"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=0").fetchone()[0] == 0
 
 
 # --- the ledger counts in the flush's transaction (2026-09-14) ---------------
