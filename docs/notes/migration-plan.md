@@ -1123,8 +1123,8 @@ tests, and every pre-existing test stays green after each.
   a `chat` request is in flight and released after, restored on
   SIGTERM.
 - **13d — The image, and the first proof. BUILT ON THE NODE AND PUBLISHED
-  2026-09-19** (`ghcr.io/sourstar/rage@sha256:8ee29dfa…0489`, private
-  until the operator makes the package public; trial-built locally first,
+  2026-09-19** (`ghcr.io/sourstar/rage@sha256:8ee29dfa…0489`, PUBLIC and
+  verified by an anonymous pull; trial-built locally first,
   which found and fixed two defects — [`rage.md`](rage.md) §17). On the
   node, with the card and no model loaded: llama-server, torch XPU and
   OpenVINO all see the Arc Pro B70 from the image. **The proof with real

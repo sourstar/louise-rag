@@ -3153,9 +3153,11 @@ first half).** `ghcr.io/sourstar/rage@sha256:8ee29dfab3d7f8720cb48cb6b5367c1b176
 (tag `b10630-1`, 18.2 GB; the base's layers were mounted from
 ggml-org/llama.cpp, not uploaded). The login is a Docker config kept by
 path, `/mnt/ssd5/apps/louise-rage/secrets/docker` — root's own config
-was not touched. **The package is PRIVATE until the operator makes it
-public in its GitHub settings page; nothing else can.** Until then the
-image is not "obtainable" (02 §2.4) and no Codex should freeze it.
+was not touched. **The package is PUBLIC** (operator, 2026-09-19; GitHub
+offers no API for it): an anonymous pull by digest answers 200, the
+manifest's bytes hash to the digest, and a layer downloads — 32 blobs,
+6.32 GB compressed. So the image is "obtainable" (02 §2.4) and a Codex
+may freeze it.
 - **Settled on the node, with the card, no model loaded:** llama-server
   starts from `/srv` and lists `SYCL0: Intel(R) Arc(TM) Pro B70 Graphics
   (32656 MiB)`; torch 2.14.0+xpu, under the environment a torch model
