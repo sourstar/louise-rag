@@ -79,21 +79,26 @@ _INDEXED = "documents INDEXED BY idx_documents_scope"
 
 IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"
 
-#: What each node mode holds back, as the worker does it: `_paused` stands
-#: every stage down for paused and seed-only; `_acquire_only` stands down
-#: rdf, fts, embed and the archive's IMPORTS while fetching — the corpus
-#: and the archive's shards alike — carries on. `running` holds nothing,
-#: and a mode this does not know ('unknown') holds nothing either: better
-#: to report work as running than to invent a reason it is not.
-_HELD_BY_MODE = {
-    "paused": ("rdf", "fts", "embed", "archive"),
-    "seed-only": ("rdf", "fts", "embed", "archive"),
-    "acquire-only": ("rdf", "fts", "embed", "archive"),
-}
+#: What each node mode holds back — READ OFF THE ONE TABLE of what a mode
+#: runs (app/node_state.py: MODE_RUNS; operator, 2026-09-19), never a second
+#: list that could come to disagree with the worker. rdf is parsing; fts and
+#: the archive's imports are indexing; embedding runs only where everything
+#: does. `running` holds nothing, and a mode this does not know ('unknown')
+#: holds nothing either: better to report work as running than to invent a
+#: reason it is not.
+_STAGE_NEEDS = {"rdf": "parse", "fts": "index", "embed": "embed", "archive": "index"}
+
+
+def _held_by_mode(mode: str) -> tuple[str, ...]:
+    from . import node_state
+    if mode not in node_state.MODE_RUNS:
+        return ()
+    return tuple(stage for stage, needs in _STAGE_NEEDS.items()
+                 if not node_state.runs(mode, needs))
 
 
 def _held_reason(mode: str | None, stage: str) -> str:
-    if mode and stage in _HELD_BY_MODE.get(mode, ()):
+    if mode and stage in _held_by_mode(mode):
         # no "held" here: a HELD row prints its state word first, and the
         # live report read "held — held — the node is…" (staged check)
         return (f"the node is {mode}; this runs when the Library's "

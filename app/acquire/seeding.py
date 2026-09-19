@@ -33,13 +33,16 @@ import threading
 import time
 from pathlib import Path
 
-from .. import db
+from .. import db, node_state
 from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 
 TORRENT_PUBLISHED_KEY = "torrent_published"    # per collection
 SEEDING_TABLE_KEY = "seeding_table"            # on the control collection
-SEEDING_STATES = ("running", "acquire-only", "seed-only")   # worker states that seed
+#: the modes that seed — read off the one table of what a mode runs
+#: (app/node_state.py: MODE_RUNS), never a second list: "pause" seeds nothing
+SEEDING_STATES = tuple(state for state in db.WORKER_STATES
+                       if node_state.runs(state, node_state.SEED))
 
 
 def record_published(con, entry: dict) -> None:

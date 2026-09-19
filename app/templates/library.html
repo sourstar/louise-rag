@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Library — louise-rag{% endblock %}
 {% block content %}
+{# what the node's mode runs, from the one table the worker reads
+   (app/node_state.py); `worker_state` may be absent in a partial render #}
+{% set mode_scans = mode_runs(worker_state|default('running'), 'parse') %}
+{% set mode_fetches = mode_runs(worker_state|default('running'), 'fetch') %}
 <h1>Library</h1>
 <div class="panel">
   <span class="dot {{ 'running' if worker_state=='running' else 'paused' }}"></span>
@@ -10,22 +14,23 @@
        state it was NOT in, so the current mode was the one button that
        looked inactive. Selected is disabled too: you cannot switch to
        where you already are. #}
-    {% for mode, label in (('running', 'run everything'),
-                            ('acquire-only', 'download/seeding only'),
-                            ('seed-only', 'seeding only'),
-                            ('paused', 'pause')) %}
+    {# The four modes and what each runs come from ONE table, the one the
+       worker reads (app/node_state.py: MODE_RUNS). Embedding is not a
+       mode: where everything runs, each collection's own drop-down below
+       sets it, and no mode changes that setting. #}
+    {% for mode, label in mode_labels %}
     <button class="mode{{ ' selected' if worker_state==mode }}"
-            {% if worker_state==mode %}disabled aria-current="true"
-            title="the node is already in this mode"{% endif %}
+            {% if worker_state==mode %}disabled aria-current="true"{% endif %}
+            title="{{ mode_says[mode] }}{{ ' — the node is in this mode' if worker_state==mode }}"
             onclick="setWorkerState('{{ mode }}')">{{ label }}</button>
     {% endfor %}
-    {# Grey while paused because it would genuinely do nothing: the worker
-       loop returns at the pause gate before servicing discovery requests,
-       so the rescan would sit queued until the node runs again. #}
+    {# Grey wherever the mode parses nothing, because it would genuinely do
+       nothing: a scan is parsing, and only "run everything" parses. #}
     <button onclick="rescanAll()"
-            {% if worker_state in ('paused', 'seed-only') %}disabled
-            title="discovery does not run in this mode"{% endif %}>rescan all collections</button>
+            {% if not mode_scans %}disabled
+            title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan all collections</button>
   </div>
+  <div class="note">{{ mode_says.get(worker_state, '') }}</div>
 </div>
 
   <div class="note">counts: {% if counts_age < 5 %}fresh{% else %}up to {{ '%.0f'|format(counts_age) }}s old{% endif %} (cached 2 min)</div>
@@ -63,7 +68,7 @@
      what moves: data, compressed data, +extras. Details in Help. #}
   {% set fetch_what = ('compressed data' if c.fetched.containers else 'data') + ('+extras' if c.fetched.has_extras else '') %}
   {% set fetch_title = ('file count is archives, not documents. ' if c.fetched.containers else '') + 'green = complete, turquoise = running or scheduled, orange = on-demand only, grey = off/paused' %}
-  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif worker_state != 'paused' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
+  <div class="stage"><div class="lbl"><span title="{{ fetch_title }}"{% if c.fetched.complete %} style="color:var(--ok)"{% elif mode_fetches %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched ({{ fetch_what }})</span>
       <span{% if c.fetched.docs_total %} title="documents (files)"{% endif %}>{% if c.fetched.docs_total %}{{ (c.fetched.docs_done or 0)|num }} / {{ c.fetched.docs_total|num }} ({{ c.fetched.done|num }}/{{ fetch_total|num }}){% else %}{{ c.fetched.done|num }} / {{ fetch_total|num }}{% endif %}{% if c.fetched.has_extras %} <span title="extra formats — local only">(+ {{ c.fetched.extra_done|num }}/{{ c.fetched.extra_total|num }})</span>{% endif %}{% if c.stage_etas.fetch %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.fetch }}">({{ c.stage_etas.fetch }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*(c.fetched.docs_done or c.fetched.done)/(c.fetched.docs_total or fetch_total))|round(1) if (c.fetched.docs_total or fetch_total) else 0 }}%;background:var(--brass)"></span></div></div>
   {% else %}
@@ -181,7 +186,7 @@
        not numbers are "outside". An archive that declares no range keeps
        the ledger's count. Colors: green complete, turquoise moving or
        scheduled, grey paused. #}
-    <div class="stage"><div class="lbl"><span title="the archive's own download, behind the corpus on the link. green = all landed, turquoise = downloading or scheduled, grey = paused"{% if c.genesis.fetch_state == 'done' %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or (worker_state == 'running' and c.license.acquire_enabled) %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
+    <div class="stage"><div class="lbl"><span title="the archive's own download, behind the corpus on the link. green = all landed, turquoise = downloading or scheduled, grey = paused"{% if c.genesis.fetch_state == 'done' %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or (mode_fetches and c.license.acquire_enabled) %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
         <span>{{ c.genesis.fetched|num }} / {{ c.genesis.shard_total|num }} archive files{% if c.genesis.resident_bytes %} <span class="note" title="bounded by GENESIS_CACHE_BYTES">({{ (c.genesis.resident_bytes / 1073741824)|round(1) }} GB on disk)</span>{% endif %}</span></div>
       <div class="spine"><span style="width:{{ (100*c.genesis.fetched/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
     {% if c.genesis.in_range is not none and not c.counts_pending %}
@@ -256,7 +261,7 @@
     <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
     <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
     <button onclick="libReset('{{ c.name }}','fts')">reprocess lexical index</button>
-    <button onclick="libDiscover('{{ c.name }}')">rescan</button>
+    <button onclick="libDiscover('{{ c.name }}')"{% if not mode_scans %} disabled title="a scan is parsing, and this mode parses nothing"{% endif %}>rescan</button>
   </div>
   <div class="actions">
     {% if c.license.needs_ack %}

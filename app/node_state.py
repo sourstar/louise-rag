@@ -43,6 +43,63 @@ from . import config, db
 
 _SCHEMA = "CREATE TABLE IF NOT EXISTS control (key TEXT PRIMARY KEY, value TEXT)"
 
+# ---- what each mode runs -------------------------------------------------------
+#
+# THE ONE TABLE (operator, 2026-09-19: "I want to redefine the behavior"). A
+# mode is a statement of what the node does, and the Library's four buttons
+# are these four rows and nothing else:
+#
+#     pause                   nothing runs — no fetching, parsing, seeding,
+#                             indexing
+#     seeding only            seeding only
+#     download/seeding only   download and seeding only
+#     run everything          everything
+#
+# EMBEDDING IS NOT A MODE'S BUSINESS beyond this: it runs only where
+# everything runs, and THERE it is set per collection by its own drop-down
+# (`embed` in the collection's file: off, on-demand, all). No mode changes
+# that setting and no mode is changed by it.
+#
+# Before this, "download/seeding only" also SCANNED what it downloaded into
+# the manifest and kept the vector-index maintainer running — parsing and
+# indexing under a button that named neither — and a scan already running
+# ignored a pause until it ended (1,083 s on wikivec). Every gate in the
+# worker, the seeder, `louise health` and the Library now reads this table,
+# so they cannot come to disagree about what a mode means.
+FETCH, SEED, PARSE, INDEX, EMBED = "fetch", "seed", "parse", "index", "embed"
+
+#: PARSE is reading what was fetched: the discovery scan, rdf, the parse pool.
+#: INDEX is the text index (fts), the vector-index maintainer, and taking in
+#: vectors others computed (archive and bundle imports). EMBED is this node's
+#: own encoder, and only ever beside the other two.
+MODE_RUNS: dict[str, frozenset[str]] = {
+    "paused": frozenset(),
+    "seed-only": frozenset({SEED}),
+    "acquire-only": frozenset({FETCH, SEED}),
+    "running": frozenset({FETCH, SEED, PARSE, INDEX, EMBED}),
+}
+
+#: the Library's words for the four, in the order it shows them
+MODE_LABELS = (("running", "run everything"),
+               ("acquire-only", "download/seeding only"),
+               ("seed-only", "seeding only"),
+               ("paused", "pause"))
+
+MODE_SAYS = {
+    "running": "everything runs: fetching, seeding, parsing, indexing — and "
+               "embedding as each collection's own embed setting says",
+    "acquire-only": "download and seeding only: nothing is parsed, indexed or "
+                    "embedded; what lands is scanned when everything runs again",
+    "seed-only": "seeding only: nothing is fetched, parsed, indexed or embedded",
+    "paused": "nothing runs: no fetching, no parsing, no seeding, no indexing",
+}
+
+
+def runs(state: str, activity: str) -> bool:
+    """Does the node, in this mode, do this? A mode this does not know runs
+    nothing — the reading of an unreadable state everywhere else too."""
+    return activity in MODE_RUNS.get(state, frozenset())
+
 
 def path() -> Path:
     """Beside `collections/` under the one root — the same file

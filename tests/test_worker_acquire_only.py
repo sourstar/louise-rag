@@ -1,12 +1,16 @@
-"""The "download only" node mode.
+"""The "download/seeding only" node mode.
 
 The two halves of this system cost very differently: moving bytes is
 nearly free, while rdf/fts/embed run every core hot — enough to heat the
 room the node lives in. Turning embedding off used to mean editing every
 collection's embed mode and losing what each one was set to; pausing the
-worker stopped the downloads too. acquire-only keeps the corpus growing
-and stands the heavy stages down, restoring per-collection settings
+worker stopped the downloads too. acquire-only keeps the bytes moving
+and stands everything else down, restoring per-collection settings
 untouched when it is turned back off.
+
+Since 2026-09-19 "everything else" includes the SCAN of what was
+downloaded (operator: "download/seeding only: download/seeding only"):
+tests/test_node_modes.py holds that, and what each of the four modes runs.
 """
 import shutil
 import threading
@@ -57,8 +61,9 @@ def test_api_accepts_the_new_state(isolated_config, monkeypatch):
 
 def test_pipeline_thread_still_discovers_but_does_no_stage_work(collection,
                                                                  monkeypatch):
-    """The point of the mode: fetches keep being started and their results
-    picked up, while parse/index stand down."""
+    """The point of the mode: fetches keep being started — a discovery
+    request is what starts one — while parse/index stand down. What lands is
+    scanned when everything runs again (tests/test_node_modes.py)."""
     monkeypatch.setattr(config, "WORKER_IDLE_SLEEP", 0.05)
     con = db.connect(collection)
     con.execute("UPDATE documents SET rdf_done=0, fts_done=0")

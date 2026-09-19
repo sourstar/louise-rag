@@ -87,6 +87,13 @@ def _asset_version() -> str:
 
 
 TEMPLATES.env.globals["asset_v"] = _asset_version()
+# The node's four modes, their words and what each runs — the ONE table the
+# worker reads (app/node_state.py: MODE_RUNS), as template GLOBALS: a page
+# cannot be rendered without them, so a button cannot promise what the node
+# does not do, whoever builds the context.
+TEMPLATES.env.globals.update(mode_labels=node_state.MODE_LABELS,
+                             mode_says=node_state.MODE_SAYS,
+                             mode_runs=node_state.runs)
 # Dot-grouped digits ("4.020.578"): a comma reads as a decimal separator to
 # half the world — an operator read "+377,217/h" as 377.217 docs/h and
 # computed an 11-year ETA from a 4-day one. Dots as thousands separators,

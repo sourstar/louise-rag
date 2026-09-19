@@ -1661,8 +1661,11 @@ def _maintenance_allowed() -> bool:
     optimize for 485 s and went straight on to the next collection's —
     twelve Lance threads, ~9 cores. A Lance call already running cannot be
     interrupted; it finishes, and nothing new starts after it."""
+    # INDEX, by the one table of what a mode runs (app/node_state.py): it
+    # stands down in "download/seeding only" too, which it did not before
+    # 2026-09-19 — twelve Lance threads are not downloading or seeding
     return (not _stop.is_set()
-            and node_state.worker_state() not in ("paused", "seed-only"))
+            and node_state.runs(node_state.worker_state(), node_state.INDEX))
 
 
 def _index_maintainer() -> None:
@@ -1789,6 +1792,11 @@ def _finish_completed_acquires(cons, all_collections, last_discover,
             # passed the gate when it STARTED; the terms can change before
             # it ends (audit, 2026-09-13)
             if not _license_allows(cons[collection.name], collection, "corpus scan"):
+                continue
+            if _parse_held.is_set():
+                # download/seeding only: what landed is scanned when
+                # everything runs again (app/node_state.py: MODE_RUNS)
+                _owe_scan(collection.name)
                 continue
             db.log_event(cons[collection.name], "info", "discover",
                          "background fetch finished — scanning")
@@ -1962,8 +1970,22 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
     # binds the USE, not the route that reached it.
     if not _license_allows(con, collection, "corpus scan"):
         return
+    # A SCAN IS PARSING, and "download/seeding only" parses nothing
+    # (operator, 2026-09-19; app/node_state.py: MODE_RUNS). It is owed, not
+    # dropped: what landed meanwhile is scanned when everything runs again.
+    if _parse_held.is_set():
+        _owe_scan(collection.name)
+        return
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
-    stats = discovery.sync_collection(con, collection, stop=stop)
+    held = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
+    stats = discovery.sync_collection(con, collection, stop=held)
+    if held.fired is _parse_held:
+        # the mode changed under a running scan: it ended at its next ref,
+        # its progress committed and its cursor that far — and the rest is owed
+        _owe_scan(collection.name)
+        db.log_event(con, "info", "discover",
+                     "corpus scan stopped: the node's mode runs no parsing now; "
+                     "it goes on from here when everything runs again")
     if stats.get("added") or stats.get("changed"):
         db.log_event(con, "info", "discover",
                      f"picked up {stats.get('added', 0)} new, "
@@ -2073,16 +2095,13 @@ def _license_allows(con, collection, use: str) -> bool:
 
 
 def _discover(con, collection, reason: str, stop=None) -> None:
+    """Start what is to be fetched, then scan what is there. The two halves
+    answer to different activities of the node's mode (app/node_state.py):
+    the fetch runs wherever FETCH does, the scan only where PARSE does —
+    `_scan_only` holds that gate, so there is one."""
     _acquire(con, collection, reason)
     _acquire_archive(con, collection, reason)
-    if not _license_allows(con, collection, "corpus scan"):
-        return
-    db.log_event(con, "info", "discover", f"corpus scan ({reason})")
-    stats = discovery.sync_collection(con, collection, stop=stop)
-    if stats.get("added") or stats.get("changed"):
-        db.log_event(con, "info", "discover",
-                     f"picked up {stats.get('added',0)} new, "
-                     f"{stats.get('changed',0)} changed books")
+    _scan_only(con, collection, reason, stop=stop)
 
 
 # Discovery scans, one thread per collection at most, OFF the pipeline
@@ -2474,13 +2493,45 @@ def _run_one_step(con, collection, last_idle_log: dict,
 # the same manifest). The main loop keeps embed: GPU-serial ACROSS
 # collections is doctrine, and one owner enforces it.
 _pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
-_paused = threading.Event()          # set = worker paused via the control UI
-# set = "acquire-only": keep the corpus growing (discovery still runs, so
-# finished fetches are picked up and new ones start) but stand down the
-# CPU-heavy stages. Moving bytes is nearly free; rdf/fts/embed run every
-# core hot, which is a real consideration when the node lives in a room
-# someone sits in.
+_paused = threading.Event()          # set = the mode fetches nothing: paused, seed-only
+# set = "download/seeding only": the bytes keep moving and NOTHING reads
+# them — no scan, no rdf, no fts, no index maintenance, no embedding
+# (operator, 2026-09-19; app/node_state.py: MODE_RUNS). What lands is
+# scanned when everything runs again (`_scan_owed`). This mode used to go
+# on scanning, which is parsing under a button that says download. Moving
+# bytes is nearly free; the other stages run every core hot, which matters
+# when the node lives in a room someone sits in.
 _acquire_only = threading.Event()
+
+
+class _ParseHeld:
+    """`is_set()` while the node's mode runs no parsing. A STOP for a scan,
+    beside SIGTERM and the collection's removal: a scan already running when
+    the mode changes ends at its next ref, its progress committed and its
+    cursor exactly that far — it is resumable by construction — where a pause
+    used to wait for it to finish (1,083 s on wikivec)."""
+
+    def is_set(self) -> bool:
+        return _paused.is_set() or _acquire_only.is_set()
+
+
+_parse_held = _ParseHeld()
+#: collections whose corpus may have changed, or whose scan was cut short,
+#: while the mode ran no parsing: scanned when everything runs again
+_scan_owed: set[str] = set()
+_scan_owed_lock = threading.Lock()
+
+
+def _owe_scan(name: str) -> None:
+    with _scan_owed_lock:
+        _scan_owed.add(name)
+
+
+def _take_owed_scans() -> set[str]:
+    with _scan_owed_lock:
+        owed = set(_scan_owed)
+        _scan_owed.clear()
+    return owed
 
 # Discovery requests, drained by the owning collection's pipeline thread.
 #
@@ -3257,7 +3308,7 @@ def _note_pause_from_state(state: str) -> None:
     the comment at the call in `_stats_publisher`. Stopping late is the
     bug; resuming a round late is harmless, so this can only ever make the
     stop prompter, never make the node do work it was told not to."""
-    if state in ("paused", "seed-only"):
+    if not node_state.runs(state, node_state.FETCH):     # paused, seed-only
         _paused.set()
 
 
@@ -3498,13 +3549,13 @@ def run_forever():
             # happens; publishing is how the web process sees it.
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = node_state.worker_state(node_con)
-            if state in ("paused", "seed-only"):
-                # seed-only: downloads and processing stand down exactly
-                # like pause; what stays alive — serving peers (the web
-                # process, torrent seeding) — does not live in this loop,
-                # so the worker-side gating is identical. The distinct
-                # state exists so the UI says what the NODE is doing and
-                # so a future worker-managed seeder has a state to honor.
+            # WHAT A MODE RUNS is one table (app/node_state.py: MODE_RUNS;
+            # operator, 2026-09-19), read here and by every other gate.
+            if not node_state.runs(state, node_state.FETCH):
+                # paused, seed-only: nothing is fetched, parsed or indexed.
+                # What seed-only keeps alive — the seeder, on the stats
+                # beat — does not live in this loop, so the gating here is
+                # the same for both.
                 _paused.set()       # pipeline threads idle at the same gate
                 time.sleep(2)
                 continue
@@ -3512,13 +3563,28 @@ def run_forever():
             # Re-arm the fetches a pause stopped, BEFORE the interval check
             # below — without pipeline threads, that check is what runs them.
             _rearm_paused_aborts(all_collections, last_discover, pipeline, cons=cons)
-            # acquire-only: discovery and fetching continue (the pipeline
-            # threads still drain discovery requests), but rdf/fts stand
-            # down there and this loop skips embed/genesis/bundles below
-            if state == "acquire-only":
-                _acquire_only.set()
-            else:
+            # download/seeding only: fetching continues — the pipeline
+            # threads still drain discovery requests, which is what starts a
+            # fetch — and NOTHING reads what lands: the scan is owed
+            # (`_scan_only`), rdf/fts stand down on their threads, and this
+            # loop skips embed/genesis/bundles below
+            if node_state.runs(state, node_state.PARSE):
                 _acquire_only.clear()
+                # what landed, or was cut short, while nothing was parsed
+                owed = _take_owed_scans()
+                for collection in all_collections:
+                    if collection.name not in owed:
+                        continue
+                    if pipeline:
+                        _request_discovery(collection.name,
+                                           "landed while the node parsed nothing",
+                                           acquire=False)
+                    else:
+                        _scan_only(cons[collection.name], collection,
+                                   "landed while the node parsed nothing")
+                        last_discover[collection.name] = time.time()
+            else:
+                _acquire_only.set()
             if pipeline:
                 # after the pause gate: a paused worker starts no threads,
                 # and running ones idle on _paused
@@ -3557,7 +3623,7 @@ def run_forever():
                 _sync_embed_producers(all_collections)
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue
-            if state != "acquire-only":
+            if node_state.runs(state, node_state.INDEX):
                 servable = servable_collections(all_collections, pipeline)
                 serve = (_serve_rotation if config.SCHED_FAIR_SHARE
                          else _serve_in_order)

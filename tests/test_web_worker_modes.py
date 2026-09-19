@@ -65,21 +65,34 @@ def test_exactly_one_button_is_ever_selected(client):
         assert page.count('class="mode selected"') == 1, state
 
 
-def test_rescan_is_grey_only_while_paused(client):
-    """Greyed because it would genuinely do nothing: the worker loop
-    returns at the pause gate before servicing discovery requests, so the
-    rescan sits queued until the node runs again. A button that silently
-    queues is worse than one that says it can't."""
-    for state in ("paused", "seed-only"):
+def test_rescan_is_grey_wherever_the_mode_parses_nothing(client):
+    """A scan is PARSING, and only "run everything" parses (operator,
+    2026-09-19; app/node_state.py: MODE_RUNS). Greyed because it would
+    genuinely do nothing: in "download/seeding only" the scan is owed until
+    everything runs again, and in the two modes below it the worker does not
+    even take the request. A button that silently queues is worse than one
+    that says it can't. It was live in "download/seeding only" until then,
+    when that mode still scanned what it downloaded."""
+    for state in ("paused", "seed-only", "acquire-only"):
         node_state.set_worker_state(state)
         btn = _button(client.get("/admin/library").text, "rescan all collections")
         assert "disabled" in btn, state
-        assert "discovery does not run" in btn    # the title says why
+        assert "this mode parses nothing" in btn    # the title says why
 
-    for state in ("running", "acquire-only"):
+    node_state.set_worker_state("running")
+    btn = _button(client.get("/admin/library").text, "rescan all collections")
+    assert "disabled" not in btn
+
+
+def test_the_page_says_what_the_current_mode_runs(client):
+    """The words come from the table the worker reads, so a button cannot
+    promise what the node does not do."""
+    for state in MODES:
         node_state.set_worker_state(state)
-        btn = _button(client.get("/admin/library").text, "rescan all collections")
-        assert "disabled" not in btn, state
+        page = client.get("/admin/library").text
+        assert node_state.MODE_SAYS[state].split(":")[0] in page, state
+    for mode, label in node_state.MODE_LABELS:
+        assert f">{label}</button>" in page, label
 
 
 def test_the_css_gives_the_three_states_distinct_looks():
