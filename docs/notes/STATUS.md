@@ -3249,6 +3249,19 @@ parsing; it is owed and runs when everything does again), and the
 vector-index maintainer stands down there. And a scan already running
 now ends at its next ref when the mode stops parsing, where a pause used
 to wait for it (1,083 s on wikivec).
+- **WORK IN FLIGHT STOPS TOO — found by watching the node (412a5c7).**
+  After the first deploy, "download/seeding only" took no new document
+  and the two in flight went on: RAGE served 470 embedding requests in the
+  next 100 s, and the largest book is 5.3 h. Embedding now ends at its next
+  slice and an archive pass at its next row — the units SIGTERM already
+  had — deferred, never marked, resumed from what is written. Measured
+  on the node after the second deploy, embedding requests per 30 s:
+  153 running; 31 in the 10–40 s after the switch (the slice in flight);
+  **0** after that, with nothing at all in the worker's log; 108 within a
+  minute of "run everything" again, no error. Deployed 2026-09-19 night
+  (node time 22:00), the node's own test pass 3,179 green; way back
+  `src.old/` and the image tags `louise-rag:pre-modes` and
+  `louise-rag:v0.1.0-live`.
 - **The System tab's clock panel** read "GPU governor not running" after
   the cut-over, because it reads the retired app's heartbeat; with
   `RAGE_URL` set it asks RAGE (f8a6266). `GPU_PROBE_URL` is still what
