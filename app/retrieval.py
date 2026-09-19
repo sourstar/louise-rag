@@ -28,10 +28,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import httpx
-from . import (catalog, collections as collections_mod, config, db, dispatch, embeddings,
+from . import (catalog, collections as collections_mod, config, copy_state, db, dispatch,
+               embeddings,
                fts, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
+from .hold import runs as hold_runs
 
 RRF_K = 60
 ENTITY_BOOST = 1.0 / RRF_K   # one extra "virtual rank-1 vote" for a tagged hit
@@ -205,6 +207,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     reranker asked for its top N has N candidates to order. Returns
     {"catalog", "merged", "translations", "timings", "scope"}."""
     timings: dict[str, float] = {}
+    vector_leg: str | None = None      # why the vector leg was withheld, if it was
     scope = db.get_scope(con)
     if plan is None:
         plan = language_plan.plan(query, [collection], translate)
@@ -242,6 +245,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         # and an unreachable endpoint degrades via the except below.
         t0 = time.time()
         try:
+            # 03 §3.3: a run that FAILED the gate withholds this leg, and the
+            # text leg goes on — known before the encoder is even asked
+            vector_leg = copy_state.vector_leg_withheld(collection)
             # A5, now at the level of a request (docs/notes/scheduling.md
             # §12): the claim stands corpus embedding aside on the whole
             # device for as long as this query embeds, and the worker
@@ -251,8 +257,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 # the restriction is a PREFILTER (measured 2026-09-18: +0.8
                 # s at most, on wikipedia); a post-filter would return an
                 # empty leg whenever the top k were in other languages
-                lists.append(embeddings.search(core, k=limit, collection=collection,
-                                               langs=list(plan.only) or None))
+                if vector_leg is None:
+                    lists.append(embeddings.search(core, k=limit, collection=collection,
+                                                   langs=list(plan.only) or None))
+        except hold_runs.RunUnvalidated as e:
+            # the answer named a run not yet tested, or one that failed: its
+            # vector is discarded, and the response says so (05 §5.3: never
+            # a silent drop)
+            vector_leg = str(e)
         except Exception as e:
             db.log_event(con, "warn", "dense", f"dense search failed: {e}")
         timings["dense"] = round((time.time() - t0) * 1000, 1)
@@ -265,7 +277,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         merged.sort(key=lambda x: -x["rrf"])
 
     return {"catalog": catalog_hits, "merged": merged, "translations": plan.translations,
-            "timings": timings, "scope": scope}
+            "timings": timings, "scope": scope, "vector_leg": vector_leg}
 
 
 def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
@@ -381,10 +393,15 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     _attach_metadata_and_enqueue(con, collection, final)
 
     timings["total"] = round((time.time() - t_total) * 1000, 1)
-    return {"query": query, "mode": mode, "translations": partial["translations"],
-            "language": plan.summary(),
-            "catalog": partial["catalog"], "hits": final, "facts": [asdict(f) for f in facts],
-            "timings": timings, "reranked": reranked}
+    result = {"query": query, "mode": mode, "translations": partial["translations"],
+              "language": plan.summary(),
+              "catalog": partial["catalog"], "hits": final,
+              "facts": [asdict(f) for f in facts],
+              "timings": timings, "reranked": reranked}
+    if partial.get("vector_leg"):
+        result["legs_withheld"] = [{"collection": collection.name, "leg": "vector",
+                                    "reason": partial["vector_leg"]}]
+    return result
 
 
 def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
@@ -469,6 +486,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     per_collection: list[tuple] = []      # (collection, its merged list)
     translations: dict[str, str] = {}
     timings_per_collection: dict[str, dict] = {}
+    legs_withheld: list[dict] = []
     catalog: list[dict] = []
     for collection, partial, err in outcomes:
         if partial is None:
@@ -482,6 +500,9 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         per_collection.append((collection, merged))
         translations.update(partial["translations"])
         timings_per_collection[collection.name] = partial["timings"]
+        if partial.get("vector_leg"):
+            legs_withheld.append({"collection": collection.name, "leg": "vector",
+                                  "reason": partial["vector_leg"]})
         catalog.extend(partial["catalog"])
     collection_by_name = {c.name: c for c in collections}
 
@@ -535,10 +556,13 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     }
     timings["total"] = round((time.time() - t_total) * 1000, 1)
 
-    return {"query": query, "mode": mode, "translations": translations,
-            "language": plan.summary(),
-            "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
-            "timings": timings, "reranked": reranked}
+    result = {"query": query, "mode": mode, "translations": translations,
+              "language": plan.summary(),
+              "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
+              "timings": timings, "reranked": reranked}
+    if legs_withheld:
+        result["legs_withheld"] = legs_withheld
+    return result
 
 ANSWER_SYSTEM = (
     "You are a research assistant over a large multilingual library of "

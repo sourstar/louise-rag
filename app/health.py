@@ -120,6 +120,26 @@ def _withheld(collection) -> str:
             f"terms — invariant 9")
 
 
+def _copy_state(collection) -> tuple[str, str]:
+    """(what blocks embedding and imports, what to say about the copy) —
+    03 §3.6, from THE derivation (app/copy_state.py), the one the worker and
+    the search read. While the node only REPORTS quarantine the first is ""
+    and the second says what enforcing WOULD withhold, so the first of step
+    14's two deploys shows the operator the day it would bite before it does.
+    A health check never raises."""
+    try:
+        from . import copy_state
+        state = copy_state.of(collection)
+        if state.in_use:
+            return "", ""
+        why = f"{state.state}: " + "; ".join(state.reasons)
+        if copy_state.enforced():
+            return f"withheld: {why} — 03 §3.6", f"in {state.state}"
+        return "", f"in {state.state}, REPORTED ONLY (nothing is withheld): {why}"
+    except Exception as e:  # noqa: BLE001
+        return "", f"its state cannot be derived ({type(e).__name__}: {e})"
+
+
 @dataclass
 class Stage:
     name: str
@@ -181,6 +201,9 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
         return report
 
     withheld = _withheld(collection)
+    quarantined, said = _copy_state(collection)
+    if said:
+        report.note = (report.note + "   " if report.note else "") + said
     for name, where in _WAITING.items():
         try:
             waiting = con.execute(
@@ -194,7 +217,10 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
             report.stages.append(
                 Stage(name, 0, BLOCKED, f"cannot be counted: {type(e).__name__}: {e}"))
             continue
-        reason = withheld or (_embed_reason(collection, scope) if name == "embed" else "")
+        # a copy in quarantine is not embedded for; its records and its text
+        # index are what its tests read, and go on (03 §3.6)
+        reason = withheld or (
+            (quarantined or _embed_reason(collection, scope)) if name == "embed" else "")
         held = _held_reason(mode, name)
         if not waiting:
             state = IDLE
@@ -315,7 +341,7 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
     if not total:
         return Stage("archive", 0, IDLE)
     name = collection.name
-    withheld = _withheld(collection)
+    withheld = _withheld(collection) or _copy_state(collection)[0]
     if withheld:
         return Stage("archive", total, BLOCKED, withheld)
     try:

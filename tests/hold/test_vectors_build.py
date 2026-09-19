@@ -275,9 +275,17 @@ def test_the_command_dry_runs_without_an_encoder(buildable, capsys):
     assert _stored(root, codex) == {}
 
 
-def test_the_command_refuses_without_a_statement(buildable, capsys):
-    root, _, _ = buildable
+def test_a_version_3_collection_needs_no_single_statement(buildable, capsys):
+    """From Codex version 3 the gate is PER ANSWER (03 §3.3): every batch's
+    answers must name a run this peer has validated, checked before that
+    batch is written, and a run it has not tested is gated at once. So there
+    is no `state/calibration.json` to require first — `require_statement`
+    above is what a version-2 collection is still held to — and a plan, which
+    embeds nothing, is not refused for the lack of one. What refuses a WRITE
+    is tests/test_run_check.py's subject."""
+    root, _, codex = buildable
+    assert codex.version >= 3
     (root / "gutenberg" / "state" / "calibration.json").unlink()
     assert louise.main(["hold", "vectors", "build", "gutenberg",
-                        "--root", str(root), "--dry-run"]) == 2
-    assert "calibration statement" in capsys.readouterr().err
+                        "--root", str(root), "--dry-run"]) == 0
+    assert "would embed" in capsys.readouterr().out

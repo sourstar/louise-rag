@@ -373,8 +373,50 @@ def cmd_list(a) -> int:
     return 0
 
 
+def _refusal_for(name: str) -> str | None:
+    """Why the NODE refuses to start this collection, if it does (07 §7.8):
+    its file names another Codex, its vector table is not the Codex's space
+    or width, its state database is another platform's. Asked of the node's
+    own loader and boot check, never re-derived; a command run where there
+    is no node configuration finds none, which is the truth there."""
+    import contextlib
+    try:
+        from app import collections as collections_mod, spaces
+        # The node's loaders log as they go, on stdout. This command's stdout
+        # is ONE JSON object (09 §9.3) that a script parses, so what they say
+        # goes to stderr for as long as they are asked.
+        with contextlib.redirect_stdout(sys.stderr):
+            loaded = collections_mod.load_all(skip_unreadable=True)
+            for r in collections_mod.refusals():
+                if r.name == name:
+                    return r.reason
+            mine = [c for c in loaded if c.name == name and c.codex is not None]
+            for _c, reason in spaces.refuse_boot(mine) if mine else []:
+                return reason
+    except Exception:                                   # noqa: BLE001
+        return None
+    return None
+
+
+def _copy_state(root, name, codex):
+    """The copy's state on this peer (03 §3.6), derived now, written nowhere."""
+    from app import copy_state
+    from app.hold import records as rec
+    try:
+        local = rec._local_collection(root, name, codex)
+    except Exception:                                   # noqa: BLE001
+        local = None
+    return copy_state.held(root, name, codex, local, refusal=_refusal_for(name))
+
+
 def cmd_show(a) -> int:
-    _print(col.show(a.root, a.codex_id))
+    out = col.show(a.root, a.codex_id)
+    name, codex = col.resolve(a.root, a.codex_id)
+    # 09 §9.3: `state`, `reasons` and `origin_check`, where this object
+    # carried `refused: string or null` until 2026-09-19
+    out.pop("refused", None)
+    out.update(_copy_state(a.root, name, codex).to_json())
+    _print(out)
     return 0
 
 
@@ -463,15 +505,25 @@ def cmd_vectors_export(a) -> int:
     # asked — import and build do (verification pass, 2026-09-13)
     from app import licensing
     licensing.require_ack(local, use="its vectors are exported as a bundle")
+    from app import copy_state
+    copy_state.require_in_use(a.root, name, codex, local,
+                              use="exporting its vectors")     # 03 §3.6: not served
     try:
         recipe = _recipe_for(codex, name)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
 
+    # the challenge's vectors LEAVE this peer: from a version-3 collection
+    # they come from a validated run or not at all (03 §3.3)
+    from app import run_check
+    under_a_validated_run = run_check.checking(a.root, name, codex, recipe)
+
     def embed(texts):
         try:
-            return embeddings.embed_texts(texts, recipe=recipe)
+            return under_a_validated_run(texts)
+        except emb.GateDeferred:
+            raise
         except Exception as e:                      # noqa: BLE001
             raise emb.GateDeferred(
                 f"the encoder at {recipe.url} could not embed the challenge "
@@ -499,6 +551,40 @@ def cmd_vectors_export(a) -> int:
     return 0
 
 
+def _ack_origin_unchecked(a, name, codex) -> int:
+    """`hold collection ack <collection> --origin-unchecked` — the other thing
+    an operator may acknowledge (07 §7.7; 03 §3.6): that this peer's own
+    `records-vs-origin` COULD NOT RUN while every other test of the copy
+    passed. It prints what passed, what could not run and when it was last
+    tried, waits for consent, and records the decision with its time and the
+    peer's key beside the licence acknowledgement. The copy is then in use
+    like any other, with no mark.
+
+    Refused (exit 2) while another test is open or has failed, when the
+    origin check has in fact run, and when it has never been tried: "a
+    decision stands in for a test that cannot run, never for one that
+    failed". There is no timeout and no default, as there is none for a
+    licence."""
+    from app import copy_state
+    state = _copy_state(a.root, name, codex)
+    for t in state.tests:
+        print(f"  {t.status:<13} {t.name:<17} {t.detail}")
+    why_not = copy_state.origin_ack_refusal(state)
+    if why_not:
+        raise CodexError(f"{name}: not recorded — {why_not}")
+    if not a.yes:
+        print("-" * 72)
+        reply = input(f"Use {name} although its origin could not be checked? The "
+                      f"check still runs when it can. [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("not acknowledged; nothing was written. `louise hold collection "
+                  f"forget {name}` rejects the copy", file=sys.stderr)
+            return 2
+    out = copy_state.record_origin_ack(a.root, name, codex, now=_utc_now())
+    print(f"acknowledged  origin unchecked  {out}")
+    return 0
+
+
 def cmd_collection_ack(a) -> int:
     """`hold collection ack <collection>` — record 09 §9.13's acknowledgement.
 
@@ -519,6 +605,8 @@ def cmd_collection_ack(a) -> int:
     from app.hold import collection as col, drag as drag_mod
 
     name, codex = col.resolve(a.root, a.collection)
+    if getattr(a, "origin_unchecked", False):
+        return _ack_origin_unchecked(a, name, codex)
     want = codex.license.terms_sha256
     if not want:
         print(f"{name} is {codex.license.cls}-class and names no terms text; "
@@ -612,6 +700,9 @@ def cmd_vectors_archive_import(a) -> int:
             f"them from")
     licensing.require_ack(
         local, use="an archive's vectors are imported into this collection")
+    from app import copy_state
+    copy_state.require_in_use(a.root, name, codex, local,
+                              use="importing an archive's vectors into it")
 
     archive = genesis.ARCHIVES.get(a.archive)
     if archive is None:
@@ -634,7 +725,7 @@ def cmd_vectors_archive_import(a) -> int:
     embed_fn = None
     try:
         recipe = _recipe_for(codex, name)
-        embed_fn = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        embed_fn = _checking_embed(a.root, name, codex, recipe)
     except emb.GateDeferred as e:
         # The same-function proof needs the encoder. genesis DEFERS a shard
         # rather than admitting it unproven, which is the right refusal —
@@ -690,6 +781,9 @@ def cmd_vectors_import(a) -> int:
     # imported. The archive half already sits at `genesis.import_shard`.
     licensing.require_ack(
         local, use="a peer's vectors are imported into this collection")
+    from app import copy_state
+    copy_state.require_in_use(a.root, name, codex, local,
+                              use="importing a peer's vectors into it")
 
     member = a.root / name / "drag" / \
         drag.calibration_paths(codex.space.calibration.set)[0]
@@ -736,7 +830,7 @@ def cmd_vectors_import(a) -> int:
     embed = None
     try:
         recipe = _recipe_for(codex, name)
-        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        embed = _checking_embed(a.root, name, codex, recipe)
     except emb.GateDeferred as e:
         if a.require_t3:
             print(f"louise: deferred: {e}", file=sys.stderr)
@@ -754,6 +848,15 @@ def cmd_vectors_import(a) -> int:
                        text_of=lambda cid: (cut.get(cid) or {}).get("text"),
                        embed=embed, seed=seed,
                        strict_allow=set(a.allow) if a.strict else None)
+    t3 = report.tier(adm.T3)
+    if (a.require_t3 and t3 is not None and t3.verdict == adm.SKIPPED
+            and "no compliant encoder" in t3.why):
+        # `--require-t3` ASKED for the spot recompute: a T3 that could not run
+        # — no encoder, or one that is not a validated run (03 §3.3) — defers
+        # the import instead of landing chunks "unverified here"
+        print(f"louise: deferred: T3 could not run — {t3.why}; nothing was written",
+              file=sys.stderr)
+        return 3
 
     known = adms.reproduced(node, report.producer)
     # 08 §8.1: "no countermeasure may require knowing whom to trust in
@@ -810,9 +913,21 @@ def cmd_vectors_build(a) -> int:
     # Embedding is a USE of the text (invariant 9): a corpus that may not
     # be read may not be embedded either.
     licensing.require_ack(local, use="this collection's text is embedded")
+    from app import copy_state
+    copy_state.require_in_use(a.root, name, codex, local, use="embedding for it")
     # 07 §7.3's gate, and the one b10630 cost: an encoder that drifted
     # produces vectors nobody can tell from good ones.
-    vb.require_statement(a.root, name, codex)
+    #
+    # FROM CODEX VERSION 3 THE GATE IS PER ANSWER (03 §3.3): every batch's
+    # answers must name a run this peer has validated, checked before that
+    # batch is written (`before_write` below). A run it has not tested is
+    # gated at once and the build goes on under it; an endpoint that states
+    # no run writes nothing, exit 2. There is no single statement to require
+    # first, and nothing to accept.
+    from app.hold import runs as hold_runs
+    by_run = hold_runs.applies(codex)
+    if not by_run:
+        vb.require_statement(a.root, name, codex)
 
     snapshot = _latest_snapshot(a.root, name, a.snapshot)
     if a.delta:
@@ -838,14 +953,26 @@ def cmd_vectors_build(a) -> int:
             print(f"louise: deferred: {e}", file=sys.stderr)
             return 3
 
+        seen: set = set()
+
         def embed(texts):                            # noqa: F811
+            seen.clear()
             try:
+                if by_run:
+                    return embeddings.embed_texts(texts, recipe=recipe, runs=seen)
                 return embeddings.embed_texts(texts, recipe=recipe)
             except Exception as e:                   # noqa: BLE001
                 raise emb.GateDeferred(
                     f"the encoder at {recipe.url} could not embed: {e}") from e
 
     stop = threading.Event()
+    before_write = None
+    if by_run and not a.dry_run:
+        from app import run_check
+
+        def before_write():
+            run_check.guard(a.root, name, codex, recipe, set(seen), stop=stop.is_set,
+                            log=lambda m: print(m, file=sys.stderr))
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             signal.signal(sig, lambda *_a: stop.set())
@@ -863,7 +990,8 @@ def cmd_vectors_build(a) -> int:
             write=lambda rows: embeddings.upsert_chunks(
                 rows, collection=local, dtype=codex.space.dtype),
             batch=config.EMBED_SLICE_CHUNKS, stop=stop,
-            log=lambda m: print(m, file=sys.stderr), dry_run=a.dry_run)
+            log=lambda m: print(m, file=sys.stderr), dry_run=a.dry_run,
+            before_write=before_write)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
@@ -919,7 +1047,7 @@ def cmd_vectors_check(a) -> int:
     embed = None
     try:
         recipe = _recipe_for(codex, name)
-        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        embed = _checking_embed(a.root, name, codex, recipe)
     except emb.GateDeferred:
         pass
 
@@ -958,6 +1086,16 @@ def cmd_vectors_check(a) -> int:
     if report.verdict == vck.INCONCLUSIVE:
         return 3
     return 1 if report.verdict == vck.FAIL else 0
+
+
+def _checking_embed(root, name, codex, recipe):
+    """The encoder, for a CHECK (03 §3.3): "a check runs under a validated
+    run. An answer that names another makes the check inconclusive." From
+    Codex version 3; an older collection embeds as it always did
+    (`app/run_check.py`: `checking`)."""
+    from app import run_check
+    return run_check.checking(root, name, codex, recipe,
+                              log=lambda m: print(m, file=sys.stderr))
 
 
 def _latest_snapshot(root, name, snapshot_id=None):
@@ -1011,7 +1149,7 @@ def cmd_check(a) -> int:
     embed = None
     try:
         recipe = _recipe_for(codex, name)
-        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        embed = _checking_embed(a.root, name, codex, recipe)
     except emb.GateDeferred:
         pass
 
@@ -1040,6 +1178,14 @@ def cmd_check(a) -> int:
                 a.root, name, report, codex, snapshot, key,
                 platform_image=codex.toolchain.platform_image, now=_utc_now())
     report = dataclasses.replace(report, attestations=written)
+
+    # 03 §3.6: an origin check that COULD NOT RUN yields no attestation, and
+    # the operator who is asked to decide is shown "when it was last tried" —
+    # so that, and only that, is noted in `state/`. Never sent, never a verdict.
+    tried = report.outcome("records-vs-origin")
+    if tried is not None and tried.result == chk.INCONCLUSIVE:
+        from app import copy_state
+        copy_state.note_origin_attempt(a.root, name, codex, why=tried.why, now=_utc_now())
 
     if a.json:
         _print(report.to_json())
@@ -1153,7 +1299,10 @@ def cmd_embedder_check(a) -> int:
     on an unreachable endpoint would flag a collection for a network
     problem.
     """
-    from app.hold import embedder as emb
+    from app.hold import collection as col, embedder as emb, runs as hold_runs
+    name, codex = col.resolve(a.root, a.collection)
+    if hold_runs.applies(codex):
+        return _embedder_check_runs(a, name, codex)
     try:
         run, codex = _gate(a)
     except emb.GateDeferred as e:
@@ -1175,6 +1324,50 @@ def cmd_embedder_check(a) -> int:
     if a.accept:
         _write_statement(a, run, codex)
     return 0
+
+
+def _embedder_check_runs(a, name, codex) -> int:
+    """`hold embedder check` for a version-3 collection: the gate against
+    THE RUN THAT ANSWERS NOW, for the document encoder and — in an
+    asymmetric space — the query encoder, each a run of its own (03 §3.3).
+
+    The statement is kept either way, one per run and role under
+    `state/calibration/` (07 §7.3), so `--accept` has nothing left to do: a
+    pass needs nobody's word, and a failure is kept so the run is not tried
+    again against the same set. Exit 0 when every role passed, 1 when one
+    failed, 2 when the endpoint states no run, 3 when it could not be asked.
+    """
+    from app import run_check
+    from app.hold import embedder as emb, runs as hold_runs
+
+    try:
+        recipe = _recipe_for(codex, name)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    roles = ["document"] + (["query"] if codex.space.query.encoder is not None else [])
+    worst = 0
+    for role in roles:
+        try:
+            body = run_check.validate(a.root, name, codex, recipe, role=role)
+        except emb.GateDeferred as e:
+            print(f"louise: deferred: {role}: {e}", file=sys.stderr)
+            return 3
+        ok = hold_runs.passing(body, codex)
+        print(f"{'PASS' if ok else 'FAIL'}  {role}")
+        print(f"  space       {body['space_id'][:23]}…")
+        print(f"  run         {body['run']}")
+        print(f"  engine      {body['engine'].get('image', '')[:60]}")
+        print(f"  driver      {body['driver']}")
+        print(f"  tolerance   {codex.space.tolerance}")
+        print(f"  sampled     {body['passed']} of {len(body['sampled'])} passed, "
+              f"worst {body['worst']}, median {body['median']}")
+        print(f"  fingerprint {body['fingerprint']}")
+        print(f"  batches     {'as one text at a time' if body['batch_invariant'] else 'DIFFER from one text at a time: validated for single-text work only'}")
+        print(f"  benchmark   {body['tokens_per_s']} tokens/s")
+        print(f"  statement   {hold_runs.path_for(a.root, name, body['run'], role)}")
+        worst = max(worst, 0 if ok else 1)
+    return worst
 
 
 def cmd_embedder_benchmark(a) -> int:
@@ -1400,6 +1593,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true",
                    help="record WITHOUT printing the terms (07 §7.7). For a "
                         "script; a person should read them")
+    p.add_argument("--origin-unchecked", action="store_true", dest="origin_unchecked",
+                   help="record the decision to use a copy whose origin could not "
+                        "be checked, every other test having passed (03 §3.6)")
     p.set_defaults(fn=cmd_collection_ack)
 
     # ---- hold records ---------------------------------------------------
@@ -1690,6 +1886,13 @@ def main(argv=None) -> int:
     try:
         return a.fn(a)
     except CodexError as e:
+        from app.hold.embedder import GateDeferred
+        if isinstance(e, GateDeferred):
+            # 07 §7.7 keeps 3 for what could not run — neither a pass nor a
+            # failure (03 §3.1). Most commands say so themselves; one that
+            # let it through must not have it read as a refusal.
+            print(f"louise: deferred: {e}", file=sys.stderr)
+            return 3
         print(f"louise: {e}", file=sys.stderr)
         return 2
     except FileNotFoundError as e:

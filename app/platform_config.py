@@ -120,6 +120,15 @@ class PlatformConfig:
     # before". Default False so nothing changes for a node that predates
     # the migration. Read by app/collections.py:codex_only().
     codex_only: bool = False
+    # [node] quarantine — "report" or "enforce" (03 §3.6; migration plan, step
+    # 14). A copy's state is always computed and shown; only "enforce"
+    # WITHHOLDS a copy in quarantine. Default "report", and that is the first
+    # of two deploys: the day the states exist no Codex collection on a node
+    # has its run statement or its own origin check yet, so enforcing at once
+    # would take every one of them out of search together. The operator
+    # switches it once `hold collection show` reads in-use for each collection
+    # meant to be. Removed at step 12. Read by app/copy_state.py:enforced().
+    quarantine: str = "report"
     source_path: Path | None = None          # None = defaults (no file on disk)
 
 
@@ -311,6 +320,12 @@ def _load_one(path: Path) -> PlatformConfig:
         # exactly like data loss to whoever opens the Library.
         raise schedule_mod.ScheduleError(
             f"node.codex_only must be true or false, got {codex_only_raw!r}")
+    quarantine_raw = node_raw.get("quarantine", "report")
+    if quarantine_raw not in ("report", "enforce"):
+        # refused, not coerced: a typo must not decide whether copies are
+        # withheld — in either direction
+        raise schedule_mod.ScheduleError(
+            f"node.quarantine must be \"report\" or \"enforce\", got {quarantine_raw!r}")
 
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
@@ -318,6 +333,7 @@ def _load_one(path: Path) -> PlatformConfig:
                           ask=ask,
                           embed_defaults=embed_raw,
                           codex_only=codex_only_raw,
+                          quarantine=quarantine_raw,
                           source_path=path)
 
 

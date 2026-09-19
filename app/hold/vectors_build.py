@@ -165,12 +165,18 @@ def build(codex, *, shards: Iterable[snap.Shard],
           vectors_for: Callable[[list[str]], dict[str, list]],
           embed: Callable[[list[str]], list[list[float]]],
           write: Callable[[list[dict]], Any],
-          batch: int = 64, stop=None, log=None, dry_run: bool = False) -> Built:
+          batch: int = 64, stop=None, log=None, dry_run: bool = False,
+          before_write: Callable[[], None] | None = None) -> Built:
     """Embed what is missing, shard by shard, writing every `batch`.
 
     Everything about this peer arrives as a callable, as everywhere under
     `app/hold/`: the module needs no Lance table and no HTTP client to be
     tested, and one storage decision stays in one place.
+
+    `before_write` stands between every batch's answers and its write (03
+    §3.3: a vector is written only if the answer that carried it names a
+    validated run — "checked on every answer, before the write"). It raises
+    to stop; the batches already written stay written, this one is not.
     """
     say = log or (lambda *_a: None)
     seen = written = tokens = n_shards = 0
@@ -198,6 +204,8 @@ def build(codex, *, shards: Iterable[snap.Shard],
                 break
             part = todo[i:i + max(1, batch)]
             vectors = embed([c["text"] for c in part])
+            if before_write is not None:
+                before_write()
             rows = [{"id": c["id"], "book_id": int(c["book_id"]),
                      "lang": c["lang"], "seq": int(c["seq"]),
                      "chapter": c["chapter"] or "", "text": c["text"],

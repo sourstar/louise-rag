@@ -132,6 +132,12 @@ def export_bundle(con, collection, uids: list[str], dest: Path, *,
     # the Library, `snapshot vectors`, contribute (audit, 2026-09-13)
     from .. import licensing
     licensing.require_ack(collection, use="its vectors are exported as a bundle")
+    # 03 §3.6, the same backstop: a copy in quarantine is "not announced and
+    # not served" — nothing of it leaves before this peer has tested it
+    from .. import copy_state
+    withheld = copy_state.withholds(collection)
+    if withheld:
+        raise ExportError(f"{collection.name}: nothing is exported — {withheld}")
     uids = sorted(set(uids))
     if not uids:
         raise ExportError("no uids requested")

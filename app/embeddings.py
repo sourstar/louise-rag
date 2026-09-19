@@ -38,8 +38,22 @@ def _conn(collection=None):
         _dbs[key] = lancedb.connect(str(collection.lance_dir))
     return _dbs[key]
 
+#: docs/09-formats.md §9.12: what RAGE states with every answer
+RUN_HEADER = "Louise-Run"
+
+
+def _note_run(response, runs: set | None) -> None:
+    """Remember which run gave this answer (03 §3.3): the header's value, or
+    None for an answer that stated none. The caller checks the set BEFORE it
+    writes what the answers carried (app/hold/runs.py)."""
+    if runs is not None:
+        headers = getattr(response, "headers", None) or {}
+        runs.add(headers.get(RUN_HEADER) or None)
+
+
 def _request_vectors(batch: list[str], timeout: float,
-                     recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
+                     recipe: "collections_mod.EmbedRecipe",
+                     runs: set | None = None) -> list[list[float]]:
     # Every request passes its server's gate (app/dispatch.py): at most the
     # server's concurrency at a time, the highest level first. The wait is
     # bounded by this request's own timeout.
@@ -53,12 +67,14 @@ def _request_vectors(batch: list[str], timeout: float,
                            json={"model": recipe.model, "input": batch},
                            timeout=timeout, headers=level)
             r.raise_for_status()
+            _note_run(r, runs)
             data = sorted(r.json()["data"], key=lambda d: d["index"])
             return [d["embedding"] for d in data]
         r = httpx.post(f"{recipe.url}/api/embed",
                        json={"model": recipe.model, "input": batch},
                        timeout=timeout, headers=level)
         r.raise_for_status()
+        _note_run(r, runs)
         return r.json()["embeddings"]
 
 def _invalid(v) -> bool:
@@ -94,7 +110,7 @@ def _over_budget(response) -> bool:
 
 def _embed_batch(batch: list[str], timeout: float,
                  recipe: "collections_mod.EmbedRecipe", *,
-                 raw: bool = False) -> list[list[float]]:
+                 raw: bool = False, runs: set | None = None) -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
     - null/NaN vectors (intermittent SYCL corruption) -> plain retry
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
@@ -103,7 +119,8 @@ def _embed_batch(batch: list[str], timeout: float,
     Other HTTP errors surface with the server's actual message.
 
     `raw`: the vectors as the endpoint returned them, not unit-normalised —
-    what 09 §9.12's fingerprint is taken over (`embed_one_at_a_time`)."""
+    what 09 §9.12's fingerprint is taken over (`embed_one_at_a_time`).
+    `runs`: a set that collects the run each answer named (`_note_run`)."""
     budget = recipe.ctx * 4
     n_bad = 0
     # The FIRST guess is script-aware; the loop below is what makes it
@@ -129,7 +146,10 @@ def _embed_batch(batch: list[str], timeout: float,
     for attempt in range(10):
         cut = [t[:budget] for t in batch]
         try:
-            vecs = _request_vectors(cut, timeout, recipe)
+            # `runs` only where asked for: a test's stand-in for this function
+            # takes the three arguments it always took
+            vecs = (_request_vectors(cut, timeout, recipe) if runs is None
+                    else _request_vectors(cut, timeout, recipe, runs))
         except httpx.HTTPStatusError as e:
             # 400: llama-server's over-budget answer. 413: TEI's (BERT-class
             # servers enforce their 512-token window and do not auto-truncate
@@ -170,7 +190,8 @@ def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mo
 
 
 def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecipe",
-                        query: bool = False, timeout: float = 300) -> list[list[float]]:
+                        query: bool = False, timeout: float = 300,
+                        runs: set | None = None) -> list[list[float]]:
     """Each text ALONE in its request, in order, truncated as a chunk is, and
     the vectors AS THE ENDPOINT RETURNED THEM — not unit-normalised.
 
@@ -182,12 +203,13 @@ def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecip
     purpose — the gate sets this beside the way the peer really contributes
     to measure batch invariance (03 §3.3)."""
     side = _side(recipe, query)
-    return [_embed_batch([text], timeout, side, raw=True)[0] for text in texts]
+    return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0] for text in texts]
 
 
 def embed_texts(texts: list[str], timeout: float = 300, *,
                 recipe: "collections_mod.EmbedRecipe | None" = None,
-                query: bool = False) -> list[list[float]]:
+                query: bool = False, runs: set | None = None,
+                raw: bool = False) -> list[list[float]]:
     """EMBED_CONCURRENCY sub-batches in flight; result order matches input.
 
     `recipe` is the collection's encoder (collections.recipe_for()), and it
@@ -203,6 +225,14 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
             "embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
+
+    def one(b: list[str]) -> list[list[float]]:
+        # the two keywords only where asked for: a test's stand-in for
+        # `_embed_batch` takes the three arguments it always took
+        if raw or runs is not None:
+            return _embed_batch(b, timeout, recipe, raw=raw, runs=runs)
+        return _embed_batch(b, timeout, recipe)
+
     batches = [texts[i:i + config.EMBED_BATCH]
                for i in range(0, len(texts), config.EMBED_BATCH)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
@@ -212,11 +242,10 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
         # default level instead of the caller's (one copy per task — a
         # Context cannot be entered by two threads at once)
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = [ex.submit(contextvars.copy_context().run,
-                                 _embed_batch, b, timeout, recipe) for b in batches]
+            futures = [ex.submit(contextvars.copy_context().run, one, b) for b in batches]
             results = [f.result() for f in futures]
     else:
-        results = [_embed_batch(b, timeout, recipe) for b in batches]
+        results = [one(b) for b in batches]
     return [v for part in results for v in part]
 
 # A document with more chunks than this is not resumed by reading its text
@@ -470,7 +499,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     if sink is not None and len(todo) <= config.EMBED_SLICE_CHUNKS:
         # one slice: embedded here, committed with the rest of its batch
         sink.put(PendingDoc(int(book_id),
-                            _rows_for(book_id, lang, todo, recipe, carry, dtype),
+                            _rows_for(book_id, lang, todo, recipe, carry, dtype, collection),
                             purge=rebuild, seen=seen))
         return len(todo) + len(done)
 
@@ -478,7 +507,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     purge = rebuild
     for start in range(0, len(todo), config.EMBED_SLICE_CHUNKS):
         part = todo[start:start + config.EMBED_SLICE_CHUNKS]
-        rows = _rows_for(book_id, lang, part, recipe, carry, dtype)
+        rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection)
 
         with _write_lock(lock_con):
             # existence re-checked INSIDE the lock: the pre-lock check picked
@@ -537,15 +566,38 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     return written + len(done)
 
 
+def _by_run(collection) -> bool:
+    """Is this a collection whose writes are held to a validated run (03
+    §3.3)? From Codex version 3; every older collection is untouched."""
+    codex = getattr(collection, "codex", None)
+    if codex is None:
+        return False                   # the common case: no import, no lookup
+    from .hold.codex import ENGINE_VERSION
+    return getattr(codex, "version", 0) >= ENGINE_VERSION
+
+
 def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
-              dtype) -> list[dict]:
+              dtype, collection=None) -> list[dict]:
     """One slice's rows. Embedding happens OUTSIDE the lock: it is the slow
     part, it touches the network, and holding a cross-process write lock
     across it would serialize every writer on the slowest endpoint call.
     Only the chunks whose TEXT this peer does not already hold reach the
-    encoder. The rest are carried at their new ids for free."""
+    encoder. The rest are carried at their new ids for free.
+
+    A VERSION-3 COLLECTION'S ROWS LEAVE HERE ONLY IF EVERY ANSWER NAMED A
+    VALIDATED RUN (03 §3.3: "checked on every answer, before the write").
+    Here, because every write of the worker's — a slice of a long document,
+    a small one left in the sink — is made of rows built here, so there is
+    no second path to forget. The check is a lookup, inside no lock and no
+    transaction; it raises, and the caller defers the document untouched."""
     fresh = [c for c in part if chunk_text_hash(c["text"]) not in carry]
-    vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
+    if fresh and _by_run(collection):
+        from . import run_check                  # it imports this module
+        seen: set = set()
+        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe, runs=seen)
+        run_check.check_write(collection, recipe, seen)
+    else:
+        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
     embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
     return [{
         "id": c["id"], "book_id": book_id, "lang": lang or "und",
@@ -920,10 +972,19 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
     if TABLE not in db.table_names():
         return []
     tbl = db.open_table(TABLE)
-    qvec = np.asarray(
-        embed_texts([query], recipe=collections_mod.recipe_for(collection),
-                    query=True)[0],
-        dtype=_np_dtype_of_table(tbl))
+    recipe = collections_mod.recipe_for(collection)
+    if _by_run(collection):
+        # 03 §3.3, searching: "the same runs, validated the same way". The
+        # answer's run is checked BEFORE its vector is used; one not yet
+        # tested answers no query, one that failed withholds this leg. It
+        # raises, and retrieval.search degrades to the text leg and says so.
+        from . import run_check
+        seen: set = set()
+        vector = embed_texts([query], recipe=recipe, query=True, runs=seen)[0]
+        run_check.check_query(collection, recipe, seen)
+    else:
+        vector = embed_texts([query], recipe=recipe, query=True)[0]
+    qvec = np.asarray(vector, dtype=_np_dtype_of_table(tbl))
     from . import vector_index
     # probe the local IVF index when the collection has one (nprobes /
     # refine), else the flat scan it always was — vector_index.query decides

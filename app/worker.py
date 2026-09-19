@@ -1266,7 +1266,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     if deferred:
         db.log_event(con, "warn", "embed",
                      f"{deferred} document(s) deferred — encoder unreachable or busy, "
-                     f"or the store held by another writer; "
+                     f"the store held by another writer, or an answer from a run "
+                     f"not yet validated (03 §3.3); "
                      f"untouched, and retried when it answers again")
     # Nothing embedded and something deferred means the endpoint is down:
     # report no work so the caller yields the round rather than spinning
@@ -1732,6 +1733,11 @@ def _drain_remote_archive(con, collection, stop) -> bool:
     if not _license_allows(con, collection, "archive import"):
         return False            # vectors are USE of the corpus they describe
     _acquire_archive(con, collection, "round")
+    # AFTER the fetch, before the apply: what a copy in quarantine keeps doing
+    # is "the fetch its operator asked for" — it is what makes it testable —
+    # and what waits is the import (03 §3.6)
+    if not _quarantine_allows(con, collection, "archive import"):
+        return False
     try:
         result = bundle_genesis.drain_next_shard(
             con, collection, stop=stop, eager=not _ingest_pending(con))
@@ -1910,6 +1916,8 @@ def _drain_bundle_inbox(con, collection) -> int:
     # imports once the terms are acknowledged.
     if not _license_allows(con, collection, "bundle import"):
         return 0
+    if not _quarantine_allows(con, collection, "bundle import"):
+        return 0
     processed = 0
     for entry in sorted(inbox.iterdir()):
         if _stop.is_set():
@@ -1969,6 +1977,74 @@ _bad_toml_nagged: dict[str, str] = {}
 
 #: last "no profile declared" warning per collection — see _acquire
 _profile_nagged: dict[str, float] = {}
+
+
+#: the collection's manifest PATH -> (when it was last said, what was said).
+#: Keyed on the path, never the name (CLAUDE.md): two collections can share a
+#: name across roots, and one's silence must not swallow the other's reason.
+_quarantine_nagged: dict[str, tuple[float, str]] = {}
+
+
+def _quarantine_allows(con, collection, use: str) -> bool:
+    """03 §3.6: for a copy in quarantine nothing is embedded, contributed,
+    imported or certified — what goes on is what makes it testable: its
+    fetch, its tests, its gate. ONE derivation (`app/copy_state.py`), the
+    same the search and `hold collection show` read.
+
+    WHILE THE NODE ONLY REPORTS (`platform.toml`: `[node] quarantine`, the
+    first of step 14's two deploys) this allows everything and says what it
+    WOULD withhold, so the operator sees the day enforcement would bite
+    before it does. Logged when the state changes, and hourly. Never raises:
+    a state that cannot be derived is reported and withholds nothing here —
+    the licence gate has already failed closed on its own."""
+    from . import copy_state
+    try:
+        state = copy_state.of(collection)
+    except Exception as e:   # noqa: BLE001
+        state, why = None, f"its state cannot be derived ({type(e).__name__}: {e})"
+    else:
+        if state.in_use:
+            _quarantine_nagged.pop(str(collection.manifest_path), None)
+            return True
+        why = f"{state.state}: " + "; ".join(state.reasons)
+    enforcing = copy_state.enforced()
+    now = time.time()
+    place = str(collection.manifest_path)
+    last = _quarantine_nagged.get(place)
+    if last is None or last[1] != why or now - last[0] > 3600:
+        _quarantine_nagged[place] = (now, why)
+        db.log_event(con, "warn", "control",
+                     (f"{use} withheld — {why}" if enforcing else
+                      f"REPORT ONLY, nothing is withheld — this copy is not in use yet "
+                      f"and {use} would wait — {why}")[:900])
+    return not enforcing
+
+
+def _embedding_allowed(con, collection) -> bool:
+    """THE GATE FIRST, QUARANTINE SECOND. The gate is one of the tests that
+    clear a quarantine (03 §3.6, condition 3), so it must run for a copy
+    that is in one; asking in the other order would leave an untested run
+    untested for ever."""
+    if not backend_gate.embed_allowed(con, collection, stop=_stop.is_set):
+        return False
+    return _quarantine_allows(con, collection, "embedding")
+
+
+def _settle_the_run(con, collection) -> None:
+    """A version-3 copy whose encoder's run is not yet tested is gated AT
+    ONCE (03 §3.3), whether or not it has anything to embed: a collection
+    that arrived whole from its peers has no embed work to reach the gate
+    through, and would wait in quarantine for ever. Costs a dictionary
+    lookup a round — `embed_allowed` caches its verdict."""
+    from . import copy_state, run_check
+    if not run_check.applies(collection):
+        return
+    try:
+        gate = copy_state.of(collection).test("gate")
+    except Exception:   # noqa: BLE001
+        return
+    if gate is not None and gate.status == copy_state.OPEN:
+        backend_gate.embed_allowed(con, collection, stop=_stop.is_set)
 
 
 def _license_allows(con, collection, use: str) -> bool:
@@ -2173,9 +2249,21 @@ def transient_failure(exc: BaseException) -> bool:
     both embed paths — the parallel one (every encoder at concurrency > 1,
     pubmed's among them) asked only `endpoint_unavailable`, so a 503 or a
     vector-lock timeout there was written onto the document as an error,
-    which takes it out of every selection until a human clears it."""
+    which takes it out of every selection until a human clears it.
+
+    AND THE ENCODER'S RUN (03 §3.3). An answer that named a run this peer
+    has not validated — or named none — wrote nothing, and that is the
+    endpoint's state, never the document's: the document is untouched and
+    stays selectable, while `backend_gate.embed_allowed` gates the new run
+    at once or pauses the collection's embedding and says why."""
     return (endpoint_unavailable(exc) or manifest_contended(exc)
-            or vector_store_contended(exc))
+            or vector_store_contended(exc) or run_not_validated(exc))
+
+
+def run_not_validated(exc: BaseException) -> bool:
+    from .hold import embedder as hold_embedder, runs as hold_runs
+    return isinstance(exc, (hold_runs.RunUnvalidated, hold_runs.RunRefused,
+                            hold_embedder.GateDeferred))
 
 
 def _execute_step(con, collection, stage, row) -> bool:
@@ -2256,6 +2344,15 @@ def _execute_step(con, collection, stage, row) -> bool:
                          f"{stage} deferred — vector store busy ({e}); "
                          f"the document is untouched and will be retried")
             return False
+        if run_not_validated(e):
+            # 03 §3.3: the answer named a run this peer has not validated,
+            # or none. Nothing was written and nothing is wrong with the
+            # document; the next `embed_allowed` gates the run or pauses the
+            # collection's embedding with the reason.
+            db.log_event(con, "warn", stage,
+                         f"{stage} deferred — {e}; the document is untouched "
+                         f"and will be retried")
+            return False
         if endpoint_unavailable(e):
             # Nothing is wrong with this document, so nothing is written to
             # it: no error, no retry increment. The backend gate owns the
@@ -2296,6 +2393,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
     dedicated pipeline thread — the main loop then only selects embed work
     (plus bundles/genesis, which write embed_done and are kept here so the
     GPU-serial-across-collections doctrine has a single owner)."""
+    _settle_the_run(con, collection)     # an untested run is gated at once (03 §3.3)
     # Imported vectors are cheaper than computed ones, so drain the inbox
     # before looking for local work: a bundle may satisfy the very document
     # the embed stage was about to pick up.
@@ -2328,11 +2426,11 @@ def _run_one_step(con, collection, last_idle_log: dict,
     scope = db.get_scope(con)
     if pipeline_active:
         stage, row = _next_embed(con, scope, collection)
-        if stage == "embed" and not backend_gate.embed_allowed(con, collection):
+        if stage == "embed" and not _embedding_allowed(con, collection):
             return False        # rdf/fts continue on the pipeline thread
     else:
         stage, row = _next_book(con, scope, collection=collection)
-        if stage == "embed" and not backend_gate.embed_allowed(con, collection):
+        if stage == "embed" and not _embedding_allowed(con, collection):
             # The endpoint failed its behavioral baseline (or is down).
             # Embedding pauses — the document is untouched, never errored —
             # while rdf/fts work continues. embed_allowed() logged the
@@ -2782,7 +2880,7 @@ def _producer_step(con, collection) -> bool:
         return False
     if not _vector_writes_allowed(collection):
         return False
-    if not backend_gate.embed_allowed(con, collection):
+    if not _embedding_allowed(con, collection):
         return False
     recipe = collections_mod.recipe_for(collection)
     slots = max(config.EMBED_PLUGIN_SLOTS, recipe.concurrency)

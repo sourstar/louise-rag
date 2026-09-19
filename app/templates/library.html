@@ -43,6 +43,14 @@
        border instead of the whole badge reading green. #}
     <span class="badge {{ 'err' if c.license.needs_ack else 'ok' }}"{% if c.license.ok %} title="{{ 'terms acknowledged' if c.license.state == 'acknowledged' else 'open license — no acknowledgement needed' }}"{% endif %}>license: <span class="lic-{{ c.license.class }}">{{ c.license.class }}</span>{{ ' — ack needed' if c.license.needs_ack else (' ✓' if c.license.ok else '') }}</span>
     {% endif %}
+    {% if c.copy_state and c.copy_state.state != 'in-use' %}
+    {# 03 §3.6: a copy this peer has not finished testing. Red once the node
+       enforces quarantine, brass while it only reports what it would withhold. #}
+    <span class="badge {{ 'err' if c.copy_state.enforced else 'brass' }}" title="{{ c.copy_state.reasons | join(' · ') }}">{{ c.copy_state.state }}{{ '' if c.copy_state.enforced else ' (reported only)' }}</span>
+    {% endif %}
+    {% if c.copy_state and not c.copy_state.vector_leg %}
+    <span class="badge err" title="{{ c.copy_state.vector_leg_reason }}">vector leg withheld</span>
+    {% endif %}
   </div>
   {% if c.fetched %}
   {# denominator = the ORIGIN's file count for this profile, recorded at

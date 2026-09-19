@@ -231,9 +231,20 @@ def gate_state(con) -> dict | None:
         return None
 
 
-def embed_allowed(con, collection, embed_fn=None) -> bool:
+def embed_allowed(con, collection, embed_fn=None, *, stop=None) -> bool:
     """TTL-cached gate for the worker's embed stage. Logs transitions to the
-    event log; never raises."""
+    event log; never raises.
+
+    A VERSION-3 COLLECTION IS HELD TO A VALIDATED RUN INSTEAD (03 §3.3,
+    app/run_check.py): "what keeps later work honest is not a test repeated
+    during the work" but the run every answer names, checked before every
+    write. So this baseline is not taken for it, and BACKEND_GATE=off does
+    not switch that check off — nothing does. `stop` lets a node that is
+    stopping leave the calibration gate between two slices."""
+    if getattr(collection, "codex", None) is not None:
+        from .. import run_check
+        if run_check.applies(collection):
+            return run_check.embed_allowed(con, collection, stop=stop)
     if config.BACKEND_GATE == "off":
         return True
     now = time.time()

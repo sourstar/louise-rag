@@ -1152,6 +1152,24 @@ def _worker_stats() -> dict:
         return {}
 
 
+def _copy_state(collection) -> dict:
+    """The copy's state on this peer — refused, quarantine or in use (03
+    §3.6) — from THE derivation (`app/copy_state.py`), the one the worker and
+    the search read. `enforced` says whether the node withholds a copy in
+    quarantine or only reports it (the first of step 14's two deploys). The
+    Library never raises for it."""
+    from . import copy_state
+    try:
+        state = copy_state.of(collection)
+        return {"state": state.state, "reasons": list(state.reasons),
+                "origin_check": state.origin_check, "enforced": copy_state.enforced(),
+                "vector_leg": state.vector_leg, "vector_leg_reason": state.vector_leg_reason}
+    except Exception as e:  # noqa: BLE001
+        return {"state": "unknown", "reasons": [f"{type(e).__name__}: {e}"],
+                "origin_check": "pending", "enforced": False,
+                "vector_leg": True, "vector_leg_reason": ""}
+
+
 def _collection_shelf(collection: collections_mod.Collection,
                        measured: dict | None = None,
                        worker_state: str = "running") -> dict:
@@ -1564,6 +1582,7 @@ def _collection_shelf(collection: collections_mod.Collection,
         "extras_offered": sorted(spec.extras) if spec is not None else [],
         "extras_held": list(getattr(collection, "extras", ())),
         "license": _license_state(collection),
+        "copy_state": _copy_state(collection),
         "genesis": _genesis_state(con, collection,
                                   None if counts_pending else counts,
                                   fetched=fetched),

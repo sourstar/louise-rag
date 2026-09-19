@@ -1,0 +1,298 @@
+"""Which runs this peer has validated, and the check that guards a write —
+docs/03-checking.md §3.3 (dd9bef4); docs/09-formats.md §9.12.
+
+    Validate once; then every answer says which run gave it.
+
+A pass validates a RUN: one engine as it was actually launched — the image
+by its running digest, the weights, the exact arguments and environment, the
+device, its driver. RAGE, the node's model container, computes that identity
+from what it launched and states it with every answer (`Louise-Run`). So
+what keeps later work honest is not a test repeated during the work:
+
+  - a vector is written ONLY if the answer that carried it names a run with
+    a passing statement for the space — checked on every answer, before the
+    write. Nothing unvalidated is ever stored, so stored vectors carry no
+    mark of their run;
+  - an answer from a run not yet validated is not written — a DEFERRAL,
+    never an error on a document — and the gate runs against that run at
+    once; if it passes, work resumes under it;
+  - an endpoint that states no run identity cannot be held to a validated
+    run: a peer may search with it and writes nothing through it.
+
+THIS APPLIES FROM CODEX VERSION 3 (`applies`). A version-2 collection's
+statement names an image, not a run (09 §9.12, version 1 of the body), and
+every collection the node held when this landed is version 2 or legacy: they
+keep the single `state/calibration.json` they have, and nothing here touches
+them.
+
+ONE STATEMENT PER RUN AND ROLE, under `state/calibration/` (07 §7.3: "keeps
+its signed statement in `state/calibration/`, one per run. A failure is kept
+too, so the run is not retried against the same set"). Read through
+`embedder.read_statement`, which VERIFIES the envelope: the whole value of
+the gate is that it cannot be satisfied by writing a file that says pass.
+
+Like the rest of `app/hold/`, this module does no embedding: the callers
+inject it. It does one HTTP GET, to ask the platform what a run stands for.
+"""
+from __future__ import annotations
+
+import json
+import os
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, Callable
+
+from . import embedder as emb
+from .codex import ENGINE_VERSION, Codex, CodexError, canonical_json, digest
+
+RUN_HEADER = "Louise-Run"
+ROLES = ("document", "query")
+
+
+class RunRefused(CodexError):
+    """The endpoint states no run: nothing is written through it (03 §3.3).
+    A refusal — exit 2 — and never a deferral: waiting does not change what
+    the endpoint is."""
+
+
+class RunUnvalidated(CodexError):
+    """An answer named a run with no passing statement for this space. A
+    DEFERRAL: nothing is written, the gate runs against that run, and work
+    resumes under it if it passes. `run_id` is the run; `failed` says the
+    gate has already run against it and it did not pass."""
+
+    def __init__(self, message: str, run_id: str, *, failed: bool = False) -> None:
+        super().__init__(message)
+        self.run_id = run_id
+        self.failed = failed
+
+
+def applies(codex: Codex) -> bool:
+    return codex.version >= ENGINE_VERSION
+
+
+# ---- the statements kept ------------------------------------------------------
+
+def directory(root: Path, name: str) -> Path:
+    return Path(root) / name / "state" / "calibration"
+
+
+def path_for(root: Path, name: str, run_id: str, role: str = "document") -> Path:
+    if role not in ROLES:
+        raise CodexError(f"role is document or query, got {role!r}")
+    return directory(root, name) / f"{role}-{run_id.split(':', 1)[-1][:16]}.json"
+
+
+def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
+    """Write a statement, pass or fail, where its run and role put it."""
+    body = statement["body"]
+    out = path_for(root, name, body["run"], body.get("role", "document"))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_bytes(canonical_json(statement))
+    os.replace(tmp, out)
+    return out
+
+
+def passing(body: dict[str, Any], codex: Codex) -> bool:
+    """03 §3.3, both conjuncts, from the numbers the statement carries — so
+    anyone holding it can recheck the verdict."""
+    try:
+        return (int(body["passed"]) >= codex.space.calibration.min_pass
+                and Decimal(body["median"]) >= Decimal(codex.space.tolerance))
+    except (KeyError, ValueError, InvalidOperation):
+        return False
+
+
+#: (directory, role, space) -> (what the directory held, the statements read
+#: from it). THE CHECK BEFORE A WRITE IS A DICTIONARY LOOKUP (migration plan,
+#: 13e): it runs once per answer, and verifying a signature per answer would
+#: be a per-item cost that grows with the statements kept. Keyed on the
+#: directory's PATH, never the collection's name (CLAUDE.md), and redone
+#: whenever a file in it appears, goes or changes.
+_read: dict[tuple[str, str, str], tuple[tuple, dict[str, dict[str, Any]]]] = {}
+
+
+def _listing(d: Path, role: str) -> tuple:
+    try:
+        with os.scandir(d) as it:
+            return tuple(sorted(
+                (e.name, e.stat().st_mtime_ns, e.stat().st_size) for e in it
+                if e.name.startswith(f"{role}-") and e.name.endswith(".json")))
+    except OSError:
+        return ()
+
+
+def statements(root: Path, name: str, codex: Codex, role: str = "document"
+               ) -> dict[str, dict[str, Any]]:
+    """run id -> verified body, for THIS space and role. A file that does not
+    verify, or speaks of another space, is not a statement about this one."""
+    d = directory(root, name)
+    held = _listing(d, role)
+    key = (str(d), role, codex.space_id)
+    cached = _read.get(key)
+    if cached is not None and cached[0] == held:
+        return cached[1]
+    out: dict[str, dict[str, Any]] = {}
+    for fname, _, _ in held:
+        try:
+            body = emb.read_statement(json.loads((d / fname).read_bytes()))
+        except Exception:                               # noqa: BLE001
+            continue
+        if (body.get("version", 1) >= 2 and body.get("space_id") == codex.space_id
+                and body.get("role", "document") == role and body.get("run")):
+            out[body["run"]] = body
+    _read[key] = (held, out)
+    return out
+
+
+def statements_for_space(root: Path, name: str, codex: Codex, role: str = "document"
+                         ) -> dict[str, dict[str, Any]]:
+    """run id -> statement, for this SPACE. A pass validates a run FOR THE
+    SPACE (03 §3.3), so one kept under another collection of the same space
+    on this peer counts here — which is what makes the gate run once per
+    (space, run) and not once per collection, and what lets every collection
+    of a space leave quarantine together (03 §3.6). This collection's own
+    come first."""
+    out = dict(statements(root, name, codex, role))
+    try:
+        others = sorted(p.name for p in Path(root).iterdir() if p.name != name
+                        and (p / "state" / "calibration").is_dir())
+    except OSError:
+        others = []
+    for other in others:
+        for run_id, body in statements(root, other, codex, role).items():
+            out.setdefault(run_id, body)
+    return out
+
+
+# ---- what a run stands for ------------------------------------------------------
+
+def base_url(encoder_url: str, fallback: str = "") -> str | None:
+    """The platform behind a model's URL: everything before `/upstream/`
+    (07 §7.8: `http://<node>:<port>/upstream/<model>`), else `RAGE_URL`."""
+    head, sep, _ = encoder_url.partition("/upstream/")
+    if sep:
+        return head.rstrip("/")
+    return fallback.rstrip("/") or None
+
+
+def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
+             fallback: str = "", timeout: float = 10.0) -> emb.StatedRun:
+    """`GET /louise/runs/<run_id>` → what the identity stands for, VERIFIED:
+    09 §9.12 defines `run_id` as `H` of that very object, so a description
+    that does not hash to the id it was asked for is not that run's."""
+    base = base_url(encoder_url, fallback)
+    if base is None:
+        raise RunRefused(
+            f"{encoder_url} names a run ({run_id[:23]}…) and nothing says where to ask "
+            f"what it stands for: the URL is not `…/upstream/<model>` and RAGE_URL is "
+            f"unset (07 §7.8)")
+    r = get(f"{base}/louise/runs/{run_id}", timeout=timeout)
+    r.raise_for_status()
+    obj = r.json()
+    if not isinstance(obj, dict) or set(obj) != {"driver", "engine", "weights"}:
+        raise RunRefused(f"{base} describes run {run_id[:23]}… as something other than "
+                         f"09 §9.12's object {{driver, engine, weights}}")
+    if digest(canonical_json(obj)) != run_id:
+        raise RunRefused(
+            f"{base} describes run {run_id[:23]}… with an object that does not hash to "
+            f"it. `run_id` IS the hash of its description (09 §9.12); a platform whose "
+            f"two answers disagree states no run that can be held to anything")
+    return emb.StatedRun(run_id=run_id, engine=obj["engine"], weights=obj["weights"],
+                         driver=obj["driver"])
+
+
+# ---- the check before a write ------------------------------------------------------
+
+def check(root: Path, name: str, codex: Codex, answered: set, *,
+          role: str = "document", batched: bool = True) -> None:
+    """May vectors from answers naming `answered` be written? Silent when
+    they may. `answered` is the set of `Louise-Run` values seen on the
+    answers that carried them; `None` in it is an answer that stated none.
+
+    `batched`: the vectors came the way this peer contributes — several
+    texts a request, or several requests at once — and not strictly one text
+    at a time. A run whose gate found it NOT batch-invariant is validated
+    for single-text work only (03 §3.3): the fault that silently corrupted
+    714 books was exactly a run that answered differently in a batch."""
+    if not applies(codex):
+        return
+    if not answered or None in answered:
+        raise RunRefused(
+            f"{name}: the encoder states no run identity (no `{RUN_HEADER}` on its "
+            f"answers), so nothing is written through it (03 §3.3). Searching with it "
+            f"works. Writing needs the node's model container, RAGE, which states the "
+            f"run of every answer")
+    # THE COMMON CASE IS ONE LOOKUP: the run is one this collection has a
+    # statement for. Only a run it has none for sends the check to the other
+    # collections of the space on this peer.
+    known = statements(root, name, codex, role)
+    for run_id in sorted(answered):
+        body = known.get(run_id)
+        if body is None:
+            known = statements_for_space(root, name, codex, role)
+            body = known.get(run_id)
+        if body is None:
+            raise RunUnvalidated(
+                f"{name}: run {run_id[:23]}… answered and this peer has not tested it "
+                f"for space {codex.space_id[:23]}…; nothing from it is written until "
+                f"the gate has passed against it (03 §3.3)", run_id)
+        if not passing(body, codex):
+            raise RunUnvalidated(
+                f"{name}: run {run_id[:23]}… FAILED the gate for this space "
+                f"({body.get('passed')} of the sample, median {body.get('median')}, "
+                f"tolerance {codex.space.tolerance}); its vectors are not this space's "
+                f"function", run_id, failed=True)
+        if batched and body.get("batch_invariant") is False:
+            raise RunUnvalidated(
+                f"{name}: run {run_id[:23]}… is validated for single-text work only — "
+                f"its gate found that a batch does not answer as one text at a time "
+                f"does. Embed one text a request (EMBED_BATCH=1, concurrency 1), or "
+                f"fix the engine's batching and let the gate run again", run_id,
+                failed=True)
+
+
+class Answers:
+    """An embed function that remembers which runs answered its last call.
+
+        embed = Answers(lambda texts, runs: embeddings.embed_texts(texts, …, runs=runs))
+        vectors = embed(texts);  runs.check(…, embed.runs)
+
+    `runs` is fresh per call, so a check is about THESE vectors and no others."""
+
+    def __init__(self, fn: Callable[[list[str], set], list[list[float]]]) -> None:
+        self._fn = fn
+        self.runs: set = set()
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        self.runs = set()
+        return self._fn(texts, self.runs)
+
+
+def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
+             embed, embed_one, contribute, stated: emb.StatedRun, key,
+             now: str) -> dict[str, Any]:
+    """Run the gate against one stated run and KEEP the statement — pass or
+    fail: "a failure is kept too, so the run is not retried against the same
+    set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
+    `embed` for the whole set, `embed_one` and `contribute` for the
+    fingerprint and batch invariance (embedder.run_gate)."""
+    run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
+                       stated=stated, embed_one=embed_one, contribute=contribute)
+    # THE PASS IS ABOUT ONE RUN. If the model was relaunched while the 512
+    # texts were going through — another flag, another image — some answers
+    # came from another run, and the numbers describe neither. 03 §3.3: "An
+    # answer that names another makes the check inconclusive": no statement,
+    # and it is tried again.
+    for fn in (embed, embed_one, contribute):
+        seen = getattr(fn, "runs", None)
+        if seen is not None and seen != {stated.run_id}:
+            others = sorted(str(r)[:23] for r in seen if r != stated.run_id)
+            raise emb.GateDeferred(
+                f"{name}: the pass was for run {stated.run_id[:23]}… and answers came "
+                f"from {others or 'an endpoint that stated none'} too; it is "
+                f"inconclusive, nothing is kept, and it is tried again")
+    statement = emb.statement(run, codex, key, now=now)
+    keep(root, name, statement)
+    return statement["body"]

@@ -30,7 +30,18 @@ def withheld_reason(collection) -> str | None:
         # is withheld until it can.
         return (f"license state cannot be judged ({type(e).__name__}: {e}); "
                 f"withheld until it can (invariant 9)")
-    return None
+    # 03 §3.6: a copy in quarantine — not yet tested on THIS peer — enters no
+    # list, in either leg. Only once the node enforces it (copy_state.enforced:
+    # the first deploy computes and shows the states and withholds nothing).
+    from . import copy_state
+    try:
+        return copy_state.withholds(collection)
+    except Exception as e:  # noqa: BLE001
+        # a state that cannot be derived withholds nothing by accident: the
+        # licence gate above has already failed closed on its own
+        return None if not copy_state.enforced() else (
+            f"quarantine: this copy's state cannot be derived "
+            f"({type(e).__name__}: {e})")
 
 
 def resolve_collections(names: list[str] | None) -> list[collections_mod.Collection]:
@@ -70,7 +81,13 @@ def withheld_from(names: list[str] | None) -> list[dict]:
     for c in collections_mod.load_all():
         reason = withheld_reason(c)
         if reason:
-            out.append({"collection": c.name, "reason": reason})
+            entry = {"collection": c.name, "reason": reason}
+            codex = getattr(c, "codex", None)
+            if codex is not None:
+                # 05 §5.3's shape: a copy withheld whole names its id, and
+                # `shards` is "all" rather than a list
+                entry.update(collection_id=codex.collection_id, shards="all")
+            out.append(entry)
     return out
 
 

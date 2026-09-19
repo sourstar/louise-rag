@@ -44,6 +44,7 @@ from . import calibration as cal
 from . import codex as cx
 from . import vectors as vec
 from .codex import CodexError
+from .embedder import GateDeferred
 
 #: 03 §3.5's tiers, in the order they run.
 T0, T1, T2, T3 = "T0", "T1", "T2", "T3"
@@ -354,7 +355,15 @@ def tier3(codex, accepted, *, text_of, embed, seed: bytes) -> Tier:
         return Tier(T3, SKIPPED,
                     "this peer holds the text of none of the sampled chunks")
 
-    got = np.asarray(embed(texts), dtype=np.float64)
+    try:
+        got = np.asarray(embed(texts), dtype=np.float64)
+    except GateDeferred as e:
+        # The encoder answered, and not under a run this peer has validated
+        # (03 §3.3: such a check is inconclusive). For T3 that is "could not
+        # run": SKIPPED, the chunks shown as *unverified here* — never a
+        # verdict about the bundle, and never a reason to refuse an import
+        # that a peer with no encoder at all is allowed to make.
+        return Tier(T3, SKIPPED, f"no compliant encoder on this peer: {e}"[:400])
     mine = got / np.clip(np.linalg.norm(got, axis=1, keepdims=True), 1e-12, None)
     theirs = np.asarray([by_id[c] for c in keep], dtype=np.float64)
     theirs = theirs / np.clip(np.linalg.norm(theirs, axis=1, keepdims=True), 1e-12, None)
