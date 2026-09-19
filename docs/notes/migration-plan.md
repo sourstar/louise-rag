@@ -1040,7 +1040,38 @@ carried it: the engine, by `engine_id`, replaces it.
 Six parts, in this order; each is a commit series of its own with its
 tests, and every pre-existing test stays green after each.
 
-- **13a — Codex v3.** `space.encoder = {weights, engine, label}`, the
+- **13a — Codex v3. DONE 2026-09-19.** What landed, and what it found:
+  - `app/hold/codex.py`: `Engine` and `engine_id`; an encoder in one of two
+    shapes — an engine from version 3, an image below it — that `validate`
+    AND the file reader tie to the Codex's version; `query_vectors` in the
+    calibration block; `space_id` without the engine at 3 and unchanged at
+    2. A version-2 Codex loads, keeps its `space_id` byte for byte and is
+    never rewritten.
+  - the artefacts that named an image each moved one version and still
+    read the old one: bundle header 2 (`bundle.py`, `export.py`),
+    attestation 3 (`check.py`), calibration member and its signature 2
+    (`calibration.py`, `collection.py`) with the QUERY side's reference
+    vectors, the statement 2 and the digest's `benchmarks` row
+    (`embedder.py`). An artefact written for a version-2 collection keeps
+    the image and its old version: those bytes are what its peers hold.
+  - the gate takes the run's FINGERPRINT and measures BATCH INVARIANCE in
+    the same pass, and gates a bi-encoder's query run against its own
+    reference (`role="query"`). A version-2 statement names the run; for an
+    endpoint that states none the verdict is reported and nothing is kept.
+  - `create` reads `[space.encoder.engine]` from the recipe and refuses an
+    image alone; `--query-encoder URL` for a bi-encoder, on the command and
+    on its route; `derive` keeps the mother's version in her space (a
+    version-3 sister of a version-2 mother would land in another space) and
+    writes 3 in a new one.
+  - FOUND: gutenberg's recipe names a `[space.query.encoder]` identical to
+    its document encoder. Under version 3 that is an asymmetric space on
+    paper — a second, identical reference to pin and gate. A symmetric
+    model names no query encoder; both recipe notes say so now, and say
+    they made version-2 Codices and cannot make another.
+  - 66 tests failed and 132 errored when `CODEX_VERSION` became 3; the
+    fixtures are the spec's version-3 worked example now, with a version-2
+    twin (`pubmed_v2`) that pins the old shape.
+  Scope as first written: `space.encoder = {weights, engine, label}`, the
   engine object and `engine_id`, `space_id` without the image, a
   non-null `space.query.encoder` as `{weights, engine}`,
   `space.calibration.query_vectors`, the version bumps of 09 §9.18

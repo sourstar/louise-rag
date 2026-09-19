@@ -3034,12 +3034,42 @@ which carries its own chat template; the per-model apps are shut off
 before RAGE loads, which makes 13f a cut-over and not a gradual switch
 ([`rage.md`](rage.md) §16). Still to give: the registry.
 
+**The same day, after the front:**
+- **A live bug fixed (8bec7fc):** every streamed answer on the Ask page
+  ended with `[error: <Token … was created in a different Context]`.
+  `llm.chat_stream` holds `dispatch.call` across its `yield`s, and
+  Starlette steps a sync generator in its threadpool with a FRESH COPY
+  of the request's context per step: the level was set in the first
+  copy and `reset` in the last, which `contextvars` refuses. The gate
+  and the claim were released correctly; only the message was wrong.
+  NOT DEPLOYED — it needs the web container rebuilt.
+- **`tools/endpoint_vectors.py` (3275ccb):** records what each encoder
+  answers today — the sixteen fingerprint texts and a spread of the
+  calibration set, one text a request, unnormalised — and compares
+  RAGE's answers with it afterwards. The cut-over needs it FIRST: once
+  the per-model apps are off there is nothing left to compare with.
+  `app/hold/fingerprint.py` is 09 §9.12's rule. A test caught
+  `Path.with_suffix` replacing ".document": a bi-encoder's query side
+  would have overwritten its document side's recording.
+- **13e, first part (3dd4194):** every model request carries
+  `Louise-Level`; `CHAT_API = ollama | openai` so the chat model can
+  leave Ollama for RAGE by switching one variable, and come back;
+  `RAGE_URL`. Nothing changes on today's node: the header is ignored by
+  today's servers and the protocol defaults to Ollama's.
+- **13a, Codex v3:** the engine in the Codex and out of the space, and
+  every artefact that named an image moved one version while still
+  reading the old one ([`migration-plan.md`](migration-plan.md) 13a has
+  the list). Every collection on the node is version 2 or legacy, so
+  nothing live changes: their Codices load as before, their `space_id`s
+  do not move, and what is written for them keeps its old shape. New
+  collections — the v1.0 roots — are version 3 and name an engine; the
+  two gutenberg recipe notes cannot create one and say so.
+
 **Not done.** 13d's build, publish and proof on the node — it needs the
 operator's registry and is outward-facing; two
-things in the Dockerfile are unverified until then and say so. 13a
-(Codex v3) and 13e (Louise's clients): until 13e nothing in Louise reads
-`Louise-Run` or sends `Louise-Level`, and RAGE would serve today's
-Louise unchanged behind `/upstream/<model>` URLs. 13f, the retirements.
+things in the Dockerfile are unverified until then and say so. 13e's
+second part: reading `Louise-Run` and checking it before every write,
+for version-3 collections. 13f, the cut-over and the retirements.
 Step 14, quarantine.
 
 ### What is waiting on the operator

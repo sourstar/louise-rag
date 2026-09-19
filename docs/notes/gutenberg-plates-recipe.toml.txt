@@ -1,3 +1,24 @@
+# ---------------------------------------------------------------------------
+# 2026-09-19 — THIS RECIPE MADE A VERSION-2 CODEX, AND CANNOT MAKE ANOTHER.
+# It is kept as the record of how that collection was created: its encoder is
+# named by an IMAGE, and that image is inside its space_id (09 §9.3, version 2).
+# From Codex version 3 `hold collection create` refuses `image` alone. A new
+# collection names the ENGINE its reference vectors are computed with:
+#
+#   [space.encoder]
+#   weights = "sha256:…"
+#   label   = "…"
+#   [space.encoder.engine]
+#   name = "llama.cpp"   build = "b10630"   variant = "sycl"
+#   image  = "sha256:<the published RAGE image that ran>"
+#   args   = [ … the model's cmd from rage.toml, ${WEIGHTS} and ${PORT} as written … ]
+#   device = "Intel(R) Arc(TM) Pro B70 Graphics"
+#
+# and a symmetric model (one encoder for documents and queries, as here) has
+# NO [space.query.encoder] at all: naming the same weights there makes the
+# space asymmetric on paper, and version 3 would then pin and gate a second,
+# identical reference (09 §9.12, query_vectors). Migration-plan step 13a.
+# ---------------------------------------------------------------------------
 # Project Gutenberg — the real collection. Step 8.
 #
 # `create` mints a PERMANENT collection_id and space_id from these bytes.
