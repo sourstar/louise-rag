@@ -2833,6 +2833,28 @@ in tantivy at `index/_catalog`, one index per collection.
   never vacuumed (invariant 6). Dropping it takes the manifest's write
   lock for as long as the drop lasts.
 
+**Deployed 2026-09-18 22:58 UTC (d615cf4); live since the backfills
+completed.**
+- The backfills took about 15 minutes for wikipedia and about 1 hour for
+  pubmed, in 60 s turns.
+- The indexes: gutenberg 6.5 MB, wikipedia 291 MB (60.1M rowids, only the
+  extracted rows are written), pubmed 3.8 GB (40.0M, estimated 3.6 GiB).
+- rdf batches were unaffected: 20,000 documents in 1.3 s, catalog commit
+  included. No catalog deferral or error was logged.
+- Measured through `catalog_search`, best of 3, on 2026-09-19:
+
+| pubmed query | before | after |
+|---|---|---|
+| aspirin platelet aggregation | 4.0 s | 17.6 ms |
+| cancer treatment | 9.1 s | 55.4 ms |
+| cancer | 57.3 s | 33.1 ms |
+
+- The hybrid search for "aspirin platelet aggregation" went from 21.6 s to
+  4.3 s. The catalog is 18 ms of that; the rest is fts (1.2 s), dense
+  (2.4 s) and the reranker (0.5 s).
+- It survived the worker's restructuring the same night, with one fix by
+  that work: 1f25e6b, `close_all` waits for a commit in flight.
+
 ### Model work by priority; the encoders fed (2026-09-19/20)
 
 **What was wrong, measured live.** gutenberg's encoder (Qwen3-4B, on the
