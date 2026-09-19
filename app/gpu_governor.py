@@ -26,6 +26,16 @@ clock changes, so a stale heartbeat reads as "not running".
 RESTORED ON EXIT. SIGTERM puts the rest value back. A governor killed while
 pinning leaves the card pinned, so the next one takes a `min_freq` already
 at the maximum to be that, and rests at the hardware floor (`rpn_freq`).
+
+THE CARD'S HISTORY. Every GOVERNOR_SAMPLE_S it also records the card's fan,
+temperatures, average power since the last sample, its clock at that
+instant (0 when idle) and whether the claim was live, in `gpu_samples` in
+the node store, keeping GOVERNOR_HISTORY_DAYS. The xe driver's known issue
+is a fan that stays high after a workload, until a GPU process restarts.
+The history shows when it happens: a high fan on a cool, idle card. The
+fan cannot be set from here (xe exposes it read-only); the workaround,
+restarting an engine, belongs to RAGE and only to RAGE (operator,
+2026-09-20: never restart other apps).
 """
 from __future__ import annotations
 
@@ -36,9 +46,62 @@ import time
 from contextlib import closing
 from pathlib import Path
 
-from . import config, db, dispatch, node_state
+from . import config, db, dispatch, gpu, node_state
 
 STATUS_KEY = "gpu_governor"
+SAMPLES_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS gpu_samples (ts INTEGER NOT NULL, fan_rpm INTEGER, "
+    "temp_pkg REAL, temp_vram REAL, power_w REAL, act_mhz INTEGER, "
+    "interactive INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_gpu_samples_ts ON gpu_samples(ts)",
+)
+
+
+def xe_hwmon(drm_dir: Path) -> Path | None:
+    """The first card whose hwmon is the xe driver's — found each time,
+    because both the card's and the hwmon's numbers change across boots."""
+    for dev in sorted(drm_dir.glob("card*/device")):
+        h = gpu.hwmon_dir(dev)
+        try:
+            if h is not None and (h / "name").read_text().strip() == "xe":
+                return h
+        except OSError:
+            continue
+    return None
+
+
+class Sampler:
+    """One row of the card's history every GOVERNOR_SAMPLE_S."""
+
+    def __init__(self, drm_dir: Path, freq_dir: Path) -> None:
+        self.drm_dir, self.freq_dir = drm_dir, freq_dir
+        self.last: tuple[float, int] | None = None     # (monotonic, energy µJ)
+
+    def row(self, interactive: bool) -> tuple:
+        hwmon = xe_hwmon(self.drm_dir)
+        now, energy = time.monotonic(), gpu.energy_uj(hwmon)
+        power = None
+        if energy is not None and self.last is not None and energy >= self.last[1] \
+                and now > self.last[0]:
+            power = (energy - self.last[1]) / (now - self.last[0]) / 1e6
+        self.last = None if energy is None else (now, energy)
+        s = gpu.read_sensors(hwmon) or gpu.GpuSensors()
+        act = gpu._num(self.freq_dir / "act_freq")
+        return (int(time.time()), s.fans[0] if s.fans else None, s.temp("pkg"),
+                s.temp("vram"), power, act, int(interactive))
+
+    def record(self, interactive: bool) -> None:
+        """Never raises: a history that cannot be written is a gap in it."""
+        try:
+            row = self.row(interactive)
+            with closing(node_state.connect()) as con:
+                for stmt in SAMPLES_SCHEMA:
+                    con.execute(stmt)
+                con.execute("INSERT INTO gpu_samples VALUES (?,?,?,?,?,?,?)", row)
+                con.execute("DELETE FROM gpu_samples WHERE ts < ?",
+                            (row[0] - int(config.GOVERNOR_HISTORY_DAYS * 86400),))
+        except Exception:   # noqa: BLE001
+            pass
 
 
 class Governor:
@@ -88,12 +151,17 @@ def _publish(payload: dict) -> None:
         pass
 
 
-def run(stop: threading.Event, freq_dir: Path | None = None) -> None:
+def run(stop: threading.Event, freq_dir: Path | None = None,
+        drm_dir: Path | None = None) -> None:
     freq_dir = Path(freq_dir or config.GOVERNOR_FREQ_DIR)
+    sampler = Sampler(Path(drm_dir or config.GOVERNOR_DRM_DIR), freq_dir)
     gov: Governor | None = None
-    last_beat = 0.0
+    last_beat = last_sample = 0.0
     try:
         while not stop.is_set():
+            if time.monotonic() - last_sample >= config.GOVERNOR_SAMPLE_S:
+                sampler.record(dispatch.interactive_active())
+                last_sample = time.monotonic()
             if gov is None:
                 try:
                     gov = Governor(freq_dir)

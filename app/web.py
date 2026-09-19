@@ -3207,4 +3207,5 @@ def system_gpu_fragment(request: Request):
     # reads /proc — only the gpu-probe container may see the host's processes
     return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
                                        gpu.panel(config.GPU_PROBE_URL)
-                                       | {"governor": gpu.governor()})
+                                       | {"governor": gpu.governor(),
+                                          "history": gpu.history()})

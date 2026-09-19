@@ -36,7 +36,11 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
-from .gpu import GpuDevice, GpuProcess, GpuSnapshot, to_json
+import threading
+import time
+
+from .gpu import (GpuDevice, GpuProcess, GpuSnapshot, energy_uj, hwmon_dir, read_sensors,
+                  to_json)
 
 PROC = Path("/proc")
 SYS_DRM = Path("/sys/class/drm")
@@ -350,6 +354,33 @@ def scan() -> dict[str, list[GpuProcess]]:
 # --------------------------------------------------------------------------
 # the snapshot, and the service
 
+# The card's power is the change of its energy counter over time. The panel
+# asks every 5 s, so the previous request's reading is the interval; with
+# none recent enough, two readings POWER_WINDOW_S apart.
+POWER_WINDOW_S = 0.25
+_POWER_MAX_AGE_S = 60.0
+_last_energy: dict[str, tuple[float, int]] = {}
+_energy_lock = threading.Lock()
+
+
+def card_power(pdev: str, hwmon) -> float | None:
+    now, energy = time.monotonic(), energy_uj(hwmon)
+    if energy is None:
+        return None
+    with _energy_lock:
+        prev = _last_energy.get(pdev)
+        _last_energy[pdev] = (now, energy)
+    if prev is None or now - prev[0] > _POWER_MAX_AGE_S or energy < prev[1]:
+        time.sleep(POWER_WINDOW_S)
+        prev, now, energy = (now, energy), time.monotonic(), energy_uj(hwmon)
+        if energy is None:
+            return None
+        with _energy_lock:
+            _last_energy[pdev] = (now, energy)
+    elapsed = now - prev[0]
+    return None if elapsed <= 0 else (energy - prev[1]) / elapsed / 1e6
+
+
 def snapshot() -> GpuSnapshot:
     notes: list[str] = []
     found = []
@@ -363,14 +394,17 @@ def snapshot() -> GpuSnapshot:
         device_id = (_read(dev / "device") or "").strip().lower().removeprefix("0x")
         vendor, name = pci_name(vendor_id, device_id)
         total, used = card_vram(card, driver, notes)
-        found.append((card.name, dev.resolve().name, driver, vendor_id, device_id,
-                      vendor, name, total, used))
+        pdev = dev.resolve().name
+        hwmon = hwmon_dir(dev)
+        sensors = read_sensors(hwmon, power_w=card_power(pdev, hwmon))
+        found.append((card.name, pdev, driver, vendor_id, device_id,
+                      vendor, name, total, used, sensors))
     per_card = scan()     # after every query has closed its descriptor
     return GpuSnapshot(
         devices=tuple(GpuDevice(card=c, pdev=pdev, driver=drv, vendor_id=vid, device_id=did,
                                 vendor=ven, name=nm, vram_total=tot, vram_used=use,
-                                processes=tuple(per_card.get(pdev, ())))
-                      for c, pdev, drv, vid, did, ven, nm, tot, use in found),
+                                processes=tuple(per_card.get(pdev, ())), sensors=sen)
+                      for c, pdev, drv, vid, did, ven, nm, tot, use, sen in found),
         notes=tuple(notes))
 
 
