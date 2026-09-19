@@ -1130,8 +1130,11 @@ tests, and every pre-existing test stays green after each.
   models are bound read-only, the token is a path. Nothing has been
   built, published or run: that needs the node, a registry and the
   operator's values. Unverified until then, and marked in the
-  Dockerfile: the llama-swap release archive's name, and torch's XPU
-  wheels on the llama.cpp base. Scope as first written:
+  Dockerfile: torch's XPU wheels on the llama.cpp base. The llama-swap
+  archive's name and checksum ARE verified, and the real v256 binary was
+  run locally on the generated yaml with stub children — no swapping,
+  per-model unload, the run identity matched through a real `/proc`
+  ([`rage.md`](rage.md) §17). Scope as first written:
   `deploy/rage/Dockerfile`,
   `deploy/truenas-rage.yaml` (an app of its own: an optional helper
   never shares Louise's app), the image published by digest.
@@ -1139,7 +1142,25 @@ tests, and every pre-existing test stays green after each.
   **The operator's stop**: the numbers go in STATUS.md and in the commit
   message — load, unload and device-change times per model, one full
   gate per encoder, each model's measured memory.
-- **13e — The clients.** Every writer reads `Louise-Run` and checks it
+- **13e — The clients. DONE 2026-09-19** (`tests/test_run_check.py`, 30;
+  `tests/test_louise_level.py`, 8). Where it differs from the scope
+  below, each found while building. The worker CHECKS at the write and
+  never gates there: several document threads reach the check at once,
+  so the gate lives in `backend_gate.embed_allowed` — one thread, once
+  per (space, endpoint) — and the write only defers. A pass validates a
+  run FOR THE SPACE, so a statement kept under one collection counts for
+  every collection of that space on the peer. The query encoder of an
+  asymmetric space is gated by itself, from the same place. For a
+  version-3 collection the run check replaces the behavioural baseline
+  and no setting turns it off. `share contribute` does not exist yet
+  (step 9); `vectors build` is the command that refuses. A CHECK runs
+  under a validated run too (03 §3.3): `hold check`, `hold vectors
+  check`, T3 and an export's challenge embed through
+  `run_check.checking`, and an answer from any other run makes them
+  inconclusive (exit 3; T3 is SKIPPED, as for a peer with no encoder).
+  As scoped:
+  Every writer reads `Louise-Run` and checks it
+
   against this peer's statements BEFORE the write, inside no
   transaction (the HTTP call stays outside; the check is a dictionary
   lookup). An answer naming an unvalidated run writes nothing — a
@@ -1178,7 +1199,33 @@ tests, and every pre-existing test stays green after each.
 stored by path, RAGE's port, its state directory, the chat GGUF
 ([`rage.md`](rage.md) §16).
 
-### Step 14 — Quarantine
+### Step 14 — Quarantine — **REPORTING DEPLOY BUILT 2026-09-19**
+*Built:* `app/copy_state.py`, the one derivation; `[node] quarantine =
+"report" | "enforce"` in `platform.toml`, default `report`; the search
+(`withheld`, `shards: "all"`; `legs_withheld` for a failed run), the
+worker's embed, bundle-import and archive-import gates (the gate FIRST,
+quarantine second, and the archive FETCH goes on), the export door, the
+four `hold vectors` commands, `louise health`, the Library card, `hold
+collection show`, `hold collection ack --origin-unchecked`, and `hold
+check` noting an origin check that could not run
+(`tests/test_quarantine.py`, 27). *Measured* (dev container, 2026-09-19):
+one evaluation is 0.20 ms warm whether 10 or 510 attestations are held —
+it was 2.6 ms at 510 until the directory's own mtime became the
+signature, a per-item cost caught before it shipped — and 95 ms cold
+per 500 signatures, once per change. Not yet timed on the node's own
+state directories. *Not built:* nothing runs `roots`,
+`chunks` or `records-vs-origin` by itself — they are `hold check`, by
+hand or cron. A scheduled run changes what runs when and moves origin
+bytes: [`scheduling.md`](scheduling.md) §6 wants it measured on the node
+first. It is the one thing between this and "clears by itself"; until
+then enforcing means running `hold check` per Codex collection first.
+`node show` is not built; `louise health` carries the state. *Settled
+while building:* test 2 (T0–T2 of every bundle held) has no open state,
+because nothing lands without them; a peer with no key is told its checks
+leave no record (no unsigned substitute was invented); `--origin-unchecked`
+also refuses when the origin check was never TRIED, since nothing then
+says it cannot run.
+
 *03 §3.3, §3.4, §3.6; 05 §5.3; 07 §7.3, §7.8; 09 §9.3 (98ee4dc).
 Reasoning: [`rage-review.md`](rage-review.md) §18. Wraps
 `app/collections.py`, `app/licensing.py`, `app/retrieval.py`, the

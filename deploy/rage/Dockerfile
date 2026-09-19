@@ -46,6 +46,13 @@ RUN mkdir -p /etc/rage \
 # re-reads that module against the new docs/config.example.yaml. The
 # checksum has no default on purpose: a build that does not say which bytes
 # it expects does not get any.
+#
+# VERIFIED 2026-09-19 against the release itself: v256 ships
+# `llama-swap_256_linux_amd64.tar.gz` with `llama-swap` at its root, and its
+# published checksum — which the downloaded bytes hash to — is
+#   557757336cde1a667f0b200d4a84c48c9f5fdf561fd8ae969a2bed9d8c94ec48
+# That binary was then run on the yaml app/rage/swapyaml.py renders
+# (docs/notes/rage.md §17): it is the value to pass, not a default.
 ARG LLAMA_SWAP_VERSION=256
 ARG LLAMA_SWAP_SHA256
 RUN test -n "${LLAMA_SWAP_SHA256}" || { echo "pass --build-arg LLAMA_SWAP_SHA256=<sha256 of the llama-swap release archive>"; exit 1; } \

@@ -502,14 +502,35 @@ handler, not a mention).
 
 **Not done, and why.**
 - **13d, the image and the proof (§14)** — needs the node, the operator's
-  values (§16) and a registry: an outward-facing build and publish. Two
-  things in the Dockerfile are unverified until then and marked there:
-  the llama-swap release archive's name, and torch's XPU wheels on the
-  llama.cpp base. Whether llama-swap restarts running children when its
-  yaml changes is also unknown; the front copes either way (§8, checked
-  twice), but the proof should time it.
+  values (§16) and a registry: an outward-facing build and publish. ONE
+  thing in the Dockerfile is unverified until then and marked there:
+  torch's XPU wheels on the llama.cpp base. Whether llama-swap restarts
+  running children when its yaml changes is also unknown; the front
+  copes either way (§8, checked twice), but the proof should time it.
+- **Proved locally meanwhile (2026-09-19), with the real llama-swap v256
+  binary and stub children, in the dev container.** The release archive
+  is named as the Dockerfile has it, holds `llama-swap` at its root, and
+  hashes to its published checksum (the value is in the Dockerfile's
+  comment). The binary ACCEPTS the yaml `swapyaml.render` writes from
+  `rage.example.toml` — nine models, eighteen variants, one group. With
+  two stub models: a `GET /upstream/<variant>/health` loads the child
+  (0.26 s) with `${PORT}` filled in from `startPort`; BOTH members then
+  run at once, so the one group does not swap; a second request reuses
+  the same process; `POST /api/models/unload/<variant>` stops that child
+  and leaves the other; the child's parent is llama-swap. And the run
+  identity holds against a real `/proc`: `runs.match` finds exactly the
+  child llama-swap started, by its argument vector, with its port; the
+  unloaded model matches nothing; `oom_score_adj` is writable for it.
+  llama-swap adds no header of its own to a proxied answer. Not proved
+  by this: anything with a GPU, the torch servers, the image itself.
 - **The sampler** (`gpu_samples`) stays with the governor app until 13f
   retires it; the front holds the clock and reports it, no more.
-- **13a and 13e** — Codex v3 and Louise's clients. Until 13e nothing in
-  Louise reads `Louise-Run` or sends `Louise-Level`: RAGE would serve
-  today's Louise unchanged, behind `/upstream/<model>` URLs.
+- **13a and 13e — BUILT since (2026-09-19)**: Codex v3, and Louise's
+  clients. Every model request sends `Louise-Level`; for a version-3
+  collection every embedding answer's `Louise-Run` is checked before its
+  vectors are written, and a run the peer has not tested is gated at
+  once through `GET /louise/runs/<id>`, whose object must hash to the id
+  it was asked for (`app/run_check.py`, `app/hold/runs.py`;
+  [`migration-plan.md`](migration-plan.md) 13e). Today's collections are
+  version 2 or legacy, so RAGE still serves today's Louise unchanged,
+  behind `/upstream/<model>` URLs.

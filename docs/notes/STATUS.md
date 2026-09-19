@@ -3065,12 +3065,63 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
   collections — the v1.0 roots — are version 3 and name an engine; the
   two gutenberg recipe notes cannot create one and say so.
 
+- **13e, second part — a vector is written only from an answer that names
+  a validated run** (03 §3.3). `app/hold/runs.py` keeps one signed
+  statement per run and role under `state/calibration/`, pass or fail,
+  and refuses a write whose answers name any other; `app/run_check.py`
+  is where the node's embedding client meets it. The worker CHECKS at
+  the write (`embeddings._rows_for`, the one place its rows are made, a
+  dictionary lookup) and never gates there: an answer from an untested
+  run, or from an endpoint that states none, defers the document
+  untouched — never an error on it. The gate runs at once from
+  `backend_gate.embed_allowed`, once per (space, endpoint): a pass
+  resumes the work, a failure or a run-less endpoint PAUSES the
+  collection's embedding with its reason. An asymmetric space's query
+  encoder is gated the same way, by itself. `hold vectors build` checks
+  every batch before its write and gates a new run inline; `hold
+  embedder check` validates the run that answers and needs no
+  `--accept`. For a version-3 collection this REPLACES the behavioural
+  baseline, and `BACKEND_GATE=off` does not switch it off. Version 2
+  and legacy collections — every collection on the node — are untouched.
+  The gate's second pass contributes the way the peer really does,
+  `recipe.concurrency` requests at once included: that is the setting
+  the 714-book fault lived in. Found by the suite: a missing calibration
+  member was reported as an unreachable encoder (exit 3) because the
+  network was asked first; it is a refusal (exit 2) again.
+- **Step 14 — quarantine, REPORTING.** `app/copy_state.py` derives a
+  copy's state — refused, quarantine, in use — from what the peer holds
+  and writes nothing: its own attestations (another key's are not its
+  tests), its run statements, the licence resolution, the origin
+  acknowledgement. One function for the worker, the search, the export
+  door, `louise health`, the Library card and `hold collection show`
+  (whose JSON gained `state`, `reasons`, `origin_check` and lost
+  `refused`, 09 §9.3). `hold collection ack --origin-unchecked` is
+  refused with a test open, with the origin never tried, and with the
+  check run; accepted with the origin away, recording time and key. A
+  run not yet tested re-quarantines every collection that reaches that
+  encoder and the gate clears it at once, with or without embed work; a
+  FAILED run withholds the vector leg only, and the search says so
+  (`legs_withheld`). **Nothing is withheld yet**: `platform.toml`'s
+  `[node] quarantine` defaults to `"report"`, and the worker log, the
+  health check and the Library say what enforcing WOULD withhold.
+  `"enforce"` is the operator's word, after `hold collection show` reads
+  `in-use` for every collection meant to be.
+
 **Not done.** 13d's build, publish and proof on the node — it needs the
-operator's registry and is outward-facing; two
-things in the Dockerfile are unverified until then and say so. 13e's
-second part: reading `Louise-Run` and checking it before every write,
-for version-3 collections. 13f, the cut-over and the retirements.
-Step 14, quarantine.
+operator's registry and is outward-facing; torch's XPU wheels on the
+llama.cpp base are unverified until then and the Dockerfile says so.
+(The llama-swap archive, its checksum and the front's assumptions about
+llama-swap were since proved locally with the real v256 binary:
+[`rage.md`](rage.md) §17.) 13f, the cut-over and the retirements. Of step 14: NOTHING RUNS `roots`, `chunks`
+or `records-vs-origin` BY ITSELF — the gate does, those three are still
+`louise hold check <name>`, by hand or by cron. A scheduled run is a
+change to what runs when ([`scheduling.md`](scheduling.md) §6: measure
+on the node first) and `records-vs-origin` moves bytes from the origin
+(invariant 5), so it was not guessed at here. Until it exists, enforcing
+quarantine means running `hold check` on each Codex collection first —
+which the reporting deploy makes visible. `node show` (07 §7.8) is not
+built; `louise health` carries the state meanwhile. None of 13e or 14
+is deployed.
 
 ### What is waiting on the operator
 
