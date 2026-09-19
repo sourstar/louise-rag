@@ -167,19 +167,20 @@ cmd.xpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--w
 cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
            "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 
-# DNABERT-2: a runtime check only, ungated — DNA collections are a non-binding
-# work in progress and no DNA calibration set exists (operator, 2026-09-19).
-# Its app is stopped today and /mnt/ssd5/apps/dnabert2-models holds no model:
-# until a Hugging Face snapshot, remote code included, is materialised there,
-# this entry is `absent` and refused by path, which harms nothing.
-[models.dnabert2]
-engine  = { name = "louise-dnabert2-server", build = "1" }
-weights = "/models/dnabert2/DNABERT-2-117M"
-device  = "xpu"
-memory  = { xpu = 1200, cpu = 1800 }
-host    = { xpu = 1500 }                  # unmeasured: its app is not running
-env     = { LD_LIBRARY_PATH = "/usr/local/lib" }   # torch: see madlad
-cmd.xpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
-           "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
-           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+# DNABERT-2 IS NOT SERVED. DNA collections have not been ferried to the new
+# architecture: they are frozen and inactive until further development
+# (operator, 2026-09-19). The image keeps its venv, so serving it again is this
+# entry uncommented, its bind restored in the app file, and its weights placed
+# as a REAL directory — on the node they sit in a Hugging Face cache layout,
+# whose symbolic links the weights digest refuses (app/rage/runs.py).
+# [models.dnabert2]
+# engine  = { name = "louise-dnabert2-server", build = "1" }
+# weights = "/models/dnabert2/DNABERT-2-117M"
+# device  = "xpu"
+# memory  = { xpu = 1200, cpu = 1800 }
+# host    = { xpu = 1500 }                  # unmeasured: its app is not running
+# env     = { LD_LIBRARY_PATH = "/usr/local/lib" }   # torch: see madlad
+# cmd.xpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
+#            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+# cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
+#            "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]

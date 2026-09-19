@@ -16,7 +16,11 @@ APP_YAML = (ROOT / "deploy" / "truenas-rage.yaml").read_text(encoding="utf-8")
 
 def test_the_example_config_is_one_the_front_would_accept():
     cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
-    assert {"bge-m3", "chat", "madlad", "medcpt-rerank", "dnabert2"} <= set(cfg.models)
+    assert {"bge-m3", "chat", "madlad", "medcpt-rerank"} <= set(cfg.models)
+    # DNA collections are frozen and inactive until further development
+    # (operator, 2026-09-19): RAGE serves no DNA model, and binds none
+    assert "dnabert2" not in cfg.models
+    assert not re.search(r"^\s+- \S*dnabert2\S*:/models/", APP_YAML, re.M)
     for entry in cfg.models.values():
         assert entry.devices == ("cpu", "xpu"), f"{entry.id}: the device is chosen at load"
     assert set(cfg.preload) <= set(cfg.models)

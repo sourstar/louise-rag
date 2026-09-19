@@ -1122,9 +1122,13 @@ tests, and every pre-existing test stays green after each.
   without the token, the token read from its file; the clock held while
   a `chat` request is in flight and released after, restored on
   SIGTERM.
-- **13d — The image, and the first proof. TRIAL-BUILT LOCALLY 2026-09-19
-  (two defects found and fixed — [`rage.md`](rage.md) §17); NOT
-  PUBLISHED, NOT ON THE NODE.** `deploy/rage/Dockerfile`, `deploy/rage/rage.example.toml` and
+- **13d — The image, and the first proof. BUILT ON THE NODE AND PUBLISHED
+  2026-09-19** (`ghcr.io/sourstar/rage@sha256:8ee29dfa…0489`, private
+  until the operator makes the package public; trial-built locally first,
+  which found and fixed two defects — [`rage.md`](rage.md) §17). On the
+  node, with the card and no model loaded: llama-server, torch XPU and
+  OpenVINO all see the Arc Pro B70 from the image. **The proof with real
+  models is the cut-over evening (13f)**: the per-model apps go off first. `deploy/rage/Dockerfile`, `deploy/rage/rage.example.toml` and
   `deploy/truenas-rage.yaml` exist and `tests/rage/test_deploy_files.py`
   holds them to the code: the example loads, every program it starts is
   in the image, the image carries exactly what the front imports, the

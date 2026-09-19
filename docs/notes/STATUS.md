@@ -3148,6 +3148,35 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   budget-drawing fetch of the plan's sample, which does not exist yet.
   That fetch and the scheduled run are one piece of work.
 
+**RAGE'S IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
+first half).** `ghcr.io/sourstar/rage@sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
+(tag `b10630-1`, 18.2 GB; the base's layers were mounted from
+ggml-org/llama.cpp, not uploaded). The login is a Docker config kept by
+path, `/mnt/ssd5/apps/louise-rage/secrets/docker` — root's own config
+was not touched. **The package is PRIVATE until the operator makes it
+public in its GitHub settings page; nothing else can.** Until then the
+image is not "obtainable" (02 §2.4) and no Codex should freeze it.
+- **Settled on the node, with the card, no model loaded:** llama-server
+  starts from `/srv` and lists `SYCL0: Intel(R) Arc(TM) Pro B70 Graphics
+  (32656 MiB)`; torch 2.14.0+xpu, under the environment a torch model
+  declares, reads `xpu available: True` and names the card; OpenVINO lists
+  `['CPU', 'GPU']`. These were the unknowns the trial build left.
+- **RAGE's folder is ready for the cut-over**: `config/rage.toml` (eight
+  models, five preloaded; every weights path checked present on the
+  node), `config/truenas-rage.yaml` with the digest filled in,
+  `secrets/admin.token` generated there and never shown, `state/` empty.
+- **DNA is frozen and inactive** (operator, 2026-09-19: "not ferried to
+  the new architecture … until further development"). DNABERT-2 is no
+  longer served: commented out of `rage.example.toml`, its bind out of
+  the app file, a test holds both. Its weights on the node sit in a
+  Hugging Face cache layout whose symbolic links the weights digest
+  refuses; placing them as a real directory is part of bringing it back.
+- A file first offered as the registry token was Louise's own admin token
+  (found by comparing hashes on the node, printing neither). It was not
+  sent anywhere; both token files are now mode 600.
+- **Left:** 13d's proof with real models and 13f are ONE evening — the
+  per-model apps go off before RAGE loads. Today's vectors are recorded.
+
 **Not done.** 13d's build, publish and proof on the node — it needs the
 operator's registry and is outward-facing. The image WAS trial-built
 locally, never pushed, and the build found two defects that would have
