@@ -90,13 +90,17 @@ def _over_budget(response) -> bool:
 
 
 def _embed_batch(batch: list[str], timeout: float,
-                 recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
+                 recipe: "collections_mod.EmbedRecipe", *,
+                 raw: bool = False) -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
     - null/NaN vectors (intermittent SYCL corruption) -> plain retry
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
       truncation underestimates tokens for CJK/dense scripts) -> halve the
       char budget and retry until it fits.
-    Other HTTP errors surface with the server's actual message."""
+    Other HTTP errors surface with the server's actual message.
+
+    `raw`: the vectors as the endpoint returned them, not unit-normalised —
+    what 09 §9.12's fingerprint is taken over (`embed_one_at_a_time`)."""
     budget = recipe.ctx * 4
     n_bad = 0
     # The FIRST guess is script-aware; the loop below is what makes it
@@ -139,6 +143,8 @@ def _embed_batch(batch: list[str], timeout: float,
                 f"embed server HTTP {e.response.status_code}: {detail}") from e
         n_bad = sum(1 for v in vecs if _invalid(v))
         if n_bad == 0 and len(vecs) == len(batch):
+            if raw:
+                return vecs
             out = []
             for v in vecs:
                 n = math.sqrt(sum(x * x for x in v)) or 1.0
@@ -148,6 +154,33 @@ def _embed_batch(batch: list[str], timeout: float,
     raise RuntimeError(
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
+
+def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
+    """The recipe of the side that is asked: the query encoder's when the
+    collection declares one and a query is being embedded, else the recipe."""
+    if not (query and recipe.query_url):
+        return recipe
+    return collections_mod.EmbedRecipe(
+        url=recipe.query_url, api=recipe.api, model=recipe.model,
+        dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
+        concurrency=recipe.concurrency, device=recipe.device)
+
+
+def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecipe",
+                        query: bool = False, timeout: float = 300) -> list[list[float]]:
+    """Each text ALONE in its request, in order, truncated as a chunk is, and
+    the vectors AS THE ENDPOINT RETURNED THEM — not unit-normalised.
+
+    This is how docs/09-formats.md §9.12 takes a run's fingerprint: "embedded
+    one at a time … each as the endpoint returned it". It is also what
+    tools/endpoint_vectors.py records before a model changes hands, so that
+    what answers afterwards can be held to it bit for bit. No batching, no
+    concurrency: neither EMBED_BATCH nor EMBED_CONCURRENCY applies here, on
+    purpose — the gate sets this beside the way the peer really contributes
+    to measure batch invariance (03 §3.3)."""
+    side = _side(recipe, query)
+    return [_embed_batch([text], timeout, side, raw=True)[0] for text in texts]
+
 
 def embed_texts(texts: list[str], timeout: float = 300, *,
                 recipe: "collections_mod.EmbedRecipe | None" = None,
@@ -166,11 +199,7 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
         raise collections_mod.NoEncoder(
             "embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
-    if query and recipe.query_url:
-        recipe = collections_mod.EmbedRecipe(
-            url=recipe.query_url, api=recipe.api, model=recipe.model,
-            dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
-            concurrency=recipe.concurrency, device=recipe.device)
+    recipe = _side(recipe, query)
     batches = [texts[i:i + config.EMBED_BATCH]
                for i in range(0, len(texts), config.EMBED_BATCH)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
