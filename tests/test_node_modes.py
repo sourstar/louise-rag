@@ -188,3 +188,78 @@ def test_the_real_scan_still_runs_where_everything_runs(collection):
     worker._scan_only(con, collection, "startup")
     assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 3
     assert worker._take_owed_scans() == set()
+
+
+# ---- embedding stops with the mode, at the unit SIGTERM already has ----------------------------
+
+def test_a_document_in_flight_stops_at_its_next_slice_when_the_mode_changes(collection,
+                                                                            monkeypatch):
+    """Seen live the evening this landed: in "download/seeding only" the
+    producers took no new document and the two in flight went on — 470
+    embedding requests in the next 100 s, and the largest book is 5.3 hours.
+    "Pause: nothing is running" cannot wait for that. The slice is the unit
+    (invariant 2): what is written stays, the document is deferred untouched."""
+    from app import config, embeddings
+    monkeypatch.setattr(config, "EMBED_SLICE_CHUNKS", 2)
+    recipe = collections_mod.EmbedRecipe(url="http://enc", api="openai", model="m",
+                                         dtype="f32", ctx=512, dim=4)
+    monkeypatch.setattr(collections_mod, "recipe_for", lambda c=None: recipe)
+    slices = []
+
+    def embed(texts, **kw):
+        slices.append(len(texts))
+        if len(slices) == 2:
+            worker._acquire_only.set()          # the operator presses the button
+        return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(embeddings, "embed_texts", embed)
+    chunks = [{"id": f"g:1:{i}", "seq": i, "chapter": "", "text": f"chunk {i}"}
+              for i in range(8)]
+    assert worker._embed_stop.is_set() is False
+    with pytest.raises(embeddings.EmbedInterrupted):
+        embeddings.upsert_book(1, "en", chunks, collection, stop=worker._embed_stop)
+    assert slices == [2, 2], "it went on embedding after the mode stopped running it"
+
+    # ...and it resumes from what is written when everything runs again
+    worker._acquire_only.clear()
+    assert embeddings.upsert_book(1, "en", chunks, collection, stop=worker._embed_stop) == 8
+    assert slices == [2, 2, 2, 2], "the four chunks already written were embedded again"
+
+
+def test_both_embed_paths_hand_the_mode_aware_stop_to_the_write():
+    import inspect
+    for fn in (worker.stage_embed, worker._embed_parallel):
+        source = inspect.getsource(fn)
+        assert "stop=_embed_stop" in source, fn.__name__
+        assert "stop=_stop" not in source, fn.__name__
+
+
+@pytest.mark.parametrize("flag", ["_paused", "_acquire_only"])
+def test_the_embed_stop_follows_every_mode_that_embeds_nothing(flag):
+    assert worker._embed_stop.is_set() is False
+    getattr(worker, flag).set()
+    assert worker._embed_stop.is_set() is True
+
+
+def test_an_archive_pass_in_flight_ends_at_its_next_row_when_the_mode_changes(collection,
+                                                                              monkeypatch):
+    """A pass asks its stop at every row and was only given SIGTERM, so one in
+    flight when the node was paused ran to the end of its budget, up to 300 s."""
+    from dataclasses import replace
+    archived = replace(collection, genesis_archive="some-archive")
+    seen = {}
+
+    def drain(con, coll, *, stop=None, eager=True):
+        seen["before"] = stop.is_set()
+        worker._paused.set()                  # the operator presses pause
+        seen["after"] = stop.is_set()
+        return None
+
+    monkeypatch.setattr(worker.bundle_genesis, "drain_next_shard", drain)
+    monkeypatch.setattr(worker, "_acquire_archive", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "_vector_writes_allowed", lambda c: True)
+    monkeypatch.setattr(worker, "_license_allows", lambda *a: True)
+    monkeypatch.setattr(worker, "_quarantine_allows", lambda *a: True)
+    monkeypatch.setattr(worker, "_ingest_pending", lambda con: False)
+    worker._drain_remote_archive(db.connect(collection), archived, threading.Event())
+    assert seen == {"before": False, "after": True}

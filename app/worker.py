@@ -439,7 +439,7 @@ def stage_embed(con, row, collection) -> None:
         # something shorter than that (invariant 2 — smaller where a
         # document is not possible). What is written stays written.
         n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
-                                    collection, lock_con=con, stop=_stop)
+                                    collection, lock_con=con, stop=_embed_stop)
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
     # Timed around the encoder call only — not around _load_chunks, and not
@@ -1084,7 +1084,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                         # 5,335 chunks); the rest resumes from what is written
                         n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
                                                     chunks, collection, lock_con=tcon,
-                                                    stop=_stop, held=held, sink=sink)
+                                                    stop=_embed_stop, held=held, sink=sink)
                     finally:
                         if submitted is not None:
                             submitted.release()
@@ -1266,8 +1266,9 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     if deferred:
         db.log_event(con, "warn", "embed",
                      f"{deferred} document(s) deferred — encoder unreachable or busy, "
-                     f"the store held by another writer, or an answer from a run "
-                     f"not yet validated (03 §3.3); "
+                     f"the store held by another writer, an answer from a run not "
+                     f"yet validated (03 §3.3), or the node's mode no longer running "
+                     f"this; "
                      f"untouched, and retried when it answers again")
     # Nothing embedded and something deferred means the endpoint is down:
     # report no work so the caller yields the round rather than spinning
@@ -1741,6 +1742,13 @@ def _drain_remote_archive(con, collection, stop) -> bool:
     # and what waits is the import (03 §3.6)
     if not _quarantine_allows(con, collection, "archive import"):
         return False
+    # THE MODE IS ONE OF A PASS'S STOPS (operator, 2026-09-19: "pause: nothing
+    # is running"). A pass asks its stop at every row and was only ever given
+    # SIGTERM or its collection's removal, so one in flight when the node was
+    # paused ran on to the end of its budget — up to 300 s. It ends at its
+    # next row now: what is flushed is committed, the rest is partial and
+    # resumes, exactly as under SIGTERM.
+    stop = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
     try:
         result = bundle_genesis.drain_next_shard(
             con, collection, stop=stop, eager=not _ingest_pending(con))
@@ -2337,7 +2345,8 @@ def _execute_step(con, collection, stage, row) -> bool:
             # written are durable and the document itself is untouched, so
             # this is a deferral like any other — never an error on the row
             db.log_event(con, "info", stage,
-                         f"{stage} interrupted by shutdown ({e})")
+                         f"{stage} interrupted — the node is stopping, or its mode "
+                         f"no longer runs this ({e})")
             return False
         if manifest_contended(e):
             # Another writer had the manifest. Nothing is wrong with this
@@ -2516,6 +2525,15 @@ class _ParseHeld:
 
 
 _parse_held = _ParseHeld()
+#: EMBEDDING STOPS WITH THE MODE TOO, at the same unit SIGTERM already has: a
+#: slice (invariant 2; EMBED_SLICE_CHUNKS). Seen live the evening this landed
+#: (2026-09-19): in "download/seeding only" the producers took no new document,
+#: and the two in flight went on — RAGE served 470 embedding requests in the
+#: next 100 s, and a large book is thousands of chunks (5.3 h for the largest).
+#: "Pause: nothing is running" cannot wait hours. `upsert_book` raises
+#: EmbedInterrupted between slices; what is written stays, the document is
+#: deferred untouched, and it resumes from there when everything runs again.
+_embed_stop = _AnyStop(_stop, _parse_held)
 #: collections whose corpus may have changed, or whose scan was cut short,
 #: while the mode ran no parsing: scanned when everything runs again
 _scan_owed: set[str] = set()
