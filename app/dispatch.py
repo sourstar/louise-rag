@@ -97,7 +97,21 @@ def working_as(level: Level, plugin: str = ""):
     try:
         yield
     finally:
-        _ctx.reset(token)
+        try:
+            _ctx.reset(token)
+        except ValueError:
+            # ENTERED IN ONE CONTEXT, LEFT IN ANOTHER. A block that spans the
+            # `yield`s of a generator (llm.chat_stream) is stepped by
+            # Starlette in its threadpool, and every step runs in a FRESH
+            # COPY of the request's context. The value was set in the first
+            # step's copy, which went with that step; in this one the
+            # variable is what the request had, so there is nothing to put
+            # back — and `reset` refuses a token from another Context.
+            # Left to raise, it ended every streamed answer on the Ask page
+            # with "[error: <Token … was created in a different Context]"
+            # (operator, 2026-09-19), AFTER the gate and the claim had been
+            # released correctly: only the message was wrong.
+            pass
 
 
 # ---- stopping --------------------------------------------------------------

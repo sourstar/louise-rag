@@ -255,3 +255,41 @@ def test_interactive_endpoints_are_bounded_only_by_configuration(monkeypatch):
     assert dispatch.configured_capacity("http://chat:11434/") == 1
     assert dispatch.configured_capacity("http://mt") == 2
     assert dispatch.configured_capacity("http://rerank") is None
+
+
+def test_a_streamed_answer_ends_cleanly_though_each_step_runs_in_another_context(
+        isolated_config):
+    """The Ask page's streamed answer ended with "[error: <Token … was created
+    in a different Context]" (operator, 2026-09-19). `llm.chat_stream` holds
+    `dispatch.call` across its `yield`s, and Starlette steps a generator in
+    its threadpool with a FRESH COPY of the request's context for every
+    step: the level was set in the first copy and reset in the last."""
+    import contextvars
+
+    from app import node_state
+    node_state.connect().close()
+    seen = []
+
+    def stream():
+        with dispatch.call("http://chat", Level.CHAT, timeout=1):
+            seen.append(dispatch.current()[0])      # the request is made here, at CHAT
+            yield "one"
+            yield "two"
+
+    g = stream()
+    step = lambda: contextvars.copy_context().run(next, g)   # noqa: E731 — Starlette's way
+    assert step() == "one" and step() == "two"
+    assert dispatch.interactive_active()
+    with pytest.raises(StopIteration):
+        step()                                      # the block is left HERE, in another copy
+    assert seen == [Level.CHAT]
+    dispatch._claim_seen.clear()
+    assert not dispatch.interactive_active(), "the claim was released"
+    assert dispatch.gate("http://chat").snapshot()["busy"] == 0, "and the gate"
+
+
+def test_a_block_left_in_its_own_context_still_restores_the_level():
+    with dispatch.working_as(Level.CORPUS, "gutenberg"):
+        with dispatch.working_as(Level.QUERY):
+            assert dispatch.current() == (Level.QUERY, "")
+        assert dispatch.current() == (Level.CORPUS, "gutenberg")
