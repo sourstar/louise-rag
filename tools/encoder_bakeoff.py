@@ -50,6 +50,18 @@ variant re-embeds 179 vectors and reuses all 23,617 document vectors.
 and the text used is recorded in the run's JSON. A prefix that silently
 differed between two rows would be the whole result.
 
+THROUGHPUT COMES FROM CONCURRENCY, NEVER FROM BATCH. `config.EMBED_BATCH`
+is 1 on purpose and must stay 1 here: raising it is the batch gate this
+codebase already paid for, because llama.cpp's batched embedding is not
+deterministic per batch shape and its prompt cache can then replay a
+corrupted result into later single-text requests. A bake-off that raised it
+would produce a full, plausible, internally consistent table of wrong
+numbers — the worst artefact available. Use `EMBED_CONCURRENCY=2` instead
+(parallel single-text requests are safe, and the B70 measures throughput
+plateauing at 2 anyway — `llama-intel-arc-b70`'s concurrency grid):
+
+    docker run ... -e EMBED_CONCURRENCY=2 ... python -m tools.encoder_bakeoff embed ...
+
 LICENCE. JuriFindIT is CC-BY-NC-SA-4.0 — a gated class under invariant 9.
 `fetch` writes LICENCE.txt and a sha256 of every file beside the data so an
 acknowledgement can be recorded against bytes that were actually seen.
@@ -68,7 +80,7 @@ import httpx
 import numpy as np
 import pyarrow.parquet as pq
 
-from app import collections as collections_mod, embeddings
+from app import collections as collections_mod, config, embeddings
 
 BASE = ("https://huggingface.co/datasets/jurifindit/JuriFindIT/"
         "resolve/refs%2Fconvert%2Fparquet")
@@ -182,6 +194,13 @@ def slug_of(query_prefix: str) -> str:
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
           query_prefix: str = "", limit: int | None = None) -> int:
+    if config.EMBED_BATCH != 1:
+        raise SystemExit(
+            f"EMBED_BATCH is {config.EMBED_BATCH}, not 1. llama.cpp's batched "
+            f"embedding is not deterministic per batch shape and its prompt "
+            f"cache can replay a corrupted result into later single-text "
+            f"requests, so every number this run produced would be plausible "
+            f"and wrong. Raise EMBED_CONCURRENCY for throughput instead.")
     corpus, queries = load(out, max_chars)
     if limit:
         # A smoke run: prove the URL, the model name and the whole pipeline
