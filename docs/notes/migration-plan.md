@@ -1123,9 +1123,21 @@ tests, and every pre-existing test stays green after each.
   endpoint serves a query and refuses a write; the gate is triggered
   once per (space, run), not once per answer; `Louise-Level` on each
   client's request; chat streams through the OpenAI shape.
-- **13f — The retirements.** Collections' `[encoder]` URLs, `CHAT_URL`,
-  `TRANSLATE_URL` and `RERANK_URL` switch to `/upstream/<model>` one at
-  a time, each reversible. Then the governor app, Ollama, TEI and the
+- **13f — The cut-over, then the retirements.** Not "one URL at a
+  time", as first written: the operator's rule (2026-09-19) is that the
+  per-model apps are SHUT OFF BEFORE RAGE LOADS — together they would
+  hold every model twice on the card, and RAGE takes one of their ports
+  (30437). The order is in `deploy/truenas-rage.yaml` and
+  [`rage.md`](rage.md) §16: record today's vectors FIRST (13d's proof
+  compares against them, and once the apps are off there is nothing left
+  to compare with), `node pause`, stop the five apps, install RAGE,
+  switch the URLs (three collection files in place, `TRANSLATE_URL`,
+  `RAGE_URL`), `node resume`. Ollama stops only after 13e's `llm.py`.
+  Back out: stop RAGE, start the apps, restore the URLs. So 13d's proof
+  and 13f's cut-over are one evening on the node, and need a small tool
+  first: `louise dev` recording each endpoint's vectors for the sixteen
+  fingerprint texts and a sample of the calibration set.
+  Then the governor app, Ollama, TEI and the
   per-model apps go: each gets an entry in
   [`legacy-to-delete.md`](legacy-to-delete.md) with its conditions
   (complete, confirm, only then delete). `backend_gate.py` is NOT

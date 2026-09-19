@@ -156,9 +156,10 @@ engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/bge-m3/bge-m3-FP16.gguf"
 device  = "xpu"                                   # default placement
 memory  = { xpu = 1400, cpu = 2600 }              # MiB, MEASURED
-cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "99",
-           "--host", "127.0.0.1", "--port", "${PORT}"]
+host    = { xpu = 1700 }                          # host RAM it holds while on the card (§7)
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
+           "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]  # today's flags, copied exactly
 cmd.cpu = [ … the same with "-ngl", "0" … ]
 
 [models.madlad]
@@ -230,9 +231,42 @@ DELETE /louise/models/<id>            → remove it; the same 409s
   servers at once with 8.5 GB spare, and the card is time-shared
   whatever we do. `embedder-pool-spec.md` §3: idle is not a reason to
   unload. So `ttl: 0`, and the query encoders are preloaded.
+- **Two budgets, and every load is checked against the host's.** A
+  model on the GPU is not free on the host. Measured on the node,
+  2026-09-19, from each per-model container's cgroup (`memory.peak`
+  since it started):
+
+  | container RAGE replaces | host RAM at rest | peak |
+  |---|---|---|
+  | MADLAD | 3,307 MiB | 8,563 |
+  | Ollama, qwen3:8b (unloaded at the time) | 132 | 5,648 |
+  | Qwen3-Embedding-4B | 647 | 3,047 |
+  | bge reranker | 465 | 1,610 |
+  | bge-m3 | 446 | 1,602 |
+  | MedCPT cross-encoder | 589 | 781 |
+  | MedCPT article / query | 286 / 295 | 691 / 494 |
+  | the governor | 40 | 44 |
+  | **together** | **6.1 GiB** | **22.0 GiB** |
+
+  So each entry declares `host.<card>`, the host RAM it holds while on
+  the card — the PEAK, because loads overlap and the peak is when the
+  out-of-memory killer comes — and admission counts it: `memory.cpu` for
+  a model placed on the CPU, `host.<card>` for one on a card, all
+  against the container's limit. The first version of `admission.py`
+  counted host RAM for CPU placements only, and would have let CPU
+  models fill what the GPU models already held; the measurement found
+  it the same day. The card is asked first, then the host.
+- **`mem_limit: 28g`** on the app, from the same figures: 22.4 GiB
+  declared for everything on the card, 2 reserved, ~3.6 left for a small
+  CPU placement. The bound that matters is the machine — 61.9 GiB, of
+  which Louise's worker peaks at 20.6 and the rest takes ~4 — so 28
+  leaves ZFS at least 9 GiB of cache in the worst case (18.5 today, and
+  it gives memory back slowly: the TEI encoder's OOM loop of 2026-09-15).
+  The first draft of the app file said 40g, which with Louise's peak is
+  more than the machine has.
 - **Fits** = the declared `memory` of what is loaded on that device,
   plus this model, plus the reserve, ≤ the device's capacity. The card's
-  capacity is declared (§5); the CPU's is the container's `memory.max`,
+  capacity is declared (§5); the host's is the container's `memory.max`,
   read. A model still loading counts in full from the moment it is
   admitted, so two loads in the same instant cannot both squeeze in.
   After every load the front records the observed peak — its own
@@ -406,13 +440,42 @@ the servers' argv; `app/rage/` with its tests; the published image and
 `app/verify/backend_gate.py` stays for legacy collections, which have no
 Codex to gate against, and retires with them at step 12.
 
-## 16. Values the operator still gives
+## 16. The operator's values (2026-09-19), and the cut-over
 
-The registry and image name, and a registry login on the node stored by
-path; RAGE's published port (30437–30448 are taken); its state and
-config directories; which qwen3 GGUF serves chat and where it lies; the
-container's `mem_limit`. Each model's `memory` is measured on the node,
-not chosen.
+| value | given |
+|---|---|
+| RAGE's folder | `/mnt/ssd5/apps/louise-rage` — `config/`, `state/`, `secrets/` under it. Not created yet |
+| the port | **30437**: one the per-model apps used (gutenberg's encoder), free once they stop |
+| the chat model | the same file Ollama serves as `qwen3:8b`: `…/ollama_data/models/blobs/sha256-a3de86cd…686f`, 4,983 MiB. Ollama names a blob by its SHA-256, so the file's name IS the weights digest. Checked: it carries `tokenizer.chat_template`, which knows `enable_thinking`. Ollama's `params` for it (top-k 20, top-p 0.95, repeat penalty 1) are the entry's flags |
+| `mem_limit` | **28g**, from the measurements of §7 |
+| the admin token | a FILE under `secrets/`. Louise has none today: she gets hers as an environment value (`ADMIN_TOKEN`; `ADMIN_TOKEN_FILE` is unset), which invariant 8 tolerates only where a path is not possible |
+| **the registry** | **still to give**: where the image is published, and a login on the node kept as a file |
+
+**The cut-over** (operator: "shut them off before loading RAGE"). The
+per-model apps and RAGE never run together: every model would sit on the
+card twice, and RAGE takes one of their ports. So 13f is one evening,
+not "one at a time" as first planned, and its order is in
+`deploy/truenas-rage.yaml`:
+0. **first, while the apps still answer**, record from each of today's
+   endpoints the vectors §14 compares RAGE's against. Once they are off
+   there is nothing left to compare with;
+1. the folder, `rage.toml`, the token file;
+2. `node pause` — an encoder that is away is a deferral, never an error
+   on a document;
+3. stop `embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`, `embed-gpu-medcpt`,
+   `translate-gpu-madlad`, `louise-gpu-governor`. **`ollama` only once
+   `app/llm.py` speaks `/v1/chat/completions` (13e)**: until then it
+   keeps serving chat on :30068 and `chat` stays out of `preload`;
+4. install RAGE; 5. switch the URLs — three collection files edited in
+   place, `TRANSLATE_URL`, `RAGE_URL`; 6. `node resume`.
+Back out: stop RAGE, start the five apps, restore the URLs. The apps are
+deleted only by `legacy-to-delete.md`'s rule.
+
+One thing the inventory turned up: gutenberg's encoder runs llama.cpp
+**b10603**, the others b10630. RAGE's image holds one build, so for
+gutenberg's space RAGE is another engine, and the gate tests it like any
+other (03 §3.3). Each model's `memory` stays a placeholder until
+measured under RAGE.
 
 ## 17. As built (2026-09-19) — steps 13b and 13c; 13d's files
 

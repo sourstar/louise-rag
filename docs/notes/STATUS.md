@@ -3012,9 +3012,30 @@ image has been built.
   the word for keys keep their names.
 - *`held` already means possession*, so the third state is `in use`.
 
+**Measured on the node the same day, and what it changed.** Each
+per-model container's cgroup `memory.peak`: the eight GPU servers and
+the governor hold **6.1 GiB of host RAM at rest and 22.0 GiB at their
+load-time peaks** (MADLAD 8.5, the chat model 5.6, Qwen3-4B 3.0). A model
+on the GPU is not free on the host, and the first `admission.py` counted
+host RAM for CPU placements only: it would have let CPU models fill what
+the GPU models already held. Every load is now checked against the
+host's budget too (`host.<card>` per entry, the peak). The app file's
+first `mem_limit` was 40g, which with Louise's worker at its 20.6 GiB
+peak is more than the machine's 61.9; it is **28g**, leaving ZFS at
+least 9 GiB of cache in the worst case. Also found: gutenberg's encoder
+runs llama.cpp b10603 and the others b10630, so under RAGE's one build
+gutenberg's space meets another engine; and Louise's admin token is an
+environment VALUE today (`ADMIN_TOKEN_FILE` unset).
+
+**The operator's values (2026-09-19):** folder
+`/mnt/ssd5/apps/louise-rage`; port 30437; the chat model is the file
+Ollama serves as `qwen3:8b`, whose blob name is its weights digest and
+which carries its own chat template; the per-model apps are shut off
+before RAGE loads, which makes 13f a cut-over and not a gradual switch
+([`rage.md`](rage.md) §16). Still to give: the registry.
+
 **Not done.** 13d's build, publish and proof on the node — it needs the
-operator's values (the registry, the port, the state and config
-directories, the chat GGUF, `mem_limit`) and is outward-facing; two
+operator's registry and is outward-facing; two
 things in the Dockerfile are unverified until then and say so. 13a
 (Codex v3) and 13e (Louise's clients): until 13e nothing in Louise reads
 `Louise-Run` or sends `Louise-Level`, and RAGE would serve today's
