@@ -3310,6 +3310,17 @@ to wait for it (1,083 s on wikivec).
   Python launcher, and the probe labelled a python process by its
   module. It now labels one that names `--weights` by them, as it does
   llama-server.
+  Deployed (b9e1456; the node's own pass 3,190 green) and seen live:
+  `madlad400-3b-mt-bf16` and `medcpt-cross-ov`. ONE ROW IS STILL
+  CRYPTIC: `sha256-a3de86cd…` is the CHAT model — Qwen3 8B read from
+  Ollama's blob store, whose file name is its digest. The probe names
+  such a blob from Ollama's `manifests` beside it, and RAGE binds only
+  `blobs/`. Two ways, neither taken unattended: bind Ollama's whole
+  `models/` read-only and point `weights` at `…/blobs/sha256-…` (the
+  run identity does not move: the template keeps `${WEIGHTS}` and the
+  digest is of the bytes) — a restart of RAGE; or the design's own join of
+  the probe's pids with RAGE's (rage.md §12), which needs RAGE to say
+  which container it is, so a new image.
 - **What re-fetching the origin would cost, measured** (the open design
   question of step 14): pubmed's plan samples 0.05 of its shards — 68 of
   1,358 — and their records come from about 249 origin files, **10.5 GiB
