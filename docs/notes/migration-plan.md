@@ -334,7 +334,9 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
   `space.tolerance`.
 - `--accept` replaces `rebaseline`: it records a passing run as this
   node's baseline for drift detection, not as the collection's
-  reference.
+  reference. **Superseded 2026-09-19 (dd9bef4; step 13):** a run is
+  validated automatically, the platform states the run on every answer,
+  and there is no baseline to accept and nothing to drift from.
 
 **PARTLY DONE 2026-09-08 — and NOT as a wrap.** 3a the calibration set
 (`app/hold/calibration.py`, `calibration/text.jsonl`, 512 texts frozen at
@@ -1009,11 +1011,155 @@ RRF (this is CLAUDE.md invariant 4 and it gets a test here); an
 unresolved reference names the shard it needs.
 
 ### Step 12 — Retire the old names
-*07 §7.6.*
+*07 §7.6.* **Runs LAST, after steps 13 and 14**, which were added on
+2026-09-19 and keep their numbers rather than renumber this one.
 
 Remove the aliases, `app/cli.py`'s old tree and the `tools/` scripts now
 under `louise dev`. Update `README.md`'s quickstart to the new commands.
+With the legacy collection shape go the two things that exist only for
+it: `app/verify/backend_gate.py` — a legacy collection has no Codex, so
+no calibration member to gate against, and it keeps this gate until it
+is gone — and `codex_only = false`.
 Delete this file.
+
+### Step 13 — The engine in the Codex, the run in the answer, RAGE
+*02 §2.4, 03 §3.3, 07 §7.8, 09 §9.3, 09 §9.12 (0d85f7f, dd9bef4,
+8bbc66a). The design is [`rage.md`](rage.md); the review that shaped it
+is [`rage-review.md`](rage-review.md). Wraps `app/hold/codex.py`,
+`app/hold/embedder.py`, `app/embeddings.py`, `app/llm.py`,
+`app/translate.py`, the rerank client, `app/dispatch.py`,
+`app/gpu_governor.py`, `deploy/dnabert2`, `deploy/madlad-translate`,
+`deploy/medcpt-rerank`.*
+
+It supersedes two things step 3 says. `--accept` and "drift detection"
+are gone: dd9bef4 validates a run automatically and the platform states
+the run on every answer, so there is no baseline to accept and nothing
+to drift from. And `encoder_image` alone is gone from every object that
+carried it: the engine, by `engine_id`, replaces it.
+
+Six parts, in this order; each is a commit series of its own with its
+tests, and every pre-existing test stays green after each.
+
+- **13a — Codex v3.** `space.encoder = {weights, engine, label}`, the
+  engine object and `engine_id`, `space_id` without the image, a
+  non-null `space.query.encoder` as `{weights, engine}`,
+  `space.calibration.query_vectors`, the version bumps of 09 §9.18
+  (codex 3, bundle header 2, attestation 3, digest 2, calibration
+  objects 2), the statement at version 2 with `run`, `engine`,
+  `driver`, `fingerprint`, `batch_invariant`, and 09 §9.3's weights
+  digest for a directory. Version 2 Codexes are still read and never
+  rewritten: `version` is inside `collection_id`.
+  *Tests*: the v3 worked example of 09 §9.3 byte for byte, its
+  `collection_id` and `space_id` pinned; a v2 Codex still loads and its
+  `space_id` does not move; one engine → one `engine_id` across key
+  order; the manifest digest golden, a symlink refused.
+- **13b — The three servers.** `--weights`, `--device`, `--host`,
+  `--port` argv and a `build` string on `deploy/dnabert2`,
+  `deploy/madlad-translate`, `deploy/medcpt-rerank`; they bind
+  `127.0.0.1` when told to and never fetch (`HF_HUB_OFFLINE=1`, weights
+  by path). The env variables stay as defaults so today's apps keep
+  running until 13f.
+  *Tests*: argv parsing; a missing weights path is an error naming it.
+- **13c — `app/rage/`, the front.** `rage.toml` → llama-swap yaml;
+  admission; load, unload, restart; the run identity; `Louise-Run` on
+  every proxied answer; the clock; the admin token; the persisted run
+  table. It imports no GPU stack (invariant 7) and nothing of `app/`
+  that opens a manifest.
+  *Tests* (`tests/rage/`): the generated yaml golden — no groups, ttl 0,
+  localhost; the run id from a fake `/proc` tree — stable across two
+  launches with different ports and host names, different for a changed
+  flag, weights byte or image; no match or two matches → unstated, no
+  header; refuse to start without a digest in `RAGE_IMAGE`, the message
+  naming the variable and never a value; admission arithmetic, `503`
+  with what is loaded, single-flight under ten concurrent first
+  requests; the header on a streamed answer; the front never merges two
+  requests; `oom_score_adj` written for a child; admin routes 401
+  without the token, the token read from its file; the clock held while
+  a `chat` request is in flight and released after, restored on
+  SIGTERM.
+- **13d — The image, and the first proof.** `deploy/rage/Dockerfile`,
+  `deploy/truenas-rage.yaml` (an app of its own: an optional helper
+  never shares Louise's app), the image published by digest.
+  [`rage.md`](rage.md) §14 is the done-when list, run on the node.
+  **The operator's stop**: the numbers go in STATUS.md and in the commit
+  message — load, unload and device-change times per model, one full
+  gate per encoder, each model's measured memory.
+- **13e — The clients.** Every writer reads `Louise-Run` and checks it
+  against this peer's statements BEFORE the write, inside no
+  transaction (the HTTP call stays outside; the check is a dictionary
+  lookup). An answer naming an unvalidated run writes nothing — a
+  deferral, never an error on a document — and the worker runs the gate
+  against that run at once. An endpoint that states no run: search with
+  it, write nothing (`vectors build`, `share contribute` exit 2). The
+  four clients send `Louise-Level`. `app/llm.py` moves to
+  `/v1/chat/completions`. `RAGE_URL` in `config.py`.
+  *Tests* (`tests/test_run_check.py`): an answer naming an unvalidated
+  run writes no row and marks nothing; a run that changes mid-document
+  stops the write and the document stays selectable; a run-less
+  endpoint serves a query and refuses a write; the gate is triggered
+  once per (space, run), not once per answer; `Louise-Level` on each
+  client's request; chat streams through the OpenAI shape.
+- **13f — The retirements.** Collections' `[encoder]` URLs, `CHAT_URL`,
+  `TRANSLATE_URL` and `RERANK_URL` switch to `/upstream/<model>` one at
+  a time, each reversible. Then the governor app, Ollama, TEI and the
+  per-model apps go: each gets an entry in
+  [`legacy-to-delete.md`](legacy-to-delete.md) with its conditions
+  (complete, confirm, only then delete). `backend_gate.py` is NOT
+  retired here (step 12).
+
+**Operator**: the registry and image name, a registry login on the node
+stored by path, RAGE's port, its state directory, the chat GGUF
+([`rage.md`](rage.md) §16).
+
+### Step 14 — Quarantine
+*03 §3.3, §3.4, §3.6; 05 §5.3; 07 §7.3, §7.8; 09 §9.3 (98ee4dc).
+Reasoning: [`rage-review.md`](rage-review.md) §18. Wraps
+`app/collections.py`, `app/licensing.py`, `app/retrieval.py`, the
+worker's stage selection, `share`, `hold collection show`.*
+
+- A copy's state — `refused`, `quarantine`, `in-use` — is ONE function
+  of what the peer holds (its own attestations, its calibration
+  statements, the licence ack, the origin ack, the refuse-to-start
+  checks), called by the worker, the web, `share` and `hold collection
+  show` alike. It writes nothing and caches on physical identity (the
+  collection's path), never its name. The licence gate stays
+  `app/licensing.py`'s resolution, called from it, never re-implemented
+  (invariant 9).
+- The five exit conditions of 03 §3.6; `hold collection ack
+  --origin-unchecked`, refused while another test is open or has failed,
+  or when the origin check has in fact run.
+- A quarantined copy enters no search, in either leg, and is named under
+  `withheld` with `shards: "all"`; it is not announced, served, embedded
+  for, contributed to, imported into or certified. Its fetch, its five
+  tests and its gate go on.
+- An untested run re-quarantines every collection of its space; a FAILED
+  run withholds the vector leg only; an unreachable encoder or origin
+  returns nothing to quarantine.
+- **Codex collections only.** A legacy collection is never quarantined.
+- **Two deploys.** The first computes and SHOWS the states and withholds
+  nothing, while the gates and the origin samples run; the second
+  enforces, once `hold collection show` reads `in-use` for every
+  collection meant to be. A switch in `platform.toml` (desired state),
+  removed at step 12. Without this every Codex collection would leave
+  search at once on the day of the deploy.
+- Per-round cost: one state evaluation per collection, each a handful of
+  lookups; the origin sample is the plan's, bounded, within the transfer
+  budget (invariant 5), and a deferral when the origin is away. Time it
+  on the live manifests before it ships (CLAUDE.md: a plan check is not
+  enough).
+
+*Tests* (`tests/test_quarantine.py`): each reason enters quarantine and
+clears by its own test; the state is derived — no row, no file is
+written for it, and two calls with the same holdings agree; a changed
+run re-quarantines every collection of the space and only those; a
+failed run leaves the text leg searchable and says so; a legacy
+collection is always `in-use`; a quarantined copy appears under
+`withheld` and in no list; `share` announces nothing of it;
+`--origin-unchecked` is refused with a test open, accepted with the
+origin away, and records time and key; a later `records-vs-origin`
+failure re-quarantines; in the reporting deploy nothing is withheld.
+
+**Operator**: the word to enforce, after the reporting deploy.
 
 ## 4. Dependencies between steps
 
@@ -1032,6 +1178,24 @@ Delete this file.
 - **7 is a decision, not code**, and it blocks 8 alone.
 - 9 needs 8 to have something real to share.
 - 10 and 11 need 5 and can proceed in parallel with 8 and 9.
+- **13 and 14 (added 2026-09-19) run before 12, which stays last.**
+
+```
+0 ── 13a codex v3 ─────────────┐
+     13b servers ── 13c front ──┼── 13d image + proof (operator's stop) ──┐
+3, 4 ───────────────────────────┴── 13e clients ───────────────────────────┴── 13f retire apps
+5, 8, 13e ── 14 quarantine (report, then enforce) ── 12 retire
+```
+
+- 13a needs only 0. 13b and 13c need nothing of the plan: the front
+  hashes the engine object's SHAPE (09 §9.3) and none of Codex v3's
+  code, so RAGE can be built and proved while 13a is in progress.
+- 13e needs 13a (the statement's version 2), 13c (a platform that states
+  a run) and 3–4 (the gate and `vectors build` it guards).
+- 13d is an operator's stop like 6: real models, the node, numbers.
+- 14 needs 5 (the checks it derives from), 8 (collections with a Codex)
+  and 13e (validated runs). 9's `share` honours it from the day it
+  enforces.
 
 ## 5. Kick-off prompt for Claude Code
 
