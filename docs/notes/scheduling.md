@@ -322,6 +322,25 @@ Mind whoever creates a runtime first: lancedb's, which carries the embed
 writes, is created on the main thread at boot (`refuse_boot`) and stays at
 0. A test checks both from `/proc/self/task`.
 
+**16. A switch that stops new work and not the work in flight.** The
+node's modes were redefined on 2026-09-19 — *pause*: nothing runs;
+*download/seeding only*: exactly that — and every test passed. Watched
+on the node, "download/seeding only" took no new document and the two in
+flight went on: RAGE served 470 embedding requests in the next 100 s,
+and the largest book is 5.3 h of them. An archive pass did the same, to
+the end of its 300 s budget, and a scan to the end of the corpus (1,083
+s on wikivec). Each already had a unit it stops at — a slice, a row, a
+ref — and each asked only SIGTERM.
+
+→ Whatever a thing stops at for SIGTERM, it stops at for the mode: one
+stop object carries both (`_embed_stop`, `_parse_held`), and what it
+interrupts is DEFERRED or OWED (`_scan_owed`), never marked and never
+dropped. What a mode runs is one table, `app/node_state.py`: `MODE_RUNS`
+— ask `node_state.runs(state, activity)`, never the mode's name. And
+WATCH A MODE ON THE NODE after deploying it: 153 requests per 30 s
+running, 31 in the 40 s after the switch, 0 after that, 108 a minute
+after "run everything". The suite could not have shown the first number.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first

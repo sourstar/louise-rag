@@ -3185,7 +3185,7 @@ the five apps (`embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`,
 `embed-gpu-medcpt`, `translate-gpu-madlad`, `louise-gpu-governor`) and
 installed `louise-rage` from the app file, in that order; the rest was
 driven from here. RAGE serves every model Louise uses except chat, on
-port 30437. Ollama still serves chat (`CHAT_API` was not switched).
+port 30437; chat followed later the same night (below).
 
 | model | device | ready in | host RSS | card |
 |---|---|---|---|---|
@@ -3230,9 +3230,7 @@ container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
   is a token generated on the node, not Louise's. RAGE reads it once at
   start, and nothing in Louise calls RAGE's operator routes yet, so it
   was left; making them the same is a file copy and a restart of RAGE.
-- **Not done**: chat stays on Ollama until `CHAT_API=openai` and
-  `CHAT_URL=…/upstream/chat` are set — the operator's switch, and it puts
-  another 5 GB on the card. The retirements are
+- **Not done**: the retirements, which are
   [`legacy-to-delete.md`](legacy-to-delete.md) §7, by its rule.
 
 **THE NODE'S FOUR MODES, REDEFINED (operator, 2026-09-19; louise 8db5af5,

@@ -463,9 +463,10 @@ not "one at a time" as first planned, and its order is in
 2. `node pause` — an encoder that is away is a deferral, never an error
    on a document;
 3. stop `embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`, `embed-gpu-medcpt`,
-   `translate-gpu-madlad`, `louise-gpu-governor`. **`ollama` only once
-   `app/llm.py` speaks `/v1/chat/completions` (13e)**: until then it
-   keeps serving chat on :30068 and `chat` stays out of `preload`;
+   `translate-gpu-madlad`, `louise-gpu-governor`. `ollama` is not one of
+   them: chat moved by itself afterwards (`CHAT_API=openai`,
+   `CHAT_URL=…/upstream/chat`; done 2026-09-19 night, 13 tokens/s against
+   Ollama's 8–9) and `chat` joined `preload`;
 4. install RAGE; 5. switch the URLs — three collection files edited in
    place, `TRANSLATE_URL`, `RAGE_URL`; 6. `node resume`.
 Back out: stop RAGE, start the five apps, restore the URLs. The apps are

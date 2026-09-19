@@ -1183,8 +1183,8 @@ tests, and every pre-existing test stays green after each.
   client's request; chat streams through the OpenAI shape.
 - **13f — The cut-over, then the retirements. THE CUT-OVER IS DONE
   (2026-09-19 night; numbers in [`STATUS.md`](STATUS.md)); the retirements
-  wait on [`legacy-to-delete.md`](legacy-to-delete.md) §7, and chat is
-  still Ollama's.** As planned: Not "one URL at a
+  wait on [`legacy-to-delete.md`](legacy-to-delete.md) §7; chat moved
+  to RAGE the same night.** As planned: Not "one URL at a
   time", as first written: the operator's rule (2026-09-19) is that the
   per-model apps are SHUT OFF BEFORE RAGE LOADS — together they would
   hold every model twice on the card, and RAGE takes one of their ports
