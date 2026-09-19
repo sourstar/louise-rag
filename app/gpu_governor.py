@@ -13,7 +13,7 @@ from the first interactive call's start to the last one's end), the card's
 what it was. Polled every GOVERNOR_POLL_S; a chat call lasts a minute, so a
 quarter-second lag costs nothing.
 
-WHERE. Its own container (deploy/truenas-app.yaml, `gpu-governor`): the
+WHERE. A TrueNAS app of its own (deploy/truenas-gpu-governor.yaml): the
 card's frequency directory bind-mounted writable, the node store's
 directory, no network. Neither the LAN-facing web nor the worker, which
 parses untrusted data, may write the host's sysfs.

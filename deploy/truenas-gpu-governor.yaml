@@ -1,0 +1,41 @@
+# THE GPU GOVERNOR (app/gpu_governor.py, docs/notes/scheduling.md §12): a
+# TrueNAS app of its OWN, never a service of louise-rag.
+#
+# What it does. It holds the Arc's min_freq at its maximum while the node's
+# interactive claim is live. Measured 2026-09-20: a chat call alone on the
+# card took 87 s at a mean of 990 MHz, and 64 s with the clock held. Absent,
+# the System tab says so and chat is slower on an idle card; nothing else
+# depends on it. It moves into RAGE when that exists.
+#
+# Why its own app. 2026-09-20, the first deploy, as a service of louise-rag:
+# - TrueNAS rewrote the long-syntax bind into short `source:target:rw`;
+# - the card's PCI path (/sys/bus/pci/devices/0000:03:00.0/...) has
+#   colons, so the spec was invalid;
+# - one service failing to create fails the whole app's `up`: Louise was
+#   down until the service was removed.
+# An optional helper must not share an app with what it helps.
+#
+# Its paths. The card's frequency directory, by its /sys/class/drm link, has
+# no colons; the daemon resolves the link on the host. Find the Arc's card
+# with `ls -l /sys/class/drm/card*/device` (it is the xe one, 0000:03:00.0).
+# If the numbering changes after a reboot, this app fails to start and the
+# System tab shows "not running"; Louise is untouched. It also mounts the
+# node store's directory for the claim and its heartbeat.
+#
+# What it gets. No network. Never louise-rag's env, which carries
+# ADMIN_TOKEN. Init forwards the stop signal; SIGTERM gives the clock back.
+
+services:
+  gpu-governor:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    command: ['python', '-m', 'app.gpu_governor']
+    network_mode: none
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - /mnt/ssd4/apps/louise-rag/data/state:/data/state
+      - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
+    stop_grace_period: 10s

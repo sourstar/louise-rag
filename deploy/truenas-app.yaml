@@ -165,33 +165,3 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  # THE GPU GOVERNOR (app/gpu_governor.py, docs/notes/scheduling.md §12):
-  # holds the Arc's min_freq at its maximum while the node's interactive
-  # claim is live. Measured 2026-09-20: a chat call alone on the card took
-  # 87 s at a mean of 990 MHz, and 64 s with the clock held. It writes ONE
-  # host directory, the card's freq0, bound by PCI ADDRESS because DRM card
-  # numbers can change across boots (find it: readlink -f
-  # /sys/class/drm/cardN/device). It reads the claim from, and reports its
-  # heartbeat to, the node store; nothing else. No network, and never *env
-  # (it carries ADMIN_TOKEN). Absent, the System tab says so and chat is
-  # slower on an idle card; nothing else depends on it. It moves into RAGE,
-  # the model container, when that exists. Init forwards the stop signal;
-  # SIGTERM gives the clock back.
-  gpu-governor:
-    image: louise-rag:local
-    pull_policy: never
-    restart: unless-stopped
-    init: true
-    command: ['python', '-m', 'app.gpu_governor']
-    network_mode: none
-    environment:
-      DATA_DIR: /data
-    volumes:
-      - type: bind
-        source: /mnt/ssd4/apps/louise-rag/data/state
-        target: /data/state
-      - type: bind
-        source: /sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0
-        target: /gpufreq
-    stop_grace_period: 10s

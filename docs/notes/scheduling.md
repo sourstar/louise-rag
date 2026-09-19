@@ -865,7 +865,7 @@ claim is live, which was its behaviour before any of this.
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
 | the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
-| the clock held while a person waits | `app/gpu_governor.py`, service `gpu-governor`; the System tab's GPU panel | `tests/test_gpu_governor.py` |
+| the clock held while a person waits | `app/gpu_governor.py`, its own TrueNAS app (`deploy/truenas-gpu-governor.yaml`); the System tab's GPU panel | `tests/test_gpu_governor.py` |
 
 ### What to measure after deploying
 
