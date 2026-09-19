@@ -163,14 +163,24 @@ def _drop_writer(collection) -> None:
 def close_all() -> None:
     """Let go of every writer this process holds — for tests, whose
     collections come and go by the hundred. The worker keeps its writers
-    until it exits."""
+    until it exits.
+
+    Each under ITS WRITE LOCK: a thread still inside a commit holds the
+    writer, and taking it from under that thread raised "Already borrowed"
+    (the node's suite, 2026-09-20: a pipeline thread of a collection the
+    test had just removed was still committing its rdf batch at teardown).
+    Waiting for the lock lets that commit finish first."""
     with _lock:
-        writers = list(_writers.values())
+        writers = [(writer, _write_locks.get(path)) for path, writer in _writers.items()]
         _writers.clear()
         _indexes.clear()
         _readers.clear()
-    for writer in writers:
-        writer.wait_merging_threads()
+    for writer, lock in writers:
+        if lock is None:
+            writer.wait_merging_threads()
+            continue
+        with lock:
+            writer.wait_merging_threads()
 
 
 def _commit(collection, rows) -> int:

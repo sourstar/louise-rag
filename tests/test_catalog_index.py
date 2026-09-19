@@ -156,3 +156,35 @@ def test_catalog_search_uses_the_index_once_complete_and_sqlite_before(col):
     con.execute("DELETE FROM catalog_fts")                 # prove the index answers now
     assert sorted(_ids(retrieval.catalog_search(con, "Moby", collection=c))) == [1, 2]
     assert _ids(retrieval.catalog_search(con, "Moby", langs=("de",), collection=c)) == [2]
+
+
+def test_closing_every_writer_waits_for_a_commit_in_flight():
+    """The node's suite, 2026-09-20: a pipeline thread of a collection the
+    test had removed was still committing when teardown closed every
+    writer, and PyO3 raised "Already borrowed". close_all now takes each
+    writer's write lock, so the commit finishes first."""
+    import threading
+    import time as _time
+
+    order = []
+
+    class Writer:
+        def wait_merging_threads(self):
+            order.append("closed")
+
+    path = "/nowhere/_catalog"
+    lock = threading.Lock()
+    with catalog._lock:
+        catalog._writers[path] = Writer()
+        catalog._write_locks[path] = lock
+    lock.acquire()                       # a commit in flight
+    t = threading.Thread(target=catalog.close_all)
+    t.start()
+    _time.sleep(0.2)
+    assert order == [], "closed from under a commit"
+    order.append("committed")
+    lock.release()
+    t.join(5)
+    assert order == ["committed", "closed"]
+    with catalog._lock:
+        catalog._write_locks.pop(path, None)
