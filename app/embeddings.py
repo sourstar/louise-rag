@@ -41,10 +41,9 @@ def _conn(collection=None):
 def _request_vectors(batch: list[str], timeout: float,
                      recipe: "collections_mod.EmbedRecipe") -> list[list[float]]:
     # Every request passes its server's gate (app/dispatch.py): at most the
-    # server's concurrency at a time, the highest level first, and corpus
-    # work standing aside while anything interactive runs on the node. The
-    # wait is bounded by this request's own timeout.
-    g = dispatch.gate(recipe.url, recipe.concurrency, gpu=recipe.spends == "gpu")
+    # server's concurrency at a time, the highest level first. The wait is
+    # bounded by this request's own timeout.
+    g = dispatch.gate(recipe.url, recipe.concurrency)
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
             r = httpx.post(f"{recipe.url}/v1/embeddings",

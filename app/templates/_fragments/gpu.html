@@ -34,3 +34,16 @@
 {% endfor %}
 {% for n in notes %}<div class="note">{{ n }}</div>{% endfor %}
 {% endif %}
+{% if governor %}
+<div class="gpu-governor" style="margin-top:8px">
+{% if governor.state == "absent" %}
+  <span class="badge brass">GPU governor not running</span>
+  <span class="note">the card's clock is not held up while someone waits on a model, so chat, search and translation run slower when nothing else is using the GPU — one chat call measured 87 s against 64 s (docs/notes/scheduling.md §12). The <code>gpu-governor</code> service, deploy/truenas-app.yaml.</span>
+{% elif governor.state == "error" %}
+  <span class="badge err">GPU governor cannot set the clock</span> <span class="note">{{ governor.error }}</span>
+{% else %}
+  <span class="badge ok">GPU governor</span>
+  <span class="note">{% if governor.pinned %}clock held at {{ governor.max_mhz }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ governor.max_mhz }} MHz while interactive work runs{% endif %}</span>
+{% endif %}
+</div>
+{% endif %}

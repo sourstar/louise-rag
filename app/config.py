@@ -199,12 +199,18 @@ REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
 BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
 
 # ---- model work by priority (app/dispatch.py; docs/notes/scheduling.md §12)
-# How often a CORPUS request waiting at a GPU gate re-reads the node's
-# interactive claim — the claim lives in another process, so nothing wakes it.
+# How long a reading of the node's interactive claim is reused in-process.
 GATE_POLL_S = float(os.getenv("GATE_POLL_S", "0.1"))
 # The claim's lifetime, refreshed at half of it while an interactive call
 # runs; it only matters if the web process dies holding one.
 INTERACTIVE_CLAIM_TTL_S = float(os.getenv("INTERACTIVE_CLAIM_TTL_S", "5"))
+# The GPU governor (app/gpu_governor.py): the card's frequency directory as
+# mounted in its container, how often it reads the claim, how often it says
+# it is alive, and when the System tab stops believing it.
+GOVERNOR_FREQ_DIR = os.getenv("GOVERNOR_FREQ_DIR", "/gpufreq")
+GOVERNOR_POLL_S = float(os.getenv("GOVERNOR_POLL_S", "0.25"))
+GOVERNOR_HEARTBEAT_S = float(os.getenv("GOVERNOR_HEARTBEAT_S", "5"))
+GOVERNOR_STALE_S = float(os.getenv("GOVERNOR_STALE_S", "30"))
 # Interactive endpoints are unbounded unless named here, `url=n,url=n`:
 # bounding one is what makes the ladder order it (chat before translation
 # on one CHAT_URL), and nothing measured yet says any of them contend.

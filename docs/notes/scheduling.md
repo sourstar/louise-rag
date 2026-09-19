@@ -799,24 +799,22 @@ goes first. A plugin returning from idle starts level with the others
 and banks nothing — §10's "idle must not cost the entitlement, nor earn
 credit".
 
-**Corpus yields the whole device, not only its endpoint.** An
-interactive request on the chat model does not queue at the Qwen3-4B
-gate, but it shares the card. So CORPUS is admitted on a GPU endpoint
-only while no interactive request is live anywhere on the node. The web
-process stamps a claim (`state/node.sqlite`) while any interactive call
-runs and clears it when the last one ends. The worker reads it
-memoised, before each REQUEST. The unit of yielding is one chunk
-(~0.2 s on gutenberg), not one document (up to 145 s measured,
-gutenberg:14300).
-
-**Interactive levels do not wait for each other across models, by
-design.** A device-wide strict ladder would make one user's
-translation wait behind another user's minute-long chat answer. The
-ladder orders them where they actually compete: at a shared gate. That
-happens with query and corpus on one encoder, and with chat and
-translation when TRANSLATE_URL is unset. Measured, small interactive
-requests are not hurt by co-residence (the table above). Chat is the
-one that is, and it is hurt by corpus work, which yields to it.
+**Levels order requests where they meet, at a shared gate, and nowhere
+else.** That happens with query and corpus on one encoder, and with chat
+and translation when TRANSLATE_URL is unset.
+- **No device-wide yield.** For one deploy, corpus work also stood aside
+  from the whole card while anything interactive ran (a claim in
+  `state/node.sqlite`, read before each request). Measured, it SLOWED
+  chat, because alone on the card the Arc drops its clock (below, "Measured
+  after deploying"). It was removed on 2026-09-20.
+- **Why interactive levels never wait on each other across models.** A
+  device-wide strict ladder would make one user's translation wait behind
+  another user's minute-long chat answer.
+- **What costs chat is the clock, not corpus work.** The claim stays: the
+  web holds it while any interactive call runs, and the **GPU governor**
+  (`app/gpu_governor.py`, its own container) holds the card's `min_freq`
+  at its maximum for the claim's lifetime. Absent, the System tab says so
+  (operator: "it will cost only a performance degradation").
 
 **Two batches submitted, a third prepared (the operator's rule).**
 - Each collection has an embed PRODUCER thread. It selects candidates,
@@ -852,9 +850,9 @@ work is short and they wait on HTTP with the GIL released, and that
 parsing already runs in other processes (amendment 47).
 
 **Rollback.** `WORKER_EMBED_PRODUCERS=0` restores the main loop's
-rotation and the pipeline threads' old priority. The gates stay: they sit
-in the embedding client, so corpus requests still stand aside per
-request.
+rotation and the pipeline threads' old priority. The gates stay, in the
+embedding client. The rotation still yields between documents while the
+claim is live, which was its behaviour before any of this.
 
 ### As built
 
@@ -867,6 +865,7 @@ request.
 | a long document stopped mid-way is a deferral | `_embed_parallel`'s `EmbedInterrupted` branch | the same |
 | nice | `worker._background_priority` (pipeline, acquisition, archive fetch, discovery) | the same |
 | the gates in the log | `[sched] gate <url> — level: admitted, waited, served` | — |
+| the clock held while a person waits | `app/gpu_governor.py`, service `gpu-governor`; the System tab's GPU panel | `tests/test_gpu_governor.py` |
 
 ### What to measure after deploying
 

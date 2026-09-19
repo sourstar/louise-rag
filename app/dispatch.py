@@ -14,19 +14,20 @@ banks nothing while away (§10: idle costs neither the entitlement nor
 earns credit). An unbounded gate (capacity None) admits at once: it orders
 nothing, and exists so that bounding an endpoint is configuration, not code.
 
-CORPUS YIELDS THE DEVICE, NOT ONLY ITS ENDPOINT. An interactive request on
-another model does not queue at the encoder's gate, but it shares the card.
-So a CORPUS request is admitted to a GPU endpoint only while no interactive
-request is live anywhere on the node. The web process holds a CLAIM in
-`state/node.sqlite` while any interactive call runs (`interactive()`), and
-the worker reads it, memoised, before each request. The unit of yielding
-is one request — one chunk — never a document.
+LEVELS ORDER WHERE REQUESTS MEET, AT A SHARED GATE, and nowhere else: query
+before corpus on one encoder, chat before translation on one CHAT_URL. Corpus
+work does NOT stand aside from the whole device while something interactive
+runs on another model. It did for one deploy, and measured live
+(2026-09-20) it slowed chat: alone on the card, token-by-token decoding lets
+the Arc drop its clock, so a chat call took 87-92 s (a mean of 990 MHz)
+against 65-72 s beside corpus work (2,695 MHz). With the clock pinned,
+standing aside bought chat 3 s and cost corpus its whole share
+(docs/notes/scheduling.md §12).
 
-Interactive levels do not wait for each other across models, deliberately:
-a device-wide strict ladder would make one user's translation wait behind
-another user's minute-long chat answer. They are ordered where they meet,
-at a shared gate (chat and translation both on CHAT_URL when no
-TRANSLATE_URL is set; query and corpus on one encoder).
+THE CLAIM. The web process still holds a claim in `state/node.sqlite` while
+any interactive call runs (`interactive()`). It is what the GPU governor
+reads (app/gpu_governor.py): the card's clock is pinned at its maximum for
+the claim's lifetime, which is where chat's speed actually comes from.
 
 BOUNDED. A wait at a gate ends at the request's own timeout, or when the
 process stops (`stop_all`), with `GateTimeout` — an `httpx.ConnectTimeout`,
@@ -142,7 +143,6 @@ class _LevelStats:
 class Gate:
     name: str
     capacity: int | None
-    gpu: bool = True
     _cv: threading.Condition = field(default_factory=threading.Condition)
     _busy: int = 0
     _waiting: list = field(default_factory=list)
@@ -166,11 +166,9 @@ class Gate:
                    key=lambda w: (-w.level, self._served.get(w.plugin, 0.0), w.seq))
 
     def _may_go(self, w: _Waiter) -> bool:
-        if self.capacity is not None and (self._busy >= self.capacity or self._head() is not w):
-            return False
-        if w.level == Level.CORPUS and self.gpu and interactive_active():
-            return False
-        return True
+        if self.capacity is None:
+            return True
+        return self._busy < self.capacity and self._head() is w
 
     @contextmanager
     def admit(self, level: Level | None = None, plugin: str | None = None, *,
@@ -192,13 +190,7 @@ class Gate:
                     if deadline is not None and now >= deadline:
                         raise GateTimeout(f"{self.name}: not admitted within {timeout:.0f}s "
                                           f"(level {lvl.name.lower()})")
-                    # CORPUS polls: the claim that holds it back lives in
-                    # another process, and nothing here would wake it
-                    step = config.GATE_POLL_S if w.level == Level.CORPUS else None
-                    if deadline is not None:
-                        left = deadline - now
-                        step = left if step is None else min(step, left)
-                    self._cv.wait(timeout=step)
+                    self._cv.wait(timeout=None if deadline is None else deadline - now)
             except BaseException:
                 self._waiting.remove(w)
                 self._cv.notify_all()
@@ -233,7 +225,7 @@ _gates: dict[str, Gate] = {}
 _gates_lock = threading.Lock()
 
 
-def gate(url: str, capacity: int | None = None, *, gpu: bool = True) -> Gate:
+def gate(url: str, capacity: int | None = None) -> Gate:
     """The gate of the server at `url` — one per server per process, keyed
     on the URL (the physical endpoint, never a collection name). The
     capacity given by the first caller stands until one gives another."""
@@ -241,7 +233,7 @@ def gate(url: str, capacity: int | None = None, *, gpu: bool = True) -> Gate:
     with _gates_lock:
         g = _gates.get(key)
         if g is None:
-            g = _gates[key] = Gate(name=key, capacity=capacity, gpu=gpu)
+            g = _gates[key] = Gate(name=key, capacity=capacity)
         elif capacity is not None and g.capacity != capacity:
             with g._cv:
                 g.capacity = capacity
@@ -310,8 +302,8 @@ _claim_lock = threading.Lock()
 
 def interactive_active() -> bool:
     """Is an interactive request live anywhere on the node? Memoised for
-    GATE_POLL_S per process: a waiting CORPUS request asks this every poll,
-    and at 175 embeds/s an unmemoised read would be a query per chunk."""
+    GATE_POLL_S per process: the governor asks this every poll, and the
+    rollback rotation between documents."""
     now = time.monotonic()
     with _claim_lock:
         seen = _claim_seen.get("claim")
@@ -335,8 +327,9 @@ def interactive_active() -> bool:
 class _Board:
     """This process's live interactive calls. The claim is written when the
     first one starts, refreshed while any runs (a chat stream can outlast
-    the TTL), and cleared when the last one ends — so corpus work resumes
-    the moment nothing interactive is left, not a TTL later."""
+    the TTL), and cleared when the last one ends — so the governor lets the
+    card's clock go the moment nothing interactive is left, not a TTL
+    later."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -376,8 +369,9 @@ _board = _Board()
 @contextmanager
 def interactive(level: Level):
     """An interactive model call at `level`: declares the level for the
-    requests inside, and holds the node's claim so corpus work stands
-    aside from the device for as long as the call runs."""
+    requests inside, and holds the node's claim for as long as the call
+    runs — the GPU governor keeps the card's clock at its maximum while it
+    is held."""
     _board.enter()
     try:
         with working_as(level):

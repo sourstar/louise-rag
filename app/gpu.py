@@ -8,6 +8,7 @@ figures the page derives from it, and the web's bounded fetch.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import asdict, dataclass
 
 import httpx
@@ -119,3 +120,25 @@ def panel(url: str) -> dict:
         return {"state": "unreachable", "url": url,   # state, never the page's
                 "error": f"{type(e).__name__}: {e}"}
     return {"state": "ok", "url": url, "devices": snapshot.devices, "notes": snapshot.notes}
+
+
+def governor() -> dict:
+    """What the GPU governor last said (app/gpu_governor.py), for the
+    System tab: `running` (with whether the clock is pinned now), `error`
+    (it runs and cannot set the clock), or `absent` (no heartbeat within
+    GOVERNOR_STALE_S). Absent is allowed — chat is slower on an idle card,
+    and the tab says so — so this never raises."""
+    from . import config, db, node_state
+    try:
+        if not node_state.path().is_file():
+            return {"state": "absent"}
+        with closing(node_state.connect()) as con:
+            payload, age = db._read_sample(con, "gpu_governor", config.GOVERNOR_STALE_S)
+    except Exception:   # noqa: BLE001 — a bad reading must not break the page
+        return {"state": "absent"}
+    if payload is None or payload.get("stopped"):
+        return {"state": "absent"}
+    if payload.get("error"):
+        return {"state": "error", "error": payload["error"]}
+    return {"state": "running", "pinned": bool(payload.get("pinned")),
+            "rest_mhz": payload.get("rest_mhz"), "max_mhz": payload.get("max_mhz")}

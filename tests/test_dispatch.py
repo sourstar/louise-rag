@@ -3,8 +3,8 @@
 The operator's ladder, lowest first: corpus embedding, translation, chat,
 reranking, query embedding. Every request passes its server's gate, which
 admits the server's capacity at a time — strictly by level, then fairly by
-service time within a level — and corpus work stands aside from the whole
-device while anything interactive runs on the node.
+service time within a level. The node's interactive claim is held while any
+interactive call runs; the GPU governor reads it (tests/test_gpu_governor.py).
 """
 import threading
 import time
@@ -53,7 +53,7 @@ def _waiting(gate, n):
 
 
 def test_the_highest_level_goes_first_whatever_arrived_first():
-    g = dispatch.gate("http://enc", 1, gpu=False)
+    g = dispatch.gate("http://enc", 1)
     order, started, release = [], threading.Event(), threading.Event()
     holder = _hold(g, Level.CORPUS, "a", started, release, order)
     started.wait(5)
@@ -73,7 +73,7 @@ def test_within_a_level_the_least_served_plugin_goes_first():
     """Fair by SERVICE TIME, not by request count: a plugin whose requests
     are long (gutenberg's 1,500-token chunks) does not take the share of
     one whose requests are short (pubmed's abstracts)."""
-    g = dispatch.gate("http://enc", 1, gpu=False)
+    g = dispatch.gate("http://enc", 1)
     with g.admit(Level.CORPUS, "long"):
         time.sleep(0.2)
     with g.admit(Level.CORPUS, "short"):
@@ -95,7 +95,7 @@ def test_a_plugin_back_from_idle_banks_nothing():
     """Idle must not earn credit (§10): a plugin that was away starts level
     with the least-served plugin present, not at zero — or it would take the
     gate for as long as the others had been working."""
-    g = dispatch.gate("http://enc", 1, gpu=False)
+    g = dispatch.gate("http://enc", 1)
     with g.admit(Level.CORPUS, "busy"):
         time.sleep(0.2)
     order, started, release = [], threading.Event(), threading.Event()
@@ -110,7 +110,7 @@ def test_a_plugin_back_from_idle_banks_nothing():
 
 
 def test_an_unbounded_gate_orders_nothing_and_waits_for_nothing():
-    g = dispatch.gate("http://chat", None, gpu=True)
+    g = dispatch.gate("http://chat", None)
     inside = threading.Event()
     with g.admit(Level.TRANSLATE, "web"):
         t = threading.Thread(target=lambda: g.admit(Level.QUERY, "web").__enter__() or inside.set())
@@ -118,53 +118,47 @@ def test_an_unbounded_gate_orders_nothing_and_waits_for_nothing():
         assert inside.wait(2), "an unbounded gate admitted at once"
 
 
-def test_corpus_stands_aside_on_the_gpu_while_anything_interactive_runs(monkeypatch):
-    """The unit of yielding is one REQUEST — a chunk — not a document: the
-    rotation used to yield between documents, and one gutenberg document
-    measured 145 s."""
-    live = {"on": True}
-    monkeypatch.setattr(dispatch, "interactive_active", lambda: live["on"])
-    monkeypatch.setattr(config, "GATE_POLL_S", 0.02)
-    gpu = dispatch.gate("http://gpu-enc", 1, gpu=True)
-    admitted = threading.Event()
-
-    def corpus():
-        with gpu.admit(Level.CORPUS, "gutenberg", timeout=10):
-            admitted.set()
-    t = threading.Thread(target=corpus, daemon=True)
-    t.start()
-    assert not admitted.wait(0.3), "corpus went ahead while a person was waiting"
-    live["on"] = False
-    assert admitted.wait(2), "corpus resumed once nothing interactive ran"
-    t.join(2)
-    # a CPU encoder shares no device with the interactive models
-    live["on"] = True
-    cpu = dispatch.gate("http://cpu-enc", 1, gpu=False)
-    with cpu.admit(Level.CORPUS, "pubmed", timeout=1):
+def test_corpus_does_not_stand_aside_for_interactive_work_on_other_models(monkeypatch):
+    """It did for one deploy. Measured live (2026-09-20), it slowed chat:
+    alone on the card, token-by-token decoding lets the Arc drop its clock
+    (87-92 s at 990 MHz, against 65-72 s beside corpus work). Levels order
+    requests where they meet, at a shared gate, and nowhere else."""
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
+    g = dispatch.gate("http://gpu-enc", 1)
+    with g.admit(Level.CORPUS, "gutenberg", timeout=1):
         pass
 
 
-def test_a_wait_is_bounded_and_is_a_deferral_not_an_error(monkeypatch):
+def _held(g):
+    """A request holding the gate's one slot until released."""
+    started, release = threading.Event(), threading.Event()
+    _hold(g, Level.QUERY, "web", started, release, [])
+    started.wait(5)
+    return release
+
+
+def test_a_wait_is_bounded_and_is_a_deferral_not_an_error():
     """CLAUDE.md: a pipeline thread never waits without a bound. The bound
     is the request's own timeout, and running out of it is the endpoint
     being busy — worker.transient_failure says so, so no error is ever
     written onto the document."""
-    monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
-    monkeypatch.setattr(config, "GATE_POLL_S", 0.02)
-    g = dispatch.gate("http://gpu-enc", 1, gpu=True)
-    with pytest.raises(dispatch.GateTimeout) as err:
-        with g.admit(Level.CORPUS, "gutenberg", timeout=0.2):
-            pass
+    g = dispatch.gate("http://gpu-enc", 1)
+    release = _held(g)
+    try:
+        with pytest.raises(dispatch.GateTimeout) as err:
+            with g.admit(Level.CORPUS, "gutenberg", timeout=0.2):
+                pass
+    finally:
+        release.set()
     assert isinstance(err.value, httpx.ConnectTimeout)
     assert worker.transient_failure(err.value)
     assert g.snapshot()["waiting"] == 0, "a waiter that gave up leaves the queue"
 
 
-def test_stopping_wakes_every_waiter(monkeypatch):
+def test_stopping_wakes_every_waiter():
     """SIGTERM: a request not yet admitted is not a unit in flight."""
-    monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
-    monkeypatch.setattr(config, "GATE_POLL_S", 5.0)
-    g = dispatch.gate("http://gpu-enc", 1, gpu=True)
+    g = dispatch.gate("http://gpu-enc", 1)
+    release = _held(g)
     got = []
 
     def corpus():
@@ -178,6 +172,7 @@ def test_stopping_wakes_every_waiter(monkeypatch):
     _waiting(g, 1)
     dispatch.stop_all()
     t.join(2)
+    release.set()
     assert got == ["deferred"]
 
 
