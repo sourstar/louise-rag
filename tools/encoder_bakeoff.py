@@ -181,13 +181,18 @@ def slug_of(query_prefix: str) -> str:
 
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
-          query_prefix: str = "") -> int:
+          query_prefix: str = "", limit: int | None = None) -> int:
     corpus, queries = load(out, max_chars)
+    if limit:
+        # A smoke run: prove the URL, the model name and the whole pipeline
+        # in two minutes rather than finding out 47 minutes into the real
+        # one. It is NOT scoreable — see `score`.
+        corpus = Corpus(ids=corpus.ids[:limit], texts=corpus.texts[:limit])
     recipe = _recipe(url, model, dim, ctx, concurrency)
     run = out / name
     slug = slug_of(query_prefix)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
-          f"{len(queries.texts)} queries")
+          f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
     # The corpus side never carries the prefix, so every variant of a model
     # shares these vectors and only the cheap side is re-embedded.
     doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
@@ -198,10 +203,13 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     (run / f"run-{slug}.json").write_text(json.dumps(
         {"name": name, "slug": slug, "url": url, "model": model, "ctx": ctx,
          "max_chars": max_chars, "query_prefix": query_prefix,
-         "dim": int(doc.shape[1]), "documents": int(doc.shape[0]),
-         "queries": int(qry.shape[0])},
+         "limit": limit, "dim": int(doc.shape[1]),
+         "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
     print(f"{name} [{slug}]: dim {doc.shape[1]}")
+    if limit:
+        print(f"  smoke run — {limit} documents, NOT scoreable. Delete "
+              f"{run} and re-embed without --limit for a real number.")
     return 0
 
 
@@ -272,6 +280,15 @@ def score(out: Path, max_chars: int) -> int:
     corpus, queries = load(out, max_chars)
     for run, meta in runs_in(out):
         slug = meta["slug"]
+        if meta.get("limit"):
+            # Recall@k against a truncated corpus is not a smaller version of
+            # the real number, it is a larger one: every document removed is a
+            # distractor removed. Refuse it rather than print it with a
+            # caveat nobody carries into the next conversation.
+            print(f"{label_of(meta)}: SKIPPED — embedded with "
+                  f"--limit {meta['limit']}; a partial corpus inflates every "
+                  f"metric here")
+            continue
         doc = np.load(run / "corpus.npy")
         qry = np.load(run / f"queries-{slug}.npy")
         result = score_run(doc, qry, corpus, queries)
@@ -342,12 +359,17 @@ def main(argv=None) -> int:
                                 "documents; recorded in the run's JSON. "
                                 "Qwen3-Embedding documents "
                                 "'Instruct: <task>\\nQuery: '")
+            p.add_argument("--limit", type=int, default=None,
+                           help="embed only the first N documents, to prove "
+                                "the endpoint in minutes. Marks the run "
+                                "unscoreable — a partial corpus inflates "
+                                "every metric")
     a = ap.parse_args(argv)
     if a.cmd == "fetch":
         return fetch(a.out)
     if a.cmd == "embed":
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
-                     a.concurrency, a.max_chars, a.query_prefix)
+                     a.concurrency, a.max_chars, a.query_prefix, a.limit)
     if a.cmd == "score":
         return score(a.out, a.max_chars)
     return report(a.out)

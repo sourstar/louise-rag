@@ -192,6 +192,43 @@ def test_variants_of_one_model_share_the_corpus_vectors(tmp_path, monkeypatch) -
     assert len(bake.runs_in(tmp_path)) == 2
 
 
+def test_a_limited_run_is_marked_and_refused_by_score(tmp_path, monkeypatch, capsys) -> None:
+    """A smoke run must never reach the report. Every document left out is a
+    distractor left out, so a partial corpus does not under-report — it
+    over-reports, which is the direction nobody catches."""
+    from tools import encoder_bakeoff as bake
+
+    corpus = bake.Corpus(ids=[1, 2, 3, 4], texts=["a", "b", "c", "d"])
+    queries = bake.Queries(texts=["q"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    monkeypatch.setattr(bake.embeddings, "embed_texts",
+                        lambda texts, **kw: [[1.0, 0.0] for _ in texts])
+
+    bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1,
+               20_000, query_prefix="", limit=2)
+
+    meta = json.loads((tmp_path / "m" / "run-bare.json").read_text())
+    assert meta["limit"] == 2 and meta["documents"] == 2
+
+    assert bake.score(tmp_path, 20_000) == 0
+    assert "SKIPPED" in capsys.readouterr().out
+    assert not (tmp_path / "m" / "scores-bare.json").exists()
+
+
+def test_an_unlimited_run_is_scored_normally(tmp_path, monkeypatch) -> None:
+    from tools import encoder_bakeoff as bake
+
+    corpus = bake.Corpus(ids=[1, 2], texts=["a", "b"])
+    queries = bake.Queries(texts=["q"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    monkeypatch.setattr(bake.embeddings, "embed_texts",
+                        lambda texts, **kw: [[1.0, 0.0] for _ in texts])
+
+    bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1, 20_000)
+    assert bake.score(tmp_path, 20_000) == 0
+    assert (tmp_path / "m" / "scores-bare.json").exists()
+
+
 def test_score_run_is_unaffected_by_vector_magnitude() -> None:
     # Cosine, not dot product: scaling a document must not promote it.
     dim = 3
