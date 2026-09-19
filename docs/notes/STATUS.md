@@ -2858,6 +2858,13 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
   has colons, and one failed service fails the whole app's `up` (013507c).
 - **The System tab's GPU panel** shows it running, unable to set the
   clock, or not running. Not running costs only speed.
+- **The fan is watched, not controlled (a89b40d, live 2026-09-19).** The
+  xe driver's fan stays high after a workload until a GPU process
+  restarts, and xe exposes it read-only. The panel shows the fan,
+  temperatures and power, and the governor samples them every minute into
+  `gpu_samples` (7 days). Any workaround belongs to RAGE only; other apps
+  are never restarted for it (operator). First samples: 1,873–1,934 RPM,
+  pkg 72–78 °C, vram 74–80 °C, 192–204 W.
 
 ### What is waiting on the operator
 
