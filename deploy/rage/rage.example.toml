@@ -1,0 +1,110 @@
+# rage.toml — the one desired state of RAGE (docs/notes/rage.md §5).
+#
+# Copy to the app's config directory as `rage.toml` and edit. The front
+# applies it at start and within seconds of every change; an edit that does
+# not parse changes nothing and the log names the rule. This file is never
+# rewritten by RAGE: a model added through the API lands in `rage.d/<id>.toml`
+# beside it.
+#
+# EVERY FIGURE BELOW IS A PLACEHOLDER UNTIL MEASURED ON THE NODE (migration
+# step 13d). `memory` is what admission places a model by: load the model,
+# read `GET /louise/models` — it shows the observed peak beside what is
+# declared here — and write the measured figure down.
+
+[rage]
+# A card is declared, never probed. Its name is what every run identity and
+# every Codex created here calls the device (09 §9.3: "as its driver names
+# it"); its capacity is what the models are placed against. Declare less
+# than the card holds to keep room for another tenant.
+device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }
+capacity_mib = { xpu = 32600 }            # the CPU's is the container's mem_limit, read
+reserve_mib  = { xpu = 2048, cpu = 4096 } # never given to a model
+# Loaded at start, through admission like any load. The query encoders and
+# the chat model: idle is no reason to unload (embedder-pool-spec.md §3).
+preload = ["bge-m3", "medcpt-query"]
+
+# ---- llama.cpp ---------------------------------------------------------------
+# One complete command per device. `${WEIGHTS}` and `${PORT}` are the only
+# placeholders, each an argument of its own: this template IS the engine's
+# `args` in every run and in every Codex created here (09 §9.3).
+# `-np 1`: one sequence per forward pass — llama-server corrupted long
+# sequences when one request carried several texts (2026-08-17), and the
+# gate measures batch invariance at exactly these settings (03 §3.3).
+
+[models.bge-m3]
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/bge-m3/bge-m3-FP16.gguf"
+device  = "xpu"
+memory  = { xpu = 1400, cpu = 2600 }
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "99",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "0",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+
+[models.medcpt-query]
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/medcpt/MedCPT-Query-Encoder-F16.gguf"
+device  = "xpu"
+memory  = { xpu = 400, cpu = 600 }
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+           "-c", "512", "-b", "512", "-ub", "512", "-np", "1", "-ngl", "99",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+           "-c", "512", "-b", "512", "-ub", "512", "-np", "1", "-ngl", "0",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+
+# The chat model. The context size is fixed at launch (operator, 2026-09-19):
+# llama-server takes no per-request `num_ctx` as Ollama did.
+[models.chat]
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/chat/qwen3-8b.gguf"
+device  = "xpu"
+memory  = { xpu = 7000, cpu = 9000 }
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "-c", "16384", "-np", "1", "-ngl", "99",
+           "--jinja", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "-c", "16384", "-np", "1", "-ngl", "0",
+           "--jinja", "--host", "127.0.0.1", "--port", "${PORT}"]
+
+# ---- the platform's own servers ------------------------------------------------
+# Started by deploy/rage/servers/launch.py, which turns the arguments into
+# the variables each server reads and runs it in the same process. `weights`
+# is a DIRECTORY: its digest is 09 §9.3's manifest of every file in it, the
+# model's code included. Nothing is fetched: a directory that is not there
+# is an error that names it.
+
+[models.madlad]
+engine  = { name = "louise-madlad-server", build = "2" }
+weights = "/models/madlad/madlad400-3b-mt-bf16"
+device  = "xpu"
+memory  = { xpu = 8200, cpu = 12000 }
+env     = { BATCH = "32", MAX_SEG_TOKENS = "96" }
+health  = "/health"
+cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
+           "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
+           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+
+[models.medcpt-rerank]
+engine  = { name = "louise-medcpt-rerank-server", build = "1" }
+weights = "/models/medcpt/medcpt-cross-ov"
+device  = "xpu"
+memory  = { xpu = 600, cpu = 900 }
+cmd.xpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
+           "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
+           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+
+# DNABERT-2: a runtime check only, ungated — DNA collections are a non-binding
+# work in progress and no DNA calibration set exists (operator, 2026-09-19).
+# Its Hugging Face snapshot, remote code included, is materialised on disk once.
+[models.dnabert2]
+engine  = { name = "louise-dnabert2-server", build = "1" }
+weights = "/models/dnabert2/DNABERT-2-117M"
+device  = "xpu"
+memory  = { xpu = 1200, cpu = 1800 }
+cmd.xpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
+           "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
+           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]

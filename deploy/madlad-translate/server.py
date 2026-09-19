@@ -330,7 +330,10 @@ def main() -> None:
     # PID 1 in its container: without a handler every `docker stop` sat out
     # the grace period and ended in SIGKILL (medcpt-rerank, 2026-09-16).
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
+    # HOST: every interface as an app of its own; 127.0.0.1 under RAGE, whose
+    # front is the only thing that reaches a model (deploy/rage/servers/launch.py).
+    ThreadingHTTPServer((os.getenv("HOST", "0.0.0.0"), int(os.getenv("PORT", "8080"))),
+                        Handler).serve_forever()
 
 
 if __name__ == "__main__":

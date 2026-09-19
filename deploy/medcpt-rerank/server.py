@@ -167,7 +167,10 @@ def main() -> None:
     # and ended in SIGKILL (each NAS poweroff, 2026-09-16 and -17). Nothing
     # here holds state, so it stops at once.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
+    # HOST: every interface as an app of its own; 127.0.0.1 under RAGE, whose
+    # front is the only thing that reaches a model (deploy/rage/servers/launch.py).
+    ThreadingHTTPServer((os.getenv("HOST", "0.0.0.0"), int(os.getenv("PORT", "8080"))),
+                        Handler).serve_forever()
 
 
 if __name__ == "__main__":

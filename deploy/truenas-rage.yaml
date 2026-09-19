@@ -1,0 +1,76 @@
+# RAGE — the RAG Engine — TrueNAS SCALE custom app "rage" (Install via YAML).
+# docs/notes/rage.md; migration-plan step 13d. NOT YET DEPLOYED.
+#
+# One app serves every model the node runs: the encoders, the rerankers, the
+# chat and translation models, whatever their runtime and their device. It
+# replaces the per-model apps (embed-gpu-*, translate-gpu-madlad, Ollama, the
+# CPU TEI encoders) and the GPU governor — one at a time, each reversible
+# (step 13f), and only after docs/notes/rage.md §14 has passed on the node.
+#
+# AN APP OF ITS OWN, never a service of louise-rag: one service failing to
+# create fails a whole app's `up`, and an optional helper must not take down
+# what it helps (2026-09-20, the governor's first deploy).
+#
+# FOUR VALUES ARE THE OPERATOR'S, marked <…> below:
+#   <registry>/rage@sha256:<digest>   the published image, BY DIGEST. The same
+#                                     digest goes in RAGE_IMAGE. A tag refuses
+#                                     to start: the run identity names the
+#                                     image that is actually running (09 §9.12)
+#   <port>                            the published port; 30437-30448 are taken
+#   <state dir>, <config dir>         RAGE's own, outside louise-rag's tree
+#
+# Before installing:
+#   1. build and publish the image (deploy/rage/Dockerfile says how);
+#   2. copy deploy/rage/rage.example.toml to <config dir>/rage.toml and edit;
+#   3. every model on disk under the /models binds below — RAGE fetches
+#      nothing (CLAUDE.md invariant 5); a model that is absent is refused by path;
+#   4. find the Arc's card: `ls -l /sys/class/drm/card*/device` (the xe one).
+#      Bind its frequency directory by that /sys/class/drm path, which has no
+#      colons — TrueNAS rewrites binds to `source:target`, and a PCI address
+#      in the source makes the spec invalid.
+#
+# After installing, on the louise-rag app: RAGE_URL=http://<nas>:<port>, and
+# each collection's [encoder] url to http://<nas>:<port>/upstream/<model> —
+# the model, never a device (07 §7.8).
+
+services:
+  rage:
+    image: <registry>/rage@sha256:<digest>
+    restart: unless-stopped
+    init: true                              # forwards the stop signal, reaps the children
+    devices:
+      - /dev/dri
+    # The kill stays inside this container: an out-of-memory here takes the
+    # model that grew (the front raises each child's oom_score_adj), never
+    # another app, and never the front. Also the CPU's capacity, as read by
+    # admission. Leave Louise what she needs.
+    mem_limit: 40g
+    environment:
+      RAGE_IMAGE: 'sha256:<digest>'
+      RAGE_FREQ_DIR: /gpufreq
+      ADMIN_TOKEN_FILE: /run/rage/admin.token   # a path, never the token (invariant 8)
+    healthcheck:
+      test:
+        - CMD
+        - /opt/venv-front/bin/python
+        - '-c'
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    ports:
+      - '<port>:8080'
+    # Answers in flight finish; a request cut short is a deferral for Louise.
+    stop_grace_period: 60s
+    volumes:
+      - <config dir>:/config
+      - <state dir>:/state
+      # read-only: nothing in this container writes a model
+      - /mnt/ssd5/apps/bge-m3-models:/models/bge-m3:ro
+      - /mnt/ssd5/apps/medcpt-models:/models/medcpt:ro
+      - /mnt/ssd5/apps/madlad-models:/models/madlad:ro
+      - /mnt/ssd5/apps/dnabert2-models:/models/dnabert2:ro
+      - /mnt/ssd5/apps/chat-models:/models/chat:ro
+      - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
+      - /mnt/ssd4/apps/louise-rag/secrets/admin.token:/run/rage/admin.token:ro

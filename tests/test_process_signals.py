@@ -147,9 +147,17 @@ def test_every_image_we_build_answers_sigterm_as_pid_1():
         if Path(argv[0]).name == "uvicorn":
             continue
         assert Path(argv[0]).name in ("python", "python3"), f"{name}: {argv} — unknown PID 1"
-        script = dockerfile.parent / Path(argv[1]).name
-        assert script.is_file(), f"{name}: runs {argv[1]}, not found beside it"
-        assert "signal.SIGTERM" in script.read_text(), \
+        if argv[1] == "-m":
+            # `python -m app.rage` (deploy/rage): the module of the repository,
+            # its __main__ when it is a package
+            module = ROOT.joinpath(*argv[2].split("."))
+            script = module / "__main__.py" if module.is_dir() else module.with_suffix(".py")
+        else:
+            script = dockerfile.parent / Path(argv[1]).name
+        assert script.is_file(), f"{name}: runs {argv[1:3]}, not found"
+        # a HANDLER, not a mention: `os.kill(pid, signal.SIGTERM)` names the
+        # signal too, and handles nothing
+        assert "signal.signal(signal.SIGTERM" in script.read_text(encoding="utf-8"), \
             f"{script.relative_to(ROOT)} is PID 1 and never handles SIGTERM"
 
 

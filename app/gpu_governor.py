@@ -50,6 +50,10 @@ from contextlib import closing
 from pathlib import Path
 
 from . import config, db, dispatch, gpu, node_state
+# The clock itself lives in app/gpu_clock.py, which imports nothing of the
+# platform, so RAGE's front can hold it too (docs/notes/rage.md §11). It is
+# named here because this app, and its tests, know it as the governor's.
+from .gpu_clock import Governor  # noqa: F401
 
 STATUS_KEY = "gpu_governor"
 SAMPLES_SCHEMA = (
@@ -113,42 +117,6 @@ def store(con, row: tuple) -> None:
     con.execute("DELETE FROM gpu_samples WHERE ts < ?",
                 (row[0] - int(config.GOVERNOR_HISTORY_DAYS * 86400),))
 
-
-class Governor:
-    def __init__(self, freq_dir: Path) -> None:
-        self.dir = freq_dir
-        self.max = self._read("rp0_freq")
-        self.floor = self._read("rpn_freq")
-        found = self._read("min_freq")
-        self.rest = self.floor if found >= self.max else found
-        self.pinned = False
-        self.error: str | None = None
-
-    def _read(self, name: str) -> int:
-        return int((self.dir / name).read_text().strip())
-
-    def _set_min(self, mhz: int) -> None:
-        (self.dir / "min_freq").write_text(str(mhz))
-
-    def step(self, interactive: bool) -> bool:
-        """Pin or release to match the claim. True when the clock changed."""
-        if interactive == self.pinned:
-            return False
-        try:
-            self._set_min(self.max if interactive else self.rest)
-        except OSError as e:
-            self.error = f"cannot write min_freq: {type(e).__name__}: {e}"
-            return False
-        self.pinned, self.error = interactive, None
-        return True
-
-    def release(self) -> None:
-        if self.pinned:
-            self.step(False)
-
-    def status(self) -> dict:
-        return {"pinned": self.pinned, "rest_mhz": self.rest, "max_mhz": self.max,
-                "error": self.error}
 
 
 def _publish(payload: dict) -> None:
