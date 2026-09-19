@@ -34,6 +34,21 @@ def _chat_url() -> str:
 
 
 CHAT_URL = _chat_url()
+# WHICH PROTOCOL CHAT_URL SPEAKS (app/llm.py): "ollama" — /api/chat, as the
+# node has always run — or "openai" — /v1/chat/completions, what llama-server
+# serves and so what RAGE serves (docs/notes/rage.md §4). Beside the old one,
+# not instead of it: the chat model moves to RAGE the day this is switched,
+# and back the day it is switched back. Under "openai" the context size is
+# the server's, fixed at launch (operator, 2026-09-19); `num_ctx` is Ollama's.
+CHAT_API = os.getenv("CHAT_API", "ollama").strip().lower()
+if CHAT_API not in ("ollama", "openai"):
+    raise RuntimeError(f"CHAT_API must be 'ollama' or 'openai', not {CHAT_API!r}")
+# RAGE, the node's model container (docs/03 §3.3; docs/07 §7.8): its base
+# URL, for the System page's list of models and their controls. Unset, the
+# page has neither, and the node learns a run only from the answers it
+# gets — which is enough to check every one of them. Every model is still
+# reached by its own URL (`<RAGE_URL>/upstream/<model>`), never through this.
+RAGE_URL = os.getenv("RAGE_URL", "").rstrip("/")
 # The node's translation model (app/translate.py, deploy/madlad-translate):
 # every query translation and every translation on the Ask page. Unset, the
 # chat model translates, slowly (operator, 2026-09-18).

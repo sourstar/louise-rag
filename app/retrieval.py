@@ -125,7 +125,8 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         body = {"query": query, "texts": texts, "truncate": True}
     try:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
-            r = httpx.post(recipe.url, json=body, timeout=budget_s)
+            r = httpx.post(recipe.url, json=body, timeout=budget_s,
+                           headers=dispatch.level_headers())
         r.raise_for_status()
         data = r.json()
         rows = data["results"] if isinstance(data, dict) else data

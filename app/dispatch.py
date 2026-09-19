@@ -88,6 +88,22 @@ def current() -> tuple[Level, str]:
     return got if got is not None else (_default_level, "")
 
 
+#: docs/09-formats.md §9.12, *the request's level*
+LEVEL_HEADER = "Louise-Level"
+
+
+def level_headers() -> dict[str, str]:
+    """The header every request to a model endpoint carries: this caller's
+    level, by name (`corpus`, `translate`, `chat`, `rerank`, `query`).
+
+    ADVISORY, as the spec says: RAGE holds the card's clock while a request
+    at `translate` or above is in flight (docs/notes/rage.md §11), and no
+    answer depends on it — an endpoint that ignores the header loses nothing
+    but speed. It is what lets the GPU governor's claim in the node store
+    retire: RAGE sees every model request itself."""
+    return {LEVEL_HEADER: current()[0].name.lower()}
+
+
 @contextmanager
 def working_as(level: Level, plugin: str = ""):
     """Declare the level and plugin of the requests made inside the block,

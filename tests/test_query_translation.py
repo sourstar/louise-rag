@@ -32,7 +32,7 @@ def test_the_chat_call_asks_ollama_to_keep_the_model_loaded(monkeypatch):
         def __exit__(self, *exc):
             return False
 
-        def post(self, url, json=None):
+        def post(self, url, json=None, headers=None):
             sent.update(json)
             return FakeResponse()
     monkeypatch.setattr(llm.httpx, "Client", FakeClient)

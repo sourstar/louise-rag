@@ -44,17 +44,20 @@ def _request_vectors(batch: list[str], timeout: float,
     # server's concurrency at a time, the highest level first. The wait is
     # bounded by this request's own timeout.
     g = dispatch.gate(recipe.url, recipe.concurrency)
+    # the caller's level, for the model container's clock (09 §9.12): CORPUS
+    # from the worker, QUERY from a search — whatever this thread works as
+    level = dispatch.level_headers()
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
             r = httpx.post(f"{recipe.url}/v1/embeddings",
                            json={"model": recipe.model, "input": batch},
-                           timeout=timeout)
+                           timeout=timeout, headers=level)
             r.raise_for_status()
             data = sorted(r.json()["data"], key=lambda d: d["index"])
             return [d["embedding"] for d in data]
         r = httpx.post(f"{recipe.url}/api/embed",
                        json={"model": recipe.model, "input": batch},
-                       timeout=timeout)
+                       timeout=timeout, headers=level)
         r.raise_for_status()
         return r.json()["embeddings"]
 

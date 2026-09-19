@@ -72,7 +72,7 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
                            timeout=TIMEOUT_S):
             r = httpx.post(f"{config.TRANSLATE_URL}/translate",
                            json={"items": [{"text": t, "to": to} for t, to in items]},
-                           timeout=TIMEOUT_S)
+                           timeout=TIMEOUT_S, headers=dispatch.level_headers())
         r.raise_for_status()
         out = r.json().get("translations")
     except Exception:   # noqa: BLE001 — the caller falls back and says so

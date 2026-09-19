@@ -211,7 +211,7 @@ def test_every_embedding_request_passes_its_servers_gate(monkeypatch):
         def json(self):
             return {"data": [{"index": 0, "embedding": [1.0]}]}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, headers=None):
         calls.append(dispatch.gate("http://enc").snapshot()["busy"])
         return Resp()
     monkeypatch.setattr(embeddings.httpx, "post", fake_post)

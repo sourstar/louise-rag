@@ -1,4 +1,19 @@
-"""Chat-model access via Ollama (Oreste does the talking)."""
+"""Chat-model access (Oreste does the talking).
+
+TWO PROTOCOLS, ONE CLIENT (`config.CHAT_API`):
+- `ollama` — `/api/chat`, newline-delimited JSON, `think`, `keep_alive` and a
+  per-request `num_ctx`. What the node has always run.
+- `openai` — `/v1/chat/completions`, server-sent events. What llama-server
+  serves, and so what RAGE serves (docs/notes/rage.md §4): the same Qwen3
+  file Ollama holds, run by the node's model container. Thinking is turned
+  off through the model's own chat template (`enable_thinking`, which the
+  node's file knows — checked 2026-09-19); the context size is the
+  server's, fixed at launch (operator, 2026-09-19), so `num_ctx` is sent to
+  Ollama only. The model named is `config.CHAT_MODEL` either way; behind
+  `/upstream/<model>` the URL has already chosen it.
+
+Every request carries `Louise-Level` (docs/09-formats.md §9.12).
+"""
 import json
 import re
 import httpx
@@ -10,49 +25,82 @@ _THINK = re.compile(r"<think>.*?</think>\s*", re.S)
 def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
+
+def _request(messages: list[dict], *, stream: bool, temperature: float,
+             max_tokens: int | None, num_ctx: int) -> tuple[str, dict]:
+    """(url, body) in the protocol CHAT_URL speaks."""
+    if config.CHAT_API == "openai":
+        body: dict = {"model": config.CHAT_MODEL, "messages": messages, "stream": stream,
+                      "temperature": temperature,
+                      "chat_template_kwargs": {"enable_thinking": False}}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        return f"{config.CHAT_URL}/v1/chat/completions", body
+    options: dict = {"temperature": temperature, "num_ctx": num_ctx}
+    if max_tokens is not None:
+        options["num_predict"] = max_tokens
+    return f"{config.CHAT_URL}/api/chat", {
+        "model": config.CHAT_MODEL, "messages": messages, "stream": stream,
+        "think": False, "keep_alive": config.LLM_KEEP_ALIVE, "options": options}
+
+
+def _delta(line: str) -> tuple[str, bool]:
+    """(the text one streamed line carries, whether the stream is over)."""
+    if config.CHAT_API == "openai":
+        if not line.startswith("data:"):
+            return "", False                    # a comment, an event name, a blank
+        data = line[5:].strip()
+        if data == "[DONE]":
+            return "", True
+        try:
+            choice = (json.loads(data).get("choices") or [{}])[0]
+        except json.JSONDecodeError:
+            return "", False
+        return (choice.get("delta") or {}).get("content") or "", False
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return "", False
+    return obj.get("message", {}).get("content", ""), bool(obj.get("done"))
+
+
 def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
          num_ctx: int = 16384, *, level: Level = Level.CHAT) -> str:
     """`level`: CHAT, or TRANSLATE when the chat model stands in for the
     translation model — the two meet at CHAT_URL's gate, where chat goes
     first (docs/notes/scheduling.md §12)."""
+    url, body = _request(messages, stream=False, temperature=temperature,
+                         max_tokens=max_tokens, num_ctx=num_ctx)
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
             httpx.Client(timeout=config.LLM_TIMEOUT) as client:
-        r = client.post(f"{config.CHAT_URL}/api/chat", json={
-            "model": config.CHAT_MODEL, "messages": messages, "stream": False,
-            "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
-            "options": {"temperature": temperature, "num_predict": max_tokens,
-                        "num_ctx": num_ctx},
-        })
+        r = client.post(url, json=body, headers=dispatch.level_headers())
         r.raise_for_status()
-        return strip_think(r.json()["message"]["content"])
+        got = r.json()
+        if config.CHAT_API == "openai":
+            return strip_think(got["choices"][0]["message"]["content"] or "")
+        return strip_think(got["message"]["content"])
 
 def chat_stream(messages: list[dict], temperature: float = 0.3,
                 max_tokens: int | None = None, num_ctx: int = 16384, *,
                 level: Level = Level.CHAT):
     """Yield content deltas. The claim and the gate are held for the whole
     stream: the model is working until the last token."""
-    options: dict = {"temperature": temperature, "num_ctx": num_ctx}
-    if max_tokens is not None:
-        options["num_predict"] = max_tokens
+    url, body = _request(messages, stream=True, temperature=temperature,
+                         max_tokens=max_tokens, num_ctx=num_ctx)
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
             httpx.Client(timeout=config.LLM_TIMEOUT) as client:
-        with client.stream("POST", f"{config.CHAT_URL}/api/chat", json={
-            "model": config.CHAT_MODEL, "messages": messages, "stream": True,
-            "think": False, "keep_alive": config.LLM_KEEP_ALIVE,
-            "options": options,
-        }) as r:
+        # the header is read HERE, in the step that makes the request: a
+        # generator's later steps run in another copy of the context
+        with client.stream("POST", url, json=body,
+                           headers=dispatch.level_headers()) as r:
             r.raise_for_status()
             for line in r.iter_lines():
                 if not line:
                     continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                delta = obj.get("message", {}).get("content", "")
+                delta, over = _delta(line)
                 if delta:
                     yield delta
-                if obj.get("done"):
+                if over:
                     return
 
 def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:

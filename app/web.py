@@ -3055,7 +3055,9 @@ def _effective_config() -> dict:
     rerank_users = [c.name for c in cols if getattr(c, "reranker", None) is None]
     tier1 = {
         "CHAT_URL": config.CHAT_URL,
+        "CHAT_API": f"{config.CHAT_API} — the protocol CHAT_URL speaks",
         "CHAT_MODEL": config.CHAT_MODEL,
+        "RAGE_URL": config.RAGE_URL or "(unset — no list of models, no load or unload)",
         "TRANSLATE_URL": config.TRANSLATE_URL or "(unset — the chat model translates, slowly)",
         "GPU_PROBE_URL": config.GPU_PROBE_URL or "(unset — no GPU panel)",
         "RERANK_URL": (f"{config.RERANK_URL} — the reranker of last resort, "

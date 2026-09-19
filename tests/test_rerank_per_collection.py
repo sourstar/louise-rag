@@ -45,7 +45,7 @@ def _server(monkeypatch, *, fail=None, answer=None):
     speaking whichever format it is asked in."""
     calls = []
 
-    def post(url, json=None, timeout=None):
+    def post(url, json=None, timeout=None, headers=None):
         calls.append({"url": url, "json": json, "timeout": timeout})
         if fail is not None:
             raise fail

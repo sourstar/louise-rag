@@ -63,7 +63,7 @@ def _capture_posts(monkeypatch):
             return {"data": [{"index": 0, "embedding": [1.0, 0.0]}],
                     "embeddings": [[1.0, 0.0]]}
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         calls.append({"url": url, "json": json})
         return FakeResponse()
     monkeypatch.setattr(embeddings.httpx, "post", fake_post)
@@ -135,7 +135,7 @@ def test_413_from_bert_class_servers_shrinks_the_budget_gently(isolated_config, 
         def json(self):
             return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         attempts.append(len(json["input"][0]))
         return Resp(413 if len(json["input"][0]) > 1000 else 200)
     monkeypatch.setattr(embeddings.httpx, "post", fake_post)
@@ -167,7 +167,7 @@ def _refusing_server(monkeypatch, status, text, limit=1000):
         def json(self):
             return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         attempts.append(len(json["input"][0]))
         return Resp(status if len(json["input"][0]) > limit else 200)
     monkeypatch.setattr(embeddings.httpx, "post", fake_post)

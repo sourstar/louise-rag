@@ -45,7 +45,7 @@ def _server(monkeypatch, known=("de", "en", "fr", "it", "la", "eo", "ja", "zh", 
     def get(url, timeout=None):
         return _Resp({"languages": list(known)})
 
-    def post(url, json=None, timeout=None):
+    def post(url, json=None, timeout=None, headers=None):
         if calls is not None:
             calls.append([(it["text"], it["to"]) for it in json["items"]])
         if fail:
