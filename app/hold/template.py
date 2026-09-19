@@ -268,6 +268,23 @@ _QUERY_NULLABLE = {"encoder": None, "instruction": None}
 _ORIGIN_NULLABLE = {"jurisdiction": None}
 
 
+def _engine_from_recipe(raw: Any, where: str) -> dict[str, Any]:
+    """The engine table of a recipe as 09 §9.3's object. TOML has no null and
+    an empty table is easy to omit, so `variant` absent is null and `env`
+    absent is `{}`; everything else is the recipe's to state — an engine is
+    never guessed, because it is what a stranger runs to reproduce the
+    reference."""
+    if not isinstance(raw, dict):
+        raise TemplateError(f"recipe: {where} is a table: name, build, image, args, "
+                            f"device, and variant and env where there are any")
+    engine = dict(raw)
+    engine.setdefault("variant", None)
+    engine.setdefault("env", {})
+    if engine["variant"] == "":
+        engine["variant"] = None
+    return engine
+
+
 def _space_from_recipe(block: dict[str, Any],
                        calibration: tuple[str, str]) -> Any:
     """The space block, with the two hashes `create` computed spliced in.
@@ -291,6 +308,11 @@ def _space_from_recipe(block: dict[str, Any],
             "recipe: space.calibration.set is required — it names which "
             "512-text set the reference vectors were produced over, and a "
             "peer holding another set compares nothing (09 §9.12)")
+    if "query_vectors" in cal_block:
+        raise TemplateError(
+            "recipe: space.calibration.query_vectors is written by `hold "
+            "collection create`, like `vectors`: it is the hash of what the query "
+            "encoder answers for the calibration set (09 §9.12)")
     cal_block["vectors"] = calibration[0]
     b["calibration"] = cal_block
     b["envelope"] = calibration[1]
@@ -300,6 +322,18 @@ def _space_from_recipe(block: dict[str, Any],
         enc = dict(b["encoder"])
         for k, v in _ENCODER_NULLABLE.items():
             enc.setdefault(k, v)
+        # A NEW CODEX NAMES ITS ENGINE (09 §9.3, the engine amendment): the
+        # run the reference vectors come from, written out whole so that
+        # anyone can run it again — never the image alone, which is what a
+        # version-2 Codex carried and what put the image inside `space_id`.
+        if "image" in enc or "engine" not in enc:
+            raise TemplateError(
+                "recipe: space.encoder names the ENGINE the reference vectors are "
+                "computed with — [space.encoder.engine] with name, build, image, "
+                "args, device (and variant, env where there are any) — beside "
+                "`weights` and `label`. `image` alone is a version-2 Codex, which "
+                "is read for ever and no longer written (09 §9.3)")
+        enc["engine"] = _engine_from_recipe(enc["engine"], "space.encoder.engine")
         b["encoder"] = enc
     q = dict(b.get("query") or {})
     for k, v in _QUERY_NULLABLE.items():
@@ -310,7 +344,27 @@ def _space_from_recipe(block: dict[str, Any],
         q["encoder"] = None
     if q.get("instruction") == "":
         q["instruction"] = None
+    if isinstance(q.get("encoder"), dict):
+        qe = dict(q["encoder"])
+        if "image" in qe:
+            raise TemplateError(
+                "recipe: space.query.encoder names `weights` and, where it differs "
+                "from the document side's, an `engine` — not an image (09 §9.3)")
+        # "the same, its own weights" (09 §9.3's worked example) is the
+        # common case — one engine, two weights files — so a query encoder
+        # that names no engine runs on the document side's.
+        qe["engine"] = (_engine_from_recipe(qe["engine"], "space.query.encoder.engine")
+                        if "engine" in qe
+                        else (b.get("encoder") or {}).get("engine"))
+        q["encoder"] = qe
     b["query"] = q
+    # present and null in a symmetric space: every field is present (§9.3)
+    cal_block["query_vectors"] = (calibration[2] if len(calibration) > 2 else None) \
+        if q.get("encoder") is not None else None
+    if q.get("encoder") is not None and cal_block["query_vectors"] is None:
+        raise TemplateError(
+            "recipe: this space has a query encoder, and `hold collection create` "
+            "was given no reference vectors for it (09 §9.12, query_vectors)")
     if b.get("evaluation") in ([], {}):
         b["evaluation"] = None
     return space_from_dict(b)

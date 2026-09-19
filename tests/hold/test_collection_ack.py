@@ -17,6 +17,7 @@ import pytest
 
 from app import louise
 from app.hold import codex as cx, collection as col
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, TERMS, fake_embed, pubmed
 
 
@@ -49,7 +50,7 @@ def test_a_green_collection_has_nothing_to_acknowledge(isolated_config,
     root = tmp_path / "collections"
     from tests.hold.test_template import recipe
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     assert louise.main(["hold", "collection", "ack", "gutenberg",
                         "--root", str(root), "--yes"]) == 0
     assert "nothing to acknowledge" in capsys.readouterr().out
@@ -151,7 +152,7 @@ def test_create_writes_LICENSE_TERMS_for_a_non_green_collection(isolated_config,
         "license": {"class": "red", "terms_sha256": digest},
     }
     col.create_from_recipe(root, "pubmed", recipe, platform_image=PLATFORM,
-                           embed=fake_embed, name="pubmed", key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, name="pubmed", key=KEY, now=NOW)
     terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
     assert terms.is_file(), "no LICENSE-TERMS: the collection cannot be acked"
     assert terms.read_bytes() == body, "byte-exact, never converted"
@@ -168,7 +169,7 @@ def test_a_green_collection_gets_no_terms_member(isolated_config, tmp_path):
     from tests.hold.test_template import recipe
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     assert not (root / "gutenberg" / "drag" / "LICENSE-TERMS").exists()
 
 
@@ -187,4 +188,4 @@ def test_a_recipe_pinning_the_wrong_terms_hash_is_refused(isolated_config,
     }
     with pytest.raises(CodexError, match="byte-exact"):
         col.create_from_recipe(root, "pubmed", recipe, platform_image=PLATFORM,
-                               embed=fake_embed, name="pubmed", key=KEY, now=NOW)
+                               embed=fake_embed, embed_query=fake_query_embed, name="pubmed", key=KEY, now=NOW)

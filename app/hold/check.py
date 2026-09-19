@@ -718,8 +718,15 @@ def attestation(outcome: Outcome, codex, snapshot: snap.Snapshot, key, *,
     """09 §9.8's body, signed under `louise/attestation/v1`."""
     statistical = outcome.check in ("vectors-sample", "calibration",
                                     "centres", "evaluation")
+    # 09 §9.8: from the engine amendment the body names the ENGINE used, by
+    # its id, and is version 3 — "version 2 is this body with
+    # `encoder_image`". A version-2 collection's attestations keep the shape
+    # they have always been written in, image and all.
+    from .codex import encoder_field
+    engine_key, engine = encoder_field(codex)
     body = {
-        "kind": "louise-attestation", "version": 1,
+        "kind": "louise-attestation",
+        "version": 3 if engine_key == "encoder_engine" else 1,
         "collection_id": codex.collection_id,
         "snapshot_id": snapshot.snapshot_id,
         "snapshot_hash": snapshot.hash,
@@ -729,7 +736,7 @@ def attestation(outcome: Outcome, codex, snapshot: snap.Snapshot, key, *,
         "result": outcome.result,
         "detail": outcome.detail,
         "platform_image": platform_image,
-        "encoder_image": codex.space.encoder.image if statistical else None,
+        engine_key: engine if statistical else None,
         "encoder_weights": codex.space.encoder.weights if statistical else None,
         "key": env.key_text(key.verify_key),
         "time": now,

@@ -1,6 +1,8 @@
 """`POST /api/hold/collection/create` — `louise hold collection create` as
 one route (07 §7.4), and what the Library's *new collection* is now
 (07 §7.6). The form before it wrote a file naming no Codex."""
+import tomllib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -34,6 +36,9 @@ def client(tmp_path, isolated_config, monkeypatch):
 
 
 ENC = "http://enc:8080"
+#: the shared test recipe is a bi-encoder space (09 §9.3's worked example), so
+#: `create` needs the query side's endpoint too
+QENC = "http://enc:8081"
 _REAL_EMBED_FOR_RECIPE = louise._embed_for_recipe
 
 
@@ -53,20 +58,23 @@ def test_a_create_that_names_no_encoder_is_refused_and_writes_nothing(client, mo
 
 def test_the_route_is_the_command(client):
     r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
-                                 "encoder": ENC})
+                                 "encoder": ENC, "query_encoder": QENC})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["exit"] == 0 and d["name"] == "gutenberg"
     assert d["held"] == str(collections_mod.config_toml_path("gutenberg"))
-    assert d["cli"] == f"louise hold collection create gutenberg --recipe FILE --encoder {ENC}"
+    assert d["cli"] == (f"louise hold collection create gutenberg --recipe FILE "
+                        f"--encoder {ENC} --query-encoder {QENC}")
     assert c_encoder_url(d["held"]) == ENC, "the file names the encoder it was created with"
+    held = tomllib.loads(open(d["held"], encoding="utf-8").read())
+    assert held["encoder"]["query_url"] == QENC, "and its query side"
     c = collections_mod.by_name("gutenberg")
     assert c.codex is not None and c.codex.collection_id == d["collection_id"]
     assert (c.slices, c.acquire_enabled, c.share, c.embed_mode_default) == \
         ((), False, False, "off"), "a new collection holds nothing and spends nothing"
 
     again = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
-                                     "encoder": ENC})
+                                     "encoder": ENC, "query_encoder": QENC})
     assert again.status_code == 200
     assert again.json()["collection_id"] == d["collection_id"], "the hash is the identity"
 

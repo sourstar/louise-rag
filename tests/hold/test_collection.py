@@ -11,6 +11,7 @@ from app.hold import codex as cx
 from app.hold import collection as col
 from app.hold.codex import (CodexError, Defect, Descriptive, Encoder, Space,
                             Update, Work)
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import (KEY, NOW, PLATFORM, a_credit, a_root,
                                  fake_embed, pubmed, with_credits)
 
@@ -24,7 +25,11 @@ A_DEFECT = Defect("records-vs-origin", PLATFORM2, ("year=1975-1979/00017",),
 
 
 def other_space(codex) -> Space:
-    return replace(codex.space, encoder=Encoder(ENCODER2, WEIGHTS2, "bge-m3"))
+    # another MODEL is another space; the engine is inside the collection's
+    # identity and outside the space's (09 §9.3), so it changes too and
+    # decides nothing here
+    engine = replace(codex.space.encoder.engine, image=ENCODER2)
+    return replace(codex.space, encoder=Encoder(None, WEIGHTS2, "bge-m3", engine))
 
 
 # ---- on disk --------------------------------------------------------------
@@ -109,7 +114,7 @@ def test_create_refuses_lineage_fields(tmp_path: Path, codex):
 def test_derive_makes_a_sister_in_a_new_space(tmp_path: Path, codex):
     mother = a_root(tmp_path, codex)
     sister = col.derive(tmp_path, mother.collection_id, space=other_space(codex),
-                        embed=fake_embed, key=KEY, now=NOW)
+                        embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     assert sister.relation == "sister"
     assert sister.derived_from == mother.collection_id
     assert sister.space_id != mother.space_id
@@ -146,7 +151,7 @@ def test_a_sisters_ARCHIVE_credits_follow_the_space(tmp_path: Path):
     assert same_space.credits == mother.credits, "in her mother's space she owes"
 
     elsewhere = col.derive(tmp_path, mother.collection_id, space=other_space(credited),
-                             embed=fake_embed, key=KEY, now=NOW)
+                             embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     assert cx.archive_credits(elsewhere) == (), \
         "in another space nothing of her mother's vectors is admissible"
 
@@ -160,7 +165,7 @@ def test_a_sister_in_another_space_still_owes_the_corpus_and_the_community(tmp_p
     credited = pubmed(credits=with_credits(a_credit()))
     mother = a_root(tmp_path, credited)
     elsewhere = col.derive(tmp_path, mother.collection_id, space=other_space(credited),
-                           embed=fake_embed, key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
 
     assert elsewhere.space_id != mother.space_id
     kept = tuple(c for c in elsewhere.credits if c.kind != "archive")
@@ -173,7 +178,7 @@ def test_a_sister_in_a_new_space_may_declare_her_own_archives(tmp_path, codex):
     mother = a_root(tmp_path, codex)
     hers = (a_credit("zenodo-medcpt"),)
     sister = col.derive(tmp_path, mother.collection_id, space=other_space(codex),
-                        credits=hers, embed=fake_embed,
+                        credits=hers, embed=fake_embed, embed_query=fake_query_embed,
                         key=KEY, now=NOW)
     assert cx.archive_credits(sister) == hers
     assert sister.credits == with_credits(*hers), "sorted, with the other kinds kept"

@@ -30,15 +30,26 @@ CODEX_KIND = "louise-codex"
 
 #: What a NEW Codex is written at. 09 §9.3: "`version` tracks what wrote
 #: the Codex, `record_line` tracks what is in the shards, and a figureless
-#: collection created under a later format writes `version` 2 with
+#: collection created under a later format writes `version` 3 with
 #: `record_line` 1".
-CODEX_VERSION = 2
+CODEX_VERSION = 3
 
-#: What this build can READ. "A Codex already written stays 1 and cannot
-#: be moved, because `version` is inside the canonical bytes and so inside
-#: `collection_id` — changing it does not upgrade a collection, it names a
-#: different one" (§9.3). So 1 is read forever and never rewritten.
-CODEX_VERSIONS = (1, 2)
+#: What this build can READ. "A Codex already written stays at its version
+#: and cannot be moved, because `version` is inside the canonical bytes and
+#: so inside `collection_id` — changing it does not upgrade a collection, it
+#: names a different one" (§9.3). So 1 and 2 are read forever and never
+#: rewritten.
+CODEX_VERSIONS = (1, 2, 3)
+
+#: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
+#: space's encoder is `{weights, engine, label}`: the ENGINE the reference
+#: vectors were computed with, written out whole so anyone can run it again,
+#: inside `collection_id` and OUTSIDE `space_id` — a space is the model and
+#: its settings, and whether another engine computes the same function is
+#: measured by the gate (03 §3.3), never declared. Below it the encoder is
+#: `{image, weights, label}`, the engine's image digest alone, and that
+#: image IS inside `space_id`. A version-2 Codex keeps that for ever.
+ENGINE_VERSION = 3
 
 #: 09 §9.5's two record shapes: 1 without a `figures` key, 2 with it. Only
 #: 1 can be CREATED here — `record_line` 2 needs the figures containers,
@@ -211,12 +222,55 @@ class Layer:
 
 
 @dataclass(frozen=True)
-class Encoder:
+class Engine:
+    """09 §9.3, *the engine*: how the reference vectors were computed,
+    written out whole so that anyone can compute them again (02 §2.4).
+
+    `image`, `args` and `env` are what a peer runs to reproduce the
+    reference; `name`, `build`, `variant` and `device` are readable, bound
+    by `image` and by the reference vectors and by no check. `args` carries
+    the weights as `${WEIGHTS}` and the port as `${PORT}` and nothing else
+    that names the host; `env` is only what was set for the engine beyond
+    the image's own, and never a credential — the Codex is public."""
+    name: str
+    build: str
+    variant: str | None
     image: str
-    weights: str
-    label: str = ""          # readable, without guarantee
+    args: tuple[str, ...]
+    env: dict[str, str]
+    device: str
 
     def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "build": self.build, "variant": self.variant,
+                "image": self.image, "args": list(self.args), "env": dict(self.env),
+                "device": self.device}
+
+    @property
+    def engine_id(self) -> str:
+        """`H(canonical JSON of the engine object)`. It names an engine
+        wherever a producer's engine is recorded: the bundle header (§9.7),
+        attestations (§9.8), benchmarks (§9.9), calibration objects (§9.12)."""
+        return digest(canonical_json(self.to_dict()))
+
+
+@dataclass(frozen=True)
+class Encoder:
+    """A space's encoder, in one of two shapes (ENGINE_VERSION):
+    `{weights, engine, label}` from Codex version 3, and `{image, weights,
+    label}` below it. The shape is the object's own — an `engine` or an
+    `image`, never both — and `validate` ties it to the Codex's version.
+
+    `image` stays FIRST, where every positional construction in the code
+    and the tests already puts it; a version-3 encoder passes `None` there."""
+    image: str | None
+    weights: str
+    label: str = ""          # readable, without guarantee
+    engine: Engine | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.engine is not None:
+            return {"weights": self.weights, "engine": self.engine.to_dict(),
+                    "label": self.label}
         return {"image": self.image, "weights": self.weights, "label": self.label}
 
 
@@ -227,9 +281,14 @@ class Query:
     instruction: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"encoder": None if self.encoder is None
-                else {"image": self.encoder.image, "weights": self.encoder.weights},
-                "instruction": self.instruction}
+        e = self.encoder
+        if e is None:
+            side = None
+        elif e.engine is not None:
+            side = {"weights": e.weights, "engine": e.engine.to_dict()}
+        else:
+            side = {"image": e.image, "weights": e.weights}
+        return {"encoder": side, "instruction": self.instruction}
 
 
 @dataclass(frozen=True)
@@ -238,10 +297,17 @@ class Calibration:
     vectors: str             # the reference vectors' hash (§9.12)
     n: int = 16
     min_pass: int = 12
+    #: From version 3: the hash of the QUERY encoder's reference vectors in
+    #: an asymmetric space — what its query runs are validated against
+    #: (03 §3.3) — and `null` in a symmetric one. Absent below version 3.
+    query_vectors: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"set": self.set, "vectors": self.vectors,
-                "quorum": {"n": self.n, "min_pass": self.min_pass}}
+    def to_dict(self, with_query_vectors: bool = False) -> dict[str, Any]:
+        out = {"set": self.set, "vectors": self.vectors,
+               "quorum": {"n": self.n, "min_pass": self.min_pass}}
+        if with_query_vectors:
+            out["query_vectors"] = self.query_vectors
+        return out
 
 
 @dataclass(frozen=True)
@@ -260,12 +326,17 @@ class Space:
                              # a sister; salted for a corrective sister
     evaluation: dict[str, Any] | None = None
 
+    @property
+    def has_engine(self) -> bool:
+        """Is this the version-3 shape — an engine, not an image alone."""
+        return self.encoder.engine is not None
+
     def to_dict(self) -> dict[str, Any]:
         return {"encoder": self.encoder.to_dict(), "dim": self.dim,
                 "dtype": self.dtype, "ctx": self.ctx, "pooling": self.pooling,
                 "normalise": self.normalise, "query": self.query.to_dict(),
                 "tolerance": self.tolerance,
-                "calibration": self.calibration.to_dict(),
+                "calibration": self.calibration.to_dict(self.has_engine),
                 "envelope": self.envelope, "epoch": self.epoch,
                 "evaluation": self.evaluation}
 
@@ -614,17 +685,35 @@ class Codex:
     def space_id(self) -> str:
         """§9.3. The encoder function and what is fed to it, and nothing
         about the contract around it: not `tolerance`, not `calibration`,
-        not `envelope`, not `work`."""
+        not `envelope`, not `work`.
+
+        FROM VERSION 3, NOT THE ENGINE EITHER (02 §2.4): the space is the
+        weights and the settings. A newer build that runs faster, another
+        engine, another device, a quantised variant each JOINS the space by
+        passing the gate and never makes a new one — so two creators on
+        different engines land in one space. The query side enters "as the
+        Codex writes it, except that a non-null `query.encoder` is reduced
+        to `{weights}`".
+
+        BELOW VERSION 3 the engine's image digest is inside: those bytes are
+        what version-2 collections were identified by, and a Codex already
+        written cannot be moved."""
+        sp = self.space
+        if self.version >= ENGINE_VERSION:
+            encoder: dict[str, Any] = {"weights": sp.encoder.weights}
+            query = sp.query.to_dict()
+            if sp.query.encoder is not None:
+                query["encoder"] = {"weights": sp.query.encoder.weights}
+        else:
+            encoder = {"image": sp.encoder.image, "weights": sp.encoder.weights}
+            query = sp.query.to_dict()
         return digest(canonical_json({
             "cleaning_version": self.cleaning_version,
-            "encoder": {"image": self.space.encoder.image,
-                        "weights": self.space.encoder.weights},
+            "encoder": encoder,
             "layers": [l.to_dict() for l in self.layers],
-            "space": {"ctx": self.space.ctx, "dim": self.space.dim,
-                      "dtype": self.space.dtype, "epoch": self.space.epoch,
-                      "normalise": self.space.normalise,
-                      "pooling": self.space.pooling,
-                      "query": self.space.query.to_dict()},
+            "space": {"ctx": sp.ctx, "dim": sp.dim, "dtype": sp.dtype,
+                      "epoch": sp.epoch, "normalise": sp.normalise,
+                      "pooling": sp.pooling, "query": query},
         }))
 
     @property
@@ -642,6 +731,25 @@ class Codex:
         if self.derived_from is not None:
             return "sister"
         return "root"
+
+
+def encoder_field(codex: "Codex", *, query: bool = False) -> tuple[str, str | None]:
+    """How an artefact written FOR this collection names the Codex's own
+    engine, beside the weights: `("encoder_engine", <engine_id>)` from Codex
+    version 3, `("encoder_image", <image digest>)` below it.
+
+    The engine amendment moved every artefact that named an image — the
+    bundle header (09 §9.7), the attestation (§9.8), the digest's benchmarks
+    (§9.9), both calibration objects (§9.12) — to the engine's id, each by
+    one version. An artefact of a version-2 collection keeps the image and
+    its old version: those bytes are what its peers already hold."""
+    enc = codex.space.query.encoder if query else codex.space.encoder
+    if enc is None:
+        return ("encoder_engine" if codex.version >= ENGINE_VERSION
+                else "encoder_image"), None
+    if codex.version >= ENGINE_VERSION:
+        return "encoder_engine", enc.engine.engine_id
+    return "encoder_image", enc.image
 
 
 def corrective_epoch(replaced_codex_id: str) -> str:
@@ -747,11 +855,76 @@ def _validate_layers(codex: Codex) -> None:
         raise CodexError("one chunker per layer: two layers name the same chunker")
 
 
+def _validate_engine(engine: Engine, where: str) -> None:
+    """09 §9.3, *the engine*. What binds is `image`, `args` and `env`; the
+    rest is readable. `args` names the weights and the port by placeholder
+    and nothing else of the host."""
+    for name in ("name", "build", "device"):
+        value = getattr(engine, name)
+        if not isinstance(value, str) or not value:
+            raise CodexError(f"{where}.{name} must be a non-empty string, got {value!r}")
+    if engine.variant is not None and (not isinstance(engine.variant, str)
+                                       or not engine.variant):
+        raise CodexError(f"{where}.variant is a non-empty string or null")
+    if not isinstance(engine.image, str) or not _DIGEST_RE.match(engine.image):
+        raise CodexError(f"{where}.image must be the sha256: digest of the OCI image that "
+                         f"was run — a tag is not an image — got {engine.image!r}")
+    if not engine.args or not all(isinstance(a, str) and a for a in engine.args):
+        raise CodexError(f"{where}.args must be the argument vector, program first: a "
+                         f"non-empty list of non-empty strings")
+    for placeholder in ("${WEIGHTS}", "${PORT}"):
+        if sum(1 for a in engine.args if placeholder in a) > 1:
+            raise CodexError(f"{where}.args carries {placeholder} more than once")
+    for key, value in engine.env.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise CodexError(f"{where}.env maps names to strings, got {key!r}: {value!r}")
+
+
+def _validate_encoder_shape(codex: Codex) -> None:
+    """The shape follows the version, both ways (ENGINE_VERSION): an engine
+    from version 3, an image alone below it. A version-2 Codex given an
+    engine — or a version-3 one left with an image — would be a third shape
+    that nobody else computes the same `collection_id` for."""
+    sp = codex.space
+    sides = [("space.encoder", sp.encoder)]
+    if sp.query.encoder is not None:
+        sides.append(("space.query.encoder", sp.query.encoder))
+    for where, enc in sides:
+        if codex.version >= ENGINE_VERSION:
+            if enc.engine is None or enc.image is not None:
+                raise CodexError(
+                    f"{where}: a version {codex.version} Codex names the ENGINE the "
+                    f"reference vectors were computed with — {{weights, engine, …}} — "
+                    f"not an image alone (09 §9.3; 02 §2.4)")
+            _validate_engine(enc.engine, f"{where}.engine")
+        else:
+            if enc.engine is not None:
+                raise CodexError(
+                    f"{where}: a version {codex.version} Codex names its encoder's IMAGE; "
+                    f"the engine is version {ENGINE_VERSION}'s. A Codex already written "
+                    f"cannot be moved: `version` is inside `collection_id`")
+            if not isinstance(enc.image, str) or not _DIGEST_RE.match(enc.image):
+                raise CodexError(f"{where}.image must be a sha256: digest, got {enc.image!r}")
+        if not _DIGEST_RE.match(enc.weights):
+            raise CodexError(f"{where}.weights must be a sha256: digest, got "
+                             f"{enc.weights!r}")
+    qv = sp.calibration.query_vectors
+    if codex.version >= ENGINE_VERSION and sp.query.encoder is not None:
+        if not isinstance(qv, str) or not _DIGEST_RE.match(qv):
+            raise CodexError(
+                "space.calibration.query_vectors must be the sha256: hash of the query "
+                "encoder's reference vectors: an asymmetric space's query runs are "
+                "validated against them (03 §3.3; 09 §9.12)")
+    elif qv is not None:
+        raise CodexError(
+            "space.calibration.query_vectors is null in a symmetric space, and absent "
+            f"below Codex version {ENGINE_VERSION} (09 §9.3)")
+
+
 def _validate_space(codex: Codex) -> None:
     sp = codex.space
-    for name, val in (("encoder.image", sp.encoder.image),
-                      ("encoder.weights", sp.encoder.weights),
-                      ("calibration.set", sp.calibration.set),
+    _validate_encoder_shape(codex)
+    for name, val in (("calibration.set", sp.calibration.set),
                       ("calibration.vectors", sp.calibration.vectors),
                       ("envelope", sp.envelope)):
         if not _DIGEST_RE.match(val):
@@ -766,11 +939,6 @@ def _validate_space(codex: Codex) -> None:
         raise CodexError(f"space.tolerance must be a decimal string, got {sp.tolerance!r}")
     if not 0 < sp.calibration.min_pass <= sp.calibration.n:
         raise CodexError("space.calibration.quorum: 0 < min_pass <= n")
-    if sp.query.encoder is not None:
-        for name, val in (("image", sp.query.encoder.image),
-                          ("weights", sp.query.encoder.weights)):
-            if not _DIGEST_RE.match(val):
-                raise CodexError(f"space.query.encoder.{name} must be a sha256: digest")
 
 
 def _validate_license(codex: Codex) -> None:
@@ -1169,6 +1337,16 @@ def from_dict(d: dict[str, Any]) -> Codex:
     sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
                             "normalise", "query", "tolerance", "calibration",
                             "envelope", "epoch", "evaluation"), "space")
+    # THE SHAPE FOLLOWS THE VERSION, checked where the file is read and not
+    # only in `validate`: 09 §9.3 defines version 2 as "this object with
+    # `space.encoder` … as `{image, weights, label}`", so a version-2 file
+    # that carries an engine is not a version-2 Codex at all.
+    has_engine = isinstance(sp["encoder"], dict) and "engine" in sp["encoder"]
+    if has_engine != (version >= ENGINE_VERSION):
+        raise CodexError(
+            f"a version {version} Codex names its encoder by "
+            f"{'its ENGINE — {weights, engine, label}' if version >= ENGINE_VERSION else 'its IMAGE — {image, weights, label}'}"
+            f" (09 §9.3); this one carries the other shape")
     wk = _only(d["work"], ("tokens", "per"), "work")
     va = _only(d["validation"], ("checks", "sample", "required"), "validation")
     li = _only(d["license"], ("class", "terms_sha256"), "license")
@@ -1220,22 +1398,53 @@ def _layer(l: dict[str, Any], i: int) -> Layer:
     return Layer(Chunker(ch["id"], ch["version"], ch["params"]), l["rule"])
 
 
+def _engine(e: Any, where: str) -> Engine:
+    if not isinstance(e, dict):
+        raise CodexError(f"{where} must be an object (09 §9.3, the engine)")
+    e = _only(e, ("name", "build", "variant", "image", "args", "env", "device"), where)
+    if not isinstance(e["args"], list) or not isinstance(e["env"], dict):
+        raise CodexError(f"{where}: args is a list of strings and env an object")
+    return Engine(e["name"], e["build"], e["variant"], e["image"],
+                  tuple(e["args"]), dict(e["env"]), e["device"])
+
+
 def _space(sp: dict[str, Any]) -> Space:
-    en = _only(sp["encoder"], ("image", "weights", "label"), "space.encoder")
+    """A space block, in the shape it is written in. The encoder says which:
+    an `engine` (Codex version 3) or an `image` (below it). `_only` refuses
+    a block that mixes the two, and `validate` ties the shape to the Codex's
+    own `version`."""
+    raw = sp["encoder"]
+    engine_shape = isinstance(raw, dict) and "engine" in raw
+    if engine_shape:
+        en = _only(raw, ("weights", "engine", "label"), "space.encoder")
+        encoder = Encoder(None, en["weights"], en["label"],
+                          _engine(en["engine"], "space.encoder.engine"))
+    else:
+        en = _only(raw, ("image", "weights", "label"), "space.encoder")
+        encoder = Encoder(en["image"], en["weights"], en["label"])
     qu = _only(sp["query"], ("encoder", "instruction"), "space.query")
     qe = qu["encoder"]
-    if qe is not None:
+    if qe is None:
+        query_encoder = None
+    elif engine_shape:
+        qe = _only(qe, ("weights", "engine"), "space.query.encoder")
+        query_encoder = Encoder(None, qe["weights"], "",
+                                _engine(qe["engine"], "space.query.encoder.engine"))
+    else:
         qe = _only(qe, ("image", "weights"), "space.query.encoder")
-    ca = _only(sp["calibration"], ("set", "vectors", "quorum"), "space.calibration")
+        query_encoder = Encoder(qe["image"], qe["weights"], "")
+    ca = _only(sp["calibration"],
+               ("set", "vectors", "query_vectors", "quorum") if engine_shape
+               else ("set", "vectors", "quorum"), "space.calibration")
     qm = _only(ca["quorum"], ("n", "min_pass"), "space.calibration.quorum")
     return Space(
-        encoder=Encoder(en["image"], en["weights"], en["label"]),
+        encoder=encoder,
         dim=sp["dim"], dtype=sp["dtype"], ctx=sp["ctx"], pooling=sp["pooling"],
         normalise=sp["normalise"],
-        query=Query(None if qe is None else Encoder(qe["image"], qe["weights"], ""),
-                    qu["instruction"]),
+        query=Query(query_encoder, qu["instruction"]),
         tolerance=sp["tolerance"],
-        calibration=Calibration(ca["set"], ca["vectors"], qm["n"], qm["min_pass"]),
+        calibration=Calibration(ca["set"], ca["vectors"], qm["n"], qm["min_pass"],
+                                ca.get("query_vectors")),
         envelope=sp["envelope"], epoch=sp["epoch"], evaluation=sp["evaluation"],
     )
 

@@ -10,8 +10,9 @@ from nacl import signing
 
 from app.hold import calibration as _cal
 from app.hold.codex import (Calibration, Chunker, Codex, Credit, Descriptive,
-                            Encoder, Facet, Layer, License, Origin, Parser,
-                            Query, Space, Toolchain, Update, Validation, Work)
+                            Encoder, Engine, Facet, Layer, License, Origin,
+                            Parser, Query, Space, Toolchain, Update, Validation,
+                            Work)
 
 PLATFORM = "sha256:" + "1f" * 32
 ENCODER = "sha256:" + "8c" * 32
@@ -52,6 +53,19 @@ def fake_embed(texts, *, dim: int = DIM, tag: bytes = b""):
 # could have written.
 CAL_VECS, ENVELOPE = _cal.build_member(
     CAL_TEXTS, fake_embed, normalise=True, dim=DIM)[2:]
+#: An asymmetric space pins its QUERY encoder's reference vectors too (09
+#: §9.12, from Codex version 3): the same texts through another function.
+CAL_QVECS = _cal.build_member(
+    CAL_TEXTS, lambda texts: fake_embed(texts, tag=b"query"), normalise=True, dim=DIM)[2]
+
+#: 09 §9.3's worked example, the engine: the run the reference vectors came
+#: from, written out whole. `ENCODER` is its image; the query side is "the
+#: same, its own weights".
+ENGINE = Engine(
+    name="llama.cpp", build="b10630", variant="sycl", image=ENCODER,
+    args=("llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+          "-c", "512", "-ngl", "99", "--port", "${PORT}"),
+    env={}, device="Intel(R) Arc(TM) Pro B70 Graphics")
 #: The REAL hash of the terms text the pubmed plugin ships, not a made-up
 #: digest. `collection.write_terms` copies that file into the drag as
 #: `LICENSE-TERMS` and refuses when its bytes do not hash to what the
@@ -109,11 +123,11 @@ def pubmed(**over) -> Codex:
         layers=(Layer(Chunker("abstract", 1, {}), "default"),),
         slicing=PUBMED_SLICING,
         space=Space(
-            encoder=Encoder(ENCODER, WEIGHTS, "MedCPT-Article-Encoder"),
+            encoder=Encoder(None, WEIGHTS, "MedCPT-Article-Encoder", ENGINE),
             dim=768, dtype="f16", ctx=512, pooling="cls", normalise=True,
-            query=Query(Encoder(Q_ENCODER, Q_WEIGHTS, ""), None),
+            query=Query(Encoder(None, Q_WEIGHTS, "", ENGINE), None),
             tolerance="0.95",
-            calibration=Calibration(CAL_SET, CAL_VECS, 16, 12),
+            calibration=Calibration(CAL_SET, CAL_VECS, 16, 12, CAL_QVECS),
             envelope=ENVELOPE, epoch="0", evaluation=None),
         work=Work(40_000_000, "P1M"),
         modality="text",
@@ -211,6 +225,23 @@ def a_facet(field_: str = "subjects") -> Facet:
     return Facet(field_, "tree", separator="/", authority={"name": "MeSH"})
 
 
+def pubmed_v2(**over) -> Codex:
+    """The same collection as it was written BEFORE the engine amendment:
+    Codex version 2, the encoder named by its image alone, that image inside
+    `space_id`, no `query_vectors`. Such a Codex is read for ever and never
+    rewritten — `version` is inside `collection_id` (09 §9.3)."""
+    v3 = pubmed()
+    space = Space(
+        encoder=Encoder(ENCODER, WEIGHTS, "MedCPT-Article-Encoder"),
+        dim=v3.space.dim, dtype=v3.space.dtype, ctx=v3.space.ctx,
+        pooling=v3.space.pooling, normalise=v3.space.normalise,
+        query=Query(Encoder(Q_ENCODER, Q_WEIGHTS, ""), None),
+        tolerance=v3.space.tolerance,
+        calibration=Calibration(CAL_SET, CAL_VECS, 16, 12),
+        envelope=ENVELOPE, epoch="0", evaluation=None)
+    return pubmed(**{"space": space, "version": 2, **over})
+
+
 @pytest.fixture
 def codex() -> Codex:
     return pubmed()
@@ -230,7 +261,13 @@ def a_root(root, codex, **kw):
     v, e, _, _ = _cal.build_member(CAL_TEXTS, fake_embed, normalise=True,
                                    dim=codex.space.dim)
     d = _col.drag_of(root, _col.name_of(root, out.collection_id))
-    _col.write_calibration(d, codex, v, e, key=KEY, now=NOW)
+    q = None
+    if codex.space.calibration.query_vectors is not None:
+        # an asymmetric space's member carries the query side's reference too
+        q, _ = _cal.build_query_member(CAL_TEXTS, fake_query_embed,
+                                       instruction=codex.space.query.instruction,
+                                       normalise=True, dim=codex.space.dim)
+    _col.write_calibration(d, codex, v, e, key=KEY, now=NOW, query_vectors=q)
     return out
 
 
@@ -240,3 +277,26 @@ def a_root(root, codex, **kw):
 #: the clock, so a caller always supplies the time.
 KEY = signing.SigningKey(b"\x05" * 32)
 NOW = "2026-09-08T00:00:00Z"
+
+
+def fake_query_embed(texts, *, dim: int = DIM):
+    """The stand-in for a bi-encoder's QUERY side (MedCPT's query encoder):
+    another function over the same texts. `CAL_QVECS` above is its hash over
+    the real 512, so a fixture Codex pins what `create` would have computed."""
+    return fake_embed(texts, dim=dim, tag=b"query")
+
+
+def a_stated_run(codex=None):
+    """The run RAGE would state for the engine of 09 §9.3's worked example
+    (09 §9.12): its id, from `Louise-Run`, and what it stands for, from
+    `GET /louise/runs/<id>`. A version-2 calibration statement names it;
+    without one a pass cannot be kept (03 §3.3)."""
+    from app.hold.codex import canonical_json, digest
+    from app.hold.embedder import StatedRun
+    engine = (codex.space.encoder.engine if codex is not None
+              and codex.space.encoder.engine is not None else ENGINE).to_dict()
+    weights = codex.space.encoder.weights if codex is not None else WEIGHTS
+    driver = "kernel 6.18.0-production; xe 9F2C1A; libze-intel-gpu1 26.05.1"
+    run = {"driver": driver, "engine": engine, "weights": weights}
+    return StatedRun(run_id=digest(canonical_json(run)), engine=engine,
+                     weights=weights, driver=driver)

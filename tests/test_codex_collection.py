@@ -17,6 +17,7 @@ import pytest
 
 from app import collections as collections_mod, db, spaces
 from app.hold import collection as col
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
@@ -28,7 +29,7 @@ def node(tmp_path, monkeypatch):
     (root / "collections").mkdir(parents=True)
     codex = col.create_from_recipe(
         root / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
-        embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+        embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
 
     cfg = tmp_path / "config" / "collections"
     cfg.mkdir(parents=True)

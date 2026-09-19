@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from . import calibration as cal, envelope as env
-from .codex import Codex, CodexError, sample
+from .codex import ENGINE_VERSION, Codex, CodexError, sample
 
 #: 03 §3.1's third outcome. An unreachable encoder is not a failure: it is
 #: a deferral, and CLAUDE.md forbids waiting on it without a bound.
@@ -43,6 +43,19 @@ class GateDeferred(GateError):
     """03 §3.1: the check could not run — the encoder was unreachable or
     past its bounded wait. Neither a failure nor a pass: no attestation, no
     flag, reported with its reason, and retried. Exit 3 (07 §7.7)."""
+
+
+@dataclass(frozen=True)
+class StatedRun:
+    """The run the platform said gave the answers (09 §9.12): its identity,
+    from the `Louise-Run` header, and what that identity stands for, from
+    `GET /louise/runs/<run_id>` — the engine as launched, the weights
+    actually loaded, the device's driver. RAGE computes all of it from what
+    it launched; nothing here is this peer's declaration."""
+    run_id: str
+    engine: dict[str, Any]
+    weights: str
+    driver: str
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,15 @@ class Run:
     min_pass: int
     max_input_tokens: int
     tokens_per_s: int
+    # What a version-2 statement adds (dd9bef4). `stated`: the run that
+    # answered, None where the endpoint states none — and then nothing can be
+    # held to it (03 §3.3). `fingerprint`: H over the sixteen vectors taken
+    # one at a time, as evidence. `batch_invariant`: whether the same sixteen,
+    # embedded the way this peer contributes, came back bit for bit.
+    stated: StatedRun | None = None
+    fingerprint: str | None = None
+    batch_invariant: bool | None = None
+    role: str = "document"            # "document" | "query"
 
     @property
     def passed(self) -> int:
@@ -109,7 +131,10 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              embed, seed: bytes | None = None,
-             collection_id: str | None = None) -> Run:
+             collection_id: str | None = None,
+             role: str = "document",
+             stated: StatedRun | None = None,
+             embed_one=None, contribute=None) -> Run:
     """One pass: embed all 512, draw the quorum, compare.
 
     `embed(texts) -> list[list[float]]` is injected rather than imported so
@@ -117,8 +142,32 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     caller owns the HTTP client, its timeout and its bounded wait
     (CLAUDE.md: a pipeline thread never waits without a bound on an
     optional subsystem).
+
+    `role="query"` gates an asymmetric space's QUERY run: the same texts
+    with `space.query.instruction` prefixed, against the member's
+    `query_vectors` (09 §9.12) — the caller passes those as `reference` and
+    the query encoder as `embed`.
+
+    WHAT THE ANSWERS DEPEND ON BESIDES THE RUN (03 §3.3). `embed_one` embeds
+    the sixteen fingerprint texts one at a time, as the endpoint returned
+    them: their hash is the run's FINGERPRINT, evidence in the statement and
+    never a check the worker repeats (dd9bef4). `contribute` embeds the same
+    sixteen the way this peer really contributes — its batching, its
+    concurrency; equal bytes mean the run is batch-invariant at those
+    settings, and a run that is not is validated for single-text work only.
+    The batching fault that silently corrupted 714 books (2026-07) is a
+    property of a run's settings: measured here, never assumed.
     """
+    if role not in ("document", "query"):
+        raise GateError(f"role is document or query, got {role!r}")
     texts = cal.verify(codex.modality, codex.space.calibration.set)
+    if role == "query":
+        if codex.space.query.encoder is None:
+            raise GateError("this space is symmetric: it has no query run to gate — "
+                            "queries and documents come from one run (03 §3.3)")
+        instruction = codex.space.query.instruction
+        if instruction:
+            texts = [f"{instruction}{t}" for t in texts]
     if len(reference) != cal.SIZE:
         raise GateError(f"the calibration member carries {len(reference)} "
                         f"reference vectors, the set has {cal.SIZE}")
@@ -148,6 +197,14 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     # LOWER bound on throughput rather than an invented number.
     tokens = sum(max(1, len(t) // 4) for t in texts)
 
+    taken = invariant = None
+    if embed_one is not None:
+        from . import fingerprint
+        sixteen = [texts[i] for i in fingerprint.indices(texts)]
+        taken = fingerprint.of(embed_one(sixteen))
+        if contribute is not None:
+            invariant = fingerprint.of(contribute(sixteen)) == taken
+
     return Run(
         space_id=codex.space_id,
         collection_id=collection_id or codex.collection_id,
@@ -159,6 +216,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         min_pass=codex.space.calibration.min_pass,
         max_input_tokens=codex.space.ctx,
         tokens_per_s=int(tokens / elapsed),
+        stated=stated, fingerprint=taken, batch_invariant=invariant, role=role,
     )
 
 
@@ -168,6 +226,8 @@ def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
     digest. This is what every other document means by "a compliant
     encoder"; the space author's calibration MEMBER is a different object
     defined in the same section."""
+    if codex.version >= ENGINE_VERSION:
+        return _statement_v2(run, key, now=now)
     body = {
         "kind": "louise-calibration-run", "version": 1,
         "space_id": run.space_id,
@@ -175,6 +235,55 @@ def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
         "set": run.set_id,
         "encoder_image": codex.space.encoder.image,
         "encoder_weights": codex.space.encoder.weights,
+        "seed": run.seed.hex(),
+        "sampled": list(run.sampled),
+        "passed": run.passed,
+        "worst": f"{run.worst:.6f}",
+        "median": f"{run.median:.6f}",
+        "max_input_tokens": run.max_input_tokens,
+        "tokens_per_s": run.tokens_per_s,
+        "key": env.key_text(key.verify_key),
+        "time": now,
+    }
+    return env.sign(env.CALIBRATION, body, key)
+
+
+def _statement_v2(run: Run, key, *, now: str) -> dict[str, Any]:
+    """09 §9.12's body at version 2: "this RUN, on this peer, is compliant
+    with this space" (dd9bef4). A peer keeps one per run it has validated,
+    and a vector is written only from an answer naming a run with a passing
+    one. "Version 1 of this body carried `encoder_image` … in place of the
+    run, and had no fingerprint."
+
+    IT NEEDS A RUN TO NAME. 03 §3.3: "An endpoint that states no run
+    identity cannot be held to a validated run: a peer may search with it
+    and writes nothing through it" — so for such an endpoint the gate's
+    verdict is reported and no statement is kept, because there is nothing
+    a later answer could be matched against."""
+    if run.stated is None:
+        raise GateError(
+            "the endpoint states no run identity (no `Louise-Run` on its answers), "
+            "so this pass cannot be kept: a calibration statement says WHICH run "
+            "is compliant, and a vector is written only from an answer naming a "
+            "validated one (03 §3.3). Search works through such an endpoint; "
+            "writing needs the node's model container, RAGE")
+    if run.fingerprint is None or run.batch_invariant is None:
+        raise GateError("a version-2 statement carries the run's fingerprint and "
+                        "whether it is batch-invariant; this pass measured neither")
+    if run.role not in ("document", "query"):
+        raise GateError(f"role is document or query, got {run.role!r}")
+    body = {
+        "kind": "louise-calibration-run", "version": 2,
+        "space_id": run.space_id,
+        "collection_id": run.collection_id,
+        "set": run.set_id,
+        "role": run.role,
+        "run": run.stated.run_id,
+        "engine": run.stated.engine,
+        "encoder_weights": run.stated.weights,
+        "driver": run.stated.driver,
+        "fingerprint": run.fingerprint,
+        "batch_invariant": run.batch_invariant,
         "seed": run.seed.hex(),
         "sampled": list(run.sampled),
         "passed": run.passed,
@@ -204,6 +313,14 @@ def benchmarks_entry(body: dict[str, Any]) -> dict[str, Any]:
     Keyed by space because that is how 04 §4.5 reads it: "a peer with no
     such entry being unscored here, since a rate measured on another
     encoder says nothing about this one"."""
+    if body.get("version", 1) >= 2:
+        # §9.9 version 2: the engine of "the validated run this peer
+        # contributes with", by its id
+        from .codex import canonical_json, digest
+        return {"space_id": body["space_id"],
+                "encoder_engine": digest(canonical_json(body["engine"])),
+                "encoder_weights": body["encoder_weights"],
+                "tokens_per_s": body["tokens_per_s"]}
     return {"space_id": body["space_id"],
             "encoder_image": body["encoder_image"],
             "encoder_weights": body["encoder_weights"],

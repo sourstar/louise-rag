@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app import louise
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
@@ -17,7 +18,7 @@ def _collection(tmp_path: Path) -> Path:
     root = tmp_path / "collections"
     from app.hold import collection as col
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     return root
 
 

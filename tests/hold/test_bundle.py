@@ -23,7 +23,7 @@ def header(**over):
     """§9.7's worked example, whole: a Gutenberg bundle, slice lang=it,
     shard 00007, 300 chunks."""
     h = {
-        "version": 1,
+        "version": 2,
         "collection": "sha256:" + "e5" * 32,
         "space_id": "sha256:" + "41" * 32,
         "snapshot_id": "2026-08",
@@ -33,7 +33,8 @@ def header(**over):
         "dim": 1024,
         "dtype": "f16",
         "producer_pubkey": PUB,
-        "encoder_image": "sha256:" + "8c" * 32,
+        # the producer's ENGINE, by its id (§9.3) — version 1 named an image
+        "encoder_engine": "sha256:" + "5a" * 32,
         "encoder_weights": "sha256:" + "e2" * 32,
         "content_digest": "sha256:" + "0f" * 32,
         "parquet_bytes": 662148,
@@ -71,13 +72,35 @@ def test_a_field_not_in_the_document_is_refused():
         bd.check(header(backend_fingerprint="whatever"))
 
 
-def test_the_version_is_the_literal_one():
-    """§9.7's table types `version` as the literal 1 — so §9.7's shape IS
-    version 1, and a bundle of another version is not one this document
-    describes. (Operator decision 2026-09-08: no bump, no compatibility
-    path.)"""
-    with pytest.raises(BundleError, match="literal 1"):
-        bd.check(header(version=2))
+def test_a_version_this_document_does_not_describe_is_refused():
+    """§9.7 fixes version 2, and version 1 — the same header naming the
+    engine's image alone — is still read (the engine amendment, 0d85f7f).
+    Anything else is refused and the message says which was found (09
+    §9.18: a reader never guesses)."""
+    for bad in (0, 3, "2", True, None):
+        with pytest.raises(BundleError, match="version is"):
+            bd.check(header(version=bad))
+
+
+def header_v1(**over):
+    h = header(version=1)
+    h["encoder_image"] = h.pop("encoder_engine")
+    h.update(over)
+    return h
+
+
+def test_version_1_is_still_read_and_names_an_image():
+    """What a version-2 collection's peers already hold. It is a CLOSED
+    schema like the other: a version-1 header carrying `encoder_engine`, or
+    a version-2 one carrying `encoder_image`, is neither."""
+    h = header_v1()
+    assert bd.parse(bd.serialise(h)) == h
+    with pytest.raises(BundleError, match="closed schema"):
+        bd.check(header(version=1))                     # encoder_engine at 1
+    with pytest.raises(BundleError, match="closed schema"):
+        bd.check(dict(header_v1(), version=2))          # encoder_image at 2
+    with pytest.raises(BundleError, match="sha256"):
+        bd.check(header_v1(encoder_image="8c" * 32))    # a bare digest, either way
 
 
 def test_the_algorithms_are_compared_and_never_dispatched_on():
@@ -212,6 +235,7 @@ def test_the_header_has_sorted_keys_and_no_whitespace():
     raw = bd.serialise(header())
     assert b" " not in raw.split(b'"shard":')[0], "no whitespace"
     assert list(json.loads(raw)) == sorted(bd.KEYS)
+    assert sorted(bd.keys_of(1)) == sorted(set(bd.KEYS) - {"encoder_engine"} | {"encoder_image"})
 
 
 def test_a_header_round_trips():

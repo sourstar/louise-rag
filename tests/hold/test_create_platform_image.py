@@ -67,7 +67,7 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: None)
     monkeypatch.setattr(col, "create_from_recipe", fake_create)
     monkeypatch.setattr(louise, "_write_held_file",
-                        lambda root, codex, encoder=None: root)
+                        lambda root, codex, encoder=None, query_encoder=None: root)
 
     extra, recipe = (), '[space]\ndim = 8\ndtype = "f16"\nctx = 512\n'
     if where == "flag":

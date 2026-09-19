@@ -206,6 +206,9 @@ class HoldCreateBody(BaseModel):
     space_from: str | None = None
     platform_image: str | None = None
     encoder: str | None = None   # this node's endpoint for it — required, no default
+    # a bi-encoder's query side (MedCPT): its endpoint. The Codex pins its
+    # reference vectors too (09 §9.12), so `create` embeds the set with it
+    query_encoder: str | None = None
 
 
 @app.post("/api/hold/collection/create", dependencies=[Depends(auth.require_admin)])
@@ -231,10 +234,13 @@ def hold_collection_create(body: HoldCreateBody):
         codex, held = louise.create_from(root, body.plugin, recipe,
                                          platform_image=body.platform_image,
                                          space_from=body.space_from,
-                                         encoder=body.encoder)
+                                         encoder=body.encoder,
+                                         query_encoder=body.query_encoder)
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"
+    if body.query_encoder:
+        cli += f" --query-encoder {body.query_encoder}"
     if body.space_from:
         cli += f" --space-from {body.space_from}"
     return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,

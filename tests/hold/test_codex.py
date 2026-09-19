@@ -16,12 +16,12 @@ from app.hold import codex as cx
 from app.hold.codex import (Calibration, Chunker, CodexError, Certifier,
                             Defect, Descriptive, Encoder, Facet, Layer,
                             License, Parser, Replaces, Toolchain, Update, Work)
-from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
+from tests.hold.conftest import (CAL_QVECS, CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
                                  PLATFORM, PUBMED_CHECKS, PUBMED_SAMPLE,
                                  PUBMED_SLICING, PUBMED_SPEC, Q_ENCODER,
                                  Q_WEIGHTS, TERMS, WEIGHTS, a_credit, a_facet,
                                  a_community_credit, a_corpus_credit,
-                                 replaced, with_credits)
+                                 pubmed_v2, replaced, with_credits)
 
 
 def _h(obj) -> str:
@@ -32,8 +32,15 @@ def _h(obj) -> str:
 
 # ---- the worked example, written out by hand ------------------------------
 
+#: 09 §9.3's engine, hand-written: the run the reference vectors came from.
+ENGINE_OBJECT = {
+    "name": "llama.cpp", "build": "b10630", "variant": "sycl", "image": ENCODER,
+    "args": ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+             "-c", "512", "-ngl", "99", "--port", "${PORT}"],
+    "env": {}, "device": "Intel(R) Arc(TM) Pro B70 Graphics"}
+
 WORKED_EXAMPLE = {
-    "kind": "louise-codex", "version": 2,
+    "kind": "louise-codex", "version": 3,
     "descriptive": {
         "title": "PubMed",
         "summary": "Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
@@ -57,14 +64,18 @@ WORKED_EXAMPLE = {
                 "rule": "default"}],
     "slicing": PUBMED_SLICING,
     "space": {
-        "encoder": {"image": ENCODER, "weights": WEIGHTS,
+        # the ENGINE the reference vectors were computed with, written out
+        # whole (the engine amendment, 0d85f7f) — not its image alone
+        "encoder": {"weights": WEIGHTS, "engine": ENGINE_OBJECT,
                     "label": "MedCPT-Article-Encoder"},
         "dim": 768, "dtype": "f16", "ctx": 512, "pooling": "cls",
         "normalise": True,
-        "query": {"encoder": {"image": Q_ENCODER, "weights": Q_WEIGHTS},
+        # "the same, its own weights"
+        "query": {"encoder": {"weights": Q_WEIGHTS, "engine": ENGINE_OBJECT},
                   "instruction": None},
         "tolerance": "0.95",
         "calibration": {"set": CAL_SET, "vectors": CAL_VECS,
+                        "query_vectors": CAL_QVECS,
                         "quorum": {"n": 16, "min_pass": 12}},
         "envelope": ENVELOPE, "epoch": "0", "evaluation": None},
     "work": {"tokens": 40000000, "per": "P1M"},
@@ -118,7 +129,101 @@ def test_the_two_hashes_are_taken_over_different_bytes(codex):
 
 
 def test_space_id_is_the_documented_preimage(codex):
+    """09 §9.3's own words: "the engine nowhere in it"."""
     assert codex.space_id == _h({
+        "cleaning_version": 1,
+        "encoder": {"weights": WEIGHTS},
+        "layers": [{"chunker": {"id": "abstract", "version": 1, "params": {}},
+                    "rule": "default"}],
+        "space": {"ctx": 512, "dim": 768, "dtype": "f16", "epoch": "0",
+                  "normalise": True, "pooling": "cls",
+                  "query": {"encoder": {"weights": Q_WEIGHTS}, "instruction": None}},
+    })
+    assert codex.space_segment == codex.space_id.split(":")[1][:16]
+    assert len(codex.space_segment) == 16
+
+
+# ---- the engine amendment (0d85f7f): inside the identity, outside the space ----
+
+def _on(codex, engine):
+    return replace(codex, space=replace(
+        codex.space, encoder=replace(codex.space.encoder, engine=engine),
+        query=replace(codex.space.query,
+                      encoder=replace(codex.space.query.encoder, engine=engine))))
+
+
+def test_two_creators_on_different_engines_land_in_one_space(codex):
+    """A newer build, another device, another image: another COLLECTION —
+    its reference was computed another way — in the SAME space, because a
+    space is the model and its settings, and whether an engine computes it
+    faithfully is measured by the gate, never declared (02 §2.4)."""
+    engine = codex.space.encoder.engine
+    newer = replace(engine, build="b10700", image="sha256:" + "9d" * 32,
+                    device="cpu", args=engine.args + ("--threads", "8"))
+    other = _on(codex, newer)
+    cx.validate(other)
+    assert other.space_id == codex.space_id
+    assert other.collection_id != codex.collection_id
+    assert newer.engine_id != engine.engine_id
+
+
+def test_engine_id_is_the_hash_of_the_engine_object(codex):
+    engine = codex.space.encoder.engine
+    assert engine.to_dict() == ENGINE_OBJECT
+    assert engine.engine_id == _h(ENGINE_OBJECT)
+
+
+def test_other_weights_are_another_space(codex):
+    other = replace(codex, space=replace(
+        codex.space, encoder=replace(codex.space.encoder, weights="sha256:" + "f0" * 32)))
+    assert other.space_id != codex.space_id
+
+
+@pytest.mark.parametrize("change, rule", [
+    ({"image": "rage:latest"}, "a tag is not an image"),
+    ({"args": ()}, "argument vector"),
+    ({"args": ("s", "${PORT}", "--alt", "${PORT}")}, "more than once"),
+    ({"name": ""}, "non-empty"),
+    ({"variant": ""}, "non-empty string or null"),
+    ({"env": {"A": 1}}, "names to strings"),
+])
+def test_an_engine_that_cannot_be_run_again_is_refused(codex, change, rule):
+    with pytest.raises(CodexError, match=rule):
+        cx.validate(_on(codex, replace(codex.space.encoder.engine, **change)))
+
+
+def test_an_asymmetric_space_pins_its_query_reference_and_a_symmetric_one_has_none(codex):
+    lost = replace(codex, space=replace(codex.space, calibration=replace(
+        codex.space.calibration, query_vectors=None)))
+    with pytest.raises(CodexError, match="query_vectors"):
+        cx.validate(lost)
+    symmetric = replace(codex, space=replace(
+        codex.space, query=cx.Query(None, None),
+        calibration=replace(codex.space.calibration, query_vectors=None)))
+    cx.validate(symmetric)
+    assert symmetric.to_dict()["space"]["calibration"]["query_vectors"] is None, \
+        "present and null: every field is present (09 §9.3)"
+    with pytest.raises(CodexError, match="null in a symmetric space"):
+        cx.validate(replace(symmetric, space=replace(symmetric.space, calibration=replace(
+            symmetric.space.calibration, query_vectors=CAL_QVECS))))
+
+
+# ---- version 2 is read for ever, and never becomes version 3 ---------------------
+
+def test_a_version_2_codex_is_still_exactly_what_it_was():
+    """Its encoder is an image alone, that image is INSIDE its space_id, and
+    it has no `query_vectors` key — the bytes version-2 collections were
+    identified by. `version` is inside `collection_id`: a Codex already
+    written cannot be moved."""
+    old = pubmed_v2()
+    cx.validate(old)
+    d = old.to_dict()
+    assert d["version"] == 2
+    assert d["space"]["encoder"] == {"image": ENCODER, "weights": WEIGHTS,
+                                     "label": "MedCPT-Article-Encoder"}
+    assert d["space"]["query"]["encoder"] == {"image": Q_ENCODER, "weights": Q_WEIGHTS}
+    assert "query_vectors" not in d["space"]["calibration"]
+    assert old.space_id == _h({
         "cleaning_version": 1,
         "encoder": {"image": ENCODER, "weights": WEIGHTS},
         "layers": [{"chunker": {"id": "abstract", "version": 1, "params": {}},
@@ -128,8 +233,28 @@ def test_space_id_is_the_documented_preimage(codex):
                   "query": {"encoder": {"image": Q_ENCODER, "weights": Q_WEIGHTS},
                             "instruction": None}},
     })
-    assert codex.space_segment == codex.space_id.split(":")[1][:16]
-    assert len(codex.space_segment) == 16
+    again = cx.loads(cx.dumps(old))
+    assert again == old and again.collection_id == old.collection_id
+
+
+def test_the_same_recipe_at_two_versions_is_two_collections_in_two_spaces(codex):
+    old = pubmed_v2()
+    assert old.collection_id != codex.collection_id
+    assert old.space_id != codex.space_id, \
+        "version 2 hashed the image into the space; version 3 took it out"
+
+
+def test_the_encoders_shape_follows_the_version_both_ways(codex):
+    old = pubmed_v2()
+    with pytest.raises(CodexError, match="names the ENGINE"):
+        cx.validate(replace(codex, space=old.space))          # an image alone at 3
+    with pytest.raises(CodexError, match="cannot be moved"):
+        cx.validate(replace(old, space=codex.space))          # an engine at 2
+    mixed = dict(codex.to_dict())
+    mixed["space"] = dict(mixed["space"], encoder=dict(mixed["space"]["encoder"],
+                                                       image=ENCODER))
+    with pytest.raises(CodexError, match="image"):
+        cx.from_dict(mixed)                                   # both, in one block
 
 
 def test_the_file_round_trips_through_its_own_bytes(codex):
@@ -229,8 +354,8 @@ def test_a_missing_field_is_refused(codex):
 
 
 def test_an_unknown_version_is_refused(codex):
-    d = dict(codex.to_dict(), version=3)
-    with pytest.raises(CodexError, match="unsupported Codex version 3"):
+    d = dict(codex.to_dict(), version=4)
+    with pytest.raises(CodexError, match="unsupported Codex version 4"):
         cx.from_dict(d)
 
 
@@ -239,7 +364,7 @@ def test_version_1_is_read_and_is_the_object_WITHOUT_record_line(codex):
     already written stays 1 and cannot be moved, because `version` is
     inside the canonical bytes and so inside `collection_id` — changing it
     does not upgrade a collection, it names a different one\"."""
-    d = dict(codex.to_dict(), version=1)
+    d = dict(pubmed_v2().to_dict(), version=1)   # version 1 names an image, as 2 does
     del d["record_line"]
     old = cx.from_dict(d)
     assert old.version == 1 and old.record_line is None
@@ -252,7 +377,7 @@ def test_a_version_1_codex_carrying_record_line_is_refused(codex):
     """Absent at 1, present at 2, both enforced by the schema — a Codex
     that carried the key at 1 would be a third shape nobody else computes
     the same id for."""
-    d = dict(codex.to_dict(), version=1)
+    d = dict(pubmed_v2().to_dict(), version=1)
     with pytest.raises(CodexError, match="WITHOUT `record_line`"):
         cx.from_dict(d)
 
@@ -299,7 +424,7 @@ def test_tolerance_is_a_decimal_string_never_a_float(codex):
 
 
 def test_a_quorum_may_not_ask_more_than_it_draws(codex):
-    bad = replace(codex.space, calibration=Calibration(CAL_SET, CAL_VECS, 16, 17))
+    bad = replace(codex.space, calibration=replace(codex.space.calibration, min_pass=17))
     with pytest.raises(CodexError, match="min_pass <= n"):
         cx.validate(replace(codex, space=bad))
 

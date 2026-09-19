@@ -11,7 +11,7 @@ from nacl import signing
 
 from app.hold import calibration as cal, codex as cx, embedder as emb, envelope as env
 from app.hold.embedder import GateError
-from tests.hold.conftest import pubmed
+from tests.hold.conftest import a_stated_run, fake_embed, pubmed, pubmed_v2
 
 DIM = 768
 NOW = "2026-08-01T00:00:00Z"
@@ -57,9 +57,18 @@ def perturbed(ref, *, indices=(), to=0.5):
     return out
 
 
-def gate(codex, got, *, seed=b"\x09" * 32, ref=None):
+NO_RUN = object()
+
+
+def gate(codex, got, *, seed=b"\x09" * 32, ref=None, stated=None, invariant=True):
+    """One pass, as the node runs it against RAGE: the endpoint states its
+    run, the sixteen fingerprint texts go one at a time and then the way the
+    peer contributes. `stated=NO_RUN` is an endpoint that states none."""
     ref = ref if ref is not None else reference()
-    return emb.run_gate(codex, reference=ref, embed=lambda texts: got, seed=seed)
+    stated = None if stated is NO_RUN else (stated or a_stated_run(codex))
+    together = fake_embed if invariant else (lambda texts: fake_embed(texts, tag=b"batched"))
+    return emb.run_gate(codex, reference=ref, embed=lambda texts: got, seed=seed,
+                        stated=stated, embed_one=fake_embed, contribute=together)
 
 
 # ---- the cosine -----------------------------------------------------------
@@ -199,10 +208,16 @@ def test_the_statement_is_09_9_12s_body_signed_under_its_domain():
     stmt = emb.statement(run, codex, a_key(), now=NOW)
     body = emb.read_statement(stmt)
     assert set(body) == {
-        "kind", "version", "space_id", "collection_id", "set",
-        "encoder_image", "encoder_weights", "seed", "sampled", "passed",
+        "kind", "version", "space_id", "collection_id", "set", "role",
+        "run", "engine", "encoder_weights", "driver", "fingerprint",
+        "batch_invariant", "seed", "sampled", "passed",
         "worst", "median", "max_input_tokens", "tokens_per_s", "key", "time"}
-    assert body["kind"] == "louise-calibration-run" and body["version"] == 1
+    # version 2: "this RUN, on this peer, is compliant with this space"
+    assert body["kind"] == "louise-calibration-run" and body["version"] == 2
+    stated = a_stated_run(codex)
+    assert body["run"] == stated.run_id and body["engine"] == stated.engine
+    assert body["driver"] == stated.driver and body["role"] == "document"
+    assert body["batch_invariant"] is True and body["fingerprint"].startswith("sha256:")
     assert body["space_id"] == codex.space_id
     assert body["set"] == codex.space.calibration.set
     assert len(body["sampled"]) == 16
@@ -273,7 +288,89 @@ def test_the_digest_entry_is_keyed_by_space():
     body = emb.read_statement(
         emb.statement(gate(codex, reference()), codex, a_key(), now=NOW))
     entry = emb.benchmarks_entry(body)
-    assert set(entry) == {"space_id", "encoder_image", "encoder_weights",
+    # §9.9 version 2: the engine of the validated run, by its id
+    assert set(entry) == {"space_id", "encoder_engine", "encoder_weights",
                           "tokens_per_s"}
+    assert entry["encoder_engine"] == cx.digest(cx.canonical_json(body["engine"]))
     assert entry["space_id"] == codex.space_id
     assert entry["tokens_per_s"] >= 0
+
+
+# ---- a run is validated, and a run has to be named (dd9bef4) -------------------
+
+def test_an_endpoint_that_states_no_run_gets_a_verdict_and_no_statement():
+    """03 §3.3: "An endpoint that states no run identity cannot be held to a
+    validated run: a peer may search with it and writes nothing through it."
+    The pass is reported; nothing is kept, because there is nothing a later
+    answer could be matched against."""
+    codex = codex_768()
+    ref = reference()
+    run = gate(codex, ref, ref=ref, stated=NO_RUN)
+    assert run.ok, "the verdict stands on its own"
+    with pytest.raises(GateError, match="Louise-Run"):
+        emb.statement(run, codex, a_key(), now=NOW)
+
+
+def test_the_fingerprint_is_the_sixteen_taken_one_at_a_time():
+    from app.hold import fingerprint
+    codex = codex_768()
+    run = gate(codex, reference())
+    texts = cal.verify(codex.modality, codex.space.calibration.set)
+    sixteen = [texts[i] for i in fingerprint.indices(texts)]
+    assert run.fingerprint == fingerprint.of(fake_embed(sixteen))
+
+
+def test_a_run_that_batches_differently_is_validated_for_single_texts_only():
+    """The batching fault that silently corrupted 714 books (2026-07) is a
+    property of a run's settings. It is measured — the same sixteen, the way
+    this peer contributes — never assumed."""
+    codex = codex_768()
+    ref = reference()
+    run = gate(codex, ref, ref=ref, invariant=False)
+    assert run.ok and run.batch_invariant is False
+    body = emb.read_statement(emb.statement(run, codex, a_key(), now=NOW))
+    assert body["batch_invariant"] is False
+
+
+def test_an_asymmetric_spaces_query_run_is_gated_against_its_own_reference():
+    codex = codex_768()
+    seen = {}
+
+    def embed(texts):
+        seen["first"] = texts[0]
+        return reference()
+
+    run = emb.run_gate(codex, reference=reference(), embed=embed, seed=b"\x09" * 32,
+                       role="query", stated=a_stated_run(codex),
+                       embed_one=fake_embed, contribute=fake_embed)
+    assert run.role == "query" and run.ok
+    body = emb.read_statement(emb.statement(run, codex, a_key(), now=NOW))
+    assert body["role"] == "query"
+    symmetric = replace(codex, space=replace(
+        codex.space, query=cx.Query(None, None),
+        calibration=replace(codex.space.calibration, query_vectors=None)))
+    with pytest.raises(GateError, match="symmetric"):
+        emb.run_gate(symmetric, reference=reference(), embed=embed, role="query")
+
+
+def test_the_query_texts_carry_the_spaces_instruction():
+    codex = codex_768()
+    instructed = replace(codex, space=replace(
+        codex.space, query=replace(codex.space.query, instruction="Query: ")))
+    seen = []
+    emb.run_gate(instructed, reference=reference(), embed=lambda t: seen.extend(t) or reference(),
+                 role="query")
+    assert all(t.startswith("Query: ") for t in seen) and len(seen) == 512
+
+
+def test_a_version_2_collection_keeps_the_statement_it_always_had():
+    """Its Codex names an image, so its statement does (09 §9.12: "Version 1
+    of this body carried `encoder_image` … in place of the run")."""
+    old = pubmed_v2()
+    ref = reference()
+    body = emb.read_statement(emb.statement(gate(old, ref, ref=ref, stated=NO_RUN),
+                                            old, a_key(), now=NOW))
+    assert body["version"] == 1 and body["encoder_image"] == old.space.encoder.image
+    assert "run" not in body
+    assert set(emb.benchmarks_entry(body)) == {"space_id", "encoder_image",
+                                               "encoder_weights", "tokens_per_s"}

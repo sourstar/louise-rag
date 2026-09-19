@@ -19,6 +19,7 @@ from nacl import signing
 from app.hold import collection as col, export as exp, records as rec, \
     snapshot as snap, vectors as vec
 from app.hold.export import ExportError
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
@@ -29,7 +30,7 @@ def build_drag(tmp_path: Path, corpus_dir, **kw):
     anything less."""
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
-                           embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+                           embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, **kw)
     rec.write_validation(root, "gutenberg")
     snapshot = snap.create(root, "gutenberg", log=lambda *_: None)

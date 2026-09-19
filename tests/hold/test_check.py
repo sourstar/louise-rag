@@ -311,19 +311,21 @@ def test_the_attestation_is_9_8s_body_and_verifies(checkable):
     doc = chk.attestation(report.outcomes[0], codex, snapshot, KEY,
                           platform_image=PLATFORM, now=NOW)
     body = env.verify(env.ATTESTATION, doc)
-    assert body["kind"] == "louise-attestation" and body["version"] == 1
+    # version 3: "version 2 is this body with `encoder_image` … in place of
+    # `encoder_engine`" (09 §9.8, the engine amendment)
+    assert body["kind"] == "louise-attestation" and body["version"] == 3
     assert body["collection_id"] == codex.collection_id
     assert body["snapshot_id"] == snapshot.snapshot_id
     assert body["snapshot_hash"] == snapshot.hash
     assert body["check"] == "roots" and body["result"] == "pass"
     assert body["seed"] is None, "an exact check publishes no seed"
     assert body["platform_image"] == PLATFORM
-    assert body["encoder_image"] is None, "roots is not a statistical check"
+    assert body["encoder_engine"] is None, "roots is not a statistical check"
     assert body["time"] == NOW
     assert set(body) == {
         "kind", "version", "collection_id", "snapshot_id", "snapshot_hash",
         "check", "seed", "shards", "result", "detail", "platform_image",
-        "encoder_image", "encoder_weights", "key", "time"}
+        "encoder_engine", "encoder_weights", "key", "time"}
 
 
 def test_a_statistical_attestation_names_the_encoder(checkable):
@@ -331,7 +333,7 @@ def test_a_statistical_attestation_names_the_encoder(checkable):
     o = chk.Outcome("vectors-sample", chk.PASS, {"chunks": 1}, SEED, ())
     body = env.verify(env.ATTESTATION, chk.attestation(
         o, codex, snapshot, KEY, platform_image=PLATFORM, now=NOW))
-    assert body["encoder_image"] == codex.space.encoder.image
+    assert body["encoder_engine"] == codex.space.encoder.engine.engine_id
     assert body["encoder_weights"] == codex.space.encoder.weights
     assert body["seed"] == SEED.hex()
 

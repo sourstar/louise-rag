@@ -21,7 +21,8 @@ from typing import Any, Iterable
 
 from . import codex as cx
 from .codex import (Codex, CodexError, Credit, Defect, Descriptive, Layer,
-                    License, Origin, Parser, Replaces, Space, Update, Work)
+                    License, Origin, Parser, Replaces, Space, Update, Work,
+                    encoder_field)
 
 
 #: A local name: the collection's directory under
@@ -253,7 +254,8 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                        platform_image: str, embed, credits: tuple = (),
                        name: str | None = None,
                        key: Any | None = None,
-                       now: str | None = None) -> Codex:
+                       now: str | None = None,
+                       embed_query=None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
 
     Re-running with the same recipe prints the same id and exits 0: the hash
@@ -293,12 +295,30 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
         texts, embed, normalise=bool(space.get("normalise")),
         dim=int(space["dim"]))
 
+    # AN ASYMMETRIC SPACE HAS TWO FUNCTIONS, and the Codex pins a reference
+    # for each (09 §9.12, `query_vectors`): a bi-encoder pair such as MedCPT's
+    # embeds a query with another model, and a gate that compared only the
+    # document side would leave every query vector on a peer unchecked.
+    query = space.get("query") if isinstance(space.get("query"), dict) else {}
+    query_vectors = query_hash = None
+    if query.get("encoder"):
+        if embed_query is None:
+            raise CodexError(
+                "recipe: this space names a query encoder (space.query.encoder), "
+                "so its reference vectors are part of the Codex too "
+                "(space.calibration.query_vectors, 09 §9.12). Name the query "
+                "encoder's endpoint: `--query-encoder URL`")
+        query_vectors, query_hash = cal.build_query_member(
+            texts, embed_query, instruction=query.get("instruction") or None,
+            normalise=bool(space.get("normalise")), dim=int(space["dim"]))
+
     codex = template.from_recipe(plugin, recipe, platform_image=platform_image,
-                                 calibration=(vectors_hash, envelope_hash),
+                                 calibration=(vectors_hash, envelope_hash, query_hash),
                                  credits=credits)
     created = create(root, codex, name=name)
     d = drag_of(root, name_of(root, created.collection_id))
-    write_calibration(d, codex, vectors, envelope, key=key, now=now)
+    write_calibration(d, codex, vectors, envelope, key=key, now=now,
+                      query_vectors=query_vectors)
     write_terms(d, codex, plugin,
                 terms_path=(recipe.get("license") or {}).get("terms_path"))
     return created
@@ -356,7 +376,7 @@ def write_terms(drag_path: Path, codex: Codex, plugin: str,
 
 
 def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
-                      *, key, now: str | None) -> None:
+                      *, key, now: str | None, query_vectors=None) -> None:
     """The member and the signature beside it (09 §9.12).
 
     BOTH, ALWAYS — which is why `key` is required. §9.12 marks the member's
@@ -385,20 +405,33 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
     set_id = codex.space.calibration.set
     member, sig_path = drag_mod.calibration_paths(set_id)
     key_text = env.key_text(key.verify_key)
+    # The run the vectors came from: the engine, by its id, from Codex
+    # version 3; the engine's image alone below it (09 §9.12).
+    engine_key, engine = encoder_field(codex)
+    pinned = codex.space.calibration.query_vectors
+    if (pinned is None) != (query_vectors is None):
+        raise CodexError(
+            f"{codex.collection_id}: "
+            + ("the Codex pins the query encoder's reference vectors "
+               "(space.calibration.query_vectors) and none were given: an "
+               "asymmetric space's member carries them (09 §9.12)" if pinned
+               else "query reference vectors were given for a space whose Codex "
+                    "pins none"))
     cal.write_member(drag_path / member, vectors, envelope, set_id_=set_id,
-                     encoder_image=codex.space.encoder.image,
-                     encoder_weights=codex.space.encoder.weights,
-                     key=key_text)
+                     encoder_weights=codex.space.encoder.weights, key=key_text,
+                     query_vectors=query_vectors, **{engine_key: engine})
 
     # 09 §9.12's body, field for field, under ITS OWN domain. Not the
     # attestation domain: §9.2's whole point is that a signature made under
     # one domain verifies under no other, so signing this as an attestation
-    # would produce a file no conformant peer can check.
-    body = {"kind": "louise-calibration", "version": 1, "set": set_id,
+    # would produce a file no conformant peer can check. Version 2 names the
+    # engine; "version 1 of that body carried `encoder_image`".
+    body = {"kind": "louise-calibration",
+            "version": 2 if engine_key == "encoder_engine" else 1, "set": set_id,
             "space_id": codex.space_id,
             "vectors": codex.space.calibration.vectors,
             "envelope": codex.space.envelope,
-            "encoder_image": codex.space.encoder.image,
+            engine_key: engine,
             "encoder_weights": codex.space.encoder.weights,
             "key": key_text, "time": now}
     (drag_path / sig_path).write_text(
@@ -414,9 +447,17 @@ def derive(root: Path, mother_id: str, *,
            work: Work | None = None,
            credits: tuple[Credit, ...] | None = None,
            descriptive: Descriptive | None = None,
-           embed=None, key=None, now: str | None = None) -> Codex:
+           embed=None, embed_query=None, key=None,
+           now: str | None = None) -> Codex:
     """A sister: her mother's corpus, and at most `space`, `layers`, `update`
     and `work` changed (02 §2.7).
+
+    HER CODEX VERSION FOLLOWS HER SPACE. In her mother's space she keeps her
+    mother's version: a version-2 mother's space_id has the engine's image in
+    it (09 §9.3), so a version-3 sister would land in another space and
+    could not share the vectors she is defined to inherit. In a NEW space
+    she is written as new Codices are — version 3, naming the engine her
+    reference vectors are computed with.
 
     `embed` IS REQUIRED WHEN THE SISTER'S ENCODER DIFFERS, and ignored when
     it does not. A new build needs its own reference vectors — the mother's
@@ -469,8 +510,19 @@ def derive(root: Path, mother_id: str, *,
     else:
         new_space = mother.space
 
+    if new_space.has_engine:
+        version = max(mother.version, cx.ENGINE_VERSION)
+    elif mother.version >= cx.ENGINE_VERSION:
+        raise CodexError(
+            "derive: a space is written with the ENGINE its reference vectors are "
+            "computed with — {weights, engine, label} — not with an image alone "
+            "(09 §9.3, the engine amendment)")
+    else:
+        version = mother.version
+
     sister = _replace(
         mother,
+        version=version,
         descriptive=descriptive if descriptive is not None else mother.descriptive,
         space=new_space,
         layers=new_layers,
@@ -508,18 +560,46 @@ def derive(root: Path, mother_id: str, *,
         # A new build: embed, and let the new hashes into the Codex BEFORE
         # it is written, since they are Codex fields.
         sister = _replace(sister, space=recalibrate(sister.space,
-                                                    mother.modality, embed))
+                                                    mother.modality, embed,
+                                                    embed_query))
     drag_path = write(root, sister, mother)
     if any(_same_reference(sister, s) for s in sources):
         carry_calibration(root, sister, drag_path, *sources)
     else:
         _write_own_calibration(sister, drag_path, embed, mother.modality,
-                               key, now)
+                               key, now, embed_query)
     return sister
 
 
+def _names_encoder(codex: Codex) -> str:
+    """How a message names a Codex's encoder: the engine, by its id, from
+    version 3; the image below it."""
+    key, value = encoder_field(codex)
+    return f"{'engine' if key == 'encoder_engine' else 'encoder'} {value}"
+
+
+def _query_member(space: Space, texts, embed_query):
+    """The query side's reference vectors for an asymmetric version-3 space,
+    `(vectors, hash)`; `(None, None)` where the space pins none."""
+    from . import calibration as cal
+
+    if not (space.has_engine and space.query.encoder is not None):
+        return None, None
+    if embed_query is None:
+        raise CodexError(
+            "this space has a query encoder of its own (space.query.encoder), and "
+            "its reference vectors are pinned in the Codex too "
+            "(space.calibration.query_vectors, 09 §9.12): an asymmetric space's "
+            "query runs are validated against them. Name the query encoder's "
+            "endpoint — pass `embed_query`")
+    return cal.build_query_member(texts, embed_query,
+                                  instruction=space.query.instruction,
+                                  normalise=space.normalise, dim=space.dim)
+
+
 def _write_own_calibration(codex: Codex, drag_path: Path, embed,
-                           modality: str, key, now: str | None) -> None:
+                           modality: str, key, now: str | None,
+                           embed_query=None) -> None:
     """The member and signature for a collection whose reference is its own
     and not a source's. Re-embeds rather than keeping the vectors from
     `recalibrate`, because the two hashes are already in the Codex and this
@@ -529,7 +609,7 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
 
     if embed is None:
         raise CodexError(
-            f"{codex.collection_id} names encoder {codex.space.encoder.image}, "
+            f"{codex.collection_id} names {_names_encoder(codex)}, "
             f"which no source it derives from holds a reference for. A new "
             f"build needs its own reference vectors, embedded at an endpoint "
             f"(06 §6.6) — pass `embed`")
@@ -541,19 +621,27 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
             f"the encoder produced reference vectors {got_v} and the Codex "
             f"names {codex.space.calibration.vectors}; the same build over "
             f"the same set must produce the same bytes twice")
-    write_calibration(drag_path, codex, vectors, envelope, key=key, now=now)
+    query_vectors, got_q = _query_member(codex.space, texts, embed_query)
+    if got_q != codex.space.calibration.query_vectors:
+        raise CodexError(
+            f"the query encoder produced reference vectors {got_q} and the Codex "
+            f"names {codex.space.calibration.query_vectors}")
+    write_calibration(drag_path, codex, vectors, envelope, key=key, now=now,
+                      query_vectors=query_vectors)
 
 
 def _same_reference(a: Codex, b: Codex) -> bool:
     """Whether two Codices name the same calibration reference — the same
     encoder build over the same set, with the same resulting hashes. Then
-    one's member IS the other's and copying it is exact."""
-    return (a.space.encoder.image, a.space.encoder.weights,
-            a.space.calibration.set, a.space.calibration.vectors,
-            a.space.envelope) == \
-           (b.space.encoder.image, b.space.encoder.weights,
-            b.space.calibration.set, b.space.calibration.vectors,
-            b.space.envelope)
+    one's member IS the other's and copying it is exact. The build is the
+    engine, by its id, from version 3, and the image below it; a version-2
+    Codex and a version-3 one never share a member, whose header names the
+    run differently."""
+    def reference(c: Codex):
+        return (encoder_field(c), c.space.encoder.weights,
+                c.space.calibration.set, c.space.calibration.vectors,
+                c.space.calibration.query_vectors, c.space.envelope)
+    return reference(a) == reference(b)
 
 
 def carry_calibration(root: Path, child: Codex, drag_path: Path,
@@ -578,7 +666,7 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
     src = next((s for s in sources if _same_reference(child, s)), None)
     if src is None:
         raise CodexError(
-            f"{child.collection_id} names encoder {child.space.encoder.image} "
+            f"{child.collection_id} names {_names_encoder(child)} "
             f"over calibration set {child.space.calibration.set}, and no "
             f"source it derives from holds that reference. A different build "
             f"needs its own reference vectors, which means embedding the set "
@@ -605,9 +693,12 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
     cal.read_member(drag_path / member,
                     expect_vectors=child.space.calibration.vectors,
                     expect_envelope=child.space.envelope)
+    if child.space.calibration.query_vectors is not None:
+        cal.read_query_vectors(drag_path / member,
+                               expect=child.space.calibration.query_vectors)
 
 
-def recalibrate(space: Space, modality: str, embed) -> Space:
+def recalibrate(space: Space, modality: str, embed, embed_query=None) -> Space:
     """`space` with the reference vectors THIS encoder produces.
 
     A sister in a new space has a new encoder build, and a new build needs
@@ -625,8 +716,10 @@ def recalibrate(space: Space, modality: str, embed) -> Space:
     texts = cal.verify(modality, space.calibration.set)
     _, _, vectors, envelope = cal.build_member(
         texts, embed, normalise=space.normalise, dim=space.dim)
+    _, query_vectors = _query_member(space, texts, embed_query)
     return _replace(space, envelope=envelope,
-                    calibration=_replace(space.calibration, vectors=vectors))
+                    calibration=_replace(space.calibration, vectors=vectors,
+                                         query_vectors=query_vectors))
 
 
 def continue_(root: Path, mother_id: str, *, platform_image: str,

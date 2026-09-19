@@ -20,6 +20,7 @@ from app.acquire.specs import ACQUIRE_REGISTRY, WIKIPEDIA_SPEC
 from app.hold import collection as col
 from app.hold.codex import CodexError
 from app.web import _write_collection_toml
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, a_credit, fake_embed
 from tests.hold.test_template import recipe
 
@@ -41,7 +42,7 @@ def node(tmp_path, isolated_config, monkeypatch):
     def make(credits=()):
         return col.create_from_recipe(
             root / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
-            embed=fake_embed, name="gutenberg", key=KEY, now=NOW, credits=credits)
+            embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW, credits=credits)
 
     def load(text):
         path = cfg / "collections" / "gutenberg.toml"
@@ -227,7 +228,7 @@ def test_a_create_in_another_root_writes_beside_its_drags(tmp_path, isolated_con
     scratch.mkdir(parents=True)
     monkeypatch.setenv("LOUISE_ROOT", str(tmp_path / "node"))
     cx = col.create_from_recipe(scratch, "gutenberg", recipe(), platform_image=PLATFORM,
-                                embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+                                embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     assert louise._write_held_file(scratch, cx) == scratch / "gutenberg.toml"
 
 

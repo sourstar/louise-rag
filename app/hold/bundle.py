@@ -42,7 +42,17 @@ DOMAIN = b"louise-rag/bundle-sig/v1"
 #: The domain the row digest is framed under (§9.7).
 VECTORS_DOMAIN = b"louise-rag/vectors/v1"
 
-VERSION = 1
+#: What §9.7 fixes today, and what is written for a collection whose Codex
+#: names an engine (version 3). THE ENGINE AMENDMENT MOVED IT (0d85f7f):
+#: "version 1 is this header with `encoder_image`, the engine's image digest
+#: alone, in place of `encoder_engine`". Version 1 is still read and still
+#: written for a version-2 collection, whose peers hold those bytes; the
+#: note above is about the pre-§9.7 shape, which stays refused.
+VERSION = 2
+VERSIONS = (1, 2)
+
+#: the key that names the producer's engine, by header version
+ENGINE_KEY = {1: "encoder_image", 2: "encoder_engine"}
 
 #: §9.7: "header at most 1 MiB, a string at most 4,096 characters, at most
 #: 10**6 uids".
@@ -64,13 +74,19 @@ DTYPES = {"f16": ">f2", "f32": ">f4"}
 #: tuple is the whole of what a header may say.
 KEYS = (
     "version", "collection", "space_id", "snapshot_id", "shard", "uids",
-    "chunk_count", "dim", "dtype", "producer_pubkey", "encoder_image",
+    "chunk_count", "dim", "dtype", "producer_pubkey", "encoder_engine",
     "encoder_weights", "content_digest", "parquet_bytes", "possession_bytes",
     "created_at", "digest_alg", "sig_alg", "challenge",
 )
 
-_ID_KEYS = ("collection", "space_id", "content_digest", "encoder_image",
-            "encoder_weights")
+
+def keys_of(version: int) -> tuple[str, ...]:
+    """The closed schema of a header at `version`: §9.7's, with the engine
+    named as that version names it."""
+    return tuple(ENGINE_KEY[version] if k == "encoder_engine" else k for k in KEYS)
+
+
+_ID_KEYS = ("collection", "space_id", "content_digest", "encoder_weights")
 _INT_KEYS = ("chunk_count", "dim", "parquet_bytes", "possession_bytes",
              "created_at")
 
@@ -136,20 +152,23 @@ def check(header: dict[str, Any]) -> None:
     peer can say no, and everything it lets through costs a signature check
     at least.
     """
-    got, want = set(header), set(KEYS)
+    # The version first: it decides which closed schema the rest is held to
+    # (09 §9.18: a reader that meets a version it does not implement refuses
+    # the object and says which it found; it never guesses).
+    version = header.get("version")
+    if isinstance(version, bool) or version not in VERSIONS:
+        raise BundleError(
+            f"version is {version!r}; §9.7 fixes {VERSION} and this build also "
+            f"reads {', '.join(str(v) for v in VERSIONS if v != VERSION)}, so a "
+            f"bundle of another version is not a bundle this document describes")
+    got, want = set(header), set(keys_of(version))
     if got != want:
         missing, extra = sorted(want - got), sorted(got - want)
         raise BundleError(
             f"the header is a closed schema — §9.7: \"Every key below is "
-            f"present and no other is\""
+            f"present and no other is\" (version {version})"
             + (f"; missing {', '.join(missing)}" if missing else "")
             + (f"; not in §9.7: {', '.join(extra)}" if extra else ""))
-
-    if header["version"] != VERSION:
-        raise BundleError(
-            f"version is {header['version']!r}; §9.7's table types it as the "
-            f"literal {VERSION}, so a bundle of another version is not a "
-            f"bundle this document describes")
     for k in ("digest_alg", "sig_alg"):
         want_alg = {"digest_alg": "sha256", "sig_alg": "ed25519"}[k]
         if header[k] != want_alg:
@@ -170,7 +189,7 @@ def check(header: dict[str, Any]) -> None:
         raise BundleError(f"dtype is one of {', '.join(sorted(DTYPES))}, "
                           f"got {header['dtype']!r}")
 
-    for k in _ID_KEYS:
+    for k in (*_ID_KEYS, ENGINE_KEY[version]):
         _check_id(k, header[k])
     _check_key(header["producer_pubkey"])
     _check_snapshot_id(header["snapshot_id"])

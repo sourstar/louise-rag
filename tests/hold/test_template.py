@@ -13,8 +13,9 @@ from app.hold import codex as cx, collection as col, template
 from app.hold.codex import Codex, CodexError
 from app.hold.template import TemplateError
 from app.plugins.gutenberg import SOURCE
-from tests.hold.conftest import (CAL_SET, CAL_VECS, ENCODER, ENVELOPE, KEY, NOW,
-                                 PLATFORM, PUBMED_SAMPLE, Q_ENCODER,
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
+from tests.hold.conftest import (CAL_QVECS, CAL_SET, CAL_VECS, ENCODER, ENVELOPE,
+                                 KEY, NOW, PLATFORM, PUBMED_SAMPLE, Q_ENCODER,
                                  Q_WEIGHTS, TERMS, WEIGHTS, a_credit,
                                  fake_embed, pubmed)
 
@@ -23,15 +24,25 @@ def from_recipe(plugin, r, **kw):
     """`template.from_recipe` with the two hashes `create` would have
     computed. They are required and have no default (06 §6.6), so every
     call supplies them; the tests that care about that are below."""
-    kw.setdefault("calibration", (CAL_VECS, ENVELOPE))
+    kw.setdefault("calibration", (CAL_VECS, ENVELOPE, CAL_QVECS))
     return template.from_recipe(plugin, r, **kw)
 
+#: 09 §9.3's engine as a recipe states it. `variant` and `env` are stated here;
+#: a recipe may leave them out (TOML has no null, and an empty table is easy
+#: to omit) — tests below cover that.
+ENGINE_TABLE = {
+    "name": "llama.cpp", "build": "b10630", "variant": "sycl", "image": ENCODER,
+    "args": ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+             "-c", "512", "-ngl", "99", "--port", "${PORT}"],
+    "env": {}, "device": "Intel(R) Arc(TM) Pro B70 Graphics"}
+
 SPACE = {
-    "encoder": {"image": ENCODER, "weights": WEIGHTS, "label": "MedCPT"},
+    "encoder": {"weights": WEIGHTS, "label": "MedCPT", "engine": ENGINE_TABLE},
     "dim": 768, "dtype": "f16", "ctx": 512, "pooling": "cls",
     "normalise": True,
-    "query": {"encoder": {"image": Q_ENCODER, "weights": Q_WEIGHTS},
-              "instruction": None},
+    # "the same, its own weights": a query encoder that names no engine runs
+    # on the document side's (09 §9.3's worked example)
+    "query": {"encoder": {"weights": Q_WEIGHTS}, "instruction": None},
     "tolerance": "0.95",
     # No `vectors` and no `envelope`: `create` computes both by embedding
     # the set, and a recipe that carried them would be asserting the
@@ -278,9 +289,9 @@ def test_a_slicing_block_may_not_name_a_space_shaped_slice():
 
 def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
     a = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     b = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     assert a.collection_id == b.collection_id
     assert (tmp_path / "gutenberg" / "drag" / "codex.json").read_bytes() == a.canonical()
     assert [c.collection_id for c in col.list_all(tmp_path)] == [a.collection_id]
@@ -288,12 +299,13 @@ def test_create_from_recipe_writes_the_drag_and_is_idempotent(tmp_path: Path):
 
 def test_two_plugins_make_two_collections(tmp_path: Path):
     g = col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     p = col.create_from_recipe(
         tmp_path, "pubmed",
         recipe(origin=dict(ORIGIN, spec=dict(ORIGIN["spec"], source_id="pubmed")),
                license={"class": "yellow", "terms_sha256": TERMS}),
-        platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+        platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
+        key=KEY, now=NOW)
     assert g.collection_id != p.collection_id
     assert g.space_id != p.space_id, "different layers, different space"
 
@@ -404,7 +416,9 @@ def test_a_recipe_may_omit_what_a_codex_writes_as_null():
     those fields and the template fills them — absent means not in use,
     never absent means guess."""
     space = {k: v for k, v in SPACE.items() if k != "evaluation"}
-    space["encoder"] = {"image": ENCODER, "weights": WEIGHTS}   # no label
+    # no label; and an engine that states neither `variant` nor `env`
+    engine = {k: v for k, v in ENGINE_TABLE.items() if k not in ("variant", "env")}
+    space["encoder"] = {"weights": WEIGHTS, "engine": engine}
     space["query"] = {}                                          # no query side
     origin = {k: v for k, v in ORIGIN.items() if k != "jurisdiction"}
     origin["spec"] = {k: v for k, v in ORIGIN["spec"].items() if k != "files"}
@@ -414,6 +428,9 @@ def test_a_recipe_may_omit_what_a_codex_writes_as_null():
                                  platform_image=PLATFORM)
     assert codex.space.evaluation is None
     assert codex.space.encoder.label == ""
+    assert codex.space.encoder.engine.variant is None
+    assert codex.space.encoder.engine.env == {}
+    assert codex.space.calibration.query_vectors is None, "a symmetric space pins none"
     assert codex.space.query.encoder is None
     assert codex.space.query.instruction is None
     assert codex.origin.jurisdiction is None

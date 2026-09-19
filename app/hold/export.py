@@ -49,7 +49,7 @@ from . import collection as col
 from . import drag as drag_mod
 from . import snapshot as snap
 from . import vectors as vec
-from .codex import CodexError
+from .codex import CodexError, encoder_field
 
 #: 09 §9.7's T2 challenge: the calibration set's first sixteen texts.
 CHALLENGE_N = 16
@@ -259,8 +259,14 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
         chunk_rows = [row for _uid, _h, rows in part for row in rows]
         possession = {uid: h for uid, h, _rows in part}
         where = Path(dest) if len(split) == 1 else Path(dest) / f"{i:05d}"
+        # The header's version follows the collection's Codex (09 §9.7): an
+        # engine by its id at 2, an image alone at 1 — what a version-2
+        # collection's peers already hold. The producer's engine is the
+        # Codex's own here; one this producer's calibration statement admits
+        # comes with the run (03 §3.3), step 13e.
+        engine_key, engine = encoder_field(codex)
         header = {
-            "version": 1,
+            "version": 2 if engine_key == "encoder_engine" else 1,
             "collection": codex.collection_id,
             "space_id": codex.space_id,
             "snapshot_id": snapshot.snapshot_id,
@@ -271,7 +277,7 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
             "dim": codex.space.dim,
             "dtype": codex.space.dtype,
             "producer_pubkey": "ed25519:" + bytes(key.verify_key).hex(),
-            "encoder_image": codex.space.encoder.image,
+            engine_key: engine,
             "encoder_weights": codex.space.encoder.weights,
             "created_at": now,
             "digest_alg": "sha256",

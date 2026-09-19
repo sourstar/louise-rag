@@ -22,6 +22,7 @@ from app.hold import (calibration as cal, collection as col, drag,
 from app.hold.calibration import CalibrationError
 from app.hold.codex import CodexError
 from app.hold.template import TemplateError
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import (CAL_SET, DIM, KEY, NOW, PLATFORM, fake_embed)
 from tests.hold.test_template import recipe
 
@@ -32,7 +33,7 @@ A_HASH = "sha256:" + "aa" * 32
 def created(root: Path, **kw):
     """The Codex and its drag, with the member `create` wrote in it."""
     codex = col.create_from_recipe(root, "gutenberg", recipe(),
-                                   platform_image=PLATFORM, embed=fake_embed,
+                                   platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                                    key=KEY, now=NOW, **kw)
     return codex, root / "gutenberg" / "drag"
 
@@ -74,7 +75,7 @@ def test_a_recipe_must_name_a_set(tmp_path: Path):
     space["calibration"] = {"quorum": {"n": 16, "min_pass": 12}}
     with pytest.raises(CodexError, match="calibration.set"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space),
-                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
 
 
 def test_a_set_this_platform_does_not_ship_is_refused(tmp_path: Path):
@@ -85,7 +86,7 @@ def test_a_set_this_platform_does_not_ship_is_refused(tmp_path: Path):
     space["calibration"] = dict(space["calibration"], set="sha256:" + "ff" * 32)
     with pytest.raises(CalibrationError, match="calibration set is"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space),
-                               platform_image=PLATFORM, embed=fake_embed, key=KEY, now=NOW)
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
     assert not list(tmp_path.iterdir()), "nothing is created"
 
 
@@ -109,7 +110,8 @@ def test_the_whole_set_is_embedded(tmp_path: Path):
         return fake_embed(texts)
 
     col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                           platform_image=PLATFORM, embed=embed, key=KEY, now=NOW)
+                           platform_image=PLATFORM, embed=embed,
+                           embed_query=fake_query_embed, key=KEY, now=NOW)
     assert seen["n"] == cal.SIZE == 512
 
 
@@ -130,8 +132,34 @@ def test_the_member_carries_09_9_12s_headers(tmp_path: Path):
     with safe_open(str(d / paths(codex)[0]), framework="numpy") as f:
         meta = f.metadata()
     assert meta["set"] == codex.space.calibration.set
-    assert meta["encoder_image"] == codex.space.encoder.image
+    # the run the vectors came from: the ENGINE, by its id (09 §9.12, from the
+    # engine amendment) — not its image alone
+    assert meta["encoder_engine"] == codex.space.encoder.engine.engine_id
+    assert "encoder_image" not in meta
     assert meta["encoder_weights"] == codex.space.encoder.weights
+
+
+def test_an_asymmetric_space_carries_its_query_reference_too(tmp_path: Path):
+    """09 §9.12: `query_vectors`, "the query encoder's reference vectors for
+    the same texts" — what an asymmetric space's query runs are validated
+    against (03 §3.3). A bi-encoder pair is two functions; gating only the
+    document side would leave every query vector on a peer unchecked."""
+    codex, d = created(tmp_path)
+    member = d / paths(codex)[0]
+    assert codex.space.calibration.query_vectors is not None
+    q = cal.read_query_vectors(member, expect=codex.space.calibration.query_vectors)
+    assert q.shape == (512, codex.space.dim)
+    v, _e = cal.read_member(member, expect_vectors=codex.space.calibration.vectors,
+                            expect_envelope=codex.space.envelope)
+    assert not (q == v).all(), "another function over the same texts"
+    with pytest.raises(cal.CalibrationError, match="hashes to"):
+        cal.read_query_vectors(member, expect="sha256:" + "00" * 32)
+
+
+def test_a_query_encoder_with_no_endpoint_named_is_refused(tmp_path: Path):
+    with pytest.raises(CodexError, match="--query-encoder"):
+        col.create_from_recipe(tmp_path, "gutenberg", recipe(), platform_image=PLATFORM,
+                               embed=fake_embed, key=KEY, now=NOW)
 
 
 def test_the_member_is_named_for_the_set_not_the_collection(tmp_path: Path):
@@ -162,7 +190,8 @@ def test_normalise_is_applied_here_and_not_left_to_the_endpoint(tmp_path: Path):
     plain, plain_drag = created(tmp_path / "a")
     other = tmp_path / "b"
     codex = col.create_from_recipe(other, "gutenberg", recipe(),
-                                   platform_image=PLATFORM, embed=scaled, key=KEY, now=NOW)
+                                   platform_image=PLATFORM, embed=scaled,
+                                   embed_query=fake_query_embed, key=KEY, now=NOW)
     a, _ = member_of(plain_drag, plain)
     b, _ = member_of(other / "gutenberg" / "drag", codex)
     assert np.allclose(np.linalg.norm(b, axis=1), 1.0, atol=1e-5), "unit"
@@ -227,13 +256,14 @@ def test_the_signature_is_09_9_12s_body_under_its_own_domain(tmp_path: Path):
     raw = json.loads((d / paths(codex)[1]).read_text(encoding="utf-8"))
     body = env.verify(env.CALIBRATION, raw)
     assert set(body) == {"kind", "version", "set", "space_id", "vectors",
-                         "envelope", "encoder_image", "encoder_weights",
+                         "envelope", "encoder_engine", "encoder_weights",
                          "key", "time"}
-    assert body["kind"] == "louise-calibration" and body["version"] == 1
+    # version 2: "Version 1 of that body carried `encoder_image`"
+    assert body["kind"] == "louise-calibration" and body["version"] == 2
     assert body["vectors"] == codex.space.calibration.vectors
     assert body["envelope"] == codex.space.envelope
     assert body["space_id"] == codex.space_id
-    assert body["encoder_image"] == codex.space.encoder.image
+    assert body["encoder_engine"] == codex.space.encoder.engine.engine_id
     assert body["time"] == NOW
     with pytest.raises(env.SignatureError, match="does not verify"):
         env.verify(env.ATTESTATION, raw)
@@ -250,7 +280,7 @@ def test_there_is_no_such_thing_as_an_unsigned_collection(tmp_path: Path):
     assert (d / paths(codex)[1]).is_file(), "always written"
     with pytest.raises(CodexError, match="signing key"):
         col.create_from_recipe(tmp_path / "x", "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed,
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                                now=NOW)
 
 
@@ -269,7 +299,7 @@ def test_signing_needs_a_time_and_never_reads_the_clock(tmp_path: Path):
     and a test can therefore pin."""
     with pytest.raises(CodexError, match="needs the time"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
-                               platform_image=PLATFORM, embed=fake_embed,
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                                key=KEY)
 
 

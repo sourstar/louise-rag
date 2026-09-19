@@ -21,6 +21,7 @@ does not cover, so the next amendment cannot repeat this quietly.
 import dataclasses
 
 import pytest
+from tests.hold.conftest import fake_query_embed
 
 from app import collections as collections_mod
 from app.web import _codex_id, _write_collection_toml
@@ -148,7 +149,7 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
     (root / "collections").mkdir(parents=True)
     cx = col.create_from_recipe(
         root / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
-        embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+        embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
 
     cfg = tmp_path / "config"
     (cfg / "collections").mkdir(parents=True)

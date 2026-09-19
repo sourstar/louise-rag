@@ -13,6 +13,7 @@ import pytest
 from app.hold import collection as col, drag, records as rec, snapshot as sn
 from app.hold.codex import CodexError
 from app.hold.records import RecordsError
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import ORIGIN, SPACE, VALIDATION, recipe
 
@@ -21,7 +22,7 @@ def _collection(tmp_path: Path, **over):
     """A gutenberg collection under a LOUISE_ROOT-shaped tree."""
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(**over),
-                           platform_image=PLATFORM, embed=fake_embed,
+                           platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                            name="gutenberg", key=KEY, now=NOW)
     return root
 

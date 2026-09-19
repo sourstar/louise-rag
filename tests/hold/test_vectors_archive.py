@@ -16,6 +16,7 @@ import pytest
 from app import louise
 from app.hold import codex as cx, collection as col
 from app.hold.codex import CodexError
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
@@ -25,7 +26,7 @@ def _root(tmp_path, archives=()):
     from app.hold import template as tpl
     col.create_from_recipe(
         root, "gutenberg", recipe(), platform_image=PLATFORM,
-        embed=fake_embed, name="gutenberg", key=KEY, now=NOW,
+        embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW,
         credits=tpl.expand_archives(archives))
     return root
 

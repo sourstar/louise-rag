@@ -336,6 +336,20 @@ def build_member(texts, embed, *, normalise: bool, dim: int):
     return v, env, tensor_hash(v), tensor_hash(env)
 
 
+def build_query_member(texts, embed_query, *, instruction: str | None,
+                       normalise: bool, dim: int):
+    """The QUERY encoder's reference vectors and their hash (09 §9.12): "the
+    query encoder's reference vectors for the same texts,
+    `space.query.instruction` prefixed". An asymmetric space's query runs
+    are validated against them (03 §3.3) — a bi-encoder pair such as MedCPT's
+    has two functions, and gating only the document side would leave every
+    query vector on this peer unchecked."""
+    prefixed = [f"{instruction}{t}" for t in texts] if instruction else list(texts)
+    v, _envelope, vectors_hash, _ = build_member(prefixed, embed_query,
+                                                 normalise=normalise, dim=dim)
+    return v, vectors_hash
+
+
 def canonical_safetensors(raw: bytes) -> bytes:
     """The same file with its header's keys in sorted order.
 
@@ -362,16 +376,36 @@ def canonical_safetensors(raw: bytes) -> bytes:
     return len(text).to_bytes(8, "little") + text + raw[8 + n:]
 
 
-def write_member(path, vectors, envelope_, *, set_id_: str, encoder_image: str,
-                 encoder_weights: str, key: str) -> None:
+QUERY_VECTORS = "query_vectors"
+
+
+def write_member(path, vectors, envelope_, *, set_id_: str,
+                 encoder_weights: str, key: str,
+                 encoder_image: str | None = None,
+                 encoder_engine: str | None = None,
+                 query_vectors=None) -> None:
     """`calibration/<set>.safetensors` at the drag root, with 09 §9.12's
-    four headers. A member of every snapshot (`files`, §9.4), so its bytes
+    headers. A member of every snapshot (`files`, §9.4), so its bytes
     are made deterministic before they land.
+
+    THE RUN THE VECTORS CAME FROM is named by `encoder_engine` — the
+    `engine_id` of the Codex's `space.encoder.engine` — from Codex version 3,
+    and by `encoder_image`, the engine's image digest alone, below it (the
+    engine amendment, 0d85f7f). Exactly one of the two.
+
+    `query_vectors`: the QUERY encoder's reference vectors for the same
+    texts, in an asymmetric space from version 3 — what its query runs are
+    validated against (03 §3.3).
 
     `key` is the CREATOR'S key and §9.12 marks it required, so it may not be
     empty: the member records who produced this reference, and a reference
     nobody is named for is one no peer can weigh.
     """
+    if (encoder_image is None) == (encoder_engine is None):
+        raise CalibrationError(
+            "the calibration member names the run its vectors came from by "
+            "`encoder_engine` (Codex version 3) or by `encoder_image` (below it): "
+            "exactly one (09 §9.12)")
     if not key:
         raise CalibrationError(
             "the calibration member's `key` header is the creator's key and "
@@ -386,10 +420,32 @@ def write_member(path, vectors, envelope_, *, set_id_: str, encoder_image: str,
     p.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=p.parent) as tmp:
         staged = Path(tmp) / p.name
-        save_file({VECTORS: vectors, ENVELOPE: envelope_}, str(staged),
-                  metadata={"set": set_id_, "encoder_image": encoder_image,
+        tensors = {VECTORS: vectors, ENVELOPE: envelope_}
+        if query_vectors is not None:
+            tensors[QUERY_VECTORS] = query_vectors
+        run = ({"encoder_engine": encoder_engine} if encoder_engine is not None
+               else {"encoder_image": encoder_image})
+        save_file(tensors, str(staged),
+                  metadata={"set": set_id_, **run,
                             "encoder_weights": encoder_weights, "key": key})
         p.write_bytes(canonical_safetensors(staged.read_bytes()))
+
+
+def read_query_vectors(path, *, expect: str):
+    """The query encoder's reference vectors, refused when they hash
+    otherwise than `space.calibration.query_vectors` says (09 §9.12)."""
+    from safetensors.numpy import load_file
+    tensors = load_file(str(path))
+    if QUERY_VECTORS not in tensors:
+        raise CalibrationError(
+            f"{path}: no `{QUERY_VECTORS}` tensor, and the Codex pins one: an "
+            f"asymmetric space's query runs are validated against it (09 §9.12)")
+    got = tensor_hash(tensors[QUERY_VECTORS])
+    if got != expect:
+        raise CalibrationError(
+            f"{path}: the `{QUERY_VECTORS}` tensor hashes to {got}, the Codex says "
+            f"{expect}")
+    return tensors[QUERY_VECTORS]
 
 
 def read_member(path, *, expect_vectors: str, expect_envelope: str):

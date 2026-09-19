@@ -14,6 +14,7 @@ import pytest
 
 from app import collections as collections_mod, layers
 from app.hold import collection as col, records as rec
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import recipe
 
@@ -24,7 +25,7 @@ def made(tmp_path):
     root.mkdir(parents=True)
     codex = col.create_from_recipe(
         root, "gutenberg", recipe(), platform_image=PLATFORM,
-        embed=fake_embed, name="gutenberg", key=KEY, now=NOW)
+        embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     return root, codex
 
 

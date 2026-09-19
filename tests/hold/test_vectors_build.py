@@ -13,6 +13,7 @@ from app import embeddings, louise
 from app.hold import codex as cx, collection as col, embedder as emb, land, \
     vectors_build as vb
 from app.hold.vectors_build import BuildRefused
+from tests.hold.conftest import a_stated_run  # noqa: E402
 from tests.hold.conftest import KEY, NOW
 from tests.hold.test_admit import made, space_embed  # noqa: F401
 from tests.hold.test_vectors_export import build_drag, first_shard
@@ -42,7 +43,10 @@ def _statement(root, codex, *, passed=None, space_id=None):
         cosines=tuple([0.999] * ok + [tol - 0.1] * (n - ok)),
         all_cosines=tuple([0.999] * 512), tolerance=tol,
         min_pass=codex.space.calibration.min_pass,
-        max_input_tokens=8192, tokens_per_s=1000)
+        max_input_tokens=8192, tokens_per_s=1000,
+        # a version-2 statement names the RUN that passed (09 §9.12)
+        stated=a_stated_run(codex), fingerprint="sha256:" + "f1" * 32,
+        batch_invariant=True)
     out = root / "gutenberg" / "state" / "calibration.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(cx.canonical_json(emb.statement(run, codex, KEY, now=NOW)))

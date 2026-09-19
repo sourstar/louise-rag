@@ -91,14 +91,16 @@ def cmd_create(a) -> int:
         return 0
     codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
                               platform_image=a.platform_image,
-                              space_from=a.space_from, encoder=a.encoder)
+                              space_from=a.space_from, encoder=a.encoder,
+                              query_encoder=a.query_encoder)
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
 
 
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
-                space_from: str | None = None, encoder: str | None = None):
+                space_from: str | None = None, encoder: str | None = None,
+                query_encoder: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -139,6 +141,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
         # and a difference here is real news about the encoder build,
         # which is why it is re-measured rather than copied.
         drifted = (space.pop("envelope"), space["calibration"].pop("vectors"))
+        space["calibration"].pop("query_vectors", None)     # computed here too (09 §9.12)
         recipe["space"] = space
         recipe["layers"] = [l.to_dict() for l in source.layers]
 
@@ -152,6 +155,8 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    key=node_keys.load_signing_key(), now=_utc_now(),
                                    platform_image=platform_image,
                                    embed=_embed_for_recipe(recipe["space"], encoder),
+                                   embed_query=(_embed_for_recipe(recipe["space"], query_encoder)
+                                                if query_encoder else None),
                                    credits=credits)
     if space_from and (codex.space.envelope,
                        codex.space.calibration.vectors) != drifted:
@@ -161,10 +166,11 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
               f"in space {codex.space_id} â calibration is not inside "
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
-    return codex, _write_held_file(root, codex, encoder)
+    return codex, _write_held_file(root, codex, encoder, query_encoder)
 
 
-def _write_held_file(root, codex, encoder: str | None = None) -> Path:
+def _write_held_file(root, codex, encoder: str | None = None,
+                     query_encoder: str | None = None) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
@@ -206,6 +212,8 @@ def _write_held_file(root, codex, encoder: str | None = None) -> Path:
                    'embed = "off"\n'
                    "share = false\n"
                    + (f'\n[encoder]\nurl = "{encoder}"\napi = "openai"\n'
+                      # a bi-encoder's query side, where the collection has one
+                      + (f'query_url = "{query_encoder}"\n' if query_encoder else "")
                       if encoder else ""),
                    encoding="utf-8")
     tmp.replace(path)
@@ -1154,7 +1162,7 @@ def cmd_embedder_check(a) -> int:
     verdict = "PASS" if run.ok else "FAIL"
     print(f"{verdict}  {run.why()}")
     print(f"  space       {run.space_id[:23]}â¦")
-    print(f"  encoder     {codex.space.encoder.label or codex.space.encoder.image[:23]}")
+    print(f"  encoder     {codex.space.encoder.label or cx.encoder_field(codex)[1][:23]}")
     print(f"  tolerance   {run.tolerance}")
     print(f"  seed        {run.seed.hex()}")
     print(f"  sampled     {len(run.sampled)} of 512, worst {run.worst:.4f}, "
@@ -1330,6 +1338,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="this node's endpoint for the recipe's encoder: it embeds the "
                         "calibration set, and the collection file names it (a "
                         "collection names its own encoder; there is no default)")
+    p.add_argument("--query-encoder", default=None, metavar="URL",
+                   help="a bi-encoder's query side (MedCPT): its endpoint. The Codex pins "
+                        "its reference vectors too (09 §9.12), and the collection "
+                        "file names it as query_url")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")

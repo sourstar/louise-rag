@@ -18,6 +18,7 @@ from app.hold import check as chk, codex as cx, collection as col, \
     drag as drag_mod, records as rec, snapshot as snap
 from app.hold import figures as fig
 from app.pack import records as pack_records
+from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
 from tests.hold.conftest import KEY, NOW, PLATFORM
 from tests.hold.test_admit import made, space_embed  # noqa: F401
 from tests.hold.test_vectors_export import fake_embed, recipe
@@ -80,7 +81,7 @@ def plates_drag(isolated_config, tmp_path, plates_corpus, monkeypatch):
     monkeypatch.delenv("EMBED_URL", raising=False)
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", _recipe_2(),
-                           platform_image=PLATFORM, embed=fake_embed,
+                           platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                            name="plates", key=KEY, now=NOW)
     rec.build(root, "plates", corpus_dir=plates_corpus, log=lambda *_: None,
               records_per_shard=10)
@@ -235,7 +236,7 @@ def test_a_plates_collection_must_plan_the_figures_check(isolated_config, tmp_pa
     del bad["validation"]["sample"]["figures"]
     with pytest.raises(cx.CodexError, match="must name"):
         col.create_from_recipe(tmp_path / "c", "gutenberg", bad,
-                               platform_image=PLATFORM, embed=fake_embed,
+                               platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                                name="nope", key=KEY, now=NOW)
 
 
