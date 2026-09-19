@@ -3107,6 +3107,47 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
   `"enforce"` is the operator's word, after `hold collection show` reads
   `in-use` for every collection meant to be.
 
+**DEPLOYED 2026-09-19 (node time 21:45), louise 026985b; pushed, with
+`main` 98ee4dc and the tag v0.1.0.** The live tree had been exactly
+v0.1.0. Staged, built, the suite run on the node (3,154 passed), then the
+staged code run READ-ONLY against the node's real configuration beside
+the live code: byte-identical `collection_id`, `space_id` and encoder for
+gutenberg, pubmed and wikipedia (all Codex v2), none refused. The way
+back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
+
+- **The streamed-answer fault is gone on the node**: a streamed `/v1/chat/
+  completions` over gutenberg ran to `[DONE]` — 94 chunks, no error chunk.
+- **Quarantine reports, withholds nothing** (`quarantine = report`). One
+  evaluation costs 0.13–0.25 ms warm on the node's own state directories.
+- **The gate passed for all three encoders**, statements kept
+  (`state/calibration.json`): pubmed 16/16, whole set worst 0.9896,
+  34,784 tokens/s; wikipedia 16/16, worst 0.9990, 14,662 tokens/s;
+  gutenberg 16/16, worst 0.9998, 2,208 tokens/s.
+- **Today's encoder answers are recorded** for the RAGE cut-over, five
+  sides, 79 texts each: `/data/state/endpoint-vectors-2026-09-19`.
+- **What the deploy found, each fixed before going on.** (1) The node's
+  test run: version-3 `embedder check` looked for the encoder before the
+  calibration member, so a drag without its member read "deferred" on a
+  node naming no encoder; the test had passed on a checkout whose own
+  collection file names one (c4fa5e6). (2) Reading the first output: `hold
+  collection show wikipedia` said the licence was not acknowledged while
+  the worker said it was — the command judged from the Codex's class
+  where the worker asks `licensing.state_for` (026985b). (3) The promote
+  loop does not run under the node's zsh, and a read-only mount fails
+  thirteen tests: both now in DEPLOYMENT.md.
+- **QUARANTINE CANNOT BE ENFORCED YET, and the reporting deploy is what
+  showed it.** Only pubmed has record shards and snapshots in its drag.
+  gutenberg and wikipedia hold a Codex and a calibration member and
+  nothing else, so `roots`, `chunks` and `records-vs-origin` have nothing
+  to run on: they need `hold records build` and `snapshot create` first
+  (migration step 8's work, hours each). And `records-vs-origin` as built
+  does not fetch: it takes `--origin DIR`. Pointed at the copy this peer
+  kept it proves the parser is deterministic, not that the origin still
+  serves those bytes — the weaker form its own docstring names — so it was
+  NOT run and nothing was attested: pubmed waits on a bounded,
+  budget-drawing fetch of the plan's sample, which does not exist yet.
+  That fetch and the scheduled run are one piece of work.
+
 **Not done.** 13d's build, publish and proof on the node — it needs the
 operator's registry and is outward-facing. The image WAS trial-built
 locally, never pushed, and the build found two defects that would have

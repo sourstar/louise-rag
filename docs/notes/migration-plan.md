@@ -1214,8 +1214,11 @@ check` noting an origin check that could not run
 one evaluation is 0.20 ms warm whether 10 or 510 attestations are held —
 it was 2.6 ms at 510 until the directory's own mtime became the
 signature, a per-item cost caught before it shipped — and 95 ms cold
-per 500 signatures, once per change. Not yet timed on the node's own
-state directories. *Not built:* nothing runs `roots`,
+per 500 signatures, once per change. ON THE NODE (deployed 2026-09-19,
+026985b): 0.13–0.25 ms warm per collection. The reporting deploy showed
+what stands between it and enforcing: gutenberg and wikipedia have no
+record shards in their drags, and `records-vs-origin` has no fetch step
+([`STATUS.md`](STATUS.md), "DEPLOYED 2026-09-19"). *Not built:* nothing runs `roots`,
 `chunks` or `records-vs-origin` by itself — they are `hold check`, by
 hand or cron. A scheduled run changes what runs when and moves origin
 bytes: [`scheduling.md`](scheduling.md) §6 wants it measured on the node
