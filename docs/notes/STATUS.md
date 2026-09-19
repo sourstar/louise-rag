@@ -3235,6 +3235,29 @@ container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
   another 5 GB on the card. The retirements are
   [`legacy-to-delete.md`](legacy-to-delete.md) §7, by its rule.
 
+**THE NODE'S FOUR MODES, REDEFINED (operator, 2026-09-19; louise 8db5af5,
+spec 83fe4b1 on main).** A mode is a statement of what the node does:
+*pause* — nothing, no fetching, parsing, seeding or indexing; *seeding
+only*; *download/seeding only* — download and seeding only; *run
+everything*. Embedding is no mode's business: it runs only where
+everything does, and there each collection's own drop-down sets it. One
+table says it (`app/node_state.py`: `MODE_RUNS`) and every gate reads it
+— the main loop, the scans, the index maintainer, the seeder, `louise
+health`, the Library. What changed on a running node is all in
+"download/seeding only": it no longer SCANS what it downloads (a scan is
+parsing; it is owed and runs when everything does again), and the
+vector-index maintainer stands down there. And a scan already running
+now ends at its next ref when the mode stops parsing, where a pause used
+to wait for it (1,083 s on wikivec).
+- **The System tab's clock panel** read "GPU governor not running" after
+  the cut-over, because it reads the retired app's heartbeat; with
+  `RAGE_URL` set it asks RAGE (f8a6266). `GPU_PROBE_URL` is still what
+  feeds the panel's per-process rows — it shows RAGE's seven processes —
+  so it was left alone; the operator's remark that it "is not used
+  anymore" is OPEN: if it means the probe should go, its rows need
+  another source first (rage.md §12 has RAGE's pids joined to the
+  probe's).
+
 **Not done, as of the cut-over.** Chat on RAGE, and the retirements of
 the five apps, the governor's code and Ollama (above). Of step 14:
 NOTHING RUNS `roots`, `chunks` or `records-vs-origin` BY ITSELF — the
