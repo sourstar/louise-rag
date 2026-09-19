@@ -2797,6 +2797,52 @@ in tantivy at `index/_catalog`, one index per collection.
   never vacuumed (invariant 6). Dropping it takes the manifest's write
   lock for as long as the drop lasts.
 
+### Model work by priority; the encoders fed (2026-09-19/20)
+
+**What was wrong, measured live.** gutenberg's encoder (Qwen3-4B, on the
+Arc) was busy 20.7% of a 5-minute trace, idle in 233 of 300 seconds, with
+78,178 documents waiting. While a document ran it was at 95%: the card
+was not slow, it was not fed.
+- The main loop fed every encoder endpoint in turn.
+- pubmed's turns cost 250 s in ten minutes for zero documents. Its
+  backfill walk took 105–153 s per call over 40M rows, because the
+  cursor's age was stamped before a walk longer than its TTL.
+- py-spy showed the loop in that walk, and in an archive drain inside an
+  encoder turn.
+
+**What changed** (operator's design; scheduling.md §12):
+- **The walk is bounded** (f5c4f29): rowid windows from a cursor, at
+  most 1 s per call. On live pubmed: worst call 1.46 s; the whole sweep
+  is 158 s spread over 141 calls.
+- **Levels:** corpus < translation < chat < rerank < query.
+- **One gate per model server** (`app/dispatch.py`). It admits the
+  server's capacity, by level, fair by service time.
+- **Corpus stands aside on the GPU per chunk** while anything
+  interactive runs, through a claim in `state/node.sqlite`.
+- **One embed producer per collection**, with two documents submitted
+  and a third prepared (bd6baa8).
+- **Nice.** Feeders at 0; pipeline, acquisition and discovery at 5;
+  parse pool and index maintainer at 10. The levels are targets over the
+  worker's base (00a9fa5); the first deploy's relative steps put
+  acquisition at 15.
+
+**After, live (1f25e6b, image d4975f1a):**
+- gutenberg's encoder over 5 minutes: mean 82.3%, median 87.9%, never at
+  0%, 18 of 298 seconds under 50%.
+- About 2.5 documents a minute embedded, against 0.8 before.
+- Query embedding and rerank were never the problem: 3–10 ms and 19 ms
+  against a 95%-busy card.
+
+**Two instrument lessons.** Measure a model server's GPU share per DRM
+client, each client's cycles over its own `drm-total-cycles` (a server
+can hold two; borrowing an idle client's time base printed "2225%"). And
+drop impossible samples (a counter reset read −821,239%) rather than let
+them average in.
+
+**Found on the way.** `catalog.close_all` closed tantivy writers without
+their write locks, and the node's suite hit "Already borrowed" at
+teardown (test-only; fixed in 1f25e6b, ten repeats clean).
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
