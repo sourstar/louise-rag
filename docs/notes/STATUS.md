@@ -4646,6 +4646,48 @@ to reintroduce.
   two totals and the download split by collection; the classes stay in
   the API payload for tests.
 
+### The legal encoder becomes measurable — 2026-09-20
+
+`gazzetta-plugin.md` §7 held that the encoder for a legal collection is
+chosen on Italian-legal retrieval quality, and explicitly that **what this
+node happens to run is not an input to that decision**. §12 item 6 then
+parked the whole thing on an unanswered question: does JuriFindIT, the set
+that would decide it, actually exist to download? It does —
+`jurifindit/JuriFindIT`, parquet, CC-BY-NC-SA-4.0 (gated: invariant 9 wants
+an ack, and `fetch` writes the digests to record one against).
+
+`tools/encoder_bakeoff.py` runs §7.2's procedure against RAGE: the 179
+expert validation questions over the 23,617-node corpus, through
+`app.embeddings` so the request shape is production's, sharded and
+resumable because it is ~47 minutes per model on the B70.
+
+Three things the data forced, each of which would have produced a
+confident wrong answer:
+
+- **`relevant_doc_ids` is a list** — 4.49 per question, up to 128. Recall@k
+  and "did we find one" are different numbers and only the first is
+  comparable to anything published.
+- **The corpus is an AKN node tree**, not a flat article list: 159
+  `<< file root node >>` placeholders, one node of 1.13 M characters, and
+  llama.cpp refuses an over-context input rather than truncating it. The
+  cut is ours to make and must be identical across candidates.
+- **No query prefix exists in this codebase** (`embeddings._side` switches
+  URL for a bi-encoder pair and nothing else). Right for bge-m3, which is
+  symmetric; wrong for Qwen3-Embedding, which documents
+  `Instruct: …\nQuery: ` on the query side. So the prefix is a recorded run
+  parameter keyed to the query shards only — a variant re-embeds 179
+  vectors and reuses all 23,617 document ones.
+
+The competitor is `jurifindit/DAR-legal-it`: 305 M, dim 768, GTE on
+`snowflake-arctic-embed-m-v2.0`, recall@10 0.8037 and mrr@100 0.7780 on
+that validation split. It **declares no licence**, which bars it from
+owning a pinned space under `approved-encoders.md` — a reference row, not
+a candidate, until that changes. What circulates as "77.80 for DAR+GIR" is
+this plain dense model's own mrr@100, not the graph pipeline's.
+
+**Not yet run**: the operator asked for the card to be left alone, so no
+model has been embedded. Nothing past `load` has touched the GPU.
+
 ## Conventions
 
 - Python 3.12, full type hints, pytest. **Every task ships tests.**

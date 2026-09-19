@@ -37,6 +37,19 @@ structural placeholder nodes, are not recorded anywhere we can read. Treat
 their row as a reference, not as a measurement made here, until that model
 is served and run through this same path.
 
+QUERY PREFIXES, AND WHY THEY ARE A RUN PARAMETER. This codebase applies
+none: `embeddings._side` switches URL for a bi-encoder pair (MedCPT) and
+nothing else, so a query reaches the encoder exactly as typed. That is
+right for bge-m3, which is symmetric. It is NOT what Qwen3-Embedding
+documents — it expects `Instruct: <task>\nQuery: <text>` on the query side
+and bare text on the document side — so measuring it bare measures what
+this node serves today, not what the model can do. Both are worth knowing
+and the second is nearly free: only the query side carries a prefix, so a
+variant re-embeds 179 vectors and reuses all 23,617 document vectors.
+`--query-prefix` therefore keys the query shards, never the corpus ones,
+and the text used is recorded in the run's JSON. A prefix that silently
+differed between two rows would be the whole result.
+
 LICENCE. JuriFindIT is CC-BY-NC-SA-4.0 — a gated class under invariant 9.
 `fetch` writes LICENCE.txt and a sha256 of every file beside the data so an
 acknowledgement can be recorded against bytes that were actually seen.
@@ -157,22 +170,38 @@ def _embed_sharded(texts: list[str], where: Path, recipe, *,
                            for s in range(n_shards)])
 
 
+def slug_of(query_prefix: str) -> str:
+    """Names the query side of a run. `bare` is the no-prefix case — the one
+    this node actually serves — so it reads as a choice, not as a default
+    nobody looked at."""
+    if not query_prefix:
+        return "bare"
+    return "q" + hashlib.sha256(query_prefix.encode("utf-8")).hexdigest()[:8]
+
+
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
-          ctx: int, concurrency: int, max_chars: int) -> int:
+          ctx: int, concurrency: int, max_chars: int,
+          query_prefix: str = "") -> int:
     corpus, queries = load(out, max_chars)
     recipe = _recipe(url, model, dim, ctx, concurrency)
     run = out / name
-    print(f"{name}: {len(corpus.texts)} documents, {len(queries.texts)} queries")
+    slug = slug_of(query_prefix)
+    print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
+          f"{len(queries.texts)} queries")
+    # The corpus side never carries the prefix, so every variant of a model
+    # shares these vectors and only the cheap side is re-embedded.
     doc = _embed_sharded(corpus.texts, run / "corpus", recipe, query=False)
-    qry = _embed_sharded(queries.texts, run / "queries", recipe, query=True)
+    qry = _embed_sharded([query_prefix + t for t in queries.texts],
+                         run / f"queries-{slug}", recipe, query=True)
     np.save(run / "corpus.npy", doc)
-    np.save(run / "queries.npy", qry)
-    (run / "run.json").write_text(json.dumps(
-        {"name": name, "url": url, "model": model, "ctx": ctx,
-         "max_chars": max_chars, "dim": int(doc.shape[1]),
-         "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
+    np.save(run / f"queries-{slug}.npy", qry)
+    (run / f"run-{slug}.json").write_text(json.dumps(
+        {"name": name, "slug": slug, "url": url, "model": model, "ctx": ctx,
+         "max_chars": max_chars, "query_prefix": query_prefix,
+         "dim": int(doc.shape[1]), "documents": int(doc.shape[0]),
+         "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
-    print(f"{name}: dim {doc.shape[1]}")
+    print(f"{name} [{slug}]: dim {doc.shape[1]}")
     return 0
 
 
@@ -225,15 +254,30 @@ def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
     return {key: value / q.shape[0] for key, value in totals.items()}
 
 
+def runs_in(out: Path) -> list[tuple[Path, dict]]:
+    """Every (model, query-side) pair that has been embedded, in a stable
+    order so two reports of the same directory read the same."""
+    found = []
+    for run in sorted(p for p in out.iterdir() if p.is_dir()):
+        for meta in sorted(run.glob("run-*.json")):
+            found.append((run, json.loads(meta.read_text(encoding="utf-8"))))
+    return found
+
+
+def label_of(meta: dict) -> str:
+    return meta["name"] if meta["slug"] == "bare" else f"{meta['name']} [{meta['slug']}]"
+
+
 def score(out: Path, max_chars: int) -> int:
     corpus, queries = load(out, max_chars)
-    for run in sorted(p for p in out.iterdir() if (p / "run.json").exists()):
+    for run, meta in runs_in(out):
+        slug = meta["slug"]
         doc = np.load(run / "corpus.npy")
-        qry = np.load(run / "queries.npy")
+        qry = np.load(run / f"queries-{slug}.npy")
         result = score_run(doc, qry, corpus, queries)
-        (run / "scores.json").write_text(json.dumps(result, indent=2) + "\n",
-                                         encoding="utf-8")
-        print(f"{run.name}: mrr@100 {result['mrr@100']:.4f}  "
+        (run / f"scores-{slug}.json").write_text(
+            json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        print(f"{label_of(meta)}: mrr@100 {result['mrr@100']:.4f}  "
               f"recall@10 {result['recall@10']:.4f}")
     return 0
 
@@ -248,8 +292,14 @@ PUBLISHED = {"DAR-legal-it (published)": {
 
 def report(out: Path) -> int:
     rows = dict(PUBLISHED)
-    for run in sorted(p for p in out.iterdir() if (p / "scores.json").exists()):
-        rows[run.name] = json.loads((run / "scores.json").read_text())
+    prefixes: dict[str, str] = {}
+    for run, meta in runs_in(out):
+        scores = run / f"scores-{meta['slug']}.json"
+        if not scores.exists():
+            continue
+        rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
+        if meta.get("query_prefix"):
+            prefixes[meta["slug"]] = meta["query_prefix"]
     shown = ["recall@3", "recall@5", "recall@10", "recall@100",
              "ndcg@5", "ndcg@100", "mrr@5", "mrr@100", "map@100"]
     width = max(len(name) for name in rows)
@@ -261,9 +311,12 @@ def report(out: Path) -> int:
         cells = [f"{result[m]:.4f}".rjust(10) if m in result else "-".rjust(10)
                  for m in shown]
         print("| " + name.ljust(width) + " | " + " | ".join(cells) + " |")
+    for slug, text in sorted(prefixes.items()):
+        print(f"\n[{slug}] query prefix: {text!r}")
     print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
           "its truncation and corpus handling are unrecorded. The other rows "
-          "are comparable to each other exactly.")
+          "are comparable to each other exactly. A row with no [slug] embedded "
+          "queries bare, which is what this node serves today.")
     return 0
 
 
@@ -284,12 +337,17 @@ def main(argv=None) -> int:
             p.add_argument("--dim", type=int, default=None)
             p.add_argument("--ctx", type=int, default=8192)
             p.add_argument("--concurrency", type=int, default=1)
+            p.add_argument("--query-prefix", default="",
+                           help="prepended to QUERIES only, never to "
+                                "documents; recorded in the run's JSON. "
+                                "Qwen3-Embedding documents "
+                                "'Instruct: <task>\\nQuery: '")
     a = ap.parse_args(argv)
     if a.cmd == "fetch":
         return fetch(a.out)
     if a.cmd == "embed":
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
-                     a.concurrency, a.max_chars)
+                     a.concurrency, a.max_chars, a.query_prefix)
     if a.cmd == "score":
         return score(a.out, a.max_chars)
     return report(a.out)

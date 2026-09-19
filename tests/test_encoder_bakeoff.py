@@ -15,6 +15,7 @@ find one".
 
 from __future__ import annotations
 
+import json
 from math import log2
 
 import numpy as np
@@ -121,6 +122,74 @@ def test_score_run_macro_averages_a_hit_and_a_miss() -> None:
     scores = score_run(doc, qry, corpus, queries, ks=(1,))
     assert scores["recall@1"] == pytest.approx(0.5)
     assert scores["mrr@1"] == pytest.approx(0.5)
+
+
+def test_slug_names_the_bare_query_side_explicitly() -> None:
+    from tools.encoder_bakeoff import slug_of
+    assert slug_of("") == "bare"
+    a, b = slug_of("Instruct: x\nQuery: "), slug_of("query: ")
+    assert a != b and a.startswith("q") and len(a) == 9
+    assert slug_of("query: ") == b  # stable across calls, so runs collide on purpose
+
+
+def test_query_prefix_reaches_queries_and_never_documents(tmp_path, monkeypatch) -> None:
+    """The prefix is the whole difference between two rows of the report. If
+    it ever leaked onto the corpus side, both rows would move together and
+    the comparison would look fine while measuring nothing."""
+    import numpy as _np
+
+    from tools import encoder_bakeoff as bake
+
+    corpus = bake.Corpus(ids=[1, 2], texts=["doc one", "doc two"])
+    queries = bake.Queries(texts=["how?"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+
+    seen: list[list[str]] = []
+
+    def fake_embed_texts(texts, **kw):
+        seen.append(list(texts))
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(bake.embeddings, "embed_texts", fake_embed_texts)
+
+    bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1,
+               20_000, query_prefix="Instruct: legal\nQuery: ")
+
+    sent = [t for batch in seen for t in batch]
+    assert "doc one" in sent and "doc two" in sent
+    assert "Instruct: legal\nQuery: how?" in sent
+    assert not any(t.startswith("Instruct:") and "doc" in t for t in sent)
+
+    slug = bake.slug_of("Instruct: legal\nQuery: ")
+    meta = json.loads((tmp_path / "m" / f"run-{slug}.json").read_text())
+    assert meta["query_prefix"] == "Instruct: legal\nQuery: "
+    assert _np.load(tmp_path / "m" / "corpus.npy").shape[0] == 2
+
+
+def test_variants_of_one_model_share_the_corpus_vectors(tmp_path, monkeypatch) -> None:
+    """A second query-side variant must not re-embed 23,617 documents — that
+    is the whole reason the prefix keys only the query shards."""
+    from tools import encoder_bakeoff as bake
+
+    corpus = bake.Corpus(ids=[1, 2], texts=["a", "b"])
+    queries = bake.Queries(texts=["q"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    calls: list[int] = []
+
+    def fake_embed_texts(texts, **kw):
+        calls.append(len(texts))
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(bake.embeddings, "embed_texts", fake_embed_texts)
+
+    args = (tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1, 20_000)
+    bake.embed(*args, query_prefix="")
+    first = sum(calls)
+    calls.clear()
+    bake.embed(*args, query_prefix="query: ")
+    # only the one query was embedded the second time
+    assert sum(calls) == 1 < first
+    assert len(bake.runs_in(tmp_path)) == 2
 
 
 def test_score_run_is_unaffected_by_vector_magnitude() -> None:
