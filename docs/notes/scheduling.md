@@ -875,3 +875,44 @@ request.
 - The `[sched]` gate lines: the waits and the service share per level.
 - Chat's latency while corpus embedding runs, against the 34 s idle
   figure.
+
+### Measured after deploying (2026-09-20)
+
+**The encoders are fed.**
+- gutenberg's encoder over 5 minutes: 82.3% busy (median 87.9%, never at
+  0%), against 20.7% before.
+- Its gate's own counters from 00:33 to 06:25: busy 19,913 s of about
+  21,100 s, which is 94% of wall time.
+
+**The device-wide yield does NOT help chat, and costs it when the clock is
+not pinned.** The chat model (Ollama qwen3:8b) translated one question
+into 20 languages, called from the web container. With the claim, corpus
+work stands aside. Without it (the claim disabled for that call), corpus
+work shares the card. Each call was checked for a foreign claim.
+
+| | Arc clock free (min 400 MHz) | Arc clock pinned (min 2800 MHz) |
+|---|---|---|
+| without claim: corpus shares the card | 65–72 s, mean 2,695 MHz | 67.5 s |
+| with claim: corpus stands aside | **87–92 s, mean 990 MHz** | 64.2 s |
+
+- Why: token-by-token decoding leaves the card idle between steps, so
+  alone it lets the Arc drop its clock. Corpus work beside it keeps the
+  clock at 2,800 MHz. Pinned, every sample was 2,800 MHz or 0 (idle
+  between tokens).
+- The yield itself works: gutenberg's encoder read 0.1–0.2% busy during
+  every claimed call. But even with the clock pinned it buys chat 3 s
+  (5%), and it costs corpus its whole share for the length of the call.
+- The first run was confounded by the operator's own query, whose claim
+  also stood corpus aside: 2 deferrals at 06:30, which were correctly
+  deferrals and not errors.
+
+**Consequences:**
+- The device-wide yield should go. The ordering at a shared server (query
+  before corpus on one encoder) stays.
+- The clock is what matters to chat when the card is otherwise idle:
+  87 s → 64 s pinned. Pinning while interactive work runs (the claim's
+  lifetime) is the operator's proposal. It needs a writer of the host's
+  `min_freq`, which no current container may be.
+- Operator's note: the card's fan never slows down under the current
+  driver, until a process such as Ollama restarts. So pinning costs power,
+  not noise.
