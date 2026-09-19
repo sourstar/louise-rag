@@ -2843,6 +2843,22 @@ them average in.
 their write locks, and the node's suite hit "Already borrowed" at
 teardown (test-only; fixed in 1f25e6b, ten repeats clean).
 
+**Then the ladder was measured, and one piece reversed (2026-09-20).**
+- **Corpus standing aside from the whole card slowed chat.** Alone on
+  the card, the Arc drops its clock: 87–92 s at a mean of 990 MHz,
+  against 65–72 s beside corpus work. With the clock held, standing aside
+  bought chat only 3 s. It was removed in b4eba5f, and levels now order
+  only at a shared gate.
+- **The clock is what chat needs.** The **GPU governor** holds `min_freq`
+  at 2,800 MHz while the interactive claim is live. Live check: 400 before
+  a claim, 2,800 during, 400 after.
+- **It runs as a TrueNAS app of its own, `louise-gpu-governor`.** The
+  first deploy, as a service inside louise-rag, took Louise down for a few
+  minutes: TrueNAS rewrites binds into short syntax, the card's PCI path
+  has colons, and one failed service fails the whole app's `up` (013507c).
+- **The System tab's GPU panel** shows it running, unable to set the
+  clock, or not running. Not running costs only speed.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in
