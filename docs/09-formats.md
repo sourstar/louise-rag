@@ -249,7 +249,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `3` | yes | the Codex format version (§9.18). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — and that `image` inside `space_id`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one |
+| `version` | `3` | yes | the Codex format version (§9.18). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -352,7 +352,7 @@ a `<space>` segment and `index-<slice>` would then be a member name
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
 | `query` | object | yes | `{encoder: {weights, engine} or null, instruction: string or null}` — an asymmetric space's query encoder, with its own weights digest and engine, and its prefix; both `null` in a symmetric space |
 | `tolerance` | decimal | yes | the cosine a vector must reach against the reference (03 §3.1) |
-| `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash (§9.12), and the quorum |
+| `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", query_vectors: "sha256:…" or null, quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash and, in an asymmetric space, the query reference vectors' (§9.12), and the quorum |
 | `envelope` | id | yes | the hash of the envelope tensor in the calibration member (§9.12) |
 | `epoch` | string | yes | `"0"` for a root; a daughter AND a sister keep their mother's, so a sister of a corrective sister keeps the salted one and stays in her mother's space (02 §2.7); a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…`. Any other value is refused |
 | `evaluation` | object or null | yes | `{suite: {name, version, sha256, public}, metric, value: decimal, conditions: {…}, coverage_check: {targets, resolved}, run_by: key, run_at: time, tier: "reproducible" · "asserted"}`; `null` when no score is claimed |
@@ -455,7 +455,7 @@ fields that carry its choices (every other field is present in the file):
                                "env":{},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
           "dim":768,"dtype":"f16","ctx":512,"pooling":"cls","normalise":true,
           "query":{"encoder":{"weights":"sha256:b7…","engine":{…the same, its own weights…}},"instruction":null},
-          "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","quorum":{"n":16,"min_pass":12}},
+          "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","query_vectors":"sha256:5e…","quorum":{"n":16,"min_pass":12}},
           "envelope":"sha256:77…","epoch":"0","evaluation":null},
  "work":{"tokens":40000000,"per":"P1M"},"modality":"text","erasure":"retractable",
  "validation":{"checks":["roots","records","chunks","records-vs-origin","vectors-sample","calibration","centres","labels","license","signature"],
@@ -1162,7 +1162,7 @@ the peer list (04 §4.2).
 | `time` | time | yes | |
 | `address` | string | yes | where the sender answers pulls: `https://host:port` |
 | `neighbours` | list of `{key, address}` | yes | up to sixteen live neighbours |
-| `benchmarks` | list | yes | `{space_id, encoder_engine, encoder_weights, tokens_per_s: integer}`, one per space this peer holds a current calibration statement for (03 §3.3, §9.12). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
+| `benchmarks` | list | yes | `{space_id, encoder_engine, encoder_weights, tokens_per_s: integer}`, one per space, for the validated run this peer contributes with (03 §3.3, §9.12). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
 | `collections` | list | yes | one entry per collection held, below |
 
 A collection entry:
@@ -1385,14 +1385,17 @@ snapshot (`files`, §9.4):
 | tensor / header | type | required | meaning |
 |---|---|---|---|
 | `vectors` | `[512, dim]` f32 | yes | the reference vectors, in set order, as the creator's encoder produced them, unit-normalised when `space.normalise` |
+| `query_vectors` | `[512, dim]` f32 | when `space.query.encoder` is not null | the query encoder's reference vectors for the same texts, `space.query.instruction` prefixed: what an asymmetric space's query runs are validated against (03 §3.3) |
 | `envelope` | `[2, dim]` f32 | yes | row 0 the per-dimension mean of `vectors`, row 1 the per-dimension standard deviation |
 | `set` | header | yes | the set's id |
 | `encoder_engine`, `encoder_weights` | header | yes | the run the vectors came from: `engine_id` of `space.encoder.engine` (§9.3), and the weights |
 | `key` | header | yes | the creator's key |
 
 `space.calibration.vectors` = `H` over the bytes of the `vectors`
-tensor; `space.envelope` = `H` over the bytes of the `envelope` tensor;
-a member whose tensors hash otherwise is refused. Beside it,
+tensor; `space.calibration.query_vectors` = `H` over the bytes of the
+`query_vectors` tensor, `null` in a symmetric space; `space.envelope` =
+`H` over the bytes of the `envelope` tensor; a member whose tensors hash
+otherwise is refused. Beside it,
 `calibration/<set>.sig.json` is an envelope signed under
 `louise/calibration/v1` with body `{kind: "louise-calibration", version:
 2, set, space_id, vectors: id, envelope: id, encoder_engine,
@@ -1411,19 +1414,33 @@ measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
-**The fingerprint** (03 §3.3). Its sixteen texts are fixed by the
-set's bytes alone. The set is ordered by the UTF-8 byte length of
-`text`, ties broken by `i`, and the texts at ranks ⌊k × 511 / 15⌋ for
-k = 0 … 15 are taken: the shortest, the longest and fourteen spaced
-between, so a fault that shows only on a full window cannot hide from
-it. They are embedded as the peer embeds chunks when it contributes:
-truncated as a chunk is, and batched as its benchmark was, because a
-batching fault is exactly what the fingerprint must not hide. A run's
-fingerprint is `H` over the sixteen vectors, in that order, each as the
-endpoint returned it, before anything the platform does to it,
-converted to little-endian f32 and concatenated. An asymmetric space's
-query side has its own fingerprint, over the same texts sent through
-`space.query.encoder` with `space.query.instruction` prefixed.
+**The run identity** (03 §3.3). What the node's model platform states
+with every answer, in the response header `Louise-Run`:
+
+```
+run_id = H( canonical JSON of
+  {"driver":  "<the device's kernel driver and compute runtime, with versions, as the platform reads them; \"cpu\" on a CPU>",
+   "engine":  <the engine object of §9.3, as LAUNCHED: `image` the digest of the image actually running>,
+   "weights": "<digest of the weights file actually loaded>"} )
+```
+
+The platform computes it from what it launched, never from a
+declaration. It describes a run on request (`GET /louise/runs/<run_id>`
+→ that same object), which is where a statement's `engine`, `weights`
+and `driver` come from.
+
+**The fingerprint.** Its sixteen texts are fixed by the set's bytes
+alone. The set is ordered by the UTF-8 byte length of `text`, ties
+broken by `i`, and the texts at ranks ⌊k × 511 / 15⌋ for k = 0 … 15 are
+taken: the shortest, the longest and fourteen spaced between. They are
+embedded one at a time, truncated as a chunk is. A run's fingerprint is
+`H` over the sixteen vectors, in that order, each as the endpoint
+returned it, converted to little-endian f32 and concatenated. The gate
+embeds the same sixteen a second time as the peer contributes, with its
+batching and concurrency. Equal bytes mean the run is batch-invariant
+at those settings. An asymmetric space's query run has its own
+fingerprint, over the same texts with `space.query.instruction`
+prefixed.
 
 **The peer's calibration statement.** The member above is the space
 author's reference. What a contributing peer produces when it passes
@@ -1434,9 +1451,9 @@ peer's digest (§9.9), with body
 
 ```
 {kind: "louise-calibration-run", version: 2,
- space_id, collection_id, set,
- engine: <engine, §9.3>, encoder_weights, fingerprint: <id or null>,
- query_engine: <engine or null>, query_weights: <id or null>, query_fingerprint: <id or null>,
+ space_id, collection_id, set, role: "document" | "query",
+ run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
+ fingerprint: <id>, batch_invariant: <boolean>,
  seed, sampled: [<integer 0…511>…], passed: <integer>,
  worst: <decimal>, median: <decimal>,
  max_input_tokens: <integer>, tokens_per_s: <integer>,
@@ -1450,19 +1467,19 @@ a verifier knows not to sample a chunk this peer could not have
 embedded whole, and `tokens_per_s` is the benchmark §4.5 weights
 rendezvous by.
 
-`engine` is the engine this peer runs, written out as the Codex writes
-its own (§9.3). Its `engine_id` is what the peer's bundles, attestations
-and benchmarks carry. `fingerprint` is the one the passing run recorded,
-`null` when the endpoint did not reproduce it twice (03 §3.3). The three
-`query_` fields are the same for an asymmetric space's query side, and
-`null` in a symmetric one.
+`run` is the run identity the platform stated. `engine`, `encoder_weights`
+and `driver` are what it stands for, written out as the Codex writes its
+own engine (§9.3). The engine's `engine_id` is what the peer's bundles,
+attestations and benchmarks carry. `role` says whether the run embedded
+documents (against `vectors`) or queries (against `query_vectors`).
+`fingerprint` and `batch_invariant` are the gate's own measurements
+(03 §3.3); a run that is not batch-invariant is validated for
+single-text, one-at-a-time work only.
 
-A statement is **current** while its engine, weights and set are the
-ones in use and the endpoint's fingerprint still equals `fingerprint`.
-For a `null` fingerprint, it is current while the sixteen texts still
-pass the quorum against their reference rows. Anything else needs a new
-run (03 §3.3). Version 1 of this body carried `encoder_image`, the
-engine's image digest alone, in place of the engine, and had no
+A peer keeps one statement per run it has validated, and a vector is
+written only from an answer naming a run with a passing statement for
+the space (03 §3.3). Version 1 of this body carried `encoder_image`, the
+engine's image digest alone, in place of the run, and had no
 fingerprint.
 
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`

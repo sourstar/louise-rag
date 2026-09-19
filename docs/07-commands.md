@@ -84,7 +84,7 @@ louise hold
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
-  embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept keeps the passing run's signed statement in `state/`
+  embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
               calibrate --encoder-weights D --engine FILE [--against FILE …] [--set SHA256]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
@@ -225,20 +225,20 @@ reader needs at the command line:
   Refuses (exit 2) when this peer's key is not the Codex's
   `certifier.key`.
 - **`embedder check`.** The calibration check of 03 §3.3 against the
-  calibration member (09 §9.12): pass or fail at the Codex's
-  `tolerance`; a pass writes the signed compliance statement. `--accept`
-  KEEPS that statement — `state/calibration.json` (09 §9.12: "kept in
-  `state/` and published in this peer's digest") — and does nothing else;
-  it has no effect on a failing run. It stores no vectors: the statement
+  calibration member (09 §9.12), for the run the endpoint states (its
+  `Louise-Run`): pass or fail at the Codex's `tolerance`. A pass
+  validates that run and keeps its signed statement in
+  `state/calibration/` (09 §9.12: "kept in `state/` and published in this
+  peer's digest"), one per run. A failure is kept too, so the run is not
+  retried against the same set. It stores no vectors: the statement
   already carries the seed, so anyone can reproduce the sample and
   recheck the verdict, and a 512-row baseline beside it would be a second
   answer to a question the statement answers. Of the endpoint's output it
-  keeps only the fingerprint (03 §3.3), a hash. `vectors build` and
-  `share contribute` refuse (exit 2) without a current statement for
-  this collection's space on the configured endpoint (09 §9.12). The node
-  takes the fingerprint before the first shard of a round and after
-  every batch, and runs the whole check again only when the fingerprint
-  differs.
+  keeps only the fingerprint, a hash. The node runs the same check by
+  itself the first time an answer names a run it has not validated (03
+  §3.3). `vectors build` and `share contribute` write a vector only from
+  an answer naming a validated run; an endpoint that states no run
+  identity is refused for them (exit 2).
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
   fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
@@ -455,7 +455,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
-| `backend check` / `rebaseline` | `hold embedder check` / `--accept`; the probe baseline and its cosine threshold become the statement's fingerprint, compared for equality (03 §3.3) |
+| `backend check` / `rebaseline` | `hold embedder check`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant` |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
@@ -568,8 +568,8 @@ it is; `ack --yes` records without printing the terms.
 `state/lock` in its directory (§7.8). The node holds it for every
 collection it runs, for as long as it runs it. A `hold` command that
 writes takes the lock or exits 3 naming the holder; `show`, `list` and
-`check` never take it, and neither does `ask` — `embedder check
---accept` does, because it writes. Four commands exit 2, not 3, while
+`check` never take it, and neither does `ask` — `embedder check` does,
+because it writes a statement. Four commands exit 2, not 3, while
 the node holds the collection, because retrying them later is not the
 answer: `collection forget`, `vectors check --drop`, `dev migrate schema`
 and `dev adopt`. `node pause <collection>` releases the lock at the end
@@ -587,7 +587,7 @@ signal does not shorten that. The unit per stage:
 | `records fetch`, `share fetch` | the current file, at byte granularity — a checkpoint mid-file, the byte offset committed |
 | `records build` | the document; a shard cut short is re-cut on resume |
 | `snapshot create` | atomic: the file is written last and is there entire or not at all |
-| `vectors build` | the batch: the chunks in flight to the encoder, committed only when the fingerprint taken after it equals the statement's (03 §3.3) — otherwise dropped, a deferral |
+| `vectors build` | the batch: the chunks in flight to the encoder, each written only from an answer naming a validated run (03 §3.3) |
 | `vectors import`, `share contribute` | the bundle, marked applied in the same transaction as its last row |
 | `index build` | the shard |
 | `check`, `share attest` | the sampled shard; an attestation is written only for a completed check |
@@ -659,11 +659,9 @@ embed  = "on-demand"                           # off | on-demand | all: what the
 share  = true
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
-url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
-engine = "engines/medcpt-article-b10630.toml"  # the engine this endpoint runs, in 09 §9.3's form; absent = the Codex's own.
-                                               # The statement names it; the fingerprint holds the endpoint to it
+url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder, on the node's model
+                                               # platform, which states the run with every answer (03 §3.3)
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
-query_engine = "engines/medcpt-query-b10630.toml"   # the same, for the query side
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint

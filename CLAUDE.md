@@ -40,9 +40,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
    pooling, normalisation and query encoder's weights, and the epoch. Not
    the ENGINE — the tested build, image, args, env and device are frozen
    in the Codex as `space.encoder.engine` (inside `collection_id`,
-   outside `space_id`); any engine may contribute once it passes the
-   calibration gate, and a batch commits only if the fingerprint taken
-   after it still matches the accepted one (docs/03 §3.3). Not the tolerance, not the calibration.
+   outside `space_id`); any engine may contribute once its RUN passes
+   the calibration gate, validated once, and a vector is written only from
+   an answer whose `Louise-Run` names a validated run — checked per answer,
+   before the write (docs/03 §3.3). Not the tolerance, not the calibration.
    A vector table whose
    dim/space mismatches the Codex is a
    REFUSE-TO-START error FOR THAT COLLECTION, never a warning or

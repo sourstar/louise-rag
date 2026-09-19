@@ -134,12 +134,12 @@ admission test, and it is per combination — a new engine, a new build,
 a new device or driver, a new quantisation is a new test. Which engine
 a peer runs is its own choice: the one the Codex freezes (02 §2.4) is
 the reference every run is measured against, not a requirement, and a
-newer build that is faster is welcome the moment it passes. A failure
-stops embedding for that collection as a deferral, never as an error on
-a document, and is shown by `hold collection show`. `hold embedder
-check --accept` is the only way a changed engine becomes the one this
-peer stands behind: it keeps that run's signed statement, which is what
-the digest publishes and what 04 §4.5 weights.
+newer build that is faster is welcome the moment it passes. A run that
+passes is validated for the space as it stands, with nobody having to
+accept it (operator, 2026-09-20). Its signed statement is what the
+digest publishes and what 04 §4.5 weights. A run that fails writes
+nothing for the collection — a deferral, never an error on a document —
+and `hold collection show` says so.
 
 **A peer that DERIVES rather than embeds passes no gate, because there
 is no encoder to gate.** Where a space declares a `derivation` (02
@@ -152,49 +152,64 @@ For the same reason a derived space's reference vectors are its
 source's, derived by the same function, and `hold collection create`
 writes its calibration member without calling an encoder at all.
 
-**The fingerprint: the same engine between runs.** A pass admits an
-engine at one moment. Nothing in it says that the endpoint answering an
-hour later is still that engine: a model pool reloads models, a tag
-moves under an image name, a flag is edited, and a compliant engine
-swapped for another compliant engine would pass the gate again while
-its vectors were credited to a run nobody accepted. So the passing run
-also records a **fingerprint**: the hash of what the endpoint returns
-for sixteen fixed texts of the calibration set, the shortest to the
-longest, sent as the peer sends chunks (09 §9.12). One engine on one
-machine is deterministic, so the fingerprint needs no threshold: the
-same bytes are the same run, and any other bytes are not. It is not a
-second threshold beside the gate — equality needs none — and it is
-taken wherever this peer's encoder produces or judges vectors:
+**Validate once; then every answer says which run gave it.** A pass
+validates a RUN: one engine as it was actually launched. That is the
+image by the digest that is running (never a tag), the weights, the
+exact arguments and environment, the device, and the device's driver and
+compute runtime, all named by a **run identity** (09 §9.12). What keeps
+later work honest is not a test repeated during the work. It is the
+platform that serves the models. The node's model platform launches
+every engine itself, computes the run identity from what it launched
+rather than from what was declared, and states it with every answer.
+That makes it a trusted processing platform: a model reloaded with
+another flag, an image whose tag moved, a driver updated underneath it
+is each a different run, and says so on its next answer.
 
-- **Embedding** (`vectors build`, `share contribute`): before a
-  session's first batch, and after every batch, before that batch
-  commits (07 §7.7). Equal, the batch commits. Different, the batch is
-  dropped uncommitted — a deferral, never an error on a document — and
-  embedding for that space waits on the gate, run again in full, and
-  then on `--accept`: a pass under changed bytes is a different run,
-  and only the operator stands behind a different run.
-- **Checking** (T3, T4, `vectors-sample`, `hold vectors check`): before
-  and after the check. A mismatch makes the check inconclusive, and an
-  inconclusive check yields no attestation (§3.6).
-- **Searching**: when the node starts, whenever the embedding side
-  fingerprints the same endpoint, and before the next search after a
-  mismatch. While the fingerprint differs, searches of that space run
-  without their vector leg and say so.
+- **Embedding** (`vectors build`, `share contribute`): a vector is
+  written only if the answer that carried it names a run validated for
+  the space. This is checked on every answer, before the write. An
+  answer from a run not yet validated is not written — a deferral — and
+  the gate runs against that run at once; if it passes, work resumes
+  under it. Nothing unvalidated is ever stored, so stored vectors carry
+  no mark of their run. A document may hold vectors from two validated
+  runs, each within tolerance, as a space holds the work of many
+  producers.
+- **Checking** (T3, T4, `vectors-sample`, `hold vectors check`): a
+  check runs under a validated run. An answer that names another makes
+  the check inconclusive, and an inconclusive check yields no
+  attestation (§3.6).
+- **Searching**: the same runs, validated the same way. In a symmetric
+  space the queries and the documents come from one run. An asymmetric
+  space's query encoder is a run of its own, validated against the
+  query reference vectors (09 §9.12). A query answered by a run not yet
+  validated is used — a query vector is never published — and the gate
+  runs against that run meanwhile. A run that FAILS has its space's
+  vector leg withheld until a validated run answers, and the search
+  says so.
 
-An endpoint that does not reproduce its own sixteen vectors bit for bit
-has no fingerprint. The gate embeds the sixteen texts twice to find
-out, and its statement then says `null`. In its place, each of the
-checks above runs the gate's quorum rule on the sixteen texts against
-their reference rows.
-That makes a change slower to be sure of, and the check is never
-skipped.
+An endpoint that states no run identity cannot be held to a validated
+run: a peer may search with it and writes nothing through it.
 
-The result is a signed **calibration statement** — "this engine and
-these weights, on this peer, are compliant with this space" — whose
-bytes are 09 §9.12's *peer's calibration statement*, a different
-object from the space author's calibration member defined in the same
-section. It names the space, the engine and the weights digest, the
-fingerprint, the seed and the sampled texts, the worst and median cosine
+**The gate also measures what the answers depend on besides the run.**
+It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
+again the way the peer contributes: its batching and its concurrency.
+A run whose answers differ between the two is validated only for
+single-text, one-at-a-time work. The batching fault that silently
+corrupted 714 books (2026-07) is a property of a run's settings, and it
+is measured, never assumed. The sixteen vectors' hash, the run's
+**fingerprint**, goes into the statement as evidence, not as a check
+the worker repeats. A peer that runs the same run on the same kind of
+device reproduces it bit for bit, which is stronger evidence than any
+tolerance and is the reproduction the Codex's engine is frozen for
+(02 §2.4).
+
+The result is a signed **calibration statement** — "this run, on this
+peer, is compliant with this space" — whose bytes are 09 §9.12's
+*peer's calibration statement*, a different object from the space
+author's calibration member defined in the same section. A peer holds
+one per run it has validated. It names the space, the run identity with
+the engine, weights and driver it stands for, the fingerprint, the
+seed and the sampled texts, the worst and median cosine
 OVER THOSE SAMPLED TEXTS — not over all 512, so that the statement
 carries the very numbers the pass decision used and anyone holding it
 can recheck the verdict from the seed alone — the endpoint's maximum

@@ -59,7 +59,7 @@ codex = {
                                      -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
     query: {encoder: null | {weights: "sha256:…", engine: {…}}, instruction: null | "<prefix>"},
     tolerance: "0.95",
-    calibration: {set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}},
+    calibration: {set: "sha256:…", vectors: "sha256:…", query_vectors: null | "sha256:…", quorum: {n: 16, min_pass: 12}},
     envelope: "sha256:…",
     epoch: "0",
     evaluation: null | {...}         -- the creator's published score, if any (notes/embedder-choice-and-supersession.md)
