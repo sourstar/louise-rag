@@ -124,10 +124,10 @@ louise ask
   serve                                                                expose search, lookup and traversal as MCP tools
 
 louise node
-  start [--acquire-only]                                               the daemon; runs until stopped
+  start [--acquire-only | --seed-only]                                 the daemon; runs until stopped
   stop                                                                 finish the current units, commit, exit
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
-  pause [<collection>] [--acquire-only]                                a runtime override: no work, or acquisition only, until resume; it survives a restart (§7.8)
+  pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
@@ -333,8 +333,27 @@ reader needs at the command line:
   cutoff, embed (under rendezvous when the node shares), index, check by
   the plan, share — calling the same functions the commands call and
   nothing else. A collection that refuses to start is skipped and says
-  why (§7.8). `--acquire-only` fetches and builds and spends nothing on
-  an encoder. `stop` ends the daemon at its units (§7.7), exit 0.
+  why (§7.8). The node is in one of four **modes**, and a mode is a
+  statement of what it does (operator, 2026-09-19):
+
+  | mode | fetches | seeds | parses | indexes |
+  |---|---|---|---|---|
+  | *paused* (`pause`) | — | — | — | — |
+  | *seeding only* (`--seed-only`) | — | yes | — | — |
+  | *download and seeding only* (`--acquire-only`) | yes | yes | — | — |
+  | *running* (`resume`) | yes | yes | yes | yes |
+
+  Parsing is reading what was fetched: the scan of the origin into the
+  state database, `records build`. Indexing is the text index, the vector
+  index, and taking in vectors others computed. In *download and seeding
+  only* what lands is scanned when the node runs again; until 2026-09-19
+  that mode also built, which is parsing under a name that says download.
+  A scan already running when the mode changes ends at its next unit
+  (§7.7). **Embedding is not a mode's business**: it happens only where
+  everything runs, and there each collection's own `embed` setting
+  (§7.8: `off`, `on-demand`, `all`) decides it. No mode changes that
+  setting and none is changed by it. `stop` ends the daemon at its units
+  (§7.7), exit 0.
   `pause` and `resume` are runtime overrides: they live in the state
   database and survive a restart until `resume` (§7.8).
 - **`dev migrate schema`.** Creating the schema of a new state database
@@ -619,12 +638,12 @@ one home.
 |---|---|---|
 | **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
-| **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
+| **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
 never survives the node applying the files — at start, at `hold config
-apply`, and when a file changes. The one exception is the node's mode —
-`pause` and `--acquire-only` — which no file sets, so there is nothing to
+apply`, and when a file changes. The one exception is the node's mode
+(§7.3) — which no file sets, so there is nothing to
 apply over it: it survives a restart until `resume`. An expiry would turn
 a node the operator holds at acquire-only back into a running one, encoder
 and all, on every restart (operator decision, 2026-09-13). What `hold config show` prints comes
