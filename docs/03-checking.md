@@ -158,7 +158,7 @@ image by the digest that is running (never a tag), the weights, the
 exact arguments and environment, the device, and the device's driver and
 compute runtime, all named by a **run identity** (09 §9.12). What keeps
 later work honest is not a test repeated during the work. It is the
-platform that serves the models. The node's model platform launches
+platform that serves the models: RAGE, the RAG Engine — the node's model container. It launches
 every engine itself, computes the run identity from what it launched
 rather than from what was declared, and states it with every answer.
 That makes it a trusted processing platform: a model reloaded with

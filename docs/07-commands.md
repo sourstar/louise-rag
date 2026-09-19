@@ -660,7 +660,7 @@ share  = true
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
 url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder, on the node's model
-                                               # platform, which states the run with every answer (03 §3.3)
+                                               # container RAGE, which states the run with every answer (03 §3.3)
 query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection

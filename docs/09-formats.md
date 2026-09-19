@@ -1414,7 +1414,7 @@ measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
-**The run identity** (03 §3.3). What the node's model platform states
+**The run identity** (03 §3.3). What RAGE, the node's model container, states
 with every answer, in the response header `Louise-Run`:
 
 ```
