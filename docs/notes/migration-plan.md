@@ -1181,7 +1181,10 @@ tests, and every pre-existing test stays green after each.
   endpoint serves a query and refuses a write; the gate is triggered
   once per (space, run), not once per answer; `Louise-Level` on each
   client's request; chat streams through the OpenAI shape.
-- **13f — The cut-over, then the retirements.** Not "one URL at a
+- **13f — The cut-over, then the retirements. THE CUT-OVER IS DONE
+  (2026-09-19 night; numbers in [`STATUS.md`](STATUS.md)); the retirements
+  wait on [`legacy-to-delete.md`](legacy-to-delete.md) §7, and chat is
+  still Ollama's.** As planned: Not "one URL at a
   time", as first written: the operator's rule (2026-09-19) is that the
   per-model apps are SHUT OFF BEFORE RAGE LOADS — together they would
   hold every model twice on the card, and RAGE takes one of their ports

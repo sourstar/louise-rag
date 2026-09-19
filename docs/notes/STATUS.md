@@ -3179,24 +3179,74 @@ may freeze it.
 - **Left:** 13d's proof with real models and 13f are ONE evening — the
   per-model apps go off before RAGE loads. Today's vectors are recorded.
 
-**Not done.** 13d's build, publish and proof on the node — it needs the
-operator's registry and is outward-facing. The image WAS trial-built
-locally, never pushed, and the build found two defects that would have
-met the operator on the cut-over evening: every llama-server died at
-exec (its runpath only works from the base's WORKDIR), and `import
-torch` died on a SYCL runtime clash with the base's older oneAPI. Both
-fixed and held by tests; the front then ran end to end inside the image
-over the real llama-swap v256 ([`rage.md`](rage.md) §17). Left for the
-node: torch seeing the card, llama-server itself, every GPU number. 13f, the cut-over and the retirements. Of step 14: NOTHING RUNS `roots`, `chunks`
-or `records-vs-origin` BY ITSELF — the gate does, those three are still
-`louise hold check <name>`, by hand or by cron. A scheduled run is a
-change to what runs when ([`scheduling.md`](scheduling.md) §6: measure
-on the node first) and `records-vs-origin` moves bytes from the origin
-(invariant 5), so it was not guessed at here. Until it exists, enforcing
-quarantine means running `hold check` on each Codex collection first —
-which the reporting deploy makes visible. `node show` (07 §7.8) is not
-built; `louise health` carries the state meanwhile. None of 13e or 14
-is deployed.
+**THE CUT-OVER IS DONE (2026-09-19 night; 13d's proof and 13f's first
+half, one evening as planned).** The operator paused the node, stopped
+the five apps (`embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`,
+`embed-gpu-medcpt`, `translate-gpu-madlad`, `louise-gpu-governor`) and
+installed `louise-rage` from the app file, in that order; the rest was
+driven from here. RAGE serves every model Louise uses except chat, on
+port 30437. Ollama still serves chat (`CHAT_API` was not switched).
+
+| model | device | ready in | host RSS | card |
+|---|---|---|---|---|
+| qwen3-embedding-4b | xpu | 35.4 s | 1,011 MiB | 8,628 MiB |
+| madlad (torch) | xpu | 20.3 s | 3,152 MiB | 6,209 MiB |
+| bge-m3 | xpu | 14.4 s | 1,112 MiB | 1,017 MiB |
+| bge-reranker | xpu | 8.3 s | 1,143 MiB | 1,019 MiB |
+| medcpt-article | xpu | 6.3 s, on demand | 549 MiB | 292 MiB |
+| medcpt-query | xpu | 6.3 s | 543 MiB | 292 MiB |
+| medcpt-rerank (OpenVINO) | xpu | 4.3 s | 507 MiB | 288 MiB |
+
+Seven models at once: 8.0 GiB of host RSS by process, 5.6 GiB by the
+container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
+32.6. MADLAD's 20 s is against the 300 s its own app took.
+- **RAGE's vectors against the recording of the old endpoints**, 79
+  texts a side, worst cosine: gutenberg 0.999999, pubmed documents
+  1.000000, pubmed queries 0.999981, wikipedia 0.999998; median 1.000000
+  everywhere. No fingerprint is bit-equal — expected for gutenberg
+  (b10603 → b10630), and for the others the engine's settings differ —
+  so the cosines judge, and the gate tests.
+- **The gate through RAGE passed for all three**, the same whole-set
+  figures as through the old apps (worst 0.9896 / 0.9990 / 0.9998).
+  Throughput read 142,707 / 72,900 / 3,373 tokens/s against 34,784 /
+  14,662 / 2,208 — but the node was PAUSED for these and running for
+  those, so this is not yet a comparison of RAGE with the apps.
+- **The query path, live**: a search on each collection reranked by its
+  own reranker; an Italian question over gutenberg translated by MADLAD
+  into every held language; a streamed answer over pubmed ran to
+  `[DONE]`, 74 chunks, no error chunk.
+- **The worker resumed and works through RAGE**, no error in its log: in
+  its first two minutes RAGE served 428 requests to qwen3, 125 to bge-m3
+  and 4 to medcpt-article. The GPU clock is RAGE's now (`/louise/gpu`:
+  running, rest 400 MHz, max 2,800, not pinned).
+- **What was switched**: the `[encoder]` and `[reranker]` URLs of the
+  three collection files, to `…:30437/upstream/<model>`; `TRANSLATE_URL`
+  and a new `RAGE_URL` on web and worker, through the TrueNAS client
+  library so the app's configuration — which carries the admin token —
+  never reached a command line. **The way back**:
+  `config/backup-pre-rage-2026-09-19/` holds the three files and the
+  app's configuration (mode 600); the five apps are stopped, not deleted.
+- **Differs from the app file's own note**: RAGE's `secrets/admin.token`
+  is a token generated on the node, not Louise's. RAGE reads it once at
+  start, and nothing in Louise calls RAGE's operator routes yet, so it
+  was left; making them the same is a file copy and a restart of RAGE.
+- **Not done**: chat stays on Ollama until `CHAT_API=openai` and
+  `CHAT_URL=…/upstream/chat` are set — the operator's switch, and it puts
+  another 5 GB on the card. The retirements are
+  [`legacy-to-delete.md`](legacy-to-delete.md) §7, by its rule.
+
+**Not done, as of the cut-over.** Chat on RAGE, and the retirements of
+the five apps, the governor's code and Ollama (above). Of step 14:
+NOTHING RUNS `roots`, `chunks` or `records-vs-origin` BY ITSELF — the
+gate does, those three are still `louise hold check <name>`, by hand or
+by cron — and `records-vs-origin` has no fetch step, and gutenberg and
+wikipedia have no record shards to check. A scheduled, budget-drawing
+run is a change to what runs when ([`scheduling.md`](scheduling.md) §6:
+measure on the node first; invariant 5), so it was not guessed at here.
+Until it exists quarantine stays on `report`. `node show` (07 §7.8) is
+not built; `louise health` carries the state meanwhile. What the local
+trial build of the image found and fixed before any of this reached the
+node is in [`rage.md`](rage.md) §17.
 
 ### What is waiting on the operator
 

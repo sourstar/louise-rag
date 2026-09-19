@@ -292,3 +292,37 @@ stated. It sat outside the ferry list so the migration does not need it,
 and its 48 GB was a text index over a pack that survives on
 the archive pool’s `louise-packs/gutenberg-2026-06`. Recorded here because the
 rule arrived afterwards and the deletion should not be invisible.
+
+## 7. The per-model apps and the governor — STOPPED 2026-09-19, delete nothing yet
+
+RAGE (`louise-rage`, port 30437) replaced them in one cut-over
+([`STATUS.md`](STATUS.md), "THE CUT-OVER IS DONE"). They are **stopped,
+not deleted**, and they are the way back: start them, restore
+`config/backup-pre-rage-2026-09-19/`, stop RAGE.
+
+| app | what it served | its models stay, RAGE reads them |
+|---|---|---|
+| `embed-gpu-qwen3-4b` | gutenberg's encoder, :30437 | `/mnt/ssd5/apps/llama-embed` |
+| `embed-gpu-bge-m3` | wikipedia's encoder :30439, the bge reranker :30447 | `/mnt/ssd5/apps/bge-m3-models` |
+| `embed-gpu-medcpt` | MedCPT article :30443, query :30444, cross-encoder :30445 | `/mnt/ssd5/apps/medcpt-models` |
+| `translate-gpu-madlad` | MADLAD, :30448 | `/mnt/ssd5/apps/madlad-models` |
+| `louise-gpu-governor` | the GPU clock | — (RAGE holds the clock) |
+
+**THE MODEL FOLDERS ARE NEVER DELETABLE ON THESE GROUNDS**: RAGE binds
+them read-only. Only the app DEFINITIONS and their images go.
+
+Conditions, all of them, before any is deleted (operator's rule: complete,
+confirm, only then delete):
+1. RAGE has served the node through at least one full day of ordinary
+   work — embedding, archive proofs, searches, translations — with no
+   model refused for memory and none restarted by the kernel.
+2. The three gates still pass through RAGE after that day.
+3. The operator confirms.
+4. Then, and separately: `ollama`, once chat has moved
+   (`CHAT_API=openai`, `CHAT_URL=…/upstream/chat`) and answered for a day;
+   and the CPU apps (`embed-cpu-*`), which were already stopped before the
+   cut-over and which nothing references.
+
+Not part of this: `embed-gpu-qwen3-8b` (stopped before, referenced by no
+collection) and the raw container `dnabert2-xpu` — DNA is frozen
+(operator, 2026-09-19), so it is neither migrated nor deleted.
