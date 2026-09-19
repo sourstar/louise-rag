@@ -1225,6 +1225,12 @@ because nothing lands without them; a peer with no key is told its checks
 leave no record (no unsigned substitute was invented); `--origin-unchecked`
 also refuses when the origin check was never TRIED, since nothing then
 says it cannot run.
+*An amendment to name on `main`, not yet made:* 03 §3.3 has a failed run
+withhold the vector leg "and the search says so", and 05 §5.7's response
+object has no place to say it — `withheld` names copies left out WHOLE.
+Today's response carries `legs_withheld: [{collection, leg: "vector",
+reason}]` beside `withheld`; 05 should adopt that, or name the leg inside a
+`withheld` entry, before step 11 builds `louise_search`'s object.
 
 *03 §3.3, §3.4, §3.6; 05 §5.3; 07 §7.3, §7.8; 09 §9.3 (98ee4dc).
 Reasoning: [`rage-review.md`](rage-review.md) §18. Wraps
