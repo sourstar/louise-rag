@@ -229,6 +229,13 @@ def governor() -> dict:
     GOVERNOR_STALE_S). Absent is allowed — chat is slower on an idle card,
     and the tab says so — so this never raises."""
     from . import config, db, node_state
+    if config.RAGE_URL:
+        # THE CLOCK IS RAGE'S once the node's models are (docs/notes/rage.md:
+        # the governor moved into the model container, and its own app is
+        # retired). The heartbeat below is then nobody's: after the cut-over
+        # of 2026-09-19 this panel read "GPU governor not running" while
+        # RAGE was holding the clock. Asked over HTTP, bounded like the probe.
+        return _rage_clock(config.RAGE_URL)
     try:
         if not node_state.path().is_file():
             return {"state": "absent"}
@@ -242,3 +249,21 @@ def governor() -> dict:
         return {"state": "error", "error": payload["error"]}
     return {"state": "running", "pinned": bool(payload.get("pinned")),
             "rest_mhz": payload.get("rest_mhz"), "max_mhz": payload.get("max_mhz")}
+
+
+def _rage_clock(url: str) -> dict:
+    """RAGE's `GET /louise/gpu`, in the shape the governor's heartbeat had:
+    `running` (with whether the clock is pinned now), `error` (it runs and
+    cannot set the clock), or `absent` (RAGE did not answer, or holds no
+    clock — `RAGE_FREQ_DIR` unset). Never raises: a bad reading is the
+    panel's state, never the page's."""
+    try:
+        clock = (_get_json(url.rstrip("/") + "/louise/gpu") or {}).get("clock") or {}
+    except Exception:   # noqa: BLE001
+        return {"state": "absent"}
+    if clock.get("error"):
+        return {"state": "error", "error": str(clock["error"])}
+    if not clock.get("running"):
+        return {"state": "absent"}
+    return {"state": "running", "pinned": bool(clock.get("pinned")),
+            "rest_mhz": clock.get("rest_mhz"), "max_mhz": clock.get("max_mhz")}

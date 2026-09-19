@@ -131,3 +131,46 @@ def test_the_system_tab_says_when_the_governor_is_absent(tmp_path, isolated_conf
     body = web.TEMPLATES.get_template("_fragments/gpu.html").render(
         state="unset", url="", governor={"state": "error", "error": "cannot write min_freq: x"})
     assert "cannot set the clock" in body and "cannot write min_freq" in body
+
+
+# ---- after the cut-over the clock is RAGE's -------------------------------------------
+
+def test_with_rage_the_system_tab_asks_rage_for_the_clock(monkeypatch):
+    """Found the evening RAGE took the models over (2026-09-19): the governor's
+    own app was stopped, its heartbeat went stale, and this panel read "GPU
+    governor not running" while RAGE was holding the clock."""
+    from app import config, gpu
+    monkeypatch.setattr(config, "RAGE_URL", "http://rage:30437")
+    asked = []
+
+    def answer(url):
+        asked.append(url)
+        return {"clock": {"running": True, "waiting": 0, "pinned": True,
+                          "rest_mhz": 400, "max_mhz": 2800, "error": None}}
+
+    monkeypatch.setattr(gpu, "_get_json", answer)
+    assert gpu.governor() == {"state": "running", "pinned": True,
+                              "rest_mhz": 400, "max_mhz": 2800}
+    assert asked == ["http://rage:30437/louise/gpu"]
+
+
+def test_a_rage_that_cannot_set_the_clock_or_holds_none_says_so(monkeypatch):
+    from app import config, gpu
+    monkeypatch.setattr(config, "RAGE_URL", "http://rage:30437/")
+    monkeypatch.setattr(gpu, "_get_json", lambda url: {"clock": {
+        "running": True, "pinned": False, "error": "PermissionError: /gpufreq/min_freq"}})
+    assert gpu.governor() == {"state": "error", "error": "PermissionError: /gpufreq/min_freq"}
+
+    monkeypatch.setattr(gpu, "_get_json", lambda url: {"clock": {"running": False}})
+    assert gpu.governor() == {"state": "absent"}, "RAGE_FREQ_DIR unset: no clock is held"
+
+
+def test_a_rage_that_does_not_answer_never_breaks_the_page(monkeypatch):
+    from app import config, gpu
+
+    def gone(url):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(config, "RAGE_URL", "http://rage:30437")
+    monkeypatch.setattr(gpu, "_get_json", gone)
+    assert gpu.governor() == {"state": "absent"}
