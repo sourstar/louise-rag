@@ -1640,12 +1640,22 @@ INDEX_MAINTAINER_INTERVAL_S = 60.0
 INDEX_MAINTAINER_NICE = 10
 
 
-def _lower_own_priority(increment: int) -> int | None:
-    """Raise the CALLING thread's nice value by `increment`; the new value,
-    or None where the platform does not allow it (then it runs unniced)."""
+def _lower_own_priority(offset: int) -> int | None:
+    """Put the CALLING thread at the process's base nice + `offset`, never
+    lower than that; the new value, or None where the platform does not
+    allow it (then it runs unniced).
+
+    A TARGET, not a step. Nice is inherited by the threads a thread starts,
+    so a relative step compounds: live 2026-09-20, the fetch started from a
+    discovery started from a (lowered) pipeline thread sat at nice 15 —
+    below the parse pool, which scheduling.md §10 A1 forbids ("fetching:
+    never starve it of CPU"). The base is the main thread's (its tid is the
+    pid)."""
     try:
         tid = threading.get_native_id()
-        os.setpriority(os.PRIO_PROCESS, tid, os.getpriority(os.PRIO_PROCESS, tid) + increment)
+        target = min(19, os.getpriority(os.PRIO_PROCESS, os.getpid()) + offset)
+        if os.getpriority(os.PRIO_PROCESS, tid) < target:
+            os.setpriority(os.PRIO_PROCESS, tid, target)
         return os.getpriority(os.PRIO_PROCESS, tid)
     except (AttributeError, OSError):
         return None

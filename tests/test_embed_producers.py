@@ -185,3 +185,48 @@ def test_indexing_and_fetching_yield_the_cpu_and_the_feeders_do_not(monkeypatch)
     assert seen["background"] == min(19, main_before + config.BACKGROUND_NICE)
     assert seen["producer"] == main_before
     assert os.getpriority(os.PRIO_PROCESS, threading.get_native_id()) == main_before
+
+
+@linux_only
+def test_a_background_thread_started_by_one_does_not_compound(monkeypatch):
+    """Live 2026-09-20, the first deploy: nice is INHERITED, and the fetch
+    started from a discovery started from a pipeline thread lowered itself
+    by another step each time — acquisition at 15, below the parse pool,
+    which §10 A1 forbids. The level is a target over the process's base."""
+    monkeypatch.setattr(config, "WORKER_PIPELINE_THREADS", 1)
+    monkeypatch.setattr(config, "WORKER_EMBED_PRODUCERS", 1)
+    base = os.getpriority(os.PRIO_PROCESS, os.getpid())
+    seen = {}
+
+    def inner():
+        worker._background_priority()
+        seen["inner"] = os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
+
+    def outer():
+        worker._background_priority()
+        t = threading.Thread(target=inner)
+        t.start()
+        t.join(5)
+    t = threading.Thread(target=outer)
+    t.start()
+    t.join(5)
+    assert seen["inner"] == min(19, base + config.BACKGROUND_NICE)
+
+
+@linux_only
+def test_a_parse_child_sits_at_the_workers_base_plus_ten_whoever_started_it():
+    """A child process inherits its starter's nice; started from a lowered
+    pipeline thread, a relative nice(10) put it at 15, below the index
+    maintainer — whose rule is that it yields to parsing."""
+    from app import parallel
+    base = os.getpriority(os.PRIO_PROCESS, os.getpid())
+    seen = {}
+
+    def starter():
+        worker._lower_own_priority(config.BACKGROUND_NICE)   # a pipeline thread
+        parallel._child_init({}, base)                        # what the child runs first
+        seen["child"] = os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
+    t = threading.Thread(target=starter)
+    t.start()
+    t.join(5)
+    assert seen["child"] == min(19, base + 10)

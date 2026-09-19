@@ -47,13 +47,32 @@ _failures = 0
 _disabled = False
 
 
-def _child_init(knobs: dict) -> None:
+def _child_init(knobs: dict, base: int | None = None) -> None:
+    """A child sits at the WORKER's base nice + 10, whichever thread started
+    the pool. A child inherits its starter's nice, and since the pipeline
+    threads lower themselves (docs/notes/scheduling.md §12) a relative
+    `nice(10)` landed at 15 (live, 2026-09-20) — below the index
+    maintainer, whose rule is that it yields to parsing, not the reverse."""
     try:
-        os.nice(10)
+        if base is None:
+            os.nice(10)
+        else:
+            target = min(19, base + 10)
+            if os.getpriority(os.PRIO_PROCESS, 0) < target:
+                os.setpriority(os.PRIO_PROCESS, 0, target)
     except (AttributeError, OSError):
         pass
     for k, v in knobs.items():
         setattr(config, k, v)
+
+
+def _base_nice() -> int | None:
+    """The worker's base: its main thread's nice (the main thread's tid is
+    the pid)."""
+    try:
+        return os.getpriority(os.PRIO_PROCESS, os.getpid())
+    except (AttributeError, OSError):
+        return None
 
 
 def _knobs() -> dict:
@@ -76,7 +95,7 @@ def pool() -> ProcessPoolExecutor | None:
                 _pool.shutdown(wait=False, cancel_futures=True)
             _pool = ProcessPoolExecutor(
                 max_workers=n, mp_context=multiprocessing.get_context("spawn"),
-                initializer=_child_init, initargs=(_knobs(),),
+                initializer=_child_init, initargs=(_knobs(), _base_nice()),
                 # bounded memory: a child's plugin caches grow with what it
                 # parsed; it is replaced after this many sub-batches
                 max_tasks_per_child=max(1, int(config.PARSE_TASKS_PER_CHILD)))
