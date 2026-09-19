@@ -27,9 +27,12 @@ device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }
 capacity_mib = { xpu = 32600 }            # the host's is the container's mem_limit, read
 reserve_mib  = { xpu = 2048, cpu = 2048 } # never given to a model
 # Loaded at start, one after the other, through admission like any load. The
-# query encoders and the rerankers: a person waits on them, and idle is no
-# reason to unload (embedder-pool-spec.md §3).
-preload = ["bge-m3", "medcpt-query", "qwen3-embedding-4b", "bge-reranker", "medcpt-rerank"]
+# query encoders, the rerankers, the translator and the chat model: a person
+# waits on them, and idle is no reason to unload (embedder-pool-spec.md §3).
+# `chat` and `madlad` since the cut-over (2026-09-19): chat moved off Ollama,
+# and MADLAD's first translation should not be the one that loads it.
+preload = ["bge-m3", "medcpt-query", "qwen3-embedding-4b", "bge-reranker", "medcpt-rerank",
+           "madlad", "chat"]
 
 # ---- llama.cpp ---------------------------------------------------------------
 # One complete command per device. `${WEIGHTS}` and `${PORT}` are the only
@@ -61,7 +64,10 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling",
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf"
 device  = "xpu"
-memory  = { xpu = 5200, cpu = 6000 }
+# card: OBSERVED 8,628 MiB under RAGE (2026-09-19) against the 5,200 first
+# declared from its app's figure — admission counts what is declared, so an
+# under-declared model is how a card gets over-committed
+memory  = { xpu = 9000, cpu = 6000 }
 host    = { xpu = 3100 }                  # peak 3,047
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "last", "-ngl", "999",
            "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
@@ -125,7 +131,7 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "0",
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/ollama-blobs/sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
 device  = "xpu"
-memory  = { xpu = 7000, cpu = 9000 }
+memory  = { xpu = 7600, cpu = 9000 }     # observed 7,250 MiB under RAGE (2026-09-19)
 host    = { xpu = 5700 }                  # Ollama's peak with it loaded: 5,648
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--jinja", "-ngl", "999", "-c", "16384", "-np", "1",
            "-fa", "on", "-t", "6", "--top-k", "20", "--top-p", "0.95", "--repeat-penalty", "1.0",

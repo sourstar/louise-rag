@@ -46,9 +46,11 @@
 #   2. `node pause` on Louise. An encoder that is away is a deferral, never an
 #      error on a document, so nothing is lost while the models change hands.
 #   3. Stop the apps: embed-gpu-qwen3-4b, embed-gpu-bge-m3, embed-gpu-medcpt,
-#      translate-gpu-madlad, louise-gpu-governor. Stop `ollama` too ONLY once
-#      app/llm.py speaks /v1/chat/completions (step 13e); until then Ollama
-#      keeps serving chat on :30068 and `chat` stays out of `preload`.
+#      translate-gpu-madlad, louise-gpu-governor. `ollama` is NOT one of them:
+#      chat moves by itself, afterwards, by setting CHAT_API=openai and
+#      CHAT_URL=.../upstream/chat on louise-rag (done 2026-09-19: 13 tokens/s
+#      against Ollama's 8-9 on the same card). Ollama is then idle and goes by
+#      legacy-to-delete.md's rule, like the rest.
 #   4. Install this app. `GET http://<nas>:30437/louise/models` shows each
 #      model loading, then its run.
 #   5. Point Louise at it, the MODEL in each URL and never a device (07 §7.8):

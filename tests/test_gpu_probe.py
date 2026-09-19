@@ -400,3 +400,22 @@ def test_the_service_stops_cleanly_on_sigterm():
 def test_the_region_struct_matches_the_uapi_layout():
     raw = struct.pack("<HHIQQQQ", 1, 0, 65536, 10, 4, 10, 2) + bytes(48)
     assert gp._XE_REGION.unpack(raw) == (1, 0, 65536, 10, 4, 10, 2)
+
+
+def test_a_python_server_that_names_its_weights_is_labelled_by_them(tmp_path):
+    """After RAGE took the models over, the panel showed two rows called
+    "servers.launch" — 6.2 GB and 432 MB of the card — because RAGE starts its
+    torch and OpenVINO servers through one launcher and a python process was
+    labelled by its module (operator, 2026-09-19: "check what models are
+    servers.launch")."""
+    from app import gpu_probe
+    madlad = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights",
+              "/models/madlad/madlad400-3b-mt-bf16", "--device", "xpu", "--port", "10008"]
+    rerank = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt",
+              "--weights=/models/medcpt/medcpt-cross-ov", "--device", "xpu"]
+    assert gpu_probe.label(madlad, tmp_path) == "madlad400-3b-mt-bf16"
+    assert gpu_probe.label(rerank, tmp_path) == "medcpt-cross-ov"
+    # a python process that names no weights keeps the label it had
+    assert gpu_probe.label(["python3", "-m", "app.worker"], tmp_path) == "app.worker"
+    # and `-m` is never read as a model for python: it is the module
+    assert gpu_probe.label(["python", "-m", "uvicorn", "app.api:app"], tmp_path) == "uvicorn"

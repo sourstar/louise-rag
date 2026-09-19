@@ -320,7 +320,7 @@ def test_the_search_says_that_the_vector_leg_was_withheld(node, rage, tmp_path):
     result = retrieval.search(db.connect(collection), "a lighthouse", mode="hybrid",
                               translate=False, collection=collection)
     assert result["legs_withheld"] == [{
-        "collection": "gutenberg", "leg": "vector",
+        "collection": "gutenberg", "collection_id": codex.collection_id, "leg": "vector",
         "reason": copy_state.vector_leg_withheld(collection)}]
     assert rage.posts == asked, "the encoder was asked for a leg that is withheld"
 

@@ -280,6 +280,18 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             "timings": timings, "scope": scope, "vector_leg": vector_leg}
 
 
+def _leg_withheld(collection, reason: str) -> dict:
+    """05 §5.7's `legs_withheld` entry: the copy is SEARCHED — its text leg
+    goes on — and one leg of it is not, with the reason (03 §3.3: a run that
+    failed the gate, or an answer from a run not yet tested). Beside
+    `withheld`, which names copies left out whole."""
+    entry = {"collection": collection.name, "leg": "vector", "reason": reason}
+    codex = getattr(collection, "codex", None)
+    if codex is not None:
+        entry["collection_id"] = codex.collection_id
+    return entry
+
+
 def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
     """Attaches title/authors/lang to each hit and, in 'lazy' embed_mode,
     queues the hit documents not yet embedded. Shared by search() and
@@ -399,8 +411,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
               "facts": [asdict(f) for f in facts],
               "timings": timings, "reranked": reranked}
     if partial.get("vector_leg"):
-        result["legs_withheld"] = [{"collection": collection.name, "leg": "vector",
-                                    "reason": partial["vector_leg"]}]
+        result["legs_withheld"] = [_leg_withheld(collection, partial["vector_leg"])]
     return result
 
 
@@ -501,8 +512,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         translations.update(partial["translations"])
         timings_per_collection[collection.name] = partial["timings"]
         if partial.get("vector_leg"):
-            legs_withheld.append({"collection": collection.name, "leg": "vector",
-                                  "reason": partial["vector_leg"]})
+            legs_withheld.append(_leg_withheld(collection, partial["vector_leg"]))
         catalog.extend(partial["catalog"])
     collection_by_name = {c.name: c for c in collections}
 
