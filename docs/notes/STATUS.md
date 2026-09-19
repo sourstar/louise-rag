@@ -3108,11 +3108,14 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
   `in-use` for every collection meant to be.
 
 **Not done.** 13d's build, publish and proof on the node — it needs the
-operator's registry and is outward-facing; torch's XPU wheels on the
-llama.cpp base are unverified until then and the Dockerfile says so.
-(The llama-swap archive, its checksum and the front's assumptions about
-llama-swap were since proved locally with the real v256 binary:
-[`rage.md`](rage.md) §17.) 13f, the cut-over and the retirements. Of step 14: NOTHING RUNS `roots`, `chunks`
+operator's registry and is outward-facing. The image WAS trial-built
+locally, never pushed, and the build found two defects that would have
+met the operator on the cut-over evening: every llama-server died at
+exec (its runpath only works from the base's WORKDIR), and `import
+torch` died on a SYCL runtime clash with the base's older oneAPI. Both
+fixed and held by tests; the front then ran end to end inside the image
+over the real llama-swap v256 ([`rage.md`](rage.md) §17). Left for the
+node: torch seeing the card, llama-server itself, every GPU number. 13f, the cut-over and the retirements. Of step 14: NOTHING RUNS `roots`, `chunks`
 or `records-vs-origin` BY ITSELF — the gate does, those three are still
 `louise hold check <name>`, by hand or by cron. A scheduled run is a
 change to what runs when ([`scheduling.md`](scheduling.md) §6: measure

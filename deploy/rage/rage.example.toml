@@ -147,7 +147,10 @@ weights = "/models/madlad/madlad400-3b-mt-bf16"
 device  = "xpu"
 memory  = { xpu = 8200, cpu = 12000 }     # 8 GB of the card at peak (its app's note)
 host    = { xpu = 8600 }                  # peak 8,563, at load; 3,307 at rest
-env     = { BATCH = "32", MAX_SEG_TOKENS = "96" }
+# LD_LIBRARY_PATH: torch's own SYCL runtime before the base image's older
+# one, or `import torch` dies (deploy/rage/Dockerfile). Declared, so it is in
+# the run identity; llama-server entries must NOT carry it.
+env     = { BATCH = "32", MAX_SEG_TOKENS = "96", LD_LIBRARY_PATH = "/usr/local/lib" }
 cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
@@ -175,6 +178,7 @@ weights = "/models/dnabert2/DNABERT-2-117M"
 device  = "xpu"
 memory  = { xpu = 1200, cpu = 1800 }
 host    = { xpu = 1500 }                  # unmeasured: its app is not running
+env     = { LD_LIBRARY_PATH = "/usr/local/lib" }   # torch: see madlad
 cmd.xpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",

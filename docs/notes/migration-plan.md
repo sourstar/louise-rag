@@ -1122,15 +1122,17 @@ tests, and every pre-existing test stays green after each.
   without the token, the token read from its file; the clock held while
   a `chat` request is in flight and released after, restored on
   SIGTERM.
-- **13d — The image, and the first proof. FILES WRITTEN 2026-09-19, NOT
-  BUILT.** `deploy/rage/Dockerfile`, `deploy/rage/rage.example.toml` and
+- **13d — The image, and the first proof. TRIAL-BUILT LOCALLY 2026-09-19
+  (two defects found and fixed — [`rage.md`](rage.md) §17); NOT
+  PUBLISHED, NOT ON THE NODE.** `deploy/rage/Dockerfile`, `deploy/rage/rage.example.toml` and
   `deploy/truenas-rage.yaml` exist and `tests/rage/test_deploy_files.py`
   holds them to the code: the example loads, every program it starts is
   in the image, the image carries exactly what the front imports, the
   models are bound read-only, the token is a path. Nothing has been
   built, published or run: that needs the node, a registry and the
-  operator's values. Unverified until then, and marked in the
-  Dockerfile: torch's XPU wheels on the llama.cpp base. The llama-swap
+  operator's values. Only the node can settle what is left: torch seeing
+  the card, llama-server itself (it aborts without an Intel GPU), every
+  number of §14. The llama-swap
   archive's name and checksum ARE verified, and the real v256 binary was
   run locally on the generated yaml with stub children — no swapping,
   per-model unload, the run identity matched through a real `/proc`

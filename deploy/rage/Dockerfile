@@ -6,9 +6,13 @@
 #     -t <registry>/rage:<build> .
 #   docker push <registry>/rage:<build>      # then deploy BY DIGEST, never by this tag
 #
-# NOT YET BUILT. Migration step 13d builds it on the node, publishes it by
-# digest and runs docs/notes/rage.md §14. What that proof exists to settle is
-# marked PROOF below; nothing here is claimed to work until it has.
+# TRIAL-BUILT LOCALLY 2026-09-19, never pushed: all steps build, and the front
+# ran end to end inside the image over the real llama-swap with a stub model
+# (docs/notes/rage.md §17). On that day `server-intel-b10630` was
+#   ghcr.io/ggml-org/llama.cpp@sha256:37dd060b3616c35a7f1b9ff8684a3ebcb59b57cf5e40b0d3f578d209279f3fc7
+# NOT YET PUBLISHED OR RUN ON THE NODE. Migration step 13d builds it there,
+# publishes it by digest and runs docs/notes/rage.md §14. What only that can
+# settle is marked PROOF below.
 #
 # THE IMAGE IS PUBLISHED, by digest, where a stranger can pull it. Every
 # Codex created on this node freezes this image as its engine (02 §2.4: "an
@@ -18,10 +22,17 @@
 # THE BASE is the Intel llama.cpp image the node's GPU encoders already run
 # from: Ubuntu 24.04 with the Level Zero / OpenCL runtime that drives the
 # Arc Pro B70, and /app/llama-server. deploy/medcpt-rerank already runs
-# OpenVINO on this base, on this card. PROOF: torch's XPU wheels, which
-# bundle their own SYCL runtime, against this base's Level Zero loader. The
-# children are separate processes, so their oneAPI libraries never share an
-# address space; the loader and the driver are what they share.
+# OpenVINO on this base, on this card. torch's XPU wheels bundle their own
+# SYCL runtime (libsycl.so.9 and its libur_loader, under /usr/local/lib),
+# and the base's LD_LIBRARY_PATH puts oneAPI 2025.3's OLDER libur_loader in
+# front of it: `import torch` died on "undefined symbol: urDeviceWaitExp"
+# (found by building this image, 2026-09-19). So a torch model DECLARES
+# `LD_LIBRARY_PATH = "/usr/local/lib"` in rage.toml — for its own process,
+# inside its run identity, and nowhere else: llama-server keeps the base's
+# path. Built and imported: torch 2.14.0+xpu. PROOF, still: that torch then
+# sees the card through this base's Level Zero loader. The children are
+# separate processes, so their oneAPI libraries never share an address
+# space; the loader and the driver are what they share.
 #
 # Pinned by DIGEST at build: a moving `:server-intel` tag once cost a
 # multi-day vector-corruption mystery (DEPLOYMENT.md).
@@ -84,6 +95,18 @@ RUN python3 -m venv /opt/venv-medcpt \
 # The servers: ONE source each, whether an app of its own or under RAGE.
 # A .pth in each venv, not PYTHONPATH: an environment variable would enter
 # every engine's declared `env`, and so every run identity, for no reason.
+# llama-server's libraries, FOUND FROM ANYWHERE. The base image's binary has
+# the runpath `/app/build/bin:` — a directory that does not exist, and an
+# EMPTY entry, which the loader reads as "the current directory". So it loads
+# libllama-server-impl.so only when started FROM /app, which is the base's
+# WORKDIR. llama-swap starts its children from RAGE's, and every llama-server
+# died at exec: "libllama-server-impl.so: cannot open shared object file"
+# (found by building and running this image, 2026-09-19). Registered with the
+# loader rather than put on LD_LIBRARY_PATH: that variable is the base's, and
+# the engine that produced every vector on the node runs under it unchanged.
+RUN echo /app > /etc/ld.so.conf.d/llama-server.conf && ldconfig \
+ && cd / && ldd /app/llama-server | grep -q "libllama-server-impl.so => /app/"
+
 COPY deploy/rage/servers/__init__.py deploy/rage/servers/launch.py /opt/rage/servers/
 COPY deploy/dnabert2/server.py          /opt/rage/servers/dnabert2.py
 COPY deploy/madlad-translate/server.py  /opt/rage/servers/madlad.py

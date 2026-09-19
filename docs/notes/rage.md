@@ -502,11 +502,43 @@ handler, not a mention).
 
 **Not done, and why.**
 - **13d, the image and the proof (§14)** — needs the node, the operator's
-  values (§16) and a registry: an outward-facing build and publish. ONE
-  thing in the Dockerfile is unverified until then and marked there:
-  torch's XPU wheels on the llama.cpp base. Whether llama-swap restarts
-  running children when its yaml changes is also unknown; the front
-  copes either way (§8, checked twice), but the proof should time it.
+  values (§16) and a registry: an outward-facing build and publish. What
+  only the node can settle: that torch sees the card through this base's
+  Level Zero loader; every GPU number of §14; llama-server itself, which
+  aborts on a host with no Intel GPU even for a CPU placement ("can not
+  find preferred GPU platform": the SYCL backend initialises first).
+  Whether llama-swap restarts running children when its yaml changes is
+  also unknown; the front copes either way (§8, checked twice), but the
+  proof should time it.
+- **THE IMAGE WAS TRIAL-BUILT LOCALLY (2026-09-19), never pushed, and the
+  build found two defects that would have met the operator on the
+  cut-over evening.** All twenty steps build from the pinned base
+  (`server-intel-b10630` = `sha256:37dd060b…f3fc7`, 3.5 GB compressed; the
+  image is 24.8 GB). (1) EVERY llama-server died at exec:
+  "libllama-server-impl.so: cannot open shared object file". Its runpath
+  is `/app/build/bin:` — a directory that does not exist, and an empty
+  entry, which the loader reads as the current directory — so it loads
+  only from the base's WORKDIR, and llama-swap starts children from
+  RAGE's. Fixed by registering `/app` with the loader (`ldconfig`), and
+  the build now asserts it; never by touching `LD_LIBRARY_PATH`, which is
+  the environment every vector on the node was produced under. (2)
+  `import torch` died: "undefined symbol: urDeviceWaitExp". torch's XPU
+  wheels bring their own SYCL runtime under `/usr/local/lib`, and the
+  base's `LD_LIBRARY_PATH` puts oneAPI 2025.3's older `libur_loader` in
+  front of it. Fixed where it belongs: a torch model DECLARES
+  `LD_LIBRARY_PATH = "/usr/local/lib"` in `rage.toml`, so it is in that
+  model's run identity and in no other process; `tests/rage/
+  test_deploy_files.py` holds both. After the fixes, in the image: torch
+  2.14.0+xpu with transformers 4.46.3 (madlad) and 4.49.0 (dnabert2),
+  openvino 2026.3.1, the three server modules import, the runtime
+  versions file reads `libze-intel-gpu1 26.18.38308.1-0`, `libze1 1.27.0`.
+- **The front, end to end, inside that image**: `python -m app.rage` over
+  the real llama-swap with a stub model — the first request loads the
+  child (0.40 s) and the answer carries `Louise-Run`; `GET
+  /louise/runs/<id>` returns `{driver, engine, weights}` and its canonical
+  JSON hashes to the id, which is what Louise's client verifies; a second
+  answer names the same run; an admin route without a token is 401;
+  SIGTERM ends llama-swap and exits 0.
 - **Proved locally meanwhile (2026-09-19), with the real llama-swap v256
   binary and stub children, in the dev container.** The release archive
   is named as the Dockerfile has it, holds `llama-swap` at its root, and
@@ -521,8 +553,7 @@ handler, not a mention).
   identity holds against a real `/proc`: `runs.match` finds exactly the
   child llama-swap started, by its argument vector, with its port; the
   unloaded model matches nothing; `oom_score_adj` is writable for it.
-  llama-swap adds no header of its own to a proxied answer. Not proved
-  by this: anything with a GPU, the torch servers, the image itself.
+  llama-swap adds no header of its own to a proxied answer.
 - **The sampler** (`gpu_samples`) stays with the governor app until 13f
   retires it; the front holds the clock and reports it, no more.
 - **13a and 13e — BUILT since (2026-09-19)**: Codex v3, and Louise's
