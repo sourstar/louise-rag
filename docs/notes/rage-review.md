@@ -240,6 +240,13 @@ amendments, for `main`.*
 
 ## 6. The shape: one policy, in the front (B3, §1)
 
+*Corrected while building (2026-09-19):* "no groups" below is wrong. A
+model in no group falls into llama-swap's default — one model at a time
+across the instance, as its own example config says — so the policy-free
+configuration is ONE group holding every entry, `swap: false`,
+`exclusive: false` (`app/rage/swapyaml.py`). The rest of the paragraph
+stands.
+
 llama-swap stays, as the process runner it is good at — start, health,
 stop, per-model proxy, log buffer, UI — and holds **no policy**: every
 model is its own entry, `swap: false`, `exclusive: false`, `ttl: 0`, no

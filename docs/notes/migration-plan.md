@@ -1053,20 +1053,34 @@ tests, and every pre-existing test stays green after each.
   `collection_id` and `space_id` pinned; a v2 Codex still loads and its
   `space_id` does not move; one engine → one `engine_id` across key
   order; the manifest digest golden, a symlink refused.
-- **13b — The three servers.** `--weights`, `--device`, `--host`,
-  `--port` argv and a `build` string on `deploy/dnabert2`,
-  `deploy/madlad-translate`, `deploy/medcpt-rerank`; they bind
-  `127.0.0.1` when told to and never fetch (`HF_HUB_OFFLINE=1`, weights
-  by path). The env variables stay as defaults so today's apps keep
-  running until 13f.
-  *Tests*: argv parsing; a missing weights path is an error naming it.
-- **13c — `app/rage/`, the front.** `rage.toml` → llama-swap yaml;
+- **13b — The three servers. DONE 2026-09-19, as a launcher.** Not argv
+  in each server, as first scoped: the servers keep reading their
+  environment, which is right for an app of their own, and
+  `deploy/rage/servers/launch.py` takes `--weights --device --host
+  --port`, sets the variables each server reads, switches the Hugging
+  Face hub off, and runs the server IN THE SAME PROCESS, so
+  `/proc/<pid>/cmdline` is the template RAGE checks. One source per
+  server, two ways to start it, and today's apps untouched but for
+  binding the `HOST` they are given. The `build` string is declared in
+  `rage.toml`'s `engine`, where 09 §9.3 reads it.
+  *Tests* (`tests/rage/test_servers_launch.py`): the arguments become
+  each server's variables (OpenVINO's `GPU`/`CPU` among them); absent
+  weights are an error naming the path; every argument is required.
+- **13c — `app/rage/`, the front. DONE 2026-09-19** (95 tests, 6 s;
+  [`rage.md`](rage.md) §17 lists each piece and its proof). `rage.toml`
+  → llama-swap yaml;
   admission; load, unload, restart; the run identity; `Louise-Run` on
   every proxied answer; the clock; the admin token; the persisted run
   table. It imports no GPU stack (invariant 7) and nothing of `app/`
-  that opens a manifest.
-  *Tests* (`tests/rage/`): the generated yaml golden — no groups, ttl 0,
-  localhost; the run id from a fake `/proc` tree — stable across two
+  that opens a manifest. Three things differ from the scope written
+  below, each found while building: the yaml is ONE GROUP that never
+  swaps, not "no groups" (llama-swap's default for a model in no group
+  is one model at a time); a card's name and capacity are DECLARED in
+  `rage.toml`, because reading them meant importing the GPU probe, which
+  nothing may import; and the API writes `rage.d/<id>.toml`, never the
+  operator's hand-written `rage.toml`.
+  *Tests* (`tests/rage/`): the generated yaml golden — one group, no
+  swapping, ttl 0; the run id from a fake `/proc` tree — stable across two
   launches with different ports and host names, different for a changed
   flag, weights byte or image; no match or two matches → unstated, no
   header; refuse to start without a digest in `RAGE_IMAGE`, the message
@@ -1077,7 +1091,17 @@ tests, and every pre-existing test stays green after each.
   without the token, the token read from its file; the clock held while
   a `chat` request is in flight and released after, restored on
   SIGTERM.
-- **13d — The image, and the first proof.** `deploy/rage/Dockerfile`,
+- **13d — The image, and the first proof. FILES WRITTEN 2026-09-19, NOT
+  BUILT.** `deploy/rage/Dockerfile`, `deploy/rage/rage.example.toml` and
+  `deploy/truenas-rage.yaml` exist and `tests/rage/test_deploy_files.py`
+  holds them to the code: the example loads, every program it starts is
+  in the image, the image carries exactly what the front imports, the
+  models are bound read-only, the token is a path. Nothing has been
+  built, published or run: that needs the node, a registry and the
+  operator's values. Unverified until then, and marked in the
+  Dockerfile: the llama-swap release archive's name, and torch's XPU
+  wheels on the llama.cpp base. Scope as first written:
+  `deploy/rage/Dockerfile`,
   `deploy/truenas-rage.yaml` (an app of its own: an optional helper
   never shares Louise's app), the image published by digest.
   [`rage.md`](rage.md) §14 is the done-when list, run on the node.

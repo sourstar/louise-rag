@@ -2962,6 +2962,65 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
   it (operator). First samples: 1,873–1,934 RPM, pkg 72–78 °C, vram
   74–80 °C, 192–204 W.
 
+### RAGE: reviewed, redesigned, the front built — nothing on the node yet (2026-09-19)
+
+**What happened, in order.**
+1. The first proposal for RAGE (b0f5dad) was reviewed before any code
+   ([`rage-review.md`](rage-review.md)) and did not survive as written:
+   llama-swap has no load endpoint and evicts by default; the run
+   identity could not be computed as specified (a process cannot see its
+   image's digest; the raw argv and environment would have made every
+   restart another run and re-gated every space); a locally built image
+   would have frozen an unobtainable engine into every new Codex; nobody
+   admitted a load. The operator accepted every recommendation.
+2. **Quarantine** came out of the same review (operator's idea): a copy
+   is not used before this peer's own five tests are done; an origin that
+   cannot be checked waits for the operator's recorded decision.
+3. The amendments are on `main`: **8bbc66a** (the run identity made
+   computable, a weights digest for directories, `Louise-Level`, the
+   model's URL, `RAGE_URL`) and **98ee4dc** (quarantine).
+4. [`rage.md`](rage.md) rewritten to the accepted design;
+   [`migration-plan.md`](migration-plan.md) gained **step 13** (RAGE,
+   parts a–f) and **step 14** (quarantine). Step 12 stays last.
+5. The code as it stood before RAGE is tagged **v0.1.0** (`louise`
+   01a4d00; the first tag of the repository).
+6. **Steps 13b and 13c are built**: `app/rage/`, the launcher of our
+   three servers, and 13d's files (image, example config, TrueNAS app).
+   [`rage.md`](rage.md) §17 lists each piece and what proves it.
+
+**Numbers.** `tests/rage/`: 96 tests in 7 s, against a directory that
+stands in for `/proc` and a fake llama-swap. The whole suite: 3,050
+passed, none failed, 7 min 34 s. No number from the node exists yet: no
+image has been built.
+
+**What cost time, so it does not again.**
+- *The design said "no groups" and would have swapped every model out
+  for the next.* llama-swap's default for a model in no group is one
+  model at a time across the instance; its own example config says so.
+  Policy-free is ONE group with `swap: false`, `exclusive: false`.
+  Found by reading the example before writing the generator, not after.
+- *Three pre-existing guards said no, and each was right.* Nothing
+  imports the GPU probe (so a card's name and capacity are declared in
+  `rage.toml`, which is also the only way to get the driver's own words
+  09 §9.3 asks for). No GPU stack under `app/`. Every image of ours
+  answers SIGTERM as PID 1 — the front's boot had no handler before
+  uvicorn is up; it has one now, and that guard asks for a handler, not
+  a mention of the signal (`os.kill(pid, SIGTERM)` used to satisfy it).
+- *A burned key is not a denied key.* The review first proposed renaming
+  a key's "quarantine" to "denied", misreading 07's table. The specs'
+  own word is *burned*; the trust file's field and the code's 86 uses of
+  the word for keys keep their names.
+- *`held` already means possession*, so the third state is `in use`.
+
+**Not done.** 13d's build, publish and proof on the node — it needs the
+operator's values (the registry, the port, the state and config
+directories, the chat GGUF, `mem_limit`) and is outward-facing; two
+things in the Dockerfile are unverified until then and say so. 13a
+(Codex v3) and 13e (Louise's clients): until 13e nothing in Louise reads
+`Louise-Run` or sends `Louise-Level`, and RAGE would serve today's
+Louise unchanged behind `/upstream/<model>` URLs. 13f, the retirements.
+Step 14, quarantine.
+
 ### What is waiting on the operator
 
 * **The legacy artefacts each migration leaves behind** are tracked in

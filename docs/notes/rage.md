@@ -6,7 +6,8 @@ until then.*
 *Operator, 2026-09-19: "each plugin uses one to three models, on
 llama.cpp, Ollama, PyTorch. I want one container (a TrueNAS app) to
 add/load/unload/remove models, run them sequentially or concurrently,
-on CPU or GPU as chosen at load."* **Design accepted, not built.** It
+on CPU or GPU as chosen at load."* **Design accepted; the front is built
+and tested (2026-09-19, §17); nothing has run on the node yet.** It
 extends [`embedder-pool-spec.md`](embedder-pool-spec.md), which chose
 llama-swap when every encoder was a llama.cpp build, and it is the
 server [`gpu-time-slots.md`](gpu-time-slots.md) was waiting for.
@@ -81,14 +82,18 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 ## 4. The design: one policy, in a front; llama-swap runs the processes
 
 One TrueNAS app, `rage`, one image, one published port, `/dev/dri`, a
-read-only models directory and a state directory. The image holds:
-- the B70 compute runtime (the verified recipe);
-- llama.cpp's SYCL build, copied from the image we pin today, with its
-  oneAPI libraries under its own prefix;
+read-only models directory and a state directory. The image
+(`deploy/rage/Dockerfile`) is BUILT ON the Intel llama.cpp image we pin
+today, by digest — the base `deploy/medcpt-rerank` already runs OpenVINO
+on, on this card — and adds:
 - one torch XPU, and a venv per Python server created with
   `--system-site-packages`, each with its own pins (§9);
-- llama-swap, pinned by version;
-- the front, `app/rage/`.
+- our three servers, one source each, started by
+  `deploy/rage/servers/launch.py`, which turns an argument vector into
+  the variables each server reads and runs it in the same process;
+- llama-swap, pinned by version and checksum;
+- the front, `app/rage/`, with the two modules it borrows and no more of
+  the platform.
 
 Each model runs as a child process. No docker socket.
 
@@ -101,10 +106,16 @@ every answer, streamed ones included. It never batches, coalesces or
 reorders requests: the gate measures batch invariance at the peer's own
 batching (03 §3.3).
 
-**llama-swap holds no policy.** Every model and device is its own
-entry, `swap: false`, `exclusive: false`, `ttl: 0`, no groups, no
-`matrix`, no preload hook, listening on `127.0.0.1` only. It never
-loads, evicts or swaps by itself; only the front reaches it. Its yaml is
+**llama-swap holds no policy**, which takes one thing to say in its own
+language: ONE group holding every entry, `swap: false`, `exclusive:
+false`. Not "no groups", as this note first said: a model in no group
+falls into llama-swap's default, which its own example config spells
+out — "only one model runs at a time across the entire instance" — so
+no groups would have swapped every model out for the next (found while
+writing `app/rage/swapyaml.py`, 2026-09-19). Every model and device is
+its own entry, `ttl: 0`, no `matrix`, no preload hook, listening on
+`127.0.0.1` only. It never evicts or swaps by itself; only the front
+reaches it. Its yaml is
 generated from `rage.toml` (§5) and never edited by hand. Exit
 criterion: if finding a child's pid (§8) or the double hop costs more
 than a week of the first proof, the front supervises directly with
@@ -135,42 +146,53 @@ no desired state enters a database).
 
 ```toml
 [rage]
-reserve_mib = { xpu = 2048, cpu = 4096 }
-preload     = ["bge-m3", "qwen3-8b", "medcpt-article", "medcpt-query"]
+device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }   # 09 §9.3's `device`
+capacity_mib = { xpu = 32600 }                    # the CPU's is the container's limit, read
+reserve_mib  = { xpu = 2048, cpu = 4096 }
+preload      = ["bge-m3", "medcpt-query"]
 
 [models.bge-m3]
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
-weights = "/models/bge-m3-FP16.gguf"
+weights = "/models/bge-m3/bge-m3-FP16.gguf"
 device  = "xpu"                                   # default placement
 memory  = { xpu = 1400, cpu = 2600 }              # MiB, MEASURED
-env     = { LD_LIBRARY_PATH = "/opt/llama/lib" }
-health  = "/health"
-cmd.xpu = ["/opt/llama/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "8192", "-ub", "8192", "-b", "8192", "-np", "1", "-ngl", "99",
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
+           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "99",
            "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/opt/llama/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "8192", "-ub", "8192", "-b", "8192", "-np", "1", "-ngl", "0",
-           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = [ … the same with "-ngl", "0" … ]
 
 [models.madlad]
-engine  = { name = "louise-madlad-server", build = "2", variant = null }
-weights = "/models/madlad400-3b-mt-bf16"          # a directory: 09 §9.3's manifest digest
+engine  = { name = "louise-madlad-server", build = "2" }     # no variant: absent is null
+weights = "/models/madlad/madlad400-3b-mt-bf16"   # a directory: 09 §9.3's manifest digest
 device  = "xpu"
 memory  = { xpu = 8200, cpu = 12000 }
-env     = { HF_HUB_OFFLINE = "1", BATCH = "32", MAX_SEG_TOKENS = "96" }
-cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.madlad", "--weights", "${WEIGHTS}",
+env     = { BATCH = "32", MAX_SEG_TOKENS = "96" }
+cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.madlad", "--weights", "${WEIGHTS}",
-           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = [ … the same with "--device", "cpu" … ]
 ```
+
+The whole of it, for every model the node runs:
+`deploy/rage/rage.example.toml`, which a test loads.
 
 - One complete `cmd` per device. The engine's `args` (09 §9.3) is the
   template of the device that ran, `${WEIGHTS}` and `${PORT}` left as
-  placeholders, so nothing is inferred.
-- The three Python servers gain `--weights`, `--device`, `--host` and
-  `--port` argv and a `build` string, and bind `127.0.0.1`: llama-swap
-  does not expand `${PORT}` inside `env`, and 09 §9.3 wants nothing
-  host-specific there.
+  placeholders, each an argument of its own, so nothing is inferred.
+- **A card is declared, never probed**: its name and its capacity are
+  required for every card a model names. The name enters every run
+  identity; the size is what admission places against; neither changes
+  while the card is in the machine. Reading them would mean importing
+  the GPU probe, the one module that sees the host's processes, which
+  nothing may import (`tests/test_gpu_panel.py`).
+- **Two places, one configuration.** `rage.toml` is hand-written and
+  commented, and the front never rewrites it. A model added through the
+  API lands whole in `rage.d/<id>.toml`; an id in both is an error, and
+  `PUT`/`DELETE` refuse a model that lives in `rage.toml`.
+- The three Python servers stay driven by their environment, as apps of
+  their own need; `servers/launch.py` takes `--weights --device --host
+  --port` and sets it. llama-swap does not expand `${PORT}` inside
+  `env`, and 09 §9.3 wants nothing host-specific there. The servers bind
+  the `HOST` they are given: `127.0.0.1` under RAGE.
 - `name`, `build`, `variant` are readable and declared; `image`, `args`,
   `env` and `weights` are what binds.
 - `preload` is applied through admission at start and whenever the file
@@ -180,17 +202,18 @@ cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.madlad", "--weights", "
 ## 6. The API
 
 ```
-GET    /louise/models                 → [{id, state: absent|loading|ready|unstated|failed,
-                                          device, run, pid, memory: {declared, observed},
-                                          idle_s, since}]
-POST   /louise/models/<id>/load       {device?}  → 202 {run} · 409 loaded elsewhere · 503 {reason, loaded}
+GET    /louise/models                 → [{id, state: absent|unloaded|loading|ready|unstated,
+                                          device, run, pid, reason, memory: {declared, observed},
+                                          idle_s, since, source}]
+POST   /louise/models/<id>/load       {device?}  → 200 the row, once it is up · 409 loaded on
+                                          another device · 503 {error, admission: {loaded, free_mib, …}}
 POST   /louise/models/<id>/unload     → 200 · 404
-POST   /louise/models/<id>/restart    → 202 (the fan workaround, §11; operator only)
+POST   /louise/models/<id>/restart    → 200 the row (the fan workaround, §11; operator only)
 GET    /louise/runs/<run_id>          → 09 §9.12's object · 404
-GET    /louise/gpu                    → the card's live sensors and the clock's state (§11)
-PUT    /louise/models/<id>            → write the entry to rage.toml; 409 while loaded
-DELETE /louise/models/<id>            → remove it; 409 while loaded
-/upstream/<id>/…                      → the child, with Louise-Run
+GET    /louise/gpu                    → the clock's state (§11)
+PUT    /louise/models/<id>            → write rage.d/<id>.toml; 409 while loaded, or if rage.toml defines it
+DELETE /louise/models/<id>            → remove it; the same 409s
+/upstream/<id>/…                      → the child, with Louise-Run; 503 + Retry-After when it does not fit
 ```
 
 | the ask | what does it |
@@ -209,11 +232,14 @@ DELETE /louise/models/<id>            → remove it; 409 while loaded
   unload. So `ttl: 0`, and the query encoders are preloaded.
 - **Fits** = the declared `memory` of what is loaded on that device,
   plus this model, plus the reserve, ≤ the device's capacity. The card's
-  capacity from the `xe` device query (the probe's ioctl, reused; RAGE
-  has `/dev/dri`); the CPU's from the container's `memory.max` and
-  `memory.current`. After every load the front records the observed
-  peak — its own children's DRM fdinfo, their RSS — and shows it beside
-  the declaration, so a figure that drifts is visible.
+  capacity is declared (§5); the CPU's is the container's `memory.max`,
+  read. A model still loading counts in full from the moment it is
+  admitted, so two loads in the same instant cannot both squeeze in.
+  After every load the front records the observed peak — its own
+  children's DRM fdinfo, summed once per DRM client, and their RSS — and
+  shows it beside the declaration, so a figure that drifts is visible.
+  The declaration decides, never the observation: a model that spilled
+  to host RAM holds less than it needs.
 - **Does not fit** → `503` with `Retry-After` and what is loaded; never
   an eviction. Eviction is Louise's decision, explicit and event-driven
   (`embedder-pool-spec.md` §3–4); the front gives the facts and the
@@ -250,10 +276,19 @@ them.
   loads; no cache. A directory by 09 §9.3's manifest digest, remote
   code included. DNABERT-2's Hugging Face snapshot is materialised under
   `/models/` once.
-- **`device`, `driver`.** The card as its driver names it (the probe's
-  pci.ids lookup), `"cpu"` on a CPU entry. `driver` = kernel release,
-  `xe` module version, the compute-runtime package versions, the GuC
-  firmware where readable; `"cpu"` on a CPU run.
+- **`device`, `driver`.** The card as its driver names it, declared in
+  `rage.toml` (§5); `"cpu"` on a CPU entry. `driver` = kernel release,
+  the card's module (`xe`) with its version, and the compute-runtime
+  package versions, which the image writes to
+  `/etc/rage/runtime-versions` when it is built so that no package
+  manager runs at start; `"cpu"` on a CPU run.
+- **Checked twice around an answer.** Before a request is passed on, the
+  pid that was matched must still show the same argument vector;
+  llama-swap restarts a child that died on its next request, and that is
+  another launch — hashed and matched again before any run is named. And
+  once the answer's headers are in, the pid is checked again: a child
+  replaced mid-request gets no `Louise-Run`, and Louise writes nothing
+  from it.
 - **`run_id`** once per launch, persisted in RAGE's own sqlite with the
   object, so `GET /louise/runs/<id>` survives a restart of the front.
   The same entry relaunched unchanged states the same run.
@@ -374,6 +409,44 @@ Codex to gate against, and retires with them at step 12.
 ## 16. Values the operator still gives
 
 The registry and image name, and a registry login on the node stored by
-path; RAGE's published port (30437–30448 are taken); its state
-directory; which qwen3 GGUF serves chat and where it lies. Each model's
-`memory` is measured on the node, not chosen.
+path; RAGE's published port (30437–30448 are taken); its state and
+config directories; which qwen3 GGUF serves chat and where it lies; the
+container's `mem_limit`. Each model's `memory` is measured on the node,
+not chosen.
+
+## 17. As built (2026-09-19) — steps 13b and 13c; 13d's files
+
+| piece | where | proved by |
+|---|---|---|
+| `rage.toml` and `rage.d/`, validated by rule | `app/rage/model.py` | `tests/rage/test_model_and_yaml.py` |
+| the yaml: one group, never swaps, never evicts | `app/rage/swapyaml.py` | the same, a golden |
+| the weights digest, the engine, the run, the match against `/proc` | `app/rage/runs.py`, `procfs.py` | `tests/rage/test_runs.py` |
+| admission | `app/rage/admission.py` | `tests/rage/test_admission_and_clock.py` |
+| the clock by `Louise-Level`; the governor's class lifted out | `app/rage/clock.py`, `app/gpu_clock.py` | the same; `tests/test_gpu_governor.py` unchanged and green |
+| single-flight loads, a place held from admission, liveness, apply | `app/rage/placement.py` | `tests/rage/test_placement.py` |
+| the HTTP surface, the admin token, `Louise-Run` on streamed answers | `app/rage/front.py` | `tests/rage/test_front.py` |
+| the runs kept across a restart of the front | `app/rage/store.py` | through the two above |
+| boot: refuse a tag, SIGTERM handled before uvicorn is up | `app/rage/__main__.py` | `tests/rage/test_runs.py`, `tests/test_process_signals.py` |
+| the launcher of our three servers; they bind `HOST` | `deploy/rage/servers/launch.py`; `deploy/*/server.py` | `tests/rage/test_servers_launch.py` |
+| the image, the example config, the TrueNAS app — WRITTEN, NOT BUILT | `deploy/rage/Dockerfile`, `rage.example.toml`, `deploy/truenas-rage.yaml` | `tests/rage/test_deploy_files.py` holds them to the code |
+
+95 tests, 6 s. Three pre-existing guards shaped the code rather than
+the other way round: nothing imports the GPU probe (so a card is
+declared); no GPU stack under `app/` (the front launches processes and
+imports none); every image of ours answers SIGTERM as PID 1 (the front's
+boot now does, and the guard learnt the `python -m` form and asks for a
+handler, not a mention).
+
+**Not done, and why.**
+- **13d, the image and the proof (§14)** — needs the node, the operator's
+  values (§16) and a registry: an outward-facing build and publish. Two
+  things in the Dockerfile are unverified until then and marked there:
+  the llama-swap release archive's name, and torch's XPU wheels on the
+  llama.cpp base. Whether llama-swap restarts running children when its
+  yaml changes is also unknown; the front copes either way (§8, checked
+  twice), but the proof should time it.
+- **The sampler** (`gpu_samples`) stays with the governor app until 13f
+  retires it; the front holds the clock and reports it, no more.
+- **13a and 13e** — Codex v3 and Louise's clients. Until 13e nothing in
+  Louise reads `Louise-Run` or sends `Louise-Level`: RAGE would serve
+  today's Louise unchanged, behind `/upstream/<model>` URLs.
