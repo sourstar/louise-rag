@@ -319,7 +319,8 @@ confirm, only then delete):
 2. The three gates still pass through RAGE after that day.
 3. The operator confirms.
 4. Then, and separately: `ollama`, once chat has moved
-   (`CHAT_API=openai`, `CHAT_URL=…/upstream/chat`) and answered for a day;
+   (`CHAT_API=openai`, `CHAT_URL=…/upstream/chat` — DONE 2026-09-19 night)
+   and answered for a day;
    and the CPU apps (`embed-cpu-*`), which were already stopped before the
    cut-over and which nothing references.
 

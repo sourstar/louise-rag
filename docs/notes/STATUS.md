@@ -3271,8 +3271,60 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
-**Not done, as of the cut-over.** Chat on RAGE, and the retirements of
-the five apps, the governor's code and Ollama (above). Of step 14:
+**LATER THE SAME NIGHT (2026-09-19/20), unattended.**
+- **Chat runs in RAGE** (operator: "the same model in Ollama, just run in
+  RAGE"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
+  back in `config/backup-pre-rage-2026-09-19/app-config.pre-chat.json`
+  (mode 600). Loaded in 15 s, 7,250 MiB of the card, no `<think>` in an
+  answer. Same prompt, the worker embedding beside both: RAGE 12.2–13.8
+  tokens/s generated, Ollama 8.3–8.9. A streamed Ask over gutenberg took
+  25 s through RAGE against 47 s through Ollama. Ollama is idle now, its
+  model unloaded through its own API; it goes by
+  [`legacy-to-delete.md`](legacy-to-delete.md) §7. `chat` and `madlad`
+  joined RAGE's `preload`. **Declared card memory corrected**: Qwen3 was
+  declared 5,200 MiB and holds 8,628 — admission counts what is declared,
+  so that is how a card gets over-committed; now 9,000, and chat 7,600.
+  Eight models resident: 25.0 GiB of the card's 32.6, and every model at
+  once is 29,800 MiB declared of 30,552 usable.
+- **WHY THE llama-server MODELS HOLD SO MUCH HOST RAM** (operator's
+  question; measured on the node). Two parts. (1) Right after a load, the
+  model FILE, memory-mapped: bge-m3 read 1,067 MiB resident, of which 657
+  file-backed, for a 1,104 MiB file. The kernel takes those pages back by
+  itself — an hour later the same processes read 22–81 MiB file-backed —
+  so it was never memory the process owned, though the container's
+  `memory.peak` counts it. `--no-mmap` removes it altogether (438 MiB
+  right after load, at no anonymous cost, since the weights go straight
+  to the card). (2) What stays is the process's own HEAP, about 270–650
+  MiB each: bge-m3 412, bge-reranker 396, Qwen3 657, MedCPT 268, chat 474.
+  It is NOT the batch size — `-ub 8192` and `-ub 512` read 410 and 400.
+  373 of bge-m3's 412 MiB is `[heap]`: the Intel SYCL/Level Zero runtime
+  with its compiled kernels, a floor of ~270 MiB that even the 209 MiB
+  MedCPT model pays, plus the tokenizer — XLM-R's 250,000-entry
+  vocabulary for the two bge models, Qwen's 152,000 with its merges. One
+  process per model pays the floor once per model: eight models, ~3.8
+  GiB. NOT CHANGED: `--no-mmap` is worth adding to the llama-server
+  entries — it lowers the peak the 28 GiB limit is judged against — but
+  it is a change to each engine's arguments, so it is the operator's.
+- **"servers.launch" on the GPU panel** were MADLAD (6.2 GB of the card)
+  and MedCPT's cross-encoder (432 MB): RAGE starts both through one
+  Python launcher, and the probe labelled a python process by its
+  module. It now labels one that names `--weights` by them, as it does
+  llama-server.
+- **What re-fetching the origin would cost, measured** (the open design
+  question of step 14): pubmed's plan samples 0.05 of its shards — 68 of
+  1,358 — and their records come from about 249 origin files, **10.5 GiB
+  to re-fetch from NCBI per check** (12 shards read: 360,000 records, 44
+  files, 1.85 GiB; every record carries its origin). That is not the
+  operator's "reasonable amount of data". So before a fetch step is
+  built the plan needs a decision: a smaller sample for this one check,
+  or a check bounded by ORIGIN FILES rather than shards — draw K files,
+  re-fetch those, and compare every record of the sampled shards that
+  came from them. Nothing was built and nothing attested.
+- Spec, on main: 07's four modes (83fe4b1); 05's `legs_withheld`
+  (34dd3d3), whose entries now carry `collection_id` in the code too.
+
+**Not done, as of the cut-over.** The retirements of the five apps, the
+governor's code and Ollama (above). Of step 14:
 NOTHING RUNS `roots`, `chunks` or `records-vs-origin` BY ITSELF — the
 gate does, those three are still `louise hold check <name>`, by hand or
 by cron — and `records-vs-origin` has no fetch step, and gutenberg and
@@ -4205,8 +4257,17 @@ gutenberg pack plan needs those vectors before the hand-over.
    anything; there is currently no baseline to judge any model against.
 
 7. **Italian law plugin (Gazzetta Ufficiale / Normattiva)** —
-   [`gazzetta-plugin.md`](gazzetta-plugin.md). **Research done, nothing
-   built, three operator decisions open.** Normattiva's data went CC BY 4.0
+   [`gazzetta-plugin.md`](gazzetta-plugin.md). **BUILT and deployed
+   2026-09-14** (1c3178e, parser 2 in 74173fc) — `app/plugins/eli.py` and
+   `app/plugins/normattiva/`, `akn_article` v1, `NORMATTIVA_SPEC`; see
+   "Normattiva on a generic ELI layer" above for what the build decided and
+   what it left out (the delta feed, the SKOS tables, the §6
+   ReferenceSource, the manifest `eli` block). The 2026-08-26 decisions
+   below were all taken. **No Normattiva collection exists**, and none is to
+   be created: the encoder is the operator's own side project (2026-09-14
+   evening), so no off-the-shelf model is proposed meanwhile — that is the
+   single blocker, and the research below records why the choice is
+   `space_id`-pinned and irreversible. Normattiva's data went CC BY 4.0
    on 2026-01-01 with an OpenData portal and API (Akoma Ntoso, XML-NIR,
    JSON, ELI) — that, not the IPZS site, is the origin worth building on:
    structured, identified, versioned, openly licensed. Three findings that
@@ -4221,13 +4282,18 @@ gutenberg pack plan needs those vectors before the hand-over.
    verified by a skeleton round-trip test — derived and local exactly as
    pubmed's pack is, with its version folded into the chunker's so it never
    touches the global `CLEANING_VERSION` (the global-knob lesson, second
-   coat). Encoder: chosen on measured Italian legal retrieval (JuriFindIT),
-   not on what this node runs — KaLM-Embedding-Gemma3-12B (MMTEB #1) and
-   Qwen3-Embedding-8B are the open-weight candidates, both MRL, so the
-   pinned dimension is a separate decision from the model; closed API models
-   are excluded as space owners because a peer must reproduce vectors at
-   cos ≥ 0.999. Italian-Legal-BERT is an MLM and would walk straight into
-   item 6's anisotropy trap. Operator decisions 2026-08-26: scope is
+   coat). Encoder: **superseded 2026-09-14 — the operator is training a
+   dedicated embedder for this corpus, and no off-the-shelf candidate is to
+   be proposed.** What survives the supersession is the method and the
+   constraints, which apply to a trained encoder too: judged on measured
+   Italian legal retrieval (JuriFindIT), not on what this node runs; a
+   closed API model cannot own the space, because a peer must reproduce
+   vectors at cos ≥ 0.999; and an MLM (Italian-Legal-BERT was the tempting
+   one) walks straight into item 6's anisotropy trap. The shortlist that
+   this replaces, kept only so the reasoning is not re-derived:
+   KaLM-Embedding-Gemma3-12B (MMTEB #1) and Qwen3-Embedding-8B, both MRL,
+   which is where the dimension-vs-model split below comes from.
+   Operator decisions 2026-08-26: scope is
    **Normattiva only**; the reranker is **jina-reranker-v3** (listwise, one
    pass) under a stated **p95 ≤ 2 s** budget, because latency is part of
    answer quality and a reranker switched off under load contributes zero;
