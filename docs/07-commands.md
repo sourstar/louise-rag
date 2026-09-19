@@ -604,7 +604,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
 
@@ -631,7 +631,11 @@ unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
-panel empty and says why, and nothing else changes. Secrets are named
+panel empty and says why, and nothing else changes; `RAGE_URL` — the
+node's model container (03 §3.3) — unset leaves the System page without
+the container's models and their controls, and the node then learns a
+run only from the answers it gets, which is enough to check every one
+of them. Secrets are named
 by path only — the key, the token — never by value in an environment
 variable, a file, a log line or a message.
 
@@ -660,9 +664,11 @@ embed  = "on-demand"                           # off | on-demand | all: what the
 share  = true
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
-url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder, on the node's model
-                                               # container RAGE, which states the run with every answer (03 §3.3)
-query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
+                                               # the endpoint that serves the Codex's encoder: a MODEL on the node's model
+                                               # container RAGE, never a device — RAGE places the model on a device, and
+                                               # states the run, device included, with every answer (03 §3.3)
+url = "http://nas:30450/upstream/medcpt-article"
+query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side; absent when symmetric
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint
@@ -678,6 +684,12 @@ keeps its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
+
+An `[encoder]` URL names a model and never a device. Where the model
+runs is the model container's placement, and a change of device is a
+change of run, which the gate tests by itself (03 §3.3): nothing in a
+collection's file has to follow it. Every request the node makes to a
+model endpoint carries the request header `Louise-Level` (09 §9.12).
 
 `hold collection create`, `share fetch` and `dev migrate pack` write the
 file; `hold collection forget` removes it. The name is `--name` when

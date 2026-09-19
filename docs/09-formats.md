@@ -344,7 +344,7 @@ a `<space>` segment and `index-<slice>` would then be a member name
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `encoder` | object | yes | `{weights: "sha256:…", engine: <engine>, label: string}` — the digest of the weights file, the engine the reference vectors were computed with (below), and a readable label without guarantee. The engine's image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
+| `encoder` | object | yes | `{weights: "sha256:…", engine: <engine>, label: string}` — the weights digest (below: of the file, or of the directory where the model is one), the engine the reference vectors were computed with (below), and a readable label without guarantee. The engine's image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
 | `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by the top-level `derivation` above rather than by an encoder, because few encoders emit integers |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
@@ -378,6 +378,16 @@ back bit for bit. **`engine_id`** = `H(canonical JSON of the engine
 object)`. It names an engine wherever a producer's engine is recorded:
 the bundle header (§9.7), attestations (§9.8), benchmarks (§9.9) and
 calibration objects (§9.12).
+
+**The weights digest.** For a model held as one file — a GGUF —
+`weights` is `H(bytes of the file)`. For a model held as a directory —
+a Hugging Face snapshot, an OpenVINO IR beside its tokenizer — it is
+`H` of the canonical JSON object that maps the path of every regular
+file in the directory, relative to it and `/`-separated, to that file's
+digest, `sha256:…`. A symbolic link is refused. Code the model loads
+from its directory is a file like any other, because it is part of the
+function: two copies that differ in it are two encoders. The same rule
+gives the `weights` of a query encoder and of the run identity (§9.12).
 
 **space_id.**
 
@@ -1421,13 +1431,42 @@ with every answer, in the response header `Louise-Run`:
 run_id = H( canonical JSON of
   {"driver":  "<the device's kernel driver and compute runtime, with versions, as the platform reads them; \"cpu\" on a CPU>",
    "engine":  <the engine object of §9.3, as LAUNCHED: `image` the digest of the image actually running>,
-   "weights": "<digest of the weights file actually loaded>"} )
+   "weights": "<the weights digest of §9.3, of the file or the directory actually loaded>"} )
 ```
 
 The platform computes it from what it launched, never from a
 declaration. It describes a run on request (`GET /louise/runs/<run_id>`
 → that same object), which is where a statement's `engine`, `weights`
 and `driver` come from.
+
+Three things make "what it launched" computable, and a platform that
+states a run follows all three:
+- **`image`.** A process cannot see the digest of the image it runs in;
+  only the container runtime knows it. The platform therefore learns its
+  `image` from a deployment pinned by digest and refuses to start
+  otherwise: a tag is not an image. A digest-pinned deployment IS the
+  observation, since the runtime runs nothing else.
+- **`args` and `env`.** They are the engine's as §9.3 writes them —
+  `${WEIGHTS}` and `${PORT}` unsubstituted, and only the variables set
+  for the engine — never the process's raw argument vector and
+  environment, which carry a port, a path and a container's host name
+  that change at every start and would make every restart another run.
+  The platform checks that the process it launched matches them before
+  it states the run; a process that does not match states none.
+- **`weights`.** Hashed at every launch, from the bytes on disk.
+
+So the same engine relaunched unchanged states the same run, and a
+changed flag, a changed weights file, a changed image or a changed
+driver each states another.
+
+**The request's level.** Every request a node makes to a model endpoint
+— an encoder, a reranker, the chat model, the translation model —
+carries the request header `Louise-Level`, one of `corpus` ·
+`translate` · `chat` · `rerank` · `query`, lowest first: the node's own
+order of model work. It is advisory. RAGE uses it to hold the device's
+clock while a person waits, and may use it for nothing an answer
+depends on: the same request gives the same answer at every level, and
+an endpoint that ignores the header loses nothing but speed.
 
 **The fingerprint.** Its sixteen texts are fixed by the set's bytes
 alone. The set is ordered by the UTF-8 byte length of `text`, ties
