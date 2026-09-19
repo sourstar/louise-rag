@@ -498,16 +498,25 @@ def held(root: Path, name: str, codex: Codex, local=None, *,
          refusal: str | None = None) -> CopyState:
     """The state of the copy at `<root>/<name>/`, for a command. `local` is
     the collection object `app/licensing.py` judges (invariant 9: its
-    resolution, never a second one); without it the licence is judged from
-    the Codex's class alone — green needs nothing, anything else is open."""
-    if local is not None:
-        from . import licensing
-        try:
-            licence = licensing.state_for(local)
-        except Exception as e:                          # noqa: BLE001
-            licence = f"{type(e).__name__}: {e}"        # fail closed
-    else:
-        licence = "not_required" if codex.license.cls == "green" else "missing"
+    resolution, never a second one).
+
+    WITHOUT ONE, THE SAME RESOLUTION IS STILL ASKED, of a stand-in that
+    carries the Codex. It was first judged from the Codex's class alone —
+    "yellow, so missing" — and on the reference node `hold collection show
+    wikipedia` then read "the licence is not acknowledged" while the worker,
+    asking `licensing.state_for`, read acknowledged: its terms are
+    acknowledged by a record held elsewhere on this peer (04 §4.4), which a
+    class cannot know. Two answers to one question, found the day it was
+    deployed (2026-09-19)."""
+    from types import SimpleNamespace
+
+    from . import licensing
+    judged = local if local is not None else SimpleNamespace(
+        name=name, plugin=codex.plugin, codex=codex, license_ack=None)
+    try:
+        licence = licensing.state_for(judged)
+    except Exception as e:                              # noqa: BLE001
+        licence = f"{type(e).__name__}: {e}"            # fail closed
     return evaluate(Path(root), name, codex, licence=licence, refusal=refusal,
                     key=own_key())
 

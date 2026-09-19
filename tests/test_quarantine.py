@@ -524,3 +524,34 @@ def test_hold_collection_show_prints_the_state_and_every_reason(node, rage, caps
     assert louise.main(["hold", "collection", "show", "gutenberg", "--root", str(root)]) == 0
     shown = json.loads(capsys.readouterr().out)
     assert (shown["state"], shown["reasons"], shown["origin_check"]) == ("in-use", [], "passed")
+
+
+def test_a_command_asks_the_same_licence_resolution_as_the_worker(tmp_path, monkeypatch):
+    """Found on the reference node the day this was deployed: `hold collection
+    show wikipedia` said "the licence is not acknowledged" while the worker
+    said acknowledged. The command had no collection object to hand to
+    `app/licensing.py` — the builder refuses a yellow collection with no
+    `ack.json` of its own — and judged from the Codex's class instead. But a
+    Codex collection is acknowledged by ANY record of its pinned terms on this
+    peer (04 §4.4), which only THE resolution knows."""
+    from app import licensing
+    from tests.hold.conftest import pubmed
+    codex = pubmed()
+    assert codex.license.cls != "green" and codex.license.terms_sha256
+    root = tmp_path / "collections"
+    (root / "pubmed" / "state").mkdir(parents=True)
+    monkeypatch.setenv("LOUISE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
+    licensing.reset_peer_acks()
+
+    assert copy_state.held(root, "pubmed", codex).test("licence").status == "open"
+
+    # the same terms, acknowledged under ANOTHER collection on this peer
+    elsewhere = root / "pubmed-2025" / "state"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "ack.json").write_text(json.dumps(
+        {"kind": "louise-ack", "version": 1, "terms_sha256": codex.license.terms_sha256,
+         "time": NOW, "collection_id": "sha256:" + "11" * 32}), encoding="utf-8")
+    licensing.reset_peer_acks()
+    assert copy_state.held(root, "pubmed", codex).test("licence").status == "passed"
+    licensing.reset_peer_acks()
