@@ -89,13 +89,13 @@ All of these change the fingerprint:
 - a driver or compute-runtime update, which a TrueNAS update brings;
 - a llama.cpp rebuild;
 - a different `-t` on a CPU engine;
-- choosing `@cpu` instead of `@xpu` at load (the model pool's device
+- choosing `@cpu` instead of `@xpu` at load (RAGE's device
   choice).
 
 Under the spec, any of them stops that space's embedding until a person
 runs `embedder check --accept`. That is the rule working: a different
 run. But three consequences follow:
-- **One accepted run per space is too few for the model pool.** A node
+- **One accepted run per space is too few for RAGE.** A node
   that switches a model between devices must hold an accepted run for
   each variant. The fingerprint then says which one is live, and a
   switch between two accepted runs needs nobody.
@@ -179,6 +179,6 @@ How that settles this note:
 - New: `query_vectors` in the calibration member, so pubmed's MedCPT
   query encoder can be validated at all.
 
-It depends on the model pool: only a front we run can state the run on
-each answer (model-pool.md §4). Until then the worker keeps
+It depends on RAGE, the model container: only a front we run can state the run on
+each answer (rage.md §4). Until then the worker keeps
 `backend_gate`.

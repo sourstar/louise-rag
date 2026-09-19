@@ -5,7 +5,7 @@ to Louise for both query and creation, on one machine. This document fixes
 the design decisions; it is not yet an implementation.
 
 *2026-09-19: the node now runs PyTorch, OpenVINO and Ollama models beside
-llama.cpp. [`model-pool.md`](model-pool.md) extends this design to every
+llama.cpp. [`rage.md`](rage.md) extends this design to every
 runtime and every model kind, in one image.*
 
 ## 1. Purpose

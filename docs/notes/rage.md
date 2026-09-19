@@ -1,4 +1,7 @@
-# One app for every model — survey and proposal
+# RAGE — the RAG Engine: one container for every model
+
+*Named by the operator, 2026-09-20. This note called it "the model pool"
+until then.*
 
 *Operator, 2026-09-19: "each plugin uses one to three models, on
 llama.cpp, Ollama, PyTorch. I want one container (a TrueNAS app) to
@@ -65,7 +68,7 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 
 ## 4. Proposal: one image, llama-swap supervising processes
 
-One TrueNAS app, `model-pool`, one image, one port, `/dev/dri`, and a
+One TrueNAS app, `rage`, one image, one port, `/dev/dri`, and a
 models directory. The image holds:
 - the B70 compute runtime (the verified recipe);
 - llama.cpp's SYCL build, copied from the image we pin today, with its
@@ -171,9 +174,9 @@ The pool image with bge-m3 (llama.cpp) and DNABERT-2 (torch), each in
 - the vectors match today's endpoints within the calibration tolerance;
 - wikipedia's calibration gate passes through `/upstream/…`.
 
-## 8. The pool states the run on every answer (2026-09-20)
+## 8. RAGE states the run on every answer (2026-09-20)
 
-Specs dd9bef4 (03 §3.3, 09 §9.12) make the pool the node's trusted
+Specs dd9bef4 (03 §3.3, 09 §9.12) make RAGE the node's trusted
 processing platform.
 - For each engine it launches, it computes the run identity from what
   actually runs: the image's digest resolved at launch (never a tag), the
