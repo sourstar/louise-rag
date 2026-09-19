@@ -252,6 +252,14 @@ quarantine (§3.6) — not yet tested on this peer — enters no list, in
 either leg, and is named the same way: `shards` is `"all"` and the
 reason is the test or the acknowledgement it waits for.
 
+A copy can also be searched with ONE LEG MISSING: its encoder's run
+failed the gate, or an answer named a run this peer has not tested yet
+(03 §3.3). The text leg goes on, the vector leg is not used, and the
+response says so under `legs_withheld` — the collection, the leg, the
+reason — beside `withheld`, which names only what was left out whole. A
+result list from such a copy is a text-leg list, and a reader has to be
+able to tell.
+
 Facts are placed beside the lists, never in them. Every fact names the
 reference source and its `ref_version` (§6.5), the table, the canonical
 id, the row's columns, and — when *expand* reached it — the link it was
@@ -294,7 +302,9 @@ louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
               as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
-       withheld: [{collection_id, shards, reason}], translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
+       withheld: [{collection_id, shards, reason}],
+       legs_withheld: [{collection_id, leg, reason}],     -- leg is "vector"; the copy IS searched, on its text leg (§5.3)
+       translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
     filters: {<facet field>: <value> | {not: <value>}}
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
