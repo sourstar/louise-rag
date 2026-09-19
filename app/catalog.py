@@ -20,8 +20,10 @@ Writers, one at a time per collection (`_lock`):
   older than what the rdf stage has just committed.
 
 Until a collection's backfill is complete, `search` returns None and the
-caller keeps the SQLite catalog. The state file (`STATE`) lives inside the
-index directory, so an index that is removed takes its "complete" with it.
+catalog leg is empty (the SQLite FTS5 catalog that answered meanwhile was
+dropped on 2026-09-19, db.drop_catalog_fts). The state file (`STATE`)
+lives inside the index directory, so an index that is removed takes its
+"complete" with it.
 """
 from __future__ import annotations
 
@@ -113,6 +115,17 @@ def _write_state(collection, state: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps({**state, "version": CATALOG_VERSION}), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def count(collection) -> int:
+    """The entries in this collection's catalog index, complete or not
+    (0 when it has none) — for tests and tools, through a handle of its own."""
+    path = path_for(collection)
+    if not (path / "meta.json").is_file():
+        return 0
+    idx = _open(path)
+    idx.reload()
+    return idx.searcher().num_docs
 
 
 def ready(collection) -> bool:

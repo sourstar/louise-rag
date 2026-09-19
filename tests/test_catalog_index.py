@@ -145,15 +145,13 @@ def test_the_catalog_is_not_a_language_group(col):
     assert "_catalog" not in fts.existing_groups(c)
 
 
-def test_catalog_search_uses_the_index_once_complete_and_sqlite_before(col):
+def test_catalog_search_is_empty_until_the_index_is_complete_then_uses_it(col):
+    """The SQLite catalog that answered meanwhile is retired (2026-09-19):
+    until the backfill completes, the catalog leg is empty — never an error,
+    and the search's other legs still answer."""
     c, con = col
-    for n, _lang, title, authors, subjects in ROWS:
-        con.execute("INSERT INTO catalog_fts(uid,title,authors,subjects,bookshelves) "
-                    "VALUES(?,?,?,?,'')", (f"gutenberg:{n}", title, authors, subjects))
-    before = retrieval.catalog_search(con, "Moby", collection=c)
-    assert sorted(_ids(before)) == [1, 2], "the SQLite catalog, joined after its LIMIT"
+    assert retrieval.catalog_search(con, "Moby", collection=c) == []
     catalog.backfill(con, c, budget_s=60)
-    con.execute("DELETE FROM catalog_fts")                 # prove the index answers now
     assert sorted(_ids(retrieval.catalog_search(con, "Moby", collection=c))) == [1, 2]
     assert _ids(retrieval.catalog_search(con, "Moby", langs=("de",), collection=c)) == [2]
 

@@ -77,10 +77,6 @@ CREATE INDEX IF NOT EXISTS idx_documents_lang ON documents(lang);
 CREATE INDEX IF NOT EXISTS idx_documents_content_hash
   ON documents(uid, content_hash);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS catalog_fts USING fts5(
-  uid UNINDEXED, title, authors, subjects, bookshelves
-);
-
 CREATE TABLE IF NOT EXISTS control (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE IF NOT EXISTS embed_queue (
@@ -359,46 +355,43 @@ def ensure_browse_index(con: sqlite3.Connection) -> bool:
     return True
 
 
-CATALOG_ALIGNED_KEY = "catalog_fts_rowid_aligned"
+def drop_catalog_fts(con: sqlite3.Connection) -> bool:
+    """One-time: the SQLite FTS5 catalog goes. The catalog is the tantivy
+    index of app/catalog.py since 2026-09-19. FTS5 ranked every match (57.3 s
+    for "cancer" on pubmed's 40M records), and the table held 15.7 GiB there
+    and 1.06 GiB in wikipedia's manifest. The index is built from
+    `documents`, never from this table, so nothing is lost.
 
-
-def ensure_catalog_rowids(con: sqlite3.Connection) -> bool:
-    """One-time realignment: catalog_fts rows keyed on documents.rowid.
-
-    catalog_fts declares `uid UNINDEXED`, so `DELETE FROM catalog_fts WHERE
-    uid=?` scans the whole shadow table — measured live at 14.02 of rdf's
-    14.25 ms/doc at only 36k catalog rows, and the scan grows with the
-    catalog: the total cost of extracting a corpus was O(N²), which at
-    pubmed scale never finishes. The cure is to give each catalog row the
-    rowid of its document, so the delete-then-insert becomes a single
-    INSERT OR REPLACE keyed on rowid (see worker._rdf_one).
-
-    Rows written before this scheme carry arbitrary rowids that REPLACE
-    would never hit, leaving duplicates behind — hence this rebuild: wipe
-    and re-derive from the documents table, which holds every column the
-    catalog carries. Runs inside one transaction (a crash re-runs it), is
-    marked done in the control table, and belongs to the WORKER's startup
-    like ensure_browse_index. Nothing here VACUUMs, so implicit rowids are
-    stable; if a VACUUM is ever introduced, clear the marker to force a
-    realignment.
-    """
-    if get_control(con, CATALOG_ALIGNED_KEY) == "1":
+    The worker's startup, like ensure_browse_index: one transaction that
+    holds the manifest's write lock while SQLite frees the table's pages,
+    which go to the free list for the manifest to reuse. The file does not
+    shrink, because nothing VACUUMs a manifest (invariant 6). A crash rolls
+    it back, and the next boot drops it again."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_fts'").fetchone():
         return False
     log_event(con, "info", "worker",
-              "realigning catalog_fts to document rowids (one-time)")
-    con.execute("BEGIN")
+              "dropping the SQLite catalog (one-time; the catalog index replaced it)")
+    t0 = time.monotonic()
+    # This SQLite is built with SECURE_DELETE on: every freed page would be
+    # zeroed THROUGH THE WAL. On a clone of pubmed's manifest that was a
+    # 14.6 GB WAL still growing after 12 minutes, with a checkpoint to
+    # rewrite all of it after. The catalog is public metadata that
+    # `documents` also holds, so its freed pages keep their bytes until
+    # reused.
+    secure = con.execute("PRAGMA secure_delete").fetchone()[0]
+    con.execute("PRAGMA secure_delete = OFF")
+    con.execute("BEGIN IMMEDIATE")
     try:
-        con.execute("DELETE FROM catalog_fts")
-        con.execute(
-            "INSERT INTO catalog_fts(rowid,uid,title,authors,subjects,bookshelves) "
-            "SELECT rowid,uid,title,authors,subjects,bookshelves "
-            "FROM documents WHERE rdf_done=1")
-        set_control(con, CATALOG_ALIGNED_KEY, "1")
+        con.execute("DROP TABLE catalog_fts")
+        con.execute("DELETE FROM control WHERE key='catalog_fts_rowid_aligned'")
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
         raise
-    log_event(con, "info", "worker", "catalog_fts realigned")
+    finally:
+        con.execute(f"PRAGMA secure_delete = {int(secure)}")
+    log_event(con, "info", "worker",
+              f"SQLite catalog dropped in {time.monotonic() - t0:.0f}s")
     return True
 
 

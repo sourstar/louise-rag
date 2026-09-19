@@ -113,8 +113,9 @@ def test_migrate_row_counts_and_uid_format(tmp_path):
     assert rows["1342"]["source"] == "gutenberg"
     assert rows["1342"]["title"] == "A Study"
 
-    fts_uids = {r[0] for r in con.execute("SELECT uid FROM catalog_fts")}
-    assert fts_uids == {"gutenberg:1342", "gutenberg:84"}
+    # the old FTS5 catalog is dropped: the catalog index is built from
+    # `documents` by the worker (app/catalog.py)
+    assert "catalog_fts" not in tables
 
     eq = [tuple(r) for r in con.execute("SELECT uid,priority,ts FROM embed_queue")]
     assert eq == [("gutenberg:1342", 0, 100)]

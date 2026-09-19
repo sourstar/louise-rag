@@ -9,7 +9,7 @@ groups (ar, ca, da, …), not the largest.
 """
 import dataclasses
 
-from app import collections as collections_mod, config, db, fts, llm, retrieval
+from app import catalog, collections as collections_mod, config, db, fts, llm, retrieval
 
 
 def test_the_chat_call_asks_ollama_to_keep_the_model_loaded(monkeypatch):
@@ -201,12 +201,11 @@ def test_the_catalog_keeps_only_the_restricted_languages(isolated_config):
         con.execute("INSERT INTO documents(uid,source,native_id,path,lang,title,authors,"
                     "updated_at) VALUES(?,?,?,?,?,?,?,0)",
                     (f"gutenberg:{n}", "gutenberg", str(n), f"/f/{n}", lang, "Moby Dick", "M"))
-        # keyed on documents.rowid (CLAUDE.md invariant 6)
-        con.execute("INSERT INTO catalog_fts(rowid,uid,title,authors,subjects,bookshelves) "
-                    "VALUES((SELECT rowid FROM documents WHERE uid=?),?,?,?,?,?)",
-                    (f"gutenberg:{n}", f"gutenberg:{n}", "Moby Dick", "M", "", ""))
-    assert {r["book_id"] for r in retrieval.catalog_search(con, "Moby")} == {1, 2}
-    assert [r["book_id"] for r in retrieval.catalog_search(con, "Moby", langs=("de",))] == [1]
+    con.execute("UPDATE documents SET rdf_done=1")
+    catalog.backfill(con, c, budget_s=60)            # the catalog index (app/catalog.py)
+    assert {r["book_id"] for r in retrieval.catalog_search(con, "Moby", collection=c)} == {1, 2}
+    assert [r["book_id"] for r in retrieval.catalog_search(
+        con, "Moby", langs=("de",), collection=c)] == [1]
 
 
 def test_group_sizes_counts_each_groups_own_index(isolated_config):

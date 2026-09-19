@@ -1,8 +1,8 @@
 """rdf processes a batch of documents inside one transaction.
 
 Profiled live on pubmed (33M rows): 95% of a warm rdf step was SQLite — the
-UPDATE against the wide documents table plus the catalog_fts FTS5
-delete/insert, committed once per document — against 0.8 ms of parsing. One
+UPDATE against the wide documents table plus the (since retired) catalog_fts
+FTS5 delete/insert, committed once per document — against 0.8 ms of parsing. One
 transaction per batch writes each dirty page to the WAL once per batch and
 lets FTS5 buffer its index writes, the same economics as fts batching.
 
@@ -14,7 +14,7 @@ uid (invariant 2).
 import shutil
 from pathlib import Path
 
-from app import collections as collections_mod, config, db, discovery, plugin_io, worker
+from app import catalog, collections as collections_mod, config, db, discovery, plugin_io, worker
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
 
@@ -45,8 +45,7 @@ def test_one_step_extracts_several_documents(tmp_path):
 
     done = con.execute("SELECT COUNT(*) FROM documents WHERE rdf_done=1").fetchone()[0]
     assert done == total, f"one step should have extracted all {total}, got {done}"
-    catalog = con.execute("SELECT COUNT(*) FROM catalog_fts").fetchone()[0]
-    assert catalog == total, "every batched document must reach the catalog"
+    assert catalog.count(c) == total, "every batched document must reach the catalog"
 
 
 def test_batch_is_capped(tmp_path, monkeypatch):
@@ -98,17 +97,21 @@ def test_batch_is_all_or_nothing(tmp_path, monkeypatch):
 
     done = con.execute("SELECT COUNT(*) FROM documents WHERE rdf_done=1").fetchone()[0]
     assert done == 0, f"rollback must undo the whole batch, {done} rows survived"
-    catalog = con.execute("SELECT COUNT(*) FROM catalog_fts").fetchone()[0]
-    assert catalog == 0
+    # the catalog index committed BEFORE the marks (invariant 2): its entries
+    # stay, unmarked documents are re-extracted, and the re-run replaces them
+    written = catalog.count(c)
+    monkeypatch.undo()
+    assert worker._execute_step(con, c, "rdf", _pending(con)) is True
+    assert catalog.count(c) == written, "replaced, never duplicated"
 
 
 def test_rerunning_a_batch_does_not_duplicate_catalog_rows(tmp_path):
     c, con = _discovered(tmp_path)
     worker._execute_step(con, c, "rdf", _pending(con))
-    first = con.execute("SELECT COUNT(*) FROM catalog_fts").fetchone()[0]
+    first = catalog.count(c)
 
     con.execute("UPDATE documents SET rdf_done=0")       # pretend the mark was lost
     con.commit()
     worker._execute_step(con, c, "rdf", _pending(con))
-    second = con.execute("SELECT COUNT(*) FROM catalog_fts").fetchone()[0]
+    second = catalog.count(c)
     assert second == first, f"re-run duplicated catalog rows: {first} -> {second}"

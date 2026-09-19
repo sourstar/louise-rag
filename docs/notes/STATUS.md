@@ -2855,6 +2855,33 @@ completed.**
 - It survived the worker's restructuring the same night, with one fix by
   that work: 1f25e6b, `close_all` waits for a commit in flight.
 
+**The SQLite catalog is retired (operator: "do it", 2026-09-19).**
+- Nothing writes or reads `catalog_fts` any more. The rdf stage writes
+  only the index, and `catalog_search` has no SQLite fallback: an index
+  that is not complete yet gives an empty catalog leg.
+- New manifests are created without the table. An old manifest's is
+  dropped once at the worker's startup (`db.drop_catalog_fts`, replacing
+  the rowid realignment it no longer needs).
+- `tools/clean_titles.py` now writes the index. The index has one writer,
+  the worker's, so the tool asks for the worker to be stopped and changes
+  nothing while it runs. `tools/migrate_manifest.py` drops a pre-refactor
+  catalog instead of converting it.
+- **Measured on a ZFS clone of pubmed's manifest first.**
+  - This SQLite is compiled with `SECURE_DELETE`, so a plain `DROP TABLE`
+    zeroes every freed page through the WAL. That was a 14.6 GB WAL, still
+    growing after 12 minutes. It was stopped.
+  - With `PRAGMA secure_delete = OFF` for the drop alone, it took 335 s,
+    committed in 2.7 s, with a 16 MiB WAL, and freed 15.7 GiB to the
+    manifest's free list. The catalog was public metadata that `documents`
+    also holds.
+  - So the first boot after the deploy starts the pipeline about six
+    minutes later, once. Reads, and so search, go on meanwhile.
+- A clone on ssd4 is swept into the hourly recursive snapshot. The first
+  test clone was caught at 11:00 and its full send to tank (1.1 TiB) was
+  aborted at 196 GiB. The partial copy, the clone and its snapshot were
+  destroyed, and replication 5 re-ran clean. The second test ran between
+  two snapshots.
+
 ### Model work by priority; the encoders fed (2026-09-19/20)
 
 **What was wrong, measured live.** gutenberg's encoder (Qwen3-4B, on the

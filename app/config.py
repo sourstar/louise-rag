@@ -257,7 +257,9 @@ FTS_BATCH_CHUNKS = int(os.getenv("FTS_BATCH_CHUNKS", "20000"))
 # UPDATE on the wide documents table plus the catalog_fts FTS5 delete/insert,
 # committed per document. Parsing was 0.8 ms. One transaction per batch
 # writes each dirty page to the WAL once per batch instead of once per
-# document, and FTS5 buffers its index writes within a transaction.
+# document, and FTS5 buffers its index writes within a transaction. (That
+# FTS5 catalog is gone since 2026-09-19; the batch now commits its entries
+# to the catalog index, app/catalog.py, once per batch.)
 RDF_BATCH_DOCS = int(os.getenv("RDF_BATCH_DOCS", "200"))
 
 # Local (corpus-resident) genesis archives read a whole parquet shard —

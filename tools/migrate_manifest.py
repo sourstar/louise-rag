@@ -83,21 +83,13 @@ def _migrate_books(con: sqlite3.Connection, source: str) -> tuple[int, int]:
 
 
 def _migrate_catalog_fts(con: sqlite3.Connection, source: str) -> tuple[int, int] | None:
-    if not _table_exists(con, "catalog_fts"):
-        return None
-    old_rows = list(con.execute(
-        "SELECT book_id, title, authors, subjects, bookshelves FROM catalog_fts"))
-    con.execute("DROP TABLE catalog_fts")
-    con.execute("""
-        CREATE VIRTUAL TABLE catalog_fts USING fts5(
-          uid UNINDEXED, title, authors, subjects, bookshelves)
-    """)
-    for book_id, title, authors, subjects, bookshelves in old_rows:
-        con.execute(
-            "INSERT INTO catalog_fts(uid,title,authors,subjects,bookshelves) "
-            "VALUES(?,?,?,?,?)",
-            (f"{source}:{book_id}", title, authors, subjects, bookshelves))
-    return len(old_rows), _row_count(con, "catalog_fts")
+    """The pre-refactor FTS5 catalog is dropped, not migrated. The catalog is
+    the tantivy index of app/catalog.py since 2026-09-19, and the worker
+    builds it from `documents`, which this migration carries. Nothing to
+    count across, so it reports nothing to `_verify`."""
+    if _table_exists(con, "catalog_fts"):
+        con.execute("DROP TABLE catalog_fts")
+    return None
 
 
 def _migrate_embed_queue(con: sqlite3.Connection, source: str) -> tuple[int, int] | None:

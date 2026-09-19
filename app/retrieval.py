@@ -8,9 +8,9 @@ Pipeline per query:
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
      for the LLM context (never ranked, never in RRF); doc_keys-tagged hits
      get a soft RRF boost.
-  1. catalog search (the catalog index over title/author/subjects, app/catalog.py;
-     SQLite FTS5 until a collection's index is complete — subjects are
-     English LoC headings for every language, so this is cross-lingual for free)
+  1. catalog search (the catalog index over title/author/subjects,
+     app/catalog.py — subjects are English LoC headings for every
+     language, so this is cross-lingual for free)
   2. lexical fan-out: the query in every language the indexes hold, BM25
      each group with its own (app/language_plan.py — once per search)
   3. dense search over whatever is embedded (cross-lingual natively)
@@ -55,42 +55,19 @@ def catalog_search(con, query: str, limit: int = 10,
     """`langs`, when given, keeps only documents written in those languages
     (a query's language restriction, app/language_plan.py).
 
-    The collection's catalog INDEX answers once its backfill is complete
-    (app/catalog.py): top-k without scoring every match. Until then the
-    SQLite FTS5 catalog does — which ranks EVERY match (57.3 s for "cancer"
-    on pubmed), so it at least joins only the top `limit` to `documents`
-    when no language restriction needs the join to filter (4.0 → 1.5 s for
-    "aspirin platelet aggregation", 15,078 matches)."""
+    The collection's catalog index answers (app/catalog.py): top-k without
+    scoring every match, 18–55 ms on pubmed's 40M records where the SQLite
+    FTS5 catalog it replaced took 4–57 s. A collection whose index is not
+    complete yet (its first backfill, or a rebuild after a version change)
+    has an empty catalog leg until it is; the other legs still answer."""
     q = " ".join(t for t in query.split() if t.isalnum() or t.replace("'", "").isalnum())
     if not q:
         return []
-    if collection is not None:
-        try:
-            hits = catalog.search(con, collection, q, limit, langs=langs)
-        except Exception:   # noqa: BLE001 — an index problem falls back, never fails a search
-            hits = None
-        if hits is not None:
-            return hits
+    collection = collection or collections_mod.default_collection()
     try:
-        if langs:
-            rows = con.execute(
-                "SELECT d.native_id AS book_id, f.title, f.authors, f.subjects, d.lang, "
-                "bm25(catalog_fts) AS rank "
-                "FROM catalog_fts f JOIN documents d ON d.uid = f.uid "
-                f"WHERE catalog_fts MATCH ? AND d.lang IN ({','.join('?' for _ in langs)}) "
-                "ORDER BY rank LIMIT ?",
-                (q, *langs, limit)).fetchall()
-        else:
-            rows = con.execute(
-                "SELECT d.native_id AS book_id, f.title, f.authors, f.subjects, d.lang "
-                "FROM (SELECT uid, title, authors, subjects, bm25(catalog_fts) AS rank "
-                "      FROM catalog_fts WHERE catalog_fts MATCH ? ORDER BY rank LIMIT ?) f "
-                "JOIN documents d ON d.uid = f.uid ORDER BY f.rank",
-                (q, limit)).fetchall()
-    except Exception:
+        return catalog.search(con, collection, q, limit, langs=langs) or []
+    except Exception:   # noqa: BLE001 — an index problem empties the leg, never fails a search
         return []
-    return [{"book_id": int(r["book_id"]), "title": r["title"], "authors": r["authors"],
-             "subjects": (r["subjects"] or "")[:300], "lang": r["lang"]} for r in rows]
 
 def _merge_rrf(lists: list[list[dict]]) -> list[dict]:
     scored: dict[str, dict] = {}

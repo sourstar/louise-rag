@@ -8,7 +8,8 @@ as they are until something re-parses them, and they are what a reader is
 looking at. This applies the same function to the stored value, so no
 re-parse and no corpus read is needed.
 
-WHAT IT TOUCHES. `documents.title` and `catalog_fts` — and nothing else.
+WHAT IT TOUCHES. `documents.title` and the catalog index (app/catalog.py)
+— and nothing else.
 Not `updated_at`: on this table that column is a PIPELINE signal, and
 genesis's candidate scan reads it into `ShardDemand.oldest`
 (app/bundles/genesis.py:389), the ordering that decides which archive
@@ -16,10 +17,10 @@ shard is fetched next. Not `content_hash` either — `title` IS inside it,
 but that hash belongs to a BUILT record and this collection's records are
 rebuilt for v1.0 anyway (docs/notes/v1-rebuild.md).
 
-The catalog write mirrors `worker._rdf_one` exactly: INSERT OR REPLACE by
-the document's rowid, never DELETE ... WHERE uid, because `uid` is
-UNINDEXED and that scans the whole shadow table (it was 14.02 of rdf's
-14.25 ms/doc at 36k rows, and grows linearly).
+The catalog write mirrors the rdf stage: each batch's entries go into the
+catalog index first, keyed on the document's rowid, and the titles after.
+The index has ONE writer, the worker's, so the worker must be stopped while
+this runs. If it is not, the tool says so and changes nothing more.
 
 Never runs automatically; an operator invokes it (CLAUDE.md invariant 3,
 "never silently").
@@ -33,7 +34,7 @@ import argparse
 import sys
 import time
 
-from app import collections as collections_mod, db
+from app import catalog, collections as collections_mod, db
 from app.plugins.gutenberg.rdf import clean_title
 
 #: The cleaning can only change a title that has a `$` or abnormal
@@ -42,7 +43,7 @@ from app.plugins.gutenberg.rdf import clean_title
 #: reads all of them to fix none is the per-item cost CLAUDE.md warns
 #: about. Every candidate is then checked properly, so the probes may be
 #: over-broad but never under-broad.
-_CANDIDATES = ("SELECT rowid, uid, title, authors, subjects, bookshelves "
+_CANDIDATES = ("SELECT rowid, uid, title, authors, subjects, lang "
                "FROM documents WHERE title IS NOT NULL AND title != '' AND ("
                "title LIKE '%$%' OR title LIKE ' %' OR title LIKE '% ' "
                "OR title LIKE '%  %' OR title LIKE '%' || char(10) || '%' "
@@ -51,7 +52,8 @@ _CANDIDATES = ("SELECT rowid, uid, title, authors, subjects, bookshelves "
 BATCH = 500
 
 
-def run(con, *, dry_run: bool = False, limit: int | None = None) -> tuple[int, int]:
+def run(con, collection, *, dry_run: bool = False,
+        limit: int | None = None) -> tuple[int, int]:
     """Returns (titles changed, candidates examined)."""
     rows = con.execute(_CANDIDATES).fetchall()
     if limit is not None:
@@ -70,16 +72,18 @@ def run(con, *, dry_run: bool = False, limit: int | None = None) -> tuple[int, i
     done = 0
     for i in range(0, len(changed), BATCH):
         batch = changed[i:i + BATCH]
+        try:
+            catalog.write(collection, [(r["rowid"], t, r["authors"], r["subjects"], r["lang"])
+                                       for r, t in batch])
+        except catalog.CatalogUnavailable as e:
+            raise SystemExit(
+                f"{e}\nThe catalog index has one writer, the worker's: stop the worker, "
+                f"run this again, start it. {done} title(s) were cleaned before this "
+                f"batch; nothing in it was changed.") from None
         con.execute("BEGIN IMMEDIATE")
         try:
             con.executemany("UPDATE documents SET title=? WHERE uid=?",
                             [(t, r["uid"]) for r, t in batch])
-            # by ROWID, as worker._rdf_one does
-            con.executemany(
-                "INSERT OR REPLACE INTO catalog_fts"
-                "(rowid,uid,title,authors,subjects,bookshelves) VALUES(?,?,?,?,?,?)",
-                [(r["rowid"], r["uid"], t, r["authors"], r["subjects"],
-                  r["bookshelves"]) for r, t in batch])
             con.execute("COMMIT")
         except BaseException:
             con.execute("ROLLBACK")
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"no such collection: {args.collection!r} "
                          f"(have {[c.name for c in cols]})")
     t0 = time.monotonic()
-    done, seen = run(db.connect(collection=col), dry_run=args.dry_run,
+    done, seen = run(db.connect(collection=col), col, dry_run=args.dry_run,
                      limit=args.limit)
     print(f"\ndone: {done:,} title(s) cleaned of {seen:,} examined, "
           f"{time.monotonic() - t0:.1f}s")

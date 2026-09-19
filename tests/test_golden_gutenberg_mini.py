@@ -33,12 +33,6 @@ def _run_pipeline(con, collection):
             "rdf_done=1 WHERE uid=?",
             (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
              meta["bookshelves"], row["uid"]))
-        con.execute("DELETE FROM catalog_fts WHERE uid=?", (row["uid"],))
-        con.execute(
-            "INSERT INTO catalog_fts(uid,title,authors,subjects,bookshelves) "
-            "VALUES(?,?,?,?,?)",
-            (row["uid"], meta["title"], meta["authors"], meta["subjects"],
-             meta["bookshelves"]))
 
         chapters = plugin.read_chapters(Path(row["path"]), native_id)
         chunks = list(chunking.chunk_book(row["uid"], native_id, chapters))

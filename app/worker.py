@@ -107,19 +107,10 @@ def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -
         "work=?,rdf_done=1,updated_at=? WHERE uid=?",
         (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
          meta["bookshelves"], plugin_io.work_identity(meta), now, row["uid"]))
-    # Keyed on the document's rowid, REPLACE instead of delete-then-insert:
-    # `uid UNINDEXED` means a DELETE ... WHERE uid=? scans the whole shadow
-    # table — 14.02 of rdf's 14.25 ms/doc at just 36k catalog rows, growing
-    # linearly with the catalog (O(N²) for a whole corpus). REPLACE by rowid
-    # is one b-tree probe and keeps the same idempotence.
-    # db.ensure_catalog_rowids realigned pre-existing rows to this scheme.
+    # The catalog index's row (app/catalog.py), keyed on the document's
+    # rowid and written by the caller before the marks commit. (The SQLite
+    # FTS5 catalog it replaced was written here until 2026-09-19.)
     rowid = con.execute("SELECT rowid FROM documents WHERE uid=?", (row["uid"],)).fetchone()[0]
-    con.execute(
-        "INSERT OR REPLACE INTO catalog_fts"
-        "(rowid,uid,title,authors,subjects,bookshelves) VALUES(?,?,?,?,?,?)",
-        (rowid, row["uid"], meta["title"], meta["authors"],
-         meta["subjects"], meta["bookshelves"]))
-    # the catalog index's row (app/catalog.py), written by the caller
     return (rowid, meta["title"], meta["authors"], meta["subjects"], meta["lang"])
 
 
@@ -2986,7 +2977,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             continue
         cons[added.name] = db.connect(added)
         db.ensure_browse_index(cons[added.name])
-        db.ensure_catalog_rowids(cons[added.name])
+        db.drop_catalog_fts(cons[added.name])
         _apply_tier2_embed_mode(cons[added.name], added, "add")
         db.log_event(cons[added.name], "info", "worker",
                      f"collection {added.name!r} added — discovering")
@@ -3328,7 +3319,7 @@ def run_forever():
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker started")
         db.ensure_browse_index(cons[c.name])
-        db.ensure_catalog_rowids(cons[c.name])
+        db.drop_catalog_fts(cons[c.name])
         _apply_tier2_embed_mode(cons[c.name], c, "restart")
         if c.embed is None:
             db.log_event(cons[c.name], "info", "worker",
