@@ -1,37 +1,70 @@
-# RAGE — the RAG Engine — TrueNAS SCALE custom app "rage" (Install via YAML).
-# docs/notes/rage.md; migration-plan step 13d. NOT YET DEPLOYED.
+# RAGE — the RAG Engine — TrueNAS SCALE custom app "louise-rage" (Install via
+# YAML). docs/notes/rage.md; migration-plan step 13d. NOT YET DEPLOYED.
 #
 # One app serves every model the node runs: the encoders, the rerankers, the
 # chat and translation models, whatever their runtime and their device. It
-# replaces the per-model apps (embed-gpu-*, translate-gpu-madlad, Ollama, the
-# CPU TEI encoders) and the GPU governor — one at a time, each reversible
-# (step 13f), and only after docs/notes/rage.md §14 has passed on the node.
+# replaces the per-model apps and the GPU governor.
 #
 # AN APP OF ITS OWN, never a service of louise-rag: one service failing to
 # create fails a whole app's `up`, and an optional helper must not take down
 # what it helps (2026-09-20, the governor's first deploy).
 #
-# FOUR VALUES ARE THE OPERATOR'S, marked <…> below:
-#   <registry>/rage@sha256:<digest>   the published image, BY DIGEST. The same
-#                                     digest goes in RAGE_IMAGE. A tag refuses
-#                                     to start: the run identity names the
-#                                     image that is actually running (09 §9.12)
-#   <port>                            the published port; 30437-30448 are taken
-#   <state dir>, <config dir>         RAGE's own, outside louise-rag's tree
+# THE OPERATOR'S VALUES (2026-09-19), and the two still to give:
+#   /mnt/ssd5/apps/louise-rage    RAGE's folder: config/ and state/ under it
+#   30437                         the published port — one the per-model apps
+#                                 used (gutenberg's encoder), free once they stop
+#   the chat model                the same file Ollama serves as qwen3:8b, read
+#                                 where Ollama keeps it (rage.example.toml)
+#   <registry>/rage@sha256:<digest>   STILL TO GIVE: where the image is
+#                                 published, BY DIGEST. The same digest goes in
+#                                 RAGE_IMAGE. A tag refuses to start: the run
+#                                 identity names the image actually running
+#                                 (09 §9.12). Publishing needs a login on the
+#                                 node, kept as a file, never in a variable.
 #
-# Before installing:
-#   1. build and publish the image (deploy/rage/Dockerfile says how);
-#   2. copy deploy/rage/rage.example.toml to <config dir>/rage.toml and edit;
-#   3. every model on disk under the /models binds below — RAGE fetches
-#      nothing (CLAUDE.md invariant 5); a model that is absent is refused by path;
-#   4. find the Arc's card: `ls -l /sys/class/drm/card*/device` (the xe one).
-#      Bind its frequency directory by that /sys/class/drm path, which has no
-#      colons — TrueNAS rewrites binds to `source:target`, and a PCI address
-#      in the source makes the spec invalid.
+# THE CUT-OVER (operator, 2026-09-19: "shut them off before loading RAGE").
+# The per-model apps and RAGE never run together: they would hold every model
+# twice on the card, and RAGE takes one of their ports.
+#   0. BEFORE anything stops: record, from each of today's endpoints, the
+#      vectors the first proof compares RAGE's against (docs/notes/rage.md
+#      §14). Once the apps are off there is nothing left to compare with.
+#   1. mkdir -p /mnt/ssd5/apps/louise-rage/{config,state,secrets}
+#      and copy deploy/rage/rage.example.toml to config/rage.toml.
+#      secrets/admin.token (chmod 600) holds the node's admin token — the SAME
+#      one louise-rag has, so the System page can load and unload models. RAGE
+#      takes it by file and no other way (invariant 8). Louise itself still
+#      gets hers as an environment VALUE today (ADMIN_TOKEN; checked
+#      2026-09-19, ADMIN_TOKEN_FILE is unset): pointing louise-rag's
+#      ADMIN_TOKEN_FILE at this same file would bring her in line too.
+#   2. `node pause` on Louise. An encoder that is away is a deferral, never an
+#      error on a document, so nothing is lost while the models change hands.
+#   3. Stop the apps: embed-gpu-qwen3-4b, embed-gpu-bge-m3, embed-gpu-medcpt,
+#      translate-gpu-madlad, louise-gpu-governor. Stop `ollama` too ONLY once
+#      app/llm.py speaks /v1/chat/completions (step 13e); until then Ollama
+#      keeps serving chat on :30068 and `chat` stays out of `preload`.
+#   4. Install this app. `GET http://<nas>:30437/louise/models` shows each
+#      model loading, then its run.
+#   5. Point Louise at it, the MODEL in each URL and never a device (07 §7.8):
+#        gutenberg   [encoder]  url, query_url  .../upstream/qwen3-embedding-4b
+#                    [reranker] url             .../upstream/bge-reranker/v1/rerank
+#        pubmed      [encoder]  url             .../upstream/medcpt-article
+#                               query_url       .../upstream/medcpt-query
+#                    [reranker] url             .../upstream/medcpt-rerank/rerank
+#        wikipedia   [encoder]  url             .../upstream/bge-m3
+#                    [reranker] url             .../upstream/bge-reranker/v1/rerank
+#        louise-rag  TRANSLATE_URL              .../upstream/madlad
+#                    RAGE_URL                   http://<nas>:30437
+#                    CHAT_URL (after 13e)       .../upstream/chat
+#      Edit the collection files IN PLACE, only those lines, after a backup.
+#   6. `node resume`.
+#   BACK OUT: stop this app, start the five apps again, restore the URLs. The
+#   per-model apps are deleted only by legacy-to-delete.md's rule — complete,
+#   confirm, and only then delete (step 13f).
 #
-# After installing, on the louise-rag app: RAGE_URL=http://<nas>:<port>, and
-# each collection's [encoder] url to http://<nas>:<port>/upstream/<model> —
-# the model, never a device (07 §7.8).
+# Find the Arc's card for the clock: `ls -l /sys/class/drm/card*/device` (the
+# xe one). Bind its frequency directory by that /sys/class/drm path, which has
+# no colons — TrueNAS rewrites binds to `source:target`, and a PCI address in
+# the source makes the spec invalid.
 
 services:
   rage:
@@ -40,11 +73,19 @@ services:
     init: true                              # forwards the stop signal, reaps the children
     devices:
       - /dev/dri
-    # The kill stays inside this container: an out-of-memory here takes the
-    # model that grew (the front raises each child's oom_score_adj), never
-    # another app, and never the front. Also the CPU's capacity, as read by
-    # admission. Leave Louise what she needs.
-    mem_limit: 40g
+    # 28 GiB, from the node's own figures (2026-09-19, each container's
+    # cgroup memory.peak). The containers RAGE replaces hold 6.1 GiB of host
+    # RAM between them at rest and 22.0 GiB at their load-time peaks — a model
+    # on the GPU is not free on the host. 22.4 declared + 2 reserved leaves
+    # ~3.6 GiB for a small model placed on the CPU; a big one on the CPU
+    # (chat: ~9) means unloading something first, which admission will say.
+    # The bound that matters is the machine: 61.9 GiB total, Louise's worker
+    # peaks at 20.6, the rest ~4 — so 28 here leaves ZFS at least 9 GiB of
+    # cache in the worst case, where it has 18.5 today. With a limit, an
+    # out-of-memory kill stays inside this container and takes the model that
+    # grew (the front raises each child's oom_score_adj), never another app.
+    # This figure is also what admission reads as the host's capacity.
+    mem_limit: 28g
     environment:
       RAGE_IMAGE: 'sha256:<digest>'
       RAGE_FREQ_DIR: /gpufreq
@@ -60,17 +101,19 @@ services:
       retries: 3
       start_period: 30s
     ports:
-      - '<port>:8080'
+      - '30437:8080'
     # Answers in flight finish; a request cut short is a deferral for Louise.
     stop_grace_period: 60s
     volumes:
-      - <config dir>:/config
-      - <state dir>:/state
-      # read-only: nothing in this container writes a model
+      - /mnt/ssd5/apps/louise-rage/config:/config
+      - /mnt/ssd5/apps/louise-rage/state:/state
+      # The models, where they already are, READ-ONLY: nothing in this
+      # container writes a model, and RAGE fetches nothing (invariant 5).
       - /mnt/ssd5/apps/bge-m3-models:/models/bge-m3:ro
       - /mnt/ssd5/apps/medcpt-models:/models/medcpt:ro
       - /mnt/ssd5/apps/madlad-models:/models/madlad:ro
+      - /mnt/ssd5/apps/llama-embed:/models/llama-embed:ro
       - /mnt/ssd5/apps/dnabert2-models:/models/dnabert2:ro
-      - /mnt/ssd5/apps/chat-models:/models/chat:ro
+      - /mnt/ssd5/apps/ollama_data/models/blobs:/models/ollama-blobs:ro
       - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
-      - /mnt/ssd4/apps/louise-rag/secrets/admin.token:/run/rage/admin.token:ro
+      - /mnt/ssd5/apps/louise-rage/secrets/admin.token:/run/rage/admin.token:ro

@@ -128,6 +128,23 @@ def test_a_config_that_breaks_a_rule_is_refused_by_name(rage, old, new, rule):
         model.load(rage.config)
 
 
+def test_a_model_on_a_card_declares_the_host_ram_it_holds_there(rage):
+    text = rage.config.read_text(encoding="utf-8")
+    assert "host    = { xpu = 450 }\n" in text
+    rage.config.write_text(text.replace("host    = { xpu = 450 }\n", ""), encoding="utf-8")
+    with pytest.raises(RageConfigError, match=r"bge-m3\.host\.xpu"):
+        model.load(rage.config)
+    rage.config.write_text(text.replace("host    = { xpu = 450 }",
+                                        "host    = { xpu = 450, cpu = 9 }"), encoding="utf-8")
+    with pytest.raises(RageConfigError, match=r"host\.cpu"):
+        model.load(rage.config)
+    rage.config.write_text(text, encoding="utf-8")
+    entry = model.load(rage.config).models["bge-m3"]
+    assert entry.host_need("xpu") == 450 and entry.host_need("cpu") == 2600, \
+        "on the CPU the host RAM it holds IS memory.cpu"
+    assert "host    = { xpu = 450 }" in model.entry_to_toml(entry)
+
+
 def test_a_model_id_never_carries_a_device(rage):
     rage.write_config(BASE.replace("[models.m]", '[models."m@xpu"]'))
     with pytest.raises(RageConfigError, match="never '@'"):

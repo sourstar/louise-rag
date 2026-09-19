@@ -1,71 +1,138 @@
 # rage.toml — the one desired state of RAGE (docs/notes/rage.md §5).
 #
-# Copy to the app's config directory as `rage.toml` and edit. The front
+# Copy to /mnt/ssd5/apps/louise-rage/config/rage.toml and edit. The front
 # applies it at start and within seconds of every change; an edit that does
 # not parse changes nothing and the log names the rule. This file is never
 # rewritten by RAGE: a model added through the API lands in `rage.d/<id>.toml`
 # beside it.
 #
-# EVERY FIGURE BELOW IS A PLACEHOLDER UNTIL MEASURED ON THE NODE (migration
-# step 13d). `memory` is what admission places a model by: load the model,
-# read `GET /louise/models` — it shows the observed peak beside what is
-# declared here — and write the measured figure down.
+# WHAT IS MEASURED HERE AND WHAT IS NOT (node, 2026-09-19).
+# - Every file name, and every flag of the llama.cpp entries, is the one the
+#   node's per-model apps run with today (`docker inspect`). They are copied
+#   exactly on purpose: the flags ARE the engine's `args`, and the first proof
+#   compares RAGE's vectors with today's endpoints.
+# - `host.xpu` is each per-model container's PEAK host RAM since it started
+#   (its cgroup's memory.peak), rounded up. A model on the card is not free on
+#   the host: together the eight held 6.1 GiB at rest and 22.0 GiB at peak.
+# - `memory.xpu` and `memory.cpu` are PLACEHOLDERS until measured under RAGE
+#   (migration step 13d): load the model, read `GET /louise/models` — it shows
+#   what the model holds beside what is declared here — and write it down.
 
 [rage]
 # A card is declared, never probed. Its name is what every run identity and
 # every Codex created here calls the device (09 §9.3: "as its driver names
 # it"); its capacity is what the models are placed against. Declare less
-# than the card holds to keep room for another tenant.
+# than the card holds (34.2 GB) to keep room for another tenant.
 device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }
-capacity_mib = { xpu = 32600 }            # the CPU's is the container's mem_limit, read
-reserve_mib  = { xpu = 2048, cpu = 4096 } # never given to a model
-# Loaded at start, through admission like any load. The query encoders and
-# the chat model: idle is no reason to unload (embedder-pool-spec.md §3).
-preload = ["bge-m3", "medcpt-query"]
+capacity_mib = { xpu = 32600 }            # the host's is the container's mem_limit, read
+reserve_mib  = { xpu = 2048, cpu = 2048 } # never given to a model
+# Loaded at start, one after the other, through admission like any load. The
+# query encoders and the rerankers: a person waits on them, and idle is no
+# reason to unload (embedder-pool-spec.md §3).
+preload = ["bge-m3", "medcpt-query", "qwen3-embedding-4b", "bge-reranker", "medcpt-rerank"]
 
 # ---- llama.cpp ---------------------------------------------------------------
 # One complete command per device. `${WEIGHTS}` and `${PORT}` are the only
 # placeholders, each an argument of its own: this template IS the engine's
 # `args` in every run and in every Codex created here (09 §9.3).
-# `-np 1`: one sequence per forward pass — llama-server corrupted long
-# sequences when one request carried several texts (2026-08-17), and the
-# gate measures batch invariance at exactly these settings (03 §3.3).
+# `-np 1` on every encoder: one sequence per forward pass — llama-server
+# corrupted long sequences when one request carried several texts
+# (2026-08-17), and the gate measures batch invariance at exactly these
+# settings (03 §3.3). `--host 127.0.0.1`: only the front reaches a model.
+#
+# ONE BUILD FOR ALL. Today gutenberg's encoder runs llama.cpp b10603 and the
+# others b10630; RAGE's image holds one. For gutenberg's space that is
+# another engine, which the gate tests like any other (03 §3.3).
 
-[models.bge-m3]
+[models.bge-m3]                           # wikipedia: documents and queries
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/bge-m3/bge-m3-FP16.gguf"
 device  = "xpu"
 memory  = { xpu = 1400, cpu = 2600 }
-cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "99",
+host    = { xpu = 1700 }                  # peak 1,602
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
+           "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "8192", "-b", "8192", "-ub", "8192", "-np", "1", "-ngl", "0",
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "0",
+           "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
 
-[models.medcpt-query]
+[models.qwen3-embedding-4b]               # gutenberg: documents and queries
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
-weights = "/models/medcpt/MedCPT-Query-Encoder-F16.gguf"
+weights = "/models/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf"
+device  = "xpu"
+memory  = { xpu = 5200, cpu = 6000 }
+host    = { xpu = 3100 }                  # peak 3,047
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "last", "-ngl", "999",
+           "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "last", "-ngl", "0",
+           "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+
+[models.medcpt-article]                   # pubmed: documents
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/medcpt/MedCPT-Article-Encoder-f16.gguf"
 device  = "xpu"
 memory  = { xpu = 400, cpu = 600 }
-cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "512", "-b", "512", "-ub", "512", "-np", "1", "-ngl", "99",
+host    = { xpu = 750 }                   # peak 691
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
+           "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls",
-           "-c", "512", "-b", "512", "-ub", "512", "-np", "1", "-ngl", "0",
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "0",
+           "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
 
-# The chat model. The context size is fixed at launch (operator, 2026-09-19):
-# llama-server takes no per-request `num_ctx` as Ollama did.
+[models.medcpt-query]                     # pubmed: queries
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/medcpt/MedCPT-Query-Encoder-f16.gguf"
+device  = "xpu"
+memory  = { xpu = 400, cpu = 600 }
+host    = { xpu = 550 }                   # peak 494
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
+           "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "0",
+           "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+
+[models.bge-reranker]                     # gutenberg and wikipedia: the reranker (jina /v1/rerank)
+engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
+weights = "/models/bge-m3/bge-reranker-v2-m3-f16.gguf"
+device  = "xpu"
+memory  = { xpu = 2200, cpu = 3200 }
+host    = { xpu = 1700 }                  # peak 1,610
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "999",
+           "-c", "16384", "-np", "4", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "0",
+           "-c", "16384", "-np", "4", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
+           "--host", "127.0.0.1", "--port", "${PORT}"]
+
+# The chat model: THE SAME FILE Ollama serves as `qwen3:8b` today (operator,
+# 2026-09-19), read where Ollama keeps it. Ollama names a blob by its SHA-256,
+# so the file's name IS the weights digest RAGE will state. Verified on the
+# node: the GGUF carries `tokenizer.chat_template`, and the template knows
+# `enable_thinking`, so llama-server serves it as it is (`--jinja`). The
+# sampling flags are Ollama's own `params` layer for this model, so it
+# answers as it did. The context size is fixed at launch (operator,
+# 2026-09-19): llama-server takes no per-request `num_ctx`.
+# It moves here only once app/llm.py speaks /v1/chat/completions (step 13e);
+# until then Ollama serves chat. Before Ollama is retired, copy this one file
+# under /mnt/ssd5/apps/louise-rage/models/ and change `weights`: same bytes,
+# same digest, same run — the path is not part of a run.
 [models.chat]
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
-weights = "/models/chat/qwen3-8b.gguf"
+weights = "/models/ollama-blobs/sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
 device  = "xpu"
 memory  = { xpu = 7000, cpu = 9000 }
-cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "-c", "16384", "-np", "1", "-ngl", "99",
-           "--jinja", "--host", "127.0.0.1", "--port", "${PORT}"]
-cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "-c", "16384", "-np", "1", "-ngl", "0",
-           "--jinja", "--host", "127.0.0.1", "--port", "${PORT}"]
+host    = { xpu = 5700 }                  # Ollama's peak with it loaded: 5,648
+cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--jinja", "-ngl", "999", "-c", "16384", "-np", "1",
+           "-fa", "on", "-t", "6", "--top-k", "20", "--top-p", "0.95", "--repeat-penalty", "1.0",
+           "--metrics", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--jinja", "-ngl", "0", "-c", "16384", "-np", "1",
+           "-fa", "on", "-t", "6", "--top-k", "20", "--top-p", "0.95", "--repeat-penalty", "1.0",
+           "--metrics", "--host", "127.0.0.1", "--port", "${PORT}"]
 
 # ---- the platform's own servers ------------------------------------------------
 # Started by deploy/rage/servers/launch.py, which turns the arguments into
@@ -74,23 +141,24 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "-c", "16384", "-np", "1", "
 # model's code included. Nothing is fetched: a directory that is not there
 # is an error that names it.
 
-[models.madlad]
+[models.madlad]                           # TRANSLATE_URL
 engine  = { name = "louise-madlad-server", build = "2" }
 weights = "/models/madlad/madlad400-3b-mt-bf16"
 device  = "xpu"
-memory  = { xpu = 8200, cpu = 12000 }
+memory  = { xpu = 8200, cpu = 12000 }     # 8 GB of the card at peak (its app's note)
+host    = { xpu = 8600 }                  # peak 8,563, at load; 3,307 at rest
 env     = { BATCH = "32", MAX_SEG_TOKENS = "96" }
-health  = "/health"
 cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 
-[models.medcpt-rerank]
+[models.medcpt-rerank]                    # pubmed: the reranker (tei /rerank)
 engine  = { name = "louise-medcpt-rerank-server", build = "1" }
 weights = "/models/medcpt/medcpt-cross-ov"
 device  = "xpu"
 memory  = { xpu = 600, cpu = 900 }
+host    = { xpu = 850 }                   # peak 781
 cmd.xpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
@@ -98,12 +166,15 @@ cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--w
 
 # DNABERT-2: a runtime check only, ungated — DNA collections are a non-binding
 # work in progress and no DNA calibration set exists (operator, 2026-09-19).
-# Its Hugging Face snapshot, remote code included, is materialised on disk once.
+# Its app is stopped today and /mnt/ssd5/apps/dnabert2-models holds no model:
+# until a Hugging Face snapshot, remote code included, is materialised there,
+# this entry is `absent` and refused by path, which harms nothing.
 [models.dnabert2]
 engine  = { name = "louise-dnabert2-server", build = "1" }
 weights = "/models/dnabert2/DNABERT-2-117M"
 device  = "xpu"
 memory  = { xpu = 1200, cpu = 1800 }
+host    = { xpu = 1500 }                  # unmeasured: its app is not running
 cmd.xpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.launch", "dnabert2", "--weights", "${WEIGHTS}",

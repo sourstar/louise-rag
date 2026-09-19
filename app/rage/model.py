@@ -62,10 +62,20 @@ class ModelEntry:
     env: Mapping[str, str] = field(default_factory=dict)
     health: str = "/health"
     source: str = ""                      # the file that defines it
+    #: MiB of HOST RAM the model holds while it is on a card, per card. A
+    #: model on the GPU is not free on the host: measured on the node,
+    #: 2026-09-19, the eight GPU servers held 6.1 GiB between them at rest
+    #: and 22.0 GiB at their load-time peaks (MADLAD alone 8.5).
+    host: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def devices(self) -> tuple[str, ...]:
         return tuple(sorted(self.cmd))
+
+    def host_need(self, device: str) -> int:
+        """The host RAM this placement takes: all of it on the CPU, the
+        declared share of it on a card."""
+        return self.memory[device] if device == CPU else self.host[device]
 
     def variant_id(self, device: str) -> str:
         """The id llama-swap knows this model on this device by. Internal:
@@ -136,7 +146,8 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
         raise RageConfigError(f"{model_id!r} is not a model id: lower-case letters, "
                               f"digits, '.', '_' and '-', and never '@' or '/'")
     t = _table(raw, where)
-    unknown = set(t) - {"engine", "weights", "device", "memory", "cmd", "env", "health"}
+    unknown = set(t) - {"engine", "weights", "device", "memory", "host", "cmd", "env",
+                        "health"}
     if unknown:
         raise RageConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
     for key in ("engine", "weights", "device", "memory", "cmd"):
@@ -178,6 +189,20 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
             raise RageConfigError(f"{where}.memory.{d} is missing or zero: admission "
                                   f"cannot place a model whose size it does not know")
 
+    host = _int_map(t.get("host", {}), f"{where}.host")
+    if CPU in host:
+        raise RageConfigError(f"{where}.host.cpu: on the CPU the host RAM a model holds "
+                              f"IS memory.cpu; host is for the cards")
+    for d in sorted(set(cmd) - {CPU}):
+        if not host.get(d):
+            raise RageConfigError(
+                f"{where}.host.{d} is missing or zero: the host RAM, in MiB, the model "
+                f"holds while it is on {d}. A model on a card is not free on the host — "
+                f"load it and read `GET /louise/models`, which shows what it holds")
+    if set(host) - set(cmd):
+        raise RageConfigError(f"{where}.host names {sorted(set(host) - set(cmd))}, which "
+                              f"have no command")
+
     env = _table(t.get("env", {}), f"{where}.env")
     for name, value in env.items():
         if not _ENV_NAME.fullmatch(name):
@@ -194,7 +219,7 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
 
     return ModelEntry(id=model_id, engine=EngineDecl(e["name"], e["build"], variant),
                       weights=weights, device=device, memory=memory, cmd=cmd,
-                      env=dict(env), health=health, source=source)
+                      env=dict(env), health=health, source=source, host=host)
 
 
 def _models(doc: dict[str, Any], source: str) -> dict[str, ModelEntry]:
@@ -291,6 +316,9 @@ def entry_to_toml(entry: ModelEntry) -> str:
              "memory  = { " + ", ".join(f"{d} = {entry.memory[d]}"
                                         for d in sorted(entry.memory)) + " }",
              f"health  = {_s(entry.health)}"]
+    if entry.host:
+        lines.append("host    = { " + ", ".join(f"{d} = {entry.host[d]}"
+                                                for d in sorted(entry.host)) + " }")
     if entry.env:
         lines.append("env     = { " + ", ".join(f"{k} = {_s(v)}"
                                                 for k, v in sorted(entry.env.items())) + " }")
@@ -303,6 +331,6 @@ def entry_to_json(entry: ModelEntry) -> dict[str, Any]:
     return {"engine": {"name": entry.engine.name, "build": entry.engine.build,
                        "variant": entry.engine.variant},
             "weights": entry.weights, "device": entry.device,
-            "memory": dict(entry.memory), "env": dict(entry.env),
+            "memory": dict(entry.memory), "host": dict(entry.host), "env": dict(entry.env),
             "health": entry.health,
             "cmd": {d: list(entry.cmd[d]) for d in entry.devices}}

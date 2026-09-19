@@ -303,7 +303,8 @@ class Placement:
                 "id": model_id, "devices": list(entry.devices), "default_device": entry.device,
                 "engine": {"name": entry.engine.name, "build": entry.engine.build,
                            "variant": entry.engine.variant},
-                "memory": {"declared": dict(entry.memory), "observed": None},
+                "memory": {"declared": dict(entry.memory), "host": dict(entry.host),
+                           "observed": None},
                 "source": entry.source}
             if placed is None:
                 row |= {"state": UNLOADED if Path(entry.weights).exists() else ABSENT,

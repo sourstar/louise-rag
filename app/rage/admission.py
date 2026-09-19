@@ -5,21 +5,33 @@ on its first request, so without this a query for a dormant collection
 would launch 8 GB unchecked. The front admits every load, the first request
 included.
 
-    fits  =  declared memory of what is loaded on the device
-             + this model + the reserve   <=   the device's capacity
+TWO BUDGETS, AND EVERY LOAD IS CHECKED AGAINST THE HOST'S.
+- the card's, for a model placed on it: its `memory.<card>`;
+- the host's, for EVERY model: `memory.cpu` when it is placed on the CPU,
+  and `host.<card>` when it is placed on a card — because a model on the
+  GPU is not free on the host. Measured on the node, 2026-09-19, the eight
+  GPU servers RAGE replaces held 6.1 GiB of host RAM between them at rest
+  and 22.0 GiB at their load-time peaks (MADLAD alone 8.5, the chat model
+  5.6). The first version of this module counted host RAM for CPU
+  placements only, and would have let CPU models fill what the GPU models
+  were already holding.
 
-DECLARED, NOT OBSERVED. The sum is over `memory` as `rage.toml` states it:
-a model that is still loading holds less than it will, and one that spilled
-to host RAM — which `xe` allows silently (rage.md §7) — holds less than it
-needs. The observed peak is recorded beside the declaration after every
-load (front.py) so a figure that drifts is seen; it never decides.
+    fits  =  what is declared for everything loaded in that budget
+             + this model + the reserve   <=   the budget's capacity
+
+DECLARED, NOT OBSERVED. A model that is still loading holds less than it
+will, and one that spilled to host RAM — which `xe` allows silently
+(rage.md §7) — holds less of the card than it needs. The observed figures
+are recorded beside the declarations after every load (placement.py) so a
+figure that drifts is seen; they never decide. Declare the PEAK: loads can
+overlap, and the peak is when the out-of-memory killer comes.
 
 NEVER AN EVICTION. A load that does not fit is refused, with what is loaded
 and how much is free. Which model to give up is Louise's decision
 (docs/notes/embedder-pool-spec.md §3-4): she knows whose batch is in flight.
 
 AN UNKNOWN CAPACITY REFUSES. A card's capacity is declared in `rage.toml`
-and model.load requires it; the CPU's is the container's limit, read. Where
+and model.load requires it; the host's is the container's limit, read. Where
 neither gives a figure nothing is admitted there, and the reason names the
 key to set. Admitting blind is how the out-of-memory killer took the CPU
 encoder four times on 2026-09-15.
@@ -39,12 +51,12 @@ CapacityReader = Callable[[str], int | None]      # device -> MiB, or None: unkn
 @dataclass(frozen=True)
 class Verdict:
     ok: bool
-    device: str
+    device: str                         # the budget that decided: a card, or "cpu" = the host
     need_mib: int
     capacity_mib: int | None
-    held_mib: int                       # declared, by what is loaded on the device
+    held_mib: int                       # declared, by what is loaded in that budget
     reserve_mib: int
-    loaded: tuple[str, ...]             # the models loaded on the device
+    loaded: tuple[str, ...]             # the models counted in that budget
     reason: str | None = None
 
     @property
@@ -60,28 +72,41 @@ class Verdict:
                 "loaded": list(self.loaded), "reason": self.reason}
 
 
+def _budget(cfg: RageConfig, budget: str, what: str, model_id: str, need: int,
+            holders: Mapping[str, int], capacity: CapacityReader) -> Verdict:
+    held = sum(holders.values())
+    reserve = cfg.reserve_mib.get(budget, 0)
+    total = cfg.capacity_mib.get(budget) or capacity(budget)
+    base = dict(device=budget, need_mib=need, capacity_mib=total, held_mib=held,
+                reserve_mib=reserve, loaded=tuple(sorted(holders)))
+    if total is None:
+        return Verdict(ok=False, **base, reason=(
+            f"the capacity of {what} cannot be read here; declare "
+            f"[rage] capacity_mib.{budget} in rage.toml"))
+    if held + need + reserve > total:
+        return Verdict(ok=False, **base, reason=(
+            f"{model_id} needs {need} MiB of {what}; {total - reserve - held} MiB are "
+            f"free of {total} ({held} held by {sorted(holders) or 'nothing'}, "
+            f"{reserve} reserved)"))
+    return Verdict(ok=True, **base)
+
+
 def fits(cfg: RageConfig, loaded: Mapping[str, str], model_id: str, device: str,
          capacity: CapacityReader) -> Verdict:
     """`loaded` maps a model id to the device it is on (loading ones
-    included: they hold their place from the moment they are admitted)."""
+    included: they hold their place from the moment they are admitted).
+    The card is asked first, then the host; the first budget that says no
+    is the answer, and a yes is the host's — the one every load passes."""
     entry = cfg.models[model_id]
-    need = entry.memory[device]
-    on_device = tuple(sorted(m for m, d in loaded.items() if d == device and m != model_id))
-    held = sum(cfg.models[m].memory[device] for m in on_device if m in cfg.models)
-    reserve = cfg.reserve_mib.get(device, 0)
-    total = cfg.capacity_mib.get(device) or capacity(device)
-    base = dict(device=device, need_mib=need, capacity_mib=total, held_mib=held,
-                reserve_mib=reserve, loaded=on_device)
-    if total is None:
-        return Verdict(ok=False, **base, reason=(
-            f"the capacity of device {device!r} cannot be read here; declare "
-            f"[rage] capacity_mib.{device} in rage.toml"))
-    if held + need + reserve > total:
-        return Verdict(ok=False, **base, reason=(
-            f"{model_id} needs {need} MiB on {device}; {total - reserve - held} MiB are "
-            f"free of {total} ({held} held by {list(on_device) or 'nothing'}, "
-            f"{reserve} reserved)"))
-    return Verdict(ok=True, **base)
+    others = {m: d for m, d in loaded.items() if m != model_id and m in cfg.models}
+    if device != CPU:
+        on_card = {m: cfg.models[m].memory[d] for m, d in others.items() if d == device}
+        card = _budget(cfg, device, f"device {device!r}", model_id, entry.memory[device],
+                       on_card, capacity)
+        if not card.ok:
+            return card
+    on_host = {m: cfg.models[m].host_need(d) for m, d in others.items()}
+    return _budget(cfg, CPU, "host RAM", model_id, entry.host_need(device), on_host, capacity)
 
 
 # ---- reading a device's capacity --------------------------------------------
@@ -105,7 +130,7 @@ def cgroup_capacity_mib(root: Path = Path("/sys/fs/cgroup"),
 
 
 def system_capacity(device: str) -> int | None:
-    """The CPU's capacity is the container's limit, read. A card's is
+    """The host's capacity is the container's limit, read. A card's is
     DECLARED (`[rage] capacity_mib`, required by model.load for every card a
     model names): the card does not change, a declared figure lets the
     operator keep part of it for another tenant, and reading it would mean

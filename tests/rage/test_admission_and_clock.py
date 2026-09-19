@@ -18,16 +18,35 @@ def _unknown(_device):
 
 def test_what_fits_is_declared_memory_plus_the_reserve(rage):
     cfg = model.load(rage.config)                     # xpu: 10000 capacity, 1000 reserve
-    v = admission.fits(cfg, {}, "madlad", "xpu", _unknown)
-    assert v.ok and v.need_mib == 8200 and v.free_mib == 9000
+    assert admission.fits(cfg, {}, "madlad", "xpu", _unknown).ok
 
     v = admission.fits(cfg, {"madlad": "xpu"}, "bge-m3", "xpu", _unknown)
     assert not v.ok, "8200 held + 1400 + 1000 reserved > 10000"
-    assert v.loaded == ("madlad",) and v.free_mib == 800
+    assert v.device == "xpu" and v.loaded == ("madlad",) and v.free_mib == 800
     assert "bge-m3 needs 1400 MiB" in v.reason and "madlad" in v.reason
 
     assert admission.fits(cfg, {"madlad": "xpu"}, "bge-m3", "cpu", _unknown).ok, \
-        "the other device is another budget"
+        "the card's budget is not the host's"
+
+
+def test_a_model_on_the_gpu_is_not_free_on_the_host(rage):
+    """Measured on the node, 2026-09-19: the eight GPU servers RAGE replaces
+    held 6.1 GiB of host RAM at rest and 22.0 GiB at their load-time peaks.
+    The first version counted host RAM for CPU placements only, and would
+    have let CPU models fill what the GPU models were already holding."""
+    cfg = dataclasses.replace(model.load(rage.config),
+                              capacity_mib={"xpu": 10000, "cpu": 7000})   # reserve 2000
+    v = admission.fits(cfg, {"madlad": "xpu"}, "bge-m3", "cpu", _unknown)
+    assert not v.ok, "3400 held on the host by madlad@xpu + 2600 + 2000 reserved > 7000"
+    assert v.device == "cpu" and v.loaded == ("madlad",) and "host RAM" in v.reason
+
+    tight = dataclasses.replace(cfg, capacity_mib={"xpu": 10000, "cpu": 5000})
+    v = admission.fits(tight, {}, "madlad", "xpu", _unknown)
+    assert not v.ok and v.device == "cpu" and v.need_mib == 3400, \
+        "the card has room; the host has not: a GPU load is refused by the host's budget"
+
+    roomy = admission.fits(cfg, {"bge-m3": "xpu"}, "madlad", "xpu", _unknown)
+    assert not roomy.ok and roomy.device == "xpu", "the card is asked first"
 
 
 def test_a_model_is_never_counted_against_itself(rage):

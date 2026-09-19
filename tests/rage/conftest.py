@@ -36,6 +36,7 @@ engine  = {{ name = "llama.cpp", build = "b10630", variant = "sycl" }}
 weights = "{models}/bge-m3-FP16.gguf"
 device  = "xpu"
 memory  = {{ xpu = 1400, cpu = 2600 }}
+host    = {{ xpu = 450 }}
 env     = {{ LD_LIBRARY_PATH = "/opt/llama/lib" }}
 cmd.xpu = ["/opt/llama/llama-server", "-m", "${{WEIGHTS}}", "--embedding", "-ngl", "99", "--port", "${{PORT}}"]
 cmd.cpu = ["/opt/llama/llama-server", "-m", "${{WEIGHTS}}", "--embedding", "-ngl", "0", "--port", "${{PORT}}"]
@@ -45,6 +46,7 @@ engine  = {{ name = "louise-madlad-server", build = "2" }}
 weights = "{models}/madlad400-3b-mt-bf16"
 device  = "xpu"
 memory  = {{ xpu = 8200, cpu = 12000 }}
+host    = {{ xpu = 3400 }}
 env     = {{ HF_HUB_OFFLINE = "1" }}
 cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${{WEIGHTS}}", "--device", "xpu", "--host", "127.0.0.1", "--port", "${{PORT}}"]
 cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${{WEIGHTS}}", "--device", "cpu", "--host", "127.0.0.1", "--port", "${{PORT}}"]
