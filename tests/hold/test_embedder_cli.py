@@ -31,10 +31,16 @@ def test_the_verbs_are_in_the_tree():
         assert p.parse_args(argv).fn is not None
 
 
-def test_check_without_a_calibration_member_is_refused_not_deferred(tmp_path):
+def test_check_without_a_calibration_member_is_refused_not_deferred(tmp_path, monkeypatch):
     """Exit 2: "a rule stood in the way before anything was done" (07 §7.7).
     The member is written by `hold collection create` (09 §9.12) and without
-    it there is nothing to compare against — that is not a network problem."""
+    it there is nothing to compare against — that is not a network problem.
+
+    ON A NODE THAT NAMES NO ENCODER, deliberately: this passed on a checkout
+    whose own `collections/gutenberg.toml` happened to name one, and failed
+    on the reference node, where the encoder was looked for before the member
+    and the command read "deferred" (2026-09-19). The member comes first."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config-here"))
     root = _collection(tmp_path)
     # `create` wrote it; a drag that lost it is the case under test.
     member, = (root / "gutenberg" / "drag" / "calibration").glob("*.safetensors")

@@ -149,7 +149,7 @@ def stated_run(recipe, *, query: bool = False) -> emb.StatedRun:
 
 # ---- the gate against the run that answers ------------------------------------
 
-def _reference(root: Path, name: str, codex: Codex, role: str):
+def reference(root: Path, name: str, codex: Codex, role: str):
     member = Path(root) / name / "drag" / drag.calibration_paths(
         codex.space.calibration.set)[0]
     if not member.is_file():
@@ -180,7 +180,7 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
     # FIRST, and before the network: without the member there is nothing to
     # compare against, which is a rule in the way (exit 2) and no deferral —
     # an unreachable encoder must not be what the operator reads instead
-    reference = _reference(root, name, codex, role)
+    reference_vectors = reference(root, name, codex, role)
     try:
         stated = stated_run(recipe, query=query)
         _stopping(stop, name)
@@ -190,7 +190,7 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
         kw = {"query": query, "stop": stop, "name": name}
         return runs_mod.validate(
             root, name, codex, role=role,
-            reference=reference,
+            reference=reference_vectors,
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),

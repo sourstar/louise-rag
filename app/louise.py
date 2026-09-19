@@ -1340,12 +1340,20 @@ def _embedder_check_runs(a, name, codex) -> int:
     from app import run_check
     from app.hold import embedder as emb, runs as hold_runs
 
+    roles = ["document"] + (["query"] if codex.space.query.encoder is not None else [])
+    # THE MEMBER FIRST, before the encoder is even looked for: without it
+    # there is nothing to compare against, which is a rule in the way (exit
+    # 2) and never a deferral. Asked in the other order, a node with no
+    # encoder configured read "deferred" for a drag that had lost its member
+    # — found on the reference node, where the test that holds this ran with
+    # no collection file beside it (2026-09-19).
+    for role in roles:
+        run_check.reference(a.root, name, codex, role)
     try:
         recipe = _recipe_for(codex, name)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
-    roles = ["document"] + (["query"] if codex.space.query.encoder is not None else [])
     worst = 0
     for role in roles:
         try:
