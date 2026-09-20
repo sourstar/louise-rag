@@ -530,6 +530,19 @@ for a signed pack whose consumers must reproduce it. §12.7.
 
 ## 7. Encoders
 
+> **DECIDED, operator, 2026-09-20: the legal collection's encoder is
+> `qwen3-embedding-4b`, with a query-side instruction.** Measured, not
+> assumed — §7.1b has the table and §7.1c the base-model comparison behind
+> it. The instruction is **part of the decision, not a follow-up**: the
+> same weights score 0.7744 mrr@100 with it and 0.7324 without, and the
+> platform cannot yet declare it (§7.4b). A collection pinned before that
+> is settled takes the lower number silently.
+>
+> Per-query latency was raised and set aside as not a blocker (operator).
+> `jurifindit/DAR-legal-it` measures better on recall@10 and costs a third
+> the bytes per vector, and is excluded solely because it declares no
+> licence; if that ever changes, §7.4b's supersession path is how to revisit.
+
 **The encoder is chosen on retrieval quality on Italian legal text.** What
 this node happens to be running is not an input to that decision — it is a
 consequence of it, and a procurement problem (`approved-encoders.md`) to be
