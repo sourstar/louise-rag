@@ -167,3 +167,97 @@ def test_card_memory_is_counted_once_per_drm_client(rage):
     assert (rage.proc / str(pid) / "oom_score_adj").read_text() == "800"
     assert fs.exe_digest(pid) == digest(b"the program")
     assert fs.cmdline(99999) == [] and fs.rss_mib(99999) is None, "a gone process is not an error"
+
+
+# ---- the driver is the one the card is bound to ------------------------------------
+#
+# Operator, 2026-09-20: "RAGE should be independent from a specific
+# manufacturer." The driver in a run used to be "the first GPU module loaded"
+# from a fixed list. The reference node loads TWO — `xe` for its Arc and
+# `amdgpu` for the processor's own graphics — and read `xe` by luck of order.
+
+def _host(tmp_path, cards: dict[str, str], versions: dict[str, tuple[str, str]]):
+    """A /sys with these PCI cards bound to these drivers, and these modules."""
+    sys_root, proc_root = tmp_path / "sys", tmp_path / "proc"
+    (proc_root / "sys" / "kernel").mkdir(parents=True)
+    (proc_root / "sys" / "kernel" / "osrelease").write_text("6.18.0-production\n")
+    for module, (fname, value) in versions.items():
+        (sys_root / "module" / module).mkdir(parents=True)
+        if fname:
+            (sys_root / "module" / module / fname).write_text(value + "\n")
+        (sys_root / "bus" / "pci" / "drivers" / module).mkdir(parents=True)
+    for address, driver in cards.items():
+        device = sys_root / "bus" / "pci" / "devices" / address
+        device.mkdir(parents=True)
+        if driver:
+            (device / "driver").symlink_to(sys_root / "bus" / "pci" / "drivers" / driver)
+    runtime = tmp_path / "runtime-versions"
+    runtime.write_text("libfoo 1.2\n")
+    return {"sys_root": sys_root, "proc_root": proc_root, "runtime_versions": runtime}
+
+
+ARC, RADEON, GEFORCE = "0000:03:00.0", "0000:0d:00.0", "0000:01:00.0"
+
+
+def test_the_driver_is_the_one_the_declared_card_is_bound_to(tmp_path):
+    """The reference node itself: an Intel card and AMD graphics, both loaded."""
+    host = _host(tmp_path, {ARC: "xe", RADEON: "amdgpu"},
+                 {"xe": ("srcversion", "9F2C1A"), "amdgpu": ("version", "6.12")})
+    assert runs.driver_string("xpu", pci=ARC, **host) == \
+        "kernel 6.18.0-production; xe 9F2C1A; libfoo 1.2"
+    assert runs.driver_string("igpu", pci=RADEON, **host) == \
+        "kernel 6.18.0-production; amdgpu 6.12; libfoo 1.2"
+
+
+def test_an_nvidia_card_beside_amd_graphics_is_stated_as_nvidia(tmp_path):
+    """The case the fixed list got WRONG: `amdgpu` comes before `nvidia` in
+    it, so the NVIDIA card's runs would have named the AMD driver."""
+    host = _host(tmp_path, {GEFORCE: "nvidia", RADEON: "amdgpu"},
+                 {"nvidia": ("version", "575.64.03"), "amdgpu": ("version", "6.12")})
+    assert runs.driver_string("cuda", pci=GEFORCE, **host) == \
+        "kernel 6.18.0-production; nvidia 575.64.03; libfoo 1.2"
+
+
+def test_a_module_with_no_version_file_is_named_alone(tmp_path):
+    """The reference node's `xe` has neither `version` nor `srcversion`."""
+    host = _host(tmp_path, {ARC: "xe"}, {"xe": ("", "")})
+    assert runs.driver_string("xpu", pci=ARC, **host) == \
+        "kernel 6.18.0-production; xe; libfoo 1.2"
+
+
+def test_several_drivers_and_no_address_states_no_run_and_says_what_to_declare(tmp_path):
+    host = _host(tmp_path, {ARC: "xe", RADEON: "amdgpu"},
+                 {"xe": ("srcversion", "9F2C1A"), "amdgpu": ("version", "6.12")})
+    with pytest.raises(runs.DriverUnknown, match=r"declare \[rage\] pci\.xpu"):
+        runs.driver_string("xpu", **host)
+
+
+def test_one_driver_and_no_address_is_read_as_it_always_was(tmp_path):
+    host = _host(tmp_path, {ARC: "xe"}, {"xe": ("srcversion", "9F2C1A")})
+    assert runs.driver_string("xpu", **host) == \
+        "kernel 6.18.0-production; xe 9F2C1A; libfoo 1.2"
+
+
+def test_an_address_with_no_card_or_no_driver_is_not_guessed(tmp_path):
+    host = _host(tmp_path, {ARC: ""}, {"xe": ("srcversion", "9F2C1A")})
+    with pytest.raises(runs.DriverUnknown, match="bound to no kernel driver"):
+        runs.driver_string("xpu", pci=ARC, **host)
+    with pytest.raises(runs.DriverUnknown, match="no PCI device 0000:99:00.0"):
+        runs.driver_string("xpu", pci="0000:99:00.0", **host)
+    assert runs.driver_string("cpu", pci=None, **host) == "cpu"
+
+
+def test_the_cards_address_is_declared_in_rage_toml_and_checked(rage):
+    text = rage.config.read_text(encoding="utf-8")
+    rage.config.write_text(text.replace("[rage]\n", '[rage]\npci = { xpu = "0000:03:00.0" }\n', 1),
+                           encoding="utf-8")
+    assert model.load(rage.config).pci == {"xpu": "0000:03:00.0"}
+    for bad, why in (('"03:00.0"', "PCI address"), ('"renderD128"', "PCI address"), ("3", "PCI address")):
+        rage.config.write_text(text.replace("[rage]\n", f"[rage]\npci = {{ xpu = {bad} }}\n", 1),
+                               encoding="utf-8")
+        with pytest.raises(model.RageConfigError, match=why):
+            model.load(rage.config)
+    rage.config.write_text(text.replace("[rage]\n", '[rage]\npci = { cpu = "0000:03:00.0" }\n', 1),
+                           encoding="utf-8")
+    with pytest.raises(model.RageConfigError, match="not a card"):
+        model.load(rage.config)

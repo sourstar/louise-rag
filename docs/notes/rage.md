@@ -147,6 +147,7 @@ no desired state enters a database).
 ```toml
 [rage]
 device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }   # 09 §9.3's `device`
+pci          = { xpu = "0000:03:00.0" }   # where the card is on the bus: its driver is read there (§18)
 capacity_mib = { xpu = 32600 }                    # the CPU's is the container's limit, read
 reserve_mib  = { xpu = 2048, cpu = 4096 }
 preload      = ["bge-m3", "medcpt-query"]
@@ -595,17 +596,26 @@ come to need them.
 
 **Audited against the rule the same day. Where RAGE is tied to Intel:**
 
-1. **THE DRIVER IN THE RUN IDENTITY IS RIGHT BY LUCK OF ORDER — a defect,
-   latent on this very node.** `runs.driver_string` names "the first GPU
+1. **FIXED 2026-09-20** (`[rage] pci.<card>`, `runs.card_driver`): the
+   driver is read from the PCI device the card is declared to be; with no
+   address and several GPU drivers loaded, NO run is stated and the reason
+   says what to declare; with exactly one loaded the old reading stands,
+   because there it cannot be wrong. As found: **THE DRIVER IN THE RUN
+   IDENTITY WAS RIGHT BY LUCK OF ORDER — a defect, latent on this very
+   node.** `runs.driver_string` names "the first GPU
    module loaded" from a fixed list, `("xe", "i915", "amdgpu", "nvidia")`.
    This node has TWO loaded: `xe` for the Arc (renderD128) and `amdgpu`
    for the Ryzen's own graphics (renderD129). RAGE states `xe` only
    because `xe` comes first in that tuple; an NVIDIA card beside the same
    AMD graphics would be stated as `amdgpu`. The driver is the one the
    DEVICE is bound to: declare the card's node in `rage.toml` and read
-   `/sys/class/drm/<node>/device/driver`. On this node the string stays
-   `xe`, so no run id moves. It needs a new image — the front is in it —
-   so it was NOT done unasked.
+   `/sys/class/drm/<node>/device/driver`. (Built on the PCI address
+   instead: render nodes are numbered by load order and can swap across
+   boots; an address moves only with the hardware.) On this node the
+   DRIVER STRING stays what it was. **The run ids do move, and I first said
+   they would not**: the front lives in the image, a new image has a new
+   digest, and the image is part of every run (09 §9.12) — a new RAGE
+   build is a new run by definition, which is what makes it re-gated.
 2. **The GPU clock is Intel's and says so nowhere.** `gpu_clock.Governor`
    reads and writes `rp0_freq`, `rpn_freq`, `min_freq`, the `xe`/`i915`
    sysfs names. It is optional (`RAGE_FREQ_DIR` unset = no clock), which

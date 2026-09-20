@@ -130,6 +130,7 @@ class Placement:
             self.log(f"rage.toml not applied, the previous configuration stands: {e}")
             return False
         self.cfg = new
+        self._drivers.clear()        # a card's declared address may have changed
         self._write_yaml()
         return True
 
@@ -229,8 +230,14 @@ class Placement:
             return
         engine = runs.engine_object(entry, placed.device, image=self.image,
                                     device_name=self.device_name(placed.device))
-        run = runs.run_object(driver=self._driver(placed.device), engine=engine,
-                              weights=weights)
+        try:
+            driver = self._driver(placed.device)
+        except runs.DriverUnknown as e:
+            # the driver is part of what a run IS: one that cannot be read is
+            # not guessed, and the model serves with no run stated
+            placed.state, placed.run, placed.reason = UNSTATED, None, str(e)
+            return
+        run = runs.run_object(driver=driver, engine=engine, weights=weights)
         placed.run = runs.run_id(run)
         self.store.put(placed.run, run)
         placed.state, placed.reason = READY, None
@@ -289,8 +296,8 @@ class Placement:
     def _driver(self, device: str) -> str:
         if device not in self._drivers:
             self._drivers[device] = runs.driver_string(
-                device, sys_root=self._sys_root, proc_root=self._proc_root,
-                runtime_versions=self._runtime_versions)
+                device, pci=self.cfg.pci.get(device), sys_root=self._sys_root,
+                proc_root=self._proc_root, runtime_versions=self._runtime_versions)
         return self._drivers[device]
 
     def describe(self) -> list[dict[str, Any]]:

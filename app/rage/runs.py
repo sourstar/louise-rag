@@ -23,6 +23,7 @@ second one.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +36,9 @@ from .procfs import ProcFS
 MIB = 1 << 20
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 IMAGE_VARIABLE = "RAGE_IMAGE"
-#: kernel modules that drive a card; the one loaded names the driver
+#: kernel modules that drive a card. Read ONLY where no card address is declared
+#: and exactly one of them is loaded (`driver_string`): a list is no way to tell
+#: two manufacturers' cards apart
 GPU_MODULES = ("xe", "i915", "amdgpu", "nvidia")
 
 
@@ -120,13 +123,43 @@ def run_id(run: Mapping[str, Any]) -> str:
     return digest(canonical_json(dict(run)))
 
 
-def driver_string(device: str, *, sys_root: Path = Path("/sys"),
+class DriverUnknown(ValueError):
+    """The card's kernel driver cannot be read, so no run can be stated for a
+    model placed on it (09 §9.12: the driver is part of what a run IS)."""
+
+
+def card_driver(pci: str, *, sys_root: Path = Path("/sys")) -> str:
+    """The kernel driver the device at this PCI address is BOUND to. The PCI
+    bus is every manufacturer's: `xe`, `i915`, `amdgpu` and `nvidia` cards
+    alike are a directory under `/sys/bus/pci/devices` with a `driver` link."""
+    device = sys_root / "bus" / "pci" / "devices" / pci
+    if not device.is_dir():
+        raise DriverUnknown(f"there is no PCI device {pci} on this host "
+                            f"([rage] pci names the card's address, as `lspci -D` prints it)")
+    try:
+        return os.path.basename(os.readlink(device / "driver"))
+    except OSError:
+        raise DriverUnknown(f"PCI device {pci} is bound to no kernel driver") from None
+
+
+def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path("/sys"),
                   proc_root: Path = Path("/proc"),
                   runtime_versions: Path = Path("/etc/rage/runtime-versions")) -> str:
     """The device's kernel driver and compute runtime, with versions, as
     this platform reads them; `"cpu"` on a CPU (09 §9.12).
 
-    The kernel and its `xe` module are the host's, so they are read. The
+    THE DRIVER IS THE ONE THE CARD IS BOUND TO (`pci`, the card's address,
+    declared in `rage.toml`; `card_driver`). It used to be "the first GPU
+    module loaded" from a fixed list, which is right only on a host with one
+    manufacturer's driver: the reference node loads `xe` for its Arc AND
+    `amdgpu` for the processor's own graphics, and read `xe` because `xe`
+    came first in the tuple — an NVIDIA card beside that AMD graphics would
+    have been stated as `amdgpu` (operator, 2026-09-20: no manufacturer in
+    RAGE). Without a declared address the old reading stands ONLY where it
+    cannot be wrong — exactly one GPU module loaded; with several, no run is
+    stated and the reason says what to declare.
+
+    The kernel and the module are the host's, so they are read. The
     compute runtime is the image's: its package versions are written into
     the image when it is built (`deploy/rage/Dockerfile`), one `name
     version` a line, and read back here — no package manager runs at start."""
@@ -140,12 +173,20 @@ def driver_string(device: str, *, sys_root: Path = Path("/sys"),
             return None
 
     parts = [f"kernel {first_line(proc_root / 'sys/kernel/osrelease') or 'unknown'}"]
-    for module in GPU_MODULES:            # the first one loaded is the card's
-        if (sys_root / "module" / module).is_dir():
-            version = (first_line(sys_root / "module" / module / "version")
-                       or first_line(sys_root / "module" / module / "srcversion"))
-            parts.append(f"{module} {version}" if version else module)
-            break
+    if pci:
+        module: str | None = card_driver(pci, sys_root=sys_root)
+    else:
+        loaded = [m for m in GPU_MODULES if (sys_root / "module" / m).is_dir()]
+        if len(loaded) > 1:
+            raise DriverUnknown(
+                f"this host loads several GPU drivers ({', '.join(loaded)}) and rage.toml "
+                f"does not say which card `{device}` is: declare [rage] pci.{device} = "
+                f"\"<its PCI address>\" (`lspci -D`), and the driver is read from there")
+        module = loaded[0] if loaded else None
+    if module:
+        version = (first_line(sys_root / "module" / module / "version")
+                   or first_line(sys_root / "module" / module / "srcversion"))
+        parts.append(f"{module} {version}" if version else module)
     try:
         for line in runtime_versions.read_text(errors="replace").splitlines():
             if line.strip():

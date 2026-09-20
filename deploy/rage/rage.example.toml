@@ -24,6 +24,12 @@
 # it"); its capacity is what the models are placed against. Declare less
 # than the card holds (34.2 GB) to keep room for another tenant.
 device_names = { xpu = "Intel(R) Arc(TM) Pro B70 Graphics" }
+# The card's PCI address (`lspci -D`), so that the kernel driver a run states is
+# the one THIS card is bound to. RAGE names no manufacturer: every card is on
+# the PCI bus, and the driver is read from there — `xe` here, `amdgpu` or
+# `nvidia` elsewhere. This node loads two GPU drivers (the Arc's and the
+# processor's own graphics), and without this line no run would be stated.
+pci          = { xpu = "0000:03:00.0" }
 capacity_mib = { xpu = 32600 }            # the host's is the container's mem_limit, read
 reserve_mib  = { xpu = 2048, cpu = 2048 } # never given to a model
 # Loaded at start, one after the other, through admission like any load. The

@@ -99,7 +99,13 @@ class RageConfig:
     capacity_mib: Mapping[str, int] = field(default_factory=dict)
     #: a device as its driver names it (09 §9.3's `device`), where declared
     device_names: Mapping[str, str] = field(default_factory=dict)
+    #: a card's PCI address ("0000:03:00.0"), so that the kernel driver stated
+    #: in a run is the one THAT card is bound to — every manufacturer's card
+    #: is on the PCI bus (runs.driver_string)
+    pci: Mapping[str, str] = field(default_factory=dict)
 
+
+_PCI = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}.[0-7]")
 
 # ---- reading ---------------------------------------------------------------
 
@@ -241,7 +247,7 @@ def load(path: Path) -> RageConfig:
     if unknown:
         raise RageConfigError(f"{path}: unknown table(s) {sorted(unknown)}")
     head = _table(doc.get("rage", {}), "rage")
-    unknown = set(head) - {"preload", "reserve_mib", "capacity_mib", "device_names"}
+    unknown = set(head) - {"preload", "reserve_mib", "capacity_mib", "device_names", "pci"}
     if unknown:
         raise RageConfigError(f"{path}: [rage] has unknown key(s) {sorted(unknown)}")
 
@@ -285,9 +291,17 @@ def load(path: Path) -> RageConfig:
             raise RageConfigError(
                 f"declare [rage] capacity_mib.{card}: the card's memory in MiB, which "
                 f"admission places the models against")
+    pci = _table(head.get("pci", {}), "rage.pci")
+    for device, address in pci.items():
+        if not isinstance(address, str) or not _PCI.fullmatch(address):
+            raise RageConfigError(
+                f"rage.pci.{device} must be a PCI address as `lspci -D` prints it, "
+                f"like \"0000:03:00.0\"; got {address!r}")
+        if device == CPU:
+            raise RageConfigError("rage.pci.cpu: the CPU is not a card on the PCI bus")
     return RageConfig(models=models, preload=tuple(preload),
                       reserve_mib=_int_map(head.get("reserve_mib", {}), "rage.reserve_mib"),
-                      capacity_mib=capacity, device_names=dict(names))
+                      capacity_mib=capacity, device_names=dict(names), pci=dict(pci))
 
 
 def dropin_dir(config_path: Path) -> Path:

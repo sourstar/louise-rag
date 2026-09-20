@@ -106,3 +106,12 @@ def test_nothing_of_rage_depends_on_another_apps_folder():
     assert cfg.models["chat"].weights == "/models/chat/qwen3-8b.gguf"
     assert any(target.startswith("/models/chat:") for _src, target in binds), \
         "the folder the chat model is read from is bound"
+
+
+def test_every_card_the_example_places_on_says_where_it_is_on_the_bus():
+    """No manufacturer in RAGE (operator, 2026-09-20): the driver a run states
+    is read from the card's PCI address, never picked from a list of vendors'
+    modules — and the reference node loads two of them."""
+    cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    cards = {d for e in cfg.models.values() for d in e.cmd} - {"cpu"}
+    assert cards and cards <= set(cfg.pci), "a card with no address: its driver would be a guess"

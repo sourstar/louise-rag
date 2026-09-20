@@ -227,3 +227,30 @@ def test_the_front_carries_none_of_the_manifest_layer():
         for package, names in pattern.findall(source.read_text(encoding="utf-8")):
             used = {package} if package else {n.strip() for n in names.split(",")}
             assert used <= allowed, f"{source.name} imports {used - allowed} from the platform"
+
+
+def test_a_driver_that_cannot_be_told_apart_states_no_run_and_the_model_still_serves(rage):
+    """Operator, 2026-09-20: no manufacturer in RAGE. A host with two GPU
+    drivers loaded and no card address declared: the model loads and answers,
+    and no run is stated — the driver is part of what a run IS, and a guess
+    from a list's order is not a reading. The reason says what to declare."""
+    p = rage.placement()
+    (rage.root / "sys" / "module" / "amdgpu").mkdir(parents=True)     # the processor's graphics
+    placed = run(p.ensure("bge-m3"))
+    assert placed.state == UNSTATED and placed.run is None
+    assert "declare [rage] pci.xpu" in placed.reason
+    assert placed.pid is not None, "it serves all the same: search works, writes do not"
+
+    # declared, the same host states a run: the card's own driver, read
+    device = rage.root / "sys" / "bus" / "pci" / "devices" / "0000:03:00.0"
+    device.mkdir(parents=True)
+    (rage.root / "sys" / "bus" / "pci" / "drivers" / "xe").mkdir(parents=True)
+    (device / "driver").symlink_to(rage.root / "sys" / "bus" / "pci" / "drivers" / "xe")
+    text = rage.config.read_text(encoding="utf-8")
+    rage.config.write_text(text.replace("[rage]\n", '[rage]\npci = { xpu = "0000:03:00.0" }\n', 1),
+                           encoding="utf-8")
+    assert p.reload() is True, "and the cached reading went with the old configuration"
+    run(p.unload("bge-m3"))
+    placed = run(p.ensure("bge-m3"))
+    assert placed.state == READY and placed.run
+    assert p.store.get(placed.run)["driver"].startswith("kernel 6.18.0-production; xe 9F2C1A;")
