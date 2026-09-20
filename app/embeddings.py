@@ -186,7 +186,28 @@ def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mo
     return collections_mod.EmbedRecipe(
         url=recipe.query_url, api=recipe.api, model=recipe.model,
         dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
-        concurrency=recipe.concurrency, device=recipe.device)
+        concurrency=recipe.concurrency, device=recipe.device,
+        query_prefix=recipe.query_prefix)
+
+
+def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
+           query: bool) -> list[str]:
+    """The texts as the QUERY SIDE must receive them (§7.4b).
+
+    The one place a declared `query_prefix` is applied, so that "a query
+    embedding" means the same thing on every path — search, a run's
+    fingerprint, a calibration probe. A prefix applied on one path and not
+    another would put two kinds of query vector in one collection and
+    nothing would report it: both are honest vectors of the right width.
+
+    Documents are never touched. That asymmetry IS the feature, and it is
+    also the failure mode worth naming — a prefix that leaked onto the
+    document side would move every vector in the collection together, so
+    retrieval would still look reasonable while no longer matching the
+    space the Codex pins."""
+    if not (query and recipe.query_prefix):
+        return texts
+    return [recipe.query_prefix + t for t in texts]
 
 
 def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecipe",
@@ -203,7 +224,8 @@ def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecip
     purpose — the gate sets this beside the way the peer really contributes
     to measure batch invariance (03 §3.3)."""
     side = _side(recipe, query)
-    return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0] for text in texts]
+    return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0]
+            for text in _asked(texts, side, query)]
 
 
 def embed_texts(texts: list[str], timeout: float = 300, *,
@@ -225,6 +247,7 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
             "embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
+    texts = _asked(texts, recipe, query)
 
     def one(b: list[str]) -> list[list[float]]:
         # the two keywords only where asked for: a test's stand-in for

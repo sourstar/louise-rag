@@ -387,3 +387,26 @@ def test_collection_management_requires_admin(client):
                   "/admin/library/gutenberg/bundle/export",
                   "/admin/library/gutenberg/bundle/import"):
         assert client.post(path, json={}).status_code == 401, path
+
+
+def test_query_prefix_survives_being_written_back_as_toml():
+    """§7.4b's prefix carries real control characters — Qwen3-Embedding's is
+    `Instruct: <task>\nQuery: `. A literal newline inside a TOML basic string
+    is not valid TOML, so the tidy-looking `"%s"` used for URLs would write a
+    file that fails to parse at the next boot, having been written by us.
+    `_toml_scalar` quotes `"` and nothing else on purpose (it feeds layer
+    params, which are inside space_id); `_toml_string` is the one for this.
+    """
+    import tomllib
+
+    for prefix in ("query: ",
+                   "Instruct: retrieve Italian statutes\nQuery: ",
+                   'a "quoted" \ backslash\ttab'):
+        body = f"[embed]\nquery_prefix = {web._toml_string(prefix)}\n"
+        assert tomllib.loads(body)["embed"]["query_prefix"] == prefix
+
+    # and the recipe parser keeps it byte for byte on the way back in
+    r = collections_mod.parse_recipe(
+        {"url": "http://x", "model": "m",
+         "query_prefix": "Instruct: t\nQuery: "}, where="t")
+    assert r.query_prefix == "Instruct: t\nQuery: "

@@ -2050,6 +2050,21 @@ def _toml_scalar(v) -> str:
     return '"%s"' % str(v).replace('"', '\\"')
 
 
+def _toml_string(v: str) -> str:
+    """A string as a TOML basic string, escapes and all.
+
+    `_toml_scalar` above quotes `"` and nothing else, which is right for the
+    layer params it was written for and wrong for a `query_prefix`: those
+    carry real control characters ("query: " is tame, "Instruct: …\\nQuery: "
+    is not), and a literal newline inside a basic string is not valid TOML —
+    the file would fail to parse on the next boot, having been written by us.
+    TOML basic strings take JSON's escapes exactly, so json.dumps IS the
+    encoder. Kept separate deliberately: `_toml_scalar` feeds layer params,
+    which are inside `space_id`, and changing how those serialise would
+    re-pin collections whose chunker never changed (invariant 3)."""
+    return json.dumps(v, ensure_ascii=False)
+
+
 #: 07 §7.8 spells the middle mode `on-demand`; the stored value is `lazy`
 #: (app/collections.py's `_EMBED_MODE_ALIASES`). A Codex file is written in
 #: the DOCUMENT's word — CLAUDE.md: the documents fix the vocabulary.
@@ -2130,6 +2145,10 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
         lines += ["", "[encoder]", f"url = {_toml_scalar(encoder.url)}"]
         if encoder.query_url:
             lines.append(f"query_url = {_toml_scalar(encoder.query_url)}")
+        if getattr(encoder, "query_prefix", ""):
+            # query-side only, never in space_id (§7.4b) — but desired state,
+            # and dropping it on a rewrite costs 4.2 MRR points in silence
+            lines.append(f"query_prefix = {_toml_string(encoder.query_prefix)}")
         if encoder.api != "openai":
             lines.append(f"api = {_toml_scalar(encoder.api)}")
         if encoder.model and encoder.model != cx.space.encoder.label:
@@ -2246,6 +2265,10 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             lines.append(f"dim = {embed.dim}")
         if embed.query_url:
             lines.append(f'query_url = "{embed.query_url}"')
+        if getattr(embed, "query_prefix", ""):
+            # same class as `concurrency` below: not space identity, very
+            # much desired state (§7.4b)
+            lines.append(f"query_prefix = {_toml_string(embed.query_prefix)}")
         if getattr(embed, "concurrency", 1) > 1:
             # not space identity, but VERY MUCH desired state: dropping it
             # on a rewrite silently serialized a CPU collection's embeds
