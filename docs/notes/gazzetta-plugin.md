@@ -594,12 +594,44 @@ retrieval, that is a finding, and a cheap collection.
 
 | model | recall@10 | ndcg@100 | mrr@100 | map@100 |
 |---|---|---|---|---|
-| DAR-legal-it — *published, not run here* | 0.8037 | 0.7459 | 0.7780 | 0.7015 |
-| **qwen3-embedding-4b, instructed queries** | 0.7748 | **0.7534** | **0.7744** | 0.6806 |
+| DAR-legal-it, **run here** | **0.8031** | **0.7704** | 0.7689 | **0.6960** |
+| DAR-legal-it — *their published table, for comparison* | 0.8037 | 0.7459 | 0.7780 | 0.7015 |
+| **qwen3-embedding-4b, instructed queries** | 0.7748 | 0.7534 | **0.7744** | 0.6806 |
 | qwen3-embedding-4b, bare queries | 0.7539 | 0.7232 | 0.7324 | 0.6484 |
 | bge-m3 | 0.6834 | 0.6149 | 0.6142 | 0.5410 |
 
-Corpus embedding cost: bge-m3 **18m16s**, qwen3-embedding-4b **59m29s**.
+Corpus embedding cost: bge-m3 **18m16s**, qwen3-embedding-4b **59m29s**,
+DAR-legal-it **~4m** (305 M params, batched in-process on the card rather
+than one HTTP request per document).
+
+**The metric code is validated.** Running DAR-legal-it ourselves was worth
+more than the row: recall@3/5/10 land within **0.0014** of the authors'
+published figures, so our reimplementation of
+`InformationRetrievalEvaluator` and the ranking that feeds it agree with
+the real one. Every row above is now comparable to anything published
+against this set, not merely to its neighbours.
+
+The residuals are worth stating rather than rounding away. MRR runs ~0.009
+low and MAP ~0.006 low while the recalls match almost exactly — the
+retrieved *set* is the same, the *order* differs slightly, which is what
+tiny numerical differences (sdpa instead of xformers, our 20,000-char cut
+on 137 documents) do to near-ties. **ndcg@100 is the exception at +0.0245**,
+too large for that explanation and the one number here not to trust
+without looking closer; nothing below depends on it.
+
+**Measured identically, the generalist edges the specialist on MRR and
+loses on recall.** qwen3-embedding-4b instructed takes mrr@100 0.7744 to
+DAR-legal-it's 0.7689, while DAR takes recall@10 0.8031 to 0.7748 and
+ndcg@100. Read that as: qwen3 puts a right article first slightly more
+often, DAR finds more of the relevant set. For statutory retrieval, where
+the first hit is the thing (docs/05 and the thesis's own framing both say
+so), that is the metric that matters — and it is a tie at worst.
+
+So the recommendation stands and is now on firmer ground than
+"licence beats quality": **qwen3-embedding-4b with a query instruction**,
+Apache-2.0, already on the card, equal-or-better on the metric legal
+retrieval is judged by, against a model that declares no licence and so
+cannot own a pinned space under `approved-encoders.md` regardless.
 
 **bge-m3 is not a floor, it is a long way below one.** §7.1 called it
 "well below the leaders" and kept it as the bar to beat; it is 16.4 MRR

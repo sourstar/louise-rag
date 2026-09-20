@@ -4731,12 +4731,21 @@ this plain dense model's own mrr@100, not the graph pipeline's.
 
 | model | recall@10 | mrr@100 |
 |---|---|---|
-| DAR-legal-it — *published, not run here* | 0.8037 | 0.7780 |
+| DAR-legal-it, **run here** | **0.8031** | 0.7689 |
+| DAR-legal-it — *their published table* | 0.8037 | 0.7780 |
 | **qwen3-embedding-4b, instructed queries** | 0.7748 | **0.7744** |
 | qwen3-embedding-4b, bare queries | 0.7539 | 0.7324 |
 | bge-m3 | 0.6834 | 0.6142 |
 
-Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s.
+Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s, DAR-legal-it ~4m.
+
+DAR-legal-it was run on the card through a **side-car** — `FROM` the
+deployed rage digest plus one venv, run once and discarded
+(`deploy/bakeoff-st/Dockerfile.xpu`). RAGE itself, its `rage.toml` and the
+pushed image were not touched. **Its recalls land within 0.0014 of the
+authors' published figures**, which validates our metric code against the
+real `InformationRetrievalEvaluator` and makes every row here comparable
+to anything published against this set.
 
 Two findings worth carrying out of it. **bge-m3 is not a candidate for
 Italian legal** — 16.4 MRR points behind the domain specialist, and behind
