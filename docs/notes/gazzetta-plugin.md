@@ -717,9 +717,30 @@ third-party training-data terms, which is the actual blocker (§7.1b). Its
 dim 2560 is the cost — 3.3x DAR's bytes per vector, which
 `embedder-choice-and-supersession.md` §2 prices as the supersession bill.
 
-Measured with `tools/bakeoff_local.py` through the side-car. One run
-(`Qwen3-Embedding-0.6B`) is still outstanding; it decides whether Qwen's
-strength survives at 0.6B or needs the 4B.
+Measured with `tools/bakeoff_local.py` through the side-car, ~4–5 minutes
+per model on the card.
+
+**`Qwen3-Embedding-0.6B` could not be measured, and why is worth
+recording.** Two attempts, both dying with
+`UR_RESULT_ERROR_DEVICE_LOST` from the Level Zero backend part-way through
+the corpus, after running ~17x slower per shard than the encoders either
+side of it (~1.7 min per 512 documents against arctic's ~6 s). The first
+took an `xe … Engine reset: engine_class=bcs` and a device coredump with
+it; the second left no kernel trace at all and the card kept serving
+RAGE at 17 ms. So it is not the `compute-runtime#948` wedge — the card
+stays up, RAGE is untouched, and the four other models including a 4B one
+ran clean. It is **this model on the torch-XPU path**: a decoder with
+last-token pooling, where the encoders that work are bidirectional.
+
+Not retried a third time: two identical failures is evidence, and another
+attempt spends the card that production is on. Relevant beyond this
+bake-off — if a Qwen3 embedding model is ever wanted inside RAGE, the
+llama.cpp route is the one that works (qwen3-embedding-4b serves there
+daily); the torch route should be assumed broken until someone shows
+otherwise.
+
+Its absence does not move the conclusion, which rests on the spread across
+the four bases that did run and on qwen3-embedding-4b's untrained 0.7744.
 
 ### 7.4b The query prefix has nowhere to live — OPEN
 
