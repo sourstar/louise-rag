@@ -3269,6 +3269,33 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
+**2026-09-20, night — ONE ORIGIN CHECK READS AT MOST 256 MiB OF THE ORIGIN.**
+Operator: "10.5 GiB are too much, limit the test to some hundred MB."
+(spec main fef062f — 03 §3.2, 07 §7.3, 09 §9.8; louise c688567, 2a1e89e.)
+- **Why the shard sample never bounded it**: a record shard is cut by the
+  collection's slices and an origin file by the origin's. Measured on the
+  node, read-only, against pubmed's real snapshot (2026-08: 1,358 shards,
+  39,994,988 records), two seeds: a twentieth of the shards = 68 shards ≈
+  2.0 M records, read in 34 s, reaching into **651 files / 28.9 GiB** and
+  **474 files / 18.6 GiB**. My "10.5 GiB" had been an estimate, and low.
+- **The rule**: within the sampled shards the records are grouped by origin
+  unit (the file a locator points into); the units are ranked by 09 §9.1's
+  one sampling rule under the same seed and read up to the last that keeps
+  their sizes within 256 MiB; the first is always read. Every sampled
+  record of a unit read is compared byte for byte. Same two seeds, after:
+  **5 files / 214 MiB, 14,288 records** and **5 files / 226 MiB, 1,125
+  records**. The spread is real — it is how many of a file's records fall
+  in the sampled years — and is why a level counts many peers' checks.
+- **The platform's bound, not the plan's** (09 §9.3's reason), raised for a
+  run with `--origin-mib`, never lowered. The outcome and the attestation
+  say what was read (`compared`, `origin_units`, `origin_bytes`, …).
+- **A cost the measurement caught**: choosing the files took 51 s, a `stat`
+  for every one of two million records; per file it is 0.9 s. A cost test
+  holds it.
+- NOT CHANGED: there is still no step that FETCHES the origin — `--origin
+  DIR` is what a peer gives — so the bound is what that step will have to
+  respect when it is built, and what `--origin` reads today.
+
 **2026-09-20, evening — QUARANTINE IS ENFORCED, AND RAGE READS THE CARD.**
 - **Quarantine: ENFORCED on the node** (`platform.toml`: `[node] quarantine
   = "enforce"`, the three live collections listed by collection id under
