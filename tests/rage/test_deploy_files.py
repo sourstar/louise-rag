@@ -91,3 +91,18 @@ def test_llama_servers_libraries_are_found_from_any_directory():
     from RAGE's. Registered with the loader, never put on LD_LIBRARY_PATH."""
     assert re.search(r"^RUN echo /app > /etc/ld\.so\.conf\.d/\S+ && ldconfig", DOCKERFILE, re.M)
     assert not re.search(r"^ENV .*LD_LIBRARY_PATH", DOCKERFILE, re.M)
+
+
+def test_nothing_of_rage_depends_on_another_apps_folder():
+    """The chat model was first read where Ollama kept it. An app that reads
+    another app's folder stops working the day that app is deleted — so RAGE
+    has a copy of its own (2026-09-20), and neither a bind nor a weights path
+    may name Ollama's. The path is not part of a run: the run id did not move."""
+    cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    for entry in cfg.models.values():
+        assert "ollama" not in entry.weights.lower(), entry.id
+    binds = re.findall(r"^\s+- (/\S+):(/models/\S+)$", APP_YAML, re.M)
+    assert binds and not [src for src, _ in binds if "ollama" in src.lower()]
+    assert cfg.models["chat"].weights == "/models/chat/qwen3-8b.gguf"
+    assert any(target.startswith("/models/chat:") for _src, target in binds), \
+        "the folder the chat model is read from is bound"

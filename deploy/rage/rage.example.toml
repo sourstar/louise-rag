@@ -115,21 +115,23 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "0",
            "-c", "16384", "-np", "4", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
 
-# The chat model: THE SAME FILE Ollama serves as `qwen3:8b` today (operator,
-# 2026-09-19), read where Ollama keeps it. Ollama names a blob by its SHA-256,
-# so the file's name IS the weights digest RAGE will state. Verified on the
+# The chat model: THE SAME BYTES Ollama served as `qwen3:8b` (operator,
+# 2026-09-19). First read where Ollama kept it; since 2026-09-20 a copy of
+# RAGE's own, so that nothing of RAGE's depends on Ollama's folder. Its
+# SHA-256 is a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f
+# — Ollama names a blob by it, so the copy was checked against the name it
+# came from. Verified on the
 # node: the GGUF carries `tokenizer.chat_template`, and the template knows
 # `enable_thinking`, so llama-server serves it as it is (`--jinja`). The
 # sampling flags are Ollama's own `params` layer for this model, so it
 # answers as it did. The context size is fixed at launch (operator,
 # 2026-09-19): llama-server takes no per-request `num_ctx`.
-# It moves here only once app/llm.py speaks /v1/chat/completions (step 13e);
-# until then Ollama serves chat. Before Ollama is retired, copy this one file
-# under /mnt/ssd5/apps/louise-rage/models/ and change `weights`: same bytes,
-# same digest, same run — the path is not part of a run.
+# THE PATH IS NOT PART OF A RUN: moving the file left the run id where it was
+# (sha256:ce6d7fb39087…, before and after, seen on the node) — the engine's
+# `args` keep `${WEIGHTS}` and the digest is of the bytes.
 [models.chat]
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
-weights = "/models/ollama-blobs/sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
+weights = "/models/chat/qwen3-8b.gguf"
 device  = "xpu"
 memory  = { xpu = 7600, cpu = 9000 }     # observed 7,250 MiB under RAGE (2026-09-19)
 host    = { xpu = 5700 }                  # Ollama's peak with it loaded: 5,648

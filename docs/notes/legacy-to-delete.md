@@ -293,7 +293,24 @@ and its 48 GB was a text index over a pack that survives on
 the archive pool’s `louise-packs/gutenberg-2026-06`. Recorded here because the
 rule arrived afterwards and the deletion should not be invisible.
 
-## 7. The per-model apps and the governor — STOPPED 2026-09-19, delete nothing yet
+## 7. The per-model apps and the governor — STOPPED 2026-09-19; DELETED BY THE OPERATOR by 2026-09-20
+
+**As found on 2026-09-20:** none of these apps is on the node any more —
+the operator deleted them, ahead of the conditions below, which were
+written for whoever would otherwise have decided alone. Their model
+folders are untouched and RAGE reads them. What is left of this section's
+way back is `config/backup-pre-rage-2026-09-19/` (Louise's settings). The
+deleted apps' own definitions went with them: TrueNAS keeps none, and
+`/mnt/ssd4/apps/louise-rag/app-config-backups/` holds only an OLDER
+generation (`llama-embed`, `embed-bge-m3`, `embed-medcpt`). The servers'
+code is in the repository's `deploy/`; re-creating one of those apps would
+mean writing its definition again. **`ollama` is the one still standing**:
+idle since chat moved, and since 2026-09-20 RAGE reads nothing of its
+folder (the chat model has a copy of RAGE's own), so it and its 89 GB
+store can go whenever the operator says.
+
+The section as written on 2026-09-19:
+
 
 RAGE (`louise-rage`, port 30437) replaced them in one cut-over
 ([`STATUS.md`](STATUS.md), "THE CUT-OVER IS DONE"). They are **stopped,

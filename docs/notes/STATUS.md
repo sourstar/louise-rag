@@ -3269,6 +3269,38 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
+**2026-09-20, morning — RAGE NO LONGER READS ANYTHING OF OLLAMA'S.**
+Operator: "If the chat model runs now in RAGE why do we need Ollama?" —
+we did not, except for ONE FILE: the chat model was read from Ollama's
+blob store. It now has a copy of RAGE's own,
+`/mnt/ssd5/apps/louise-rage/models/chat/qwen3-8b.gguf`, checked against
+the digest in the name it came from (`a3de86cd…686f`); the app's bind and
+`rage.toml` point at it, and a test forbids a bind or a weights path that
+names another app's folder. **The path is not part of a run**: chat's run
+id is `sha256:ce6d7fb39087…` before and after, and the six other resident
+models came back from the restart with the run ids they had — the first
+time "stable across two launches" was seen on the node and not in a test.
+Preload after the restart: 7 models in 56 s (Qwen3 31.3 s, MADLAD 19.3,
+chat 11.3, bge-m3 9.3, bge-reranker 7.3, MedCPT query 5.3, cross-encoder
+3.3). A streamed Ask answered in 8.2 s. The GPU panel's last cryptic row
+reads `qwen3-8b`. Ollama has served nothing since chat moved (its only
+requests were the comparison's two chats and the unload). The way back
+for the move: `config/rage.toml.pre-chat-move`,
+`config/app-config.pre-chat-move.json` (mode 600).
+- **THE OPERATOR DELETED THE OLD APPS** (seen 2026-09-20: none of
+  `embed-gpu-*`, `embed-cpu-*`, `translate-gpu-madlad`,
+  `louise-gpu-governor` is on the node any more). So the way back through
+  them that [`legacy-to-delete.md`](legacy-to-delete.md) §7 describes is
+  gone by the operator's own decision; their model folders stay, because
+  RAGE reads them. `ollama` still exists and runs, idle: stopping and
+  deleting it, and the 89 GB of its store, is the operator's.
+- **The node was rebooted at 10:34** (kernel: a software reset), and came
+  back by itself: `louise-rag`, `louise-rage`, the probe, the mode it was
+  in. RAGE preloaded on its own. The operator then PAUSED the node from
+  the Library (10:38, from 192.168.178.76) and it was left paused — the
+  two documents in flight were deferred at their next slice, as the mode
+  table now has it.
+
 **LATER THE SAME NIGHT (2026-09-19/20), unattended.**
 - **Chat runs in RAGE** (operator: "the same model in Ollama, just run in
   RAGE"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way

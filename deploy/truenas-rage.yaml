@@ -13,8 +13,9 @@
 #   /mnt/ssd5/apps/louise-rage    RAGE's folder: config/ and state/ under it
 #   30437                         the published port — one the per-model apps
 #                                 used (gutenberg's encoder), free once they stop
-#   the chat model                the same file Ollama serves as qwen3:8b, read
-#                                 where Ollama keeps it (rage.example.toml)
+#   the chat model                the same bytes Ollama served as qwen3:8b, in a
+#                                 copy of RAGE's own under louise-rage/models/chat
+#                                 (rage.example.toml)
 #   ghcr.io/sourstar/rage        where the image is published, BY DIGEST. The
 #                                 same digest goes in RAGE_IMAGE. A tag refuses
 #                                 to start: the run identity names the image
@@ -124,6 +125,8 @@ services:
       - /mnt/ssd5/apps/llama-embed:/models/llama-embed:ro
       # DNA is frozen and inactive (operator, 2026-09-19): DNABERT-2 is not served
       # - /mnt/ssd5/apps/dnabert2-models:/models/dnabert2:ro
-      - /mnt/ssd5/apps/ollama_data/models/blobs:/models/ollama-blobs:ro
+      # the chat model: RAGE's own copy of the file Ollama served as qwen3:8b
+      # (2026-09-20), so that nothing here depends on Ollama's folder
+      - /mnt/ssd5/apps/louise-rage/models/chat:/models/chat:ro
       - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
       - /mnt/ssd5/apps/louise-rage/secrets/admin.token:/run/rage/admin.token:ro
