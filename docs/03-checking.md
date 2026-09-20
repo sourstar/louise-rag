@@ -728,7 +728,7 @@ and written nowhere:
 | state | meaning | cleared by |
 |---|---|---|
 | **refused** | the copy cannot be right: the Codex's inner hash is not the id its file names, the vector table is not the Codex's space or width, the state database is another platform's (07 §7.8) | a person, and nothing else |
-| **quarantine** | the copy is not yet tested on this peer | the five tests below, by themselves; or the two acknowledgements |
+| **quarantine** | the copy is not yet tested on this peer | the five tests below, by themselves; or the two acknowledgements; or, for a copy in use before the peer enforced, its operator's listing (below) |
 | **in use** | searched, extended and shared as its file says | — |
 
 A copy leaves quarantine when, on this peer:
@@ -765,6 +765,22 @@ collection forget` rejects it. There is no timeout and no default, as
 there is none for a licence. The check still runs when it can, as it
 does on every copy in use, and the attestation the peer could not
 publish before is published then.
+
+**Copies in use before a peer enforced quarantine** (operator,
+2026-09-20). A peer that already used copies the day it began to enforce
+cannot test them all at once: they were made before the tests existed.
+Its operator lists them in the node's desired state, by collection id
+and never by name (`platform.toml`, `[node] quarantine_in_use_before`).
+For a listed copy that decision stands in for tests 1 and 5 while they
+HAVE NOT RUN or CANNOT RUN, and for nothing else: not the gate, which the
+peer runs by itself; not the licence (04 §4.4); not a test that failed,
+which quarantines a listed copy like any other. Nothing is pretended:
+the copy is in use, `hold collection show` prints the decision beside
+each test still open and what clears it, no attestation is written, and
+`origin_check` reads what it is (09 §9.3). The tests still run when
+they can, and once they pass the entry says nothing. A copy that is not
+listed is tested — the list is how an existing peer crosses over, and
+the next collection it creates or downloads is not in it.
 
 While in quarantine a copy enters no search, in either leg, and the
 response names it as withheld with the reason (05 §5.3). It is not
