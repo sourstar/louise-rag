@@ -3269,6 +3269,38 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
+**2026-09-20, evening — QUARANTINE IS ENFORCED, AND RAGE READS THE CARD.**
+- **Quarantine: ENFORCED on the node** (`platform.toml`: `[node] quarantine
+  = "enforce"`, the three live collections listed by collection id under
+  `quarantine_in_use_before`). The list went in first, in report mode,
+  where the old code ignored it; then the deploy; then each collection was
+  read as `in-use` with its open tests named; THEN the switch. After it:
+  nothing withheld, search answered on gutenberg, pubmed and wikipedia,
+  the node still paused as the operator left it. Way back:
+  `config/platform.toml.pre-quarantine-enforce`.
+- **RAGE reads the card's real memory, gives up idle models when a
+  stranger squeezes it, and tells Louise** ([`rage.md`](rage.md) §19;
+  louise 789bd0e, 028897a). Fifth image,
+  `ghcr.io/sourstar/rage@sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
+  (tag `b10630-5`; `b10630-3` and `-4` were published on the way and are
+  superseded — nothing published is deleted). The app gained `cap_add:
+  PERFMON`: `xe` tells what is USED only to that capability. On the node:
+  32,656 MiB total, 24,691 used, 24,664 RAGE's own, 27 outside, nothing
+  pushed out. Every run id is new again — a new image is a new run (09
+  §9.12) — and no collection here is owed a gate (all Codex v2). Way
+  back: `config/app-config.pre-memory-feature.json` (mode 600).
+- **Proved live, not only in tests**: a 7 GiB stranger of my own, twice
+  (rage.md §19). The first run showed the rule was not "wise" — 9,937 MiB
+  given up for a 1,435 MiB deficit — and the second, after the fix, gave
+  up 1,596.
+- **Correction**: a model pushed off the card DOES move back when it is
+  used and the card has room (chat did, at its next request). An idle one
+  stays where it was pushed.
+- **NOT MINE, and said**: I asked to stop the dead bake-off container and
+  the permission system refused — another session's workload. It was
+  gone minutes later by other hands, and that session ran four more
+  bake-offs on the card during the evening, all small.
+
 **2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE RAGE, THE
 HOST RAN OUT OF MEMORY, AND THE EARLIER ANSWER ABOUT HOST RAM WAS THE
 SMALLER HALF.** Found while building what the operator asked for next:
@@ -3320,11 +3352,10 @@ SMALLER HALF.** Found while building what the operator asked for next:
   image and a reload of every model — the wrong thing to do to an
   overcommitted card, so it waits for the card to be free.
 
-**2026-09-20, afternoon — QUARANTINE: ENFORCEMENT IS BUILT, WITH THE THREE
-LIVE COPIES TO BE LISTED AS IN USE BEFORE. NOT YET SWITCHED ON — the deploy
-waits for the node's memory (above); the switch must never precede it, for
-the code now on the node does not know the list and would withhold all
-three.** Operator: "enforce quarantine … Assume that the
+**2026-09-20, afternoon — QUARANTINE: ENFORCEMENT BUILT, WITH THE THREE LIVE
+COPIES LISTED AS IN USE BEFORE (switched on the same evening, above). The
+switch must never precede the deploy: code that does not know the list
+would withhold all three.** Operator: "enforce quarantine … Assume that the
 current collections have already passed it. The next collection to be
 created will be our guinea pig." (spec main 8b025a2, 03 §3.6; louise
 cdaff93.) Under the rules as they stood all three would have left search

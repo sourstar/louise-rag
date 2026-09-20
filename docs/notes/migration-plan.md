@@ -1209,7 +1209,7 @@ tests, and every pre-existing test stays green after each.
 stored by path, RAGE's port, its state directory, the chat GGUF
 ([`rage.md`](rage.md) §16).
 
-### Step 14 — Quarantine — **REPORTING DEPLOY BUILT 2026-09-19; ENFORCEMENT BUILT 2026-09-20 (cdaff93), to be switched on with the next deploy**
+### Step 14 — Quarantine — **REPORTING DEPLOY BUILT 2026-09-19; ENFORCED ON THE NODE 2026-09-20 (cdaff93)**
 *The second deploy, as the operator decided it (2026-09-20)*: enforce, with
 the three live copies listed by collection id under `[node]
 quarantine_in_use_before` — they cannot run roots-and-chunks or the origin

@@ -293,7 +293,8 @@ DELETE /louise/models/<id>            → remove it; the same 409s
   kernel killed three models. Admission counts RAGE's own declarations
   and cannot see a stranger on the card ([`STATUS.md`](STATUS.md),
   2026-09-20 afternoon). OPEN: read the card's real free memory before a
-  load, and refuse when it contradicts the ledger.
+  load, and refuse when it contradicts the ledger. **BUILT the same
+  day: §19.**
 - **Sequential is the fallback** for creation encoders that do not fit
   together: `gpu-time-slots.md`'s hourly slot, driven by Louise through
   load and unload at a batch boundary. Not built with RAGE.
@@ -668,3 +669,90 @@ run, and whether its vectors belong to the space is what the calibration
 gate decides (02 §2.4 — by measurement, never by the device's name). A
 reranker defines no space, so the one Intel-tied model is also the one
 whose replacement costs nothing downstream.
+
+## 19. The card's real memory, a stranger on it, and Louise told (2026-09-20)
+
+**What happened.** A bake-off container, outside RAGE, took 21.4 GiB of the
+32 GiB card and 22.8 GiB more of GPU buffers in host RAM. RAGE's admission
+counted only what its own models declare, so it saw nothing. `xe` moved
+every resident model into host RAM without an error to anyone (chat: 476
+KiB on the card, 7,403 MiB off it); the host ran out of memory and the
+kernel killed three of RAGE's children ([`STATUS.md`](STATUS.md),
+2026-09-20 afternoon).
+
+**The operator's decision**, the same day: read the card's real free
+memory before a load — "yes, definitely"; show what is RAGE's and what is
+not, in different colours; when a process outside RAGE takes the card,
+"wisely unload the unused models to avoid an oom crash of the other
+model"; and "if Louise needs a model that RAGE cannot fit in memory I want
+a notification to Louise". This amends §7 in two places, named here:
+*observed figures never decide* and *never an eviction*.
+
+**Admission.** Our own models are still counted as DECLARED, for §7's
+reasons. What a stranger holds is counted as OBSERVED — nobody declared
+it: `foreign = the driver's count of what is used − what everything in
+this container's PID namespace is seen to hold` (DRM fdinfo; a child still
+loading included, so a load in progress is never a stranger AND its own
+declaration). The card's budget becomes `declared + foreign + need +
+reserve <= capacity`. The reading can only REFUSE a load the ledger would
+have admitted. A card that cannot be read — no reader for its driver, no
+capability — gives `foreign = 0`, the ledger decides alone as before, and
+`GET /louise/gpu` says why. The HOST's budget stays declared: the host's
+real free memory excludes the ZFS ARC, which gives way under pressure, so
+reading it would refuse every preload on a TrueNAS box that has been up a
+day.
+
+**Pressure** (`placement.relieve`, every 3 s: one ioctl and a dozen small
+files). A card is SQUEEZED when its real free memory is under the declared
+reserve and a stranger holds at least 256 MiB of it. Only IDLE models are
+given up — no request in flight (the front counts them), none for
+`idle_s` — and `unload` re-checks under the model's lock, so a model is
+never taken from under an answer:
+1. a model PUSHED OFF THE CARD (most of its GPU buffers in host RAM; read
+   from the children's own fdinfo, no capability needed): it holds real
+   host RAM and answers slowly;
+2. while squeezed: the idle models that TOGETHER cover the deficit with
+   the LEAST given up (`least_given_up`: every subset, a node holds a
+   dozen), among equals the fewer, then the longer unused.
+A model in use is never touched. A preloaded model given up comes back by
+itself once the card has been quiet for `restore_s` and REALLY has room
+for it, one per look; any other on its next request, through admission.
+`[rage] pressure = { unload = true, idle_s = 60, restore_s = 120 }`.
+
+**Measured live on the node** with a 7 GiB stranger of my own, twice. The
+squeeze was seen within 3 s (613 MiB free under 2,048 reserved: 1,435
+short); no model was pushed to host RAM; the models came back 120–140 s
+after the stranger left. The FIRST rule was least-recently-used-first,
+and it gave up 9,937 MiB for those 1,435 — two small models and then the
+8.6 GiB Qwen3 that happened to be next. The second run, with
+`least_given_up`: bge-m3 + medcpt-query + medcpt-rerank, 1,596 MiB. Tests
+had passed both times; only the node showed the difference.
+
+**The notification.** A refusal's body carries `admission.foreign_mib`
+and its reason says how much processes outside RAGE hold. RAGE keeps its
+refusals, unloads and restores — repeated asking is ONE event with a
+count — and serves them at `GET /louise/gpu` with each card's real memory
+and its own container name. Louise shows a strip on top of the Library
+and the System page when RAGE could not load a model, gave models up or
+has one pushed off the card, and nothing otherwise; the GPU panel's bar is
+segmented RAGE / other processes / held by no process shown / free, with a
+"whose" column; and the worker's deferral line carries RAGE's own words.
+It stays a deferral, never an error on a document.
+
+**No manufacturer in the front (§18).** The card is read through
+`app/gpu_memory.py`: one verb, one reader per kernel driver (`xe`'s ioctl,
+which wants CAP_PERFMON — `deploy/truenas-rage.yaml` adds it; `amdgpu`'s
+sysfs), the ONLY place a driver is named, shared with the GPU probe so the
+ioctl's layout exists once. A driver with no reader reads nothing and
+changes nothing. A test greps the front's code for vendor names.
+
+**Corrected here:** "a model pushed off the card does not move back by
+itself" (first written 2026-09-18). It does, WHEN IT IS USED and the card
+has room: chat went from 476 KiB to 7,170 MiB on the card at its next
+request. An idle one stays where it was pushed, which is why RAGE unloads
+it.
+
+**What this does not do.** It cannot stop a stranger from overcommitting
+the card by itself (the first bake-off wanted 44 GiB of a 32 GiB card), and
+it never gives up a model in use. Anything that needs the card beside
+RAGE should still go through RAGE, or run with RAGE's models unloaded.
