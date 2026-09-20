@@ -16,6 +16,8 @@ find one".
 from __future__ import annotations
 
 import json
+import sys
+import types
 from math import log2
 
 import numpy as np
@@ -273,6 +275,39 @@ def test_budgeted_encoding_preserves_input_order() -> None:
     out = encode_budgeted(_FakeST(), texts, max_seq=8192, max_batch=4,
                           budget=4.0e7)
     assert [int(v[0]) for v in out] == [len(t) for t in texts]
+
+
+def test_resuming_with_changed_settings_is_refused(tmp_path, monkeypatch) -> None:
+    """Shards are only reusable while the settings that decide a vector are
+    unchanged. Re-embedding at a different max_seq would keep the old shards
+    and write the rest differently — one row from two encodings, which is
+    plausible, internally consistent and wrong."""
+    from tools import bakeoff_local as local
+
+    corpus = Corpus(ids=[1, 2], texts=["a", "b"])
+    queries = Queries(texts=["q"], relevant=[[1]])
+    monkeypatch.setattr(local, "load", lambda out, max_chars: (corpus, queries))
+
+    class _Model:
+        max_seq_length = 8192
+
+        def encode(self, texts, **kw):
+            return np.array([[1.0, 0.0] for _ in texts], dtype=np.float32)
+
+    model = _Model()
+    # sentence_transformers is deliberately absent from the dev image
+    # (invariant 7 keeps torch out of it), so stand the module up rather
+    # than patch an attribute on something that cannot be imported.
+    stub = types.ModuleType("sentence_transformers")
+    stub.SentenceTransformer = lambda *a, **k: model
+    monkeypatch.setitem(sys.modules, "sentence_transformers", stub)
+
+    argv = ["--out", str(tmp_path), "--name", "m", "--model", "fake"]
+    assert local.main(argv) == 0
+
+    model.max_seq_length = 2048  # the same command, a different encoding
+    with pytest.raises(SystemExit, match="different settings"):
+        local.main(argv)
 
 
 def test_score_run_is_unaffected_by_vector_magnitude() -> None:

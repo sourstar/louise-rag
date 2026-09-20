@@ -92,6 +92,12 @@ def main(argv=None) -> int:
     ap.add_argument("--name", required=True)
     ap.add_argument("--model", required=True)
     ap.add_argument("--query-prefix", default="")
+    ap.add_argument("--doc-prefix", default="",
+                    help="prepended to DOCUMENTS. E5 wants 'passage: ' here "
+                         "and 'query: ' on queries; measuring it without "
+                         "both understates it. Unlike --query-prefix this "
+                         "changes the corpus vectors, so it needs its own "
+                         "--name rather than sharing one")
     ap.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     ap.add_argument("--max-seq", type=int, default=None,
                     help="override the model's own max_seq_length")
@@ -137,6 +143,27 @@ def main(argv=None) -> int:
           f"{len(queries.texts)} queries, max_seq_length {seq}, "
           f"device {a.device}", flush=True)
 
+    # Reusing ANY document vectors — the finished corpus.npy or a half-built
+    # set of shards — is only safe while the settings that decide a vector
+    # are unchanged. Re-running at a different --max-seq or --doc-prefix
+    # would otherwise blend two encodings into one row: plausible,
+    # internally consistent, and wrong. Checked before either reuse path.
+    stamp = {"model": a.model, "max_seq": seq, "max_chars": a.max_chars,
+             "doc_prefix": a.doc_prefix, "attn": a.attn}
+    stamp_path = run / "encoding.json"
+    if stamp_path.exists():
+        was = json.loads(stamp_path.read_text(encoding="utf-8"))
+        if was != stamp:
+            changed = [k for k in stamp if was.get(k) != stamp[k]]
+            raise SystemExit(
+                f"{run} holds vectors made with different settings "
+                f"({', '.join(changed)} differ). Delete it and re-embed — "
+                f"reusing them would mix two encodings into one row.\n"
+                f"  on disk: {was}\n  now:     {stamp}")
+    else:
+        stamp_path.write_text(json.dumps(stamp, indent=2) + "\n",
+                              encoding="utf-8")
+
     doc_path = run / "corpus.npy"
     if doc_path.exists():
         doc = np.load(doc_path)
@@ -153,7 +180,8 @@ def main(argv=None) -> int:
             shard = shards / f"{s:05d}.npy"
             if shard.exists():
                 continue
-            part = corpus.texts[s * SHARD:(s + 1) * SHARD]
+            part = [a.doc_prefix + t
+                    for t in corpus.texts[s * SHARD:(s + 1) * SHARD]]
             vectors = encode_budgeted(model, part, seq, a.batch, a.attn_budget)
             np.save(shard, vectors)
             done = min((s + 1) * SHARD, len(corpus.texts))
@@ -169,7 +197,8 @@ def main(argv=None) -> int:
     (run / f"run-{slug}.json").write_text(json.dumps(
         {"name": a.name, "slug": slug, "url": f"local:{a.device}",
          "model": a.model, "ctx": seq, "max_chars": a.max_chars,
-         "query_prefix": a.query_prefix, "limit": a.limit,
+         "query_prefix": a.query_prefix, "doc_prefix": a.doc_prefix,
+         "limit": a.limit,
          "dim": int(doc.shape[1]), "documents": int(doc.shape[0]),
          "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
