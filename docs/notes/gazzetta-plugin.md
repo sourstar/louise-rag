@@ -619,19 +619,29 @@ on 137 documents) do to near-ties. **ndcg@100 is the exception at +0.0245**,
 too large for that explanation and the one number here not to trust
 without looking closer; nothing below depends on it.
 
-**Measured identically, the generalist edges the specialist on MRR and
-loses on recall.** qwen3-embedding-4b instructed takes mrr@100 0.7744 to
-DAR-legal-it's 0.7689, while DAR takes recall@10 0.8031 to 0.7748 and
-ndcg@100. Read that as: qwen3 puts a right article first slightly more
-often, DAR finds more of the relevant set. For statutory retrieval, where
-the first hit is the thing (docs/05 and the thesis's own framing both say
-so), that is the metric that matters — and it is a tie at worst.
+**Measured identically, the specialist is the better model.** DAR-legal-it
+takes recall@10 0.8031 to qwen3-embedding-4b-instructed's 0.7748, and
+ndcg@100 0.7704 to 0.7534. qwen3 leads on mrr@100, 0.7744 to 0.7689 — but
+that gap is **0.0055, smaller than this run's own MRR residual against the
+published figure (0.0091)**, so it is inside our measurement noise and is
+not a result. An earlier draft of this section called it an edge for the
+generalist; it is not one.
 
-So the recommendation stands and is now on firmer ground than
-"licence beats quality": **qwen3-embedding-4b with a query instruction**,
-Apache-2.0, already on the card, equal-or-better on the metric legal
-retrieval is judged by, against a model that declares no licence and so
-cannot own a pinned space under `approved-encoders.md` regardless.
+It is also cheaper to hold. **dim 768 against 2560** is 1,536 bytes per
+vector against 5,120 at f16 — 3.3x — which
+`embedder-choice-and-supersession.md` §2 prices as the bill every peer pays
+again on a supersession, and ~0.8 GB against ~2.6 GB over a 500k-chunk
+Normattiva corpus. Embedding the 23,617-node bake-off corpus cost it ~4
+minutes against qwen3's 59m29s, though not on a like-for-like path.
+
+**So the recommendation rests on the licence, and only on the licence.**
+`jurifindit/DAR-legal-it` declares none, and `approved-encoders.md` bars an
+unlicensed model from owning a pinned space — a collection pinned on it
+could never be reproduced by a peer on stated terms. That leaves
+**qwen3-embedding-4b with a query instruction**: Apache-2.0, already on the
+card, close enough on quality that the gap is worth less than the
+reproducibility. If the authors ever state a licence, this decision should
+be reopened, and §7.4b's supersession path is how.
 
 **bge-m3 is not a floor, it is a long way below one.** §7.1 called it
 "well below the leaders" and kept it as the bar to beat; it is 16.4 MRR
