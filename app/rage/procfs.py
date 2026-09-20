@@ -17,6 +17,7 @@ from pathlib import Path
 _VMRSS = re.compile(r"^VmRSS:\s+(\d+)\s+kB", re.M)
 _RSS_PARTS = re.compile(r"^(RssAnon|RssFile|RssShmem):\s+(\d+)\s+kB", re.M)
 _RESIDENT_VRAM = re.compile(r"^drm-resident-vram\d*:\s*(\d+)(?:\s*([KMG])iB)?\s*$", re.M)
+_RESIDENT = re.compile(r"^drm-resident-([a-z0-9]+):\s*(\d+)(?:\s*([KMG])iB)?\s*$", re.M)
 _CLIENT = re.compile(r"^drm-client-id:\s*(\S+)", re.M)
 _UNIT = {None: 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
 MIB = 1 << 20
@@ -96,6 +97,34 @@ class ProcFS:
             seen[client.group(1)] = sum(int(v) * _UNIT[u or None]
                                         for v, u in _RESIDENT_VRAM.findall(text))
         return sum(seen.values()) // MIB if seen else None
+
+    def gpu_mib(self, pid: int) -> tuple[int | None, int | None]:
+        """(on the card, in host RAM) — what the process's GPU buffers occupy, by
+        the kernel's DRM fdinfo, once per DRM client. A region named `vram…` is
+        the card; every other region (`gtt`, `system`, …) is HOST memory the
+        driver holds for the process, and it is REAL. A model whose buffers are
+        mostly there has been pushed off the card: `xe` does that silently when
+        the card is overcommitted (the node, 2026-09-18 and 2026-09-20)."""
+        card: dict[str, int] = {}
+        host: dict[str, int] = {}
+        try:
+            infos = list((self.root / str(pid) / "fdinfo").iterdir())
+        except OSError:
+            return None, None
+        for info in infos:
+            try:
+                text = info.read_text(errors="replace")
+            except OSError:
+                continue
+            client = _CLIENT.search(text)
+            if client is None:
+                continue
+            regions = [(name, int(v) * _UNIT[u or None]) for name, v, u in _RESIDENT.findall(text)]
+            card[client.group(1)] = sum(b for name, b in regions if name.startswith("vram"))
+            host[client.group(1)] = sum(b for name, b in regions if not name.startswith("vram"))
+        if not card:
+            return None, None
+        return sum(card.values()) // MIB, sum(host.values()) // MIB
 
     def set_oom_score_adj(self, pid: int, value: int) -> bool:
         """Raise a child's score so an out-of-memory kill takes the model that

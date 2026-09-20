@@ -105,6 +105,14 @@ class Harness:
             "drm-driver:\txe\ndrm-client-id:\t7\ndrm-resident-vram0:\t1400 MiB\n")
         return pid
 
+    def set_gpu(self, variant: str, *, card_mib: int, host_mib: int) -> None:
+        """What the driver says the child holds now: on the card, in host RAM."""
+        d = self.proc / str(self.running[variant]) / "fdinfo"
+        for fd in ("5", "6"):
+            (d / fd).write_text(f"drm-driver:\txe\ndrm-client-id:\t7\n"
+                                f"drm-resident-vram0:\t{card_mib} MiB\n"
+                                f"drm-resident-gtt:\t{host_mib} MiB\n")
+
     def kill(self, variant: str) -> None:
         pid = self.running.pop(variant)
         for f in sorted((self.proc / str(pid)).rglob("*"), reverse=True):
@@ -164,7 +172,7 @@ class Harness:
         return Swap("http://llama-swap", transport=self.transport(), load_timeout_s=5.0)
 
     def placement(self, swap: Swap | None = None, *, image: str = IMAGE,
-                  capacity=lambda device: None) -> Placement:
+                  capacity=lambda device: None, card=None) -> Placement:
         versions = self.root / "runtime-versions"
         versions.write_text("libze-intel-gpu1 26.05.1\nintel-opencl-icd 26.05.1\n")
         sys_root, proc_root = self.root / "sys", self.root / "hostproc"
@@ -177,7 +185,7 @@ class Harness:
                       image=image, runner=swap or self.swap(),
                       store=RunStore(self.state / "rage.sqlite"), procfs=ProcFS(self.proc),
                       capacity=capacity, sys_root=sys_root, proc_root=proc_root,
-                      runtime_versions=versions, log=logs.append)
+                      runtime_versions=versions, card=card, log=logs.append)
         p.logs = logs                               # for the tests to read
         return p
 

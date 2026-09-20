@@ -46,6 +46,10 @@ _HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-autho
                   "te", "trailers", "transfer-encoding", "upgrade", "host",
                   "content-length"})
 WATCH_S = 5.0
+#: how often the cards are looked at (placement.relieve). A stranger filled 21
+#: GiB of the card in under a minute on 2026-09-20; one ioctl and a dozen small
+#: files per look.
+PRESSURE_S = 3.0
 
 
 def read_admin_token(environ: dict[str, str] | os._Environ) -> str | None:
@@ -83,11 +87,22 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
                 placement.log(f"applying rage.toml failed, will try again: "
                               f"{type(e).__name__}: {e}")
 
+    async def _pressure() -> None:
+        while True:
+            await asyncio.sleep(PRESSURE_S)
+            try:
+                await placement.relieve()
+            except Exception as e:              # noqa: BLE001 — the same: a watcher
+                # that dies silently is a card nobody looks at any more
+                placement.log(f"looking at the cards failed, will look again: "
+                              f"{type(e).__name__}: {e}")
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         tasks = [asyncio.create_task(placement.apply())]
         if watch:
             tasks.append(asyncio.create_task(_watch()))
+            tasks.append(asyncio.create_task(_pressure()))
         try:
             yield
         finally:
@@ -130,7 +145,15 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
 
     @app.get("/louise/gpu")
     async def gpu() -> dict[str, Any]:
-        return {"clock": clock.status()}
+        """The clock; each card's REAL memory and whose it is; what RAGE refused,
+        gave up under pressure and restored (Louise's notification); and this
+        container's name, so a reader of the host's processes can tell which
+        of them are RAGE's."""
+        cards = sorted({d for m in placement.cfg.models.values() for d in m.cmd} - {model.CPU})
+        return {"clock": clock.status(),
+                "container": os.uname().nodename,
+                "memory": {card: placement.card_memory(card) for card in cards},
+                "events": list(placement.events)}
 
     # ---- the operator's ----------------------------------------------------------
 
@@ -203,6 +226,8 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def upstream(model_id: str, path: str, request: Request) -> StreamingResponse:
         placed = await placement.ensure(model_id)
+        placed.in_flight += 1                   # no await since ensure(): never idle now
+        placed.last_used = time.time()
         entry = placement.cfg.models[model_id]
         waiting = is_interactive(request.headers.get(LEVEL_HEADER))
         if waiting:
@@ -214,10 +239,12 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
                 headers={k: v for k, v in request.headers.items() if k.lower() not in _HOP},
                 content=await request.body())
         except SwapError as e:
+            placed.in_flight -= 1
             if waiting:
                 clock.leave()
             raise Refused(e.status, str(e)) from None
         except BaseException:
+            placed.in_flight -= 1
             if waiting:
                 clock.leave()
             raise
@@ -241,6 +268,7 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
             if finished:
                 return
             finished = True
+            placed.in_flight -= 1
             await answer.aclose()
             placed.last_used = time.time()
             if waiting:

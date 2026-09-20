@@ -25,13 +25,11 @@ Where each figure comes from (measured on the node, 2026-09-18: kernel
 from __future__ import annotations
 
 import argparse
-import ctypes
 import fcntl
 import json
 import os
 import re
 import signal
-import struct
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -39,6 +37,7 @@ from pathlib import Path, PurePosixPath
 import threading
 import time
 
+from . import gpu_memory
 from .gpu import (GpuDevice, GpuProcess, GpuSnapshot, energy_uj, gt_clock, hwmon_dir,
                   read_sensors, to_json)
 
@@ -49,18 +48,16 @@ DEV_DRI = Path("/dev/dri")
 PCI_IDS_PATHS = (Path("/usr/share/louise/pci.ids"), Path("/usr/share/misc/pci.ids"),
                  Path("/usr/share/hwdata/pci.ids"))
 
-# include/uapi/drm/xe_drm.h. DRM_IOWR(DRM_COMMAND_BASE + DRM_XE_DEVICE_QUERY,
-# struct drm_xe_device_query): dir 3, size 40, type 'd', nr 0x40.
-DRM_IOCTL_XE_DEVICE_QUERY = 0xC0286440
-XE_QUERY_MEM_REGIONS = 1
-XE_MEM_REGION_CLASS_VRAM = 1
-_XE_QUERY = struct.Struct("<QIIQQQ")          # extensions, query, size, data, reserved[2]
-_XE_REGIONS = struct.Struct("<II")            # num_mem_regions, pad
-_XE_REGION = struct.Struct("<HHIQQQQ48x")     # class, instance, min_page_size, total_size,
-                                              # used, cpu_visible_size, cpu_visible_used, reserved[6]
+# The driver's memory query — its ioctl, its structures, the capability it
+# wants — lives in app/gpu_memory.py, which RAGE's front shares: ONE copy of a
+# kernel ABI. The names below stay because the tests and the notes use them.
+DRM_IOCTL_XE_DEVICE_QUERY = gpu_memory.DRM_IOCTL_XE_DEVICE_QUERY
+XE_QUERY_MEM_REGIONS = gpu_memory.XE_QUERY_MEM_REGIONS
+_XE_QUERY, _XE_REGIONS, _XE_REGION = (gpu_memory._XE_QUERY, gpu_memory._XE_REGIONS,
+                                      gpu_memory._XE_REGION)
 _ioctl = fcntl.ioctl                          # tests replace it
 
-CAP_SYS_ADMIN, CAP_PERFMON = 21, 38
+CAP_SYS_ADMIN, CAP_PERFMON = gpu_memory.CAP_SYS_ADMIN, gpu_memory.CAP_PERFMON
 
 _CARD = re.compile(r"card\d+$")
 _MEM = re.compile(r"drm-(total|memory|resident)-([a-z0-9]+):\s*(\d+)(?:\s*([KMG])iB)?\s*$")
@@ -124,22 +121,12 @@ def perfmon_capable(status: str | None = None) -> bool:
     """Whether the driver will tell us what is used: CAP_PERFMON or
     CAP_SYS_ADMIN in this process's effective set."""
     status = status if status is not None else (_read(PROC / "self" / "status") or "")
-    for line in status.splitlines():
-        if line.startswith("CapEff:"):
-            caps = int(line.split()[1], 16)
-            return bool(caps & (1 << CAP_PERFMON) or caps & (1 << CAP_SYS_ADMIN))
-    return False
+    return gpu_memory.perfmon_capable(status)
 
 
 def _xe_query(fd: int, query: int) -> bytes:
     """The two-call protocol: the kernel says the size, then fills it."""
-    head = bytearray(_XE_QUERY.pack(0, query, 0, 0, 0, 0))
-    _ioctl(fd, DRM_IOCTL_XE_DEVICE_QUERY, head, True)
-    size = _XE_QUERY.unpack(head)[2]
-    data = ctypes.create_string_buffer(size)
-    head = bytearray(_XE_QUERY.pack(0, query, size, ctypes.addressof(data), 0, 0))
-    _ioctl(fd, DRM_IOCTL_XE_DEVICE_QUERY, head, True)
-    return data.raw
+    return gpu_memory.xe_query(fd, query, ioctl=_ioctl)
 
 
 def xe_vram(render: Path) -> tuple[int, int]:
@@ -149,15 +136,7 @@ def xe_vram(render: Path) -> tuple[int, int]:
         raw = _xe_query(fd, XE_QUERY_MEM_REGIONS)
     finally:
         os.close(fd)    # before the process scan: the probe never lists itself
-    count, _ = _XE_REGIONS.unpack_from(raw)
-    total = used = 0
-    for i in range(count):
-        mem_class, _inst, _page, size, in_use, _vis, _vis_used = _XE_REGION.unpack_from(
-            raw, _XE_REGIONS.size + i * _XE_REGION.size)
-        if mem_class == XE_MEM_REGION_CLASS_VRAM:
-            total += size
-            used += in_use
-    return total, used
+    return gpu_memory.xe_vram_regions(raw)
 
 
 def _int(path: Path) -> int | None:

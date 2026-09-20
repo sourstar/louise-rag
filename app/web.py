@@ -103,6 +103,22 @@ TEMPLATES.env.filters["num"] = (
 TEMPLATES.env.filters["size"] = gpu.size
 
 
+def _ago(when) -> str:
+    """A unix time as how long ago: '12 s ago', '5 min ago', '3 h ago'."""
+    try:
+        s = max(0, int(time.time() - float(when)))
+    except (TypeError, ValueError):
+        return ""
+    if s < 90:
+        return f"{s} s ago"
+    if s < 5400:
+        return f"{s // 60} min ago"
+    return f"{s // 3600} h ago" if s < 172800 else f"{s // 86400} d ago"
+
+
+TEMPLATES.env.filters["ago"] = _ago
+
+
 #: What the ETA slot shows when work REMAINS and there is no rate to stand
 #: behind. A dash, not "TBD" (operator, 2026-09-12): the card is read to
 #: see whether anything is moving, and a word the reader has to look up is
@@ -3233,6 +3249,19 @@ def system_log_fragment(request: Request):
 def system_gpu_fragment(request: Request):
     # asked of the probe over HTTP, bounded (app/gpu.py): this process never
     # reads /proc — only the gpu-probe container may see the host's processes
+    # RAGE is asked ONCE: its name for itself colours the bar, its reading of
+    # the card and its events are its notification to Louise
     return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
                                        gpu.panel(config.GPU_PROBE_URL)
-                                       | {"governor": gpu.governor()})
+                                       | {"governor": gpu.governor(),
+                                          "rage": gpu.rage_status(config.RAGE_URL)})
+
+
+@admin_router.get("/system/rage-alerts", response_class=HTMLResponse)
+def rage_alerts_fragment(request: Request):
+    """RAGE's notification to Louise, for the strip on top of the Library and
+    the System page (operator, 2026-09-20: "if Louise needs a model that RAGE
+    cannot fit in memory I want a notification to Louise"). Empty when there
+    is nothing to say; bounded like every call to RAGE."""
+    return TEMPLATES.TemplateResponse(request, "_fragments/rage_alerts.html",
+                                       {"rage": gpu.rage_status(config.RAGE_URL)})

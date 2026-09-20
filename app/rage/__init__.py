@@ -17,13 +17,16 @@ runs one model at a time — its documented default — so the group is what
 makes it policy-free, not its absence.
 
 WHAT RUNS HERE IMPORTS NO GPU STACK (CLAUDE.md invariant 7) and nothing
-that opens a manifest: RAGE's image carries `app/rage/`, `app/gpu_clock.py`
-and `app/hold/codex.py` — for the ONE definition of canonical JSON and of
-the hash — and no more of the platform (tests/rage/test_placement.py holds
-it to that). Not the GPU probe either: it sees the host's processes, and
-nothing imports it (tests/test_gpu_panel.py), so a card's name and size are
-declared in `rage.toml`. The models are child processes; torch lives in
-them.
+that opens a manifest: RAGE's image carries `app/rage/`, `app/gpu_clock.py`,
+`app/gpu_memory.py` — the card's memory as its driver counts it, the one
+place a kernel driver is named — and `app/hold/codex.py`, for the ONE
+definition of canonical JSON and of the hash; and no more of the platform
+(tests/rage/test_placement.py holds it to that). Not the GPU probe either:
+it sees the host's processes, and nothing imports it
+(tests/test_gpu_panel.py), so a card's name and size are declared in
+`rage.toml`. What RAGE reads of the card is how much of it is USED, to count
+a stranger it cannot otherwise see (placement.py: `card_memory`). The models
+are child processes; torch lives in them.
 
     model.py      rage.toml and rage.d/<id>.toml → RageConfig
     swapyaml.py   RageConfig → llama-swap's yaml

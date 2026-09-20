@@ -2,6 +2,7 @@
 {% block title %}System — louise-rag{% endblock %}
 {% block content %}
 <h1>System</h1>
+<div id="rage-alerts" hx-get="/admin/system/rage-alerts" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
 
 <div class="panel">
   <h2>GPU</h2>

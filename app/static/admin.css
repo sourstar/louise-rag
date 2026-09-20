@@ -116,3 +116,22 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
 .gpu-bar{height:8px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;
   overflow:hidden;margin:6px 0}
 .gpu-bar span{display:block;height:100%;background:var(--brass)}
+
+/* The GPU bar says WHOSE the memory is (operator, 2026-09-20): RAGE's, every
+   other process's, what the driver counts and no process shown holds — and
+   the rest is free. The legend uses the same swatches. */
+.gpu-bar.whose{display:flex}
+.gpu-bar.whose span{display:block;height:100%}
+.gpu-bar .rage,.swatch.rage{background:var(--brass)}
+.gpu-bar .others,.swatch.others{background:var(--amber)}
+.gpu-bar .unattributed,.swatch.unattributed{background:var(--muted)}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 12px;
+  vertical-align:baseline}
+.swatch.free{background:var(--panel2);border:1px solid var(--line)}
+.legend .swatch:first-child{margin-left:0}
+/* RAGE's notification to Louise: a model that did not fit, models given up
+   under outside pressure. Nothing at all when there is nothing to say. */
+.rage-alerts{border:1px solid var(--err);border-radius:3px;padding:8px 12px;margin:0 0 12px;
+  background:var(--panel2)}
+.rage-alerts b{color:var(--err)}
+.rage-alerts ul{margin:4px 0 0 18px}

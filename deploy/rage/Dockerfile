@@ -123,6 +123,7 @@ RUN python3 -m venv /opt/venv-front \
       "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27"
 COPY app/__init__.py       /srv/app/__init__.py
 COPY app/gpu_clock.py      /srv/app/gpu_clock.py
+COPY app/gpu_memory.py     /srv/app/gpu_memory.py
 COPY app/hold/__init__.py  /srv/app/hold/__init__.py
 COPY app/hold/codex.py     /srv/app/hold/codex.py
 COPY app/rage              /srv/app/rage

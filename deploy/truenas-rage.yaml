@@ -86,6 +86,12 @@ services:
     init: true                              # forwards the stop signal, reaps the children
     devices:
       - /dev/dri
+    # The card's REAL memory is read before every load (what a process outside
+    # RAGE holds of it; docs/notes/rage.md §19), and the driver tells what is
+    # USED only to CAP_PERFMON. Without it RAGE still runs, on its ledger alone,
+    # and `GET /louise/gpu` says why the card is not read.
+    cap_add:
+      - PERFMON
     # 28 GiB, from the node's own figures (2026-09-19, each container's
     # cgroup memory.peak). The containers RAGE replaces hold 6.1 GiB of host
     # RAM between them at rest and 22.0 GiB at their load-time peaks — a model

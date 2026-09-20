@@ -90,6 +90,9 @@ class ModelEntry:
                                   f"{device!r}; it has {list(self.devices)}") from None
 
 
+PRESSURE_DEFAULTS: Mapping[str, Any] = {"unload": True, "idle_s": 60, "restore_s": 120}
+
+
 @dataclass(frozen=True)
 class RageConfig:
     models: Mapping[str, ModelEntry]
@@ -103,6 +106,12 @@ class RageConfig:
     #: in a run is the one THAT card is bound to — every manufacturer's card
     #: is on the PCI bus (runs.driver_string)
     pci: Mapping[str, str] = field(default_factory=dict)
+    #: what RAGE does when a process OUTSIDE it squeezes a card (placement.py:
+    #: `relieve`; operator, 2026-09-20). `unload`: give up IDLE models so the
+    #: rest are not pushed into host RAM. `idle_s`: a model nobody has asked
+    #: for this long, with no request in flight, is idle. `restore_s`: how long
+    #: the card must have been quiet before a preloaded model given up comes back.
+    pressure: Mapping[str, Any] = field(default_factory=lambda: dict(PRESSURE_DEFAULTS))
 
 
 _PCI = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}.[0-7]")
@@ -247,7 +256,8 @@ def load(path: Path) -> RageConfig:
     if unknown:
         raise RageConfigError(f"{path}: unknown table(s) {sorted(unknown)}")
     head = _table(doc.get("rage", {}), "rage")
-    unknown = set(head) - {"preload", "reserve_mib", "capacity_mib", "device_names", "pci"}
+    unknown = set(head) - {"preload", "reserve_mib", "capacity_mib", "device_names", "pci",
+                           "pressure"}
     if unknown:
         raise RageConfigError(f"{path}: [rage] has unknown key(s) {sorted(unknown)}")
 
@@ -299,9 +309,22 @@ def load(path: Path) -> RageConfig:
                 f"like \"0000:03:00.0\"; got {address!r}")
         if device == CPU:
             raise RageConfigError("rage.pci.cpu: the CPU is not a card on the PCI bus")
+    pressure = dict(PRESSURE_DEFAULTS)
+    for key, value in _table(head.get("pressure", {}), "rage.pressure").items():
+        if key not in PRESSURE_DEFAULTS:
+            raise RageConfigError(f"rage.pressure has unknown key {key!r}; it takes "
+                                  f"{sorted(PRESSURE_DEFAULTS)}")
+        if key == "unload":
+            if not isinstance(value, bool):
+                raise RageConfigError(f"rage.pressure.unload must be true or false, got {value!r}")
+        elif isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RageConfigError(f"rage.pressure.{key} must be a whole number of seconds, "
+                                  f"got {value!r}")
+        pressure[key] = value
     return RageConfig(models=models, preload=tuple(preload),
                       reserve_mib=_int_map(head.get("reserve_mib", {}), "rage.reserve_mib"),
-                      capacity_mib=capacity, device_names=dict(names), pci=dict(pci))
+                      capacity_mib=capacity, device_names=dict(names), pci=dict(pci),
+                      pressure=pressure)
 
 
 def dropin_dir(config_path: Path) -> Path:

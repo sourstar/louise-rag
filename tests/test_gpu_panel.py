@@ -160,3 +160,109 @@ def test_a_probe_one_deploy_ahead_of_the_web_is_still_read():
     for p in old["devices"][0]["processes"]:
         del p["ram"], p["mapped"]                       # a probe one deploy BEHIND
     assert gpu.from_json(old).devices[0].processes[0].ram is None
+
+
+# ---- whose the memory is, and RAGE's notification (operator, 2026-09-20) ---------------------
+
+RAGE_ID = "1ffc4692b702"
+RAGE_SAYS = {
+    "clock": {"running": True, "pinned": False, "rest_mhz": 400, "max_mhz": 2800, "error": None},
+    "container": RAGE_ID,
+    "memory": {"xpu": {"read": True, "why_not": None, "total_mib": 32656, "used_mib": 28458,
+                       "own_mib": 15900, "foreign_mib": 12558, "free_mib": 4198,
+                       "reserve_mib": 2048, "declared_held_mib": 25000,
+                       "own_in_host_ram_mib": 13800, "squeezed": False,
+                       "pushed_out": ["qwen3-embedding-4b"],
+                       "unloaded_under_pressure": ["bge-reranker"]}},
+    "events": [{"time": 1_700_000_000, "kind": "unloaded-under-pressure", "model": "bge-reranker",
+                "device": "xpu", "count": 1,
+                "detail": "idle for 412 s and unloaded: processes outside RAGE hold 12558 MiB"},
+               {"time": 1_700_000_100, "kind": "refused", "model": "madlad", "device": "xpu",
+                "count": 7, "detail": "madlad needs 6800 MiB of device 'xpu'; 1100 MiB are free "
+                                      "of 32600 (17000 held, 12558 held by processes outside "
+                                      "RAGE, 2048 reserved)"}]}
+
+
+def _rage(monkeypatch, snapshot: gpu.GpuSnapshot, says: dict | None = RAGE_SAYS):
+    from dataclasses import replace  # noqa: F401
+    monkeypatch.setattr(config, "GPU_PROBE_URL", "http://gpu-probe:8080")
+    monkeypatch.setattr(config, "RAGE_URL", "http://rage:8080")
+
+    def get(url):
+        if url.endswith("/louise/gpu"):
+            if says is None:
+                raise OSError("connection refused")
+            return says
+        return gpu.to_json(snapshot)
+    monkeypatch.setattr(gpu, "_get_json", get)
+
+
+def test_the_bar_says_what_is_rages_and_what_is_not(client, monkeypatch):
+    from dataclasses import replace
+    qwen, medcpt = ARC.processes
+    stranger = gpu.GpuProcess(119728, "tools.bakeoff_local", "python", "2b06229d3262",
+                              12524 << 20, 4408 << 20)
+    arc = replace(ARC, vram_used=None, processes=(
+        replace(qwen, container=RAGE_ID), replace(medcpt, container=RAGE_ID), stranger))
+    shares = arc.shares(RAGE_ID)
+    assert round(shares["rage"], 1) == 28.7 and round(shares["others"], 1) == 38.4
+    assert round(sum(shares.values()), 3) == 100.0
+    assert arc.shares(None)["rage"] == 0.0, "RAGE not identified: nothing is claimed as its own"
+
+    _rage(monkeypatch, gpu.GpuSnapshot(devices=(arc,)))
+    html = client.get("/admin/system/gpu").text
+    assert 'class="rage" style="width:28.7%"' in html and 'class="others" style="width:38.4%"' in html
+    assert html.count("</span>RAGE</td>") == 2 and html.count("</span>other</td>") == 1
+    assert "outside RAGE 12558" in html and "could not load" in html and "×7" in html
+    assert "unloaded, idle" in html
+
+
+def test_louise_is_told_when_rage_cannot_fit_a_model_and_is_silent_otherwise(client, monkeypatch):
+    import time as time_mod
+    fresh = {**RAGE_SAYS, "events": [{**e, "time": time_mod.time() - 30}
+                                     for e in RAGE_SAYS["events"]]}
+    _rage(monkeypatch, gpu.GpuSnapshot(devices=(ARC,)), fresh)
+    html = client.get("/admin/system/rage-alerts").text
+    assert "RAGE could not load madlad (7 times)" in html
+    assert "12558 held by processes outside RAGE" in html
+    assert "pushed off the card into host RAM: qwen3-embedding-4b" in html
+    assert "unloaded under memory pressure" in html and "bge-reranker" in html
+
+    # an old refusal is history, and a healthy card says NOTHING
+    quiet = {**RAGE_SAYS, "memory": {"xpu": {**RAGE_SAYS["memory"]["xpu"], "pushed_out": [],
+                                             "unloaded_under_pressure": []}}}
+    _rage(monkeypatch, gpu.GpuSnapshot(devices=(ARC,)), quiet)
+    assert client.get("/admin/system/rage-alerts").text.strip() == ""
+    # RAGE away: the strip stays empty, the panel says so
+    _rage(monkeypatch, gpu.GpuSnapshot(devices=(ARC,)), None)
+    assert client.get("/admin/system/rage-alerts").text.strip() == ""
+    assert "RAGE does not answer" in client.get("/admin/system/gpu").text
+
+
+def test_the_strip_is_on_the_pages_an_operator_watches():
+    templates = Path(web.__file__).parent / "templates"
+    for page in ("library.html", "system.html"):
+        assert 'hx-get="/admin/system/rage-alerts"' in (templates / page).read_text("utf-8")
+
+
+def test_the_worker_names_rages_reason_when_rage_refused_the_model():
+    import httpx
+    from app import worker
+    request = httpx.Request("POST", "http://rage/upstream/qwen3-embedding-4b/v1/embeddings")
+    refused = httpx.Response(503, request=request, json={
+        "error": "qwen3-embedding-4b needs 9000 MiB of device 'xpu'; 1100 MiB are free",
+        "admission": {"device": "xpu", "foreign_mib": 12558}})
+    busy = httpx.Response(503, request=request, text="loading")
+    try:
+        try:
+            refused.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError("embed server HTTP 503") from e
+    except RuntimeError as wrapped:
+        assert worker.transient_failure(wrapped), "still a deferral, never a document's error"
+        assert "needs 9000 MiB" in worker.rage_refusal(wrapped)
+    try:
+        busy.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        assert worker.rage_refusal(e) is None, "busy is not a refusal"
+    assert worker.rage_refusal(ValueError("x")) is None

@@ -43,7 +43,8 @@ def test_every_program_the_example_starts_is_in_the_image():
 
 def test_the_image_carries_what_the_front_imports_and_no_more_of_the_platform():
     copied = set(re.findall(r"^COPY (app/\S+)", DOCKERFILE, re.M))
-    assert copied == {"app/__init__.py", "app/gpu_clock.py", "app/hold/__init__.py",
+    assert copied == {"app/__init__.py", "app/gpu_clock.py", "app/gpu_memory.py",
+                      "app/hold/__init__.py",
                       "app/hold/codex.py", "app/rage"}
 
 

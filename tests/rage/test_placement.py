@@ -222,7 +222,7 @@ def test_the_front_carries_none_of_the_manifest_layer():
     import re
     from pathlib import Path
 
-    allowed = {"hold.codex", "gpu_clock"}
+    allowed = {"hold.codex", "gpu_clock", "gpu_memory"}     # each imports nothing of the platform
     pattern = re.compile(r"^\s*from \.\.([\w.]*) import ([\w, ]+)", re.M)
     for source in Path(model.__file__).parent.glob("*.py"):
         for package, names in pattern.findall(source.read_text(encoding="utf-8")):
