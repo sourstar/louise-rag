@@ -3269,6 +3269,39 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
+**2026-09-20, midday — THE DRIVER A RUN STATES IS THE CARD'S, AND THE NODE
+RUNS THE IMAGE THAT READS IT SO.** Operator: "driver fix: yes"
+([`rage.md`](rage.md) §18, item 1; louise bfe5377). Second image,
+`ghcr.io/sourstar/rage@sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
+(tag `b10630-2`, same base and same llama-swap: only the front changed;
+public, anonymous pull checked, the manifest's bytes hash to the digest).
+The node's `rage.toml` declares `pci = { xpu = "0000:03:00.0" }` — REQUIRED
+here: `xe` and `amdgpu` are both loaded, and without an address the new
+front states no run and says what to declare (checked in a throwaway
+container before the switch, with and without the address, and against
+the AMD graphics' address, which reads `amdgpu`).
+- **The driver string is byte for byte what it was**: `kernel
+  6.18.23-production+truenas; xe; intel-opencl-icd 26.18.38308.1-0;
+  libze-intel-gpu1 26.18.38308.1-0; libze1 1.27.0-1~24.04~ppa2`.
+- **All seven run ids are new, and that is the rule, not a side effect**:
+  the image is part of every run (09 §9.12), so a new RAGE build is a new
+  run and is re-gated. Before and after are kept in
+  `state/runs-before-driver-fix.json` beside RAGE's state. Nothing on the
+  node is owed a gate today — every collection here is Codex v2, and the
+  run check is v3's (step 13e) — but the first v3 collection would have
+  been gated again at its next write, by itself.
+- Preload after the switch: 7 models, the slowest Qwen3 at 25.3 s. Search
+  answered on gutenberg, pubmed and wikipedia (no leg withheld), a
+  streamed Ask gave its first token in 6.8 s and finished in 12.9 s, the
+  clock reads. No error in RAGE's, the web's or the worker's log. The
+  node was left PAUSED, as the operator set it.
+- The way back: `config/rage.toml.pre-driver-fix`,
+  `config/truenas-rage.yaml.pre-driver-fix`,
+  `config/app-config.pre-driver-fix.json` (mode 600). The first image
+  stays in the registry — nothing published is deleted — and
+  `deploy/bakeoff-st/Dockerfile.xpu` (the bake-off's, not RAGE's) still
+  builds on it, which is right: it wants the runtime, not the front.
+
 **2026-09-20, morning — RAGE NO LONGER READS ANYTHING OF OLLAMA'S.**
 Operator: "If the chat model runs now in RAGE why do we need Ollama?" —
 we did not, except for ONE FILE: the chat model was read from Ollama's

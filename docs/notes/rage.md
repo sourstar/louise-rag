@@ -616,6 +616,9 @@ come to need them.
    they would not**: the front lives in the image, a new image has a new
    digest, and the image is part of every run (09 §9.12) — a new RAGE
    build is a new run by definition, which is what makes it re-gated.
+   **Rolled out the same day**: image `…d7686483…7aa4`, `pci` declared on
+   the node, the driver string identical, seven new run ids
+   ([`STATUS.md`](STATUS.md), 2026-09-20 midday).
 2. **The GPU clock is Intel's and says so nowhere.** `gpu_clock.Governor`
    reads and writes `rp0_freq`, `rpn_freq`, `min_freq`, the `xe`/`i915`
    sysfs names. It is optional (`RAGE_FREQ_DIR` unset = no clock), which
@@ -636,3 +639,25 @@ runs unchanged on all three manufacturers, and on this card it is the
 slower one (published B70 figures: SYCL about 2.2 times Vulkan's
 generation speed) — independence of RAGE does not mean the slowest common
 engine on each node.
+
+**The models on the reference node, held to the rule** (operator's
+question, 2026-09-20: which backend, tied to Intel or not, and would the
+same model run elsewhere). DNABERT-2 is left out: the DNA collections are
+frozen.
+
+| model | serves | backend here | weights | tied to Intel? | on NVIDIA / AMD |
+|---|---|---|---|---|---|
+| `bge-m3` | wikipedia, documents and queries | llama.cpp (`llama-server`, SYCL build) | GGUF f16 | no | same file; llama.cpp's CUDA, ROCm or Vulkan build |
+| `qwen3-embedding-4b` | gutenberg, documents and queries | llama.cpp | GGUF Q4_K_M | no | same |
+| `medcpt-article`, `medcpt-query` | pubmed, documents / queries | llama.cpp | GGUF f16 | no | same |
+| `bge-reranker` | reranker, gutenberg and wikipedia | llama.cpp (`--reranking`) | GGUF f16 | no | same |
+| `chat` (Qwen3-8B) | answers | llama.cpp | GGUF | no | same |
+| `madlad` (MADLAD-400 3B) | translation | PyTorch, our own server (`servers.launch madlad`) | safetensors bf16 | no — the server asks torch for a device; only the image's wheels are XPU | same weights, torch's CUDA or ROCm wheels, the device word `cuda` (item 4) |
+| `medcpt-rerank` | reranker, pubmed | OpenVINO, our own server (`servers.launch medcpt`) | OpenVINO IR | **YES — the one model that is** | not as it stands: the IR runs on Intel hardware and on any CPU. The model itself is an ordinary BERT cross-encoder, and its original weights run under PyTorch anywhere; that is a second server entry, not a change to RAGE |
+
+What the same file does NOT promise on another card is the same VECTOR:
+another build is another engine digest and another driver, hence another
+run, and whether its vectors belong to the space is what the calibration
+gate decides (02 §2.4 — by measurement, never by the device's name). A
+reranker defines no space, so the one Intel-tied model is also the one
+whose replacement costs nothing downstream.

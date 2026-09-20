@@ -25,6 +25,9 @@
 #                                 (/mnt/ssd5/apps/louise-rage/config/) carries
 #                                 the one it runs. First published 2026-09-19:
 #                                 sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489
+#                                 Second, 2026-09-20 (the driver read where the
+#                                 card is on the PCI bus — the one the node runs):
+#                                 sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4
 #                                 The login is a Docker config kept by path,
 #                                 /mnt/ssd5/apps/louise-rage/secrets/docker:
 #                                 `docker --config <that> push …`, never a
