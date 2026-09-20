@@ -226,7 +226,7 @@ def test_louise_is_told_when_rage_cannot_fit_a_model_and_is_silent_otherwise(cli
     assert "RAGE could not load madlad (7 times)" in html
     assert "12558 held by processes outside RAGE" in html
     assert "pushed off the card into host RAM: qwen3-embedding-4b" in html
-    assert "unloaded under memory pressure" in html and "bge-reranker" in html
+    assert "back by themselves once it has room" in html and "bge-reranker" in html
 
     # an old refusal is history, and a healthy card says NOTHING
     quiet = {**RAGE_SAYS, "memory": {"xpu": {**RAGE_SAYS["memory"]["xpu"], "pushed_out": [],

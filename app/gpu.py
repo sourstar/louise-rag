@@ -332,7 +332,8 @@ def alerts(memory: dict, events: list[dict], now: float | None = None) -> list[s
             out.append(f"{device}: pushed off the card into host RAM: "
                        f"{', '.join(m['pushed_out'])}")
         if m.get("unloaded_under_pressure"):
-            out.append(f"{device}: unloaded under memory pressure, back on their next "
+            out.append(f"{device}: idle and unloaded because a process outside RAGE squeezed "
+                       f"the card — back by themselves once it has room, or on their next "
                        f"request: {', '.join(m['unloaded_under_pressure'])}")
     for e in events[::-1]:
         if e.get("kind") == "refused" and now - float(e.get("time") or 0) <= ALERT_FRESH_S:
