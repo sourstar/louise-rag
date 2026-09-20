@@ -1260,8 +1260,20 @@ def _origin_unit_from(codex, name: str, origin_dir):
     base = Path(origin_dir)
     plugin = collections_mod.PLUGIN_REGISTRY[codex.plugin]
 
+    # ONE `stat` PER FILE, NOT PER RECORD. Measured on the node (pubmed,
+    # 2026-09-20): 1,998,732 sampled records point into 651 files, and weighing
+    # the file again for every record took 51 s of a check that reads the
+    # shards themselves in 34. A unit and its size depend on the locator's file
+    # part alone — what comes after §9.5's `#` is a member inside it.
+    seg = getattr(plugin, "LOCATOR_SEGMENT_SEP", None)
+    weighed: dict[str, tuple[str, int | None]] = {}
+
     def origin_unit(locator: str) -> tuple[str, int | None]:
-        return plugin_io.origin_unit(plugin, locator, base)
+        key = (locator if seg and seg in locator
+               else locator.partition(plugin_io.DEFAULT_MEMBER_SEP)[0])
+        if key not in weighed:
+            weighed[key] = plugin_io.origin_unit(plugin, locator, base)
+        return weighed[key]
 
     return origin_unit
 

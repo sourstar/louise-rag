@@ -767,3 +767,24 @@ def test_the_command_weighs_the_origin_files_it_is_given(checkable, corpus_dir):
     assert o.detail["origin_units"] == o.detail["origin_units_sampled"], \
         "a few small books are far inside the bound: everything is compared"
     assert o.detail["compared"] == o.detail["records"]
+
+
+def test_an_origin_file_is_weighed_once_however_many_records_point_into_it(
+        checkable, corpus_dir, monkeypatch):
+    """A COST test. Measured on the node (pubmed, 2026-09-20): 1,998,732
+    sampled records point into 651 origin files, and weighing the file again
+    for every record took 51 s — longer than reading the shards (34 s)."""
+    from app import louise, plugin_io
+    root, snapshot, codex = checkable
+    weighed: list[str] = []
+    real = plugin_io.origin_unit
+
+    def counting(plugin, origin, base):
+        weighed.append(origin)
+        return real(plugin, origin, base)
+    monkeypatch.setattr(plugin_io, "origin_unit", counting)
+    unit_of = louise._origin_unit_from(codex, "gutenberg", corpus_dir)
+    record = _records_of(root, snapshot)[0]
+    file_part = record["origin"].partition("#")[0]
+    answers = {unit_of(f"{file_part}#{member}") for member in range(500)}
+    assert len(weighed) == 1 and len(answers) == 1, "500 records of one file: one stat"
