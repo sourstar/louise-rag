@@ -316,6 +316,22 @@ def container(pid_dir: Path) -> str:
     return hostname if hostname and not full.startswith(hostname) else full[:12]
 
 
+_RSS = re.compile(r"^(RssAnon|RssFile|RssShmem):\s+(\d+)\s+kB", re.M)
+
+
+def host_memory(pid_dir: Path) -> tuple[int | None, int | None]:
+    """(what the process OWNS, what it has merely MAPPED from files), in bytes
+    — the kernel's own split of a resident set (`/proc/<pid>/status`):
+    `RssAnon` + `RssShmem` is memory that exists because of this process;
+    `RssFile` is page cache seen through its mappings, which the kernel takes
+    back whenever it wants the room. (None, None) where the kernel gives no
+    split, or the process is gone."""
+    found = {k: int(v) * 1024 for k, v in _RSS.findall(_read(pid_dir / "status") or "")}
+    if "RssAnon" not in found or "RssFile" not in found:
+        return None, None
+    return found["RssAnon"] + found.get("RssShmem", 0), found["RssFile"]
+
+
 def scan() -> dict[str, list[GpuProcess]]:
     """Every process holding GPU memory, per card (pdev), largest first.
 
@@ -353,10 +369,11 @@ def scan() -> dict[str, list[GpuProcess]]:
             continue          # a client that holds nothing (an enumeration, a probe)
         pid_dir = PROC / str(pid)
         argv = _argv(pid_dir)
+        ram, mapped = host_memory(pid_dir)
         out.setdefault(pdev, []).append(GpuProcess(
             pid=pid, label=label(argv, pid_dir / "root"),
             command=PurePosixPath(argv[0]).name if argv else "?",
-            container=container(pid_dir), vram=vram, host=host))
+            container=container(pid_dir), vram=vram, host=host, ram=ram, mapped=mapped))
     for procs in out.values():
         procs.sort(key=lambda p: (-p.vram, -p.host, p.pid))
     return out

@@ -419,3 +419,29 @@ def test_a_python_server_that_names_its_weights_is_labelled_by_them(tmp_path):
     assert gpu_probe.label(["python3", "-m", "app.worker"], tmp_path) == "app.worker"
     # and `-m` is never read as a model for python: it is the module
     assert gpu_probe.label(["python", "-m", "uvicorn", "app.api:app"], tmp_path) == "uvicorn"
+
+
+# ---------------------------------------------------------------- host memory, split
+
+STATUS = ("Name:\tllama-server\nVmRSS:\t 1092608 kB\nRssAnon:\t  402432 kB\n"
+          "RssFile:\t  672768 kB\nRssShmem:\t   17408 kB\nThreads:\t9\n")
+
+
+def test_a_process_host_memory_is_split_into_what_it_owns_and_what_it_mapped(proc):
+    """Operator, 2026-09-20: "separate real RAM occupancy from memory mapped
+    RAM". bge-m3 right after a load read 1,067 MiB resident, 657 of them the
+    model FILE seen through a mapping — page cache the kernel takes back by
+    itself (an hour later: 22 MiB). One figure for both made a model look as
+    large as its file."""
+    (proc / "9317" / "status").write_text(STATUS)
+    assert gp.host_memory(proc / "9317") == ((402432 + 17408) * 1024, 672768 * 1024)
+    qwen = gp.scan()[PDEV][0]
+    assert (qwen.pid, qwen.ram, qwen.mapped) == (9317, (402432 + 17408) * 1024, 672768 * 1024)
+
+
+def test_with_no_split_from_the_kernel_nothing_is_guessed(proc):
+    (proc / "9317" / "status").write_text("Name:\tllama-server\nVmRSS:\t 1092608 kB\n")
+    assert gp.host_memory(proc / "9317") == (None, None), "VmRSS alone is the sum: not a split"
+    assert gp.host_memory(proc / "978631") == (None, None), "no status file: the process is gone"
+    madlad = gp.scan()[PDEV][1]
+    assert (madlad.ram, madlad.mapped) == (None, None) and madlad.vram > 0, "still listed"

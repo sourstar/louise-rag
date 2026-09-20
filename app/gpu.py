@@ -9,7 +9,7 @@ figures the page derives from it, and the web's bounded fetch.
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import httpx
@@ -28,6 +28,27 @@ class GpuProcess:
     container: str    # the container's hostname or short id; "host" outside one
     vram: int         # bytes resident in the card's memory
     host: int         # bytes of its GPU buffers held in host RAM (GTT, system)
+    # The process's OWN host memory, split the way the kernel splits it
+    # (/proc/<pid>/status). `ram` is what it owns: anonymous and shared memory.
+    # `mapped` is pages of FILES it has mapped — the model file, libraries —
+    # that are in the page cache now: the kernel takes them back at will, so
+    # they are nobody's occupancy, and adding them to `ram` is what made a
+    # freshly loaded model look as large as its file (operator, 2026-09-20:
+    # "separate real RAM occupancy from memory mapped RAM"). None = not read.
+    ram: int | None = None
+    mapped: int | None = None
+
+    #: below this nothing is said: every GPU process keeps a few MiB of buffers
+    #: in host memory by design
+    PUSHED_OUT_FLOOR = 256 << 20
+
+    @property
+    def pushed_out(self) -> bool:
+        """MORE of its GPU buffers are in host RAM than on the card: the card
+        was overcommitted and the driver moved them out (seen twice on `xe`,
+        2026-09-18 and 2026-09-20 — silently, with no error to anyone). It
+        still answers, slower, and that host RAM is REAL."""
+        return self.host >= self.PUSHED_OUT_FLOOR and self.host > self.vram
 
 
 @dataclass(frozen=True)
@@ -104,6 +125,9 @@ def to_json(snapshot: GpuSnapshot) -> dict:
     return asdict(snapshot)
 
 
+#: a probe one deploy ahead of the web may send a field this web does not know
+_PROCESS_FIELDS = frozenset(f.name for f in fields(GpuProcess))
+
 def from_json(data: dict) -> GpuSnapshot:
     def sensors(s):
         if not s:
@@ -114,7 +138,8 @@ def from_json(data: dict) -> GpuSnapshot:
                           clock_mhz=s.get("clock_mhz"), clock_max_mhz=s.get("clock_max_mhz"))
     return GpuSnapshot(
         devices=tuple(
-            GpuDevice(**{**d, "processes": tuple(GpuProcess(**p) for p in d.get("processes", ())),
+            GpuDevice(**{**d, "processes": tuple(GpuProcess(**{k: v for k, v in p.items() if k in _PROCESS_FIELDS})
+                                                 for p in d.get("processes", ())),
                          "sensors": sensors(d.get("sensors"))})
             for d in data.get("devices", ())),
         notes=tuple(data.get("notes", ())))

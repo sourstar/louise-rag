@@ -119,3 +119,44 @@ def test_nothing_but_the_probe_imports_the_probe():
             re.match(r"\s*(from|import)\s", line) and "gpu_probe" in line
             for line in p.read_text(encoding="utf-8").splitlines())]
     assert importers == []
+
+
+def test_real_host_ram_is_shown_apart_from_mapped_files_and_a_pushed_out_model_is_flagged(
+        client, monkeypatch):
+    """Operator, 2026-09-20: "separate real RAM occupancy from memory mapped
+    RAM". And what the separation showed the same day: another container took
+    21 GiB of the card, the driver moved every resident model's buffers to
+    host RAM without an error to anyone, and two models died. The panel says
+    which host figure is real, and says when a model is no longer on the card."""
+    from dataclasses import replace
+    qwen, medcpt = ARC.processes
+    arc = replace(ARC, processes=(replace(qwen, ram=657 << 20, mapped=2400 << 20), medcpt))
+    _probe(monkeypatch, gpu.GpuSnapshot(devices=(arc,)))
+    html = client.get("/admin/system/gpu").text
+    for heading in ("GPU buffers in host RAM", "process RAM", "mapped file (reclaimable)"):
+        assert heading in html
+    assert "657 MiB" in html and "2.34 GiB" in html
+    assert "never read as occupancy" in html
+    # MedCPT: 416 KiB on the card, 414 MiB in host RAM — pushed out; Qwen is not
+    assert medcpt.pushed_out and not qwen.pushed_out
+    assert html.count("pushed off the card</span>") == 1
+    # a row whose split was not read says so, never 0
+    assert "<td>—</td>" in html
+
+
+def test_a_few_mib_of_buffers_in_host_ram_is_not_a_model_pushed_out():
+    small = gpu.GpuProcess(1, "probe", "python", "host", vram=0, host=64 << 20)
+    assert not small.pushed_out, "every GPU client keeps some buffers in host memory"
+    assert gpu.GpuProcess(2, "chat", "llama-server", "rage", vram=476 << 10,
+                          host=7403 << 20).pushed_out, "the node, 2026-09-20"
+
+
+def test_a_probe_one_deploy_ahead_of_the_web_is_still_read():
+    snap = gpu.to_json(gpu.GpuSnapshot(devices=(ARC,)))
+    snap["devices"][0]["processes"][0]["a_field_from_the_future"] = 1
+    back = gpu.from_json(snap)
+    assert back.devices[0].processes[0].pid == 9317
+    old = gpu.to_json(gpu.GpuSnapshot(devices=(ARC,)))
+    for p in old["devices"][0]["processes"]:
+        del p["ram"], p["mapped"]                       # a probe one deploy BEHIND
+    assert gpu.from_json(old).devices[0].processes[0].ram is None

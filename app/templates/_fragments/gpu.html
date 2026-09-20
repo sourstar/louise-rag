@@ -21,16 +21,22 @@
   {% endif %}
   {% if d.processes %}
   <table style="margin-top:8px"><tr><th>model</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
-    <th title="GPU buffers this process holds in host memory (GTT, system)">in host RAM</th></tr>
+    <th title="REAL host RAM: GPU buffers the driver keeps in host memory for this process (GTT, system). A few MiB is normal. A whole model here means the card was overcommitted and the driver moved it out.">GPU buffers in host RAM</th>
+    <th title="REAL host RAM: memory that exists because of this process — its runtime, its tokenizer, its heap (the kernel's RssAnon + RssShmem).">process RAM</th>
+    <th title="NOT occupancy: pages of files the process has mapped — the model file, libraries — that are in the page cache now (the kernel's RssFile). The kernel takes them back whenever it wants the room; right after a load this is about the size of the model file and then shrinks by itself.">mapped file (reclaimable)</th></tr>
     {% for p in d.processes %}
     <tr><td title="{{ p.command }}">{{ p.label }}</td><td>{{ p.container }}</td><td>{{ p.pid }}</td>
-      <td>{{ p.vram|size }}</td><td>{{ '%.1f'|format(d.share(p.vram)) }}%</td><td>{{ p.host|size }}</td></tr>
+      <td>{{ p.vram|size }}</td><td>{{ '%.1f'|format(d.share(p.vram)) }}%</td>
+      <td>{{ p.host|size }}{% if p.pushed_out %} <span class="badge err" title="More of this model is in host RAM than on the card: the card was overcommitted and the driver moved its buffers out, with no error to anyone. It still answers, slower, and this host RAM is real. Reloading the model brings it back once the card has room.">pushed off the card</span>{% endif %}</td>
+      <td>{{ p.ram|size if p.ram is not none else '—' }}</td>
+      <td class="note">{{ p.mapped|size if p.mapped is not none else '—' }}</td></tr>
     {% endfor %}
     {% if d.unattributed %}
     <tr class="note"><td>not held by any process shown</td><td></td><td></td>
-      <td>{{ d.unattributed|size }}</td><td>{{ '%.1f'|format(d.share(d.unattributed)) }}%</td><td></td></tr>
+      <td>{{ d.unattributed|size }}</td><td>{{ '%.1f'|format(d.share(d.unattributed)) }}%</td><td></td><td></td><td></td></tr>
     {% endif %}
   </table>
+  <div class="note">Host RAM a model really occupies = <b>GPU buffers in host RAM</b> + <b>process RAM</b>. <b>Mapped file</b> is page cache seen through the process, reclaimed by the kernel at will: it is shown apart so it is never read as occupancy.</div>
   {% elif d.vram_total %}
   <div class="note">no process holds memory on this card</div>
   {% endif %}
