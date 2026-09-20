@@ -287,6 +287,13 @@ DELETE /louise/models/<id>            → remove it; the same 409s
   silently: MedCPT-Article, 2026-09-18, which cost nothing measurable
   for a 110M model. For Qwen3-4B or MADLAD it is unmeasured, and no
   policy relies on it until it is.
+  **MEASURED THE HARD WAY, 2026-09-20**: a container OUTSIDE RAGE took
+  21.4 GiB of the card; every resident model went to host RAM (chat: 476
+  KiB on the card, 7,403 MiB off it), the host ran out of memory and the
+  kernel killed three models. Admission counts RAGE's own declarations
+  and cannot see a stranger on the card ([`STATUS.md`](STATUS.md),
+  2026-09-20 afternoon). OPEN: read the card's real free memory before a
+  load, and refuse when it contradicts the ledger.
 - **Sequential is the fallback** for creation encoders that do not fit
   together: `gpu-time-slots.md`'s hourly slot, driven by Louise through
   load and unload at a batch boundary. Not built with RAGE.

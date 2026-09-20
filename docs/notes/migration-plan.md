@@ -1209,7 +1209,12 @@ tests, and every pre-existing test stays green after each.
 stored by path, RAGE's port, its state directory, the chat GGUF
 ([`rage.md`](rage.md) §16).
 
-### Step 14 — Quarantine — **REPORTING DEPLOY BUILT 2026-09-19**
+### Step 14 — Quarantine — **REPORTING DEPLOY BUILT 2026-09-19; ENFORCEMENT BUILT 2026-09-20 (cdaff93), to be switched on with the next deploy**
+*The second deploy, as the operator decided it (2026-09-20)*: enforce, with
+the three live copies listed by collection id under `[node]
+quarantine_in_use_before` — they cannot run roots-and-chunks or the origin
+check yet — and the NEXT collection tested for real (spec main 8b025a2,
+03 §3.6; [`STATUS.md`](STATUS.md), 2026-09-20 afternoon).
 *Built:* `app/copy_state.py`, the one derivation; `[node] quarantine =
 "report" | "enforce"` in `platform.toml`, default `report`; the search
 (`withheld`, `shards: "all"`; `legs_withheld` for a failed run), the

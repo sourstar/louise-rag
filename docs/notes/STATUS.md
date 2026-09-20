@@ -3269,6 +3269,81 @@ to wait for it (1,083 s on wikivec).
   another source first (rage.md §12 has RAGE's pids joined to the
   probe's).
 
+**2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE RAGE, THE
+HOST RAN OUT OF MEMORY, AND THE EARLIER ANSWER ABOUT HOST RAM WAS THE
+SMALLER HALF.** Found while building what the operator asked for next:
+"separate real RAM occupancy from memory mapped RAM".
+- **What happened.** At 14:50 a bake-off container (`bakeoff-st:xpu`,
+  another session's; Qwen3-Embedding-0.6B under sentence-transformers,
+  `--attn sdpa --batch 32`) took 21.4 GiB of the 32 GiB card and 22.8 GiB
+  more of GPU buffers in host RAM. RAGE had 25 GiB resident. The `xe`
+  driver moved EVERY resident model's buffers into host RAM with no error
+  to anyone (DRM fdinfo, `drm-resident-vram0` against `drm-resident-gtt`):
+  chat 476 KiB on the card and 7,403 MiB in host RAM, bge-reranker 9 MiB /
+  6,129 MiB, bge-m3 0 / 1,290 MiB. GPU buffers in host RAM, all processes:
+  32.3 GiB; host memory used 56 of 63 GiB with the ZFS ARC squeezed to 2.2
+  GiB. **The kernel's out-of-memory killer (global) took three of RAGE's
+  children**: MADLAD and Qwen3-Embedding at 14:51:43–44, bge-reranker at
+  15:03:15 — with an `xe` engine reset in the same second. They go first
+  by design (`oom_score_adj` 800). The third kill came as the staged test
+  run for this deploy started on the node; that run was stopped at once
+  and the suite moved to the workstation.
+- **Not touched**: the bake-off is another session's work and the node was
+  paused, so nothing of Louise's was lost. At 15:03:15 the bake-off itself
+  died of the engine reset (`UR_RESULT_ERROR_DEVICE_LOST`, at 10,752 of
+  23,617 documents) and its process has spun one core since, still holding
+  the card and ~27 GiB of host RAM: stopping that container is the
+  operator's. RAGE restarts a dead model on
+  its next request, as another launch. The models pushed out do NOT move
+  back by themselves (2026-09-18 showed the same): a reload does it, once
+  the card has room.
+- **Why RAGE could not prevent it**: admission counts what RAGE's OWN
+  models declare. A process that reaches the card without RAGE is
+  invisible to it. Anything that needs the card beside RAGE has to go
+  through RAGE, or run with RAGE's models unloaded. OPEN, the operator's:
+  whether RAGE should read the card's real free memory before a load.
+- **The correction.** The host-RAM answer of the night before (the mapped
+  model file, plus 270–650 MiB of heap per process) was true and was the
+  smaller half. The GPU panel's "in host RAM" column was never RSS: it is
+  the driver's buffers in host memory, and on 2026-09-18 it already read
+  3.9 GiB for Qwen3. That memory is REAL. Three figures, now shown apart
+  (louise d41784d): GPU buffers in host RAM (real), process RAM (real,
+  `RssAnon + RssShmem`), mapped file (`RssFile`: page cache, reclaimed at
+  will, never occupancy). A row with most of its GPU buffers in host RAM
+  reads "pushed off the card". Twenty minutes after a load the models read
+  264–397 MiB owned and 0 mapped.
+- **A defect of RAGE's found by it, fixed in code (8de3a60), NOT yet on the
+  node**: `/louise/models` read "ready" for the three dead models, with
+  dead pids. The request path was right (`_verified` starts another
+  launch, hashed and checked again), so no run was stated for a dead
+  process; the list was wrong. It now reads `exited`. A new front is a new
+  image and a reload of every model — the wrong thing to do to an
+  overcommitted card, so it waits for the card to be free.
+
+**2026-09-20, afternoon — QUARANTINE: ENFORCEMENT IS BUILT, WITH THE THREE
+LIVE COPIES TO BE LISTED AS IN USE BEFORE. NOT YET SWITCHED ON — the deploy
+waits for the node's memory (above); the switch must never precede it, for
+the code now on the node does not know the list and would withhold all
+three.** Operator: "enforce quarantine … Assume that the
+current collections have already passed it. The next collection to be
+created will be our guinea pig." (spec main 8b025a2, 03 §3.6; louise
+cdaff93.) Under the rules as they stood all three would have left search
+the moment the switch flipped — gutenberg and wikipedia have no record
+shards to take roots of, and no origin check has a fetch step — so
+`platform.toml` gains `[node] quarantine_in_use_before`, a list of
+COLLECTION IDS (a name is refused; a refused file enforces nothing). For a
+listed copy the decision stands in for roots-and-chunks and the origin
+while they have not run or cannot run, and for nothing else: not the gate,
+not the licence, not a refusal, not a FAILED test. Nothing is pretended —
+tests read `in-use-before`, no attestation is written, `origin_check`
+stays `pending`, and the Library says "tests open — in use by decision".
+- **What the guinea pig will meet**, known going in: there is no scheduled
+  `hold check`; `records-vs-origin` needs `--origin DIR`; `hold records
+  build` and the snapshot are commands a person runs. So a new collection
+  embeds NOTHING until its records are built, snapshotted and checked.
+  That is the rule working — and the list of what to build next. Never
+  list the guinea pig to unblock it.
+
 **2026-09-20, midday — THE DRIVER A RUN STATES IS THE CARD'S, AND THE NODE
 RUNS THE IMAGE THAT READS IT SO.** Operator: "driver fix: yes"
 ([`rage.md`](rage.md) §18, item 1; louise bfe5377). Second image,
@@ -3350,7 +3425,10 @@ for the move: `config/rage.toml.pre-chat-move`,
   Eight models resident: 25.0 GiB of the card's 32.6, and every model at
   once is 29,800 MiB declared of 30,552 usable.
 - **WHY THE llama-server MODELS HOLD SO MUCH HOST RAM** (operator's
-  question; measured on the node). Two parts. (1) Right after a load, the
+  question; measured on the node). **CORRECTED 2026-09-20, afternoon
+  (above): this is the smaller half — the panel's "in host RAM" is the
+  driver's buffers, which are real, and become the whole model when the
+  card is overcommitted.** Two parts. (1) Right after a load, the
   model FILE, memory-mapped: bge-m3 read 1,067 MiB resident, of which 657
   file-backed, for a 1,104 MiB file. The kernel takes those pages back by
   itself — an hour later the same processes read 22–81 MiB file-backed —
