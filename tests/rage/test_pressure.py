@@ -330,3 +330,34 @@ def test_the_front_itself_names_no_manufacturer():
         code = re.sub(r'""".*?"""', "", text, flags=re.S)
         code = "\n".join(line.split("#")[0] for line in code.splitlines())
         assert not re.search(r"\b(xe|i915|amdgpu|nvidia|intel|nouveau)\b", code, re.I), name
+
+
+# ---- "wisely": the least given up ----------------------------------------------------------------
+
+def _held(name: str, mib: int, last_used: float):
+    return (placement_mod.Placed(model=name, device="xpu", state=READY, since=0.0,
+                                 last_used=last_used), mib)
+
+
+def test_the_models_given_up_are_those_that_cover_the_deficit_with_the_least():
+    """The node, 2026-09-20, the first live squeeze: 1,435 MiB short. In
+    least-recently-used order RAGE gave up bge-m3, medcpt-query and then the
+    8.6 GiB Qwen3 that happened to be next: 9,937 MiB for 1,435. The two
+    1 GiB models cover it."""
+    node = [_held("bge-m3", 1017, 1.0), _held("medcpt-query", 292, 2.0),
+            _held("qwen3-embedding-4b", 8628, 3.0), _held("bge-reranker", 1019, 4.0),
+            _held("medcpt-rerank", 287, 5.0), _held("madlad", 6209, 6.0),
+            _held("chat", 7250, 7.0)]
+    chosen = placement_mod.least_given_up(node, 1435)
+    assert sorted(p.model for p in chosen) == ["bge-m3", "medcpt-query", "medcpt-rerank"]
+    assert sum(mib for p, mib in node if p in chosen) == 1596, "161 MiB over, not 8,502"
+
+    assert placement_mod.least_given_up(node, 0) == []
+    assert placement_mod.least_given_up([], 500) == []
+    assert len(placement_mod.least_given_up(node, 10**6)) == 7, "all of them still fall short"
+    # among equals, the longer unused
+    twins = [_held("newer", 1000, 900.0), _held("older", 1000, 100.0)]
+    assert [p.model for p in placement_mod.least_given_up(twins, 800)] == ["older"]
+    # past a dozen models every subset is too many: plain least-recently-used order
+    many = [_held(f"m{i}", 100, float(i)) for i in range(13)]
+    assert [p.model for p in placement_mod.least_given_up(many, 250)] == ["m0", "m1", "m2"]

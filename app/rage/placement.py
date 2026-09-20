@@ -91,6 +91,36 @@ class Placed:
     in_flight: int = 0          # requests being answered now: never idle while > 0
 
 
+def least_given_up(holding: "list[tuple[Placed, int]]", deficit: int) -> "list[Placed]":
+    """The models that, together, cover `deficit` MiB with the LEAST memory given
+    up; among equals the fewer models, then the longer unused. All of them when
+    even all of them fall short — it still helps. Every subset is tried: a node
+    holds a dozen models (2^12 sums of small numbers); past that, the plain
+    least-recently-used order."""
+    if deficit <= 0 or not holding:
+        return []
+    if sum(mib for _, mib in holding) <= deficit:
+        return [p for p, _ in holding]
+    if len(holding) > 12:
+        out, left = [], deficit
+        for placed, mib in sorted(holding, key=lambda h: h[0].last_used):
+            if left <= 0:
+                break
+            out.append(placed)
+            left -= mib
+        return out
+    best: tuple | None = None
+    for mask in range(1, 1 << len(holding)):
+        chosen = [h for i, h in enumerate(holding) if mask >> i & 1]
+        given = sum(mib for _, mib in chosen)
+        if given < deficit:
+            continue
+        key = (given, len(chosen), sum(p.last_used for p, _ in chosen))
+        if best is None or key < best[0]:
+            best = (key, chosen)
+    return [p for p, _ in best[1]] if best else []
+
+
 def _log(message: str) -> None:
     print(f"[rage] {message}", flush=True)
 
@@ -412,8 +442,12 @@ class Placement:
           1. a model PUSHED OFF THE CARD — it holds host RAM, answers slowly, and
              its reload puts it back on the card once there is room;
           2. while a stranger SQUEEZES the card (real free memory below the
-             declared reserve, with a stranger holding part of it): the least
-             recently used, and no more of them than the deficit asks for.
+             declared reserve, with a stranger holding part of it): the idle
+             models that TOGETHER cover the deficit with the LEAST given up
+             (`least_given_up`). Least-recently-used-first was the first rule,
+             and the first live squeeze (the node, 2026-09-20: 1,435 MiB short)
+             gave up 9,937 MiB for it — two small models and then the 8.6 GiB
+             one that happened to be next in line.
         A model somebody is using is never touched: if the stranger squeezes
         past what the idle ones free, the driver pushes it to host RAM and it
         goes on answering.
@@ -446,15 +480,10 @@ class Placement:
                     (self.procfs.gpu_mib(p.pid)[0] or 0) for p, _ in victims if p.pid)
                 why = (f"processes outside RAGE hold {mem['foreign_mib']} MiB of the card and "
                        f"{mem['free_mib']} MiB are free, under the {mem['reserve_mib']} reserved")
-                for p in idle:
-                    if deficit <= 0:
-                        break
-                    if any(p is v for v, _ in victims) or p.pid is None:
-                        continue
-                    on_card = self.procfs.gpu_mib(p.pid)[0] or 0
-                    if on_card:
-                        victims.append((p, why))
-                        deficit -= on_card
+                holding = [(p, self.procfs.gpu_mib(p.pid)[0] or 0) for p in idle
+                           if p.pid is not None and not any(p is v for v, _ in victims)]
+                victims += [(p, why) for p in least_given_up(
+                    [(p, mib) for p, mib in holding if mib], deficit)]
             for placed, why in victims:
                 idle_for = int(now - placed.last_used)
                 try:
