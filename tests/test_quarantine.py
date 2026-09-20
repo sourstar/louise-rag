@@ -48,9 +48,11 @@ def fresh():
     copy_state.reset_cache()
 
 
-def enforce(tmp_path, how: str = "enforce") -> None:
+def enforce(tmp_path, how: str = "enforce", before=()) -> None:
+    listed = ", ".join(f'"{c}"' for c in before)
     (tmp_path / "config" / "platform.toml").write_text(
-        f'[node]\nquarantine = "{how}"\n', encoding="utf-8")
+        f'[node]\nquarantine = "{how}"\nquarantine_in_use_before = [{listed}]\n',
+        encoding="utf-8")
     copy_state._states.clear()
 
 
@@ -555,3 +557,118 @@ def test_a_command_asks_the_same_licence_resolution_as_the_worker(tmp_path, monk
     licensing.reset_peer_acks()
     assert copy_state.held(root, "pubmed", codex).test("licence").status == "passed"
     licensing.reset_peer_acks()
+
+
+# ---- in use before the peer enforced (operator, 2026-09-20) ----------------------------------------
+
+def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decision(
+        node, rage, tmp_path):
+    """"Assume that the current collections have already passed it. The next
+    collection to be created will be our guinea pig." The copies a peer used
+    before it enforced cannot run two of the tests yet; the decision is
+    desired state, by collection id, and NOTHING IS PRETENDED: no test reads
+    passed, no attestation appears, the origin check stays pending."""
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    before = _tree(root)
+    enforce(tmp_path, before=[codex.collection_id])
+
+    s = state_of(collection)
+    assert s.state == "in-use" and s.origin_check == "pending"
+    assert {t.name: t.status for t in s.tests} == {
+        "roots-and-chunks": "in-use-before", "bundles": "passed", "gate": "passed",
+        "licence": "not-required", "origin": "in-use-before"}
+    assert len(s.reasons) == 2 and all(
+        "operator's decision" in r and "still open" in r and "cleared by" in r
+        for r in s.reasons), "in use BY A DECISION is said, and what clears each test"
+    assert _tree(root) == before, "a decision wrote a file: it is desired state, in platform.toml"
+
+    assert copy_state.withholds(collection) is None
+    assert collection in query_service.resolve_collections(None)
+    assert worker._quarantine_allows(db.connect(collection), collection, "embedding") is True
+    assert health._copy_state(collection) == ("", "")
+    held = copy_state.held(root, "gutenberg", codex)
+    assert (held.state, held.reasons) == (s.state, s.reasons), "the command reads the same"
+
+    # the real tests still count: once they pass, nothing is left to say
+    fully_tested(root, collection, codex)
+    s = state_of(collection)
+    assert s.state == "in-use" and s.reasons == () and s.origin_check == "passed"
+
+
+def test_the_guinea_pig_is_tested_for_real(node, rage, tmp_path):
+    """Every copy NOT in the list — another collection's id is in it here."""
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    enforce(tmp_path, before=["sha256:" + "ab" * 32])
+    s = state_of(collection)
+    assert s.state == "quarantine" and len(s.reasons) == 2
+    assert copy_state.withholds(collection).startswith("quarantine: ")
+    assert collection not in query_service.resolve_collections(None)
+
+
+def test_the_decision_stands_in_for_no_failure_no_gate_and_no_licence(node, rage, tmp_path):
+    root, collection, codex = node
+    enforce(tmp_path, before=[codex.collection_id])
+
+    # the gate has not run: that is a test the peer CAN run, and does by itself
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.test("gate").status == "open"
+    assert len(s.reasons) == 1 and "encoder" in s.reasons[0], \
+        "only what the decision does not cover is a reason to withhold"
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    assert state_of(collection).state == "in-use"
+
+    # the licence (invariant 9): no list of ids acknowledges a licence
+    mine = copy_state.own_key()
+    assert copy_state.evaluate(root, "gutenberg", codex, licence="missing", key=mine,
+                               before=True).state == "quarantine"
+
+    # a test that FAILED: roots, then the origin
+    attest(root, codex, "roots", "fail", shards=["records-0001"])
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.test("roots-and-chunks").status == "failed"
+    attest(root, codex, "roots", time="2026-09-19T11:00:00Z")
+    attest(root, codex, "chunks")
+    assert state_of(collection).state == "in-use"
+    attest(root, codex, "records-vs-origin", "fail", time="2026-09-19T12:00:00Z",
+           shards=["records-0001"])
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.origin_check == "failed"
+
+    # and a refusal is a refusal
+    assert copy_state.evaluate(root, "gutenberg", codex, licence="not_required", key=mine,
+                               refusal="the vector table is 1024 wide", before=True
+                               ).state == "refused"
+
+
+def test_the_origin_acknowledgement_has_nothing_to_add_to_a_copy_in_use_before(
+        node, rage, tmp_path):
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    enforce(tmp_path, before=[codex.collection_id])
+    why = copy_state.origin_ack_refusal(state_of(collection))
+    assert why and "quarantine_in_use_before" in why and "records-vs-origin" in why
+
+
+def test_the_list_holds_collection_ids_and_a_name_is_refused(tmp_path, monkeypatch):
+    """By id, never by name: a name can be given to another collection, and an
+    entry that names nothing would leave its copy withheld while the operator
+    reads it as listed. Refused, not skipped — and a file that is refused
+    enforces NOTHING, so a typo cannot take every copy out of search."""
+    from app.transfer import schedule
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    good = "sha256:" + "0f" * 32
+    for bad in ('["gutenberg"]', f'"{good}"', '["sha256:0F"]', f'["{good.upper()}"]', "[7]"):
+        (tmp_path / "platform.toml").write_text(
+            f'[node]\nquarantine = "enforce"\nquarantine_in_use_before = {bad}\n',
+            encoding="utf-8")
+        with pytest.raises(schedule.ScheduleError, match="quarantine_in_use_before"):
+            platform_config.load()
+        copy_state._switch.clear()
+        assert copy_state.enforced() is False
+    (tmp_path / "platform.toml").write_text(
+        f'[node]\nquarantine = "enforce"\nquarantine_in_use_before = ["{good}"]\n',
+        encoding="utf-8")
+    assert platform_config.load().quarantine_in_use_before == (good,)
+    assert platform_config.PlatformConfig().quarantine_in_use_before == ()

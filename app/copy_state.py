@@ -47,6 +47,20 @@ TWO DEPLOYS (`enforced`). The state is always computed and shown;
 this lands no Codex collection has a run statement or an origin check of its
 own, so enforcing at once would take them all out of search together.
 
+IN USE BEFORE (`in_use_before`; operator, 2026-09-20: "assume that the current
+collections have already passed it; the next collection to be created will be
+our guinea pig"). The copies a peer already used the day it began to enforce
+were made before the tests existed: two of them have no record shards to take
+roots of, and no origin check has a fetch step yet. `platform.toml` lists
+them BY COLLECTION ID, and for those the operator's decision stands in for
+the two tests that cannot run yet — roots-and-chunks and the origin — while
+they are OPEN or CANNOT RUN. It stands in for nothing else: never the licence
+(invariant 9), never the gate (a run not yet tested still withholds, and the
+gate still clears it by itself), never a test that FAILED. Nothing is
+pretended: the tests read `in-use-before` with what is still open beside
+them, no attestation is written, and `origin_check` stays what it is. Every
+copy NOT in the list is tested for real.
+
 COST. One evaluation is a handful of lookups: two directory listings, whose
 contents are re-read only when they change, and the licence resolution.
 Cached a few seconds on the collection's PATH, never its name (CLAUDE.md).
@@ -68,6 +82,7 @@ REFUSED, QUARANTINE, IN_USE = "refused", "quarantine", "in-use"
 # a test's status
 PASSED, OPEN, FAILED = "passed", "open", "failed"
 CANNOT_RUN, ACKNOWLEDGED, NOT_REQUIRED = "cannot-run", "acknowledged", "not-required"
+IN_USE_BEFORE = "in-use-before"      # the operator's decision stands in (see the header)
 
 # 09 §9.3's `origin_check`
 ORIGIN_PASSED, ORIGIN_PENDING = "passed", "pending"
@@ -116,28 +131,42 @@ ALWAYS_IN_USE = CopyState(IN_USE, (), ORIGIN_PASSED, True)
 #: (the file's path, its mtime and size) -> what it said. Asked once per
 #: collection per search, so it is a `stat`, and a parse only when the file
 #: changed — an operator's edit is seen at once, with no restart.
-_switch: dict[tuple, bool] = {}
+_switch: dict[tuple, tuple[bool, frozenset[str]]] = {}
 
 
-def enforced() -> bool:
-    """Does quarantine WITHHOLD on this node, or only report? Desired state
-    (`platform.toml`), read when asked. A file that cannot be read enforces
-    nothing: it must not take every copy out of search by accident."""
+def _desired() -> tuple[bool, frozenset[str]]:
+    """(does quarantine WITHHOLD, the collection ids in use before it did) —
+    desired state (`platform.toml`), read when asked. A file that cannot be
+    read enforces nothing: it must not take every copy out of search by
+    accident."""
+    nothing: tuple[bool, frozenset[str]] = (False, frozenset())
     try:
         from . import platform_config
         path = platform_config.platform_path()
         try:
             st = path.stat()
         except OSError:
-            return False
+            return nothing
         key = (str(path), st.st_mtime_ns, st.st_size)
         if key not in _switch:
             _switch.clear()
-            _switch[key] = getattr(platform_config.load(), "quarantine",
-                                   "report") == "enforce"
+            cfg = platform_config.load()
+            _switch[key] = (getattr(cfg, "quarantine", "report") == "enforce",
+                            frozenset(getattr(cfg, "quarantine_in_use_before", ())))
         return _switch[key]
     except Exception:                                   # noqa: BLE001
-        return False
+        return nothing
+
+
+def enforced() -> bool:
+    """Does quarantine WITHHOLD on this node, or only report?"""
+    return _desired()[0]
+
+
+def in_use_before(codex: Codex | None) -> bool:
+    """Is this copy one the peer already used the day it began to enforce?
+    By collection id — a name can be given to another collection."""
+    return codex is not None and codex.collection_id in _desired()[1]
 
 
 # ---- this peer's key, as its attestations spell it -----------------------------
@@ -293,7 +322,7 @@ def _roots_and_chunks(bodies, key: str | None, name: str) -> Test:
     detail = (f"{' and '.join(failed)} failed here and never passed: a shard's local "
               f"fault is re-fetched and re-checked (03 §3.6)" if failed else
               f"{' and '.join(missing)} not yet run on this peer")
-    return Test("roots-and-chunks", OPEN, detail, clears)
+    return Test("roots-and-chunks", FAILED if failed else OPEN, detail, clears)
 
 
 def _bundles() -> Test:
@@ -415,15 +444,33 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
 
 # ---- the state ------------------------------------------------------------------------------
 
+_STANDS_IN_FOR = ("roots-and-chunks", "origin")
+
+
+def _decided(t: Test) -> Test:
+    """The operator's decision for a copy in use before quarantine was enforced
+    (the header). It stands in for a test that HAS NOT RUN or CANNOT RUN —
+    never for one that failed, never for the gate, never for the licence."""
+    if t.name not in _STANDS_IN_FOR or t.status not in (OPEN, CANNOT_RUN):
+        return t
+    return Test(t.name, IN_USE_BEFORE,
+                "in use before this peer enforced quarantine, by its operator's decision "
+                "(platform.toml: quarantine_in_use_before); still open: " + t.detail,
+                t.clears)
+
+
 def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
              refusal: str | None = None, key: str | None = None,
-             answering: Mapping[str, str | None] | None = None) -> CopyState:
+             answering: Mapping[str, str | None] | None = None,
+             before: bool = False) -> CopyState:
     """The state of the copy at `<root>/<name>/`, from what is there NOW.
 
     `licence` is `app/licensing.py`'s answer, passed in (invariant 9: one
     resolution). `refusal` is the refuse-to-start reason, if any. `key` is
     this peer's, as an envelope spells it. `answering` maps a role to the run
-    its encoder last stated, where this process has heard one."""
+    its encoder last stated, where this process has heard one. `before`: the
+    copy is one the peer already used the day it began to enforce
+    (`in_use_before`)."""
     if refusal:
         return CopyState(REFUSED, (refusal,), ORIGIN_PENDING, False)
     if codex is None:
@@ -433,9 +480,16 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
     origin, origin_check = _origin(root, name, codex, bodies, key)
     tests = (_roots_and_chunks(bodies, key, name), _bundles(), gate,
              _licence(licence, name), origin)
+    if before:
+        tests = tuple(_decided(t) for t in tests)
     waiting = [t for t in tests if t.status in (OPEN, FAILED, CANNOT_RUN)]
     reasons = tuple(f"{t.detail} — cleared by {t.clears}" if t.clears else t.detail
                     for t in waiting)
+    if not waiting:
+        # in use BY A DECISION is said, never passed over: the tests it stands in
+        # for are still open, and `show` names them and what clears each
+        reasons = tuple(f"{t.detail} — cleared by {t.clears}" for t in tests
+                        if t.status == IN_USE_BEFORE)
     return CopyState(QUARANTINE if waiting else IN_USE, reasons, origin_check,
                      leg, tests, why)
 
@@ -463,7 +517,8 @@ def of(collection) -> CopyState:
     except Exception as e:                              # noqa: BLE001
         licence = f"{type(e).__name__}: {e}"            # fail closed (invariant 9)
     state = evaluate(root, collection.name, codex, licence=licence, key=own_key(),
-                     answering=run_check.answering(collection))
+                     answering=run_check.answering(collection),
+                     before=in_use_before(codex))
     _states[where] = (state, now + TTL_S)
     return state
 
@@ -518,7 +573,7 @@ def held(root: Path, name: str, codex: Codex, local=None, *,
     except Exception as e:                              # noqa: BLE001
         licence = f"{type(e).__name__}: {e}"            # fail closed
     return evaluate(Path(root), name, codex, licence=licence, refusal=refusal,
-                    key=own_key())
+                    key=own_key(), before=in_use_before(codex))
 
 
 def require_in_use(root: Path, name: str, codex: Codex, local=None, *, use: str) -> None:
@@ -557,6 +612,10 @@ def origin_ack_refusal(state: CopyState) -> str | None:
                 "decision stands in for a test that cannot run, never for one that ran")
     if origin.status == ACKNOWLEDGED:
         return "the decision is already recorded: " + origin.detail
+    if origin.status == IN_USE_BEFORE:
+        return ("the copy is already in use by the decision in platform.toml "
+                "(quarantine_in_use_before): there is nothing to acknowledge. " + origin.clears
+                + " is what clears the test itself")
     if origin.status == OPEN:
         return ("records-vs-origin has not been tried on this peer, so nothing says it "
                 "cannot run: " + origin.clears + " first")

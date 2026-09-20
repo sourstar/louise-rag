@@ -52,6 +52,10 @@
     {# 03 §3.6: a copy this peer has not finished testing. Red once the node
        enforces quarantine, brass while it only reports what it would withhold. #}
     <span class="badge {{ 'err' if c.copy_state.enforced else 'brass' }}" title="{{ c.copy_state.reasons | join(' · ') }}">{{ c.copy_state.state }}{{ '' if c.copy_state.enforced else ' (reported only)' }}</span>
+    {% elif c.copy_state and c.copy_state.reasons %}
+    {# in use BY THE OPERATOR'S DECISION (platform.toml: quarantine_in_use_before):
+       said, never passed over — the tests it stands in for are still open. #}
+    <span class="badge brass" title="{{ c.copy_state.reasons | join(' · ') }}">tests open — in use by decision</span>
     {% endif %}
     {% if c.copy_state and not c.copy_state.vector_leg %}
     <span class="badge err" title="{{ c.copy_state.vector_leg_reason }}">vector leg withheld</span>

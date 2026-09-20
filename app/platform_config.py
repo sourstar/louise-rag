@@ -24,6 +24,7 @@ always-full — an existing deployment upgrades with zero behavior change, the
 same philosophy collections.py follows for a missing collections/ directory.
 """
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,7 +130,19 @@ class PlatformConfig:
     # switches it once `hold collection show` reads in-use for each collection
     # meant to be. Removed at step 12. Read by app/copy_state.py:enforced().
     quarantine: str = "report"
+    # [node] quarantine_in_use_before — the copies this peer ALREADY USED the day
+    # it began to enforce (operator, 2026-09-20: "assume that the current
+    # collections have already passed it; the next collection to be created
+    # will be our guinea pig"). By COLLECTION ID, never a name: a name can be
+    # given to another collection. It stands in for the two tests a copy made
+    # before the tests existed cannot run yet — roots-and-chunks, the origin —
+    # and for nothing else: never the licence, never the gate, never a test
+    # that FAILED. Read by app/copy_state.py:in_use_before().
+    quarantine_in_use_before: tuple[str, ...] = ()
     source_path: Path | None = None          # None = defaults (no file on disk)
+
+
+_COLLECTION_ID = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _config_dir() -> Path:
@@ -326,6 +339,14 @@ def _load_one(path: Path) -> PlatformConfig:
         # withheld — in either direction
         raise schedule_mod.ScheduleError(
             f"node.quarantine must be \"report\" or \"enforce\", got {quarantine_raw!r}")
+    before_raw = node_raw.get("quarantine_in_use_before", [])
+    if not isinstance(before_raw, list) or not all(
+            isinstance(c, str) and _COLLECTION_ID.fullmatch(c) for c in before_raw):
+        # refused, not skipped: an entry that names nothing would leave the copy
+        # it was meant for withheld, and the operator reading "in the list"
+        raise schedule_mod.ScheduleError(
+            "node.quarantine_in_use_before must be a list of collection ids, each "
+            f"\"sha256:\" and 64 hex digits (`louise hold collection show`), got {before_raw!r}")
 
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           trust=TrustConfig(space_authors=tuple(authors)),
@@ -334,6 +355,7 @@ def _load_one(path: Path) -> PlatformConfig:
                           embed_defaults=embed_raw,
                           codex_only=codex_only_raw,
                           quarantine=quarantine_raw,
+                          quarantine_in_use_before=tuple(before_raw),
                           source_path=path)
 
 
