@@ -4726,8 +4726,26 @@ owning a pinned space under `approved-encoders.md` — a reference row, not
 a candidate, until that changes. What circulates as "77.80 for DAR+GIR" is
 this plain dense model's own mrr@100, not the graph pipeline's.
 
-**Not yet run**: the operator asked for the card to be left alone, so no
-model has been embedded. Nothing past `load` has touched the GPU.
+**Run 2026-09-20**, and it answered §7 (full table in
+[`gazzetta-plugin.md`](gazzetta-plugin.md) §7.1b):
+
+| model | recall@10 | mrr@100 |
+|---|---|---|
+| DAR-legal-it — *published, not run here* | 0.8037 | 0.7780 |
+| **qwen3-embedding-4b, instructed queries** | 0.7748 | **0.7744** |
+| qwen3-embedding-4b, bare queries | 0.7539 | 0.7324 |
+| bge-m3 | 0.6834 | 0.6142 |
+
+Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s.
+
+Two findings worth carrying out of it. **bge-m3 is not a candidate for
+Italian legal** — 16.4 MRR points behind the domain specialist, and behind
+a generalist this node already serves. And **the query instruction is
+worth +4.2 MRR@100 on identical weights** — bare, qwen3 trails the
+specialist by 4.6 points and loses; instructed, it is 0.36 behind and
+ties. The platform cannot declare that prefix anywhere, so a collection
+pinned on qwen3 today would silently take the worse row. Open, with a
+proposed home, in `gazzetta-plugin.md` §7.4b.
 
 ## Conventions
 

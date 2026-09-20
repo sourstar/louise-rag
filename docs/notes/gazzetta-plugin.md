@@ -586,6 +586,62 @@ are what the bake-off has to *beat*, and they are worth keeping in it for
 exactly that reason — if the leaders do not beat them on Italian legal
 retrieval, that is a finding, and a cheap collection.
 
+### 7.1b MEASURED, 2026-09-20 — and §7.1's ranking was wrong twice over
+
+`tools/encoder_bakeoff.py`, JuriFindIT `validation` (179 expert questions,
+803 relevant ids) over the 23,617-node corpus, truncated at 20,000 chars,
+`EMBED_BATCH=1`, `EMBED_CONCURRENCY=2`, through RAGE on the B70.
+
+| model | recall@10 | ndcg@100 | mrr@100 | map@100 |
+|---|---|---|---|---|
+| DAR-legal-it — *published, not run here* | 0.8037 | 0.7459 | 0.7780 | 0.7015 |
+| **qwen3-embedding-4b, instructed queries** | 0.7748 | **0.7534** | **0.7744** | 0.6806 |
+| qwen3-embedding-4b, bare queries | 0.7539 | 0.7232 | 0.7324 | 0.6484 |
+| bge-m3 | 0.6834 | 0.6149 | 0.6142 | 0.5410 |
+
+Corpus embedding cost: bge-m3 **18m16s**, qwen3-embedding-4b **59m29s**.
+
+**bge-m3 is not a floor, it is a long way below one.** §7.1 called it
+"well below the leaders" and kept it as the bar to beat; it is 16.4 MRR
+points behind the domain specialist and 16 behind a generalist this node
+already runs. Whatever else is decided, it is not a candidate for an
+Italian legal collection.
+
+**The instruction is worth more than most model changes.** The same
+qwen3-embedding-4b, same weights, same documents, gains **+4.2 MRR@100**
+and +2.1 recall@10 purely from `Instruct: …\nQuery: ` on the query side.
+Bare, it trails DAR-legal-it by 4.6 MRR points and the conclusion would
+have been "the specialist wins"; instructed, the gap is **0.36 points**.
+The platform has no mechanism for this (`embeddings._side` switches URL for
+a bi-encoder pair and nothing else), so today a Normattiva collection on
+qwen3 would silently take the bare row. That is now a design gap, not a
+detail — see §7.4b.
+
+**So the node already runs a competitive encoder**, which §7's own rule
+says must not be why it is chosen — and it is not: it is chosen because it
+measured within noise of the specialist on the specialist's own set, while
+being Apache-2.0 against a model that declares no licence at all
+(`approved-encoders.md` bars an unlicensed model from owning a pinned
+space). The two reasons happen to agree here; if they had not, quality
+would have won.
+
+Caveats that keep this honest: DAR-legal-it's row is its published table,
+not a run of ours, and its recall@10 (0.8037 vs 0.7748) is the one place
+it stays clearly ahead. The 179 questions come from four annotators. And
+qwen3-embedding-4b at dim 2560 costs 2.5x bge-m3's bytes per vector, which
+`embedder-choice-and-supersession.md` §2 prices as the supersession bill.
+
+### 7.4b The query prefix has nowhere to live — OPEN
+
+Measured above at +4.2 MRR@100, and there is no way to declare it. It
+belongs in the `[encoder]` recipe beside `model` and `ctx`, and — because
+it changes every vector a query produces but no vector in the collection —
+it is a **query-side** property, so it does not belong in `space_id`. Two
+peers embedding documents identically still agree; a peer searching with a
+different prefix only searches worse, which is exactly the class of thing
+the recipe already carries for the query encoder (`query_url`). Needs a
+decision before a collection pins qwen3.
+
 ### 7.2 The measurement that actually decides
 
 MMTEB's multilingual mean is not Italian legal retrieval, and choosing on it
