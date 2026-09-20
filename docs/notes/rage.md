@@ -566,3 +566,63 @@ handler, not a mention).
   [`migration-plan.md`](migration-plan.md) 13e). Today's collections are
   version 2 or legacy, so RAGE still serves today's Louise unchanged,
   behind `/upstream/<model>` URLs.
+
+## 18. No manufacturer in RAGE (operator, 2026-09-20)
+
+*"OpenArc is dedicated to Intel, RAGE should be independent from a specific
+manufacturer."* Said when a survey of other serving stacks put forward an
+Intel-only one. It is a rule about RAGE, and it sorts everything into two
+layers:
+
+- **THE FRONT, `rage.toml`, THE API AND THE RUN IDENTITY name no
+  manufacturer.** A card is whatever name the file declares (`xpu` is this
+  node's word, not the code's: the only fixed device name is `cpu`); a
+  backend is a command line and a health path; the run identity is the
+  image, the arguments, the weights and the driver AS READ. This is also
+  Louise's own premise — a space never names a device, and peers run what
+  they have (02 §2.4).
+- **AN IMAGE IS A MANUFACTURER'S**, by necessity: it carries one compute
+  runtime. `deploy/rage/Dockerfile` is the Intel one (llama.cpp's SYCL
+  build, torch's XPU wheels, Level Zero). Another card is another
+  Dockerfile and another `rage.toml`, never another front.
+
+So a backend is judged by whether it runs on more than one manufacturer's
+hardware: llama.cpp (SYCL, CUDA, ROCm, Vulkan, Metal), vLLM (CUDA, ROCm,
+Intel XPU, CPU), TEI and SGLang qualify; OpenVINO Model Server, OpenArc and
+Intel's llm-scaler build do not — they may serve a model ON an Intel node,
+as OpenVINO serves MedCPT's cross-encoder here, and nothing in RAGE may
+come to need them.
+
+**Audited against the rule the same day. Where RAGE is tied to Intel:**
+
+1. **THE DRIVER IN THE RUN IDENTITY IS RIGHT BY LUCK OF ORDER — a defect,
+   latent on this very node.** `runs.driver_string` names "the first GPU
+   module loaded" from a fixed list, `("xe", "i915", "amdgpu", "nvidia")`.
+   This node has TWO loaded: `xe` for the Arc (renderD128) and `amdgpu`
+   for the Ryzen's own graphics (renderD129). RAGE states `xe` only
+   because `xe` comes first in that tuple; an NVIDIA card beside the same
+   AMD graphics would be stated as `amdgpu`. The driver is the one the
+   DEVICE is bound to: declare the card's node in `rage.toml` and read
+   `/sys/class/drm/<node>/device/driver`. On this node the string stays
+   `xe`, so no run id moves. It needs a new image — the front is in it —
+   so it was NOT done unasked.
+2. **The GPU clock is Intel's and says so nowhere.** `gpu_clock.Governor`
+   reads and writes `rp0_freq`, `rpn_freq`, `min_freq`, the `xe`/`i915`
+   sysfs names. It is optional (`RAGE_FREQ_DIR` unset = no clock), which
+   is why it harms nothing elsewhere; a second manufacturer means a second
+   clock driver behind the same three verbs (read the range, pin,
+   release), not a change to the front.
+3. **Observed card memory comes from DRM fdinfo**, a kernel interface that
+   `xe`, `i915` and `amdgpu` implement and NVIDIA's own driver does not.
+   There RAGE still places and admits — admission counts what is DECLARED
+   — and only `observed` is missing.
+4. **The launcher for the torch and OpenVINO servers hard-codes the word**
+   `xpu` (`deploy/rage/servers/launch.py`: `choices=["xpu", "cpu"]`, and
+   torch's `xpu`, OpenVINO's `GPU`). Image layer, so allowed — but the
+   device WORD belongs to the image's table, not to the argument parser.
+
+Worth knowing beside it: llama.cpp's Vulkan backend is the one engine that
+runs unchanged on all three manufacturers, and on this card it is the
+slower one (published B70 figures: SYCL about 2.2 times Vulkan's
+generation speed) — independence of RAGE does not mean the slowest common
+engine on each node.
