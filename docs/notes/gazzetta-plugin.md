@@ -531,17 +531,41 @@ for a signed pack whose consumers must reproduce it. §12.7.
 ## 7. Encoders
 
 > **DECIDED, operator, 2026-09-20: the legal collection's encoder is
-> `qwen3-embedding-4b`, with a query-side instruction.** Measured, not
-> assumed — §7.1b has the table and §7.1c the base-model comparison behind
-> it. The instruction is **part of the decision, not a follow-up**: the
-> same weights score 0.7744 mrr@100 with it and 0.7324 without, and the
-> platform cannot yet declare it (§7.4b). A collection pinned before that
-> is settled takes the lower number silently.
+> `jurifindit/DAR-legal-it`**, on the assumption that its weights carry the
+> same licence as the material they were trained from —
+> **CC-BY-NC-SA-4.0**, JuriFindIT's. It is the better model on the evidence
+> (§7.1b): recall@10 0.8031 against qwen3-embedding-4b-instructed's 0.7748,
+> ndcg@100 0.7704 against 0.7534, MRR a tie inside our own residual, at
+> **dim 768 against 2560** — a third the bytes per vector, which
+> `embedder-choice-and-supersession.md` §2 prices as the supersession bill.
+>
+> Two things this decision carries, neither of which blocks it.
+>
+> **The assumption is not a statement.** The authors declare no licence;
+> CC-BY-NC-SA-4.0 is inferred from the training data. §4.4's class
+> machinery does not cover this — that governs the *corpus* text, and the
+> encoder never travels — so nothing in the format records the encoder's
+> terms or gates on them. What binds instead is 02 §2.4's obtainability and
+> `approved-encoders.md`'s reproduction bar. **And a pin is not
+> reversible**: docs/01 promise 8 means nothing published is recalled, so
+> if the authors later state different terms, every peer that adopted the
+> collection keeps it. Asking them costs one message and converts the
+> assumption into a fact; worth doing before the collection is created,
+> not after.
+>
+> **NC makes commercial peers consumer-only for this collection.** A peer
+> who cannot legally run the encoder cannot reproduce its vectors, so
+> cannot verify or contribute to the space — it can import and search, not
+> attest. That is a property of the choice, not a defect, and it is the
+> shape 02 §2.4 already allows; it is recorded here so nobody rediscovers
+> it from a failing contribution.
 >
 > Per-query latency was raised and set aside as not a blocker (operator).
-> `jurifindit/DAR-legal-it` measures better on recall@10 and costs a third
-> the bytes per vector, and is excluded solely because it declares no
-> licence; if that ever changes, §7.4b's supersession path is how to revisit.
+> Superseded: an earlier draft of this block named qwen3-embedding-4b, on
+> the reasoning that an unstated licence bars a pinned space. The operator's
+> assumption resolves that, and the measurement then favours DAR-legal-it.
+> If the assumption fails, qwen3-embedding-4b instructed is the fallback and
+> §7.4b is what it needs.
 
 **The encoder is chosen on retrieval quality on Italian legal text.** What
 this node happens to be running is not an input to that decision — it is a
