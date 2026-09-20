@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _VMRSS = re.compile(r"^VmRSS:\s+(\d+)\s+kB", re.M)
+_RSS_PARTS = re.compile(r"^(RssAnon|RssFile|RssShmem):\s+(\d+)\s+kB", re.M)
 _RESIDENT_VRAM = re.compile(r"^drm-resident-vram\d*:\s*(\d+)(?:\s*([KMG])iB)?\s*$", re.M)
 _CLIENT = re.compile(r"^drm-client-id:\s*(\S+)", re.M)
 _UNIT = {None: 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
@@ -64,6 +65,16 @@ class ProcFS:
     def rss_mib(self, pid: int) -> int | None:
         m = _VMRSS.search((self._bytes(pid, "status") or b"").decode("ascii", "replace"))
         return int(m.group(1)) // 1024 if m else None
+
+    def ram_and_mapped_mib(self, pid: int) -> tuple[int | None, int | None]:
+        """(what the process owns, what it has mapped from files) — the kernel's
+        own split of the resident set: RssAnon + RssShmem, and RssFile, which is
+        page cache the kernel reclaims at will. (None, None) with no split."""
+        found = {k: int(v) for k, v in _RSS_PARTS.findall(
+            (self._bytes(pid, "status") or b"").decode("ascii", "replace"))}
+        if "RssAnon" not in found or "RssFile" not in found:
+            return None, None
+        return (found["RssAnon"] + found.get("RssShmem", 0)) // 1024, found["RssFile"] // 1024
 
     def vram_mib(self, pid: int) -> int | None:
         """The card memory the process holds: the kernel's DRM fdinfo, summed

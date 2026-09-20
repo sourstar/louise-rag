@@ -18,7 +18,8 @@ def test_a_load_states_the_run_of_the_process_it_checked(rage):
     placed = run(p.ensure("bge-m3"))
     assert placed.state == READY and placed.device == "xpu"
     assert placed.pid == rage.running["bge-m3@xpu"]
-    assert placed.observed == {"rss_mib": 500, "vram_mib": 1400}, "beside the declaration"
+    assert placed.observed == {"rss_mib": 500, "ram_mib": 300, "mapped_mib": 200,
+                               "vram_mib": 1400}, "beside the declaration; owned apart from mapped"
     described = p.store.get(placed.run)
     assert sorted(described) == ["driver", "engine", "weights"]
     assert described["engine"]["args"][2] == "${WEIGHTS}", "the template, not the process"
@@ -254,3 +255,36 @@ def test_a_driver_that_cannot_be_told_apart_states_no_run_and_the_model_still_se
     placed = run(p.ensure("bge-m3"))
     assert placed.state == READY and placed.run
     assert p.store.get(placed.run)["driver"].startswith("kernel 6.18.0-production; xe 9F2C1A;")
+
+
+def test_the_list_never_says_ready_for_a_process_that_is_gone(rage):
+    """The node, 2026-09-20: another container overcommitted the card, the
+    host ran out of memory, the kernel killed three models — and
+    `/louise/models` read "ready" for each, with a dead pid and the memory it
+    had observed at load. Reported as it is; the restart stays the next
+    request's (`test_a_child_restarted_behind_the_front_is_another_launch`)."""
+    p = rage.placement()
+    first = run(p.ensure("bge-m3"))
+    old_pid = first.pid                     # the placement is one object, renewed in place
+    row = next(r for r in p.describe() if r["id"] == "bge-m3")
+    assert row["state"] == READY and row["run"] == first.run
+
+    rage.kill("bge-m3@xpu")
+    row = next(r for r in p.describe() if r["id"] == "bge-m3")
+    assert row["state"] == "exited" and row["run"] is None
+    assert row["memory"]["observed"] is None, "a dead process holds nothing"
+    assert f"pid {old_pid} is gone" in row["reason"]
+    assert p.placed["bge-m3"].state == READY, "describing changes nothing"
+
+    again = run(p.ensure("bge-m3"))
+    row = next(r for r in p.describe() if r["id"] == "bge-m3")
+    assert row["state"] == READY and row["pid"] == again.pid != old_pid
+
+
+def test_with_no_split_from_the_kernel_the_observed_split_is_not_guessed(rage):
+    from app.rage.procfs import ProcFS
+    pid = rage.spawn(["/app/llama-server"], {})
+    (rage.proc / str(pid) / "status").write_text("Name:\tchild\nVmRSS:\t512000 kB\n")
+    fs = ProcFS(rage.proc)
+    assert fs.rss_mib(pid) == 500 and fs.ram_and_mapped_mib(pid) == (None, None)
+    assert fs.ram_and_mapped_mib(99999) == (None, None), "a gone process is not an error"

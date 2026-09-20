@@ -39,6 +39,7 @@ from .swap import SwapError
 
 READY, UNSTATED, LOADING = "ready", "unstated", "loading"
 ABSENT, UNLOADED = "absent", "unloaded"
+EXITED = "exited"          # only ever REPORTED: the process that was checked is gone
 #: a child's oom_score_adj: the killer takes the model that grew, never the
 #: front, which stays at 0 (docs/notes/rage.md §9)
 OOM_CHILD = 800
@@ -221,8 +222,7 @@ class Placement:
         placed.pid = found.pid
         placed.argv = tuple(self.procfs.cmdline(found.pid)) if found.pid is not None else ()
         if found.pid is not None:
-            placed.observed = {"rss_mib": self.procfs.rss_mib(found.pid),
-                               "vram_mib": self.procfs.vram_mib(found.pid)}
+            placed.observed = self._observed(found.pid)
             self.procfs.set_oom_score_adj(found.pid, OOM_CHILD)
         if weights is None or not found.ok:
             placed.state, placed.run = UNSTATED, None
@@ -243,6 +243,16 @@ class Placement:
         placed.state, placed.reason = READY, None
         self.log(f"{entry.id}@{placed.device}: pid {found.pid}, program "
                  f"{self.procfs.exe_digest(found.pid)}, engine {runs.engine_id(engine)}")
+
+    def _observed(self, pid: int) -> dict[str, int | None]:
+        """What the process holds, read now. `ram_mib` is what it OWNS and
+        `mapped_mib` the files it has merely mapped — the model file right after
+        a load, page cache the kernel takes back at will — kept apart because
+        their sum (`rss_mib`) made a freshly loaded model look as large as its
+        file (operator, 2026-09-20)."""
+        ram, mapped = self.procfs.ram_and_mapped_mib(pid)
+        return {"rss_mib": self.procfs.rss_mib(pid), "ram_mib": ram, "mapped_mib": mapped,
+                "vram_mib": self.procfs.vram_mib(pid)}
 
     def still_the_run(self, placed: Placed) -> bool:
         """Is the process that was checked still the one answering."""
@@ -321,5 +331,18 @@ class Placement:
                         "pid": placed.pid, "reason": placed.reason,
                         "since": int(placed.since), "idle_s": int(now - placed.last_used)}
                 row["memory"]["observed"] = placed.observed or None
+                gone = (placed.pid is not None and placed.state != LOADING
+                        and tuple(self.procfs.cmdline(placed.pid)) != placed.argv)
+                if gone:
+                    # SAID AS IT IS. The node, 2026-09-20: the kernel's out-of-memory
+                    # killer took three models and this list read "ready" for each,
+                    # with the pid of a process that no longer existed. Nothing is
+                    # changed here — the next request finds it gone and starts
+                    # another launch, hashed and checked again (`_verified`) — but
+                    # a list that says ready must be true when it is read.
+                    row |= {"state": EXITED, "run": None,
+                            "reason": f"pid {placed.pid} is gone — killed or crashed; the "
+                                      f"next request starts it again, as another launch"}
+                    row["memory"]["observed"] = None
             out.append(row)
         return out

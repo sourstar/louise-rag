@@ -93,7 +93,10 @@ class Harness:
         (d / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
         (d / "environ").write_bytes(
             b"\0".join(f"{k}={v}".encode() for k, v in env.items()) + b"\0")
-        (d / "status").write_text(f"Name:\tchild\nVmRSS:\t{rss_kb} kB\n")
+        # the kernel's own split: 200 MiB of the resident set is files it mapped
+        (d / "status").write_text(
+            f"Name:\tchild\nVmRSS:\t{rss_kb} kB\nRssAnon:\t{rss_kb - 204_800} kB\n"
+            f"RssFile:\t204800 kB\nRssShmem:\t0 kB\n")
         (d / "exe").write_bytes(b"the program")
         (d / "oom_score_adj").write_text("0")
         (d / "fdinfo" / "5").write_text(

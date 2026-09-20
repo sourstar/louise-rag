@@ -140,7 +140,8 @@ def test_load_unload_and_the_device_chosen_at_load(rage):
         assert row["state"] == "ready" and row["device"] == "cpu"
         assert row["memory"] == {"declared": {"xpu": 1400, "cpu": 2600},
                                  "host": {"xpu": 450},
-                                 "observed": {"rss_mib": 500, "vram_mib": 1400}}, \
+                                 "observed": {"rss_mib": 500, "ram_mib": 300, "mapped_mib": 200,
+                                              "vram_mib": 1400}}, \
             "what it holds, beside what rage.toml says it holds"
         assert client.post("/louise/models/bge-m3/load", headers=ADMIN,
                            json={"device": "xpu"}).status_code == 409
