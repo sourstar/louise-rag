@@ -76,11 +76,14 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
 import numpy as np
 import pyarrow.parquet as pq
 
-from app import collections as collections_mod, config, embeddings
+# `app` is imported lazily, inside the functions that embed. Everything else
+# here — load, the metrics, score, report — depends only on pyarrow and
+# numpy, so a sibling embedder that needs torch (tools/bakeoff_local.py, in
+# an image the app's stack is not in) can import this module for the corpus,
+# the truncation and the slug and be scored by exactly the same code.
 
 BASE = ("https://huggingface.co/datasets/jurifindit/JuriFindIT/"
         "resolve/refs%2Fconvert%2Fparquet")
@@ -119,6 +122,7 @@ def _sha256(path: Path) -> str:
 
 
 def fetch(out: Path) -> int:
+    import httpx
     out.mkdir(parents=True, exist_ok=True)
     digests = {}
     for name, suffix in FILES.items():
@@ -156,8 +160,8 @@ def load(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
     return corpus, queries
 
 
-def _recipe(url: str, model: str, dim: int | None, ctx: int,
-            concurrency: int) -> collections_mod.EmbedRecipe:
+def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int):
+    from app import collections as collections_mod
     return collections_mod.EmbedRecipe(url=url, api="openai", model=model,
                                        dtype="f16", ctx=ctx, dim=dim,
                                        concurrency=concurrency)
@@ -174,6 +178,7 @@ def _embed_sharded(texts: list[str], where: Path, recipe, *,
         if shard.exists():
             continue
         batch = texts[s * SHARD:(s + 1) * SHARD]
+        from app import embeddings
         vectors = embeddings.embed_texts(batch, recipe=recipe, query=query)
         np.save(shard, np.asarray(vectors, dtype=np.float32))
         done = min((s + 1) * SHARD, len(texts))
@@ -194,6 +199,7 @@ def slug_of(query_prefix: str) -> str:
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
           query_prefix: str = "", limit: int | None = None) -> int:
+    from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
             f"EMBED_BATCH is {config.EMBED_BATCH}, not 1. llama.cpp's batched "
