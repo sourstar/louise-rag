@@ -4473,10 +4473,16 @@ gutenberg pack plan needs those vectors before the hand-over.
    "Normattiva on a generic ELI layer" above for what the build decided and
    what it left out (the delta feed, the SKOS tables, the §6
    ReferenceSource, the manifest `eli` block). The 2026-08-26 decisions
-   below were all taken. **No Normattiva collection exists**, and none is to
-   be created: the encoder is the operator's own side project (2026-09-14
-   evening), so no off-the-shelf model is proposed meanwhile — that is the
-   single blocker, and the research below records why the choice is
+   below were all taken. **No Normattiva collection exists**, and the
+   encoder is what it waits on — now MEASURED rather than argued
+   (2026-09-20, `gazzetta-plugin.md` §7.1b). **One decision is open and it
+   is the operator's:** 2026-09-14 the encoder was declared the operator's
+   own side project, a dedicated embedder, with no off-the-shelf model to
+   be proposed meanwhile; the 2026-09-20 bake-off then measured the
+   off-the-shelf field and recommends one (§7.1b). Nothing records whether
+   the measurement supersedes that decision or merely gives the trained
+   model its target and its baselines. Do not create a collection on the
+   bake-off's recommendation until that is answered — the choice is
    `space_id`-pinned and irreversible. Normattiva's data went CC BY 4.0
    on 2026-01-01 with an OpenData portal and API (Akoma Ntoso, XML-NIR,
    JSON, ELI) — that, not the IPZS site, is the origin worth building on:
@@ -4492,17 +4498,30 @@ gutenberg pack plan needs those vectors before the hand-over.
    verified by a skeleton round-trip test — derived and local exactly as
    pubmed's pack is, with its version folded into the chunker's so it never
    touches the global `CLEANING_VERSION` (the global-knob lesson, second
-   coat). Encoder: **superseded 2026-09-14 — the operator is training a
-   dedicated embedder for this corpus, and no off-the-shelf candidate is to
-   be proposed.** What survives the supersession is the method and the
-   constraints, which apply to a trained encoder too: judged on measured
-   Italian legal retrieval (JuriFindIT), not on what this node runs; a
-   closed API model cannot own the space, because a peer must reproduce
-   vectors at cos ≥ 0.999; and an MLM (Italian-Legal-BERT was the tempting
-   one) walks straight into item 6's anisotropy trap. The shortlist that
-   this replaces, kept only so the reasoning is not re-derived:
-   KaLM-Embedding-Gemma3-12B (MMTEB #1) and Qwen3-Embedding-8B, both MRL,
-   which is where the dimension-vs-model split below comes from.
+   coat). Encoder: the 2026-08-26 shortlist below
+   (KaLM-Embedding-Gemma3-12B, Qwen3-Embedding-8B) was reasoning, and
+   **2026-09-20 replaced it with measurement** — `tools/encoder_bakeoff.py`
+   over JuriFindIT's 179 expert questions, through RAGE on the B70,
+   `gazzetta-plugin.md` §7.1b. Neither shortlisted model is the answer. The
+   two findings that outrank the ranking: running the published
+   **DAR-legal-it** ourselves landed within 0.0014 of its authors' recalls,
+   which **validates our metric code** and makes every row comparable to
+   anything published against that set; and a **query instruction is worth
+   more than most model changes** — the same qwen3-embedding-4b weights
+   gain +4.2 MRR@100 from `Instruct: …\nQuery: ` on the query side alone,
+   which the platform has no mechanism for (`embeddings._side` switches URL
+   for a bi-encoder pair and nothing else), so a collection built today
+   would silently take the worse row. That is a design gap, not a detail.
+   The recommendation — qwen3-embedding-4b, instructed — **rests on the
+   licence and only on the licence**: DAR-legal-it is the better model
+   measured identically and 3.3x cheaper per vector, but declares no
+   licence, and `approved-encoders.md` bars an unlicensed model from owning
+   a pinned space, because a peer could never reproduce it on stated terms.
+   bge-m3 is not a floor but 16 MRR points below one. The constraints that
+   survive from the original reasoning, and that apply to a trained encoder
+   too: a closed API model cannot own a space (a peer must reproduce
+   vectors at cos ≥ 0.999), and an MLM — Italian-Legal-BERT was the
+   tempting one — walks straight into item 6's anisotropy trap.
    Operator decisions 2026-08-26: scope is
    **Normattiva only**; the reranker is **jina-reranker-v3** (listwise, one
    pass) under a stated **p95 ≤ 2 s** budget, because latency is part of
