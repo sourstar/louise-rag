@@ -52,6 +52,39 @@ from tools.encoder_bakeoff import (DEFAULT_MAX_CHARS, SHARD, Corpus, load,
                                    slug_of)
 
 
+CHARS_PER_TOKEN = 3.2  # Italian legal text on a multilingual BPE
+
+
+def encode_budgeted(model, texts: list[str], max_seq: int, max_batch: int,
+                    budget: float) -> np.ndarray:
+    """Encode with a batch size that adapts to the longest text in it.
+
+    The attention this model falls back to on XPU materialises a
+    batch × heads × seq × seq tensor, so cost goes with the SQUARE of the
+    longest text in a batch. A fixed batch size is therefore wrong in both
+    directions at once: 16 short articles barely touch the card, 16 long
+    ones asked for 48 GiB of it. Grouping by length and spending a fixed
+    batch*seq^2 budget instead keeps every forward pass the same size in
+    memory, which is the thing that is actually scarce.
+
+    Longest first, so a budget that is too large fails in seconds rather
+    than an hour in.
+    """
+    order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
+    out: list[np.ndarray | None] = [None] * len(texts)
+    i = 0
+    while i < len(order):
+        seq = min(max_seq, max(1, int(len(texts[order[i]]) / CHARS_PER_TOKEN)))
+        n = max(1, min(max_batch, int(budget / (seq * seq))))
+        group = order[i:i + n]
+        vectors = model.encode([texts[j] for j in group],
+                               batch_size=len(group), convert_to_numpy=True)
+        for j, v in zip(group, vectors):
+            out[j] = v.astype(np.float32)
+        i += n
+    return np.stack(out)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -71,6 +104,13 @@ def main(argv=None) -> int:
                          "path, which is a CUDA route; eager is the same "
                          "function, slower")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--attn-budget", type=float, default=4.0e7,
+                    help="max batch*seq^2 per forward pass. Attention memory "
+                         "here scales with the SQUARE of the longest text in "
+                         "a batch, not with the batch's token count, so a "
+                         "fixed --batch either wastes the card on short "
+                         "documents or dies on one long one. 4e7 is ~2 GB "
+                         "with 12 heads in fp32")
     a = ap.parse_args(argv)
 
     from sentence_transformers import SentenceTransformer
@@ -114,8 +154,7 @@ def main(argv=None) -> int:
             if shard.exists():
                 continue
             part = corpus.texts[s * SHARD:(s + 1) * SHARD]
-            vectors = model.encode(part, batch_size=a.batch,
-                                   convert_to_numpy=True).astype(np.float32)
+            vectors = encode_budgeted(model, part, seq, a.batch, a.attn_budget)
             np.save(shard, vectors)
             done = min((s + 1) * SHARD, len(corpus.texts))
             print(f"  corpus: {done}/{len(corpus.texts)}", flush=True)
@@ -123,8 +162,8 @@ def main(argv=None) -> int:
                               for s in range(n_shards)])
         np.save(doc_path, doc)
 
-    qry = model.encode([a.query_prefix + t for t in queries.texts],
-                       batch_size=a.batch, convert_to_numpy=True).astype(np.float32)
+    qry = encode_budgeted(model, [a.query_prefix + t for t in queries.texts],
+                          seq, a.batch, a.attn_budget)
     np.save(run / f"queries-{slug}.npy", qry)
 
     (run / f"run-{slug}.json").write_text(json.dumps(

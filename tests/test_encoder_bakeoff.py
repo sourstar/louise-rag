@@ -229,6 +229,52 @@ def test_an_unlimited_run_is_scored_normally(tmp_path, monkeypatch) -> None:
     assert (tmp_path / "m" / "scores-bare.json").exists()
 
 
+class _FakeST:
+    """Records the shape of every forward pass it is asked for."""
+
+    def __init__(self) -> None:
+        self.batches: list[list[str]] = []
+
+    def encode(self, texts, batch_size=None, convert_to_numpy=True, **kw):
+        self.batches.append(list(texts))
+        return np.array([[float(len(t)), 1.0] for t in texts], dtype=np.float32)
+
+
+def test_budgeted_encoding_shrinks_the_batch_for_long_texts() -> None:
+    """A fixed batch size is wrong in both directions: it wastes the card on
+    short articles and asks for 48 GiB on long ones. Every pass should cost
+    about the same in memory instead."""
+    from tools.bakeoff_local import CHARS_PER_TOKEN, encode_budgeted
+
+    short = ["x" * 320] * 8          # ~100 tokens each
+    long_one = "y" * 32000           # ~10000 tokens, clamped to max_seq
+    model = _FakeST()
+    out = encode_budgeted(model, short + [long_one], max_seq=8192,
+                          max_batch=64, budget=4.0e7)
+
+    assert out.shape == (9, 2)
+    # longest first, and it travels alone: 8192^2 already exceeds the budget
+    assert model.batches[0] == [long_one]
+    # the short ones fit together under the same budget
+    seq = int(320 / CHARS_PER_TOKEN)
+    assert len(model.batches[1]) == min(8, int(4.0e7 / (seq * seq)))
+    for batch in model.batches:
+        longest = max(int(len(t) / CHARS_PER_TOKEN) for t in batch)
+        assert len(batch) * min(longest, 8192) ** 2 <= 4.0e7 or len(batch) == 1
+
+
+def test_budgeted_encoding_preserves_input_order() -> None:
+    """It encodes longest-first but must return vectors in the caller's
+    order — a silent permutation here would misalign every vector with its
+    document id and the scores would still look plausible."""
+    from tools.bakeoff_local import encode_budgeted
+
+    texts = ["a" * 100, "b" * 5000, "c" * 10, "d" * 900]
+    out = encode_budgeted(_FakeST(), texts, max_seq=8192, max_batch=4,
+                          budget=4.0e7)
+    assert [int(v[0]) for v in out] == [len(t) for t in texts]
+
+
 def test_score_run_is_unaffected_by_vector_magnitude() -> None:
     # Cosine, not dot product: scaling a document must not promote it.
     dim = 3
