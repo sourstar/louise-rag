@@ -177,6 +177,27 @@ cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--w
 cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 
+[models.dar-legal-it]                     # normattiva: documents and queries
+# A server, not llama-server, because llama.cpp implements no `GteModel` at
+# any tag — the arctic-embed GGUFs that exist are the `-l-v2.0` variant,
+# which declares `XLMRobertaModel` (docs/notes/gazzetta-plugin.md §7).
+# MEAN pooling, not cls: its 1_Pooling/config.json says so, unlike bge-m3
+# two entries up, and copying that flag here would quietly change every
+# vector. LD_LIBRARY_PATH is the torch-on-this-base fix the header explains.
+engine  = { name = "louise-dar-legal-it-server", build = "1" }
+weights = "/models/dar-legal-it"           # the HF snapshot directory
+device  = "xpu"
+memory  = { xpu = 6200, cpu = 3200 }       # MEASURED 2026-09-20: 5961 / 2642
+host    = { xpu = 2800 }                   # RSS while on the card, 2.58 GiB
+# ~4x bge-m3's VRAM for a fifth of the parameters: torch's caching allocator
+# plus the O(seq^2) attention buffers, not the weights. ATTN_BUDGET trades
+# it against throughput if the card ever needs the room.
+env     = { LD_LIBRARY_PATH = "/usr/local/lib", MAX_SEQ = "8192", ATTN_BUDGET = "1.5e7", QUERY_PREFIX = "query: " }
+cmd.xpu = ["/opt/venv-st/bin/python", "-m", "servers.launch", "dar_legal_it", "--weights", "${WEIGHTS}",
+           "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+cmd.cpu = ["/opt/venv-st/bin/python", "-m", "servers.launch", "dar_legal_it", "--weights", "${WEIGHTS}",
+           "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
+
 [models.medcpt-rerank]                    # pubmed: the reranker (tei /rerank)
 engine  = { name = "louise-medcpt-rerank-server", build = "1" }
 weights = "/models/medcpt/medcpt-cross-ov"

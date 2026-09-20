@@ -78,7 +78,14 @@ def test_a_torch_model_declares_its_runtime_and_a_llama_server_never_does():
     cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
     for entry in cfg.models.values():
         programs = {t[0] for t in entry.cmd.values()}
-        if programs & {"/opt/venv-madlad/bin/python", "/opt/venv-dnabert2/bin/python"}:
+        # The venvs built --system-site-packages, which is what makes them
+        # see the system torch. venv-medcpt is deliberately absent: it runs
+        # OpenVINO and installs no torch at all, so the base's path is right
+        # for it, and a model that imports torch is the only thing this
+        # applies to.
+        if programs & {"/opt/venv-madlad/bin/python",
+                       "/opt/venv-dnabert2/bin/python",
+                       "/opt/venv-st/bin/python"}:
             assert entry.env.get("LD_LIBRARY_PATH") == "/usr/local/lib", entry.id
         else:
             assert "LD_LIBRARY_PATH" not in entry.env, entry.id

@@ -44,6 +44,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import signal
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -51,8 +53,28 @@ import numpy as np
 from tools.encoder_bakeoff import (DEFAULT_MAX_CHARS, SHARD, Corpus, load,
                                    slug_of)
 
-
 CHARS_PER_TOKEN = 3.2  # Italian legal text on a multilingual BPE
+
+#: set by SIGTERM/SIGINT; read between shards
+_stopping = False
+
+
+def _stop(signum, frame) -> None:
+    global _stopping
+    _stopping = True
+    print(f"  signal {signum}: finishing this shard, then stopping",
+          flush=True)
+
+
+def install_signal_handlers() -> None:
+    """As PID 1 under docker the kernel gives SIGTERM no default action, so
+    without this the container is only killable with SIGKILL — which is how
+    a run gets abandoned mid-shard. Invariant 2's shape: finish the unit,
+    commit it, exit 130. A shard IS the unit here, and it is written before
+    the next begins, so stopping between shards loses nothing and the next
+    start resumes from disk."""
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
 
 
 def encode_budgeted(model, texts: list[str], max_seq: int, max_batch: int,
@@ -118,6 +140,7 @@ def main(argv=None) -> int:
                          "documents or dies on one long one. 4e7 is ~2 GB "
                          "with 12 heads in fp32")
     a = ap.parse_args(argv)
+    install_signal_handlers()
 
     from sentence_transformers import SentenceTransformer
 
@@ -186,6 +209,9 @@ def main(argv=None) -> int:
             np.save(shard, vectors)
             done = min((s + 1) * SHARD, len(corpus.texts))
             print(f"  corpus: {done}/{len(corpus.texts)}", flush=True)
+            if _stopping:
+                print(f"stopped after {done} documents; re-run to resume")
+                return 130
         doc = np.concatenate([np.load(shards / f"{s:05d}.npy")
                               for s in range(n_shards)])
         np.save(doc_path, doc)
@@ -207,4 +233,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

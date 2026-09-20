@@ -23,3 +23,7 @@ RUN pip install --no-cache-dir \
 
 ENV PYTHONPATH=/srv HF_HOME=/hf
 WORKDIR /srv
+# Exec form, so python is PID 1 and a SIGTERM reaches it rather than a shell
+# (tests/test_process_signals.py). An embedding run is long enough that
+# being killable matters, and its shards make the next start cheap.
+ENTRYPOINT ["python", "-m", "tools.bakeoff_local"]

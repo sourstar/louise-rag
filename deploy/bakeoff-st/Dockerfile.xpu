@@ -33,4 +33,4 @@ RUN python3 -m venv --system-site-packages /opt/venv-st \
 
 ENV PYTHONPATH=/srv HF_HOME=/hf
 WORKDIR /srv
-ENTRYPOINT ["/opt/venv-st/bin/python"]
+ENTRYPOINT ["/opt/venv-st/bin/python", "-m", "tools.bakeoff_local"]

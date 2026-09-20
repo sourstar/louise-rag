@@ -91,6 +91,14 @@ RUN python3 -m venv --system-site-packages /opt/venv-madlad \
 RUN python3 -m venv /opt/venv-medcpt \
  && /opt/venv-medcpt/bin/pip install --no-cache-dir \
       openvino==2026.3.1 tokenizers==0.22.2 numpy
+#   st        sentence-transformers 5.1.0 / transformers 4.55.4 — the pair
+#             jurifindit/DAR-legal-it's card names as what produced the
+#             figures §7.1b checks against, and it loads through the
+#             model's own remote code (GteModel), which llama.cpp does not
+#             implement at any tag — hence a server rather than a GGUF.
+RUN python3 -m venv --system-site-packages /opt/venv-st \
+ && /opt/venv-st/bin/pip install --no-cache-dir \
+      "sentence-transformers==5.1.0" "transformers==4.55.4" einops
 
 # The servers: ONE source each, whether an app of its own or under RAGE.
 # A .pth in each venv, not PYTHONPATH: an environment variable would enter
@@ -111,7 +119,8 @@ COPY deploy/rage/servers/__init__.py deploy/rage/servers/launch.py /opt/rage/ser
 COPY deploy/dnabert2/server.py          /opt/rage/servers/dnabert2.py
 COPY deploy/madlad-translate/server.py  /opt/rage/servers/madlad.py
 COPY deploy/medcpt-rerank/server.py     /opt/rage/servers/medcpt.py
-RUN for v in dnabert2 madlad medcpt; do \
+COPY deploy/dar-legal-it/server.py      /opt/rage/servers/dar_legal_it.py
+RUN for v in dnabert2 madlad medcpt st; do \
       echo /opt/rage > "$(/opt/venv-$v/bin/python -c 'import site; print(site.getsitepackages()[0])')/rage-servers.pth"; \
     done
 

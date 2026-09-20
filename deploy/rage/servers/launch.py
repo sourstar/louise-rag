@@ -16,6 +16,7 @@ the template RAGE checks the process against.
     dnabert2   deploy/dnabert2/server.py        FastAPI, under uvicorn
     madlad     deploy/madlad-translate/server.py   its own `main()`
     medcpt     deploy/medcpt-rerank/server.py      its own `main()`
+    dar_legal_it  deploy/dar-legal-it/server.py     its own `main()`
 
 NOTHING IS FETCHED (CLAUDE.md invariant 5; docs/notes/rage.md §10). The
 weights are a path that must exist, and the Hugging Face hub is switched off
@@ -35,11 +36,13 @@ from typing import Mapping, Sequence
 
 #: server -> the variable that names its model
 SERVERS: Mapping[str, str] = {"dnabert2": "MODEL_ID", "madlad": "MODEL_ID",
+                              "dar_legal_it": "MODEL_DIR",
                               "medcpt": "MODEL_DIR"}
 #: what each server calls a device, by RAGE's name for it
 DEVICE_WORDS: Mapping[str, Mapping[str, str]] = {
     "dnabert2": {"xpu": "xpu", "cpu": "cpu"},
     "madlad": {"xpu": "xpu", "cpu": "cpu"},
+    "dar_legal_it": {"xpu": "xpu", "cpu": "cpu"},
     "medcpt": {"xpu": "GPU", "cpu": "CPU"},          # OpenVINO's own names
 }
 
