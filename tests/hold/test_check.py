@@ -654,3 +654,116 @@ def test_a_broken_plan_is_still_raised_not_reported_as_a_check(checkable):
     root, snapshot, codex = checkable
     with pytest.raises(CheckError, match="no such check"):
         _run(root, codex, snapshot, ["vibes"])
+
+
+# ---- what one origin check may read of the origin --------------------------------------
+
+def _all_records(root, snapshot) -> list[dict]:
+    from app.pack import records as pack_records
+    return [r for s in snapshot.shards for r in pack_records.iter_records(
+        root / "gutenberg" / "drag" / s.path)]
+
+
+def _unit_sizes(size: int):
+    """Every record of the fixture is its own origin file (a Gutenberg book):
+    the unit is the locator's file part, and each weighs `size` bytes."""
+    return lambda locator: (locator.partition("#")[0], size)
+
+
+def test_an_origin_check_reads_no_more_of_the_origin_than_the_bound(checkable, corpus_dir):
+    """Operator, 2026-09-20: "10.5 GiB are too much, limit the test to some
+    hundred MB". 5 % of PubMed's shards, sliced by year, reach into about 249
+    of its baseline files — 10.5 GiB to fetch for every check on every peer.
+    The shard sample stays what the plan says; within it the origin FILES are
+    ranked by the same seeded rule and read up to the bound, and every sampled
+    record of a file that is read is still compared byte for byte."""
+    from app import louise
+    from app.hold import codex as cx
+    root, snapshot, codex = checkable
+    reparse = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    asked: list[str] = []
+
+    def counted(uid, locator):
+        asked.append(locator.partition("#")[0])
+        return reparse(uid, locator)
+
+    records = _all_records(root, snapshot)
+    units = sorted({r["origin"].partition("#")[0] for r in records})
+    assert len(units) >= 3, "the fixture has several origin files"
+    each = 100 << 20                                 # 100 MiB a file: two fit in 256 MiB
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=_unit_sizes(each)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    ranked = cx.sample(SEED, len(units), iter(units))
+    assert sorted(set(asked)) == sorted(ranked[:2]), \
+        "the first two by the seeded rule, and nothing else was read"
+    assert o.detail["origin_units"] == 2 and o.detail["origin_units_sampled"] == len(units)
+    assert o.detail["origin_bytes"] == 2 * each
+    assert o.detail["origin_bytes_bound"] == chk.ORIGIN_BYTES == 256 << 20
+    assert o.detail["compared"] == len(asked) < o.detail["records"]
+    assert "2 of the" in o.why and "256 MiB" in o.why
+
+
+def test_the_first_origin_file_is_always_read_whatever_it_weighs(checkable, corpus_dir):
+    """A check that read nothing would prove nothing: one file bigger than the
+    bound is still one file, and the report says what it weighed."""
+    from app import louise
+    root, snapshot, codex = checkable
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
+             origin_unit=_unit_sizes(10 << 30)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert o.detail["origin_units"] == 1 and o.detail["origin_bytes"] == 10 << 30
+
+
+def test_a_run_may_raise_the_bound_and_never_lower_it(checkable, corpus_dir):
+    from app import louise
+    root, snapshot, codex = checkable
+    reparse = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    each = 100 << 20
+    lowered = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=reparse,
+                   origin_unit=_unit_sizes(each), origin_bytes=1).outcome("records-vs-origin")
+    assert lowered.detail["origin_bytes_bound"] == 256 << 20 and lowered.detail["origin_units"] == 2
+    raised = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=reparse,
+                  origin_unit=_unit_sizes(each),
+                  origin_bytes=1 << 40).outcome("records-vs-origin")
+    assert raised.detail["origin_units"] == raised.detail["origin_units_sampled"]
+    assert raised.detail["compared"] == raised.detail["records"]
+
+
+def test_a_difference_in_a_file_that_is_read_still_fails(checkable, corpus_dir):
+    from app import louise
+    from app.hold import codex as cx
+    root, snapshot, codex = checkable
+    records = _all_records(root, snapshot)
+    units = sorted({r["origin"].partition("#")[0] for r in records})
+    first = cx.sample(SEED, 1, iter(units))[0]
+    victim = next(r for r in records if r["origin"].partition("#")[0] == first)
+    txt = next((corpus_dir / str(victim["native_id"])).glob("*.txt*"))
+    txt.write_bytes(txt.read_bytes() + b"\n\nAn appended paragraph.\n")
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
+             origin_unit=_unit_sizes(200 << 20)).outcome("records-vs-origin")
+    assert o.result == chk.FAIL and victim["uid"] in o.detail["failed"], o.why
+
+
+def test_the_command_weighs_the_origin_files_it_is_given(checkable, corpus_dir):
+    """`--origin DIR`: a file's size is the file's; one that is not there has
+    none, and its records are reported as not there, as before."""
+    from app import louise
+    root, snapshot, codex = checkable
+    unit_of = louise._origin_unit_from(codex, "gutenberg", corpus_dir)
+    record = _records_of(root, snapshot)[0]
+    unit, size = unit_of(record["origin"])
+    assert not unit.startswith("/") and "#" not in unit
+    assert size == (corpus_dir / unit).stat().st_size > 0
+    assert unit_of("no/such/file.txt#1")[1] is None
+    assert louise._origin_unit_from(codex, "gutenberg", None) is None
+
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
+             origin_unit=unit_of).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert o.detail["origin_units"] == o.detail["origin_units_sampled"], \
+        "a few small books are far inside the bound: everything is compared"
+    assert o.detail["compared"] == o.detail["records"]

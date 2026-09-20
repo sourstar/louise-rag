@@ -45,6 +45,17 @@ PASS, FAIL, INCONCLUSIVE = "pass", "fail", "inconclusive"
 #: default is `"0.05"`, always at least one shard".
 DEFAULT_FRACTION = "0.05"
 
+#: What ONE `records-vs-origin` run may read of the origin, in bytes (03 §3.2;
+#: operator, 2026-09-20: "10.5 GiB are too much, limit the test to some
+#: hundred MB"). The shard sample alone does not bound it: a record shard is
+#: cut by the COLLECTION's slices and an origin file by the ORIGIN's, so 5 % of
+#: PubMed's shards — 68 of 1,358, sliced by year — reach into about 249 of its
+#: baseline files, 10.5 GiB to fetch for every check on every peer. Fixed by
+#: the platform and not by the plan, for 09 §9.3's reason: a creator who could
+#: set it could set it backwards. A run may RAISE it (`--origin-mib`), never
+#: lower it.
+ORIGIN_BYTES = 256 << 20
+
 
 class CheckError(CodexError):
     """The plan could not be run — not a verdict about the collection."""
@@ -172,6 +183,13 @@ class Ctx:
     #: the plugin and the corpus machinery, and `app/hold/` stays free of
     #: both so a peer that is only checking needs neither.
     reparse: Callable[[str, str], bytes] | None = None
+    #: `origin locator -> (the origin unit it points into, that unit's size in
+    #: bytes, or None where it cannot be had)`. A unit is what is FETCHED to
+    #: answer for a record: a file of the origin. Given by whoever gives
+    #: `reparse`; without it nothing can be bounded and every sampled record
+    #: is compared, as before 2026-09-20.
+    origin_unit: Callable[[str], tuple[str, int | None]] | None = None
+    origin_bytes: int = ORIGIN_BYTES
 
     @property
     def drag(self) -> Path:
@@ -498,6 +516,9 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            "that passed without one would certify the copy "
                            "against itself")
 
+    sampled_records = len(lines)
+    lines, bound = _within_the_origin_bound(ctx, lines)
+
     # "DIFFERS FROM ITS ORIGIN" AND "COULD NOT BE RE-PARSED" ARE NOT THE
     # SAME FINDING, and conflating them produces the most damaging kind of
     # wrong answer this check can give. A record that differs is a fidelity
@@ -542,9 +563,16 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        ctx.seed, _shard_ids(ctx.codex, ran),
                        why=f"none of the {len(lines)} sampled record(s) could "
                            f"be re-fetched from the origin given")
+    said = ""
+    if bound:
+        said = (f" — read {bound['origin_units']} of the {bound['origin_units_sampled']} "
+                f"origin file(s) the sampled shards reach into, {bound['origin_bytes'] >> 20} "
+                f"MiB of the {bound['origin_bytes_bound'] >> 20} MiB one check may read of "
+                f"the origin ({len(lines)} of {sampled_records} sampled records)")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
-                   {"records": seen, "failed": sorted(failed)[:64],
-                    "errored": len(errored), "origin": "reachable"},
+                   {"records": seen, "compared": len(lines),
+                    "failed": sorted(failed)[:64],
+                    "errored": len(errored), "origin": "reachable", **bound},
                    ctx.seed, _shard_ids(ctx.codex, ran),
                    why=f"{len(lines) - unreachable - len(errored)} record(s) "
                        f"re-parsed from the origin, {len(failed)} differing"
@@ -552,7 +580,44 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        # named, never folded into the count above: a record
                        # that could not be read is not a record that agreed
                        + (f", {len(errored)} unreadable ({errored[0]})"
-                          if errored else ""))
+                          if errored else "")
+                       + said)
+
+
+def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:
+    """The sampled records this run will answer for, and what it reads to do so.
+
+    The sampled shards' records are grouped by ORIGIN UNIT — the file of the
+    origin a record's locator points into. The units are ranked by the ONE
+    sampling rule (09 §9.1), under the same seed the shards were drawn with,
+    and taken in that order up to the last one that keeps their sizes within
+    `ctx.origin_bytes`; the first is always taken, whatever its size. EVERY
+    sampled record of a taken unit is compared, byte for byte, as before.
+
+    So the seed still decides everything — a verifier cannot be steered toward
+    files a producer prepared, and anyone can recompute from the attestation
+    which files it read — and what a check costs is bounded by bytes, not by
+    how the collection happens to be sliced against its origin."""
+    if ctx.origin_unit is None or not lines:
+        return lines, {}
+    size_of: dict[str, int | None] = {}
+    unit_of: list[str] = []
+    for _uid, locator, _line in lines:
+        unit, size = ctx.origin_unit(locator)
+        size_of.setdefault(unit, size)
+        unit_of.append(unit)
+    taken: list[str] = []
+    used = 0
+    for unit in cx.sample(ctx.seed, len(size_of), iter(sorted(size_of))):
+        size = size_of[unit] or 0
+        if taken and used + size > ctx.origin_bytes:
+            break
+        taken.append(unit)
+        used += size
+    keep = set(taken)
+    return ([item for item, unit in zip(lines, unit_of) if unit in keep],
+            {"origin_units": len(taken), "origin_units_sampled": len(size_of),
+             "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes})
 
 
 def check_figures(ctx: Ctx) -> Outcome:
@@ -665,8 +730,13 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
 def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         checks: Sequence[str] | None = None, sample: str | None = None,
         embed=None, vectors_for=None, reference=None, reparse=None,
+        origin_unit=None, origin_bytes: int | None = None,
         log=None) -> Report:
-    """Run the plan and report. Writes nothing — `attest` does that."""
+    """Run the plan and report. Writes nothing — `attest` does that.
+
+    `origin_bytes` RAISES what `records-vs-origin` may read of the origin for
+    this run and cannot lower it — 07 §7.3's rule for `--sample`, for the same
+    reason: a peer may always check more than the rule asks, never less."""
     say = log or (lambda *_a: None)
     planned = plan_of(root, name, codex)
     want = tuple(checks) if checks else planned
@@ -685,7 +755,8 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
             say(f"note: {', '.join(outside)} is not in this collection's plan")
 
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
-              vectors_for, reference, reparse)
+              vectors_for, reference, reparse, origin_unit,
+              max(ORIGIN_BYTES, int(origin_bytes or 0)))
     outcomes = []
     for c in want:
         try:

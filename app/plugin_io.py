@@ -115,6 +115,31 @@ def _local_one(plugin, origin: str, base) -> tuple[Path, str]:
     return local, str(local) + (f"{sep}{member}" if member else "")
 
 
+def origin_unit(plugin, origin: str, base) -> tuple[str, int | None]:
+    """`(the origin unit a locator points into, its size in bytes)` — the FILE
+    part of the locator, never the member after `#`: what has to be fetched to
+    answer for the record. A unit of several pieces is all of them, and its
+    size their sum. None where a piece is not under `base`: nothing to weigh.
+
+    For `records-vs-origin`'s bound (app/hold/check.py): a check reads a
+    seeded sample of these, and no more of the origin than the bound allows."""
+    seg = getattr(plugin, "LOCATOR_SEGMENT_SEP", None)
+    parts = origin.split(seg) if seg and seg in origin else [origin]
+    names, total = [], 0
+    for part in parts:
+        local, _ = _local_one(plugin, part, base)
+        try:
+            names.append(local.relative_to(base).as_posix())
+        except ValueError:
+            names.append(local.as_posix())
+        try:
+            size = local.stat().st_size
+        except OSError:
+            size = None
+        total = None if total is None or size is None else total + size
+    return "+".join(names), total
+
+
 def metadata(plugin, row) -> dict:
     if hasattr(plugin, "read_metadata"):
         return plugin.read_metadata(Path(row["path"]), int(row["native_id"]))

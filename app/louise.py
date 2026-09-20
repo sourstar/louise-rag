@@ -1158,6 +1158,8 @@ def cmd_check(a) -> int:
         checks=a.checks.split(",") if a.checks else None, sample=a.sample,
         embed=embed, reference=reference,
         reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
+        origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
+        origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
             ids, collection=local),
         log=lambda m: print(m, file=sys.stderr))
@@ -1243,6 +1245,25 @@ def _reparse_from(codex, name: str, origin_dir):
             record, record_line=int(getattr(codex, "record_line", 1) or 1))
 
     return reparse
+
+
+def _origin_unit_from(codex, name: str, origin_dir):
+    """`origin locator -> (the origin file it points into, its size in bytes)`,
+    for `records-vs-origin`'s bound (app/hold/check.py: `ORIGIN_BYTES`). With
+    the origin as a local base the size is the file's; a file that is not
+    there has none, and its records are reported as not there, as before."""
+    if not origin_dir:
+        return None
+    from pathlib import Path
+
+    from app import collections as collections_mod, plugin_io
+    base = Path(origin_dir)
+    plugin = collections_mod.PLUGIN_REGISTRY[codex.plugin]
+
+    def origin_unit(locator: str) -> tuple[str, int | None]:
+        return plugin_io.origin_unit(plugin, locator, base)
+
+    return origin_unit
 
 
 def cmd_records_check(a) -> int:
@@ -1635,6 +1656,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="an origin base to re-fetch and re-parse from; "
                         "adds `records-vs-origin`. Without it `--sample` "
                         "affects nothing this command runs (07 §7.3)")
+    p.add_argument("--origin-mib", type=int, metavar="N",
+                   help="raise what `records-vs-origin` may read of the origin "
+                        "for this run (default and floor: 256 MiB)")
     p.add_argument("--sample",
                    help="raise the plan's shard fraction for this run")
     p.add_argument("--seed", help="32 bytes as hex")
@@ -1799,6 +1823,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="an origin base to re-fetch and re-parse from, for "
                         "`records-vs-origin` (03 §3.2). Without it that "
                         "check is inconclusive, never a pass")
+    p.add_argument("--origin-mib", type=int, metavar="N",
+                   help="raise what `records-vs-origin` may read of the origin "
+                        "for this run: 256 MiB by default, and never less "
+                        "(03 §3.2)")
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
