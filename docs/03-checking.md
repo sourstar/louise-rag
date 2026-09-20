@@ -68,7 +68,7 @@ create` and at `hold check` alike.
 |---|---|---|---|
 | `roots` | every shard's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
 | `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled shard's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
-| `records-vs-origin` | a seeded sample of shards, re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every record line of the shard byte for byte — the decompressed lines in order, not merely the same `records_root` | the origin, the platform image | exact |
+| `records-vs-origin` | a seeded sample of shards and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root` | the origin, the platform image | exact |
 | `chunks` | recomputing chunks from the records reproduces each sampled shard's `chunks_root` and its `chunks` count (09 §9.4) — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3), so a wrong layer is caught rather than reproduced | the copy | exact; can be exhaustive |
 | `vectors-sample` | in a seeded sample of shards, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
 | `calibration` | the calibration set's reference vectors reproduce on this peer's encoder — the gate of §3.3, run for this collection's space | an encoder | statistical |
@@ -96,6 +96,30 @@ of samples grows with every verifier, and anyone can recompute from an
 attestation exactly which shards it covered. `sample` gives the
 fraction of shards per sampled check as a decimal string; the default
 is `"0.05"`, always at least one shard.
+
+**What one origin check may read.** The shard sample does not bound what
+`records-vs-origin` costs: a record shard is cut by the collection's
+slices and an origin file by the origin's, so a twentieth of PubMed's
+shards — 68 of 1,358, sliced by year — reach into 474 to 651 of its
+origin files, 18 to 29 GiB to fetch for every check on every peer
+(measured 2026-09-20, two seeds). So within the sampled shards the
+records are grouped by **origin unit** — the file of the origin a
+record's locator points into (09 §9.5) — the units are ranked by
+`sample(seed, n, universe)` under the same seed, an id being the unit's
+locator without its member, and they are read in that order up to the
+last one that keeps the sum of their sizes within **256 MiB**; the
+first is always read, whatever it weighs. Every sampled record of a
+unit that is read is compared byte for byte; the others are not
+compared in this run and the report says so. The seed still decides
+everything, so the union of what peers have compared grows with every
+check, and anyone can recompute from an attestation which units it
+read. The bound is the platform's and not the plan's, for the reason
+the plan sets no chunk count (09 §9.3): a creator who could set it could
+set it backwards. `--origin-mib` raises it for a run and cannot lower
+it (07 §7.3). This amends "nothing outside the Codex decides how much is
+sampled" in one respect only: the Codex decides how many shards, and
+the platform how much of the origin one check may read for them
+(operator, 2026-09-20).
 
 `hold check <collection>` runs the plan and prints a report; the same
 report is what the worker produces in the background, once per cadence

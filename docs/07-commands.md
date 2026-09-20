@@ -288,6 +288,8 @@ reader needs at the command line:
   unless `--origin` was given. `--sample F` raises the plan's sample for
   this run and cannot
   lower it; the attestation records the sample actually taken.
+  `--origin-mib N` raises what `records-vs-origin` may read of the origin
+  for this run — 256 MiB by default — and cannot lower it either (03 §3.2).
 - **`key`.** `create` writes a new seed at `NODE_KEY_PATH` in the form
   of 09 §9.2, refuses to overwrite one, and prints the public key; a key
   file readable by anyone but its owner is refused at load, never
