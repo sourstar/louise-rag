@@ -673,6 +673,54 @@ it stays clearly ahead. The 179 questions come from four annotators. And
 qwen3-embedding-4b at dim 2560 costs 2.5x bge-m3's bytes per vector, which
 `embedder-choice-and-supersession.md` §2 prices as the supersession bill.
 
+### 7.1c If we trained our own: the base barely matters, the pairs do
+
+We have everything DAR-legal-it was trained from. The reconciliation is
+exact: JuriFindIT's `questions/train` expanded to one row per relevant
+article (3,204) plus `synthetic/train` (21,457) is **24,661**, the figure on
+its model card. Base `Snowflake/snowflake-arctic-embed-m-v2.0`,
+Apache-2.0; loss `CachedMultipleNegativesRankingLoss`;
+sentence-transformers 5.1.0. Nothing was withheld.
+
+So the obvious question — is there a better base to start from — was
+measured rather than argued. Every candidate, **untrained**, on the same
+179 questions:
+
+| base, untrained | recall@10 | mrr@100 | dim |
+|---|---|---|---|
+| `snowflake-arctic-embed-m-v2.0` (DAR's) | 0.6923 | 0.6035 | 768 |
+| `bge-m3` | 0.6834 | 0.6142 | 1024 |
+| `multilingual-e5-large` (`passage: `/`query: `) | 0.6444 | 0.5845 | 1024 |
+| `gte-multilingual-base` | 0.6397 | 0.5355 | 768 |
+
+**The base is not where DAR's quality came from.** Arctic untrained scores
+*below bge-m3* on MRR. Fine-tuning it on 24,661 pairs added **+0.111
+recall@10 and +0.165 mrr@100**, while the entire spread across candidate
+bases is 0.079 MRR. Base choice is worth less than half what the training
+data is worth, and the authors' pick was the best of a weak field by a
+margin a third the size of what they then trained into it.
+
+Two things follow.
+
+**bge-m3 is a decent base and a poor finished model.** Best of the four on
+MRR untrained, and 16 points behind after everyone else is trained. §7.1
+listing it as a floor conflated the two roles; the thesis in §7.1 draws
+exactly this distinction and we re-derived it the hard way.
+
+**And a big model skips the whole question.** qwen3-embedding-4b
+instructed reaches 0.7744 mrr@100 with **no training at all** — above every
+small base fine-tuned from scratch except DAR itself. A 4B model starts
+roughly where a 305M model finishes after 24k pairs. If a fine-tune is
+ever worth doing, the candidate is qwen3 on pairs built from Normattiva,
+which we own: it starts at 0.7744 instead of 0.6035 and carries no
+third-party training-data terms, which is the actual blocker (§7.1b). Its
+dim 2560 is the cost — 3.3x DAR's bytes per vector, which
+`embedder-choice-and-supersession.md` §2 prices as the supersession bill.
+
+Measured with `tools/bakeoff_local.py` through the side-car. One run
+(`Qwen3-Embedding-0.6B`) is still outstanding; it decides whether Qwen's
+strength survives at 0.6B or needs the 4B.
+
 ### 7.4b The query prefix has nowhere to live — OPEN
 
 Measured above at +4.2 MRR@100, and there is no way to declare it. It
