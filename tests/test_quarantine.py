@@ -758,3 +758,28 @@ def test_the_empty_bytes_placeholder_names_no_image(monkeypatch):
     from app.hold.codex import digest
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", digest(b""))
     assert equivalence.running_image() is None
+
+
+def test_under_an_image_that_is_not_the_reference_the_origin_check_cannot_run(
+        node, rage, monkeypatch):
+    """03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
+    neither the Codex's nor equivalent (§3.4), so that its failure would say
+    nothing about the collection" — and the operator decides, with `hold
+    collection ack --origin-unchecked`."""
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.test("origin").status == "cannot-run"
+    assert "neither the Codex's image" in s.test("origin").detail
+    assert copy_state.origin_ack_refusal(s) is None, "the operator may decide"
+
+    attest(root, codex, "records-vs-origin", "fail", image=NEWER,
+           time="2026-10-01T00:00:00Z")
+    s = state_of(collection)
+    assert s.test("origin").status == "cannot-run" and s.origin_check != "failed"
+    assert "flags nothing" in s.test("origin").detail
+
+    # under the reference itself the check CAN run: open, not a decision
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", codex.toolchain.platform_image)
+    assert state_of(collection).test("origin").status == "open"

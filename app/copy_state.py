@@ -480,6 +480,24 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
                      f"the origin could not be checked and its operator decided to use "
                      f"the copy ({ack.get('time')}); the check still runs when it can"),
                 ORIGIN_ACKED)
+    # 03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
+    # neither the Codex's nor equivalent (§3.4), so that its failure would
+    # say nothing about the collection" — and then the operator decides.
+    from app.hold import equivalence
+    ran = equivalence.running_image()
+    if key is not None and ran is not None \
+            and ran not in equivalence.reference_images(bodies, key, codex):
+        failed_here = (f"; under it the check failed ({elsewhere.get('time')}), which "
+                       f"flags nothing" if elsewhere is not None
+                       and elsewhere.get("platform_image") == ran else "")
+        return (Test("origin", CANNOT_RUN,
+                     f"this peer runs {ran[:19]}…, neither the Codex's image nor one "
+                     f"equivalent to it, so its records-vs-origin would say nothing "
+                     f"about the collection (03 §3.4){failed_here} — awaiting your "
+                     f"decision",
+                     f"{clears} run in the Codex's own image; or decide: `louise hold "
+                     f"collection ack {name} --origin-unchecked`, or `louise hold "
+                     f"collection forget {name}`"), ORIGIN_PENDING)
     tried = origin_attempt(root, name)
     if tried is not None:
         return (Test("origin", CANNOT_RUN,
