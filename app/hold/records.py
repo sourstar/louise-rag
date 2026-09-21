@@ -298,14 +298,58 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     finally:
         con.close()
 
+    _claim_staging(staging, codex)
     result = pack_build.build(
         src, staging, snapshot=snapshot_id, name=name, sign=False,
         records_per_shard=records_per_shard, log=log, stop=stop)
+    if result.interrupted:
+        # A stopped build promotes NOTHING: what it cut stays in staging,
+        # recorded, and the next run resumes it. Promoting the finished part
+        # put a partial record set into the drag, beside a snapshot that
+        # names the whole (found 2026-09-21).
+        log(f"[records build] {name}: stopped after {result.shards} shard(s); "
+            f"staged, not promoted — the next run resumes")
+        return result
 
     promoted = _promote_records(staging, drag_dir)
     log(f"[records build] {name}: {result.records} records in {result.shards} "
         f"shard(s), {promoted} promoted into the drag")
     return result
+
+
+#: What a staging build was started FOR, beside its build database. `pack
+#: build` resumes whatever that database holds and checks only the plugin,
+#: the cutoff and the shard size, so a build begun under one Codex or parser
+#: is resumed under the next as if it were the same work: every shard it had
+#: already cut counts as done and is promoted unchanged. On 2026-09-21
+#: pubmed's staging still held a parser-4 build, and a new Codex's build
+#: would have resumed it and shipped parser-4 records under parser 8.
+STAGING_CLAIM = ".codex.json"
+
+
+def _claim_staging(staging, codex) -> None:
+    import json
+    from pathlib import Path
+
+    staging = Path(staging)
+    claim = {"collection_id": codex.collection_id, "parser": codex.parser.to_dict()}
+    path = staging / STAGING_CLAIM
+    if path.is_file():
+        held = json.loads(path.read_text(encoding="utf-8"))
+        if held != claim:
+            raise RecordsError(
+                f"{staging} holds a build of {held.get('collection_id')} with "
+                f"parser {held.get('parser')}, and this is {codex.collection_id} "
+                f"with parser {claim['parser']}. Resuming it would count that "
+                f"build's shards as this one's. Move it aside and build again")
+        return
+    if (staging / ".build").exists():
+        raise RecordsError(
+            f"{staging} holds a build with no record of which Codex or parser "
+            f"it was started for, and resuming it would count its shards as "
+            f"this one's. Move it aside and build again")
+    staging.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(claim, sort_keys=True), encoding="utf-8")
 
 
 def local_collection(root, name: str, codex, *, corpus_dir=None):

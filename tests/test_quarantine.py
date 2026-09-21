@@ -57,13 +57,13 @@ def enforce(tmp_path, how: str = "enforce", before=()) -> None:
 
 
 def attest(root, codex, check: str, result: str = "pass", *, name: str = "gutenberg",
-           time: str = "2026-09-19T10:00:00Z", key=KEY, shards=()):
+           time: str = "2026-09-19T10:00:00Z", key=KEY, shards=(), image=PLATFORM):
     """One of this peer's own attestations, as `hold check` writes them (09 §9.8)."""
     body = {"kind": "louise-attestation", "version": 3,
             "collection_id": codex.collection_id, "snapshot_id": "2026-09",
             "snapshot_hash": "sha256:" + "00" * 32, "check": check, "seed": None,
             "shards": list(shards), "result": result, "detail": {},
-            "platform_image": PLATFORM, "encoder_engine": None, "encoder_weights": None,
+            "platform_image": image, "encoder_engine": None, "encoder_weights": None,
             "key": env.key_text(key.verify_key), "time": time}
     d = root / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
     d.mkdir(parents=True, exist_ok=True)
@@ -672,3 +672,89 @@ def test_the_list_holds_collection_ids_and_a_name_is_refused(tmp_path, monkeypat
         encoding="utf-8")
     assert platform_config.load().quarantine_in_use_before == (good,)
     assert platform_config.PlatformConfig().quarantine_in_use_before == ()
+
+
+# ---- 03 §3.4: a verdict belongs to the image that ran it ---------------------------
+
+NEWER = "sha256:" + "2e" * 32
+
+
+def test_an_origin_failure_under_another_image_flags_nothing(node, rage):
+    """Live 2026-09-21: a deploy moved pubmed's parser from 4 to 8, the check
+    re-parsed under the new image, every record differed — and the copy was
+    quarantined as if its own toolchain had failed. 03 §3.4: "an
+    equivalence failure of that image for this collection, not a defect in
+    the collection ... it flags nothing"."""
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    attest(root, codex, "records-vs-origin", "fail", image=NEWER,
+           time="2026-10-01T00:00:00Z", shards=("lang=en/00001",))
+    s = state_of(collection)
+    origin = s.test("origin")
+    assert origin.status == "open" and s.origin_check != "failed"
+    assert "flags nothing" in origin.detail and NEWER[:19] in origin.detail
+
+
+def test_the_references_own_failure_still_flags(node, rage):
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-01T00:00:00Z")
+    attest(root, codex, "records-vs-origin", "fail", time="2026-10-02T00:00:00Z")
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.origin_check == "failed"
+
+
+def test_an_image_that_proved_equivalence_can_flag(node, rage):
+    """Its own records-vs-origin AND chunks passed under it: it is a
+    reference for this collection now, and its later failure counts."""
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    attest(root, codex, "records-vs-origin", image=NEWER, time="2026-10-01T00:00:00Z")
+    attest(root, codex, "chunks", image=NEWER, time="2026-10-01T00:00:00Z")
+    assert state_of(collection).state == "in-use"
+    attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-02T00:00:00Z")
+    s = state_of(collection)
+    assert s.state == "quarantine" and s.origin_check == "failed"
+
+
+def test_half_an_equivalence_is_none(node, rage):
+    """records-vs-origin passed under the image but chunks never ran there:
+    not proven, so its later failure still flags nothing."""
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    attest(root, codex, "records-vs-origin", image=NEWER, time="2026-10-01T00:00:00Z")
+    attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-02T00:00:00Z")
+    assert state_of(collection).origin_check != "failed"
+
+
+def test_records_are_built_only_by_the_reference_or_an_equivalent_image(node, rage, monkeypatch):
+    """03 §3.4: "does not build its records, create its snapshots or
+    contribute vectors to it until its own records-vs-origin and chunks pass
+    under the image it runs". Found live 2026-09-21: gutenberg's Codex image
+    had been pruned and a build under the next one ran unrefused."""
+    from app.hold import equivalence
+    root, collection, codex = node
+    monkeypatch.delenv("LOUISE_PLATFORM_IMAGE", raising=False)
+    with pytest.raises(equivalence.NotEquivalent, match="does not know the image"):
+        equivalence.require_reference(root, "gutenberg", codex, use="build its records")
+
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
+    with pytest.raises(equivalence.NotEquivalent, match="03 §3.4"):
+        equivalence.require_reference(root, "gutenberg", codex, use="build its records")
+
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", codex.toolchain.platform_image)
+    assert equivalence.require_reference(root, "gutenberg", codex, use="x") \
+        == codex.toolchain.platform_image
+
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
+    attest(root, codex, "records-vs-origin", image=NEWER, time="2026-10-01T00:00:00Z")
+    attest(root, codex, "chunks", image=NEWER, time="2026-10-01T00:00:00Z")
+    copy_state.reset_cache()
+    assert equivalence.require_reference(root, "gutenberg", codex, use="x") == NEWER
+
+
+def test_the_empty_bytes_placeholder_names_no_image(monkeypatch):
+    from app.hold import equivalence
+    from app.hold.codex import digest
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", digest(b""))
+    assert equivalence.running_image() is None

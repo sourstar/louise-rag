@@ -42,6 +42,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import tomllib
 from pathlib import Path
 
@@ -443,14 +444,27 @@ def cmd_collection_migrate(a) -> int:
 
 
 def cmd_records_build(a) -> int:
-    from app.hold import records as rec
+    from app.hold import equivalence, records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    # 03 §3.4: records are built by the Codex's image or an equivalent one
+    equivalence.require_reference(a.root, name, codex, use="build its records")
     # 07 §7.3's `build <collection> [--snapshot ID]`: the origin is the
     # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
     # another, for a node whose origins are not there yet
-    corpus = a.corpus or (Path(a.root) / col.name_of(a.root, a.collection) / "origin")
-    rec.build(a.root, a.collection, corpus_dir=corpus,
-              snapshot_id=a.snapshot_id, records_per_shard=a.records_per_shard)
-    return 0
+    corpus = a.corpus or (Path(a.root) / name / "origin")
+    # Invariant 2: SIGTERM or SIGINT finishes the current unit and exits 130.
+    # Without this a stop KILLED the build: its parse pool's children were
+    # re-parented to init and kept running (2026-09-21).
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):                # not the main thread
+            pass
+    result = rec.build(a.root, a.collection, corpus_dir=corpus,
+                       snapshot_id=a.snapshot_id,
+                       records_per_shard=a.records_per_shard, stop=stop)
+    return 130 if result.interrupted else 0
 
 
 def cmd_records_validation(a) -> int:
@@ -461,7 +475,10 @@ def cmd_records_validation(a) -> int:
 
 
 def cmd_snapshot_create(a) -> int:
-    from app.hold import collection as c, snapshot as sn
+    from app.hold import collection as c, equivalence, snapshot as sn
+    ref_name, ref_codex = c.resolve(a.root, a.collection)
+    equivalence.require_reference(a.root, ref_name, ref_codex,
+                                  use="create its snapshots")
     snap = sn.create(a.root, a.collection, snapshot_id=a.snapshot_id)
     print(snap.hash)
     # 09 §9.4's sidecar, and 02 §2.2's meaning: "a signature says *I
@@ -1175,10 +1192,20 @@ def cmd_check(a) -> int:
             # on this peer alone, which is what §7.3 says it does.
             print(f"note: unsigned — {e}", file=sys.stderr)
             key = None
-        if key is not None:
+        # 09 §9.8: `platform_image` is "the image the verifier ran" — never
+        # the Codex's, which it wrote until 2026-09-21 and so turned a new
+        # image's equivalence failure into the collection's own (03 §3.4).
+        # A process that cannot name its image attests nothing.
+        from app.hold import equivalence
+        ran_in = equivalence.running_image()
+        if key is not None and ran_in is None:
+            print("note: unattested — this process does not know the image it "
+                  "runs in (LOUISE_PLATFORM_IMAGE, which the deploy sets), and an "
+                  "attestation names it (09 §9.8)", file=sys.stderr)
+        if key is not None and ran_in is not None:
             written = chk.write_attestations(
                 a.root, name, report, codex, snapshot, key,
-                platform_image=codex.toolchain.platform_image, now=_utc_now())
+                platform_image=ran_in, now=_utc_now())
     report = dataclasses.replace(report, attestations=written)
 
     # 03 §3.6: an origin check that COULD NOT RUN yields no attestation, and

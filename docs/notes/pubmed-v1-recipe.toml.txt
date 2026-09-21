@@ -1,0 +1,124 @@
+# PubMed v1.0 — the ROOT (operator 2026-09-12: "not daughters or sisters of
+# precedent non compliant collections"; 2026-09-21: "with all the fixes we
+# agreed"). What differs from the development collection's recipe
+# (config/recipes/pubmed-real.toml on the node), and why:
+#
+#   - it is created by TODAY's platform, so its parser is today's (8): every
+#     field the fidelity audits of 2026-09-12 and 09-14 restored — creators,
+#     lang, date, OtherAbstract, ids, publication types, qualifiers, ... —
+#     and today's facets and slicing defaults;
+#   - it is a version-3 Codex: `space.encoder` names the ENGINE the reference
+#     vectors are computed with, written out whole as RAGE states the run
+#     (GET /louise/runs/<run id>, 2026-09-21), and `weights` is the file that
+#     engine loads through ${WEIGHTS} — the GGUF f16 of MedCPT, as in 02
+#     §2.3's own worked example. The engine is outside space_id (02 §2.4);
+#   - so its space is NOT the development collection's (version 2 hashed the
+#     TEI image into space_id), and none of that collection's vectors is
+#     admissible to it (§3.5). See docs/notes/v1-rebuild.md, "2026-09-21".
+#
+# Unchanged: the archive credit (it keeps `hold vectors import --archive
+# medcpt-pubmed` possible — 22 of its 37 shards are still on the node), the
+# calibration set, the layer, the origin and its form, the licence.
+
+archives = ["medcpt-pubmed"]
+
+[descriptive]
+title = "PubMed"
+summary = "Every MEDLINE abstract, sliced by year, for biomedical retrieval."
+
+[space]
+dim = 768
+dtype = "f16"
+ctx = 512
+pooling = "cls"
+normalise = true
+tolerance = "0.95"
+epoch = "0"
+evaluation = ""
+
+[space.encoder]
+weights = "sha256:177a8216d25da42819492cc937fcc4b5eb848688e11bd7ba1ae44a663a78ef68"
+label = "MedCPT-Article-Encoder"
+
+[space.encoder.engine]
+name = "llama.cpp"
+build = "b10630"
+variant = "sycl"
+image = "sha256:a8b649abc7eae74c423607817c9c9321f0463fff240cefab22bec23f0a65b9f6"
+args = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999", "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics", "--host", "127.0.0.1", "--port", "${PORT}"]
+env = {}
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.query.encoder]
+weights = "sha256:c94edce7f895df4a1cd34659d543de3dc08f55583d05480bbb518e8592257b5d"
+
+[space.query.encoder.engine]
+name = "llama.cpp"
+build = "b10630"
+variant = "sycl"
+image = "sha256:a8b649abc7eae74c423607817c9c9321f0463fff240cefab22bec23f0a65b9f6"
+args = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999", "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics", "--host", "127.0.0.1", "--port", "${PORT}"]
+env = {}
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.calibration]
+set = "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+
+[space.calibration.quorum]
+n = 16
+min_pass = 12
+
+[work]
+tokens = 40000000
+per = "P1M"
+
+[[layers]]
+rule = "default"
+
+[layers.chunker]
+id = "abstract"
+version = 1
+params = { }
+
+[origin]
+form = "the XML baseline and update files, because the API paginates and the FTP files are checksummed"
+unit = "container-member"
+clock = "America/New_York"
+cutoff_rule = "update-files"
+
+[origin.spec]
+source_id = "pubmed"
+transport = "ftp"
+url = "ftp.ncbi.nlm.nih.gov/pubmed/baseline"
+layout = "container-files"
+listing = "directory"
+filters = ["*.xml.gz", "*.xml.gz.md5"]
+
+[origin.spec.checksums]
+kind = "sidecar"
+suffix = ".md5"
+algo = "md5"
+
+[origin.spec.delta]
+mode = "updatefiles-dir"
+subdir = "updatefiles"
+
+[license]
+class = "yellow"
+terms_sha256 = "sha256:77d605f1c9080f8be69de0b1e4d72b32e153bb678b3abd9e2423062d43271ab2"
+
+[validation]
+checks = ["roots", "records", "chunks", "records-vs-origin", "license", "signature", "calibration", "vectors-sample"]
+required = []
+
+[validation.sample.records]
+shards = "0.05"
+
+[validation.sample.chunks]
+shards = "0.05"
+
+[validation.sample."vectors-sample"]
+shards = "0.05"
+
+[validation.sample."records-vs-origin"]
+shards = "0.05"

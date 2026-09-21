@@ -203,6 +203,26 @@ class Attested(list):
     def __init__(self, bodies=()) -> None:
         super().__init__(bodies)
         self._by_key: dict[str, dict[str, tuple[bool, dict | None]]] = {}
+        self._by_image: dict[tuple[str, str], dict[str, tuple[bool, dict | None]]] = {}
+
+    def by_image(self, key: str, check: str) -> dict[str, tuple[bool, dict[str, Any] | None]]:
+        """image -> (has this key's `check` ever passed under it, its latest
+        pass-or-fail under it). 03 §3.4: a verdict belongs to the image that
+        ran it, and only some images' verdicts count (app/hold/equivalence.py)."""
+        mine = self._by_image.get((key, check))
+        if mine is None:
+            mine = {}
+            for b in self:
+                if b.get("key") != key or b.get("check") != check \
+                        or b.get("result") not in ("pass", "fail"):
+                    continue
+                image = str(b.get("platform_image") or "")
+                ever, latest = mine.get(image, (False, None))
+                if latest is None or str(b.get("time") or "") >= str(latest.get("time") or ""):
+                    latest = b
+                mine[image] = (ever or b.get("result") == "pass", latest)
+            self._by_image[(key, check)] = mine
+        return mine
 
     def of(self, key: str, check: str) -> tuple[bool, dict[str, Any] | None]:
         """(has this key's `check` ever passed, its latest pass-or-fail)."""
@@ -410,9 +430,39 @@ def _licence(licence: str, name: str) -> Test:
                 f"`louise hold collection ack {name}`")
 
 
+def _origin_verdicts(bodies, key: str | None, codex: Codex
+                     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """(the verdict that decides, the latest failure that flags nothing).
+
+    03 §3.4: a failure under an image that is neither the Codex's reference
+    nor proven equivalent "is an equivalence failure of that image for this
+    collection, not a defect in the collection ... it flags nothing". So the
+    latest verdict among the images that count decides; failing that, a pass
+    under any image shows the records reproduce, and a failure elsewhere is
+    only said."""
+    if key is None:
+        return None, None
+    from app.hold import equivalence
+    verdicts = bodies.by_image(key, "records-vs-origin")
+    counted = equivalence.reference_images(bodies, key, codex)
+
+    def newest(items):
+        items = [b for b in items if b is not None]
+        return max(items, key=lambda b: str(b.get("time") or "")) if items else None
+
+    deciding = newest(latest for image, (_, latest) in verdicts.items() if image in counted)
+    if deciding is None:
+        deciding = newest(latest for _, (_, latest) in verdicts.items()
+                          if latest is not None and latest.get("result") == "pass")
+    elsewhere = newest(latest for image, (_, latest) in verdicts.items()
+                       if image not in counted and latest is not None
+                       and latest.get("result") == "fail")
+    return deciding, elsewhere
+
+
 def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tuple[Test, str]:
     clears = f"`louise hold check {name} --checks records-vs-origin`"
-    latest = _own_latest(bodies, key, "records-vs-origin") if key else None
+    latest, elsewhere = _origin_verdicts(bodies, key, codex)
     if latest is not None and latest.get("result") == "fail":
         shards = ", ".join(latest.get("shards") or []) or "a shard"
         return (Test("origin", FAILED,
@@ -438,6 +488,14 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
                      f"{clears} when the origin answers; or decide: `louise hold "
                      f"collection ack {name} --origin-unchecked`, or `louise hold "
                      f"collection forget {name}`"), ORIGIN_PENDING)
+    if elsewhere is not None:
+        image = str(elsewhere.get("platform_image") or "?")
+        return (Test("origin", OPEN,
+                     f"this peer's own records-vs-origin has not run under the Codex's "
+                     f"image or one equivalent to it; under {image[:19]}… it failed "
+                     f"({elsewhere.get('time')}), which is that image failing "
+                     f"equivalence for this collection and flags nothing (03 §3.4)",
+                     f"{clears}, run in the Codex's own image"), ORIGIN_PENDING)
     return (Test("origin", OPEN, "this peer's own records-vs-origin has not run",
                  clears), ORIGIN_PENDING)
 

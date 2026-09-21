@@ -391,6 +391,7 @@ def test_the_command_writes_one_attestation_per_completed_check(
     from app import louise
     root, snapshot, codex = checkable
     monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", codex.toolchain.platform_image)
     assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
                         "--checks", "roots,centres", "--json",
                         "--seed", SEED.hex()]) == 0
@@ -400,6 +401,37 @@ def test_the_command_writes_one_attestation_per_completed_check(
     d = (root / "gutenberg" / "state" / "attestations" /
          drag_mod._hex(codex.collection_id))
     assert len(list(d.glob("*.json"))) == 1
+
+
+def test_an_attestation_names_the_image_that_ran_it(checkable, monkeypatch, capsys):
+    """09 §9.8: `platform_image` is "the image the verifier ran". It was the
+    Codex's, whatever ran — so on 2026-09-21 a new image's equivalence
+    failure read as the collection failing its own toolchain (03 §3.4)."""
+    from app import louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    ran = "sha256:" + "2e" * 32
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", ran)
+    assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
+                        "--checks", "roots", "--seed", SEED.hex()]) == 0
+    d = (root / "gutenberg" / "state" / "attestations" /
+         drag_mod._hex(codex.collection_id))
+    body, = [json.loads(p.read_bytes()) for p in d.glob("*.json")]
+    body = body.get("body", body)
+    assert body["platform_image"] == ran != codex.toolchain.platform_image
+
+
+def test_a_process_that_cannot_name_its_image_attests_nothing(checkable, monkeypatch, capsys):
+    from app import louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    monkeypatch.delenv("LOUISE_PLATFORM_IMAGE", raising=False)
+    assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
+                        "--checks", "roots", "--seed", SEED.hex()]) == 0
+    assert "unattested" in capsys.readouterr().err
+    d = (root / "gutenberg" / "state" / "attestations" /
+         drag_mod._hex(codex.collection_id))
+    assert not list(d.glob("*.json")) if d.exists() else True
 
 
 def test_a_peer_with_no_key_still_checks(checkable, monkeypatch, capsys):

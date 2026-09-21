@@ -344,3 +344,75 @@ def test_the_build_stores_each_records_content_hash(
     for uid, h in rows.items():
         assert len(h) == 32 and all(c in "0123456789abcdef" for c in h), \
             f"{uid}: a content_hash is BLAKE2b-128 as 32 lowercase hex (09 §9.5)"
+
+
+# ---- a stopped build, a foreign build, and the image that may build -------
+
+def test_a_stopped_build_promotes_nothing_and_the_next_run_finishes_it(
+        isolated_config, tmp_path, corpus_dir):
+    """Invariant 2. A build stopped before its end promoted what it had
+    cut, putting part of a record set into the drag (found 2026-09-21)."""
+    import threading
+    root = _collection(tmp_path)
+    stop = threading.Event()
+    stop.set()
+    first = rec.build(root, "gutenberg", corpus_dir=corpus_dir,
+                      log=lambda *_: None, records_per_shard=2, stop=stop)
+    assert first.interrupted
+    assert not list((root / "gutenberg" / "drag").rglob("*.jsonl.zst"))
+    second = _build(root, corpus_dir, records_per_shard=2)
+    assert not second.interrupted and second.records == 3
+    assert len(list((root / "gutenberg" / "drag" / "records").rglob("*.jsonl.zst"))) == 2
+
+
+def test_a_build_of_another_codex_or_parser_is_never_resumed(
+        isolated_config, tmp_path, corpus_dir):
+    """`pack build` resumes whatever its database holds. On 2026-09-21 a
+    parser-4 build sat in pubmed's staging under a parser-8 Codex."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    claim = root / "gutenberg" / "state" / "build" / rec.STAGING_CLAIM
+    held = json.loads(claim.read_text(encoding="utf-8"))
+    claim.write_text(json.dumps({**held, "parser": {"id": "gutenberg", "version": 1}}),
+                     encoding="utf-8")
+    with pytest.raises(RecordsError, match="Move it aside"):
+        rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None)
+    claim.unlink()
+    with pytest.raises(RecordsError, match="no record of which Codex"):
+        rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None)
+
+
+def test_the_commands_build_and_freeze_only_under_the_reference_image(
+        isolated_config, tmp_path, corpus_dir, monkeypatch, capsys):
+    """03 §3.4, through the command line, where the peer's image is known."""
+    from app import louise
+    root = _collection(tmp_path)
+    args = ["hold", "records", "build", "gutenberg", "--root", str(root),
+            "--corpus", str(corpus_dir), "--shard-records", "2"]
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "2e" * 32)
+    assert louise.main(args) == 2
+    assert "03 §3.4" in capsys.readouterr().err
+    assert not (root / "gutenberg" / "state" / "build").exists()
+    assert louise.main(["hold", "snapshot", "create", "gutenberg", "--root", str(root)]) == 2
+
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
+    assert louise.main(args) == 0
+    assert len(list((root / "gutenberg" / "drag" / "records").rglob("*.jsonl.zst"))) == 2
+
+
+def test_the_build_command_exits_130_when_stopped(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """07 §7.7: SIGTERM or SIGINT finishes the unit and exits 130."""
+    from app import louise
+    from app.pack.build import BuildResult
+    root = _collection(tmp_path)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
+    seen = {}
+
+    def stopped(*_a, stop=None, **_k):
+        seen["stop"] = stop
+        return BuildResult(tmp_path, 0, 1, 2, 2, 0, True, None)
+    monkeypatch.setattr(rec, "build", stopped)
+    assert louise.main(["hold", "records", "build", "gutenberg", "--root", str(root),
+                        "--corpus", str(corpus_dir)]) == 130
+    assert seen["stop"] is not None, "the command hands the build a stop to honour"
