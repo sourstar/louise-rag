@@ -44,7 +44,9 @@ later one — a wrong date is worse than no answer here. Without
 **The fusion unit is the record.** Each leg — the text index, the
 vector index — ranks chunks; chunks of every layer compete as chunks,
 with no per-layer normalisation. A record's rank in a leg is the rank
-of its best chunk there, and the leg contributes its top 100 records.
+of its best chunk there, and the leg contributes its top records to
+the depth the request needs: the larger of `limit` and `rerank_depth`
+(§5.4), and never fewer than 20 — so 50 by default, at most 300.
 Fusion is reciprocal-rank fusion with `k = 60`: a record's score is the
 sum over the legs that ranked it of `1 / (60 + rank)`, rank counted
 from 1; records are ordered by score descending, ties by the bytes of
@@ -316,10 +318,10 @@ louise_traverse(id, relation?, depth?)
 `collections` names collections by id, prefix or local name (07 §7.7)
 and defaults to every collection the peer holds and may use; `space`
 restricts the search to the collections in one space; `limit` is the
-number of results per list, 10 by default and at most 100, the depth
-of a leg. `rerank_depth` is how many of each list the reranker orders
-(§5.6), 50 by default and at most 100; a leg goes at least that deep,
-so the reranker has that many candidates. `louise_lookup` takes no `as_of`: `--as-of` selects among
+number of results per list, 10 by default and at most 100.
+`rerank_depth` is how many of each list the reranker orders (§5.6), 50
+by default and at most 300; a leg goes at least that deep (§5.1), so
+the reranker has that many candidates. `louise_lookup` takes no `as_of`: `--as-of` selects among
 snapshots (§5.1) and a reference source has none — it is node-local
 tables synced from the origin (06 §6.5) — so every fact names its
 `ref_version` instead. It takes one canonical id and answers from the
@@ -394,7 +396,9 @@ the collection's (`modality` in the Codex, §2.1): a text cross-encoder
 scoring DNA is a category error, refused at boot, not a quality knob.
 
 If the reranker is unreachable, refuses, or exceeds the node's latency
-budget (07 §7.8), the fused order stands and the list is returned with
+budget (07 §7.8) — set for the default depth of 50, and given to a
+deeper list in proportion, so 300 candidates have six times as long —
+the fused order stands and the list is returned with
 `reranked: false`; a list the reranker ordered carries `reranked:
 true`. A peer that holds no text for a candidate — vectors without
 records — cannot rerank it and returns the fused order the same way.

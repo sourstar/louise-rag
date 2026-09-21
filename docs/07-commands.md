@@ -683,7 +683,8 @@ variable, a file, a log line or a message.
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
-[ask]        latency_budget_ms = 8000                   # the reranker's bound (05 §5.6)
+[ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
+             # of 50; a deeper list gets it in proportion (05 §5.6)
 ```
 
 **`collections/<name>.toml`** — one held collection; the file existing
