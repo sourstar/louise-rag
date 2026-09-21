@@ -1,5 +1,22 @@
 # Project: Louise — implementation rules
 
+## RULE 1 — READ THIS BEFORE ANYTHING ELSE, NO MATTER WHAT
+
+*(Operator, 2026-09-21. It stands until the operator changes this statement.)*
+
+**This is a DEVELOPMENT system.** When the specifications, the code or the
+artifacts need to change, take whatever shortcut minimises recomputing
+time, as long as the final artifact is indistinguishable from one made by
+the book. For example:
+- reuse bytes that are provably identical;
+- carry a space whose vectors already exist;
+- resume a build instead of redoing it.
+
+Tell the operator about each such intervention, but it is the default
+choice, not an exception to ask about. A spec rule that forces a
+recomputation where an identical result can be kept is changed, not
+obeyed. Name the amendment.
+
 ## Before any work
 - Read docs/README.md and the numbered documents it lists (01–09), in
   order. They are the specification; the vocabulary they fix (docs/01,
