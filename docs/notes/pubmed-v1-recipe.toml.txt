@@ -16,6 +16,7 @@
 #     TEI image into space_id), and none of that collection's vectors is
 #     admissible to it (§3.5). See docs/notes/v1-rebuild.md, "2026-09-21".
 #
+# Also: all four facets of 02 §2.3's pubmed example (see the end).
 # Unchanged: the archive credit (it keeps `hold vectors import --archive
 # medcpt-pubmed` possible — 22 of its 37 shards are still on the node), the
 # calibration set, the layer, the origin and its form, the licence.
@@ -122,3 +123,26 @@ shards = "0.05"
 
 [validation.sample."records-vs-origin"]
 shards = "0.05"
+
+# THE FACETS, as 02 §2.3's own pubmed example declares them (added
+# 2026-09-21, before any record was built under this recipe: a facet is
+# inside collection_id, so it is fixed for the collection's life, and the
+# plugin's default declares `subjects` alone).
+[[facets]]
+field = "creators"
+kind = "flat"
+
+[[facets]]
+field = "date"
+kind = "range"
+
+[[facets]]
+field = "lang"
+kind = "flat"
+authority = { name = "ISO 639-1" }
+
+[[facets]]
+field = "subjects"
+kind = "tree"
+separator = "/"
+authority = { name = "MeSH" }

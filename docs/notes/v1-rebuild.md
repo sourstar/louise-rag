@@ -331,3 +331,45 @@ fastest compliant route.
 
 The text index can stay: chunk ids and text are unchanged, because parser 8
 does not touch `sections`.
+
+### Decided: A' (operator, 2026-09-21), and the four facets
+
+The root was re-created with 02 §2.3's four facets (`creators`, `date`,
+`lang`, `subjects`) before any record was built under it:
+`sha256:5f0944e3…`, the same space `2c05a8c3…`. The first root,
+`7541bb4a…`, had the plugin's single facet, carried nothing and was
+never used; its files are in `louise-drag/_superseded/`.
+
+**The cut-over, in this order**, in one restart window, with the deploy of
+a7cf99c. Each step reverses by a rename:
+1. Drag: the development drag's contents go to
+   `louise-drag/_superseded/pubmed-c4e3bd74/`, and `pubmed-v1`'s come into
+   `pubmed/`. These are renames inside one dataset, so the live bind mount
+   sees them.
+2. Set aside, as renames: `collections/pubmed/lance` (another space) and
+   `state/backend_baseline-pubmed.json` (another reference). The text index
+   stays.
+3. The collection file's `codex` line becomes the root. Nothing else in
+   it changes.
+4. The manifest:
+   - `embed_done = 0` everywhere, because the new space holds no vectors;
+   - `lang`, `authors` and the other parser fields come from the root's
+     records, one pass over the shards;
+   - this goes BEFORE any vector lands, because the importer and the
+     encoder read `lang` from `documents`.
+5. The archive ledger (`genesis_imports`, `medcpt-pubmed`) describes the old
+   space's imports:
+   - the 22 shards on disk go back to `fetched`, and a file already on
+     disk is never fetched;
+   - the 15 deleted ones become `rejected`, with the detail "not
+     re-fetched: operator decision 2026-09-21". A rejected shard is never
+     re-read, and its documents go to the local encoder
+     (`genesis._candidate_shards`, `worker._covered_ranges`).
+6. Start. The root is NOT on `quarantine_in_use_before`, so it passes its
+   own tests first:
+   - roots, chunks and origin were attested by the build's image;
+   - the gate runs at the first embed;
+   - the licence is acknowledged by its terms hash.
+
+   Then the 22 shards import, each re-proved against the root's reference
+   engine, and the encoder takes the rest.
