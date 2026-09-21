@@ -83,6 +83,42 @@ single bit". Detail is in [`v1-rebuild.md`](v1-rebuild.md) and
   recomputes least, the artifact indistinguishable from one made by the
   book.
 
+### 2026-09-21: a PubMed search ran 75 minutes; search and RAGE fixes
+
+Committed on `louise`, not deployed; the other session tests them together.
+
+- **What cost the time: one PubMed search was still running after 75
+  minutes, its caller long gone** (py-spy on the live web, through a
+  pid-namespace sidecar). The entity boost fetched every document tagged
+  with the query's entities, joining `doc_keys` to `documents`. A manifest
+  has **no ANALYZE statistics**, so SQLite took `source = ?` as selective
+  and walked all 40.0 M documents. And "BRCA2" expanded to 21,968 ClinVar
+  variants, each one a boost key and a pinned fact. 98ae00d fixed it:
+  - the boost only asks whether a candidate is tagged: 3.1–3.9 ms on the
+    real manifest;
+  - the boost takes only the entities the query names;
+  - facts keep docs/05's one hop, at most 25 per link (668 ms → 24.6 ms),
+    and `facts_withheld` counts what was left out.
+
+  The fixture manifest reproduces the node's query plan, so plan checks on
+  it are trustworthy (`tests/test_entity_boost.py`).
+- **A search whose caller has gone now stops** (89361b3, `app/cancel.py`).
+  `Connection.interrupt()` alone misses statements that start after it, so
+  a progress handler checks too. `Cancelled` is a `BaseException`, so it is
+  never logged as a failed collection.
+- **The query instruction comes from the Codex** (30c7276, which reverted
+  the node-side `query_prefix` of 25b30f3). See
+  [`gazzetta-plugin.md`](gazzetta-plugin.md) §7.4b.
+- **Ask tab:**
+  - rerank depth up to 300, with a budget scaled from 8 s at 50 to 48 s
+    at 300 (9df8190; spec 336a5ee);
+  - the answer's opening stays in view while it streams (576224b);
+  - a fact reached through a link names that link (da098b4, 05 §5.4).
+- **RAGE b10630-8 is live.** When a model does not fit on the card, RAGE
+  frees space by evicting lower-priority models first (93ccefa), and it
+  reads a request's body before waiting for its model to load (9f77a99).
+  See [`rage.md`](rage.md) (amended 2026-09-21).
+
 ### v1.0 roots — the development collections are not the product (2026-09-12)
 
 Operator decision: the collections this development phase produces become
