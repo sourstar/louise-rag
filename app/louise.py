@@ -158,6 +158,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    embed=_embed_for_recipe(recipe["space"], encoder),
                                    embed_query=(_embed_for_recipe(recipe["space"], query_encoder)
                                                 if query_encoder else None),
+                                   space_version=source.version if space_from else None,
                                    credits=credits)
     if space_from and (codex.space.envelope,
                        codex.space.calibration.vectors) != drifted:

@@ -286,7 +286,7 @@ def _engine_from_recipe(raw: Any, where: str) -> dict[str, Any]:
 
 
 def _space_from_recipe(block: dict[str, Any],
-                       calibration: tuple[str, str]) -> Any:
+                       calibration: tuple[str, str], *, image_shaped: bool = False) -> Any:
     """The space block, with the two hashes `create` computed spliced in.
 
     `calibration.vectors` and `envelope` are OUTPUTS of `hold collection
@@ -326,14 +326,26 @@ def _space_from_recipe(block: dict[str, Any],
         # run the reference vectors come from, written out whole so that
         # anyone can run it again — never the image alone, which is what a
         # version-2 Codex carried and what put the image inside `space_id`.
-        if "image" in enc or "engine" not in enc:
+        # EXCEPT a space copied whole from a version-2 Codex (`--space-from`,
+        # `image_shaped`): 02 §2.7's copy lands two collections in ONE space
+        # by construction, and a version-2 space moved to the version-3
+        # shape is another `space_id` — every vector of the first becomes
+        # inadmissible to the second (operator, 2026-09-21).
+        if image_shaped:
+            if "image" not in enc or "engine" in enc:
+                raise TemplateError(
+                    "recipe: a space copied from a version-2 Codex keeps its "
+                    "encoder `{image, weights, label}` byte for byte (09 §9.3)")
+        elif "image" in enc or "engine" not in enc:
             raise TemplateError(
                 "recipe: space.encoder names the ENGINE the reference vectors are "
                 "computed with — [space.encoder.engine] with name, build, image, "
                 "args, device (and variant, env where there are any) — beside "
                 "`weights` and `label`. `image` alone is a version-2 Codex, which "
-                "is read for ever and no longer written (09 §9.3)")
-        enc["engine"] = _engine_from_recipe(enc["engine"], "space.encoder.engine")
+                "is read for ever and written only as a copy of a version-2 "
+                "space (`--space-from`, 09 §9.3)")
+        else:
+            enc["engine"] = _engine_from_recipe(enc["engine"], "space.encoder.engine")
         b["encoder"] = enc
     q = dict(b.get("query") or {})
     for k, v in _QUERY_NULLABLE.items():
@@ -344,7 +356,9 @@ def _space_from_recipe(block: dict[str, Any],
         q["encoder"] = None
     if q.get("instruction") == "":
         q["instruction"] = None
-    if isinstance(q.get("encoder"), dict):
+    if isinstance(q.get("encoder"), dict) and image_shaped:
+        q["encoder"] = dict(q["encoder"])        # the version-2 shape, as copied
+    elif isinstance(q.get("encoder"), dict):
         qe = dict(q["encoder"])
         if "image" in qe:
             raise TemplateError(
@@ -358,6 +372,12 @@ def _space_from_recipe(block: dict[str, Any],
                         else (b.get("encoder") or {}).get("engine"))
         q["encoder"] = qe
     b["query"] = q
+    if image_shaped:
+        # a version-2 calibration is {set, vectors, quorum}: `query_vectors`
+        # came with the engine amendment (09 §9.12), so the copy has none
+        if b.get("evaluation") in ([], {}):
+            b["evaluation"] = None
+        return space_from_dict(b)
     # present and null in a symmetric space: every field is present (§9.3)
     cal_block["query_vectors"] = (calibration[2] if len(calibration) > 2 else None) \
         if q.get("encoder") is not None else None
@@ -414,7 +434,7 @@ def _file_entry(f, i: int) -> dict[str, Any]:
 def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 platform_image: str,
                 calibration: tuple[str, str],
-                credits: tuple = ()) -> Codex:
+                credits: tuple = (), space_version: int | None = None) -> Codex:
     """Build a Codex from a plugin's defaults and a creator's recipe.
 
     `calibration` is `(vectors_hash, envelope_hash)` — what the caller got
@@ -446,6 +466,14 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
             "creation or not at all (06 §6.6)")
 
     source = source_for(plugin)
+    # `space_version`: the version of the Codex a `--space-from` space was
+    # copied from. Below the engine amendment that space names an image, and
+    # it is written back as it was — in a Codex of that version, whose
+    # space_id is computed the way the copied one's was (02 §2.7: one space
+    # by construction). Only a copy: a recipe cannot state that shape itself.
+    image_shaped = (space_version is not None
+                    and space_version < codex_mod.ENGINE_VERSION
+                    and "image" in ((recipe.get("space") or {}).get("encoder") or {}))
     # Read once: it is written into the Codex AND it decides whether the
     # community is credited (02 §2.7), and the two must not disagree.
     _embedding = recipe.get("embedding", "open")
@@ -467,7 +495,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "layers" in recipe else default_layers(source)),
         slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
                  else default_slicing(source)),
-        space=_space_from_recipe(recipe["space"], calibration),
+        space=_space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped),
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
         erasure=recipe.get("erasure", source.erasure.value),
@@ -484,7 +512,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
-        version=codex_mod.CODEX_VERSION,
+        version=space_version if image_shaped else codex_mod.CODEX_VERSION,
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)

@@ -255,7 +255,8 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                        name: str | None = None,
                        key: Any | None = None,
                        now: str | None = None,
-                       embed_query=None) -> Codex:
+                       embed_query=None,
+                       space_version: int | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
 
     Re-running with the same recipe prints the same id and exits 0: the hash
@@ -301,7 +302,12 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     # document side would leave every query vector on a peer unchecked.
     query = space.get("query") if isinstance(space.get("query"), dict) else {}
     query_vectors = query_hash = None
-    if query.get("encoder"):
+    # a version-2 space copied whole (`space_version`) pins no query reference:
+    # its calibration is {set, vectors, quorum} (09 §9.12 before the engine
+    # amendment), and a member no field names would be a stray drag file
+    image_shaped = (space_version is not None and space_version < cx.ENGINE_VERSION
+                    and "image" in (space.get("encoder") or {}))
+    if query.get("encoder") and not image_shaped:
         if embed_query is None:
             raise CodexError(
                 "recipe: this space names a query encoder (space.query.encoder), "
@@ -314,7 +320,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
 
     codex = template.from_recipe(plugin, recipe, platform_image=platform_image,
                                  calibration=(vectors_hash, envelope_hash, query_hash),
-                                 credits=credits)
+                                 credits=credits, space_version=space_version)
     created = create(root, codex, name=name)
     d = drag_of(root, name_of(root, created.collection_id))
     write_calibration(d, codex, vectors, envelope, key=key, now=now,
