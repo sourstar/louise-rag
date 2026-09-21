@@ -32,8 +32,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
+from starlette.requests import ClientDisconnect
 
 from . import model
 from .clock import HEADER as LEVEL_HEADER, Clock, is_interactive
@@ -224,7 +225,20 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
 
     @app.api_route("/upstream/{model_id}/{path:path}",
                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-    async def upstream(model_id: str, path: str, request: Request) -> StreamingResponse:
+    async def upstream(model_id: str, path: str, request: Request) -> Response:
+        # The body is read FIRST, while its caller is certainly still here.
+        # `ensure` can wait out a whole load — 20 s for the translator, 35 for
+        # qwen3 — and uvicorn answers every read after a caller has hung up
+        # with "disconnected", even when the body had already arrived. Read
+        # after the wait, every caller that gave up during a load was an
+        # unhandled exception in the log: four on the node, 2026-09-21, three
+        # during a restart's preload and one when the translator came back on
+        # demand — which models now do more often, since a low-priority model
+        # given up returns only when it is asked for.
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            return Response(status_code=499)    # gone before it finished asking
         placed = await placement.ensure(model_id)
         placed.in_flight += 1                   # no await since ensure(): never idle now
         placed.last_used = time.time()
@@ -237,7 +251,7 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
                 request.method, entry.variant_id(placed.device), path,
                 query=request.url.query,
                 headers={k: v for k, v in request.headers.items() if k.lower() not in _HOP},
-                content=await request.body())
+                content=body)
         except SwapError as e:
             placed.in_flight -= 1
             if waiting:

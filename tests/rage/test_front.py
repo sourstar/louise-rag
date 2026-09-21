@@ -238,3 +238,73 @@ def test_ten_first_requests_over_http_are_one_load(rage):
 
 def test_the_front_watches_its_files():
     assert front.WATCH_S <= 10, "an edit to rage.toml applies within seconds, not at restart"
+
+
+# ---- a caller that hangs up while its model loads ------------------------------------------
+#
+# The node, 2026-09-21: four `starlette.requests.ClientDisconnect` tracebacks
+# in RAGE's log, each right after a model finished loading — three during a
+# restart's preload, one when the translator came back on demand. The front
+# awaited the load and only THEN read the request body, and uvicorn answers
+# every read after a caller has hung up with "disconnected", even when the
+# body had already arrived. `receive` below does exactly that.
+
+_EMBED = "/upstream/bge-m3/v1/embeddings"
+
+
+def _scope(path: str = _EMBED) -> dict:
+    return {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": "POST", "scheme": "http", "path": path,
+            "raw_path": path.encode(), "root_path": "", "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+            "server": ("rage", 8080), "client": ("127.0.0.1", 40000)}
+
+
+def _caller(body: bytes, gone: dict):
+    """A caller as uvicorn presents it: its body while it is there, and
+    "disconnected" for every read once it has left."""
+    async def receive() -> dict:
+        if gone["now"]:
+            return {"type": "http.disconnect"}
+        return {"type": "http.request", "body": body, "more_body": False}
+    return receive
+
+
+def test_a_caller_that_hangs_up_while_its_model_loads_is_not_an_error(rage):
+    swap = rage.swap()
+    p = rage.placement(swap)
+    app = create_app(p, swap, Clock(None), None, watch=False)
+    gone = {"now": False}
+    launch = rage.launch
+
+    def gives_up_during_the_load(variant: str) -> int:
+        gone["now"] = True                  # the caller's timeout ran out mid-load
+        return launch(variant)
+
+    rage.launch = gives_up_during_the_load
+    body = b'{"input": "chi paga l\'IMU?"}'
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    asyncio.run(app(_scope(), _caller(body, gone), send))   # raised ClientDisconnect before
+
+    assert rage.launches == ["bge-m3@xpu"], "the model was still loaded, for the next caller"
+    assert rage.requests[-1] == ("v1/embeddings", body), "the body read before the wait"
+    assert p.placed["bge-m3"].in_flight == 0, "and nothing is left in flight"
+
+
+def test_a_caller_gone_before_it_finished_asking_loads_nothing(rage):
+    swap = rage.swap()
+    p = rage.placement(swap)
+    app = create_app(p, swap, Clock(None), None, watch=False)
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    asyncio.run(app(_scope(), _caller(b"", {"now": True}), send))
+
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 499
+    assert rage.launches == [] and "bge-m3" not in p.placed, "no load for nobody"
