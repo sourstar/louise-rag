@@ -373,3 +373,30 @@ a7cf99c. Each step reverses by a rename:
 
    Then the 22 shards import, each re-proved against the root's reference
    engine, and the encoder takes the rest.
+
+### CORRECTION, same day: the archive cannot give the root a single vector
+
+Above, the rejection of the 22 archive shards still on disk was put down to
+the check embedding with Qwen3-4B. **That was wrong.** Reading the ledger
+itself:
+- **12 shards** (10–12, 16–17, 19–23, 25–26) were rejected on **2026-09-19**,
+  after e8e2751. The detail is "sample re-encode failed: archive vs local
+  encoder median cos 0.80–0.93, at most 5 of 16 at ≥ 0.95". The wrong model
+  would score near 0; 0.8–0.9 is the same model given different text. The
+  archive embedded other versions of these abstracts than the ones the
+  records hold. Admitting them would mix spaces, and the proof was right
+  to refuse.
+- **10 shards** (27–36) were refused at admission: only 12–43 distinct
+  vectors among 500 chunks. The archive's data is degenerate there.
+- The 15 shards that passed were deleted after import.
+
+So route A' is route A. The root's ~40M chunks are this node's encoder's
+work: **~12 days at the 38 chunks/s measured**, which was measured under
+three concurrent builds and with RAGE's MedCPT on one slot and 512-token
+batches. Proposed to the operator:
+- measure a tuned run (more slots, bigger batches). It is another engine
+  run for the same space and joins it by passing the gate (02 §2.4);
+- build the vectors BESIDE the live collection (`hold vectors build` under
+  the root's image, from the parser-8 records, so every vector carries the
+  record's real `lang`), then switch in minutes. The development pubmed
+  serves searches meanwhile.
