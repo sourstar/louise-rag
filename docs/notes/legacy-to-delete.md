@@ -227,6 +227,29 @@ answer back, plus the counts agreeing.
 
 ## Already deleted, for the record
 
+The legacy wikivec and wikipedia trees and the three retired gutenberg
+collections (2026-09-21, operator: "delete legacy data"; run by the
+operator, because the classifier refuses an `rm -rf` there). Deleted:
+`data/wikivec` (462 G), `data/wikipedia` (30 G), and
+`collections/gutenberg.{retired,parser4,unchecked-figures}-2026-09-12`
+(63 G). Checked that day:
+- No process had a file open, and no live TOML or control table names them.
+- The live wikipedia holds more than both legacy trees: 144.1M vectors
+  against wikivec's 119.6M, all 1,447 archive shards applied against
+  1,199, and 52.9M documents against 22.0M + 19.4M. A search returns the
+  right articles in en/ru/it/fr.
+- **§5's condition for the retired gutenberg did NOT hold.** The live
+  gutenberg had no DRAG snapshot, so `hold check` could not run. It was
+  deleted on the operator's word, their second request after 09-12.
+- **Kept:** `config/collections-legacy/{wikivec,wikipedia}.toml`.
+  `licensing._peer_acknowledged` reads acks from that directory, and the
+  live wikipedia has no `state/ack.json` of its own. Move its ack before
+  those files go.
+- The space is held by the manual snapshot
+  `ssd4/apps/louise-rag@pre-rage-b10630-6-2026-09-20`, which no retention
+  removes (707 G in snapshots right after the deletion). The space comes
+  back only when that snapshot is destroyed.
+
 pubmed's legacy collection (2026-09-18, operator: "check and in case you
 can delete them, delete"). Deleted `data/pubmed` (134 G: its manifest, text
 index, vector table, genesis state and cursor) and the three parked config
