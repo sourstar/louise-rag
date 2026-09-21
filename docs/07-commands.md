@@ -58,20 +58,22 @@ one.
 
 ```
 louise hold
-  collection  create <plugin> --recipe FILE [--space-from CODEX]         write a Codex; print its id
-              derive <codex> [--space-from CODEX | --space FILE | --encoder-image D --encoder-weights D] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
+  collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
+                                                                       write a Codex; print its id
+              derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
-              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-image D --encoder-weights D]
+              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-weights D --engine FILE]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
+              ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes]                  stop holding: remove this peer's copy and its state
               list [--all]                                             collections held, by lineage; --all includes the dormant
-              show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, what refuses to start
+              show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
@@ -83,10 +85,11 @@ louise hold
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
-  embedder    check <collection> [--accept]                            the calibration gate (§3.3); --accept keeps the passing run's signed statement in `state/`
+  embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
-              calibrate --encoder-image D --encoder-weights D [--against IMAGE:WEIGHTS …] [--set SHA256]
-                                                                       the tolerance a space can bear, measured between the reference build and each --against build
+              calibrate --encoder-weights D --engine FILE [--against FILE …] [--set SHA256]
+                                                                       the tolerance a space can bear, measured between the reference engine and each --against
+                                                                       encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
@@ -111,7 +114,7 @@ louise share
   peers add <address>                                                  a peer given by hand
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--as-of DATE] [--freshness] [--translate] [--<facet> VALUE | --not-<facet> VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--<facet> VALUE | --not-<facet> VALUE …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); a facet flag restricts the legs and never ranks (§5.2, §5.7)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
@@ -121,10 +124,10 @@ louise ask
   serve                                                                expose search, lookup and traversal as MCP tools
 
 louise node
-  start [--acquire-only]                                               the daemon; runs until stopped
+  start [--acquire-only | --seed-only]                                 the daemon; runs until stopped
   stop                                                                 finish the current units, commit, exit
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
-  pause [<collection>] [--acquire-only]                                a runtime override: no work, or acquisition only, until resume; it survives a restart (§7.8)
+  pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
@@ -132,8 +135,8 @@ louise dev                                                             operator 
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   migrate pack <name> --recipe FILE [--platform-image D]               give a pre-Codex pack its Codexes and first snapshot (§7.6); writes.
-                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder image and
-                                                                       weights, tolerance, work, validation, descriptive — and the calibration set is embedded per space
+                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder's weights
+                                                                       and engine, tolerance, work, validation, descriptive — and the calibration set is embedded per space
                                                                        as `create` does; the first space named is the root, the others `derived_from` it
   adopt <pack-dir> <collection>                                        the one-time move of a pre-Codex pack's vectors and index into the collection's drag; writes
   refs-sync            reference tables from their origins; writes
@@ -188,7 +191,17 @@ reader needs at the command line:
   The acknowledgement is written to the collection's state directory
   (§7.8). A yellow or red collection is not fetched, built, embedded,
   indexed, shared or searched until it exists: every such command exits
-  2 and names this one.
+  2 and names this one. `--origin-unchecked` is the other thing an
+  operator may acknowledge (03 §3.6): that this peer's own
+  `records-vs-origin` could not run — the origin unreachable, or this
+  platform image neither the Codex's nor equivalent (03 §3.4) — while
+  every other test of the copy passed. It prints what passed, what
+  could not run and when it was last tried, waits for consent as above,
+  and records the decision with its time and the peer's key beside the
+  licence acknowledgement; the copy is then in use like any other, with
+  no mark. It is refused (exit 2) while another test is still open or
+  has failed, and when the origin check has in fact run: a decision
+  stands in for a test that cannot run, never for one that failed.
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
   and the local state that goes with them; the Codex, this peer's
   attestations and anything another peer holds are untouched (01,
@@ -223,17 +236,20 @@ reader needs at the command line:
   Refuses (exit 2) when this peer's key is not the Codex's
   `certifier.key`.
 - **`embedder check`.** The calibration check of 03 §3.3 against the
-  calibration member (09 §9.12): pass or fail at the Codex's
-  `tolerance`; a pass writes the signed compliance statement. `--accept`
-  KEEPS that statement — `state/calibration.json` (09 §9.12: "kept in
-  `state/` and published in this peer's digest") — and does nothing else;
-  it has no effect on a failing run. It stores no vectors: the statement
+  calibration member (09 §9.12), for the run the endpoint states (its
+  `Louise-Run`): pass or fail at the Codex's `tolerance`. A pass
+  validates that run and keeps its signed statement in
+  `state/calibration/` (09 §9.12: "kept in `state/` and published in this
+  peer's digest"), one per run. A failure is kept too, so the run is not
+  retried against the same set. It stores no vectors: the statement
   already carries the seed, so anyone can reproduce the sample and
   recheck the verdict, and a 512-row baseline beside it would be a second
-  answer to a question the statement answers. `vectors build` and
-  `share contribute` refuse (exit 2) without a passing check for this
-  collection's space on the configured endpoint; the node runs the check
-  before the first shard of a round.
+  answer to a question the statement answers. Of the endpoint's output it
+  keeps only the fingerprint, a hash. The node runs the same check by
+  itself the first time an answer names a run it has not validated (03
+  §3.3). `vectors build` and `share contribute` write a vector only from
+  an answer naming a validated run; an endpoint that states no run
+  identity is refused for them (exit 2).
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
   fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
@@ -272,6 +288,8 @@ reader needs at the command line:
   unless `--origin` was given. `--sample F` raises the plan's sample for
   this run and cannot
   lower it; the attestation records the sample actually taken.
+  `--origin-mib N` raises what `records-vs-origin` may read of the origin
+  for this run — 256 MiB by default — and cannot lower it either (03 §3.2).
 - **`key`.** `create` writes a new seed at `NODE_KEY_PATH` in the form
   of 09 §9.2, refuses to overwrite one, and prints the public key; a key
   file readable by anyone but its owner is refused at load, never
@@ -285,7 +303,9 @@ reader needs at the command line:
   keys of 04 §4.2, and returns; the node serves. With the node not
   running, exit 0 with a notice that nothing is served yet. What it
   publishes is exactly what `hold collection show` lists as held, never
-  more; `--stop` withdraws the announcement. It refuses (exit 2) a
+  more, and nothing of a copy that is refused or in quarantine (03
+  §3.6): what this peer has not tested it does not offer. `--stop`
+  withdraws the announcement. It refuses (exit 2) a
   `never-share` collection and announces a `restricted` one to trust-list
   peers only (04 §4.4). Sharing is automatic after a completed fetch for
   a `public` collection unless its file says `share = false`.
@@ -315,8 +335,27 @@ reader needs at the command line:
   cutoff, embed (under rendezvous when the node shares), index, check by
   the plan, share — calling the same functions the commands call and
   nothing else. A collection that refuses to start is skipped and says
-  why (§7.8). `--acquire-only` fetches and builds and spends nothing on
-  an encoder. `stop` ends the daemon at its units (§7.7), exit 0.
+  why (§7.8). The node is in one of four **modes**, and a mode is a
+  statement of what it does (operator, 2026-09-19):
+
+  | mode | fetches | seeds | parses | indexes |
+  |---|---|---|---|---|
+  | *paused* (`pause`) | — | — | — | — |
+  | *seeding only* (`--seed-only`) | — | yes | — | — |
+  | *download and seeding only* (`--acquire-only`) | yes | yes | — | — |
+  | *running* (`resume`) | yes | yes | yes | yes |
+
+  Parsing is reading what was fetched: the scan of the origin into the
+  state database, `records build`. Indexing is the text index, the vector
+  index, and taking in vectors others computed. In *download and seeding
+  only* what lands is scanned when the node runs again; until 2026-09-19
+  that mode also built, which is parsing under a name that says download.
+  A scan already running when the mode changes ends at its next unit
+  (§7.7). **Embedding is not a mode's business**: it happens only where
+  everything runs, and there each collection's own `embed` setting
+  (§7.8: `off`, `on-demand`, `all`) decides it. No mode changes that
+  setting and none is changed by it. `stop` ends the daemon at its units
+  (§7.7), exit 0.
   `pause` and `resume` are runtime overrides: they live in the state
   database and survive a restart until `resume` (§7.8).
 - **`dev migrate schema`.** Creating the schema of a new state database
@@ -450,7 +489,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
-| `backend check` / `rebaseline` | `hold embedder check` / `--accept` |
+| `backend check` / `rebaseline` | `hold embedder check`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant` |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
@@ -529,9 +568,10 @@ facet takes `FROM..TO`, either end omitted for open.
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
 combined with `--slice`. `--space` and `--work` take a TOML holding
-that Codex block in the form 09 §9.3 fixes; `--encoder-image` and
-`--encoder-weights` are shorthand for a `--space` file changing only
-those two digests, and any other field a new encoder needs — `dim`,
+that Codex block in the form 09 §9.3 fixes; `--encoder-weights` and
+`--engine` are shorthand for a `--space` file changing only
+`space.encoder` — the weights digest, and the engine as a TOML file in
+09 §9.3's form — and any other field a new encoder needs — `dim`,
 `ctx`, `pooling`, `normalise`, `query`, `tolerance` — is given in
 `--space`, the calibration and envelope being computed from the named
 encoder as `create` computes them.
@@ -562,8 +602,8 @@ it is; `ack --yes` records without printing the terms.
 `state/lock` in its directory (§7.8). The node holds it for every
 collection it runs, for as long as it runs it. A `hold` command that
 writes takes the lock or exits 3 naming the holder; `show`, `list` and
-`check` never take it, and neither does `ask` — `embedder check
---accept` does, because it writes. Four commands exit 2, not 3, while
+`check` never take it, and neither does `ask` — `embedder check` does,
+because it writes a statement. Four commands exit 2, not 3, while
 the node holds the collection, because retrying them later is not the
 answer: `collection forget`, `vectors check --drop`, `dev migrate schema`
 and `dev adopt`. `node pause <collection>` releases the lock at the end
@@ -581,7 +621,7 @@ signal does not shorten that. The unit per stage:
 | `records fetch`, `share fetch` | the current file, at byte granularity — a checkpoint mid-file, the byte offset committed |
 | `records build` | the document; a shard cut short is re-cut on resume |
 | `snapshot create` | atomic: the file is written last and is there entire or not at all |
-| `vectors build` | the batch: the chunks in flight to the encoder |
+| `vectors build` | the batch: the chunks in flight to the encoder, each written only from an answer naming a validated run (03 §3.3) |
 | `vectors import`, `share contribute` | the bundle, marked applied in the same transaction as its last row |
 | `index build` | the shard |
 | `check`, `share attest` | the sampled shard; an attestation is written only for a completed check |
@@ -598,14 +638,14 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `EMBED_URL`, `RERANK_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
-| **state database** — runtime overrides | `node pause` and `--acquire-only`, in force until `resume` | the commands; a restart keeps them |
+| **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
 never survives the node applying the files — at start, at `hold config
-apply`, and when a file changes. The one exception is the node's mode —
-`pause` and `--acquire-only` — which no file sets, so there is nothing to
+apply`, and when a file changes. The one exception is the node's mode
+(§7.3) — which no file sets, so there is nothing to
 apply over it: it survives a restart until `resume`. An expiry would turn
 a node the operator holds at acquire-only back into a running one, encoder
 and all, on every restart (operator decision, 2026-09-13). What `hold config show` prints comes
@@ -616,14 +656,22 @@ tier; a value shown anywhere else comes from that resolution too.
 `NODE_KEY_PATH` unset means this peer cannot sign — no bundles, no
 attestations, no `share` of its own work; import, check and search work
 without it. `ADMIN_TOKEN_FILE` unset means the `hold` and `node` routes
-answer 401 (§7.4). `EMBED_URL` unset means everything that needs an
-encoder — `vectors build`, T3, T4, the vector leg of a search — defers
-(exit 3) unless a collection's file names its own endpoint; `CHAT_URL`
+answer 401 (§7.4). There is no default encoder: a collection names
+its own in its file's `[encoder]`, and a file that names none is a
+non-compliant collection — refused, not served, shared or searched, the
+reason named by `hold collection show` — and everything that would need
+its encoder (`vectors build`, T3, T4) defers (exit 3). `TRANSLATE_URL`
+unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
-`[reranker]` of its own. Secrets are named by path only — the key,
-the token — never by value in an environment variable, a file, a log
-line or a message.
+`[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
+panel empty and says why, and nothing else changes; `RAGE_URL` — the
+node's model container (03 §3.3) — unset leaves the System page without
+the container's models and their controls, and the node then learns a
+run only from the answers it gets, which is enough to check every one
+of them. Secrets are named
+by path only — the key, the token — never by value in an environment
+variable, a file, a log line or a message.
 
 **`platform.toml`** — the node:
 
@@ -635,8 +683,8 @@ line or a message.
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
-[ask]        latency_budget_ms = 8000                   # the reranker's bound (05 §5.6)
-[encoder_defaults.pubmed]   url = "http://nas:30440"    # per plugin; a collection's own [encoder] wins
+[ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
+             # of 50; a deeper list gets it in proportion (05 §5.6)
 ```
 
 **`collections/<name>.toml`** — one held collection; the file existing
@@ -650,24 +698,33 @@ kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
 share  = true
 
-[encoder]
-url = "http://nas:30440"                       # the endpoint that serves the Codex's encoder; `embedder check` proves it
-query_url = "http://nas:30441"                 # a bi-encoder's query side; absent when symmetric
+[encoder]                                      # required: a collection names its own encoder, there is no default
+                                               # the endpoint that serves the Codex's encoder: a MODEL on the node's model
+                                               # container RAGE, never a device — RAGE places the model on a device, and
+                                               # states the run, device included, with every answer (03 §3.3)
+url = "http://nas:30450/upstream/medcpt-article"
+query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side; absent when symmetric
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 ```
 
-The encoder endpoint resolves in this order, each a fallback for the one
-before it, never an override: the collection's `[encoder]`, then
-`platform.toml`'s `[encoder_defaults.<plugin>]`, then `EMBED_URL`. The
-reranker resolves the same way, without a per-plugin tier: the
-collection's `[reranker]`, then `RERANK_URL`; with neither, the list keeps
-its fused order and says so (05 §5.6). `embed
+The encoder endpoint is the collection's `[encoder]` and nothing else: a
+node has no default encoder, and a file that names none is refused
+(operator, 2026-09-18). `hold collection create` writes the endpoint it
+was given (`--encoder`) into the file it creates. The reranker resolves
+the collection's `[reranker]`, then `RERANK_URL`; with neither, the list
+keeps its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
+
+An `[encoder]` URL names a model and never a device. Where the model
+runs is the model container's placement, and a change of device is a
+change of run, which the gate tests by itself (03 §3.3): nothing in a
+collection's file has to follow it. Every request the node makes to a
+model endpoint carries the request header `Louise-Level` (09 §9.12).
 
 `hold collection create`, `share fetch` and `dev migrate pack` write the
 file; `hold collection forget` removes it. The name is `--name` when
@@ -728,12 +785,24 @@ before the next embed. `hold config apply` is the same reload on demand
 and, with `--set`, the way a script or the web interface edits one value
 without opening the file; `--set` writes the file, then applies it.
 
-**Refuse-to-start is per collection.** A collection whose
+**A copy's state is per collection, and derived.** A copy is *refused*,
+in *quarantine* or *in use* (03 §3.6): computed at start and between
+rounds from what the peer holds, and stored nowhere.
+
+*Refused* — refuse-to-start — is a collection whose
 `drag/codex.json` has an inner hash other than its file's `codex`
 (09 §9.3), whose vector table's space or width
 is not its Codex's (02 §2.4), or whose state database carries a schema
-other than this platform's, is not served, not shared and not searched;
-the node keeps running its other collections, `node show` lists it, and
-`hold collection show` prints the reason. A missing acknowledgement is
-not this: the collection is held and withheld from every use until
-`hold collection ack` runs (04 §4.4).
+other than this platform's. Only a person clears it.
+
+*Quarantine* is a copy this peer has not finished testing: a check of
+03 §3.6 still open, an encoder stating a run not yet tested, a licence
+not acknowledged (04 §4.4), or an origin that could not be checked and
+awaits its operator's decision. It clears by itself as the tests pass,
+or by `hold collection ack` — for the licence, and with
+`--origin-unchecked` for the origin.
+
+Either way the copy is not served, not shared and not searched; the
+node keeps running its other collections, `node show` lists it with its
+state, and `hold collection show` prints every reason with the test or
+the command that clears it.

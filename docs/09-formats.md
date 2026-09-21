@@ -192,7 +192,7 @@ local, never signed, never sent:
 | `version` | `1` | yes | |
 | `allow` | list of keys | yes | keys whose attestations are counted when the list is used as an allow filter; empty means every key is counted. It is also what `hold vectors import --strict` consults locally (07 §7.3), the one place the allow side touches a bundle; a bundle's admission is otherwise 03 §3.5's ladder |
 | `deny` | list of keys | yes | keys whose attestations, digests and bundles are ignored |
-| `quarantined` | list of `{key, attestation, time}` | yes | keys burned on this peer by a proof of forgery (03 §3.5): `attestation` is the id of the `forgery` attestation; the entry is removed only by `hold key trust <key> --restore` |
+| `quarantined` | list of `{key, attestation, time}` | yes | keys burned on this peer by a proof of forgery (03 §3.5): `attestation` is the id of the `forgery` attestation; the entry is removed only by `hold key trust <key> --restore`. The field keeps the name it had when a burned key was called quarantined; in prose the word now means a copy not yet tested (03 §3.6), and a key is *burned* |
 
 A list is a filter over whose word is counted at all, never a weight
 (08 §8.1, 03 §3.6).
@@ -249,7 +249,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `2` | yes | the Codex format version (§9.18). Version 1 is this object without `record_line`; a Codex already written stays 1 and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one |
+| `version` | `3` | yes | the Codex format version (§9.18). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -257,7 +257,7 @@ number written as a decimal string is marked *decimal*.
 | `parser` | object | yes | `{id: string, version: integer}` — the readable alias of what the platform image contains |
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
-| `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the shards, and a figureless collection created under a later format writes `version` 2 with `record_line` 1 |
+| `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the shards, and a figureless collection created under a later format writes `version` 3 with `record_line` 1 |
 | `layers` | list of layer | yes | `{chunker: {id, version, params}, rule}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none |
 | `slicing` | object | yes | below |
 | `space` | object | yes | below |
@@ -344,32 +344,69 @@ a `<space>` segment and `index-<slice>` would then be a member name
 
 | field | type | required | meaning |
 |---|---|---|---|
-| `encoder` | object | yes | `{image: "sha256:…", weights: "sha256:…", label: string}` — the encoder container's digest, the digest of the weights file it serves, and a readable label without guarantee. The encoder image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
+| `encoder` | object | yes | `{weights: "sha256:…", engine: <engine>, label: string}` — the weights digest (below: of the file, or of the directory where the model is one), the engine the reference vectors were computed with (below), and a readable label without guarantee. The engine's image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
 | `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by the top-level `derivation` above rather than by an encoder, because few encoders emit integers |
 | `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
 | `pooling` | string | yes | `"cls"`, `"mean"`, `"last"` — the pooling the encoder is run with |
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
-| `query` | object | yes | `{encoder: {image, weights} or null, instruction: string or null}` — an asymmetric space's query encoder, with its own image and weights digests, and its prefix; both `null` in a symmetric space |
+| `query` | object | yes | `{encoder: {weights, engine} or null, instruction: string or null}` — an asymmetric space's query encoder, with its own weights digest and engine, and its prefix; both `null` in a symmetric space |
 | `tolerance` | decimal | yes | the cosine a vector must reach against the reference (03 §3.1) |
-| `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash (§9.12), and the quorum |
+| `calibration` | object | yes | `{set: "sha256:…", vectors: "sha256:…", query_vectors: "sha256:…" or null, quorum: {n: 16, min_pass: 12}}` — the calibration set's id, the reference vectors' hash and, in an asymmetric space, the query reference vectors' (§9.12), and the quorum |
 | `envelope` | id | yes | the hash of the envelope tensor in the calibration member (§9.12) |
 | `epoch` | string | yes | `"0"` for a root; a daughter AND a sister keep their mother's, so a sister of a corrective sister keeps the salted one and stays in her mother's space (02 §2.7); a corrective sister's is `H(canonical JSON of {"replaces": <replaced collection_id>})`, written `sha256:…`. Any other value is refused |
 | `evaluation` | object or null | yes | `{suite: {name, version, sha256, public}, metric, value: decimal, conditions: {…}, coverage_check: {targets, resolved}, run_by: key, run_at: time, tier: "reproducible" · "asserted"}`; `null` when no score is claimed |
+
+**The engine.** How the reference vectors were computed, written out
+whole so that anyone can compute them again (02 §2.4):
+
+| field | type | required | meaning |
+|---|---|---|---|
+| `name` | string | yes | the serving software: `"llama.cpp"`, `"text-embeddings-inference"`, the name of a server the platform ships |
+| `build` | string | yes | its build or release as the software names it — `"b10630"`, `"1.8.0"`, a commit |
+| `variant` | string or null | yes | the variant of that build where the software publishes several — `"sycl"`, `"cpu"`, `"cuda"`; `null` where there is one |
+| `image` | id | yes | the digest of the OCI image holding that build, the one that was run. It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
+| `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}` and the listening port `${PORT}`, and nothing else in it names the host |
+| `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
+| `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
+
+`name`, `build`, `variant` and `device` are readable; they are bound by
+`image` and by the reference vectors, not by any check. `image`, `args`
+and `env` are what a peer runs to reproduce the reference, and running
+them on the named device is how a peer may get `space.calibration.vectors`
+back bit for bit. **`engine_id`** = `H(canonical JSON of the engine
+object)`. It names an engine wherever a producer's engine is recorded:
+the bundle header (§9.7), attestations (§9.8), benchmarks (§9.9) and
+calibration objects (§9.12).
+
+**The weights digest.** For a model held as one file — a GGUF —
+`weights` is `H(bytes of the file)`. For a model held as a directory —
+a Hugging Face snapshot, an OpenVINO IR beside its tokenizer — it is
+`H` of the canonical JSON object that maps the path of every regular
+file in the directory, relative to it and `/`-separated, to that file's
+digest, `sha256:…`. A symbolic link is refused. Code the model loads
+from its directory is a file like any other, because it is part of the
+function: two copies that differ in it are two encoders. The same rule
+gives the `weights` of a query encoder and of the run identity (§9.12).
 
 **space_id.**
 
 ```
 space_id = H( canonical JSON of
   {"cleaning_version": <int>,
-   "encoder":          {"image": "<space.encoder.image>", "weights": "<space.encoder.weights>"},
+   "encoder":          {"weights": "<space.encoder.weights>"},
    "layers":           <the layers list, byte for byte>,
    "space":            {"ctx", "dim", "dtype", "epoch", "normalise", "pooling", "query"}} )
 ```
 
+`query` enters as the Codex writes it, except that a non-null
+`query.encoder` is reduced to `{"weights"}`.
+
 Not `tolerance`, not `calibration`, not `envelope`, not `evaluation`,
 not `work`: those are the contract around the function, not the
-function. `space_from` copies `space` and `layers` byte for byte and
+function. Not the `engine` and not the `label`: the engine is how the
+reference was computed. Whether another engine computes the same
+function is measured (03 §3.3), never declared (02 §2.4). `space_from` copies `space` and `layers` byte for byte and
 never `cleaning_version`, which stays the mother's (07 §7.3); `derive`
 refuses when the named Codex's `cleaning_version` differs from hers, and
 refuses in any case when the resulting `space_id` differs from the
@@ -403,15 +440,20 @@ default (06 §6.6); the recipe is input, never hashed, never shared.
 hash, signatures: integer, held: boolean}], holdings: {slices: [...],
 kinds: [...], members: integer}, license: {class, acknowledged: boolean,
 time}, trust_level, certification: {certified_by, anchor_state} or null,
-vitality: "actively-held" · "dormant", refused: string or null}`; the
-last is the reason the collection is not served when refuse-to-start
-applies to it (07 §7.8).
+vitality: "actively-held" · "dormant", state: "refused" · "quarantine" ·
+"in-use", reasons: [string…], origin_check: "passed" · "pending" ·
+"acknowledged-unchecked" · "failed"}`. `state` is the copy's state on
+this peer (03 §3.6), derived when the command runs and stored nowhere;
+`reasons` is empty exactly when `state` is `"in-use"`, and otherwise
+names each test or acknowledgement the copy waits for, or why it is
+refused (07 §7.8). Until 2026-09-19 this object carried `refused:
+string or null` in their place.
 
 **Worked example.** The PubMed collection's Codex, abbreviated to the
 fields that carry its choices (every other field is present in the file):
 
 ```
-{"kind":"louise-codex","version":2,
+{"kind":"louise-codex","version":3,
  "descriptive":{"title":"PubMed","summary":"Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
  "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
@@ -422,10 +464,13 @@ fields that carry its choices (every other field is present in the file):
  "layers":[{"chunker":{"id":"abstract","version":1,"params":{}},"rule":"default"}],
  "slicing":{"keys":["year"],"year":{"field":"date","bins":["<1950","5y<2000","1y"]},
             "unknown":"year=unknown","shard_records":30000,"order":"numeric"},
- "space":{"encoder":{"image":"sha256:8c…","weights":"sha256:e2…","label":"MedCPT-Article-Encoder"},
+ "space":{"encoder":{"weights":"sha256:e2…","label":"MedCPT-Article-Encoder",
+                     "engine":{"name":"llama.cpp","build":"b10630","variant":"sycl","image":"sha256:8c…",
+                               "args":["llama-server","-m","${WEIGHTS}","--embedding","--pooling","cls","-c","512","-ngl","99","--port","${PORT}"],
+                               "env":{},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
           "dim":768,"dtype":"f16","ctx":512,"pooling":"cls","normalise":true,
-          "query":{"encoder":{"image":"sha256:0a…","weights":"sha256:b7…"},"instruction":null},
-          "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","quorum":{"n":16,"min_pass":12}},
+          "query":{"encoder":{"weights":"sha256:b7…","engine":{…the same, its own weights…}},"instruction":null},
+          "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","query_vectors":"sha256:5e…","quorum":{"n":16,"min_pass":12}},
           "envelope":"sha256:77…","epoch":"0","evaluation":null},
  "work":{"tokens":40000000,"per":"P1M"},"modality":"text","erasure":"retractable",
  "validation":{"checks":["roots","records","chunks","records-vs-origin","vectors-sample","calibration","centres","labels","license","signature"],
@@ -442,10 +487,11 @@ fields that carry its choices (every other field is present in the file):
 whitespace removed and the `descriptive` block dropped; `codex_hash` is
 `H` of the file exactly as written, `descriptive` included; the space
 segment under `vectors/` is the first 16
-digits of `H` over `{"cleaning_version":1,"encoder":{"image":"sha256:8c…",
-"weights":"sha256:e2…"},"layers":[…],"space":{"ctx":512,
+digits of `H` over `{"cleaning_version":1,"encoder":{"weights":"sha256:e2…"},
+"layers":[…],"space":{"ctx":512,
 "dim":768,"dtype":"f16","epoch":"0","normalise":true,"pooling":"cls",
-"query":{…}}}`.
+"query":{"encoder":{"weights":"sha256:b7…"},"instruction":null}}}` — the
+engine nowhere in it.
 
 ## 9.4 The snapshot file and its sidecar
 
@@ -931,7 +977,7 @@ uids); no floats anywhere.
 
 | key | type | required | meaning |
 |---|---|---|---|
-| `version` | `1` | yes | |
+| `version` | `2` | yes | version 1 is this header with `encoder_image`, the engine's image digest alone, in place of `encoder_engine` |
 | `collection` | id | yes | the collection the producer embedded for. Provenance, never a gate: a bundle is admissible in any collection whose `space_id` it matches (03 §3.5) |
 | `space_id` | id | yes | the space, and the gate: a bundle whose `space_id` is not the importing collection's is refused at T0, before any tier runs |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot whose records were embedded. Provenance, never a gate: an unchanged record keeps its vectors across snapshots (02 §2.2), and `possession.json` — not this field — decides whether a row still matches the text |
@@ -941,7 +987,7 @@ uids); no floats anywhere.
 | `dim` | integer | yes | |
 | `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | the parquet element type; an integer type adds the `scale` column below |
 | `producer_pubkey` | key | yes | the signer; `ed25519:…` |
-| `encoder_image`, `encoder_weights` | id | yes | the producer's encoder build; equal to the Codex's, or a build attested compliant (03 §3.3) |
+| `encoder_engine`, `encoder_weights` | id | yes | the producer's engine (`engine_id`, §9.3) and weights; the Codex's, or a pair this producer's calibration statement admits (03 §3.3, §9.12) |
 | `content_digest` | id | yes | the container-independent digest of the rows, below |
 | `parquet_bytes`, `possession_bytes` | integer | yes | sizes of the two files |
 | `created_at` | integer | yes | Unix seconds |
@@ -1017,7 +1063,7 @@ partial publication:
 
 ```
 header.json:
-{"challenge":{"n":16,"set":"sha256:6b1a…"},"chunk_count":300,"collection":"sha256:e5c2…","content_digest":"sha256:0f7b…","created_at":1756713600,"digest_alg":"sha256","dim":1024,"dtype":"f16","encoder_image":"sha256:8c…","encoder_weights":"sha256:e2…","parquet_bytes":662148,"possession_bytes":1417,"producer_pubkey":"ed25519:19…","shard":"lang=it/00007","sig_alg":"ed25519","snapshot_id":"2026-08","space_id":"sha256:41844ebb…","uids":["gutenberg:10102","gutenberg:1012","gutenberg:10125","gutenberg:10131",…],"version":1}
+{"challenge":{"n":16,"set":"sha256:6b1a…"},"chunk_count":300,"collection":"sha256:e5c2…","content_digest":"sha256:0f7b…","created_at":1756713600,"digest_alg":"sha256","dim":1024,"dtype":"f16","encoder_engine":"sha256:5a…","encoder_weights":"sha256:e2…","parquet_bytes":662148,"possession_bytes":1417,"producer_pubkey":"ed25519:19…","shard":"lang=it/00007","sig_alg":"ed25519","snapshot_id":"2026-08","space_id":"sha256:41844ebb…","uids":["gutenberg:10102","gutenberg:1012","gutenberg:10125","gutenberg:10131",…],"version":2}
 possession.json:
 {"gutenberg:10102":"bb02…","gutenberg:1012":"7a1c…",…}
 ```
@@ -1043,7 +1089,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-attestation"` | yes | |
-| `version` | `1` | yes | |
+| `version` | `3` | yes | version 2 is this body with `encoder_image`, the engine's image digest alone, in place of `encoder_engine`; version 1 is version 2 without the `figures` check |
 | `collection_id` | id | yes | |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | |
 | `snapshot_hash` | id | yes | which of two snapshots under one id was checked |
@@ -1053,7 +1099,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `result` | `"pass"` · `"fail"` · `"forgery"` · `"withdraw"` · `"supersedes"` | yes | |
 | `detail` | object | yes | per check, below; `{}` when the check has none |
 | `platform_image` | id | yes | the image the verifier ran; when it differs from the Codex's and `check` is `records-vs-origin` with `result: "pass"`, the attestation is the equivalence proof of 03 §3.4 |
-| `encoder_image`, `encoder_weights` | id or null | yes | the encoder used, for a statistical check; `null` otherwise |
+| `encoder_engine`, `encoder_weights` | id or null | yes | the engine (`engine_id`, §9.3) and weights used, for a statistical check; `null` otherwise |
 | `key` | key | yes | the verifier |
 | `time` | time | yes | |
 
@@ -1064,7 +1110,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `roots` | exact | `{failed: [shard…]}` |
 | `records` | exact | `{records: n, failed: [uid…]}` — content and origin hashes present and, where the text is, reproduced |
 | `chunks` | exact | `{records: n, failed: [uid…]}` |
-| `records-vs-origin` | exact | `{records: n, failed: [uid…], origin: "reachable"}`; a failing entry names the first differing record |
+| `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], origin: "reachable"}` — `records` the sampled shards hold, `compared` those of the `k` origin units read out of the `K` the sampled shards reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record |
 | `vectors-sample` | statistical | `{chunks: n, passed: n, median: decimal, failed: [chunk id…], producers: [key…]}` — the producers whose bundles supplied the sampled vectors; two producers when the attestation compares duplicate bundles (04 §4.5) |
 | `calibration` | statistical | `{n: 16, passed: n, median: decimal}` |
 | `centres` | exact | `{index_version: n}` |
@@ -1096,10 +1142,10 @@ and finds a second producer's bundle compliant with the first:
 ```
 {"body":{"check":"vectors-sample","collection_id":"sha256:9d3e…41ab",
          "detail":{"chunks":16,"failed":[],"median":"0.9987","passed":16,"producers":["ed25519:19…","ed25519:77…"]},
-         "encoder_image":"sha256:8c…","encoder_weights":"sha256:e2…","key":"ed25519:c3…","kind":"louise-attestation",
+         "encoder_engine":"sha256:5a…","encoder_weights":"sha256:e2…","key":"ed25519:c3…","kind":"louise-attestation",
          "platform_image":"sha256:1f…","result":"pass","seed":"9b4e…d201",
          "shards":["sha256:9d3e…41ab/41844ebbc0d19f2e/year=2023/00011"],
-         "snapshot_hash":"sha256:c07d…","snapshot_id":"2026-08","time":"2026-09-04T22:15:09Z","version":1},
+         "snapshot_hash":"sha256:c07d…","snapshot_id":"2026-08","time":"2026-09-04T22:15:09Z","version":3},
  "sig":"…"}
 ```
 
@@ -1126,12 +1172,12 @@ the peer list (04 §4.2).
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-digest"` | yes | |
-| `version` | `1` | yes | |
+| `version` | `2` | yes | version 1 is this object with `encoder_image`, the engine's image digest alone, in place of `encoder_engine` in `benchmarks` |
 | `key` | key | yes | the sender |
 | `time` | time | yes | |
 | `address` | string | yes | where the sender answers pulls: `https://host:port` |
 | `neighbours` | list of `{key, address}` | yes | up to sixteen live neighbours |
-| `benchmarks` | list | yes | `{space_id, encoder_image, encoder_weights, tokens_per_s: integer}`, one per space this peer holds a passing calibration statement for (03 §3.3). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
+| `benchmarks` | list | yes | `{space_id, encoder_engine, encoder_weights, tokens_per_s: integer}`, one per space, for the validated run this peer contributes with (03 §3.3, §9.12). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
 | `collections` | list | yes | one entry per collection held, below |
 
 A collection entry:
@@ -1354,19 +1400,24 @@ snapshot (`files`, §9.4):
 | tensor / header | type | required | meaning |
 |---|---|---|---|
 | `vectors` | `[512, dim]` f32 | yes | the reference vectors, in set order, as the creator's encoder produced them, unit-normalised when `space.normalise` |
+| `query_vectors` | `[512, dim]` f32 | when `space.query.encoder` is not null | the query encoder's reference vectors for the same texts, `space.query.instruction` prefixed: what an asymmetric space's query runs are validated against (03 §3.3) |
 | `envelope` | `[2, dim]` f32 | yes | row 0 the per-dimension mean of `vectors`, row 1 the per-dimension standard deviation |
 | `set` | header | yes | the set's id |
-| `encoder_image`, `encoder_weights` | header | yes | the creator's encoder build |
+| `encoder_engine`, `encoder_weights` | header | yes | the run the vectors came from: `engine_id` of `space.encoder.engine` (§9.3), and the weights |
 | `key` | header | yes | the creator's key |
 
 `space.calibration.vectors` = `H` over the bytes of the `vectors`
-tensor; `space.envelope` = `H` over the bytes of the `envelope` tensor;
-a member whose tensors hash otherwise is refused. Beside it,
+tensor; `space.calibration.query_vectors` = `H` over the bytes of the
+`query_vectors` tensor, `null` in a symmetric space; `space.envelope` =
+`H` over the bytes of the `envelope` tensor; a member whose tensors hash
+otherwise is refused. Beside it,
 `calibration/<set>.sig.json` is an envelope signed under
 `louise/calibration/v1` with body `{kind: "louise-calibration", version:
-1, set, space_id, vectors: id, envelope: id, encoder_image,
+2, set, space_id, vectors: id, envelope: id, encoder_engine,
 encoder_weights, key, time}` — who produced the reference, for
 provenance; the Codex's hashes, not the signature, are what bind it.
+Version 1 of that body carried `encoder_image`, the engine's image
+digest alone, in place of `encoder_engine`.
 
 **Three uses, one file.** `hold embedder check` embeds the 512 texts,
 draws `quorum.n` of them by `sample(seed, n, {"0"…"511"})` with the
@@ -1378,6 +1429,63 @@ measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
+**The run identity** (03 §3.3). What RAGE, the node's model container, states
+with every answer, in the response header `Louise-Run`:
+
+```
+run_id = H( canonical JSON of
+  {"driver":  "<the device's kernel driver and compute runtime, with versions, as the platform reads them; \"cpu\" on a CPU>",
+   "engine":  <the engine object of §9.3, as LAUNCHED: `image` the digest of the image actually running>,
+   "weights": "<the weights digest of §9.3, of the file or the directory actually loaded>"} )
+```
+
+The platform computes it from what it launched, never from a
+declaration. It describes a run on request (`GET /louise/runs/<run_id>`
+→ that same object), which is where a statement's `engine`, `weights`
+and `driver` come from.
+
+Three things make "what it launched" computable, and a platform that
+states a run follows all three:
+- **`image`.** A process cannot see the digest of the image it runs in;
+  only the container runtime knows it. The platform therefore learns its
+  `image` from a deployment pinned by digest and refuses to start
+  otherwise: a tag is not an image. A digest-pinned deployment IS the
+  observation, since the runtime runs nothing else.
+- **`args` and `env`.** They are the engine's as §9.3 writes them —
+  `${WEIGHTS}` and `${PORT}` unsubstituted, and only the variables set
+  for the engine — never the process's raw argument vector and
+  environment, which carry a port, a path and a container's host name
+  that change at every start and would make every restart another run.
+  The platform checks that the process it launched matches them before
+  it states the run; a process that does not match states none.
+- **`weights`.** Hashed at every launch, from the bytes on disk.
+
+So the same engine relaunched unchanged states the same run, and a
+changed flag, a changed weights file, a changed image or a changed
+driver each states another.
+
+**The request's level.** Every request a node makes to a model endpoint
+— an encoder, a reranker, the chat model, the translation model —
+carries the request header `Louise-Level`, one of `corpus` ·
+`translate` · `chat` · `rerank` · `query`, lowest first: the node's own
+order of model work. It is advisory. RAGE uses it to hold the device's
+clock while a person waits, and may use it for nothing an answer
+depends on: the same request gives the same answer at every level, and
+an endpoint that ignores the header loses nothing but speed.
+
+**The fingerprint.** Its sixteen texts are fixed by the set's bytes
+alone. The set is ordered by the UTF-8 byte length of `text`, ties
+broken by `i`, and the texts at ranks ⌊k × 511 / 15⌋ for k = 0 … 15 are
+taken: the shortest, the longest and fourteen spaced between. They are
+embedded one at a time, truncated as a chunk is. A run's fingerprint is
+`H` over the sixteen vectors, in that order, each as the endpoint
+returned it, converted to little-endian f32 and concatenated. The gate
+embeds the same sixteen a second time as the peer contributes, with its
+batching and concurrency. Equal bytes mean the run is batch-invariant
+at those settings. An asymmetric space's query run has its own
+fingerprint, over the same texts with `space.query.instruction`
+prefixed.
+
 **The peer's calibration statement.** The member above is the space
 author's reference. What a contributing peer produces when it passes
 the gate (03 §3.3) is a different object, and the one every other
@@ -1386,9 +1494,10 @@ domain `louise/calibration/v1`, kept in `state/` and published in this
 peer's digest (§9.9), with body
 
 ```
-{kind: "louise-calibration-run", version: 1,
- space_id, collection_id, set,
- encoder_image, encoder_weights,
+{kind: "louise-calibration-run", version: 2,
+ space_id, collection_id, set, role: "document" | "query",
+ run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
+ fingerprint: <id>, batch_invariant: <boolean>,
  seed, sampled: [<integer 0…511>…], passed: <integer>,
  worst: <decimal>, median: <decimal>,
  max_input_tokens: <integer>, tokens_per_s: <integer>,
@@ -1400,9 +1509,22 @@ peer's digest (§9.9), with body
 cosines over them. `max_input_tokens` is what the endpoint accepted, so
 a verifier knows not to sample a chunk this peer could not have
 embedded whole, and `tokens_per_s` is the benchmark §4.5 weights
-rendezvous by. A statement is current while its `encoder_image`,
-`encoder_weights` and `set` are the ones in use; changing any of the
-three needs a new run (03 §3.3).
+rendezvous by.
+
+`run` is the run identity the platform stated. `engine`, `encoder_weights`
+and `driver` are what it stands for, written out as the Codex writes its
+own engine (§9.3). The engine's `engine_id` is what the peer's bundles,
+attestations and benchmarks carry. `role` says whether the run embedded
+documents (against `vectors`) or queries (against `query_vectors`).
+`fingerprint` and `batch_invariant` are the gate's own measurements
+(03 §3.3); a run that is not batch-invariant is validated for
+single-text, one-at-a-time work only.
+
+A peer keeps one statement per run it has validated, and a vector is
+written only from an answer naming a run with a passing statement for
+the space (03 §3.3). Version 1 of this body carried `encoder_image`, the
+engine's image digest alone, in place of the run, and had no
+fingerprint.
 
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`
 (`sha256:6b1a3f0e9c2d4b7f…`); the PubMed Codex names it, and its member
@@ -1580,7 +1702,8 @@ snapshot is the first 20 bytes of `H(collection_id ‖ snapshot_id)`; the
 lineage key is the first 20 bytes of `H(lineage_id ‖ snapshot_id)`; an
 encoder's key is the first 20 bytes of `H` of its weights digest, under
 which any peer holding those weights announces, whatever collections it
-holds (04 §4.3); a
+holds (04 §4.3); an engine's is the first 20 bytes of `H` of its
+`image` digest, under which any peer holding that image announces; a
 sharer announces its peer-message port under both for every snapshot it
 serves (04 §4.2). What a searcher finds there is an address that speaks
 §9.9.
@@ -1703,19 +1826,20 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 2 | §9.3 |
+| `louise-codex` | 3 | §9.3 |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
 | shard index (`LOUISE-PACK-IDX1`) | 1 | §9.5 |
 | figures container index (`LOUISE-FIGURES-1`) | 1 | §9.5 |
 | `louise-index` | 1 | §9.6 |
-| bundle header | 1 | §9.7 |
-| `louise-attestation` | 2 | §9.8 |
-| `louise-digest`, `louise-event`, `louise-pull` | 1 | §9.9 |
+| bundle header | 2 | §9.7 |
+| `louise-attestation` | 3 | §9.8 |
+| `louise-digest` | 2 | §9.9 |
+| `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
-| `louise-calibration` | 1 | §9.12 |
-| `louise-calibration-run` | 1 | §9.12 |
+| `louise-calibration` | 2 | §9.12 |
+| `louise-calibration-run` | 2 | §9.12 |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
 
@@ -1723,7 +1847,11 @@ Two rows above were one row each until the figures amendment, and the
 split is the point: a schema pinned beside another moves only when its
 OWN bytes move. `louise-snapshot` gained a `figures` list and
 `louise-snapshot-sig` did not; the record line gained a `figures` key
-and the shard's frame layout did not. `protocol_version` (§9.3, §9.17)
+and the shard's frame layout did not. `louise-digest` left `louise-event`
+and `louise-pull` the same way, when its benchmarks began naming an
+engine rather than an image — the engine amendment, which moved the
+Codex, the bundle header, the attestation and both calibration objects
+with it. `protocol_version` (§9.3, §9.17)
 is 2 and is not in this table: it versions the plugin contract, which
 is a boundary inside one platform rather than a byte on the wire.
 

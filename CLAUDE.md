@@ -31,14 +31,20 @@ are the ones that have drifted; prefer to add a test when you touch them.
 
 1. SPACES. Never mix embedding spaces. One collection = one space; a node
    runs several spaces side by side. `space_id` is computed as docs/02 §2.4
-   states and docs/09 §9.3 fixes byte for byte: the encoder (image AND
-   weights digests), the collection's chunker LAYERS with their ids,
+   states and docs/09 §9.3 fixes byte for byte: the encoder's WEIGHTS
+   digest, the collection's chunker LAYERS with their ids,
    versions and parameters (one chunker per layer, every document in
    exactly one layer by a declared rule, the layer list fixed at creation;
    a collection with one layer is the common case and its layer IS its
    chunker), `cleaning_version`, the space block's dim, dtype, ctx,
-   pooling, normalisation and query encoder, and the epoch. Not the
-   tolerance, not the calibration, not the device. A vector table whose
+   pooling, normalisation and query encoder's weights, and the epoch. Not
+   the ENGINE — the tested build, image, args, env and device are frozen
+   in the Codex as `space.encoder.engine` (inside `collection_id`,
+   outside `space_id`); any engine may contribute once its RUN passes
+   the calibration gate, validated once, and a vector is written only from
+   an answer whose `Louise-Run` names a validated run — checked per answer,
+   before the write (docs/03 §3.3). Not the tolerance, not the calibration.
+   A vector table whose
    dim/space mismatches the Codex is a
    REFUSE-TO-START error FOR THAT COLLECTION, never a warning or
    auto-migration: the node keeps running its others, that one is not

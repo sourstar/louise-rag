@@ -44,7 +44,9 @@ later one — a wrong date is worse than no answer here. Without
 **The fusion unit is the record.** Each leg — the text index, the
 vector index — ranks chunks; chunks of every layer compete as chunks,
 with no per-layer normalisation. A record's rank in a leg is the rank
-of its best chunk there, and the leg contributes its top 100 records.
+of its best chunk there, and the leg contributes its top records to
+the depth the request needs: the larger of `limit` and `rerank_depth`
+(§5.4), and never fewer than 20 — so 50 by default, at most 300.
 Fusion is reciprocal-rank fusion with `k = 60`: a record's score is the
 sum over the legs that ranked it of `1 / (60 + rank)`, rank counted
 from 1; records are ordered by score descending, ties by the bytes of
@@ -143,14 +145,25 @@ have. An identifier that resolves to no reference row and no record is
 returned as *unresolved*; it never produces an empty fact.
 
 **Translation is an expand step, off by default.** When it is on, the
-peer translates the query into each language its text indexes hold,
-using its chat model, and runs the text leg once per variant; the
-record's rank in the leg is its best rank across the variants. A
-variant is a query, not a leg: a collection indexed in five languages
-casts no more votes than one indexed in one. The response lists the
-translations used. It is turned on per request and by nothing else:
-`translate: true` on `louise_search` (§5.4), `--translate` on `ask
-search` (07 §7.3).
+peer translates the query into the MAIN languages its text indexes
+hold — each language with an index of its own — and, when the request
+asks for every language, into every language they hold; it runs the
+text leg once per variant; the record's rank in the leg is its best
+rank across the variants. A variant is a query, not a leg: a collection
+indexed in five languages casts no more votes than one indexed in one.
+The peer translates with its translation model (`TRANSLATE_URL`, 07
+§7.8) where it has one, and with its chat model where it has not; the
+response lists the translations used and which model made them. It is
+turned on per request and by nothing else: `translate: true` on
+`louise_search` (§5.4), `--translate` on `ask search` (07 §7.3); every
+language is `all_languages: true` / `--all-languages`, or `lang:all` in
+the query.
+
+**A query may limit the languages of what it returns.** `lang:de` (or
+`lang:de,fr`) in the query, or an instruction the peer reads in it ("only
+texts in German"), restricts every leg to records written in those
+languages. It is a filter like any other: it narrows, never boosts, and
+the response names it.
 
 ## 5.3 What a result carries
 
@@ -236,7 +249,18 @@ red-class result.
 Search continues over the certified subset of a collection marked
 *integrity violated* (§3.8), and over what the licence gate admits
 (§4.4); whatever either withholds is named in the response, per
-collection, as shards withheld and why — never a silent drop.
+collection, as shards withheld and why — never a silent drop. A copy in
+quarantine (§3.6) — not yet tested on this peer — enters no list, in
+either leg, and is named the same way: `shards` is `"all"` and the
+reason is the test or the acknowledgement it waits for.
+
+A copy can also be searched with ONE LEG MISSING: its encoder's run
+failed the gate, or an answer named a run this peer has not tested yet
+(03 §3.3). The text leg goes on, the vector leg is not used, and the
+response says so under `legs_withheld` — the collection, the leg, the
+reason — beside `withheld`, which names only what was left out whole. A
+result list from such a copy is a text-leg list, and a reader has to be
+able to tell.
 
 Facts are placed beside the lists, never in them. Every fact names the
 reference source and its `ref_version` (§6.5), the table, the canonical
@@ -276,11 +300,13 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, filters?, limit?, as_of?,
-              freshness?, translate?)
+louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
+              as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
-       withheld: [{collection_id, shards, reason}], translations: [...]}
+       withheld: [{collection_id, shards, reason}],
+       legs_withheld: [{collection_id, leg, reason}],     -- leg is "vector"; the copy IS searched, on its text leg (§5.3)
+       translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
     filters: {<facet field>: <value> | {not: <value>}}
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
@@ -292,8 +318,10 @@ louise_traverse(id, relation?, depth?)
 `collections` names collections by id, prefix or local name (07 §7.7)
 and defaults to every collection the peer holds and may use; `space`
 restricts the search to the collections in one space; `limit` is the
-number of results per list, 10 by default and at most 100, the depth
-of a leg. `louise_lookup` takes no `as_of`: `--as-of` selects among
+number of results per list, 10 by default and at most 100.
+`rerank_depth` is how many of each list the reranker orders (§5.6), 50
+by default and at most 300; a leg goes at least that deep (§5.1), so
+the reranker has that many candidates. `louise_lookup` takes no `as_of`: `--as-of` selects among
 snapshots (§5.1) and a reference source has none — it is node-local
 tables synced from the origin (06 §6.5) — so every fact names its
 `ref_version` instead. It takes one canonical id and answers from the
@@ -355,9 +383,12 @@ travels. A reranker may influence *which* records a peer embeds next
 under on-demand embedding; it never influences *what* a vector or a
 record is.
 
-It runs after fusion, over the top 50 of **one** ranked list, and
-re-orders those; the rest of the list keeps the fused order below
-them. It never runs over facts, and never across lists — each list of
+It runs after fusion, over the top `rerank_depth` of **one** ranked
+list — 50 unless the request says otherwise (§5.4) — and re-orders
+those; the rest of the list keeps the fused order below them. The
+depth is the caller's, like `limit`: the reranker is the asking peer's
+own and so is the time it spends, and the latency budget below still
+bounds it. It never runs over facts, and never across lists — each list of
 §5.1 is reranked on its own, so two spaces or two questions are never
 put on one score scale. A candidate is sent whole: the text of the
 record's best chunk, never truncated. The reranker's modality must be
@@ -365,7 +396,9 @@ the collection's (`modality` in the Codex, §2.1): a text cross-encoder
 scoring DNA is a category error, refused at boot, not a quality knob.
 
 If the reranker is unreachable, refuses, or exceeds the node's latency
-budget (07 §7.8), the fused order stands and the list is returned with
+budget (07 §7.8) — set for the default depth of 50, and given to a
+deeper list in proportion, so 300 candidates have six times as long —
+the fused order stands and the list is returned with
 `reranked: false`; a list the reranker ordered carries `reranked:
 true`. A peer that holds no text for a candidate — vectors without
 records — cannot rerank it and returns the fused order the same way.

@@ -244,14 +244,21 @@ checked about the collection is in its attestations, not in the fact
 that it serves it.
 
 **The encoder travels too.** A collection's encoder is named by the
-digests of its weights and its image (02 §2.4), so it is an artefact
-like any other and moves like one: a peer that holds an encoder
-announces it under the first 20 bytes of `H` of its weights digest
-(09 §9.16), and a peer that needs it fetches from whoever answers and
-checks the bytes against the digest — the digest is the whole check, so
-no signature and no trust are involved. It is not part of any drag,
-because one encoder serves every collection in its space and would
-otherwise be copied into each.
+digest of its weights, and its reference engine by the digest of the
+image holding it (02 §2.4). So both are artefacts like any other and
+move like one:
+- a peer that holds an encoder's weights announces them under the first
+  20 bytes of `H` of the weights digest;
+- a peer that holds an engine's image announces it the same way, under
+  the image digest (09 §9.16);
+- a peer that needs either fetches from whoever answers and checks the
+  bytes against the digest.
+
+The digest is the whole check, so no signature and no trust are
+involved. The image travels so that the reference stays reproducible
+the day its registry forgets it. Neither is part of any drag, because
+one encoder serves every collection in its space and would otherwise be
+copied into each.
 
 Weights carry licences of their own, and some forbid redistribution.
 The platform's list of encoders records for each whether it may be
@@ -537,10 +544,11 @@ peer that fetched it.
 The numbers, for a hundred peers embedding a corpus that would take one
 of them two hundred GPU-days: two days each, plus a few percent of
 duplicates that become attestations. The one cost no partitioning
-touches is a change of space — a new encoder build, a new chunker —
-which invalidates every vector every peer holds at once. That is why
-the space is pinned by digest (§2.4) and why changing it is a sister,
-announced as such (§2.7).
+touches is a change of space — new weights, a new chunker — which
+invalidates every vector every peer holds at once. That is why the
+space is pinned by digest (§2.4) and why changing it is a sister,
+announced as such (§2.7). A new engine is not a change of space: it
+passes the gate and contributes to the space it was admitted to (§3.3).
 
 ## 4.6 When two daughters appear
 

@@ -50,12 +50,16 @@ codex = {
     {field: "date",     kind: "range", separator: null, authority: null}
   ],
   space: {
-    encoder: {image: "sha256:…", weights: "sha256:…", label: "medcpt-article"},
+    encoder: {weights: "sha256:…", label: "medcpt-article",
+              engine: {name: "llama.cpp", build: "b10630", variant: "sycl", image: "sha256:…",
+                       args: ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls", "--port", "${PORT}"],
+                       env: {}, device: "Intel(R) Arc(TM) Pro B70 Graphics"}},
+                                     -- the engine the reference vectors came from; not in space_id (§2.4)
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
                                      -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
-    query: {encoder: null | {image: "sha256:…", weights: "sha256:…"}, instruction: null | "<prefix>"},
+    query: {encoder: null | {weights: "sha256:…", engine: {…}}, instruction: null | "<prefix>"},
     tolerance: "0.95",
-    calibration: {set: "sha256:…", vectors: "sha256:…", quorum: {n: 16, min_pass: 12}},
+    calibration: {set: "sha256:…", vectors: "sha256:…", query_vectors: null | "sha256:…", quorum: {n: 16, min_pass: 12}},
     envelope: "sha256:…",
     epoch: "0",
     evaluation: null | {...}         -- the creator's published score, if any (notes/embedder-choice-and-supersession.md)
@@ -173,12 +177,15 @@ proves nothing and is compared by nobody (08 §8.2).
 
 **The toolchain is pinned by digest, not by label.** The bytes a parser
 produces depend on its extraction library and interpreter as much as on
-its own source, and an encoder's vectors depend on the build, not the
-model name. So the Codex names container images by digest. A peer runs
+its own source, and an encoder's vectors depend on the engine that runs
+the model as well as on the weights. So the Codex names container
+images by digest, and for the encoder it writes out the whole engine
+its reference vectors were computed with (§2.4). A peer runs
 its *own* platform; the digests tell it whether that platform is the
 one this collection requires. `parser.version` and friends stay as
 readable aliases without guarantee. A different platform image may
-still contribute if it proves itself equivalent (§3.4).
+still contribute if it proves itself equivalent (§3.4), and a different
+engine if it proves itself compliant (§3.3).
 
 **The Codex is always public and never executable.** It names code that
 lives in the platform, reviewed like any code. It does not carry code.
@@ -432,14 +439,12 @@ which.
 
 **One collection, one space.** A space is a function from cleaned text
 to vectors, and vectors from different functions cannot be compared.
-The function is the encoder — a container image and the weights it
-serves, both by digest, because under a model pool the image alone does
-not identify the weights — with `dim`, `dtype`, `ctx`, `pooling`,
-`normalise`, the query side, and the layers and cleaning that produce
-the text it reads:
+The function is the model — its weights, by digest — with `dim`,
+`dtype`, `ctx`, `pooling`, `normalise`, the query side, and the layers
+and cleaning that produce the text it reads:
 
 ```
-space_id = H(canonical-json({encoder: {image, weights}, layers, cleaning_version,
+space_id = H(canonical-json({encoder: {weights}, layers, cleaning_version,
                              space: {dim, dtype, ctx, pooling, normalise, query, epoch}}))
 ```
 
@@ -471,6 +476,28 @@ article encoders — and prefixed with `space.query.instruction` when
 that is not null; a document is embedded by `space.encoder` and never
 prefixed (05 §5.1).
 
+**Not the engine either.** The software that runs the model — its build,
+the image holding it, its arguments and environment, the device — is
+how the function was computed, not the function. The Codex freezes it
+as `space.encoder.engine`: the engine the creator TESTED, the one the
+reference vectors of the calibration member came from, written out
+whole so that anyone can run it again and get those vectors back
+(09 §9.3). It is inside `collection_id`, so a collection's reference
+cannot change under it. It is outside `space_id`, because what makes
+two vectors comparable is the model and its settings, and whether an
+engine computes them faithfully is not declared but measured — by the
+calibration gate, against the reference (§3.3). A newer build that runs
+faster, another engine, another device, a quantised variant: each
+contributes to the space once it passes, stays a distinct producer in
+provenance, and never makes a new space. Unlike two derivations, two
+engines do not produce the same numbers; they produce numbers within
+tolerance of one reference, which is all a space promises (§3.1).
+Collections meant to be searched together reach one space through
+`space_from` (§2.7), which copies the engine with the rest, so they
+share one reference. The query side is
+in the space the same way: its weights and its instruction, never its
+engine.
+
 **The encoder must be obtainable, and stay so.** A space is a function,
 and a function nobody can run is a function nobody can check: every gate
 that keeps the collection honest — calibration (§3.3), T3, `vectors-sample`,
@@ -479,8 +506,8 @@ whose encoder is a paid API, or any build a stranger cannot obtain and
 run, is refused at creation: such a collection could be held, but never
 extended and never verified by anyone but the API's owner, which is the
 one-shot dump §1 exists to replace. `space.encoder` therefore names
-open weights, by the digest of the weights and the digest of the image
-that serves them.
+open weights by their digest, and an engine whose image is named by
+digest and obtainable the same way.
 
 Naming them by digest also makes them content-addressed, and what is
 content-addressed can travel: a peer holding an encoder's weights
@@ -542,11 +569,16 @@ SHA-256 of the reference vectors the creator produced for those texts
 with the collection's encoder. Because the set does not depend on the
 corpus, a Codex is complete before a single record exists (06 §6.6),
 and every collection on one encoder shares one calibration (08 §8.3).
-A peer whose encoder differs from the reference build — another driver,
-a quantised variant — embeds the whole set with its own encoder and
+A peer whose encoder differs from the reference — another engine, a
+newer build, another device or driver, a quantised variant — embeds the
+whole set with its own encoder and
 passes when, over `quorum.n` texts drawn from it by the seeded rule of
 03 §3.2, at least `quorum.min_pass` reach cosine ≥ `tolerance` and the
-median of those n does (`hold embedder check`, 03 §3.3). The whole set
+median of those n does (`hold embedder check`, 03 §3.3). A peer that
+runs `space.encoder.engine` as written, on the device it names, may get
+the reference vectors back bit for bit — their hash is then
+`space.calibration.vectors` itself, the exact reproduction the engine is
+frozen for — but the gate asks only for the tolerance. The whole set
 is embedded because the statement it produces reports over all of it,
 and because T0's envelope and T1's probe set are the whole set too. A
 peer that fails may still search with what it holds. The same
@@ -749,9 +781,10 @@ records, the shards are byte-identical, their roots are equal and the
 members are interchangeable. A weekly sister of a monthly collection
 holds every shard the monthly holds, and more snapshots naming them.
 `space_from: <codex>` copies the whole `space` block and `layers` byte
-for byte, and the encoder image must match too or `derive` refuses — so
-two collections meant to be searched together land in one space by
-construction rather than by hoping their settings match.
+for byte, the engine and the calibration with them, and `derive`
+refuses when the resulting `space_id` differs from the source's — so
+two collections meant to be searched together land in one space, on one
+reference, by construction rather than by hoping their settings match.
 
 **A sister may DERIVE her vectors instead of embedding them.** Where her
 space is a pure function of another's — a quantisation of it, or a
