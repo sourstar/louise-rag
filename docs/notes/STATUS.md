@@ -47,6 +47,42 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-09-21: the v1.0 collections made compliant, nothing re-fetched
+
+The operator: "make my collections compliant again without re-fetching a
+single bit". Detail is in [`v1-rebuild.md`](v1-rebuild.md) and
+[`storage-tiering.md`](storage-tiering.md) §7.
+
+- **The image a Codex names had been pruned** for gutenberg and wikipedia.
+  They were recovered from a docker-dataset snapshot on the day it
+  expired. Every Codex image is now kept on the archive pool
+  (`louise-platform-images/`) and tagged `louise-rag:codex-<name>`.
+- **A verdict belongs to the image that ran it** (a7cf99c, 1bf3058,
+  03 §3.4/§3.6):
+  - `hold check` wrote the Codex's image into every attestation, which
+    quarantined pubmed on another image's equivalence failure;
+  - builds now refuse an image that is neither the reference nor
+    equivalent;
+  - `records build` honours SIGTERM, promotes nothing when stopped, and
+    refuses to resume another Codex's staging.
+- **gutenberg:** records built by its own image (79,445 records, 1,635
+  shards, 64,736 plates), snapshot `2026-08`, and every deterministic
+  check passes under its image. Its drag is on tank.
+- **wikipedia:** the same route, running (52.9M records).
+- **pubmed:** the v1.0 root `sha256:e1711334…`, created with `--space-from`
+  the development Codex, so it is **the same space** and its ~40M vectors
+  stay (2c0d984; spec on branch `spec/2026-09-21`). It has parser 8 and
+  the four facets. Its records resumed a build already cut (Rule 1:
+  byte-identical record code), and the switch is scripted. The archive
+  shards still on disk were rightly refused, not a bug.
+- **Storage:**
+  - the drag and the exports live on tank (0eca48c, `EXPORT_DIR`);
+  - the legacy wikivec/wikipedia and the retired gutenberg trees are
+    deleted.
+- **Rule 1** (`CLAUDE.md`): a development system takes the shortcut that
+  recomputes least, the artifact indistinguishable from one made by the
+  book.
+
 ### v1.0 roots — the development collections are not the product (2026-09-12)
 
 Operator decision: the collections this development phase produces become
