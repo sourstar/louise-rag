@@ -283,3 +283,51 @@ cross-reference to the wikipedia collection.
   (`tools/backfill_pubmed_authors.py`) so the GUI is honest until the
   root replaces it. That run also built the 632 missing container packs,
   which the records rebuild needs, so it is not throwaway work.
+
+## 2026-09-21: the pubmed root exists; its vectors are a decision
+
+The operator: "pubmed with all the fixes we agreed", without re-fetching
+anything. Done, except the cut-over:
+
+- **Root created**: `sha256:7541bb4a…`, Codex version 3, relation root,
+  parser 8, platform image `08554e60…` (kept on the archive pool and tagged
+  `louise-rag:codex-pubmed-v1`), credits `medcpt-pubmed`. Its recipe is
+  [`pubmed-v1-recipe.toml.txt`](pubmed-v1-recipe.toml.txt). Its drag is on
+  tank beside the development one, not yet swapped in.
+- **Its records** are built by its own image from the origin on tank. Then
+  validation, snapshot and the Codex's check plan run, unattended.
+
+**Why its vectors cannot be the development collection's.** Today's code
+writes only version-3 Codexes, and from version 3 the engine is OUTSIDE
+`space_id` (02 §2.4). The development Codex is version 2, which hashed
+the TEI image INTO it. Same weights and settings, different `space_id`: §3.5
+refuses those vectors, and invariant 1 refuses a vector table from another
+space. `--space-from` cannot bridge the two, because create refuses to
+write a version-2 space.
+
+**Three ways to give it vectors, none re-fetching:**
+
+| route | what runs | measured cost |
+|---|---|---|
+| A. re-embed everything | RAGE MedCPT on the Arc | 38 chunks/s: 40M chunks, **~12 days** |
+| A'. archive + re-embed the rest | `hold vectors import --archive medcpt-pubmed` over the **22 shards still on disk** (20.7M documents, re-proved against this node's encoder), then the encoder for the ~19M left | the import is hours; the rest **~6 days** |
+| C. amend the spec | admit a version-2 space's vectors into its version-3 successor once the producing engine passes the new space's gate | TEI's image may still be on the node; NCBI's archive engine cannot be run, so its 14.7M vectors could only enter through the archive route anyway |
+
+Recommendation: **A'**. It is by the book, fetches nothing and is the
+fastest compliant route.
+- Those 22 shards were `rejected` on 09-13, while the check was
+  embedding with Qwen3-4B instead of MedCPT (fixed by e8e2751). So the
+  rejection says nothing about the shards.
+- Until the cut-over, the development pubmed stays in use: its only open
+  test is the origin check, covered by the operator's decision of
+  2026-09-20.
+
+**The cut-over itself, once decided:**
+- move the development drag to `louise-drag/_superseded/`;
+- set the collection file's `codex` to the root;
+- move the development Lance table aside, since it is another space;
+- re-derive the manifest (`rdf_done = 0`), because `documents.lang` is
+  still parser 4's `en` everywhere.
+
+The text index can stay: chunk ids and text are unchanged, because parser 8
+does not touch `sections`.
