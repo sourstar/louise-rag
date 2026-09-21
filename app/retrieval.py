@@ -1,13 +1,16 @@
 """Retrieval orchestration.
 
 Pipeline per query:
-  0. resolve -> expand -> plan (architecture-v2.md §4): regex/dictionary
-     entity resolution against the reference layer (app/refs/). No entities
-     found -> every step below is a structural no-op, degenerating exactly to
-     the pre-P0.3 pipeline. Entities found -> two separate outputs, NEVER
+  0. resolve -> plan (architecture-v2.md §4): regex/dictionary entity
+     resolution against the reference layer (app/refs/). No entities found
+     -> every step below is a structural no-op, degenerating exactly to the
+     pre-P0.3 pipeline. Entities found -> two separate outputs, NEVER
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
      for the LLM context (never ranked, never in RRF); doc_keys-tagged hits
-     get a soft RRF boost.
+     get a soft RRF boost. The boost takes only the entities the query
+     NAMES; the facts take those and docs/05's one hop, bounded per link,
+     with what the bound left out named in `facts_withheld` (2026-09-21:
+     one gene expanded to 21,968 variants).
   1. catalog search (the catalog index over title/author/subjects,
      app/catalog.py — subjects are English LoC headings for every
      language, so this is cross-lingual for free)
@@ -145,6 +148,33 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         ranked.append(h)
     return ranked + tail, True
 
+#: docs/05's one hop, bounded: at most this many facts per declared link from
+#: each entity the query names. A person reads pinned facts as cards above
+#: the results; 25 is already more than a screen of them, and BRCA2 alone
+#: reaches 21,961 ClinVar variants (2026-09-21). The rest are counted in the
+#: answer's `facts_withheld`, and the traversal tool (docs/05 §5.4) is how
+#: they are reached.
+FACTS_PER_LINK = 25
+
+
+def _entity_facts(query: str, store) -> tuple[list, list["PinnedFact"], list[dict]]:
+    """resolve, then docs/05's expand — one hop along each declared link,
+    bounded — then the facts. Returns the entities the query NAMES (the
+    boost's, and only those: the 21,968 variants BRCA2 reaches tag not one
+    PubMed document the gene does not), the pinned facts, and what each link
+    reached beyond its bound: named in the answer, never dropped in silence
+    (docs/05)."""
+    resolved = refs.RESOLVER.resolve(query, store)
+    reached = [(r, link) for r in resolved
+               for link in refs.RESOLVER.expand_bounded(r, store, FACTS_PER_LINK)]
+    facts = _build_pinned_facts(
+        resolved + [e for _, link in reached for e in link.entities], store)
+    withheld = [{"entity_id": r.entity_id, "table": link.table,
+                 "reached": link.total, "pinned": len(link.entities)}
+                for r, link in reached if link.total > len(link.entities)]
+    return resolved, facts, withheld
+
+
 def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
     facts: list[PinnedFact] = []
     seen: set[str] = set()
@@ -158,14 +188,37 @@ def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
                                  label=e.label, fields=row))
     return facts
 
-def _tagged_book_ids(con, collection, entity_ids: list[str]) -> set[int]:
-    if not entity_ids:
+def _tagged_among(con, collection, entity_ids: list[str], book_ids) -> set[int]:
+    """Which of these CANDIDATES carry any of `entity_ids` — for the boost.
+
+    The boost asks one thing: is this hit tagged? So the question is put for
+    the candidates alone, after the merge, and its cost is theirs — a few
+    hundred at most — never the entity's. It used to be the other way round:
+    every document tagged with the entity, fetched before the search, to test
+    a hundred hits against. On pubmed (40.0 M documents, 51.5 GB, 2026-09-21)
+    BRCA2 tags 12,053 documents and took 2.5 s that way; the heaviest gene,
+    HGNC:5172, tags 265,237.
+
+    And before THAT fix it never finished at all. A manifest nobody has
+    ANALYZEd has no statistics, so the planner takes any equality on an
+    indexed column to be selective — and `d.source = ?` is not, every
+    document of a collection has the same source. It drove the loop from all
+    40 M documents; one search was still running after 75 minutes, its
+    caller long gone. `CROSS JOIN` fixes the order here, and with BOTH
+    columns of the unique (source, native_id) index constrained, each
+    candidate is known to be at most one row whatever the statistics say.
+
+    `str(book_id)` is how a candidate is found again: a book_id IS
+    int(native_id), exact for every native id without leading zeros — which
+    is every collection this node holds."""
+    if not entity_ids or not book_ids:
         return set()
-    marks = ",".join("?" for _ in entity_ids)
+    ids = sorted({str(b) for b in book_ids})
     rows = con.execute(
-        f"SELECT DISTINCT d.native_id FROM doc_keys k JOIN documents d ON d.uid=k.uid "
-        f"WHERE k.entity_id IN ({marks}) AND d.source=?",
-        entity_ids + [collection.plugin]).fetchall()
+        f"SELECT d.native_id FROM documents d CROSS JOIN doc_keys k ON k.uid = d.uid "
+        f"WHERE d.source = ? AND d.native_id IN ({','.join('?' * len(ids))}) "
+        f"AND k.entity_id IN ({','.join('?' * len(entity_ids))})",
+        [collection.plugin, *ids, *entity_ids]).fetchall()
     return {int(r["native_id"]) for r in rows}
 
 def _enqueue_lazy_embed(con, book_ids: list[int], collection):
@@ -197,7 +250,7 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 
 
 def _search_one_collection(con, collection, query: str, k: int, mode: str, translate: bool,
-                            tagged_book_ids: set[int], plan: LanguagePlan | None = None,
+                            entity_ids: list[str], plan: LanguagePlan | None = None,
                             depth: int = 0) -> dict:
     """catalog + fts fan-out + dense + intra-collection RRF + entity boost —
     the per-collection core, extracted so search() (one collection) and
@@ -270,9 +323,10 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         timings["dense"] = round((time.time() - t0) * 1000, 1)
 
     merged = _merge_rrf(lists)
-    if tagged_book_ids:
+    tagged = _tagged_among(con, collection, entity_ids, [m["book_id"] for m in merged])
+    if tagged:
         for m in merged:
-            if m["book_id"] in tagged_book_ids:
+            if m["book_id"] in tagged:
                 m["rrf"] += ENTITY_BOOST
         merged.sort(key=lambda x: -x["rrf"])
 
@@ -375,22 +429,18 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     collection = collection or collections_mod.default_collection()
     t_total = time.time()
 
-    # resolve -> expand -> plan (architecture-v2.md §4). No entities found
-    # (the common case) -> facts=[] and tagged_book_ids=set(), and nothing
-    # below reads either until the boost block, which is then skipped —
-    # a structural no-op, not a behavior that needs re-verifying per call.
+    # resolve -> expand -> plan (architecture-v2.md §4, docs/05). No entities
+    # found (the common case) -> no facts and no entity ids, and nothing
+    # below reads either until the boost block, which is then skipped — a
+    # structural no-op, not a behavior that needs re-verifying per call.
     store = refs.get_store()
-    resolved = refs.RESOLVER.resolve(query, store)
-    expanded = [e for r in resolved for e in refs.RESOLVER.expand(r, store)]
-    entities_found = resolved + expanded
-    facts = _build_pinned_facts(entities_found, store)
-    tagged_book_ids = _tagged_book_ids(con, collection, [e.entity_id for e in entities_found])
+    resolved, facts, facts_withheld = _entity_facts(query, store)
 
     t0 = time.time()
     plan = language_plan.plan(query, [collection], translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
     partial = _search_one_collection(con, collection, query, k, mode, translate,
-                                     tagged_book_ids, plan, rerank_depth)
+                                     [e.entity_id for e in resolved], plan, rerank_depth)
     timings = {"languages": plan_ms, **partial["timings"]}
 
     t0 = time.time()
@@ -408,7 +458,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     result = {"query": query, "mode": mode, "translations": partial["translations"],
               "language": plan.summary(),
               "catalog": partial["catalog"], "hits": final,
-              "facts": [asdict(f) for f in facts],
+              "facts": [asdict(f) for f in facts], "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
     if partial.get("vector_leg"):
         result["legs_withheld"] = [_leg_withheld(collection, partial["vector_leg"])]
@@ -452,12 +502,11 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     config.FEDERATION_CANDIDATE_BUDGET, which only applies when len(collections)>1."""
     t_total = time.time()
 
+    # The same entity step as search(), through the same helper: the two paths
+    # came in a pair, and fixing one left the other pinning 21,969 facts.
     store = refs.get_store()
-    resolved = refs.RESOLVER.resolve(query, store)
-    expanded = [e for r in resolved for e in refs.RESOLVER.expand(r, store)]
-    entities_found = resolved + expanded
-    facts = _build_pinned_facts(entities_found, store)
-    entity_ids = [e.entity_id for e in entities_found]
+    resolved, facts, facts_withheld = _entity_facts(query, store)
+    entity_ids = [e.entity_id for e in resolved]
 
     # ONE language plan for the whole search: one model call translates the
     # query into the union of what every collection holds, where each
@@ -473,9 +522,8 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         except Exception as e:
             return collection, None, e
         try:
-            tagged_book_ids = _tagged_book_ids(con, collection, entity_ids)
             partial = _search_one_collection(con, collection, query, k, mode, translate,
-                                              tagged_book_ids, plan, rerank_depth)
+                                              entity_ids, plan, rerank_depth)
             for h in partial["merged"]:
                 h["source_collection"] = collection.name
             return collection, partial, None
@@ -569,6 +617,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     result = {"query": query, "mode": mode, "translations": translations,
               "language": plan.summary(),
               "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
+              "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
     if legs_withheld:
         result["legs_withheld"] = legs_withheld

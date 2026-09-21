@@ -109,13 +109,31 @@ class RefStore:
         self._pk: dict[str, str] = {t.name: t.primary_key for s in schemas for t in s.tables}
         self._owner: dict[str, str] = {t.name: s.source_id for s in schemas for t in s.tables}
 
-    def rows(self, table: str, where: dict | None = None) -> list[dict]:
+    def rows(self, table: str, where: dict | None = None, *,
+             order_by: str | None = None, limit: int | None = None) -> list[dict]:
+        """`order_by` is SQL the caller composes from its own constants, never
+        from a query's text; `limit` bounds what is materialised — the point
+        of both (resolver.expand_bounded)."""
+        sql, params = f"SELECT * FROM {table}", []
         if where:
-            cond = " AND ".join(f"{k}=?" for k in where)
-            cur = self.con.execute(f"SELECT * FROM {table} WHERE {cond}", list(where.values()))
-        else:
-            cur = self.con.execute(f"SELECT * FROM {table}")
-        return [dict(r) for r in cur.fetchall()]
+            sql += " WHERE " + " AND ".join(f"{k}=?" for k in where)
+            params = list(where.values())
+        if order_by:
+            sql += f" ORDER BY {order_by}"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return [dict(r) for r in self.con.execute(sql, params).fetchall()]
+
+    def count(self, table: str, where: dict | None = None) -> int:
+        sql, params = f"SELECT count(*) FROM {table}", []
+        if where:
+            sql += " WHERE " + " AND ".join(f"{k}=?" for k in where)
+            params = list(where.values())
+        return int(self.con.execute(sql, params).fetchone()[0])
+
+    def columns(self, table: str) -> set[str]:
+        return {r[1] for r in self.con.execute(f"PRAGMA table_info('{table}')")}
 
     def get(self, table: str, pk_value) -> dict | None:
         row = self.con.execute(

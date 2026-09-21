@@ -9,10 +9,40 @@ never a dependency. See _symbol_index.
 """
 import re
 import threading
+from dataclasses import dataclass
 
 from ..plugins.base import Entity, RefLookup
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]{1,15}")
+
+#: A clinical significance, most actionable first: the ACMG/AMP tiers and the
+#: compound terms ClinVar adds between them. `expand` already reads the
+#: `significance` column for a fact's label; this is only its order. Anything
+#: else — "not provided", a term not listed — comes after all of these.
+CLINICAL_ORDER = (
+    "Pathogenic",
+    "Pathogenic/Likely pathogenic",
+    "Likely pathogenic",
+    "Conflicting classifications of pathogenicity",
+    "Uncertain significance",
+    "Likely benign",
+    "Benign/Likely benign",
+    "Benign",
+)
+_CLINICAL_RANK = ("CASE significance "
+                  + " ".join(f"WHEN '{t}' THEN {i}" for i, t in enumerate(CLINICAL_ORDER))
+                  + f" ELSE {len(CLINICAL_ORDER)} END")
+
+
+@dataclass(frozen=True)
+class Reached:
+    """One declared link walked from a resolved entity: the rows pinned, and
+    how many the link reaches in all — so what is not pinned is named in the
+    answer, never dropped in silence (docs/05)."""
+    table: str
+    entities: tuple[Entity, ...]
+    total: int
+
 
 _cache_lock = threading.Lock()
 _symbol_cache: tuple | None = None        # (stamp, symbols)
@@ -65,6 +95,14 @@ def _symbol_index(refs: RefLookup) -> dict:
     return symbols
 
 
+def _entity(refs: RefLookup, table: str, row: dict) -> Entity:
+    """A row a link reached, as the entity `expand` and `expand_bounded` both
+    return — one construction, so the two cannot disagree on a fact."""
+    owner = refs.owner_of(table)
+    return Entity(entity_id=f"{owner}:{row[refs.pk_of(table)]}", kind=table,
+                  source_id=owner, label=row.get("significance") or row.get("name"))
+
+
 class DictResolver:
     """Exact-case symbol matching against hgnc_gene. Case sensitivity is a
     deliberate precision choice: gene symbols routinely collide with
@@ -105,13 +143,38 @@ class DictResolver:
             if link.to_table != entity.kind:
                 continue
             for r in refs.rows(link.from_table, {link.from_column: row[link.to_column]}):
-                table = link.from_table
-                pk = refs.pk_of(table)
-                out.append(Entity(
-                    entity_id=f"{refs.owner_of(table)}:{r[pk]}",
-                    kind=table,
-                    source_id=refs.owner_of(table),
-                    label=r.get("significance") or r.get("name")))
+                out.append(_entity(refs, link.from_table, r))
+        return out
+
+    def expand_bounded(self, entity: Entity, refs: RefLookup, limit: int) -> list[Reached]:
+        """`expand`, one declared link at a time, with at most `limit` rows
+        materialised per link — the most clinically actionable first where
+        the table carries a `significance`, else by primary key — and the
+        link's full count beside them.
+
+        `expand` materialises every row a link reaches. For BRCA2 that is
+        21,961 ClinVar variants (plus 1 gnomAD row and 6 HomoloGene), 668 ms
+        on the node — spent every time a search named the gene, to pin facts
+        nobody could read. Bounded, the same three links cost 24.6 ms
+        (2026-09-21). ClinVar's order still sorts that gene's rows (no index
+        serves a CASE), so it grows as n log n with the gene: tens of ms."""
+        _, _, native = entity.entity_id.partition(":")
+        row = refs.get(entity.kind, native)
+        if row is None:
+            return []
+        out: list[Reached] = []
+        for link in refs.links_for(entity.kind):
+            if link.to_table != entity.kind:
+                continue
+            table = link.from_table
+            where = {link.from_column: row[link.to_column]}
+            pk = refs.pk_of(table)
+            order = f"{_CLINICAL_RANK}, {pk}" if "significance" in refs.columns(table) else pk
+            out.append(Reached(
+                table=table,
+                entities=tuple(_entity(refs, table, r)
+                               for r in refs.rows(table, where, order_by=order, limit=limit)),
+                total=refs.count(table, where)))
         return out
 
 
