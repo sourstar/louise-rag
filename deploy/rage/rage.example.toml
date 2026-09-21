@@ -39,13 +39,18 @@ reserve_mib  = { xpu = 2048, cpu = 2048 } # never given to a model
 # and MADLAD's first translation should not be the one that loads it.
 preload = ["bge-m3", "medcpt-query", "qwen3-embedding-4b", "bge-reranker", "medcpt-rerank",
            "madlad", "chat"]
-# What RAGE does when a process OUTSIDE it squeezes the card (rage.md §19): it
-# gives up IDLE models — no request in flight, none for `idle_s` seconds — the
-# ones pushed off the card first, then the least recently used, and no more
-# than the deficit asks for. A preloaded model given up comes back by itself
-# once the card has been quiet for `restore_s` and really has room. A model in
-# use is never touched. These are the defaults.
-pressure = { unload = true, idle_s = 60, restore_s = 120 }
+# When the card must be freed RAGE gives up IDLE models — no request in flight,
+# none for `idle_s` seconds — and never one in use. Two reasons: a process
+# OUTSIDE RAGE squeezes the card (rage.md §19), or a load does not fit (§7,
+# amended 2026-09-21). Either way the ones pushed off the card go first, then
+# the LOWEST `priority` (each model's own key, below), the fewest MiB only
+# breaking a tie within one priority. A load gives up only models ranked
+# strictly below it, and nothing unless that is enough. A preloaded model given
+# up comes back by itself once the card has been quiet for `restore_s` and
+# really has room — if its priority is at least `restore_min_priority`; any
+# other comes back on its next request. `unload = false` switches off both
+# reasons. These are the defaults.
+pressure = { unload = true, idle_s = 60, restore_s = 120, restore_min_priority = 3 }
 
 # ---- llama.cpp ---------------------------------------------------------------
 # One complete command per device. `${WEIGHTS}` and `${PORT}` are the only
@@ -116,6 +121,7 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling",
            "--host", "127.0.0.1", "--port", "${PORT}"]
 
 [models.bge-reranker]                     # gutenberg and wikipedia: the reranker (jina /v1/rerank)
+priority = 2
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/bge-m3/bge-reranker-v2-m3-f16.gguf"
 device  = "xpu"
@@ -143,6 +149,7 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "0",
 # (sha256:ce6d7fb39087…, before and after, seen on the node) — the engine's
 # `args` keep `${WEIGHTS}` and the digest is of the bytes.
 [models.chat]
+priority = 1                              # the Ask page only
 engine  = { name = "llama.cpp", build = "b10630", variant = "sycl" }
 weights = "/models/chat/qwen3-8b.gguf"
 device  = "xpu"
@@ -163,6 +170,7 @@ cmd.cpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--jinja", "-ngl", "0", "-c"
 # is an error that names it.
 
 [models.madlad]                           # TRANSLATE_URL
+priority = 0                              # the translator: an optimisation, search answers without it
 engine  = { name = "louise-madlad-server", build = "2" }
 weights = "/models/madlad/madlad400-3b-mt-bf16"
 device  = "xpu"
@@ -199,6 +207,7 @@ cmd.cpu = ["/opt/venv-st/bin/python", "-m", "servers.launch", "dar_legal_it", "-
            "--device", "cpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 
 [models.medcpt-rerank]                    # pubmed: the reranker (tei /rerank)
+priority = 2
 engine  = { name = "louise-medcpt-rerank-server", build = "1" }
 weights = "/models/medcpt/medcpt-cross-ov"
 device  = "xpu"

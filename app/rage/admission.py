@@ -36,12 +36,23 @@ every resident model went to host RAM and the kernel killed three of them.
 Where the card cannot be read (no reader for its driver, no capability)
 `foreign` is 0 and the ledger decides alone, as before.
 
-NEVER AN EVICTION FOR A LOAD. A load that does not fit is refused, with what
-is loaded, how much is free and how much a stranger holds — and that answer
-is Louise's notification. Which model to give up FOR ANOTHER OF OURS is
-Louise's decision (docs/notes/embedder-pool-spec.md §3-4): she knows whose
-batch is in flight. Giving up IDLE models because a stranger squeezes the
-card is another matter, and placement.py's (`relieve`).
+THIS MODULE ONLY ANSWERS; it never gives anything up. What follows a "no" is
+placement.py's. Until 2026-09-21 the answer was final — "never an eviction
+for a load", with the choice left to Louise because she knows whose batch is
+in flight — and Louise never made it (embedder-pool-spec.md §9 listed it as
+open). So a full card could admit nothing new, ever: DAR-legal-it was refused
+beside seven preloaded models, the translator among them, idle, which search
+does without. Operator, 2026-09-21: "RAGE should free VRAM on demand".
+
+Now a card that says no is asked once more after `placement._make_room` gives
+up IDLE models ranked strictly BELOW the one being loaded, lowest first — and
+only if the ledger, asked with them gone, says yes. "Idle" (`_idle`: nothing
+in flight and nothing asked for `idle_s`) is how "whose batch is in flight"
+is read without Louise: an embedding batch asks its model every fraction of
+a second. A load that still does not fit is refused, with what is loaded, how
+much is free and how much a stranger holds — that answer is Louise's
+notification. A stranger's squeeze gives up idle models by the same rule
+(`relieve`).
 
 AN UNKNOWN CAPACITY REFUSES. A card's capacity is declared in `rage.toml`
 and model.load requires it; the host's is the container's limit, read. Where

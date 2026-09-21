@@ -121,6 +121,40 @@ def least_given_up(holding: "list[tuple[Placed, int]]", deficit: int) -> "list[P
     return [p for p, _ in best[1]] if best else []
 
 
+def victims_by_priority(holding: "list[tuple[Placed, int]]", deficit: int,
+                        priority_of: "Callable[[str], int]", *,
+                        must_cover: bool) -> "list[Placed]":
+    """The idle models to give up for `deficit` MiB, the LOWEST priority first.
+
+    ONE rule for both reasons a card is freed — a load that does not fit, and a
+    stranger's squeeze — so the two cannot drift apart (scheduling.md §6,
+    item 4). A whole priority is given up before the next one is touched;
+    within the priority that closes the deficit, `least_given_up` picks the
+    fewest MiB. Size breaks a tie and never decides: deciding by size alone
+    gave up the 1 GiB reranker, which every search uses, and kept the 6.2 GiB
+    translator nobody had asked for (the node, 2026-09-21).
+
+    `must_cover`: a LOAD takes nothing unless everything it may take covers the
+    deficit. Giving up the translator, chat and both rerankers and then
+    refusing anyway would destroy four models for nothing (§6, item 6). A
+    SQUEEZE takes whatever helps, as it always has: every MiB it frees keeps a
+    model that is answering off host RAM."""
+    if deficit <= 0 or not holding:
+        return []
+    if must_cover and sum(mib for _, mib in holding) < deficit:
+        return []
+    out: list[Placed] = []
+    left = deficit
+    for prio in sorted({priority_of(p.model) for p, _ in holding}):
+        tier = [(p, mib) for p, mib in holding if priority_of(p.model) == prio]
+        tier_total = sum(mib for _, mib in tier)
+        if tier_total >= left:
+            return out + least_given_up(tier, left)
+        out += [p for p, _ in tier]
+        left -= tier_total
+    return out
+
+
 def _log(message: str) -> None:
     print(f"[rage] {message}", flush=True)
 
@@ -213,6 +247,71 @@ class Placement:
     def _holding(self) -> dict[str, str]:
         return {m: p.device for m, p in self.placed.items()}
 
+    def _priority(self, model_id: str) -> int:
+        entry = self.cfg.models.get(model_id)
+        return entry.priority if entry is not None else model.DEFAULT_PRIORITY
+
+    def _fits(self, entry: ModelEntry, device: str,
+              loaded: dict[str, str] | None = None) -> admission.Verdict:
+        foreign = {} if device == CPU else {
+            device: self.card_memory(device).get("foreign_mib") or 0}
+        return admission.fits(self.cfg, self._holding() if loaded is None else loaded,
+                              entry.id, device, self.capacity, foreign)
+
+    async def _make_room(self, entry: ModelEntry, device: str,
+                         verdict: admission.Verdict) -> bool:
+        """EVICTION FOR A LOAD — operator, 2026-09-21: "RAGE should free VRAM on
+        demand", which embedder-pool-spec.md §3 already said and nothing built.
+        Returns whether anything was given up.
+
+        Only when the CARD is what refused; only IDLE models (`_idle`: nothing
+        in flight, nothing asked for `idle_s`, so a batch between two requests
+        is not idle); only models ranked STRICTLY BELOW the one being loaded,
+        or bringing back the translator for a search would give up chat and a
+        reranker for the lowest-priority model there is, and two rerankers of
+        one rank would evict each other in turn; the lowest priority first
+        (`victims_by_priority`), counted in the ledger's own DECLARED MiB,
+        because the ledger is what is asked again.
+
+        Nothing is given up unless the ledger, asked with those models gone,
+        says yes — card and host both. Giving up four models and refusing
+        anyway would destroy them for nothing (scheduling.md §6, item 6)."""
+        if device == CPU or verdict.device != device or verdict.free_mib is None:
+            return False
+        if not self.cfg.pressure["unload"]:
+            return False
+        rank = self._priority(entry.id)
+        now = time.time()
+        holding = [(p, self.cfg.models[p.model].memory[device])
+                   for p in self._idle(device, now)
+                   if p.model != entry.id and p.model in self.cfg.models
+                   and self._priority(p.model) < rank]
+        victims = victims_by_priority(holding, verdict.need_mib - verdict.free_mib,
+                                      self._priority, must_cover=True)
+        if not victims:
+            return False
+        gone = {v.model for v in victims}
+        if not self._fits(entry, device, {m: d for m, d in self._holding().items()
+                                          if m not in gone}).ok:
+            return False                        # even with them gone it would not fit
+        given_up = False
+        why = f"to make room for {entry.id}, which needs {verdict.need_mib} MiB"
+        for placed in victims:
+            idle_for = int(now - placed.last_used)
+            try:
+                if not await self.unload(placed.model, only_if_idle=True):
+                    continue                    # a request reached it meanwhile: left alone
+            except Refused as e:
+                self.log(f"{placed.model}: not given up for {entry.id}: {e}")
+                continue
+            self._dropped[placed.model] = {"device": device, "time": int(now), "why": why}
+            self._event(RELIEVED, placed.model, device,
+                        f"idle for {idle_for} s and unloaded {why}")
+            self.log(f"{placed.model}@{device}: GIVEN UP FOR A LOAD, idle for "
+                     f"{idle_for} s — {why}")
+            given_up = True
+        return given_up
+
     async def ensure(self, model_id: str, device: str | None = None) -> Placed:
         """The model, loaded — on `device`, or wherever it is or defaults to."""
         entry = self.cfg.models.get(model_id)
@@ -234,10 +333,12 @@ class Placement:
         if not Path(entry.weights).exists():
             raise Refused(503, f"the weights of {entry.id} are absent: {entry.weights}. RAGE "
                                f"fetches nothing; place them and ask again", state=ABSENT)
-        foreign = {} if device == CPU else {
-            device: self.card_memory(device).get("foreign_mib") or 0}
-        verdict = admission.fits(self.cfg, self._holding(), entry.id, device, self.capacity,
-                                 foreign)
+        verdict = self._fits(entry, device)
+        if not verdict.ok and await self._make_room(entry, device, verdict):
+            # Asked AGAIN, after the awaits: another load may have taken the
+            # room meanwhile. From this answer to holding the place there is
+            # no await, which is what keeps two loads from sharing one place.
+            verdict = self._fits(entry, device)
         if not verdict.ok:
             # THE NOTIFICATION (operator, 2026-09-20): Louise needed a model and it
             # does not fit. She gets the reason on the answer, and RAGE keeps it
@@ -443,19 +544,23 @@ class Placement:
              its reload puts it back on the card once there is room;
           2. while a stranger SQUEEZES the card (real free memory below the
              declared reserve, with a stranger holding part of it): the idle
-             models that TOGETHER cover the deficit with the LEAST given up
-             (`least_given_up`). Least-recently-used-first was the first rule,
-             and the first live squeeze (the node, 2026-09-20: 1,435 MiB short)
-             gave up 9,937 MiB for it — two small models and then the 8.6 GiB
-             one that happened to be next in line.
+             models that cover the deficit, the LOWEST PRIORITY first and the
+             fewest MiB within it (`victims_by_priority`). Least-recently-used
+             was the first rule — the first live squeeze (2026-09-20: 1,435 MiB
+             short) gave up 9,937 MiB for it, the 8.6 GiB model that happened
+             to be next in line. Fewest-MiB was the second, and it always gave
+             up the small reranker every search uses and kept the translator
+             (2026-09-21).
         A model somebody is using is never touched: if the stranger squeezes
         past what the idle ones free, the driver pushes it to host RAM and it
         goes on answering.
 
-        RESTORED: a PRELOADED model given up comes back by itself once the card
-        has been quiet for `restore_s` and REALLY has room for it — read, not
-        assumed — one per look. Any other comes back on its next request,
-        through admission like any load."""
+        RESTORED: a PRELOADED model of at least `restore_min_priority` comes
+        back by itself once the card has been quiet for `restore_s` and REALLY
+        has room for it — read, not assumed — one per look. Any other comes
+        back on its next request, through admission like any load. The bar is
+        what ended the reranker's loop (2026-09-21): it was given up, came back
+        with nobody asking, and the next burst of work pushed it off again."""
         now = time.time() if now is None else now
         given_up: list[str] = []
         cards = sorted({p.device for p in self.placed.values()}
@@ -482,8 +587,9 @@ class Placement:
                        f"{mem['free_mib']} MiB are free, under the {mem['reserve_mib']} reserved")
                 holding = [(p, self.procfs.gpu_mib(p.pid)[0] or 0) for p in idle
                            if p.pid is not None and not any(p is v for v, _ in victims)]
-                victims += [(p, why) for p in least_given_up(
-                    [(p, mib) for p, mib in holding if mib], deficit)]
+                victims += [(p, why) for p in victims_by_priority(
+                    [(p, mib) for p, mib in holding if mib], deficit,
+                    self._priority, must_cover=False)]
             for placed, why in victims:
                 idle_for = int(now - placed.last_used)
                 try:
@@ -509,6 +615,9 @@ class Placement:
                 continue
             if model_id not in self.cfg.preload:
                 continue                                # back on its next request
+            if self._priority(model_id) < self.cfg.pressure["restore_min_priority"]:
+                continue                                # so is anything ranked below it
+
             device = dropped["device"]
             quiet = self._quiet_since.get(device)
             if quiet is None or now - quiet < restore_s:

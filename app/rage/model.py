@@ -51,6 +51,12 @@ class EngineDecl:
     variant: str | None = None
 
 
+#: The priority a model has when its entry names none: the top tier, the
+#: encoders — given up last, and brought back by itself after a squeeze
+#: (`pressure.restore_min_priority`).
+DEFAULT_PRIORITY = 3
+
+
 @dataclass(frozen=True)
 class ModelEntry:
     id: str
@@ -67,6 +73,17 @@ class ModelEntry:
     #: 2026-09-19, the eight GPU servers held 6.1 GiB between them at rest
     #: and 22.0 GiB at their load-time peaks (MADLAD alone 8.5).
     host: Mapping[str, int] = field(default_factory=dict)
+    #: Which idle model RAGE gives up first when a card must be freed — for a
+    #: load that does not fit, or under a stranger's squeeze (placement.py:
+    #: `victims_by_priority`). LOWER goes first. Size only breaks a tie within
+    #: one priority: giving up the small, often-used model because it frees the
+    #: least is how the reranker was evicted and restored in a loop on
+    #: 2026-09-21 while the 6.2 GiB translator nobody had asked for stayed.
+    #: The operator's order (2026-09-21): the translator 0 — an optimisation,
+    #: search answers without it, only untranslated — chat 1, the rerankers 2,
+    #: the encoders DEFAULT_PRIORITY. Absent is DEFAULT_PRIORITY, so a file
+    #: written before this key existed parses and behaves exactly as before.
+    priority: int = DEFAULT_PRIORITY
 
     @property
     def devices(self) -> tuple[str, ...]:
@@ -90,7 +107,8 @@ class ModelEntry:
                                   f"{device!r}; it has {list(self.devices)}") from None
 
 
-PRESSURE_DEFAULTS: Mapping[str, Any] = {"unload": True, "idle_s": 60, "restore_s": 120}
+PRESSURE_DEFAULTS: Mapping[str, Any] = {"unload": True, "idle_s": 60, "restore_s": 120,
+                                        "restore_min_priority": DEFAULT_PRIORITY}
 
 
 @dataclass(frozen=True)
@@ -111,6 +129,11 @@ class RageConfig:
     #: rest are not pushed into host RAM. `idle_s`: a model nobody has asked
     #: for this long, with no request in flight, is idle. `restore_s`: how long
     #: the card must have been quiet before a preloaded model given up comes back.
+    #: `restore_min_priority`: only a model of at least this priority comes back
+    #: BY ITSELF; the rest come back on their next request. Bringing back one
+    #: nobody asked for is what made the reranker load, go, and load again on
+    #: 2026-09-21 — each return put it back where the next burst of work pushed
+    #: it off the card.
     pressure: Mapping[str, Any] = field(default_factory=lambda: dict(PRESSURE_DEFAULTS))
 
 
@@ -162,7 +185,7 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
                               f"digits, '.', '_' and '-', and never '@' or '/'")
     t = _table(raw, where)
     unknown = set(t) - {"engine", "weights", "device", "memory", "host", "cmd", "env",
-                        "health"}
+                        "health", "priority"}
     if unknown:
         raise RageConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
     for key in ("engine", "weights", "device", "memory", "cmd"):
@@ -232,9 +255,15 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
     if not isinstance(health, str) or not health.startswith("/"):
         raise RageConfigError(f"{where}.health must be a path starting with '/'")
 
+    priority = t.get("priority", DEFAULT_PRIORITY)
+    if isinstance(priority, bool) or not isinstance(priority, int) or priority < 0:
+        raise RageConfigError(f"{where}.priority must be a whole number, 0 or more "
+                              f"(lower is given up first), got {priority!r}")
+
     return ModelEntry(id=model_id, engine=EngineDecl(e["name"], e["build"], variant),
                       weights=weights, device=device, memory=memory, cmd=cmd,
-                      env=dict(env), health=health, source=source, host=host)
+                      env=dict(env), health=health, source=source, host=host,
+                      priority=priority)
 
 
 def _models(doc: dict[str, Any], source: str) -> dict[str, ModelEntry]:
@@ -318,7 +347,8 @@ def load(path: Path) -> RageConfig:
             if not isinstance(value, bool):
                 raise RageConfigError(f"rage.pressure.unload must be true or false, got {value!r}")
         elif isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise RageConfigError(f"rage.pressure.{key} must be a whole number of seconds, "
+            unit = "a model priority" if key == "restore_min_priority" else "seconds"
+            raise RageConfigError(f"rage.pressure.{key} must be a whole number of {unit}, "
                                   f"got {value!r}")
         pressure[key] = value
     return RageConfig(models=models, preload=tuple(preload),

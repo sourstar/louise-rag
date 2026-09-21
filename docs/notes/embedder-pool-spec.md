@@ -126,6 +126,10 @@ the Codex. The pool config must enable the deterministic mode in each
 - Concrete llama-swap `config.yaml`: group definition for query embedders,
   per-model persist for creation, `${PORT}`, ctx sizes, `--embedding`.
 - How Louise maps a collection's encoder hash → a llama-swap model alias.
-- Headroom check that triggers explicit eviction (§3), and the batch-boundary
-  unload hook (§4).
+- ~~Headroom check that triggers explicit eviction (§3)~~ — **built
+  2026-09-21, in RAGE rather than Louise** (rage.md §7, amended): a load that
+  does not fit gives up idle models ranked strictly below it, lowest
+  `priority` first, and only if that is enough. "Idle" — nothing in flight,
+  nothing asked for `idle_s` — stands in for "whose batch is in flight".
+  The batch-boundary unload hook (§4) is still open.
 - Health/readiness wiring so Louise waits for load before first query.

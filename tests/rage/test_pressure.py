@@ -223,12 +223,13 @@ def test_it_can_be_switched_off_and_the_settings_are_checked(rage, card):
     assert run(p.relieve(now=placed.last_used + 600)) == []
     assert p.card_memory("xpu")["squeezed"] is True, "still SAID"
     for bad in ("pressure = { unload = 1 }", "pressure = { idle_s = -1 }",
-                "pressure = { patience = 3 }"):
+                "pressure = { patience = 3 }", "pressure = { restore_min_priority = -1 }"):
         rage.config.write_text(text.replace("[rage]\n", f"[rage]\n{bad}\n", 1), encoding="utf-8")
         with pytest.raises(model.RageConfigError, match="pressure"):
             model.load(rage.config)
     rage.config.write_text(text, encoding="utf-8")
-    assert model.load(rage.config).pressure == {"unload": True, "idle_s": 60, "restore_s": 120}
+    assert model.load(rage.config).pressure == {"unload": True, "idle_s": 60, "restore_s": 120,
+                                                "restore_min_priority": 3}
 
 
 # ---- coming back -----------------------------------------------------------------------------
@@ -266,6 +267,31 @@ def test_it_does_not_come_back_the_moment_the_squeeze_ends(rage, card):
     assert "bge-m3" not in p.placed, "a stranger between two batches is still a stranger"
     run(p.relieve(now=t0 + 3 + 121))
     assert "bge-m3" in p.placed
+
+
+def test_a_model_ranked_below_the_bar_is_given_up_and_comes_back_only_when_asked(rage, card):
+    """The reranker's loop on the node, 2026-09-21: given up under pressure,
+    back with nobody asking, pushed off the card by the next burst of work,
+    given up again. A model ranked below `restore_min_priority` waits to be
+    asked for (tests/rage/test_evict_for_load.py has the ranking itself)."""
+    text = rage.config.read_text(encoding="utf-8").replace(
+        'preload = ["bge-m3"]', 'preload = ["madlad"]').replace(
+        "[models.madlad]\n", "[models.madlad]\npriority = 0\n", 1)
+    rage.config.write_text(text, encoding="utf-8")
+    p = rage.placement(card=card)
+    placed = run(p.ensure("madlad"))
+    rage.set_gpu("madlad@xpu", card_mib=8_200, host_mib=0)
+    t0 = placed.last_used + 600
+    card.used_mib = 9_900                       # a stranger holds 1,700: 100 free < 1,000
+    assert run(p.relieve(now=t0)) == ["madlad"]
+
+    card.used_mib = 300                         # the stranger left: all the room it needs
+    run(p.relieve(now=t0 + 10))
+    run(p.relieve(now=t0 + 10 + 121))           # quiet for longer than restore_s
+    assert "madlad" not in p.placed, "rank 0 < restore_min_priority: not by itself"
+    assert [e["kind"] for e in p.events] == ["unloaded-under-pressure"]
+
+    assert run(p.ensure("madlad")).state == READY, "and it comes back the moment it is asked"
 
 
 def test_a_model_given_up_comes_back_on_its_next_request_through_admission(rage, card):

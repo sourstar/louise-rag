@@ -275,11 +275,33 @@ DELETE /louise/models/<id>            → remove it; the same 409s
   shows it beside the declaration, so a figure that drifts is visible.
   The declaration decides, never the observation: a model that spilled
   to host RAM holds less than it needs.
-- **Does not fit** → `503` with `Retry-After` and what is loaded; never
-  an eviction. Eviction is Louise's decision, explicit and event-driven
-  (`embedder-pool-spec.md` §3–4); the front gives the facts and the
-  lever. For Louise a `503` is already a deferral
-  (`worker._ENDPOINT_BUSY_STATUS`).
+- **Does not fit** → the front first gives up IDLE models ranked strictly
+  BELOW the one asked for, the lowest `priority` first, and asks again;
+  still no → `503` with `Retry-After` and what is loaded. For Louise a
+  `503` is already a deferral (`worker._ENDPOINT_BUSY_STATUS`).
+  **AMENDED 2026-09-21.** This line used to read "never an eviction.
+  Eviction is Louise's decision" — because only Louise knows whose batch
+  is in flight. Louise never made the decision (`embedder-pool-spec.md`
+  §9 carried it as open), so a full card admitted nothing new: that night
+  DAR-legal-it was refused 6,200 MiB with 1,125 free while the translator
+  sat idle on 8,200. Operator: "RAGE should free VRAM on demand", in the
+  order translator (0) → chat (1) → rerankers (2) → encoders (3). What
+  replaced Louise's knowledge is `_idle` — nothing in flight and nothing
+  asked for `idle_s`; an embedding batch asks its model every fraction of
+  a second, so 60 s of silence means it has stopped. Three rules keep it
+  from doing harm, each with a test that fails without it
+  (`tests/rage/test_evict_for_load.py`): **strictly below** — the
+  translator, asked for by a search, cannot push out chat and a reranker,
+  and two rerankers of one rank cannot evict each other in turn; **only
+  if enough** — nothing is given up unless the ledger, asked with those
+  models gone, says yes; **never in use** — `unload(only_if_idle=True)`
+  leaves a model a request reached meanwhile. The same ranking now orders
+  a stranger's squeeze (§19), which chose by fewest MiB and so always gave
+  up the reranker every search uses. And a model ranked below
+  `pressure.restore_min_priority` (3) no longer comes back by itself after
+  a squeeze: the reranker's did, and the next burst of work pushed it off
+  the card again — given up at 02:18:56, back at 02:21:05 with nobody
+  asking, given up at 02:23:59, back at 02:26:10.
 - **Autoload stays, through admission.** A request for an unloaded model
   admits on its default device; fits → load, wait, serve; else `503`.
   Single-flight per model.
