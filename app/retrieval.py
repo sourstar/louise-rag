@@ -94,17 +94,29 @@ def _merge_rrf(lists: list[list[dict]]) -> list[dict]:
 RERANK_TOP_N = 50
 #: 05 §5.4: `limit`, the results per list AFTER the reranker — 10 by default
 DEFAULT_RESULTS = 10
-#: 05 §5.4 caps `limit` at 100, the depth of a leg; so is the rerank depth
+#: 05 §5.4 caps `limit` — the results per list — at 100
 MAX_RESULTS = 100
+#: 05 §5.4 caps the rerank depth at 300 (operator, 2026-09-21: "I cannot
+#: increment the rerank from above 100"; then "up to 300 per leg"). It used to
+#: share MAX_RESULTS, only because a leg was said to contribute its top 100
+#: records — which the code never did: a leg goes to max(limit, depth, 20).
+MAX_RERANK_DEPTH = 300
 
 
-def _rerank_budget_s() -> float:
-    """The node's `[ask] latency_budget_ms` (07 §7.8), in seconds."""
+def _rerank_budget_s(depth: int = RERANK_TOP_N) -> float:
+    """The node's `[ask] latency_budget_ms` (07 §7.8), in seconds, for a list
+    reranked `depth` deep: the budget is set for the default depth of 50 and
+    given to a deeper list IN PROPORTION — 300 candidates have six times as
+    long (05 §5.6; operator, 2026-09-21: "scale the timeout proportionally").
+    Never less than the budget itself: a shallower list keeps it, since a
+    reranker's cost is not all per candidate and a squeezed budget would only
+    turn more reranks into the fused order."""
     from . import platform_config
     try:
-        return platform_config.load().ask.latency_budget_ms / 1000.0
+        base = platform_config.load().ask.latency_budget_ms / 1000.0
     except Exception:   # noqa: BLE001 — a broken platform.toml must not break search
-        return platform_config.AskConfig().latency_budget_ms / 1000.0
+        base = platform_config.AskConfig().latency_budget_ms / 1000.0
+    return base * max(1.0, depth / RERANK_TOP_N)
 
 
 def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
@@ -454,7 +466,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
         con, collection, partial["merged"][: max(k * 4, rerank_depth)], plan.core)
     ranked, reranked = _rerank_list(plan.core, candidates,
                                     collections_mod.reranker_for(collection),
-                                    _rerank_budget_s(), rerank_depth)
+                                    _rerank_budget_s(rerank_depth), rerank_depth)
     final = ranked[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
@@ -589,7 +601,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     # `book_id` alone is ambiguous across them), so the reranker draws from
     # the survivors. The lists rerank in parallel: one slow reranker costs
     # the query its own time, not the sum.
-    budget_s = _rerank_budget_s()
+    budget_s = _rerank_budget_s(rerank_depth)
 
     def _rerank_one(item):
         collection, merged = item

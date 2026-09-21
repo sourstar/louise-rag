@@ -126,7 +126,7 @@ def _stubbed(monkeypatch, *, when_leg_runs=lambda: None, completed=None):
     monkeypatch.setattr(retrieval, "_attach_work_fields", lambda con, c, hits, q: hits)
     monkeypatch.setattr(retrieval, "_attach_metadata_and_enqueue",
                         lambda con, c, hits: enqueued.append(c))
-    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda: 0.4)
+    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda depth=50: 0.4)
     monkeypatch.setattr(retrieval.db, "connect", lambda c=None: _Con())
     return enqueued
 

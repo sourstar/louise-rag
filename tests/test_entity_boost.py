@@ -191,7 +191,7 @@ def test_federated_search_follows_the_same_rule(isolated_config, monkeypatch, tm
     pinning and boosting every variant."""
     c, _ = _manifest(tmp_path)
     boosted = _names_brca2(monkeypatch)
-    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda: 0.4)
+    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda depth=50: 0.4)
     _check(retrieval.federated_search([c], "BRCA2 breast cancer risk", k=5, translate=False),
            boosted)
 

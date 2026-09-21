@@ -157,7 +157,7 @@ def _stub_pipeline(monkeypatch, lists):
     monkeypatch.setattr(retrieval, "_attach_metadata_and_enqueue", lambda con, c, hits: None)
     monkeypatch.setattr(retrieval.refs, "get_store", lambda: None)
     monkeypatch.setattr(retrieval.refs.RESOLVER, "resolve", lambda q, s: [])
-    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda: 0.4)
+    monkeypatch.setattr(retrieval, "_rerank_budget_s", lambda depth=50: 0.4)
 
 
 def test_federated_search_reranks_each_collection_on_its_own(isolated_config, monkeypatch,

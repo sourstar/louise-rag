@@ -49,7 +49,7 @@
       <input id="limit" type="number" min="1" max="{{ max_results }}" value="{{ default_results }}"
              data-default="{{ default_results }}" style="width:4.5em" onchange="rememberCounts()"></label>
     <label class="inline" title="candidates per list the reranker orders, before reranking (default {{ default_rerank_depth }})">reranked from
-      <input id="rerank-depth" type="number" min="1" max="{{ max_results }}" value="{{ default_rerank_depth }}"
+      <input id="rerank-depth" type="number" min="1" max="{{ max_rerank_depth }}" value="{{ default_rerank_depth }}"
              data-default="{{ default_rerank_depth }}" style="width:4.5em" onchange="rememberCounts()"></label>
     {# EVERY LANGUAGE ONLY WHEN ASKED (operator, 2026-09-18): a search goes
        out in the main languages; this, or `lang:all` in the question, adds

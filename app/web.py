@@ -214,7 +214,7 @@ class AskQueryBody(BaseModel):
     # reranking, with as default the recommended amount" (operator,
     # 2026-09-18): 05 §5.4's `limit` and §5.6's depth, per request
     limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
-    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RERANK_DEPTH)
     # the question into EVERY language held, not only the main ones — only
     # when asked (operator, 2026-09-18)
     all_languages: bool = False
@@ -261,7 +261,8 @@ def ask_page(request: Request):
         "result_languages": RESULT_LANGUAGES,
         "default_results": retrieval.DEFAULT_RESULTS,
         "default_rerank_depth": retrieval.RERANK_TOP_N,
-        "max_results": retrieval.MAX_RESULTS})
+        "max_results": retrieval.MAX_RESULTS,
+        "max_rerank_depth": retrieval.MAX_RERANK_DEPTH})
 
 
 class TranslateBody(BaseModel):

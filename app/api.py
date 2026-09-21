@@ -407,7 +407,7 @@ class SearchBody(BaseModel):
     collections: list[str] | None = None   # None = all enabled
     verify: bool = False                   # blocking verify-on-use (§6 T4)
     # 05 §5.6: how many of each list the reranker orders — 50 by default
-    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RERANK_DEPTH)
     all_languages: bool = False            # every language held, not only the main ones
 
 #: what a caller that disconnected mid-search is answered: nothing it will
@@ -476,7 +476,7 @@ class ChatBody(BaseModel):
     # Ask page sends its own two settings, so the answer's [n] and the
     # page's hits come from the same search
     limit: int = Field(retrieval.DEFAULT_RESULTS, ge=1, le=retrieval.MAX_RESULTS)
-    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
+    rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RERANK_DEPTH)
     all_languages: bool = False            # the page's own choice, so both searches match
 
 @app.post("/v1/chat/completions")

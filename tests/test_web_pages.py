@@ -1050,10 +1050,12 @@ def test_the_fan_out_badge_counts_in_good_english():
 def test_the_ask_page_sets_how_many_before_and_after_reranking(client, monkeypatch):
     """"I want to be able to set the maximum number of results a query
     returns before and after reranking, with as default the recommended
-    amount" (operator, 2026-09-18): 05 §5.4's 10 and §5.6's 50."""
+    amount" (operator, 2026-09-18): 05 §5.4's 10 and §5.6's 50. The depth
+    reaches 300 since 2026-09-21 ("up to 300 per leg"); the results stay at
+    most 100."""
     page = client.get("/ask").text
     assert 'id="limit" type="number" min="1" max="100" value="10"' in page
-    assert 'id="rerank-depth" type="number" min="1" max="100" value="50"' in page
+    assert 'id="rerank-depth" type="number" min="1" max="300" value="50"' in page
     assert page.count("...counts()") == 2, "the page's search AND the answer's search"
 
     seen = {}
