@@ -5,7 +5,7 @@ circular import (api.py mounts web.py's routers).
 """
 from fastapi import HTTPException
 
-from . import collections as collections_mod, db, retrieval
+from . import cancel, collections as collections_mod, db, retrieval
 
 
 def withheld_reason(collection) -> str | None:
@@ -107,11 +107,14 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
         # reads as "nothing matched your query".
         return {"hits": [], "withheld": withheld}
     if len(participants) == 1:
-        con = db.connect(participants[0])
+        # interrupted if the caller goes (app/cancel.py): a statement running
+        # on it ends then, not at its next row
+        con = cancel.watch(db.connect(participants[0]))
         result = retrieval.search(con, query, k=k, mode=mode, translate=translate,
                                    collection=participants[0], rerank_depth=rerank_depth,
                                    all_languages=all_languages)
         if verify:
+            cancel.checkpoint()            # an embed call per unverified chunk
             result["verification"] = _verify_hits(con, participants[0], result["hits"])
         if withheld:
             result["withheld"] = withheld
@@ -127,7 +130,9 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
             hits = [h for h in result["hits"]
                     if h.get("source_collection") == participant.name]
             if hits:
-                summaries.append(_verify_hits(db.connect(participant), participant, hits))
+                cancel.checkpoint()
+                summaries.append(_verify_hits(cancel.watch(db.connect(participant)),
+                                              participant, hits))
         result["verification"] = _merge_verification(summaries)
     return result
 

@@ -29,11 +29,13 @@ from pathlib import Path
 from urllib.parse import quote
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
+from fastapi.responses import (HTMLResponse, RedirectResponse, Response, StreamingResponse,
+                               JSONResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from . import auth, collections as collections_mod, query_service, web
+from . import auth, cancel, collections as collections_mod, query_service, web
 from . import config, db, discovery, retrieval, llm, summarize, embeddings, fts, spaces
 from . import node_state
 
@@ -408,8 +410,12 @@ class SearchBody(BaseModel):
     rerank_depth: int = Field(retrieval.RERANK_TOP_N, ge=1, le=retrieval.MAX_RESULTS)
     all_languages: bool = False            # every language held, not only the main ones
 
-@app.post("/api/search")
-def api_search(body: SearchBody):
+#: what a caller that disconnected mid-search is answered: nothing it will
+#: read. nginx's "client closed request"; the search behind it has stopped.
+CLIENT_GONE = 499
+
+
+def _search_and_log(body: SearchBody) -> dict:
     result = _run_search(body.collections, body.query, body.k, body.mode, body.translate,
                           verify=body.verify, rerank_depth=body.rerank_depth,
                           all_languages=body.all_languages)
@@ -417,6 +423,17 @@ def api_search(body: SearchBody):
     db.log_query(con, "search", body.query, body.mode, body.k, result["timings"],
                  len(result["hits"]), _source_qualified_ids(result["hits"]))
     return result
+
+
+@app.post("/api/search")
+async def api_search(body: SearchBody, request: Request):
+    """The search runs in a worker thread for as long as its caller is there;
+    a caller that disconnects stops it (app/cancel.py) — and is not logged,
+    since it was never answered."""
+    try:
+        return await cancel.while_connected(request, _search_and_log, body)
+    except cancel.Cancelled:
+        return Response(status_code=CLIENT_GONE)
 
 # ---------------- OpenAI-compatible RAG endpoint ----------------
 
@@ -463,15 +480,27 @@ class ChatBody(BaseModel):
     all_languages: bool = False            # the page's own choice, so both searches match
 
 @app.post("/v1/chat/completions")
-def chat_completions(body: ChatBody):
-    con = _con()   # query_log lives in the default collection's manifest regardless
+async def chat_completions(body: ChatBody, request: Request):
     user_msgs = [m for m in body.messages if m.get("role") == "user"]
     if not user_msgs:
         raise HTTPException(400, "no user message")
     query = str(user_msgs[-1].get("content", ""))
     t0 = time.time()
-    result = _run_search(body.collections, query, body.limit, "hybrid", True, verify=body.verify,
-                         rerank_depth=body.rerank_depth, all_languages=body.all_languages)
+    # The SEARCH stops if the caller goes (app/cancel.py). The answer after
+    # it is one call to the model, which nothing can interrupt midway; it
+    # runs in a worker thread so this endpoint never blocks the loop.
+    try:
+        result = await cancel.while_connected(
+            request, _run_search, body.collections, query, body.limit, "hybrid", True,
+            verify=body.verify, rerank_depth=body.rerank_depth,
+            all_languages=body.all_languages)
+    except cancel.Cancelled:
+        return Response(status_code=CLIENT_GONE)
+    return await run_in_threadpool(_chat_answer, body, query, result, t0)
+
+
+def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
+    con = _con()   # query_log lives in the default collection's manifest regardless
     messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
     # keep prior turns for conversational context (before the sources turn)
     history = [m for m in body.messages[:-1] if m.get("role") in ("user", "assistant")]

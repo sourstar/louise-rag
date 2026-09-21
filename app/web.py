@@ -42,7 +42,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import (auth, collections as collections_mod, config, db, discovery, gpu, llm,
+from . import (auth, cancel, collections as collections_mod, config, db, discovery, gpu, llm,
                 node_state, platform_config, query_service, reader, retrieval, spaces)
 from . import translate as mt
 from .transfer import manager as transfer_manager
@@ -596,7 +596,18 @@ def help_page(request: Request):
 
 
 @ask_router.post("/ask/query", response_class=HTMLResponse)
-def ask_query(request: Request, body: AskQueryBody):
+async def ask_query(request: Request, body: AskQueryBody):
+    """The Ask page's search, stopped if the page's request goes — a reader
+    who asks again, or closes the tab, leaves no search running for nobody
+    (app/cancel.py)."""
+    try:
+        result = await cancel.while_connected(request, _ask_result, body)
+    except cancel.Cancelled:
+        return Response(status_code=499)
+    return TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
+
+
+def _ask_result(body: AskQueryBody) -> dict:
     result = query_service.run_search(body.collections, body.query, body.limit, body.mode, True,
                                       rerank_depth=body.rerank_depth,
                                       all_languages=body.all_languages)
@@ -632,7 +643,7 @@ def ask_query(request: Request, body: AskQueryBody):
     # message replaced by a crash (invariant 9's silence, again).
     db.log_query(con, "ask", body.query, body.mode, body.limit, result.get("timings") or {},
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))
-    return TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
+    return result
 
 
 # ---------------- admin login (outside admin_router — must be reachable

@@ -1,8 +1,8 @@
 """Retrieval orchestration.
 
 Pipeline per query:
-  0. resolve -> plan (architecture-v2.md §4): regex/dictionary entity
-     resolution against the reference layer (app/refs/). No entities found
+  0. resolve -> expand -> plan (architecture-v2.md §4, docs/05): regex/dictionary
+     entity resolution against the reference layer (app/refs/). No entities found
      -> every step below is a structural no-op, degenerating exactly to the
      pre-P0.3 pipeline. Entities found -> two separate outputs, NEVER
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
@@ -31,8 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 import httpx
-from . import (catalog, collections as collections_mod, config, copy_state, db, dispatch,
-               embeddings,
+from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
+               dispatch, embeddings,
                fts, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
@@ -266,6 +266,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         plan = language_plan.plan(query, [collection], translate)
     core = plan.core
 
+    # A leg starts only while the caller is still there (app/cancel.py).
+    cancel.checkpoint()
     t0 = time.time()
     catalog_hits = (catalog_search(con, core, langs=plan.only, collection=collection)
                     if mode in ("hybrid", "catalog") else [])
@@ -278,6 +280,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         for group in fts.existing_groups(collection):
             if not plan.searches(group):
                 continue
+            cancel.checkpoint()            # one group per language: a query can fan out wide
             held = fts.group_languages(group, collection)
             hits = _best_rank([fts.search(group, q, limit=limit, collection=collection,
                                           langs=plan.lang_filter(group))
@@ -296,6 +299,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         # enqueue, backfill) and stays respected there; retrieval uses
         # whatever vectors exist. With no table, embeddings.search returns []
         # and an unreachable endpoint degrades via the except below.
+        cancel.checkpoint()
         t0 = time.time()
         try:
             # 03 §3.3: a run that FAILED the gate withholds this leg, and the
@@ -436,6 +440,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     store = refs.get_store()
     resolved, facts, facts_withheld = _entity_facts(query, store)
 
+    cancel.checkpoint()                    # the plan may call the translator
     t0 = time.time()
     plan = language_plan.plan(query, [collection], translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
@@ -443,6 +448,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
                                      [e.entity_id for e in resolved], plan, rerank_depth)
     timings = {"languages": plan_ms, **partial["timings"]}
 
+    cancel.checkpoint()
     t0 = time.time()
     candidates = _attach_work_fields(
         con, collection, partial["merged"][: max(k * 4, rerank_depth)], plan.core)
@@ -452,6 +458,9 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     final = ranked[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
+    # This one WRITES (the lazy-embed queue): a search nobody is waiting for
+    # enqueues nothing.
+    cancel.checkpoint()
     _attach_metadata_and_enqueue(con, collection, final)
 
     timings["total"] = round((time.time() - t_total) * 1000, 1)
@@ -512,13 +521,14 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     # query into the union of what every collection holds, where each
     # collection used to ask for its own — serialised anyway, since the
     # node's Ollama runs one request at a time (OLLAMA_NUM_PARALLEL=1).
+    cancel.checkpoint()                    # the plan may call the translator
     t0 = time.time()
     plan = language_plan.plan(query, collections, translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
 
     def _run_one(collection):
         try:
-            con = db.connect(collection)
+            con = cancel.watch(db.connect(collection))
         except Exception as e:
             return collection, None, e
         try:
@@ -535,8 +545,13 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
                 pass
             return collection, None, e
 
+    # `carry`: a pool thread does not inherit the search's token, and without
+    # it every per-collection leg would run on after its caller had gone.
+    # Cancelled is a BaseException, so `_run_one`'s `except Exception` lets it
+    # through rather than logging a cancelled search as a failed collection.
     with ThreadPoolExecutor(max_workers=max(1, len(collections))) as ex:
-        outcomes = list(ex.map(_run_one, collections))
+        outcomes = list(ex.map(cancel.carry(_run_one), collections))
+    cancel.checkpoint()
     # ex.map preserves input order already, but sort explicitly on
     # collection.name for a deterministic tie-break in the federated fuse
     # below regardless of executor internals (invariant 3).
@@ -580,7 +595,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         collection, merged = item
         candidates = merged[: max(k * 4, rerank_depth)]
         try:
-            candidates = _attach_work_fields(db.connect(collection), collection,
+            candidates = _attach_work_fields(cancel.watch(db.connect(collection)), collection,
                                              candidates, plan.core)
         except Exception:   # noqa: BLE001 — a dedup that cannot run returns
             pass            # every hit, never none
@@ -589,7 +604,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
                             rerank_depth)
 
     with ThreadPoolExecutor(max_workers=max(1, len(per_collection))) as ex:
-        ranked = list(ex.map(_rerank_one, per_collection))
+        ranked = list(ex.map(cancel.carry(_rerank_one), per_collection))
     reranked = {c.name: ok for (c, _), (_, ok) in zip(per_collection, ranked)}
     final = _merge_rrf_federated([hits for hits, _ in ranked])[:k]
     rerank_ms = round((time.time() - t0) * 1000, 1)
@@ -599,9 +614,12 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     by_collection: dict[str, list[dict]] = {}
     for h in final:
         by_collection.setdefault(h["source_collection"], []).append(h)
+    # This WRITES (the lazy-embed queue): nothing is enqueued for a search
+    # nobody is waiting for.
+    cancel.checkpoint()
     for name, hits in by_collection.items():
         collection = collection_by_name[name]
-        con = db.connect(collection)
+        con = cancel.watch(db.connect(collection))
         _attach_metadata_and_enqueue(con, collection, hits)
 
     timings = {
