@@ -93,6 +93,14 @@
   /* the page holds the view itself while text above it is translated
      (readerPaint): the browser's own anchoring would correct it twice */
   #reader-content{overflow:auto;padding:12px 16px;flex:1;overflow-anchor:none}
+  /* THE ANSWER GROWS ABOVE THE RESULTS. By default the browser keeps the
+     viewport pinned to what it is showing ("scroll anchoring"): a reader
+     scrolled down among the results had the page shift with every word the
+     answer streamed in above them, pushing its opening up out of view — it
+     read as an answer with its beginning chopped off (operator, 2026-09-21,
+     at 20 results; the text reached the page whole). The results are never
+     the anchor, so the answer pushes them down instead. */
+  #results{overflow-anchor:none}
   #reader-lang{margin-left:8px}
   #reader .translating{border-left:2px solid var(--lapis,#3a6ea5);padding-left:4px}
   .reader-chunk{white-space:pre-wrap;line-height:1.55;margin:0 0 12px}
@@ -171,6 +179,8 @@ async function ask(){
   const q=document.getElementById('q').value.trim();
   const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
   pane.style.display='block'; a.textContent='thinking…';
+  // an answer was asked for: it starts where the reader can see its first word
+  pane.scrollIntoView({block:'start'});
   const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
                          answer_lang:want,...counts()})});

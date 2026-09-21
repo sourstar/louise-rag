@@ -1151,3 +1151,15 @@ def test_node_wide_lines_are_the_nodes_not_the_first_collections(isolated_config
     assert f"[{c.name} info:fts]" in out, "a collection's own line still names it"
     tagged = {e["stage"]: e["collection"] for e in web._recent_events_all()}
     assert tagged["sched"] == "node" and tagged["fts"] == c.name
+
+
+def test_the_answer_is_not_pushed_out_of_view_as_it_streams(client):
+    """The answer grows ABOVE the results. With the browser's scroll anchoring
+    a reader scrolled among the results had the page follow them down as each
+    word arrived, and the answer's opening slid out of view — reported as an
+    answer "chopped, the beginning missing" (2026-09-21); on the node the text
+    reached the page whole every time. Scrolling itself needs a browser to
+    check; these pin the two lines that fix it, so neither goes unnoticed."""
+    page = client.get("/ask").text
+    assert "#results{overflow-anchor:none}" in page, "the results must never be the anchor"
+    assert "pane.scrollIntoView({block:'start'})" in page, "the answer starts where it is seen"
