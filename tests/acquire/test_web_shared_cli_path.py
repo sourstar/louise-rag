@@ -13,6 +13,15 @@ from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoi
 from app.plugins.base import LicenseClass
 
 
+def _only(collection):
+    """A stand-in for `collections.load_all` with its real signature:
+    `by_name` asks with `skip_unreadable=True` (one file's fault is not
+    another's), which returns `(served, unreadable)`."""
+    def load_all(*, skip_unreadable=False):
+        return ([collection], []) if skip_unreadable else [collection]
+    return load_all
+
+
 def _collection(tmp_path, **overrides):
     defaults = dict(
         name="test", plugin="gutenberg", profile=None, embed_mode_default=None,
@@ -46,7 +55,7 @@ def test_web_grow_plan_matches_engine_plan_acquisition_directly(tmp_path, mock_s
     (mock_server.root / "a.txt").write_bytes(b"x" * 100)
     collection = _collection(tmp_path)
     spec = _spec(mock_server)
-    monkeypatch.setattr(web.collections_mod, "load_all", lambda: [collection])
+    monkeypatch.setattr(web.collections_mod, "load_all", _only(collection))
     monkeypatch.setitem(web.ACQUIRE_REGISTRY, collection.plugin, spec)
 
     from app import db
@@ -63,9 +72,9 @@ def test_cli_and_web_grow_plan_agree(tmp_path, mock_server, monkeypatch, capsys)
     (mock_server.root / "b.txt").write_bytes(b"y" * 250)
     collection = _collection(tmp_path)
     spec = _spec(mock_server)
-    monkeypatch.setattr(web.collections_mod, "load_all", lambda: [collection])
+    monkeypatch.setattr(web.collections_mod, "load_all", _only(collection))
     monkeypatch.setitem(web.ACQUIRE_REGISTRY, collection.plugin, spec)
-    monkeypatch.setattr(cli.collections_mod, "load_all", lambda: [collection])
+    monkeypatch.setattr(cli.collections_mod, "load_all", _only(collection))
     monkeypatch.setitem(cli.ACQUIRE_REGISTRY, collection.plugin, spec)
 
     rc = cli.main(["corpus", "grow", "test", "--profile", "demo", "--dry-run"])

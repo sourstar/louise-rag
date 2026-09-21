@@ -814,8 +814,18 @@ def by_name(name: str) -> Collection | None:
     which guards a real side effect: outbound network, disk, license gates).
     Querying an already-ingested collection has no equivalent hazard, so an
     operator opts a collection out of federation the same way they opt it
-    out of existing at all today: by not shipping its collections/*.toml."""
-    for c in load_all():
+    out of existing at all today: by not shipping its collections/*.toml.
+
+    ANOTHER collection's fault is not this one's. A lookup by name used to
+    raise when any other file could not load — so on 2026-09-21 `hold check
+    pubmed` died on gutenberg's missing drag before it checked anything.
+    The named collection's own fault still raises, with its own reason: a
+    typo in THIS file must not read as "no such collection"."""
+    served, unreadable = load_all(skip_unreadable=True)
+    for c in served:
         if c.name == name:
             return c
+    for other, why in unreadable:
+        if other == name:
+            raise ValueError(why)
     return None
