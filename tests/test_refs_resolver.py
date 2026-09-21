@@ -125,3 +125,12 @@ def test_expand_itself_is_unchanged_and_still_reaches_everything(tmp_path):
     everything = refs.RESOLVER.expand(gene, store)
     bounded = refs.RESOLVER.expand_bounded(gene, store, 10_000)
     assert {e.entity_id for e in everything} == {e.entity_id for r in bounded for e in r.entities}
+
+
+def test_each_reached_carries_the_link_it_walked(tmp_path):
+    """docs/05 §5.4: a fact expand reached names the link it was reached
+    through — the declared link, not a guess from the table's name."""
+    store, gene = _brca2_with_variants(tmp_path, ["Benign"])
+    for r in refs.RESOLVER.expand_bounded(gene, store, 2):
+        assert r.link.from_table == r.table and r.link.to_table == gene.kind, r
+    assert _clinvar(refs.RESOLVER.expand_bounded(gene, store, 2)).link.name == "variant_to_gene"

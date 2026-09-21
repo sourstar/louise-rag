@@ -110,3 +110,28 @@ def test_pinned_fact_never_enters_rrf_input():
                                  source_id="hgnc", label="BRCA2", fields={})
     with pytest.raises(TypeError):
         retrieval._merge_rrf([[fact]])
+
+
+def test_a_reached_fact_names_the_link_everywhere_it_is_shown(tmp_path, monkeypatch):
+    """docs/05 §5.4: "— when expand reached it — the link it was reached
+    through". The real hgnc/clinvar-mini fixtures: BRCA2 is named, ClinVar
+    55074 is reached through `variant_to_gene` — in the response, in the
+    answer's [reference] block, and on the fact card."""
+    from app import web
+    _sync_refs(tmp_path, monkeypatch)
+    collection = _pubmed_collection(tmp_path)
+    _index_pubmed(collection)
+    result = retrieval.search(db.connect(collection), "BRCA2 widget", k=5, mode="fts",
+                              translate=False, collection=collection)
+    via = {f["entity_id"]: f["via"] for f in result["facts"]}
+    assert via == {"hgnc:1101": None, "clinvar-mini:55074": {
+        "from": "hgnc:1101", "link": "variant_to_gene",
+        "on": "clinvar_variant.gene_symbol → hgnc_gene.symbol"}}
+
+    prompt = retrieval.build_answer_messages("BRCA2 widget", result)[1]["content"]
+    assert "reached from hgnc:1101 through variant_to_gene" in prompt
+    gene_block = prompt[prompt.index("[reference] BRCA2"):].split("\n\n", 1)[0]
+    assert "reached from" not in gene_block, "the gene was named, not reached"
+
+    card = web.TEMPLATES.env.get_template("_ask_results.html").render(result=result)
+    assert card.count("reached from hgnc:1101 through variant_to_gene") == 1

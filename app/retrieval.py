@@ -48,12 +48,19 @@ class PinnedFact:
     subscriptable: CLAUDE.md invariant 4 requires PinnedFact instances never
     enter _merge_rrf's `lists`/`merged`. _merge_rrf accesses h["chunk_id"]
     etc., so passing a PinnedFact into it raises TypeError immediately — the
-    boundary is structurally enforced, not just conventional."""
+    boundary is structurally enforced, not just conventional.
+
+    `via`: the link a fact was reached through, when docs/05's expand reached
+    it (§5.4) — `{"from": the named entity, "link": the declared link's name,
+    "on": its join}` — and None when the query named the entity itself. A
+    ClinVar variant pinned beside "BRCA2" otherwise reads as something the
+    reader asked about."""
     entity_id: str
     kind: str
     source_id: str
     label: str | None
     fields: dict
+    via: dict | None = None
 
 def catalog_search(con, query: str, limit: int = 10,
                    langs: tuple[str, ...] | list[str] = (), collection=None) -> list[dict]:
@@ -175,29 +182,40 @@ def _entity_facts(query: str, store) -> tuple[list, list["PinnedFact"], list[dic
     boost's, and only those: the 21,968 variants BRCA2 reaches tag not one
     PubMed document the gene does not), the pinned facts, and what each link
     reached beyond its bound: named in the answer, never dropped in silence
-    (docs/05)."""
+    (docs/05). A fact expand reached names the link (`PinnedFact.via`)."""
     resolved = refs.RESOLVER.resolve(query, store)
     reached = [(r, link) for r in resolved
                for link in refs.RESOLVER.expand_bounded(r, store, FACTS_PER_LINK)]
     facts = _build_pinned_facts(
-        resolved + [e for _, link in reached for e in link.entities], store)
+        [(e, None) for e in resolved]
+        + [(e, _via(r, link)) for r, link in reached for e in link.entities], store)
     withheld = [{"entity_id": r.entity_id, "table": link.table,
                  "reached": link.total, "pinned": len(link.entities)}
                 for r, link in reached if link.total > len(link.entities)]
     return resolved, facts, withheld
 
 
+def _via(named, reached) -> dict:
+    """The link a fact was reached through (docs/05 §5.4), from the entity
+    the query named."""
+    link = reached.link
+    return {"from": named.entity_id, "link": link.name,
+            "on": f"{link.from_table}.{link.from_column} → {link.to_table}.{link.to_column}"}
+
+
 def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
+    """`entities_found`: (entity, via) pairs, the named ones first — an
+    entity both named and reached is a fact once, and the query named it."""
     facts: list[PinnedFact] = []
     seen: set[str] = set()
-    for e in entities_found:
+    for e, via in entities_found:
         if e.entity_id in seen:
             continue
         seen.add(e.entity_id)
         _, _, native = e.entity_id.partition(":")
         row = store.get(e.kind, native) or {}
         facts.append(PinnedFact(entity_id=e.entity_id, kind=e.kind, source_id=e.source_id,
-                                 label=e.label, fields=row))
+                                 label=e.label, fields=row, via=via))
     return facts
 
 def _tagged_among(con, collection, entity_ids: list[str], book_ids) -> set[int]:
@@ -680,7 +698,10 @@ def build_answer_messages(query: str, result: dict, answer_lang: str | None = No
     for fact in result.get("facts", []):
         label = fact.get("label") or fact["entity_id"]
         field_lines = "\n".join(f"{k}: {v}" for k, v in fact.get("fields", {}).items())
-        blocks.append(f"[reference] {label} — {fact['entity_id']}\n{field_lines}")
+        via = fact.get("via")
+        reached = (f"\nreached from {via['from']} through {via['link']} ({via['on']})"
+                   if via else "")
+        blocks.append(f"[reference] {label} — {fact['entity_id']}{reached}\n{field_lines}")
     spent = 0
     for i, h in enumerate(result["hits"], 1):
         # numbered by position on the page, so [n] still opens hit n

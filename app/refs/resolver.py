@@ -11,7 +11,7 @@ import re
 import threading
 from dataclasses import dataclass
 
-from ..plugins.base import Entity, RefLookup
+from ..plugins.base import Entity, RefLink, RefLookup
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]{1,15}")
 
@@ -38,10 +38,12 @@ _CLINICAL_RANK = ("CASE significance "
 class Reached:
     """One declared link walked from a resolved entity: the rows pinned, and
     how many the link reaches in all — so what is not pinned is named in the
-    answer, never dropped in silence (docs/05)."""
+    answer, never dropped in silence (docs/05). And the link itself: every
+    fact it reached names the link it was reached through (docs/05 §5.4)."""
     table: str
     entities: tuple[Entity, ...]
     total: int
+    link: RefLink
 
 
 _cache_lock = threading.Lock()
@@ -174,7 +176,7 @@ class DictResolver:
                 table=table,
                 entities=tuple(_entity(refs, table, r)
                                for r in refs.rows(table, where, order_by=order, limit=limit)),
-                total=refs.count(table, where)))
+                total=refs.count(table, where), link=link))
         return out
 
 

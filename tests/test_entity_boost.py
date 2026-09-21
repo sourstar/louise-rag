@@ -28,7 +28,7 @@ import shutil
 from pathlib import Path
 
 from app import collections as collections_mod, db, discovery, retrieval
-from app.plugins.base import Entity
+from app.plugins.base import Entity, RefLink
 from app.refs.resolver import Reached
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
@@ -140,6 +140,12 @@ GENE = Entity(entity_id=GENE_ID, kind="hgnc_gene", source_id="hgnc", label="BRCA
 PINNED = tuple(Entity(entity_id=f"clinvar-mini:{i}", kind="clinvar_variant",
                       source_id="clinvar-mini", label="Pathogenic")
                for i in range(retrieval.FACTS_PER_LINK))
+TO_GENE = RefLink(name="variant_to_gene", from_table="clinvar_variant", from_column="gene_symbol",
+                  to_table="hgnc_gene", to_column="symbol")
+ORTHOLOG = RefLink(name="ortholog_to_gene", from_table="homologene", from_column="gene_symbol",
+                   to_table="hgnc_gene", to_column="symbol")
+VIA_GENE = {"from": GENE_ID, "link": "variant_to_gene",
+            "on": "clinvar_variant.gene_symbol → hgnc_gene.symbol"}
 
 
 class _Store:
@@ -153,8 +159,8 @@ def _names_brca2(monkeypatch):
     monkeypatch.setattr(retrieval.refs, "get_store", lambda: _Store())
     monkeypatch.setattr(retrieval.refs.RESOLVER, "resolve", lambda q, s: [GENE])
     monkeypatch.setattr(retrieval.refs.RESOLVER, "expand_bounded", lambda e, s, limit: [
-        Reached(table="clinvar_variant", entities=PINNED[:limit], total=21_961),
-        Reached(table="homologene", entities=(), total=0)])
+        Reached(table="clinvar_variant", entities=PINNED[:limit], total=21_961, link=TO_GENE),
+        Reached(table="homologene", entities=(), total=0, link=ORTHOLOG)])
     boosted: list[list[str]] = []
 
     def one_collection(con, c, q, k, mode, tr, entity_ids, plan=None, depth=0):
@@ -176,6 +182,9 @@ def _check(out, boosted) -> None:
     assert out["facts_withheld"] == [{"entity_id": GENE_ID, "table": "clinvar_variant",
                                       "reached": 21_961, "pinned": retrieval.FACTS_PER_LINK}], \
         "what the bound left out is named, never dropped in silence"
+    assert out["facts"][0]["via"] is None, "the query named the gene"
+    assert [f["via"] for f in out["facts"][1:]] == [VIA_GENE] * retrieval.FACTS_PER_LINK, \
+        "every fact expand reached names the link it was reached through (05 §5.4)"
 
 
 def test_search_boosts_the_named_gene_and_pins_a_bounded_hop(
@@ -203,3 +212,15 @@ def test_nothing_is_withheld_when_nothing_is_left_out(isolated_config, monkeypat
     out = retrieval.search(con, "a quiet walk through the village", k=5, collection=c,
                            translate=False)
     assert out["facts"] == [] and out["facts_withheld"] == []
+
+
+def test_an_entity_the_query_names_is_named_even_when_a_link_also_reaches_it(monkeypatch):
+    """One fact per entity, and its `via` says what is true of the QUESTION:
+    named outright, it did not reach the answer through anything."""
+    variant = PINNED[0]
+    monkeypatch.setattr(retrieval.refs.RESOLVER, "resolve", lambda q, s: [GENE, variant])
+    monkeypatch.setattr(retrieval.refs.RESOLVER, "expand_bounded", lambda e, s, limit: [
+        Reached(table="clinvar_variant", entities=(variant,), total=1, link=TO_GENE)]
+        if e is GENE else [])
+    _, facts, _ = retrieval._entity_facts("BRCA2 and one of its variants", _Store())
+    assert [(f.entity_id, f.via) for f in facts] == [(GENE_ID, None), (variant.entity_id, None)]

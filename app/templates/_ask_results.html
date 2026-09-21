@@ -41,6 +41,9 @@
   <div class="fact-card">
     <b>{{ f.label or f.entity_id }}</b> <span class="badge brass">{{ f.entity_id }}</span>
     <span class="badge">{{ f.kind }}</span>
+    {% if f.via %}
+    <div class="note via" title="{{ f.via.on }}">reached from {{ f.via['from'] }} through {{ f.via.link }}</div>
+    {% endif %}
     {% if f.fields %}
     <div class="note">{% for k,v in f.fields.items() %}{{ k }}: {{ v }}<br>{% endfor %}</div>
     {% endif %}
