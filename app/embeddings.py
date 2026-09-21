@@ -187,27 +187,30 @@ def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mo
         url=recipe.query_url, api=recipe.api, model=recipe.model,
         dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
         concurrency=recipe.concurrency, device=recipe.device,
-        query_prefix=recipe.query_prefix)
+        query_instruction=recipe.query_instruction)
 
 
 def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
            query: bool) -> list[str]:
-    """The texts as the QUERY SIDE must receive them (§7.4b).
+    """The texts as the QUERY SIDE must receive them: the Codex's
+    `space.query.instruction` prepended (02 §2.4), exactly as calibration
+    and the gate prepend it (`f"{instruction}{t}"`, hold/calibration.py and
+    hold/embedder.py) — no separator added or trimmed, so the function a
+    search runs is byte for byte the one the gate passed.
 
-    The one place a declared `query_prefix` is applied, so that "a query
+    The one place it is applied on the serving side, so that "a query
     embedding" means the same thing on every path — search, a run's
-    fingerprint, a calibration probe. A prefix applied on one path and not
-    another would put two kinds of query vector in one collection and
-    nothing would report it: both are honest vectors of the right width.
+    fingerprint, a calibration probe. An instruction applied on one path and
+    not another puts two kinds of query vector in one collection and nothing
+    reports it: both are honest vectors of the right width.
 
-    Documents are never touched. That asymmetry IS the feature, and it is
-    also the failure mode worth naming — a prefix that leaked onto the
-    document side would move every vector in the collection together, so
-    retrieval would still look reasonable while no longer matching the
-    space the Codex pins."""
-    if not (query and recipe.query_prefix):
+    Documents are never touched: "a document is embedded by space.encoder
+    and never prefixed". A prefix that leaked onto the document side would
+    move every vector in the collection together, so retrieval would still
+    look reasonable while no longer matching the space the Codex pins."""
+    if not (query and recipe.query_instruction):
         return texts
-    return [recipe.query_prefix + t for t in texts]
+    return [f"{recipe.query_instruction}{t}" for t in texts]
 
 
 def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecipe",

@@ -9,7 +9,7 @@ required config or volume mount.
 """
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -44,20 +44,17 @@ class EmbedRecipe:
     ctx: int
     dim: int | None = None       # declared width; checked against the table
     query_url: str | None = None  # bi-encoder pairs (MedCPT); None = symmetric
-    # Prepended to QUERIES only, never to documents. Some encoders are
-    # trained asymmetrically without being bi-encoder pairs: one model, but
-    # the query side expects a lead-in ("query: " for DAR-legal-it,
-    # "Instruct: …\nQuery: " for Qwen3-Embedding). Measured on Italian legal
-    # retrieval it is worth +4.2 MRR@100 on unchanged weights
-    # (gazzetta-plugin.md §7.1b) — more than most model changes, and silent
-    # when missed, because bare queries return plausible neighbours.
-    # NOT part of the space identity, and gather_components must never read
-    # it (§7.4b): it changes every query vector and no vector in the
-    # collection, so two peers embedding documents agree whatever they
-    # search with. A peer with a different prefix only searches worse, which
-    # is a node-local quality question, not a compatibility one — unlike
-    # `query_url`, whose DIFFERENT model does move the space id.
-    query_prefix: str = ""
+    # The Codex's `space.query.instruction` (02 §2.4, 09 §9.3), prepended to
+    # QUERIES only, never to documents: one model whose query side expects a
+    # lead-in ("query: " for DAR-legal-it, "Instruct: …\nQuery: " for
+    # Qwen3-Embedding) — worth +4.2 MRR@100 on unchanged weights
+    # (gazzetta-plugin.md §7.1b). It IS part of the space: "the query side is
+    # part of the function". So it is never a node's to state — only
+    # `_codex_encoder` fills it, from the Codex, and a collection file that
+    # names one is refused. A node-local prefix (25b30f3) sat outside
+    # `space_id` while calibration and the gate prefixed with the Codex's:
+    # the gate would have passed one function and search run another.
+    query_instruction: str | None = None
     # Documents embedded concurrently by the worker (thread pool of whole
     # documents, each a single-text request). NOT part of the space identity
     # — it changes no vector, like EMBED_BATCH. >1 belongs to CPU encoders
@@ -101,6 +98,16 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     messages, whichever file the operator is editing."""
     if not isinstance(raw, dict):
         return None
+    for key in ("query_prefix", "query_instruction", "instruction"):
+        if key in raw:
+            # 25b30f3 read `query_prefix` here, and the operator was told to
+            # write one into a collection file. Refused rather than ignored:
+            # ignored, it would look set while search ran without it.
+            raise ValueError(
+                f"{where}: `{key}` is not a node's to state. A query's "
+                f"instruction is the space's — `space.query.instruction` in "
+                f"the Codex (02 §2.4, 09 §9.3), inside `space_id` — and "
+                f"`hold collection create` is where it is set")
     try:
         return EmbedRecipe(
             url=str(raw["url"]).rstrip("/"),
@@ -111,11 +118,6 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
             dim=int(raw["dim"]) if raw.get("dim") is not None else None,
             query_url=(str(raw["query_url"]).rstrip("/")
                         if raw.get("query_url") else None),
-            # NOT stripped or normalised: the trailing space in "query: " and
-            # the newline in "Instruct: …\nQuery: " are part of what the
-            # model was trained on, and eating either changes every query
-            # vector while looking like tidiness.
-            query_prefix=str(raw.get("query_prefix", "")),
             concurrency=max(1, int(raw.get("concurrency", 1))),
             device=(str(raw["device"]).lower()
                     if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
@@ -563,9 +565,13 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
                 f"{where}: [encoder] {key} = {raw[key]!r} and the Codex's space "
                 f"says {have!r}. The space is the Codex's (02 §2.4); this "
                 f"table names only where this node reaches it (07 §7.8)")
-    return parse_recipe({**raw, "model": raw.get("model") or space.encoder.label or "",
-                         "dtype": space.dtype, "ctx": space.ctx, "dim": space.dim},
-                        where=f"{where} [encoder]")
+    recipe = parse_recipe({**raw, "model": raw.get("model") or space.encoder.label or "",
+                           "dtype": space.dtype, "ctx": space.ctx, "dim": space.dim},
+                          where=f"{where} [encoder]")
+    # The query side of the space, from the Codex and only from it: the same
+    # instruction calibration and the gate prefix with (hold/calibration.py,
+    # hold/embedder.py), so search runs the function the gate passed.
+    return replace(recipe, query_instruction=space.query.instruction or None)
 
 
 def _warn_deprecated(path: Path, raw: dict) -> None:

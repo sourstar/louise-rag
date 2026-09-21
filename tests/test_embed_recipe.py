@@ -271,56 +271,44 @@ def test_gate_baseline_records_the_collection_recipe(isolated_config, config_dir
 
 
 # --------------------------------------------------------------------------
-# query_prefix — gazzetta-plugin.md §7.4b
+# The query instruction — the Codex's `space.query.instruction` (02 §2.4)
 #
-# Some encoders are one model but asymmetric in use: the query side expects a
-# lead-in ("query: " for DAR-legal-it) and the document side none. Measured on
-# Italian legal retrieval the prefix is worth +4.2 MRR@100 on unchanged
-# weights (§7.1b), and every way of getting it wrong is SILENT — bare queries
-# return plausible neighbours, and a prefix leaked onto documents moves the
-# whole collection together. Hence tests rather than care.
+# One model can want a lead-in on the query side only ("query: " for
+# DAR-legal-it), worth +4.2 MRR@100 on unchanged weights (gazzetta-plugin.md
+# §7.1b), and every way of getting it wrong is SILENT: bare queries return
+# plausible neighbours, and a prefix leaked onto documents moves the whole
+# collection together. It is the SPACE's, so it reaches a recipe only from
+# the Codex (tests/hold/test_query_instruction.py); these pin how the
+# serving side applies it once it is there.
 # --------------------------------------------------------------------------
 
-DAR_TOML = """\
-plugin = "normattiva"
-
-[embed]
-url = "http://rage:30437"
-api = "openai"
-model = "dar-legal-it"
-dtype = "f16"
-ctx = 8192
-dim = 768
-query_prefix = "query: "
-"""
+@pytest.mark.parametrize("key", ["query_prefix", "query_instruction", "instruction"])
+def test_a_node_file_cannot_state_a_query_instruction(key):
+    """25b30f3 read `query_prefix` from a collection file, and the operator was
+    told to write one. Refused, not ignored: ignored, it would look set."""
+    with pytest.raises(ValueError, match="not a node's to state"):
+        collections_mod.parse_recipe(
+            {"url": "http://rage:30437", "model": "dar-legal-it", key: "query: "},
+            where="normattiva.toml")
 
 
-def test_query_prefix_parses_byte_exact(isolated_config, config_dir):
-    _write_toml(config_dir, "normattiva", DAR_TOML)
-    r = collections_mod.by_name("normattiva").embed
-    # the TRAILING SPACE is part of what the model was trained on; a strip()
-    # here would look like tidiness and change every query vector
-    assert r.query_prefix == "query: "
-    assert r.dim == 768 and r.query_url is None
-
-
-def test_query_prefix_reaches_queries_and_never_documents(isolated_config,
-                                                          monkeypatch):
-    calls = _capture_posts(monkeypatch)
-    recipe = collections_mod.EmbedRecipe(
+def _instructed(**kw):
+    return collections_mod.EmbedRecipe(
         url="http://rage:30437", api="openai", model="dar-legal-it",
-        dtype="f16", ctx=8192, query_prefix="query: ")
+        dtype="f16", ctx=8192, query_instruction="query: ", **kw)
 
-    embeddings.embed_texts(["chi paga l'IMU?"], recipe=recipe, query=True)
+
+def test_the_instruction_reaches_queries_and_never_documents(isolated_config, monkeypatch):
+    calls = _capture_posts(monkeypatch)
+    embeddings.embed_texts(["chi paga l'IMU?"], recipe=_instructed(), query=True)
     assert calls[0]["json"]["input"] == ["query: chi paga l'IMU?"]
 
-    # the document side is untouched — this is the asymmetry, and a prefix
-    # that leaked here would move every vector in the collection together
+    # "a document is embedded by space.encoder and never prefixed" (02 §2.4)
     calls.clear()
-    embeddings.embed_texts(["Art. 1. Oggetto."], recipe=recipe)
+    embeddings.embed_texts(["Art. 1. Oggetto."], recipe=_instructed())
     assert calls[0]["json"]["input"] == ["Art. 1. Oggetto."]
 
-    # declaring none is the untouched path, queries included
+    # no instruction: the untouched path, queries included
     calls.clear()
     bare = collections_mod.EmbedRecipe(
         url="http://rage:30437", api="openai", model="m", dtype="f16", ctx=8192)
@@ -328,49 +316,32 @@ def test_query_prefix_reaches_queries_and_never_documents(isolated_config,
     assert calls[0]["json"]["input"] == ["q"]
 
 
-def test_query_prefix_applies_on_the_fingerprint_path_too(isolated_config,
-                                                          monkeypatch):
-    """`embed_one_at_a_time` is §9.12's fingerprint path. If it embedded
-    queries bare while search embedded them prefixed, a collection would hold
-    two kinds of query vector and nothing would report it: both are honest
-    vectors of the right width."""
-    calls = _capture_posts(monkeypatch)
-    recipe = collections_mod.EmbedRecipe(
-        url="http://rage:30437", api="openai", model="dar-legal-it",
-        dtype="f16", ctx=8192, query_prefix="query: ")
-    embeddings.embed_one_at_a_time(["una domanda"], recipe=recipe, query=True)
-    assert calls[0]["json"]["input"] == ["query: una domanda"]
+def test_the_serving_side_prefixes_exactly_as_calibration_does():
+    """The gate passed `f"{instruction}{t}"` (hold/calibration.py,
+    hold/embedder.py). One character of separator more or less and search
+    runs a function the gate never saw."""
+    texts = ["uno", " due", "tre\n"]
+    assert embeddings._asked(texts, _instructed(), True) == [f"query: {t}" for t in texts]
+    assert embeddings._asked(texts, _instructed(), False) == texts
 
+
+def test_the_instruction_applies_on_the_fingerprint_path_too(isolated_config, monkeypatch):
+    """`embed_one_at_a_time` is §9.12's fingerprint path. Queries bare there
+    and prefixed in search would put two kinds of query vector in one
+    collection, both honest, both the right width."""
+    calls = _capture_posts(monkeypatch)
+    embeddings.embed_one_at_a_time(["una domanda"], recipe=_instructed(), query=True)
+    assert calls[0]["json"]["input"] == ["query: una domanda"]
     calls.clear()
-    embeddings.embed_one_at_a_time(["un documento"], recipe=recipe)
+    embeddings.embed_one_at_a_time(["un documento"], recipe=_instructed())
     assert calls[0]["json"]["input"] == ["un documento"]
 
 
-def test_query_prefix_survives_a_declared_query_encoder(isolated_config,
-                                                        monkeypatch):
-    """A bi-encoder pair may ALSO want a prefix. `_side` rebuilds the recipe
-    for the query URL, and a field it forgets to carry is a field silently
-    dropped."""
+def test_the_instruction_survives_a_declared_query_encoder(isolated_config, monkeypatch):
+    """A bi-encoder pair may ALSO carry an instruction. `_side` rebuilds the
+    recipe for the query URL field by field, and a field it forgets to carry
+    is a field silently dropped."""
     calls = _capture_posts(monkeypatch)
-    recipe = collections_mod.EmbedRecipe(
-        url="http://article:1", api="openai", model="m", dtype="f16",
-        ctx=512, query_url="http://query:2", query_prefix="query: ")
-    embeddings.embed_texts(["q"], recipe=recipe, query=True)
+    embeddings.embed_texts(["q"], recipe=_instructed(query_url="http://query:2"), query=True)
     assert calls[0]["url"] == "http://query:2/v1/embeddings"
     assert calls[0]["json"]["input"] == ["query: q"]
-
-
-def test_query_prefix_is_not_in_the_space_id(isolated_config, config_dir):
-    """INVARIANT 1. The prefix changes every query vector and no vector in the
-    collection, so two peers embedding documents agree whatever they search
-    with (§7.4b). Were it in `space_id`, adding it to an existing collection
-    would re-pin it and refuse to serve — the global-knob failure, again."""
-    _write_toml(config_dir, "normattiva", DAR_TOML)
-    _write_toml(config_dir, "nopfx", DAR_TOML.replace(
-        'query_prefix = "query: "\n', ""))
-
-    with_pfx = spaces.gather_components(collections_mod.by_name("normattiva"))
-    without = spaces.gather_components(collections_mod.by_name("nopfx"))
-    assert with_pfx.embed_model_hash == without.embed_model_hash
-    assert with_pfx.query_encoder_hash == without.query_encoder_hash
-    assert spaces.compute_space_id(with_pfx) == spaces.compute_space_id(without)
