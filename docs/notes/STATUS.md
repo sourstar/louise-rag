@@ -4544,10 +4544,11 @@ gutenberg pack plan needs those vectors before the hand-over.
    which **validates our metric code** and makes every row comparable to
    anything published against that set; and a **query instruction is worth
    more than most model changes** — the same qwen3-embedding-4b weights
-   gain +4.2 MRR@100 from `Instruct: …\nQuery: ` on the query side alone,
-   which the platform has no mechanism for (`embeddings._side` switches URL
-   for a bi-encoder pair and nothing else), so a collection built today
-   would silently take the worse row. That is a design gap, not a detail.
+   gain +4.2 MRR@100 from `Instruct: …\nQuery: ` on the query side alone.
+   The platform had no mechanism for it on the serving side; since
+   30c7276 (2026-09-21) a query is prefixed with the Codex's
+   `space.query.instruction` (02 §2.4) — set in the recipe at `hold
+   collection create`, inside `space_id` (`gazzetta-plugin.md` §7.4b).
    The recommendation — qwen3-embedding-4b, instructed — **rests on the
    licence and only on the licence**: DAR-legal-it is the better model
    measured identically and 3.3x cheaper per vector, but declares no
@@ -4976,9 +4977,9 @@ Italian legal** — 16.4 MRR points behind the domain specialist, and behind
 a generalist this node already serves. And **the query instruction is
 worth +4.2 MRR@100 on identical weights** — bare, qwen3 trails the
 specialist by 4.6 points and loses; instructed, it is 0.36 behind and
-ties. The platform cannot declare that prefix anywhere, so a collection
-pinned on qwen3 today would silently take the worse row. Open, with a
-proposed home, in `gazzetta-plugin.md` §7.4b.
+ties. Closed 2026-09-21: the prefix is the Codex's
+`space.query.instruction`, and search applies it since 30c7276
+(`gazzetta-plugin.md` §7.4b).
 
 ## Conventions
 

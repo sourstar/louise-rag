@@ -779,16 +779,21 @@ otherwise.
 Its absence does not move the conclusion, which rests on the spread across
 the four bases that did run and on qwen3-embedding-4b's untrained 0.7744.
 
-### 7.4b The query prefix has nowhere to live — OPEN
+### 7.4b The query prefix — CLOSED (2026-09-21)
 
-Measured above at +4.2 MRR@100, and there is no way to declare it. It
-belongs in the `[encoder]` recipe beside `model` and `ctx`, and — because
-it changes every vector a query produces but no vector in the collection —
-it is a **query-side** property, so it does not belong in `space_id`. Two
-peers embedding documents identically still agree; a peer searching with a
-different prefix only searches worse, which is exactly the class of thing
-the recipe already carries for the query encoder (`query_url`). Needs a
-decision before a collection pins qwen3.
+Measured above at +4.2 MRR@100. It lives in the Codex, as the spec already
+said: `space.query.instruction` (02 §2.4, 09 §9.3), written in the recipe
+as `[space.query] instruction = "…"` at `hold collection create`, and
+INSIDE `space_id` — "the query side is part of the function". Calibration
+and the gate already prefixed with it; since 30c7276 search does too, from
+the Codex and only from it.
+
+What this section proposed instead — a query-side knob in the node's
+`[encoder]` recipe, outside `space_id` — was built (25b30f3) and was wrong:
+the gate would have checked one function and search run another, both
+honest vectors of the right width, and nothing would have said so. A
+collection file naming `query_prefix`, `query_instruction` or `instruction`
+is now refused (`tests/hold/test_query_instruction.py`).
 
 ### 7.2 The measurement that actually decides
 
