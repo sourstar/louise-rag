@@ -741,7 +741,7 @@ collection is another name.
 ├── collections/
 │   ├── pubmed.toml
 │   └── pubmed/
-│       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else
+│       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads

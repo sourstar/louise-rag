@@ -785,6 +785,11 @@ for byte, the engine and the calibration with them, and `derive`
 refuses when the resulting `space_id` differs from the source's — so
 two collections meant to be searched together land in one space, on one
 reference, by construction rather than by hoping their settings match.
+A version-2 source included: its copy is written as version 2 (09 §9.3),
+because the version-3 shape takes the image out of `space_id` and would
+make it another space — which is how a root (`create --space-from`) keeps
+every vector a development collection already computed (operator,
+2026-09-21).
 
 **A sister may DERIVE her vectors instead of embedding them.** Where her
 space is a pure function of another's — a quantisation of it, or a
