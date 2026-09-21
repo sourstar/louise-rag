@@ -404,8 +404,9 @@ def _promote_records(staging, drag_dir) -> int:
     Returns the RECORD shards promoted — the number the log reports — not
     the containers beside them.
     """
-    import os
     from pathlib import Path
+
+    from . import drag as drag_mod
     n = 0
     for kind, suffix in _PROMOTED:
         src = Path(staging) / kind
@@ -415,7 +416,7 @@ def _promote_records(staging, drag_dir) -> int:
         for f in sorted(src.rglob(suffix)):
             target = dst / f.relative_to(src)
             target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(f, target)
+            drag_mod.promote(f, target)
             if kind == "records":
                 n += 1
     return n

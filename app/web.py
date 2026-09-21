@@ -2852,9 +2852,9 @@ class BundleExportBody(BaseModel):
 @admin_router.post("/library/{name}/bundle/export")
 def collection_bundle_export(name: str, body: BundleExportBody):
     """Same code path as `python -m app.cli bundle export`, delivered as a
-    tar.gz download. The bundle is built in a scratch dir beside the
-    collection's data (same filesystem, no /tmp assumptions) and cleaned up
-    after the response streams out."""
+    tar.gz download. The bundle is built in a scratch dir under the
+    collection's export workspace (EXPORT_DIR, else beside its data — no
+    /tmp assumptions) and cleaned up after the response streams out."""
     from .bundles import export as bundle_export
     collection = _collection_or_404(name)
     # invariant 9, "not exchanged": the download is a signed, shareable bundle
@@ -2866,8 +2866,11 @@ def collection_bundle_export(name: str, body: BundleExportBody):
     if not uids:
         raise HTTPException(400, "no embedded documents to export")
 
-    scratch = Path(tempfile.mkdtemp(
-        prefix="bundle-export-", dir=collection.manifest_path.parent))
+    try:
+        where = bundle_export.workspace(collection)
+    except bundle_export.ExportError as e:
+        raise HTTPException(503, str(e))
+    scratch = Path(tempfile.mkdtemp(prefix="bundle-export-", dir=where))
     try:
         result = bundle_export.export_bundle(con, collection, uids,
                                               scratch / "bundle")

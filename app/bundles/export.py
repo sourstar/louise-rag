@@ -56,6 +56,25 @@ class ExportError(BundleError):
     """The local node cannot produce the requested bundle."""
 
 
+def workspace(collection) -> Path:
+    """The directory an export of `collection` is built in.
+
+    `EXPORT_DIR/<name>` when EXPORT_DIR is set (config.py), else beside the
+    manifest. EXPORT_DIR itself is never created: an unmounted path inside a
+    container is an ordinary directory of the container's own storage, so
+    a missing mount would put the export exactly where it must not go."""
+    base = config.EXPORT_DIR
+    if base is None:
+        return Path(collection.manifest_path).parent
+    if not Path(base).is_dir():
+        raise ExportError(
+            f"EXPORT_DIR {base} is not a directory — is its storage mounted? "
+            f"Exports are built there and nowhere else")
+    d = Path(base) / collection.name
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def _native_ids(con, uids: list[str]) -> dict[str, int]:
     """uid -> native_id, from the manifest. Lance keys rows on book_id
     (native_id), not uid."""

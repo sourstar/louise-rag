@@ -19,6 +19,13 @@ PUBMED_PACK_DIR = Path(os.getenv("PUBMED_PACK_DIR")) if os.getenv("PUBMED_PACK_D
 # copy — an HDD pool then never sees the transport's chunk-by-chunk fsync'd
 # writes. None = write in place. A file the area cannot hold lands in place.
 ACQUIRE_STAGING_DIR = Path(os.getenv("ACQUIRE_STAGING_DIR")) if os.getenv("ACQUIRE_STAGING_DIR") else None
+# Where exports are BUILT (operator, 2026-09-21: "export bundle should be
+# done in tank only"): the Library's download, `snapshot vectors`' default
+# output and a contribution's upload are written under EXPORT_DIR/<name>/,
+# on bulk storage, never beside the manifest on the fast pool. It must be an
+# existing directory — a mount — and an export is refused when it is not,
+# rather than written into the container. None = beside the manifest.
+EXPORT_DIR = Path(os.getenv("EXPORT_DIR")) if os.getenv("EXPORT_DIR") else None
 
 DB_PATH = DATA_DIR / "manifest.db"
 FTS_DIR = DATA_DIR / "fts"

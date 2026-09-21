@@ -335,6 +335,38 @@ def scaffold(drag: Path) -> Path:
     return drag
 
 
+def promote(src: Path, target: Path) -> None:
+    """Move one finished file into the drag; `target` only ever appears
+    whole.
+
+    A rename where `src` and `target` share a filesystem. Where they do not
+    — the drag's bytes on other storage, mounted at `drag/` as `origin/`'s
+    are (07 §7.8), while a build stages under `state/` — a rename cannot
+    cross, so the bytes are copied to a hidden name beside `target`, synced,
+    and renamed over it: the same all-or-nothing, as one sequential write.
+    A failed copy removes its temporary and leaves `src` where it was."""
+    import errno
+    import os
+    import shutil
+    try:
+        os.replace(src, target)
+        return
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+    tmp = target.with_name(f".{target.name}.promote")
+    try:
+        with open(src, "rb") as r, open(tmp, "wb") as w:
+            shutil.copyfileobj(r, w, 16 << 20)
+            w.flush()
+            os.fsync(w.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    Path(src).unlink()
+
+
 def is_member_file(path: str, snapshot_files: Iterable[str],
                    shard_paths: Iterable[str]) -> bool:
     """A file that is neither in the snapshot's `files` nor named by a

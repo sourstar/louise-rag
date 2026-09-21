@@ -7,6 +7,7 @@ import re
 import io
 import tarfile
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -236,6 +237,37 @@ def test_bundle_export_400_when_nothing_embedded(client):
     r = client.post("/admin/library/gutenberg/bundle/export", json={})
     assert r.status_code == 400
     assert "no embedded documents" in r.json()["detail"]
+
+
+def test_bundle_export_is_built_under_export_dir(client, monkeypatch, tmp_path):
+    """Operator, 2026-09-21: "export bundle should be done in tank only"."""
+    from app.bundles import export as bundle_export
+    bulk = tmp_path / "bulk"
+    bulk.mkdir()
+    monkeypatch.setattr(config, "EXPORT_DIR", bulk)
+    seen = {}
+
+    def fake_export(con, collection, uids, dest, **kw):
+        seen["dest"] = Path(dest)
+        Path(dest).mkdir(parents=True)
+        (Path(dest) / "bundle.parquet").write_bytes(b"x")
+        return {"chunks": 1, "uids": len(uids), "bundle_id": "ab" * 32}
+    monkeypatch.setattr(bundle_export, "export_bundle", fake_export)
+    r = client.post("/admin/library/gutenberg/bundle/export",
+                    json={"uids": ["gutenberg:1"]})
+    assert r.status_code == 200, r.text
+    assert seen["dest"].is_relative_to(bulk / "gutenberg")
+    assert list((bulk / "gutenberg").iterdir()) == [], "scratch cleaned up"
+
+
+def test_bundle_export_refuses_when_export_dir_is_not_mounted(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "EXPORT_DIR", tmp_path / "not-mounted")
+    r = client.post("/admin/library/gutenberg/bundle/export",
+                    json={"uids": ["gutenberg:1"]})
+    assert r.status_code == 503
+    assert "EXPORT_DIR" in r.json()["detail"]
+    manifest_dir = collections_mod.default_collection().manifest_path.parent
+    assert not list(manifest_dir.glob("bundle-export-*")), "nothing beside the manifest"
 
 
 def test_library_page_offers_profile_dropdowns_with_estimates(client):

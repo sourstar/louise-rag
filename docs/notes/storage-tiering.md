@@ -146,3 +146,29 @@ gutenberg behind — which is exactly the 261 GB above).
    would be ~6 GB, so either the index is IVF-FLAT (storing the vectors a
    second time) or stale index versions are retained. Worth measuring before
    sizing any tier.
+
+## 7. Decided, 2026-09-21
+
+The operator: "export bundle should be done in tank only", and the DRAG
+goes to tank too "unless the snapshot can be used in place of the existing
+collection data". It cannot. Search reads the manifest, the text index and
+the Lance table, and nothing reads `drag/` per query. The DRAG is what
+REBUILDS those stores on a peer, not a substitute for them. (The one partial
+exception is open question 2 in §6: records could supply chunk text
+instead of the copies kept in Lance and tantivy, at the price of reading
+from the HDD per query.)
+
+- **Exports**: `EXPORT_DIR`, a Tier-1 path to bulk storage. The Library's
+  download, `snapshot vectors`' default output and a contribution are
+  built under `EXPORT_DIR/<name>/`. When `EXPORT_DIR` is set but not
+  mounted, the export is refused, never created, because inside a container
+  an unmounted path is the container's own storage. Unset means beside the
+  manifest, as before (a single-disk node).
+- **The DRAG**: a bulk dataset bind-mounted at `collections/<name>/drag/`,
+  exactly as `origin/` is. The records build still stages under `state/`,
+  on the fast pool, and `drag.promote` crosses the mount by copying to a
+  hidden name next to the target, syncing it, and renaming. That is still
+  all-or-nothing. The bare `os.replace` it replaces would have failed on
+  the first shard with EXDEV.
+- **Not automatic**: a new collection's `drag/` is on the fast pool until
+  its mount is added. Add it before the collection's first `records build`.

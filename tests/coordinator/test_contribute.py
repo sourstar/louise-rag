@@ -183,3 +183,36 @@ def test_a_document_with_no_local_text_is_skipped_not_fatal(node, coordinator):
                                    client=_ClientAdapter(coordinator))
     assert result["ok"], result.get("reason")
     assert result["uids"] >= 1
+
+
+def test_a_contribution_is_built_under_export_dir(node, coordinator, tmp_path, monkeypatch):
+    """Operator, 2026-09-21: exports are made on bulk storage only."""
+    from app import config
+    bulk = tmp_path / "bulk"
+    bulk.mkdir()
+    monkeypatch.setattr(config, "EXPORT_DIR", bulk)
+    con, collection, _ = node
+    result = contribute.run_round(con, collection, "http://coord", count=3,
+                                   signing_key=PRODUCER_A,
+                                   client=_ClientAdapter(coordinator))
+    assert result["ok"], result.get("reason")
+    assert (bulk / collection.name).is_dir()
+    assert list((bulk / collection.name).iterdir()) == [], "scratch cleaned up"
+
+
+def test_an_unmounted_export_dir_is_refused_before_the_lease(node, tmp_path, monkeypatch):
+    """Not after it: a lease taken and embedded for nothing is work lost."""
+    from app import config
+    monkeypatch.setattr(config, "EXPORT_DIR", tmp_path / "not-mounted")
+    con, collection, _ = node
+
+    class _NoLease:
+        def get(self, *a, **kw):
+            raise AssertionError("leased before the export location was checked")
+
+        def close(self):
+            pass
+
+    with pytest.raises(contribute.ContributeError, match="EXPORT_DIR"):
+        contribute.run_round(con, collection, "http://coord", signing_key=PRODUCER_A,
+                             client=_NoLease())

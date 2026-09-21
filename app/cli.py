@@ -1099,7 +1099,7 @@ def cmd_snapshot_vectors(args) -> int:
     would be worth rebuilding.
     """
     from . import snapshots
-    from .bundles.export import ExportError, export_bundle
+    from .bundles.export import ExportError, export_bundle, workspace
     from .bundles.keys import NodeKeyError
 
     collection = _collection_by_name(args.collection)
@@ -1115,10 +1115,10 @@ def cmd_snapshot_vectors(args) -> int:
               "and nothing to ship")
         return 0
 
-    out = Path(args.out) if args.out else (
-        snapshots.snapshot_dir(collection) / f"{delta.stem}.vectors")
     con = db.connect(collection)
     try:
+        out = Path(args.out) if args.out else (
+            workspace(collection) / f"{delta.stem}.vectors")
         summary = export_bundle(con, collection, uids, out)
     except (ExportError, NodeKeyError) as e:
         # A missing signing key is an ordinary operator situation on a

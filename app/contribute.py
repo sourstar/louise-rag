@@ -103,6 +103,12 @@ def run_round(con, collection, coordinator_url: str, *, space_id: str | None = N
         space_id = row["space_id"] if row else None
     if not space_id:
         raise ContributeError("this collection has no pinned space_id")
+    # before the lease: a missing export mount must not cost a lease and
+    # its embedding first
+    try:
+        where = bundle_export.workspace(collection)
+    except bundle_export.ExportError as e:
+        raise ContributeError(str(e)) from None
 
     owns_client = client is None
     http = client or httpx.Client(timeout=UPLOAD_TIMEOUT)
@@ -121,7 +127,7 @@ def run_round(con, collection, coordinator_url: str, *, space_id: str | None = N
             return {"ok": False, "leased": len(uids), "uploaded": 0,
                     "reason": "no leased document could be embedded locally"}
 
-        with tempfile.TemporaryDirectory() as scratch:
+        with tempfile.TemporaryDirectory(dir=where) as scratch:
             bundle_dir = Path(scratch) / "bundle"
             summary = bundle_export.export_bundle(con, collection, ready, bundle_dir,
                                                    signing_key=key)
