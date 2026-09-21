@@ -81,11 +81,12 @@ are the ones that have drifted; prefer to add a test when you touch them.
    assumptions. SQLite holds state (never travels); Lance holds vectors
    locally — a bundle travels as Parquet (docs/09 §9.7) and a pack's
    vectors member rests as safetensors (docs/09 §9.6). Implicit rowids
-   are load-bearing (`catalog_fts` is
+   are load-bearing (the catalog index, `app/catalog.py`, is
    keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
-   that renumbers rowids must realign. *Enforced: review.*
+   that renumbers rowids must rebuild it. *Enforced: review.*
 7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
-   HTTP (CHAT_URL / EMBED_URL / RERANK_URL). Embedding calls go through the
+   HTTP (CHAT_URL / TRANSLATE_URL / RERANK_URL, and each collection's own
+   [encoder] — there is no default encoder). Embedding calls go through the
    existing client. *Enforced: test (tests/test_invariant_guards.py).*
 8. SECRETS. Secrets — key material AND tokens — are referenced by filesystem
    path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
