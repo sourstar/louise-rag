@@ -141,5 +141,20 @@ services:
       # the chat model: RAGE's own copy of the file Ollama served as qwen3:8b
       # (2026-09-20), so that nothing here depends on Ollama's folder
       - /mnt/ssd5/apps/louise-rage/models/chat:/models/chat:ro
-      - /sys/class/drm/card0/device/tile0/gt0/freq0:/gpufreq
+      # THE CLOCK, AND WHY THIS IS NOT A /sys PATH. The card's frequency
+      # controls live at `/sys/bus/pci/devices/<address>/tile0/gt0/freq0`, and
+      # the address is the only name that moves with the hardware: DRM card
+      # numbers are handed out in load order and SWAP ACROSS BOOTS. This node
+      # was rebooted 2026-09-22 and the Arc went from card0 to card1, so the
+      # old `/sys/class/drm/card0/…` bind pointed at the processor's graphics,
+      # which has no such directory — Docker tried to CREATE it and the app
+      # would not start ("operation not permitted"). But a PCI address has
+      # colons in it and TrueNAS parses a bind as `source:target:mode`, so the
+      # address cannot be written here either. So: a symlink, at a colon-free
+      # path on the pool, made once and pointing at the address —
+      #   ln -sfn /sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0 \
+      #           /mnt/ssd5/apps/louise-rage/gpufreq
+      # Docker resolves it, and the container reads and writes through it.
+      # Without the bind RAGE still runs, with no clock (rage.md §12).
+      - /mnt/ssd5/apps/louise-rage/gpufreq:/gpufreq
       - /mnt/ssd5/apps/louise-rage/secrets/admin.token:/run/rage/admin.token:ro

@@ -60,8 +60,15 @@ def test_the_app_writes_no_model_and_names_its_token_by_path():
     assert binds and all(target.endswith(":ro") for _src, target in binds)
     assert "ADMIN_TOKEN_FILE: /run/rage/admin.token" in APP_YAML
     assert "ADMIN_TOKEN:" not in APP_YAML, "a path, never the value (invariant 8)"
-    for source in re.findall(r"^\s+- (/sys/\S+?):/gpufreq", APP_YAML, re.M):
+    for source in re.findall(r"^\s+- (\S+?):/gpufreq", APP_YAML, re.M):
         assert ":" not in source, "TrueNAS rewrites binds; a colon in the source breaks the app"
+        # A DRM card NUMBER is handed out in load order and swaps across boots.
+        # It did, on the node, 2026-09-22: the Arc went card0 -> card1, the old
+        # bind then pointed at the processor's graphics, and the app would not
+        # start at all. The card's own address is the stable name, and a
+        # colon-free symlink to it is how a bind can carry one.
+        assert not re.search(r"/drm/card\d", source), \
+            "a card number is not a card: bind a symlink to the PCI address"
 
 
 def test_the_yaml_the_front_writes_is_for_the_llama_swap_the_image_pins():
