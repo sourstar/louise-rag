@@ -244,3 +244,52 @@ def test_the_snapshot_shows_what_the_fit_believes(s):
     shown = s.snapshot()["affine"]["rdf:w"]
     assert shown["fixed_s"] == pytest.approx(1.0, abs=0.1)
     assert shown["per_unit_s"] == pytest.approx(0.01, rel=0.1)
+
+
+def _noisy(fixed, marginal, n, i):
+    """A batch's real cost: the same shape, but the documents in it differ by
+    an order of magnitude (wikipedia's articles do), so the duration for a
+    given size is not repeatable."""
+    swing = (1.6, 0.5, 1.0, 2.2, 0.7, 1.3, 0.4, 1.9)[i % 8]
+    return fixed + marginal * n * swing
+
+
+def test_the_size_converges_under_noise_instead_of_swinging(s):
+    """Live on the node, 2026-09-23, with the model trusted outright: the
+    size swung 223 -> 4,185 documents between neighbouring batches and put a
+    57 s unit through a 12 s ceiling. A unit that long is exactly what the
+    target exists to bound. The step is bounded now — over budget shrinks at
+    once, growth never more than doubles."""
+    key, n, sizes, durations = "rdf:w", 200, [], []
+    for i in range(40):
+        seconds = _noisy(2.7, 0.041, n, i)
+        s.record(key, n, seconds)
+        durations.append(seconds)
+        n = s.size(key, target_s=3.0, default=200, lo=1, hi=4000, ceiling_s=12.0)
+        sizes.append(n)
+    tail, ran = sizes[-12:], durations[-12:]
+    assert max(tail) <= 5 * min(tail), f"it settles into a band: {tail}"
+    assert max(ran) <= 12.0 * 2, f"and no unit runs far past the ceiling: {ran}"
+    # and the point of all of it: the fixed cost is a minority of a batch
+    # rather than most of it, which is where the proportional model ended
+    assert 2.7 / (sum(ran) / len(ran)) < 0.5, f"fixed cost still dominates: {ran}"
+    # the guarantees themselves, once there is enough measurement to size from
+    # at all (before that the configured default stands, whatever happens):
+    # growth is bounded, and a batch that ran past the budget shrinks the next
+    for i in range(sizing.MIN_SAMPLES, len(sizes) - 1):
+        a, sec, b = sizes[i], durations[i + 1], sizes[i + 1]
+        assert b <= max(200, a * 2), f"grew more than double: {a} -> {b}"
+        if sec > 12.0:
+            assert b < a, f"overran {sec:.0f}s and did not shrink: {a} -> {b}"
+
+
+def test_a_batch_that_overran_the_budget_shrinks_whatever_the_model_says(s):
+    """The bound on the unit is not advisory: a run past the budget shrinks
+    the next batch even when the fit is convinced it should grow."""
+    for u, sec in ((100, 2.0), (200, 2.2), (400, 2.6)):       # fit: cheap per doc
+        s.record("fts:w", u, sec)
+    grown = s.size("fts:w", target_s=3.0, default=200, hi=4000, ceiling_s=12.0)
+    assert grown > 400, "the fit alone would grow it"
+    s.record("fts:w", 400, 40.0)                              # that batch overran
+    assert s.size("fts:w", target_s=3.0, default=200, hi=4000, ceiling_s=12.0) <= 200, \
+        "the overrun halves it at once"

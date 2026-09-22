@@ -80,6 +80,29 @@ FIXED_SHARE = 0.5
 CEILING_MULTIPLE = 4.0
 
 
+def _damped(proposed: int, last, budget: float, default: int, lo: int) -> int:
+    """THE MODEL PROPOSES, THE LAST BATCH DISPOSES. A batch's cost is not a
+    function of its size alone — wikipedia's articles differ by orders of
+    magnitude — so a fit over sixteen noisy batches moves, and a size taken
+    straight from it moves with it: live on the node, 2026-09-23, it swung
+    223 -> 4,185 documents between neighbouring batches and put a 57 s unit
+    through a 12 s ceiling. A unit that long is the thing the target exists to
+    bound (SIGTERM, and how fine-grained a slot hand-back can be). So the step
+    is bounded the way `note_window` bounds its own, and for the reason TCP
+    does: a run past the budget shrinks AT ONCE whatever the model believes,
+    and growth never more than doubles. It converges without needing the model
+    to be right, and uses it when it is.
+
+    Only where the model drives. With batches of one size the two terms cannot
+    be separated, the plain rate is a direct measurement, and nothing here has
+    anything to damp."""
+    last_units, last_seconds = last
+    if last_seconds > budget:
+        back = 0.5 if last_seconds > 2 * budget else 0.75
+        return min(proposed, int(last_units * back))
+    return min(proposed, max(default, last_units * 2))
+
+
 def _affine(samples) -> tuple[float, float | None]:
     """(fixed seconds per batch, seconds per unit) by least squares over
     recent batches. The marginal term is None when every batch was the same
@@ -149,13 +172,14 @@ class Sizer:
             return default
         hi = hi if hi is not None else default * 20
         fixed, marginal = _affine(seen)
+        budget = target_s
         if marginal is None:                      # every batch the same size:
             n = int(target_s / per) if per > 0 else default   # no way to separate
         else:
-            budget = target_s
             if fixed >= target_s * FIXED_SHARE:
                 budget = ceiling_s if ceiling_s else target_s * CEILING_MULTIPLE
             n = int((budget - fixed) / marginal) if budget > fixed else lo
+            n = _damped(n, seen[-1], budget, default, lo)
         return max(lo, min(hi, n))
 
     # ------------------------------------------------------------- windows
