@@ -1,33 +1,68 @@
-# ── runtime state: never in git (restore = git clone + compose up + acquisition) ──
-/data/
-/corpus/
-
-# ── secrets & node identity ──
-.env
-*.env
-*.key
-*.pem
-node.key*
-
-# ── python ──
-__pycache__/
-*.py[cod]
-.venv/
+```
+# Dependencies
+node_modules/
 venv/
-.pytest_cache/
-.ruff_cache/
+.venv/
+__pycache__/
 .mypy_cache/
-*.egg-info/
+.pytest_cache/
+target/
+.gradle/
+
+# Build artifacts
 dist/
 build/
+*.pyc
+*.class
+*.o
+*.exe
+*.dll
+*.so
+*.a
+*.obj
+*.out
 
-# ── editors / OS ──
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Editor/IDE files
 .vscode/
 .idea/
+*.swp
+*.swo
+*.tmp
+
+# System files
 .DS_Store
+Thumbs.db
 
-# local deployment reference material (LAN IPs, host paths) - never pushed
-deploy/reference/
+# Logs
+*.log
 
-# derived per-container caches (pubmed pack) — rebuilt from the archive, never committed
-.pack/
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+```
