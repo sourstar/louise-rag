@@ -147,6 +147,50 @@ bursts of 4–6 while the pool is fed.
   archive drain's candidate walk and a TLS context built per embedding
   request.
 
+
+**Later the same night — the two remaining wastes, and where the ceiling
+actually is.** The operator: "fix the scheduling, I want the CPU above
+95 %." Two more wastes found by profile and fixed (13389dd):
+
+| py-spy, worker, 30 s | before | after |
+|---|---|---|
+| `_candidate_shards` — the archive drain's walk | 338 samples (30 %) | **15** |
+| `ssl.create_default_context` under the embed client | 234 (16 %) | **0** |
+
+Then the ceiling was measured rather than argued, and it is not the
+scheduler:
+
+- **The pool is not the limit.** Over 30 s all ELEVEN children appear in
+  the samples and share the work; 2,210 of 3,047 samples are theirs. The
+  total is simply ~1 core: wikipedia's extraction and indexing of the
+  articles now in flight is all the CPU work the node has.
+- **The children are not starved and not blocked.** The pipeline thread
+  waits on the pool in 12 of 12 dumps, which is what a thread that has
+  handed out its work looks like; the children are asleep between bursts.
+- **Nothing is capped.** `cpu.max` is `max` on both containers; the disks
+  are at 12 % utilisation; the host is 79 % idle with 2 % iowait.
+- **Per document, the work is small**: 59 ms of CPU on average for
+  wikipedia's metadata, 0.1 s for 32 documents' chunking — with a long
+  tail (one article in the sample cost 138 ms, and a batch's wall time is
+  its dearest document).
+
+**So the machine is idle because the big jobs are not runnable:**
+
+| collection | left | why it is not using the machine |
+|---|---|---|
+| pubmed | 0 | finished |
+| gutenberg | 71,359 documents | GPU-bound: ~297 h at the measured rate, one lane, `-np 1` at the server |
+| wikipedia | **30,941,198 documents** | **`embed_mode=off`** |
+
+Wikipedia's embedding is the one switch that would fill this machine:
+every document would be chunked (CPU, across the eleven children) and then
+embedded (GPU). It is off by an operator decision this file already
+records — "its dense side is meant to come from wikivec" — and the archive
+has nearly finished delivering: of the first 401,408 candidates only 1,192
+(0.3 %) still carry an archive locator. Turning it on commits the node to
+30.9M documents of GPU work, which is why it is not a thing to flip
+unasked.
+
 ### 2026-09-22: a reboot renumbered the cards and RAGE would not start
 
 The operator, after a reboot: `louise-rage` start fails with
