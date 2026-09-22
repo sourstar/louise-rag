@@ -423,6 +423,110 @@ def test_a_sweep_that_found_work_restarts_for_what_became_eligible_below(tmp_pat
     assert [r["uid"] for r in worker._backfill_rows(con, c, 1)] == [early]
 
 
+def test_the_version_walk_is_windowed_with_no_archive_too(tmp_path, monkeypatch):
+    """The node, 2026-09-22: pubmed, 39,994,988 documents, every one embedded
+    at the current version, no archive declared — so this branch, which the
+    bounded walk of 2026-09-19 did not cover. One call read the whole scope
+    index to find nothing in 57.8 s, and the producer thread called it again
+    at once: 46 % of the worker's CPU samples, a core of twelve, for as long
+    as the collection was set to embed "all".
+
+    The index prefix of the version selection ends at `embed_done=1` — every
+    embedded document — and `embed_version` is tested row by row, so the plan
+    reads as a SEARCH while SQLite walks the corpus. That is why a plan check
+    alone never caught it, and why this test counts windows instead.
+    """
+    c, con = _discovered(tmp_path)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    _embedded_bulk(con, 5000)
+    assert worker._covered_ranges(con, c) == [], "no archive: the branch under test"
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 0.0)
+    worker.reset_backfill_cursors()
+
+    seen = _window_queries(con)
+    assert worker._backfill_rows(con, c, 10) == []
+    assert len(seen) == 1, f"zero budget: ONE window of the version walk, not the table: {seen}"
+    cur = worker._backfill_cursor[(str(c.manifest_path), "ver")]
+    assert cur[1] == -1 + 1000 and cur[4] is None, "one window on, sweep not over"
+    seen.clear()
+    worker._backfill_rows(con, c, 10)
+    assert len(seen) == 1 and worker._backfill_cursor[(str(c.manifest_path), "ver")][1] == 1999, \
+        "the next call carries the sweep on from the cursor"
+
+
+def test_with_no_archive_a_new_document_is_still_embeddable_in_the_same_round(
+        tmp_path, monkeypatch):
+    """What the unbounded walk was FOR, and what windowing the version walk
+    must not cost: with no archive there is no cursor on the new walk, so a
+    document that clears fts is picked up at once however far down the table
+    it sits — no sweep to wait for."""
+    c, con = _discovered(tmp_path)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    _embedded_bulk(con, 5000)
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 0.0)
+    worker.reset_backfill_cursors()
+    assert worker._backfill_rows(con, c, 10) == []
+
+    late = "gutenberg:24900"                    # the far end of the table
+    con.execute("UPDATE documents SET embed_done=0 WHERE uid=?", (late,))
+    con.commit()
+    assert [r["uid"] for r in worker._backfill_rows(con, c, 1)] == [late], \
+        "a new document waits for no sweep, even with the version walk out of budget"
+
+
+def test_a_version_sweep_that_found_nothing_waits_far_longer_than_a_new_one(
+        tmp_path, monkeypatch):
+    """Windowing alone still re-read the corpus every two minutes: 58 s of CPU
+    per sweep on pubmed's 40M for a candidate that cannot exist. A re-embed
+    appears only from a version bump — a code change, so a restart, which
+    clears these cursors — or an import of older vectors, which moves the
+    coverage epoch and clears them too. The NEW walk keeps its short wait: a
+    document clearing fts below the cursor is work waiting on it."""
+    c, con = _discovered(tmp_path)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    _embedded_bulk(con, 2000)
+    _fixed_windows(monkeypatch, 10_000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    worker.reset_backfill_cursors()
+    key = (str(c.manifest_path), "ver")
+
+    assert worker._backfill_rows(con, c, 10) == []
+    epoch, pos, top, found, idle_since = worker._backfill_cursor[key]
+    assert pos >= top and not found and idle_since is not None, "a whole empty sweep"
+
+    seen = _window_queries(con)
+    worker._backfill_cursor[key] = (epoch, pos, top, found,
+                                    idle_since - worker._BACKFILL_CURSOR_TTL_S - 1)
+    assert worker._backfill_rows(con, c, 10) == []
+    assert seen == [], "the NEW walk's two minutes are not enough to sweep the corpus again"
+
+    worker._backfill_cursor[key] = (epoch, pos, top, found,
+                                    idle_since - worker._REEMBED_IDLE_TTL_S - 1)
+    assert worker._backfill_rows(con, c, 10) == []
+    assert seen, "after its own wait the version sweep does run again"
+    assert worker._idle_ttl("ver") > worker._idle_ttl("new") == worker._BACKFILL_CURSOR_TTL_S
+
+
+def test_the_version_selection_that_reads_the_corpus_is_no_longer_run(tmp_path, monkeypatch):
+    """The one that cost 57.8 s. Kept as a constant for the plan checks and
+    the scheduling report; if it comes back into the walk, this fails."""
+    import inspect
+    source = inspect.getsource(worker._backfill_rows)
+    assert "_REEMBED_SQL" not in source, "the selection that reads the corpus is not run"
+    assert source.count("_REEMBED_WINDOWED") == 2, "the version walk is windowed in BOTH branches"
+    # three pages in all: the version walk in each branch, and the new walk in
+    # the archive branch — which is the one the archive's spans bound
+    assert source.count("_cursor_page") == 3
+
+
 def test_the_prefetch_probe_walks_forward_from_the_current_document(tmp_path):
     """Regression (2026-08-28, measured live): the prefetch lookahead used
     `ORDER BY rowid LIMIT 1 OFFSET k` over the whole pending set, so SQLite

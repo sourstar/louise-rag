@@ -686,12 +686,16 @@ def _archive_yields(con, collection) -> bool:
 # expires after a short TTL (one index pass) and resets when a shard goes
 # final (genesis.coverage_epoch): the documents in that range the archive
 # did not cover sit BELOW the cursor and are now the encoder's. Without an
-# archive there is no cursor at all — a document that clears fts must be
-# embeddable in the same round.
+# archive the NEW walk has no cursor — a document that clears fts must be
+# embeddable in the same round, and its index prefix ends on the candidates
+# themselves. The VERSION walk is windowed either way: its prefix ends at
+# embed_done=1 and matches every embedded document (2026-09-22).
 _BACKFILL_SQL = (
     "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 "
     "AND fts_done=1 AND embed_done=0 AND error IS NULL AND retries<? AND rowid>? "
     "{covered} ORDER BY rowid LIMIT ?")
+#: kept for the plan checks and the report: the unwindowed version selection,
+#: which nothing runs any more (`_REEMBED_WINDOWED` is what runs)
 _REEMBED_SQL = (
     "SELECT rowid AS rid, * FROM documents WHERE in_scope=1 AND rdf_done=1 "
     "AND fts_done=1 AND embed_done=1 AND embed_version<? AND error IS NULL "
@@ -710,6 +714,26 @@ _REEMBED_WINDOWED = (
     "AND embed_version<? AND error IS NULL AND retries<? ORDER BY rowid LIMIT ?")
 _BACKFILL_WINDOW = 200_000       # the starting width; sizing.py adjusts it
 _BACKFILL_CURSOR_TTL_S = 120
+#: …but a VERSION sweep that found nothing waits far longer before the next.
+#: A re-embed candidate is a document whose vector is older than the encoder's
+#: version, and one can appear in only two ways: a version bump, which is a
+#: code change and so a worker restart — and a restart clears these cursors
+#: outright — or an import of older vectors, which moves the coverage epoch
+#: and clears them too. Polling for it every two minutes is therefore a sweep
+#: of the whole corpus that CANNOT find anything: 58 s of CPU per sweep on
+#: pubmed's 40M, about a tenth of a core for ever, after the windowing above
+#: had already cut it from a whole one (the node, 2026-09-22).
+#: Nothing an OPERATOR asks for waits on this: every re-embed they can
+#: request — `api.reindex`, `louise reindex`, a scope change — sets
+#: `embed_done=0`, and that is the new walk's business, at its short wait.
+_REEMBED_IDLE_TTL_S = 3600
+
+
+def _idle_ttl(kind: str) -> float:
+    """How long a sweep that found NOTHING waits before the next one. The new
+    walk keeps the short wait — a document that clears fts below the cursor is
+    work waiting on it."""
+    return _REEMBED_IDLE_TTL_S if kind == "ver" else _BACKFILL_CURSOR_TTL_S
 # (path, kind) -> (epoch, cursor rowid, sweep's top rowid, found in this
 # sweep, idle since) — `idle since` is set when a whole sweep found nothing
 _backfill_cursor: dict[tuple[str, str], tuple[int, int, int, bool, float | None]] = {}
@@ -751,11 +775,28 @@ def _backfill_rows(con, collection, limit: int) -> list:
     if collection is not None:
         _remember_label(key, collection.name)
     if not ranges:
+        # THE NEW WALK STAYS UNBOUNDED, and must: its index prefix
+        # (in_scope, rdf_done, fts_done, embed_done=0) IS the candidate set,
+        # so it lands on the first candidate or on nothing, and a document
+        # that clears fts has to be embeddable in the same round.
         rows = con.execute(_BACKFILL_SQL.format(covered=""),
                            (config.MAX_RETRIES, -1, limit)).fetchall()
+        # THE VERSION WALK IS WINDOWED HERE TOO. Its prefix ends at
+        # embed_done=1, which is EVERY embedded document, and `embed_version`
+        # is then tested row by row — so with no archive this read the whole
+        # scope index for nothing: 57.8 s per call on pubmed's 40M, again and
+        # again, one core of the worker for as long as the collection was set
+        # to embed "all" (the node, 2026-09-22). A re-embed is never urgent —
+        # the document already has a vector — so it may wait for the sweep,
+        # which is exactly what the archive branch below already does.
         if len(rows) < limit:
-            rows += con.execute(_REEMBED_SQL, (config.EMBED_VERSION, config.MAX_RETRIES,
-                                               -1, limit - len(rows))).fetchall()
+            rows += _cursor_page(
+                con, key, "ver",
+                lambda start, end, n: con.execute(
+                    _REEMBED_WINDOWED, (start, end, config.EMBED_VERSION,
+                                        config.MAX_RETRIES, n)).fetchall(),
+                limit - len(rows),
+                time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
         return rows
     spans_sql, params = bundle_genesis.in_spans_sql(ranges)
     new_sql = _BACKFILL_WINDOWED.format(covered="AND NOT " + spans_sql)
@@ -837,7 +878,7 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
     if cur is None or cur[0] != epoch:
         cur = fresh()
     elif cur[4] is not None:
-        if time.time() - cur[4] < _BACKFILL_CURSOR_TTL_S:
+        if time.time() - cur[4] < _idle_ttl(kind):
             return []               # the last sweep found nothing: not yet
         cur = fresh()
     _, pos, top, found, _ = cur
