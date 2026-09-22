@@ -189,3 +189,41 @@ def test_a_wiki_outside_the_collections_languages_is_reported(tmp_path):
     refs = list(SOURCE.discover(DiscoverState(corpus_root=root)))
     assert len(refs) == 1 and refs[0].scope == "container"
     assert "'simple' is not one of the collection's languages" in refs[0].error
+
+
+def test_a_page_is_serialised_only_when_it_is_asked_for(corpus, monkeypatch):
+    """A stream holds ~100 pages and a caller wants ONE. `_stream_pages` used
+    to serialise every page it parsed, and `ET.tostring` is the one step with
+    no C accelerator behind it (xml.etree parses in C, serialises in Python),
+    so ~99 % of that work was thrown away — on wikipedia's rdf and fts, the
+    only CPU work this node had (2026-09-22).
+
+    The bytes must not move: `raw_hash` is over them, `origin_hash` is over
+    them, and `records-vs-origin` re-derives them (invariant 11). So this
+    pins the serialisation itself, exactly as pubmed's reader is pinned."""
+    from xml.etree import ElementTree as ET
+
+    from app.plugins.wikipedia import source as wiki
+
+    refs = {r.native_id: r for r in SOURCE.discover(DiscoverState(corpus_root=corpus))}
+    one = SOURCE.fetch(refs[nid(1)])
+    two = SOURCE.fetch(refs[nid(2)])                  # same stream, cached
+
+    # what the old code produced, computed here the old way
+    pages = wiki._stream_pages(*split_locator(refs[nid(1)].locator))
+    old = {pid: ET.tostring(page, encoding="unicode").encode("utf-8")
+           for pid, page in pages.items()}
+    assert one.data == old[str(1)] and two.data == old[str(2)], \
+        "byte for byte what ET.tostring produced before"
+    assert one.raw_hash != two.raw_hash
+
+    # and the stream now caches elements, not bytes: nothing is serialised
+    # until a page is fetched
+    serialised = []
+    real = ET.tostring
+    monkeypatch.setattr(ET, "tostring", lambda *a, **k: serialised.append(a[0]) or real(*a, **k))
+    wiki._stream_cache.clear()
+    wiki._stream_pages(*split_locator(refs[nid(1)].locator))
+    assert serialised == [], "parsing a stream serialises nothing"
+    SOURCE.fetch(refs[nid(1)])
+    assert len(serialised) == 1, "one fetch, one page serialised"

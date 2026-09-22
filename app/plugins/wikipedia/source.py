@@ -112,10 +112,10 @@ def split_locator(locator: str) -> tuple[Path, int, int]:
 import threading
 
 _stream_lock = threading.Lock()
-_stream_cache: dict = {}        # (dump, start, end) -> {page_id: serialised page bytes}
+_stream_cache: dict = {}        # (dump, start, end) -> {page_id: the page Element}
 
 
-def _stream_pages(dump: Path, start: int, end: int) -> dict[str, bytes]:
+def _stream_pages(dump: Path, start: int, end: int) -> "dict[str, ET.Element]":
     key = (str(dump), start, end)
     with _stream_lock:
         hit = _stream_cache.get(key)
@@ -135,15 +135,29 @@ def _stream_pages(dump: Path, start: int, end: int) -> dict[str, bytes]:
     if last != -1:
         xml = xml[: last + len("</page>")]
     root = ET.fromstring(f"<pages>{xml}</pages>")
-    pages: dict[str, bytes] = {}
+    # THE ELEMENT, NOT ITS BYTES. A stream holds ~100 pages and a caller wants
+    # ONE of them, but this used to serialise every page it held — and
+    # `ET.tostring` is the one step of this function with no C accelerator
+    # behind it (xml.etree parses in C and serialises in Python), so ~99% of
+    # the work was thrown away. The bytes are produced in `page_bytes` for the
+    # page actually asked for, by the identical call, so `raw_hash` and
+    # `origin_hash` are unchanged — the same move pubmed's reader already made
+    # (app/plugins/pubmed/source.py: "byte-identical to the former
+    # ET.tostring(root[index]) — pinned by tests"), pinned here the same way.
+    pages: dict[str, ET.Element] = {}
     for page in root:
         pid = page.findtext("id")
         if pid:
-            pages[pid] = ET.tostring(page, encoding="unicode").encode("utf-8")
+            pages[pid] = page
     with _stream_lock:
         _stream_cache.clear()           # one slot: streams are read sequentially
         _stream_cache[key] = pages
     return pages
+
+
+def page_bytes(page: ET.Element) -> bytes:
+    """One page as ElementTree re-writes it — what `origin_hash` is over."""
+    return ET.tostring(page, encoding="unicode").encode("utf-8")
 
 
 _NOT_AVAILABLE = "not available"
@@ -463,10 +477,11 @@ class WikipediaSource:
             return self._fetch_archive(ref)
         dump, start, end = split_locator(ref.locator)
         pages = _stream_pages(dump, start, end)
-        data = pages.get(str(decode_native_id(int(ref.native_id))[1]))
-        if data is None:
+        page = pages.get(str(decode_native_id(int(ref.native_id))[1]))
+        if page is None:
             raise RuntimeError(f"page {ref.native_id} not found in its stream "
                                 f"({ref.locator})")
+        data = page_bytes(page)
         digest = hashlib.blake2b(data, digest_size=16).hexdigest()
         return RawDoc(ref=ref, raw_hash=digest, data=data)
 
