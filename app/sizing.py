@@ -13,10 +13,29 @@ DURATION is the same thing everywhere: it says what the scheduler
 actually cares about, which is how long the thread is committed before it
 can yield.
 
-HOW. An exponentially weighted average of seconds-per-unit per key, and
-the size that would hit the target at that rate — clamped, because a
+HOW. The cost of a batch is AFFINE, not proportional: `fixed + marginal x n`.
+The fixed part is real and large — measured on the node, 2026-09-22, over 64
+logged batches of wikipedia's rdf and fts: 2.7 s and 4.5 s per batch before
+the first document is touched (a tantivy commit, a writer built, a
+transaction, a reference store opened), against 41 and 35 ms per document.
+
+THIS MATTERS BECAUSE THE OBVIOUS MODEL DIVERGES. Charging the whole batch to
+a per-document rate (`seconds / units`) reports `marginal + fixed/n`, and
+sizing from that gives `n' = target x n / (fixed + marginal x n)`. When the
+fixed cost approaches the target the next batch is smaller, which makes the
+reported rate worse, which makes the batch smaller again — a feedback loop
+that ends at the floor, paying the fixed cost once per document it can. With
+a 3 s target and a 2.7 s fixed cost that is where it went: batches of 36 to
+234 documents where the thread could have taken thousands.
+
+So both terms are fitted, by least squares over the last few batches, and the
+size is `(budget - fixed) / marginal`. When the fixed cost alone eats the
+target, the target is UNREACHABLE by shrinking — the only way to spend less
+of the thread's time on it is to pay it less often — so the budget widens to
+`ceiling_s`, which is what actually bounds the unit (and so SIGTERM, and so
+how fine-grained a slot hand-back can be). Clamped at both ends, because a
 measurement can be wrong and the clamp is what stops it being wrong
-expensively. Before there is any measurement, the configured default
+expensively. Before there are enough measurements the configured default
 stands: this never GUESSES a size, it only corrects one that has been
 observed.
 
@@ -49,6 +68,40 @@ ALPHA = 0.25
 # Below this many samples the average is one batch's luck (stats.MIN_EVENTS
 # reasoning). The default stands until then.
 MIN_SAMPLES = 3
+#: how many (size, duration) pairs the affine fit looks at
+SAMPLES_KEPT = 16
+#: the fixed cost is "dominant" at this share of the target — above it,
+#: shrinking the batch cannot buy the target back, it only pays the fixed
+#: cost more often
+FIXED_SHARE = 0.5
+#: how far past the target a unit may run when the fixed cost dominates.
+#: This is the real bound on the unit, and so on SIGTERM and on how
+#: fine-grained a slot hand-back can be (scheduling.md §10, B3).
+CEILING_MULTIPLE = 4.0
+
+
+def _affine(samples) -> tuple[float, float | None]:
+    """(fixed seconds per batch, seconds per unit) by least squares over
+    recent batches. The marginal term is None when every batch was the same
+    size — then the two terms cannot be told apart and the caller falls back
+    to the plain rate. Both are clamped non-negative: a fit that says a
+    bigger batch is cheaper, or that a batch costs less than nothing before
+    it starts, is noise, not a discovery."""
+    n = len(samples)
+    if n < MIN_SAMPLES:
+        return 0.0, None
+    sx = sum(u for u, _ in samples)
+    sy = sum(s for _, s in samples)
+    sxx = sum(u * u for u, _ in samples)
+    sxy = sum(u * s for u, s in samples)
+    denom = n * sxx - sx * sx
+    if denom <= 0:                      # every batch the same size
+        return 0.0, None
+    marginal = (n * sxy - sx * sy) / denom
+    fixed = (sy - marginal * sx) / n
+    if marginal <= 0:
+        return 0.0, None                # noise: fall back to the plain rate
+    return max(0.0, fixed), marginal
 
 
 class Sizer:
@@ -60,11 +113,15 @@ class Sizer:
         self._rate: dict[str, float] = {}        # key -> seconds per unit
         self._samples: dict[str, int] = {}
         self._window: dict[str, float] = {}      # key -> current width
+        #: key -> the last few (units, seconds), for the affine fit
+        self._recent: dict[str, list[tuple[int, float]]] = {}
 
     # ------------------------------------------------------------ batches
 
     def record(self, key: str, units: int, seconds: float) -> None:
-        """What a unit of this kind actually cost."""
+        """What a batch of this kind actually cost — its SIZE and its whole
+        duration, because the two terms can only be told apart across batches
+        of different sizes."""
         if units <= 0 or seconds < 0:
             return
         per = seconds / units
@@ -72,17 +129,33 @@ class Sizer:
             prev = self._rate.get(key)
             self._rate[key] = per if prev is None else (1 - ALPHA) * prev + ALPHA * per
             self._samples[key] = self._samples.get(key, 0) + 1
+            seen = self._recent.setdefault(key, [])
+            seen.append((int(units), float(seconds)))
+            if len(seen) > SAMPLES_KEPT:
+                del seen[0]
 
     def size(self, key: str, *, target_s: float, default: int,
-             lo: int = 1, hi: int | None = None) -> int:
-        """How many units to take so the batch lasts about `target_s`."""
+             lo: int = 1, hi: int | None = None,
+             ceiling_s: float | None = None) -> int:
+        """How many units to take so the batch lasts about `target_s` — or,
+        when the batch's FIXED cost already eats that target, as many as
+        `ceiling_s` allows, since paying it less often is then the only way
+        to spend less of the thread on it (see the header)."""
         with self._lock:
             per = self._rate.get(key)
             enough = self._samples.get(key, 0) >= MIN_SAMPLES
+            seen = list(self._recent.get(key, ()))
         if not per or not enough:
             return default
-        n = int(target_s / per) if per > 0 else default
         hi = hi if hi is not None else default * 20
+        fixed, marginal = _affine(seen)
+        if marginal is None:                      # every batch the same size:
+            n = int(target_s / per) if per > 0 else default   # no way to separate
+        else:
+            budget = target_s
+            if fixed >= target_s * FIXED_SHARE:
+                budget = ceiling_s if ceiling_s else target_s * CEILING_MULTIPLE
+            n = int((budget - fixed) / marginal) if budget > fixed else lo
         return max(lo, min(hi, n))
 
     # ------------------------------------------------------------- windows
@@ -115,6 +188,9 @@ class Sizer:
                 "rates": {k: round(v, 6) for k, v in self._rate.items()},
                 "samples": dict(self._samples),
                 "windows": {k: int(v) for k, v in self._window.items()},
+                "affine": {k: {"fixed_s": round(f, 3), "per_unit_s": round(m, 6)}
+                           for k, (f, m) in ((k, _affine(v)) for k, v in self._recent.items())
+                           if m is not None},
             }
 
     def reset(self) -> None:
@@ -122,6 +198,7 @@ class Sizer:
             self._rate.clear()
             self._samples.clear()
             self._window.clear()
+            self._recent.clear()
 
 
 _sizer = Sizer()

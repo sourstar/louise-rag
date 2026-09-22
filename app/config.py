@@ -210,6 +210,12 @@ SCHED_FLOOR_CAP_S = float(os.getenv("SCHED_FLOOR_CAP_S", "60"))
 # is also the granularity at which a resource can be handed back, so this
 # is what bounds B2/B3 in docs/notes/scheduling.md §10.
 BATCH_TARGET_S = float(os.getenv("BATCH_TARGET_S", "3"))
+# What bounds a unit when the batch's FIXED cost already exceeds the target
+# (app/sizing.py): shrinking cannot buy the target back, so the batch grows to
+# amortise the fixed cost instead — up to here, which is what SIGTERM and a
+# slot hand-back then wait for. Measured on the node 2026-09-22: a fixed cost
+# of 2.7 s (rdf) and 4.5 s (fts) against a 3 s target.
+BATCH_CEILING_S = float(os.getenv("BATCH_CEILING_S", "12"))
 # The re-index probe is a WINDOW over rowids, not a batch: its cost depends
 # on how many rows the window happens to hold. Measured live at 498 ms
 # (pubmed) for a fixed 200k window; the width is now adjusted to hit this.

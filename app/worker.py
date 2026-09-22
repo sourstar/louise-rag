@@ -125,12 +125,15 @@ def _batch_key(collection, stage: str) -> str:
 
 def batch_docs(collection, stage: str, default: int) -> int:
     """How many documents this stage should take, from what they have
-    actually cost here (app/sizing.py). The configured count is the
-    starting point and the floor of the clamp — never a guess replaced by
-    another guess."""
+    actually cost here (app/sizing.py). The configured count is the STARTING
+    point — not the floor: a collection whose documents cost 14-37 s each
+    (gutenberg) must be able to take one at a time, which is why `lo` is 1.
+    What stops a batch collapsing to the floor is the sizer modelling the
+    FIXED cost of a batch instead of charging it to the documents."""
     return sizing.sizer().size(
         _batch_key(collection, stage), target_s=config.BATCH_TARGET_S,
-        default=default, lo=1, hi=max(default, 1) * 20)
+        default=default, lo=1, hi=max(default, 1) * 20,
+        ceiling_s=config.BATCH_CEILING_S)
 
 
 def _waiting_because_off(con, collection) -> str:

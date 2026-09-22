@@ -153,3 +153,94 @@ def test_the_worker_falls_back_to_the_configured_counts(tmp_path, isolated_confi
         fts_dir=tmp_path / "f", lance_dir=tmp_path / "l", embed=None)
     assert worker.batch_docs(c, "fts", config.FTS_BATCH_DOCS) == config.FTS_BATCH_DOCS
     assert worker.batch_docs(c, "rdf", config.RDF_BATCH_DOCS) == config.RDF_BATCH_DOCS
+
+
+# ---------------------------------------------- the fixed cost of a batch
+
+def _run(s, key, *, fixed, marginal, target, default, rounds=15, ceiling=12.0,
+         lo=1, hi=4000):
+    """Close the loop the worker closes: size a batch, pay what a batch of
+    that size costs, record it, size again. Returns the sizes chosen."""
+    sizes = []
+    n = default
+    for _ in range(rounds):
+        s.record(key, n, fixed + marginal * n)
+        n = s.size(key, target_s=target, default=default, lo=lo, hi=hi,
+                   ceiling_s=ceiling)
+        sizes.append(n)
+    return sizes
+
+
+def test_a_fixed_cost_per_batch_does_not_shrink_the_batch_until_it_is_all_fixed_cost(s):
+    """THE DEFECT, measured on the node 2026-09-22: wikipedia's rdf batches
+    cost 2.7 s before the first document (a tantivy commit, a writer, a
+    transaction) plus 41 ms each, against a 3 s target. Charging all of that
+    to a per-document rate reports `marginal + fixed/n`, so the next batch is
+    smaller, so the rate looks worse, so it shrinks again — and it ended at
+    36-234 documents where the thread could have taken thousands, paying the
+    2.7 s as often as it could.
+
+    Sized from both terms, the batch instead grows until the fixed cost is a
+    minority of it, bounded by the ceiling that bounds the unit."""
+    sizes = _run(s, "rdf:wikipedia", fixed=2.7, marginal=0.041, target=3.0,
+                 default=200)
+    settled = sizes[-1]
+    assert settled > 200, f"it must grow past the default, got {sizes}"
+    duration = 2.7 + 0.041 * settled
+    assert duration <= 12.0 * 1.05, f"and stay inside the ceiling: {duration:.1f}s"
+    assert 2.7 / duration < 0.5, "the fixed cost is now a minority of the batch"
+    # and it does not oscillate: the last few rounds agree within a tenth
+    assert max(sizes[-4:]) - min(sizes[-4:]) <= max(sizes[-4:]) * 0.1, sizes
+
+
+def test_the_old_proportional_model_would_have_collapsed_here(s):
+    """The same cost, sized the way it was before: this is the loop the fix
+    breaks, pinned so nobody restores it by accident."""
+    n, sizes = 200, []
+    for _ in range(15):
+        seconds = 2.7 + 0.041 * n
+        per = seconds / n                      # the old model's whole view
+        n = max(1, min(4000, int(3.0 / per)))
+        sizes.append(n)
+    assert sizes[-1] < 80 and sizes[-1] < sizes[0], \
+        f"the proportional model shrinks toward the floor: {sizes}"
+    assert 2.7 / (2.7 + 0.041 * sizes[-1]) > 0.4, \
+        "and ends paying mostly fixed cost per document"
+
+
+def test_a_stage_with_no_fixed_cost_still_lands_on_the_target(s):
+    """The fix must not change the case it was already right about."""
+    sizes = _run(s, "fts:pubmed", fixed=0.0, marginal=0.002, target=3.0,
+                 default=200)
+    duration = 0.002 * sizes[-1]
+    assert duration == pytest.approx(3.0, rel=0.25), f"{sizes[-1]} documents"
+
+
+def test_documents_that_cost_more_than_the_whole_target_are_taken_one_at_a_time(s):
+    """gutenberg: 14-37 s per book. No arithmetic may talk it into a batch."""
+    sizes = _run(s, "fts:gutenberg", fixed=1.0, marginal=20.0, target=3.0,
+                 default=200)
+    assert sizes[-1] == 1, sizes
+
+
+def test_the_fit_reports_both_terms_and_refuses_to_invent_them(s):
+    """Every batch the same size: the two terms cannot be told apart, and the
+    sizer says so by falling back to the plain rate rather than inventing a
+    split."""
+    same = [(200, 3.0)] * 8
+    assert sizing._affine(same) == (0.0, None)
+    varied = [(100, 2.0), (200, 3.0), (400, 5.0)]        # 1.0 + 0.01n
+    fixed, marginal = sizing._affine(varied)
+    assert fixed == pytest.approx(1.0, abs=0.05)
+    assert marginal == pytest.approx(0.01, rel=0.05)
+    assert sizing._affine([(100, 5.0), (200, 1.0)])[1] is None, \
+        "a fit that says a bigger batch is cheaper is noise, not a discovery"
+    assert sizing._affine([(1, 1.0)]) == (0.0, None), "too few to fit"
+
+
+def test_the_snapshot_shows_what_the_fit_believes(s):
+    for u, sec in ((100, 2.0), (200, 3.0), (400, 5.0), (300, 4.0)):
+        s.record("rdf:w", u, sec)
+    shown = s.snapshot()["affine"]["rdf:w"]
+    assert shown["fixed_s"] == pytest.approx(1.0, abs=0.1)
+    assert shown["per_unit_s"] == pytest.approx(0.01, rel=0.1)
