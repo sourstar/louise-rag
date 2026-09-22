@@ -757,24 +757,40 @@ dim 2560 is the cost — 3.3x DAR's bytes per vector, which
 Measured with `tools/bakeoff_local.py` through the side-car, ~4–5 minutes
 per model on the card.
 
-**`Qwen3-Embedding-0.6B` could not be measured, and why is worth
-recording.** Two attempts, both dying with
-`UR_RESULT_ERROR_DEVICE_LOST` from the Level Zero backend part-way through
-the corpus, after running ~17x slower per shard than the encoders either
-side of it (~1.7 min per 512 documents against arctic's ~6 s). The first
-took an `xe … Engine reset: engine_class=bcs` and a device coredump with
-it; the second left no kernel trace at all and the card kept serving
-RAGE at 17 ms. So it is not the `compute-runtime#948` wedge — the card
-stays up, RAGE is untouched, and the four other models including a 4B one
-ran clean. It is **this model on the torch-XPU path**: a decoder with
-last-token pooling, where the encoders that work are bidirectional.
+**`Qwen3-Embedding-0.6B` could not be measured — and the first account of
+why, written here the same afternoon, was wrong.** It said the two
+`UR_RESULT_ERROR_DEVICE_LOST` failures were "this model on the torch-XPU
+path", that "the card stays up, RAGE is untouched", and read a kernel event
+at 14:51:44 as an oops and the 15:03:15 engine reset as a hang. An audit
+against the kernel journal (2026-09-20, evening) says otherwise:
 
-Not retried a third time: two identical failures is evidence, and another
-attempt spends the card that production is on. Relevant beyond this
-bake-off — if a Qwen3 embedding model is ever wanted inside RAGE, the
-llama.cpp route is the one that works (qwen3-embedding-4b serves there
-daily); the torch route should be assumed broken until someone shows
-otherwise.
+| time | journal |
+|---|---|
+| 14:49:51 | the Qwen3-0.6B side-car starts |
+| 14:51:44 | **global OOM** — the kernel kills one of RAGE's python servers, then a `llama-server` |
+| 15:03:15 | OOM kills another `llama-server`; `xe … Engine reset` **in the same second** |
+| 15:18:32 | engine reset — the moment the side-car itself was `docker kill`ed |
+
+Process death first and the reset after is, by the postmortem's own rule
+in `llama-intel-arc-b70`, the driver RECLAIMING, not a hang. This is the
+incident `rage.md` §19 records from the other side: a container outside
+RAGE took 21.4 GiB of the card and 22.8 GiB more of GPU buffers in host
+RAM, `xe` spilled every resident model to host memory without an error to
+anyone, the host ran out, and three of RAGE's children died. **The side-car
+was the cause, not a bystander.** The same attention fallback that asked
+for 48 GiB at a fixed batch (§ above) is still quadratic under the budget,
+and with this model's 32k default context, 28 layers and 16 heads it grew
+until the host paid for it. The arctic-family runs at the same budget
+produced no OOM event, which is why the budget looked safe.
+
+What follows from the corrected reading: "the torch route is broken for
+Qwen3" is unsupported — nothing here tested the route, only an unbounded
+allocator on a shared card. And a process that reaches the card outside
+RAGE is now something RAGE sees and defends against (§19), but the rule
+for this bake-off tooling is simpler: **a side-car runs only when RAGE's
+models are unloaded or the operator has said the card is free**, and the
+DAR-legal-it server's declared memory (below) must be its measured PEAK
+under a corpus-shaped run, not a figure taken after a light check.
 
 Its absence does not move the conclusion, which rests on the spread across
 the four bases that did run and on qwen3-embedding-4b's untrained 0.7744.
