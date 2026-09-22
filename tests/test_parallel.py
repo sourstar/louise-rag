@@ -206,3 +206,69 @@ def test_a_broken_pool_falls_back_and_recovers(isolated_config, tmp_path, corpus
     assert parallel.health()["failures"] == 1
     parallel.reset_failures()
     assert parallel.health() == {"processes": 4, "pool": False, "failures": 0, "disabled": False}
+
+
+def test_the_window_stays_full_instead_of_draining_between_waves(isolated_config, tmp_path,
+                                                                 corpus_dir, monkeypatch):
+    """A COST test. `compute` used to submit `wave` tasks, wait for ALL of
+    them, and only then submit the next wave — so at every boundary the
+    children drained to idle while the wave's slowest task finished alone.
+    With per-document costs spanning two orders of magnitude (wikipedia:
+    median ~0 ms, tail past 100 ms) that last task is reliably far behind,
+    and the barrier cost most of the pool: MEASURED on the node,
+    2026-09-22, a document costs 59 ms of CPU alone and the pipeline thread
+    saw 41 ms per document with ELEVEN children — 1.4x where the pool
+    exists to give ten.
+
+    The cap on how many children one collection may occupy is unchanged;
+    what changed is that a slot is refilled as soon as its result is taken.
+    """
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = (rows * 40)[:400]                      # enough parts to see waves
+    expected = parallel.compute("chunks", c, rows)        # serial truth
+    parallel.reset_failures()
+
+    submits: list[int] = []                       # in-flight count at each submit
+
+    class Fake:
+        def __init__(self, part):
+            self.part = part
+            self.taken = False
+
+        def result(self, timeout=None):
+            self.taken = True
+            Pool.live -= 1                    # the CLASS attribute submit() reads
+            return parallel._compute("chunks", c, self.part)
+
+        def cancel(self):
+            return True
+
+    class Pool:
+        live = 0
+
+        def submit(self, _fn, _kind, _collection, part):
+            submits.append(Pool.live)
+            Pool.live += 1
+            return Fake(part)
+
+    pool = Pool()
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 11)
+    monkeypatch.setattr(parallel, "pool", lambda: pool)
+    # TWO collections competing, which is the live case: wikipedia's rdf and
+    # fts against gutenberg's embed chunking. Alone, a collection's window
+    # already covers every part it cuts (parts and wave are both ~2 per
+    # child) and there is no boundary at all — the barrier appears exactly
+    # when the share is halved and the parts no longer fit in one window.
+    parallel.forget_users()
+    parallel.active_users("another-collection")
+    got = parallel.compute("chunks", c, rows)
+
+    assert got == expected, "order and content are unchanged"
+    n = parallel.processes()
+    wave = max(1, (n // max(1, parallel.active_users())) * 2)
+    assert len(submits) > wave, "the batch is cut into more parts than one window"
+    assert max(submits) == wave - 1, "the window fills to the cap and no further"
+    # the whole point: after the window first fills, no submission ever finds
+    # the pool empty again — that emptiness WAS the wave barrier
+    assert min(submits[wave:]) == wave - 1, \
+        f"the children drained between waves: in-flight at submit {submits}"

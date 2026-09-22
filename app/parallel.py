@@ -243,15 +243,33 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # On a timeout or a broken pool the batch is computed in-process and
     # the pool is rebuilt; after PARSE_MAX_FAILURES in a row this process
     # stops using children until it restarts.
-    futures = []
+    #
+    # THE WINDOW IS KEPT FULL, not refilled a wave at a time. It used to
+    # submit `wave` tasks, wait for ALL of them, and only then submit the
+    # next `wave` — so at every wave boundary the children drained to idle
+    # while the last task of the wave finished alone, and a batch cut into
+    # three waves paid that three times. With per-document costs that span
+    # two orders of magnitude (wikipedia: median ~0 ms, tail >100 ms) the
+    # last task is reliably far behind the rest, so the barrier cost most of
+    # the pool. MEASURED on the node, 2026-09-22: a document costs 59 ms of
+    # CPU on its own, and the pipeline thread saw 41 ms per document with
+    # ELEVEN children — a speedup of 1.4 where the pool exists to give ten.
+    # Now a slot is refilled the moment its result is taken, so `wave` tasks
+    # are in flight from the first submission to the last: the same cap on
+    # how many children one collection may occupy, without the idle gaps.
+    # Results are still consumed in order, so a failing document still costs
+    # itself and never its neighbours.
+    futures: list = []
     try:
         deadline = time.monotonic() + config.PARSE_TIMEOUT_S
         out: list[tuple[bool, object]] = []
-        for start in range(0, len(parts), wave):
-            futures = [ex.submit(_compute, kind, collection, part)
-                       for part in parts[start:start + wave]]
-            for f in futures:
-                out.extend(f.result(timeout=max(1.0, deadline - time.monotonic())))
+        nxt = 0
+        while nxt < len(parts) or futures:
+            while nxt < len(parts) and len(futures) < wave:
+                futures.append(ex.submit(_compute, kind, collection, parts[nxt]))
+                nxt += 1
+            oldest = futures.pop(0)
+            out.extend(oldest.result(timeout=max(1.0, deadline - time.monotonic())))
         _note_success()
         return out
     except (BrokenProcessPool, TimeoutError, OSError) as e:
