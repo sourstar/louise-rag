@@ -214,7 +214,7 @@ def test_every_embedding_request_passes_its_servers_gate(monkeypatch):
     def fake_post(url, json, timeout, headers=None):
         calls.append(dispatch.gate("http://enc").snapshot()["busy"])
         return Resp()
-    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    monkeypatch.setattr(embeddings.httpc, "post", fake_post)
     recipe = collections_mod.EmbedRecipe(url="http://enc", api="openai", model="m",
                                          dtype="f16", ctx=512)
     embeddings._request_vectors(["x"], 5, recipe)

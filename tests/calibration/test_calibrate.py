@@ -215,9 +215,16 @@ def test_nothing_here_touches_a_network(monkeypatch, recorded):
     """Live runs are a flag, never a test dependency — enforced, not hoped."""
     import httpx
 
+    from app import httpc
+
     def forbidden(*a, **kw):
         raise AssertionError("calibration tests must not touch the network")
     monkeypatch.setattr(httpx, "post", forbidden)
     monkeypatch.setattr(httpx, "get", forbidden)
+    # the model clients go through the pooled client (app/httpc.py); barring
+    # httpx alone would leave a door this test exists to keep shut
+    monkeypatch.setattr(httpc, "post", forbidden)
+    monkeypatch.setattr(httpc, "get", forbidden)
+    monkeypatch.setattr(httpc, "client", forbidden)
     backends, meta = recorded
     calibrate_space.calibrate(backends, meta)      # must complete untouched

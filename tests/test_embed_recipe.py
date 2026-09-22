@@ -66,7 +66,7 @@ def _capture_posts(monkeypatch):
     def fake_post(url, json=None, timeout=None, headers=None):
         calls.append({"url": url, "json": json})
         return FakeResponse()
-    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    monkeypatch.setattr(embeddings.httpc, "post", fake_post)
     return calls
 
 
@@ -138,7 +138,7 @@ def test_413_from_bert_class_servers_shrinks_the_budget_gently(isolated_config, 
     def fake_post(url, json=None, timeout=None, headers=None):
         attempts.append(len(json["input"][0]))
         return Resp(413 if len(json["input"][0]) > 1000 else 200)
-    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    monkeypatch.setattr(embeddings.httpc, "post", fake_post)
 
     recipe = collections_mod.EmbedRecipe(
         url="http://tei:1", api="openai", model="medcpt", dtype="f16", ctx=512)
@@ -170,7 +170,7 @@ def _refusing_server(monkeypatch, status, text, limit=1000):
     def fake_post(url, json=None, timeout=None, headers=None):
         attempts.append(len(json["input"][0]))
         return Resp(status if len(json["input"][0]) > limit else 200)
-    monkeypatch.setattr(embeddings.httpx, "post", fake_post)
+    monkeypatch.setattr(embeddings.httpc, "post", fake_post)
     return attempts
 
 

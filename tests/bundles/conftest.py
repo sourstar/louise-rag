@@ -29,10 +29,17 @@ def confirmed_space(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def fresh_revisit_state():
+def fresh_revisit_state(monkeypatch):
     """genesis keeps barren-shard bookkeeping in a process-local dict keyed
     on COLLECTION NAME, and several test modules reuse the same names —
-    without this, one module's exhausted shards silence another's drain."""
+    without this, one module's exhausted shards silence another's drain.
+
+    The candidate walk's memo goes with it: these tests are about WHAT the
+    drain decides, and they change eligibility and ask again in the same
+    second, which is exactly what the memo is allowed to be stale about.
+    Its own cost is measured in tests/bundles/test_genesis_local.py.
+    """
+    monkeypatch.setattr(genesis, "_DEMAND_TTL_S", 0.0)
     genesis.reset_revisit_state()
     yield
     genesis.reset_revisit_state()

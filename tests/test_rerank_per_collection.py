@@ -56,7 +56,7 @@ def _server(monkeypatch, *, fail=None, answer=None):
             return _Resp({"results": [{"index": i, "relevance_score": float(i)}
                                       for i in indices]})
         return _Resp([{"index": i, "score": float(i)} for i in indices])
-    monkeypatch.setattr(retrieval.httpx, "post", post)
+    monkeypatch.setattr(retrieval.httpc, "post", post)
     return calls
 
 

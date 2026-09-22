@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass
 import httpx
 from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
                dispatch, embeddings,
-               fts, language_plan, refs, work_dedup)
+               fts, httpc, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
 from .hold import runs as hold_runs
@@ -149,7 +149,7 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         body = {"query": query, "texts": texts, "truncate": True}
     try:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
-            r = httpx.post(recipe.url, json=body, timeout=budget_s,
+            r = httpc.post(recipe.url, json=body, timeout=budget_s,
                            headers=dispatch.level_headers())
         r.raise_for_status()
         data = r.json()

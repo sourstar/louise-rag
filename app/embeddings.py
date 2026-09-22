@@ -22,7 +22,7 @@ import numpy as np
 import pyarrow as pa
 
 from . import collections as collections_mod
-from . import config, dispatch
+from . import config, dispatch, httpc
 
 TABLE = "chunks"
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
@@ -63,14 +63,14 @@ def _request_vectors(batch: list[str], timeout: float,
     level = dispatch.level_headers()
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
-            r = httpx.post(f"{recipe.url}/v1/embeddings",
+            r = httpc.post(f"{recipe.url}/v1/embeddings",
                            json={"model": recipe.model, "input": batch},
                            timeout=timeout, headers=level)
             r.raise_for_status()
             _note_run(r, runs)
             data = sorted(r.json()["data"], key=lambda d: d["index"])
             return [d["embedding"] for d in data]
-        r = httpx.post(f"{recipe.url}/api/embed",
+        r = httpc.post(f"{recipe.url}/api/embed",
                        json={"model": recipe.model, "input": batch},
                        timeout=timeout, headers=level)
         r.raise_for_status()

@@ -136,10 +136,16 @@ bursts of 4–6 while the pool is fed.
   serial commit into one SQLite writer — the commit is the ceiling;
 - gutenberg's remaining 71,641 documents are GPU work: its encoder waited
   705 s against 243 s served in the window before the fix;
-- the index maintainer's turns for the two finished collections cost ~4 s
-  each and produce 0 units (`_next_reindex`, ~8 % of the worker after the
-  fix), and the archive drain builds a new TLS context per request
-  (`ssl.create_default_context`, ~10 %). Both are small and both are open.
+- **corrected the next day**: the scheduler's line
+  `gutenberg: 33% in 582 turns (4s, 0 units)` is 4 s ACROSS those turns —
+  7 ms each — not 4 s per turn as first read here. The index maintainer is
+  not a cost. What the profile showed under `_next_reindex` is the fts
+  reindex sweep restarting after a deploy: pubmed's 40M in ~32,778-row
+  windows, ~155 s of CPU spread over ~1,200 rounds, once, and then the
+  cursor's `done` flag makes it free. Left alone.
+- two real ones, both fixed the same night (see the entry below): the
+  archive drain's candidate walk and a TLS context built per embedding
+  request.
 
 ### 2026-09-22: a reboot renumbered the cards and RAGE would not start
 

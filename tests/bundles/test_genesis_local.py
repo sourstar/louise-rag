@@ -234,3 +234,33 @@ def test_a_candidate_read_touches_only_the_candidates_row_groups(collection, mon
 def test_local_shards_listing(collection):
     shards = genesis._local_shards(collection)
     assert shards == ("data/tr/000.parquet", "data/tr/001.parquet")
+
+
+def test_the_candidate_walk_is_not_repeated_for_every_round(collection, monkeypatch):
+    """A COST test. The walk pages through up to 65,536 candidates from the
+    start of the index, and the drain calls it once per round: on the node,
+    2026-09-22, that was 142 ms every round of wikipedia's pipeline thread —
+    30 % of the worker's CPU — to rediscover the same five stragglers, while
+    the thread's own rdf and fts waited behind it.
+
+    The answer is memoised for a few seconds, and dropped the moment this
+    process changes what the archive covers."""
+    monkeypatch.setattr(genesis, "_DEMAND_TTL_S", 60.0)
+    con = db.connect(collection)
+    _make_eligible(con)
+    con.commit()
+
+    pages: list[str] = []
+    con.set_trace_callback(lambda s: pages.append(s) if "rowid>" in s else None)
+    first = genesis._candidate_shards(con, collection)
+    assert first and pages, "the first call walks"
+
+    pages.clear()
+    again = genesis._candidate_shards(con, collection)
+    assert [d.shard for d in again] == [d.shard for d in first]
+    assert pages == [], "a second call inside the window walks nothing"
+
+    # …and anything that changes what the archive covers drops it at once
+    genesis._record_residual(collection, first[0].shard, [first[0].uids[0]])
+    genesis._candidate_shards(con, collection)
+    assert pages, "a residual recorded means the next call walks again"

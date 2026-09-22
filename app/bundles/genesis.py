@@ -426,6 +426,7 @@ def _residual_of(collection, shard: str) -> frozenset[str]:
 def _record_residual(collection, shard: str, uids) -> None:
     with _residual_lock:
         _residual[(str(collection.manifest_path), shard)] = frozenset(uids)
+    _forget_demand(collection)          # what this shard is wanted for has changed
 
 
 def reset_revisit_state() -> None:
@@ -434,6 +435,7 @@ def reset_revisit_state() -> None:
     needs it, since a restart starts empty anyway."""
     with _residual_lock:
         _residual.clear()
+    _forget_demand()
 
 
 #: the residual key of what a local archive's candidate walk RELEASES
@@ -446,6 +448,7 @@ def _add_residual(collection, shard: str, uids) -> None:
     key = (str(collection.manifest_path), shard)
     with _residual_lock:
         _residual[key] = _residual.get(key, frozenset()) | frozenset(uids)
+    _forget_demand(collection)
 
 
 def residual_uids(collection) -> list[str]:
@@ -510,11 +513,52 @@ def _straddles(locator: str, split_locator) -> bool:
     return len(segments) > 1 and str(segments[0][0]).endswith(".parquet")
 
 
+#: manifest path -> (when it was walked, what it found). The walk below pages
+#: through up to _CANDIDATE_SCAN_CAP candidates FROM THE START, and the drain
+#: calls it once per round: on the node, 2026-09-22, that was 142 ms every
+#: round of wikipedia's pipeline thread — 30 % of the worker's CPU — to
+#: rediscover the same five stragglers, while the thread's real work (rdf and
+#: fts) waited behind it. The candidate set moves slowly in the only way that
+#: matters here: a document becomes a candidate when fts commits it, and a
+#: shard stops being demanded when it is imported. So the answer is memoised
+#: for a few seconds and dropped outright whenever this process changes what
+#: the archive covers (an import, a residual, a retry).
+_demand_seen: dict[str, tuple[float, list]] = {}
+_demand_lock = threading.Lock()
+_DEMAND_TTL_S = 10.0
+
+
+def _forget_demand(collection=None) -> None:
+    """Drop the memo — for one collection, or all of them."""
+    with _demand_lock:
+        if collection is None:
+            _demand_seen.clear()
+        else:
+            _demand_seen.pop(str(collection.manifest_path), None)
+
+
 def _candidate_shards(con, collection) -> list[ShardDemand]:
     """For a LOCAL archive: the shards holding documents that are
     embed-eligible and not yet covered, found from the candidates' own
     locators — never by sweeping the shard list — in candidate index
-    order. Empty when there is nothing the archive could do this round."""
+    order. Empty when there is nothing the archive could do this round.
+
+    Memoised for `_DEMAND_TTL_S` (see above): the caller consumes at most one
+    demand per call and a shard read costs ~10 s, so a few seconds of
+    staleness cannot delay anything that matters, and the walk stops being
+    the pipeline thread's largest cost."""
+    memo_key = str(collection.manifest_path)
+    with _demand_lock:
+        seen = _demand_seen.get(memo_key)
+    if seen is not None and time.monotonic() - seen[0] < _DEMAND_TTL_S:
+        return seen[1]
+    found = _walk_candidate_shards(con, collection)
+    with _demand_lock:
+        _demand_seen[memo_key] = (time.monotonic(), found)
+    return found
+
+
+def _walk_candidate_shards(con, collection) -> list[ShardDemand]:
     from ..plugins.wikipedia.archive import split_locator   # format v1 locators
     root = collection.corpus_dir
     demand: dict[str, ShardDemand] = {}
@@ -605,6 +649,8 @@ def retry_rejected(con, archive_id: str | None = None, shard: str | None = None)
         con.execute(
             f"UPDATE genesis_imports SET state='fetched', detail=NULL, pending=NULL, "
             f"next_pass_at=0, updated_at=? WHERE {clause}", [int(time.time()), *params])
+        # a shard that was rejected covered nothing; now it may
+        _forget_demand()
     return rows
 
 

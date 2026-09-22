@@ -115,7 +115,7 @@ class Rage:
 @pytest.fixture
 def rage(monkeypatch):
     r = Rage()
-    monkeypatch.setattr(embeddings.httpx, "post", r.post)
+    monkeypatch.setattr(embeddings.httpc, "post", r.post)
     monkeypatch.setattr(run_check.httpx, "get", r.get)
     return r
 

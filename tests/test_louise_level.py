@@ -45,7 +45,13 @@ def posts(monkeypatch):
         return Answer(url)
 
     import httpx
+
+    from app import httpc
     monkeypatch.setattr(httpx, "post", post)
+    # the embedding and rerank clients go through the pooled client now, which
+    # exists so that one TLS context and one connection serve every request
+    # (app/httpc.py); the header they carry is what this file is about
+    monkeypatch.setattr(httpc, "post", post)
     return seen
 
 

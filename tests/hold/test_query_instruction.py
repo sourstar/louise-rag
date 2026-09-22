@@ -104,7 +104,7 @@ def test_search_sends_exactly_what_calibration_embedded(monkeypatch):
         sent.extend(json["input"])
         return Answer(len(json["input"]))
 
-    monkeypatch.setattr(embeddings.httpx, "post", post)
+    monkeypatch.setattr(embeddings.httpc, "post", post)
     embeddings.embed_texts(texts, recipe=_recipe(codex), query=True)
 
     assert sent == calibrated
