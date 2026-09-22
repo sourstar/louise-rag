@@ -205,6 +205,24 @@ SQLite took ONE equality off a four-column index and filtered the rest of
 the collection. → Time every hot query against a real manifest; a plan
 check proves the shape, only a timing proves the cost.
 
+**1b. A fix applied to one branch of the same function.**
+The backfill walk was bounded into windows in September after it was
+measured at 105–153 s on pubmed — but only where a collection DECLARES an
+archive, the other branch being believed the small case. Three days later
+the same collection lost its archive declaration, fell into the other
+branch, and burned a core of twelve on a 57.8 s selection that could not
+find a row (2026-09-22). → When you fix a cost, fix EVERY branch that
+reaches it, or make the cheap branch impossible; and a condition that
+decides between a bounded and an unbounded path is itself a defect waiting
+for the day the condition flips.
+
+**1c. A poll for something that cannot happen until a restart.**
+Even windowed, the version walk re-read the whole corpus every two minutes
+for a re-embed candidate that can appear only from a version bump (a code
+change, so a restart) or an import (which moves the coverage epoch) —
+both of which clear the cursor anyway. → Ask what has to HAPPEN for a
+selection to find something, and wait that long, not the default TTL.
+
 **2. `rowid>?` is not a range unless the index says so.**
 `idx_documents_scope` is `(in_scope, rdf_done, fts_done, embed_done)` with
 an implicit rowid tail. A rowid bound is usable ONLY when every preceding

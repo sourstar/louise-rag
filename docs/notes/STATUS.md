@@ -75,6 +75,72 @@ history because its steps were written under it; `CLAUDE.md` and
 `BRANCHING-INSTRUCTIONS.md` at the repository root — a zip-import recipe
 for a branch that never reached the remote — is deleted.
 
+### 2026-09-22: a core burned on a query that could not find anything
+
+The operator: "check why the scheduling is not saturating the CPU; I see
+louise-rag to be constantly below 35%." It was not idling — nearly half of
+what it used was waste.
+
+| measured on the node | value |
+|---|---|
+| pubmed documents, all embedded at the current version | 39,994,988 |
+| left to embed, or at an older version | 0 / 0 |
+| one call of the unwindowed version selection | **57,819 ms, 0 rows** |
+| py-spy, 25 s, that one line | 2,498 of 5,378 samples (**46 %**) |
+| worker CPU | 2.1 of 12 cores |
+
+`_backfill_rows` takes an unwindowed branch when a collection declares no
+archive, and pubmed's declaration is gone. There the version selection
+(`embed_done=1 AND embed_version<N`) has an index prefix that matches
+EVERY embedded document and tests `embed_version` row by row — so it read
+40M index entries to find nothing, and the embed producer called it again
+at once. It started when the collection was set to embed "all" at 14:36;
+that is the only mode that reaches the path.
+
+**The same defect had been fixed once.** f5c4f29 (2026-09-19) bounded this
+very walk into rowid windows after measuring it at 105–153 s on the same
+collection — but only for collections WITH an archive, the no-archive case
+being assumed small. It is the pitfall [`CLAUDE.md`](../../CLAUDE.md) names
+twice: a plan that reads `SEARCH ... USING INDEX` while SQLite walks the
+corpus behind it, and a cost that scales with the corpus instead of with
+the work available. Both branches now page the version walk; the NEW walk
+stays unbounded on purpose, because its prefix ends on its own candidates
+and a document that clears fts must be embeddable in the same round.
+
+**And the sweep itself.** Windowing alone still read the corpus every two
+minutes — ~58 s of CPU per sweep, about a tenth of a core for ever, for a
+candidate that cannot exist. A re-embed appears only from a version bump
+(a code change, so a restart, which clears these in-memory cursors) or an
+import of older vectors (which moves the coverage epoch, same). So a
+VERSION sweep that finds nothing now waits an hour; the new walk keeps its
+two minutes, and every re-embed an operator can ask for sets
+`embed_done=0`, which is the new walk's business.
+
+**After the deploy** (3f28835), measured the same evening:
+
+| | before | after |
+|---|---|---|
+| that line, py-spy over 25 s | 2,498 samples | **0** |
+| wikipedia rdf / fts | 51.7 / 52.0 documents per s | **85.1 / 81.6** |
+| wikipedia unit cost, fts / rdf | 4.0–12.8 / 5.6–11.0 ms per doc | **0.4 / 0.3** |
+| gutenberg embed, and what is left | 0.0/s — 597 h | **0.1/s — 149 h** |
+
+The first sweep after the restart ran its windows for about ten minutes
+and then went silent, as designed. The worker settles at ~1 core between
+bursts of 4–6 while the pool is fed.
+
+**What still limits saturation**, none of it a defect:
+- only wikipedia has CPU-shaped work left (52 documents/s through both
+  extraction and indexing); gutenberg and pubmed have nothing to parse;
+- wikipedia's pipeline alternates parallel parsing in 11 children with a
+  serial commit into one SQLite writer — the commit is the ceiling;
+- gutenberg's remaining 71,641 documents are GPU work: its encoder waited
+  705 s against 243 s served in the window before the fix;
+- the index maintainer's turns for the two finished collections cost ~4 s
+  each and produce 0 units (`_next_reindex`, ~8 % of the worker after the
+  fix), and the archive drain builds a new TLS context per request
+  (`ssl.create_default_context`, ~10 %). Both are small and both are open.
+
 ### 2026-09-22: a reboot renumbered the cards and RAGE would not start
 
 The operator, after a reboot: `louise-rage` start fails with
