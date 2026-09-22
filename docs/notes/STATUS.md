@@ -47,6 +47,42 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-09-22: a reboot renumbered the cards and RAGE would not start
+
+The operator, after a reboot: `louise-rage` start fails with
+
+    error while creating mount source path
+    '/sys/class/drm/card0/device/tile0/gt0/freq0':
+    mkdir /sys/class/drm/card0/device/tile0: operation not permitted
+
+**DRM card numbers are handed out in load order and swap across boots.**
+The Arc had been `card0` and came back `card1`; `card0` is now the
+processor's Radeon graphics, which has no `tile0`, so Docker tried to
+CREATE the missing source under `/sys` and the container never started.
+Not degraded — dead: a bind that cannot be made stops the app, and the
+clock is otherwise optional.
+
+[`rage.md`](rage.md) §18 had already said this of render nodes, when the
+driver in a run identity moved to the PCI address for the same reason:
+*a number is not a name, an address moves only with the hardware.* The
+clock bind was the last piece still holding a number.
+
+The address cannot go in the bind either: TrueNAS parses `source:target:
+mode` and an address has colons — the rule `tests/rage/test_deploy_files.py`
+already carried. So the bind names a colon-free symlink on the pool, made
+once, and the test now refuses a card-numbered source as well (f1b9dfc):
+
+    ln -sfn /sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0 \
+            /mnt/ssd5/apps/louise-rage/gpufreq
+
+Checked in a throwaway container before the app config was touched: Docker
+resolves the symlink and the container both reads and WRITES through it
+(`min_freq` written back to itself). After the change the app came up,
+seven models ready, `/louise/gpu` reading the clock again (400–2800 MHz,
+not pinned). Way back: `config/app-config.pre-gpufreq-symlink.json`
+(mode 600). Louise's own containers had stayed up throughout — nine hours,
+the worker deferring its embeddings, which is what a deferral is for.
+
 ### 2026-09-21: the v1.0 collections made compliant, nothing re-fetched
 
 The operator: "make my collections compliant again without re-fetching a

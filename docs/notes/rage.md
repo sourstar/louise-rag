@@ -648,7 +648,13 @@ come to need them.
    build is a new run by definition, which is what makes it re-gated.
    **Rolled out the same day**: image `…d7686483…7aa4`, `pci` declared on
    the node, the driver string identical, seven new run ids
-   ([`STATUS.md`](STATUS.md), 2026-09-20 midday).
+   ([`STATUS.md`](STATUS.md), 2026-09-20 midday). **And the warning in
+   brackets came true on 2026-09-22**: a reboot made the Arc `card1`, the
+   clock's bind still named `card0` — the processor's graphics, which has
+   no `tile0` — and RAGE would not start at all. A number is not a name
+   anywhere, not only in a run identity; the bind now names a colon-free
+   symlink to the address, and a test refuses a card-numbered source
+   (f1b9dfc, [`STATUS.md`](STATUS.md) 2026-09-22).
 2. **The GPU clock is Intel's and says so nowhere.** `gpu_clock.Governor`
    reads and writes `rp0_freq`, `rpn_freq`, `min_freq`, the `xe`/`i915`
    sysfs names. It is optional (`RAGE_FREQ_DIR` unset = no clock), which
