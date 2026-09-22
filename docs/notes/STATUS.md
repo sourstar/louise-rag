@@ -75,6 +75,112 @@ history because its steps were written under it; `CLAUDE.md` and
 `BRANCHING-INSTRUCTIONS.md` at the repository root — a zip-import recipe
 for a branch that never reached the remote — is deleted.
 
+
+**2026-09-23, through the night — what an eight-lens audit found, and the
+three fixes that came out of it.** The operator's demand ("I want the CPU
+constantly above 95 %") sent a Workflow over the scheduling path: eight
+finder agents on distinct lenses, three adversarial verifiers per finding
+(evidence / invariants / impact, majority kills), 117 agents, 9.8M tokens.
+Forty-one distinct defects were reported; the cross-lens agreement is the
+signal worth recording — four lenses independently reached the sizer, three
+reached the pool's partitioning, two each reached the commit/pool serialism,
+the double parse, the lock held across the pool round trip, and `lo=1`.
+
+**FIXED, measured on the node each time.**
+
+1. **The pool drained at every wave boundary** (5b98358). `compute` submitted
+   `wave` tasks, waited for ALL of them, then submitted the next wave — so
+   the children went idle while the wave's slowest task finished alone, and
+   wikipedia's per-document cost spans two orders of magnitude, so that task
+   is reliably far behind. A batch is cut into ~2 parts per child; the window
+   is `share x 2`, and `share` is the children divided by the collections
+   active in the last 30 s — so with gutenberg's embed chunking also touching
+   the pool, 22 parts went through a window of 10, three barriers per batch.
+   Alone, a collection's window already covers every part it cuts, which is
+   why no single-collection test ever saw it. A slot is now refilled the
+   moment its result is taken.
+
+   | measured | before | after |
+   |---|---|---|
+   | a document, computed alone | 59 ms of CPU | — |
+   | what the pipeline thread saw | 40.8 ms (rdf), 34.8 (fts) | — |
+   | documents/s within batches | **19.9** | **29.2 sustained** (and 72.5 once the sizer landed — the table below) |
+
+2. **The sizer fitted a proportional model to an affine cost** (a671818).
+   Measured by regressing duration on batch size over 64 batches: a FIXED
+   2.7 s (rdf) and 4.5 s (fts) per batch — a tantivy commit, a writer, a
+   transaction, a reference store — against 41 and 35 ms per document, with
+   a 3 s target. Charging that to a per-document rate reports
+   `marginal + fixed/n`, so every batch that ran long made the next one
+   smaller, which made the rate worse: a divergent loop that had settled at
+   36-234 documents, paying the fixed cost as often as it could. Both terms
+   are fitted now, and when the fixed cost alone eats the target the budget
+   widens to `BATCH_CEILING_S` (12 s) — because then paying it less often is
+   the only way to spend less of the thread on it. A pin keeps the old
+   model's collapse in the test suite so nobody restores it.
+
+3. **Wikipedia serialised a hundred pages to return one** (f45994f).
+   `_stream_pages` parsed a ~100-page multistream chunk and `ET.tostring`d
+   every page; `fetch` uses one. `ET.tostring` is the only step there with no
+   C accelerator behind it. The cache holds elements now and the bytes are
+   produced for the page asked for, by the identical call — pinned byte for
+   byte, as pubmed's reader already was (invariant 11: `origin_hash` is over
+   exactly those bytes).
+
+**Measured after each deploy, on the node, wikipedia's rdf and fts (the only
+CPU work this node has):**
+
+| | documents/s within batches | mean batch | longest unit | worker CPU |
+|---|---|---|---|---|
+| before tonight | **19.9** | 285 | 75 s | ~190 %, flat |
+| + the pool's window kept full | 29.2 | 285 | — | bursts to 617 % |
+| + the affine sizer, + lazy page bytes | **72.5** over 25 min | 1,268 | 57 s | bursts to 926 % |
+| + the step damped (final) | **64.3** | 941 | 32 s | bursts to **1007 %** |
+
+66,000 documents went through in the 25 minutes of the third row, against
+about 9,000 in the same time before. The last row trades ~11 % of that for
+the unit bound, which is what a pause, a mode change and SIGTERM wait on:
+57 s units were not something to keep.
+
+**The shape of what is left is visible in those CPU samples**: 108 %, 1007 %,
+116 %, 238 %, 107 %, 109 %, 350 %, 209 %. The parse phase uses ten cores and
+the commit phase uses one, alternately, on one thread per collection — which
+is the audit's first open item and the one that would raise the AVERAGE
+rather than the peak. Overlapping batch N's commit with batch N+1's parse is
+the shape; it is an optimisation, not a defect, and it was not started at
+02:00 with a 3.2x improvement already live.
+**Refuted by the verifiers, and worth keeping refuted**: a multi-slot stream
+cache. A child's parts are disjoint ranges far apart, so the stream missing
+at a part boundary was loaded by a DIFFERENT process and no per-process LRU
+can hit it — it would buy memory and nothing else.
+
+**Still open, in the audit's own order of value** (none of it started):
+- the pool phase and the commit phase never overlap: one thread per
+  collection alternates eleven cores and one;
+- the parse pool cuts by equal COUNT, so one multistream block is
+  decompressed in 9-22 children instead of once — cutting on the locator's
+  byte range would remove the decompress and the parse too;
+- every wikipedia document goes through mwparserfromhell about four times
+  where once would do (rdf runs the full article parser for five metadata
+  columns, then fts parses it again), and `wikitext.parse_all` walks the
+  tree ~16 times, 11 of them a full `filter_templates()`;
+- `stage_rdf` holds the manifest's BEGIN IMMEDIATE across the whole pool
+  round trip and the tantivy commit — the fix `stage_fts` already made;
+- `fts.index_books` builds a fresh 64 MB tantivy writer per batch per
+  language and blocks the thread in `wait_merging_threads()` — the fix
+  `catalog.py` already made for itself;
+- `catalog.backfill` holds the catalog write lock across a 200,000-rowid
+  window while `stage_rdf` waits on it holding BEGIN IMMEDIATE;
+- `refs.get_store()` opens a connection and runs every reference source's
+  DDL once per fts batch, inside the write transaction;
+- the embed producer opens a fresh SQLite connection, with the full schema
+  script, once per document; `_request_vectors` decodes the JSON response
+  inside the endpoint's gate, holding the lane during the decode;
+- admission halves a collection's children for a neighbour that has not
+  submitted for 29 seconds;
+- `_record_residual` REPLACES a shard's residual set where `_add_residual`
+  unions it, so each pass forgets what earlier passes proved.
+
 ### 2026-09-22: a core burned on a query that could not find anything
 
 The operator: "check why the scheduling is not saturating the CPU; I see
