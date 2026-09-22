@@ -1,6 +1,6 @@
 # Migration plan — from the current code to the documented architecture
 
-*Working document for the `louise` branch. The specification is
+*Working document. The specification is
 `docs/README.md` and the nine documents it lists; this file says in what
 order the code gets there, what each step reuses, and how each step is
 known to be done. Update it as steps land; delete it when the last one
@@ -48,12 +48,19 @@ changed how it is hashed.*
 
 ## 1. The branch
 
-```
-git checkout -b louise            # specs stay on main; code lands here
-```
+**ONE BRANCH, `main`, since 2026-09-22** (operator: "I want to keep only
+the main branch"). The split below is how it was until then and is left
+here because the plan's steps were written under it.
 
-Specs are edited on `main` and merged forward into `louise`; code never
-lands on `main`. On a machine with the real environment:
+*Was:* `git checkout -b louise` — specs edited on `main` and merged
+forward into `louise`, code never landing on `main`. The two were
+consolidated by fast-forwarding `main` to `louise` (`main` held nothing
+the code branch lacked) and replaying the one spec commit that lived on
+`spec/2026-09-21`; nothing was lost, and the three branches were deleted
+here and on the remote. Specs and code are now edited together, and a spec
+amendment lands in the same commit as the code it governs or beside it.
+
+On a machine with the real environment:
 
 ```
 docker build --target dev -t louise-rag:dev .
@@ -1340,7 +1347,7 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 > Read CLAUDE.md, then docs/README.md and the nine documents it lists,
 > in order — 09 last and in full, since it is the reference the others
 > point into. Then read docs/notes/migration-plan.md and
-> docs/notes/STATUS.md. We are on the `louise` branch. Implement
+> docs/notes/STATUS.md. Implement
 > **step N** of the migration plan exactly as scoped there: wrap the
 > existing code it names rather than rewriting it (step 0 is the one
 > exception and says so), add the new command beside the old one with a

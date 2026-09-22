@@ -47,6 +47,34 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-09-22: one branch
+
+The operator: "I want to keep only the main branch." Done, and nothing was
+lost, because the split had already collapsed on its own: `main` held
+**no** commit the code branch lacked — the specs had been merged forward
+all along — so `main` fast-forwarded 463 commits to `louise`'s tip. The one
+commit that lived only on `spec/2026-09-21` (a version-2 space copied with
+`--space-from` stays version 2, 09 §9.3 and 02 §2.7; `drag/` may be mounted
+from other storage, 07 §7.8) was replayed onto `main`; its CLAUDE.md hunk
+was already there, byte for byte. A third branch,
+`collection/gazzetta-ufficiale-italiana`, was an ancestor of `main` and
+carried nothing of its own.
+
+Checked before each deletion (`git rev-list --count main..<branch>`, and a
+file-level diff for the replayed one), then `louise`, `spec/2026-09-21` and
+`collection/gazzetta-ufficiale-italiana` were deleted here and on the
+remote, and the scratch worktree that existed to hold `main` was removed.
+`git ls-remote --heads` now lists one ref.
+
+What changes for the work: **specs and code are edited together.** A spec
+amendment lands in the same commit as the code it governs, or beside it —
+no forward-merging, and no "the spec says X but the branch has not caught
+up". [`migration-plan.md`](migration-plan.md) §1 keeps the old rule as
+history because its steps were written under it; `CLAUDE.md` and
+[`README.md`](README.md) no longer name a branch; the fossil
+`BRANCHING-INSTRUCTIONS.md` at the repository root — a zip-import recipe
+for a branch that never reached the remote — is deleted.
+
 ### 2026-09-22: a reboot renumbered the cards and RAGE would not start
 
 The operator, after a reboot: `louise-rage` start fails with

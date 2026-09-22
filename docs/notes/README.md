@@ -25,7 +25,7 @@ What is here, and why it is kept:
 | `rage.md` | RAGE, the RAG Engine: one app to add, load, unload and remove every model, whatever its runtime or device. A front that owns every decision — admission, the run identity, the clock — over a llama-swap that only runs processes, configured from one `rage.toml` — design accepted 2026-09-19, not built; migration step 13 |
 | `rage-review.md` | why `rage.md` reads as it does: the review of the first proposal (four blocking gaps, seven open decisions), the solution accepted for each, and §18, the reasoning behind quarantine (03 §3.6; migration step 14) |
 | `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
-| `migration-plan.md` | the ordered steps from the current code to the documented architecture, for the `louise` branch; deleted when the last step lands |
+| `migration-plan.md` | the ordered steps from the current code to the documented architecture; deleted when the last step lands |
 
 Nothing here is needed to understand or use Louise. All of it explains
 why some detail is the way it is, and most of it was paid for.

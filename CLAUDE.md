@@ -27,8 +27,8 @@ obeyed. Name the amendment.
   the design history. Read docs/notes/STATUS.md for where things stand
   and what cost time, and the note a task names, before changing the
   code that note is about.
-- **On the `louise` branch, read docs/notes/migration-plan.md before any
-  step.** It fixes the order, the scope of each step, what existing code
+- **Read docs/notes/migration-plan.md before any step of the migration.**
+  It fixes the order, the scope of each step, what existing code
   it wraps, and the tests that prove it done. Wrap, do not rewrite; add
   the new command beside the old one with a deprecation alias; keep every
   pre-existing test green.
