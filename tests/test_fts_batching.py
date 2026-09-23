@@ -176,3 +176,41 @@ def test_index_book_still_works_for_single_document_callers(tmp_path):
     term = _a_term_from(chunks)
     assert fts.search(fts.group_for(row["lang"]), term, limit=10,
                       collection=c), f"indexed document is not findable by {term!r}"
+
+
+def test_the_writer_is_kept_across_batches_and_its_merges_are_not_waited_for(tmp_path):
+    """A COST test, and the second half of the same economics.
+
+    The batching above fixed a per-DOCUMENT writer; a per-BATCH writer was
+    still left. Measured on the node 2026-09-22 by regressing duration on
+    batch size over 31 fts batches: 4.5 s of fixed cost per batch against
+    35 ms per document. A fresh writer is a 64 MB heap, and letting go of it
+    means `wait_merging_threads()` — which happens INSIDE the manifest's
+    write transaction, where every other writer of that manifest is queued
+    behind it. app/catalog.py already keeps its writer for exactly this
+    reason; this is the same fix on the other index.
+    """
+    pass
+
+    c, con = _discovered(tmp_path)
+    fts.close_all()
+    rows = con.execute("SELECT * FROM documents ORDER BY native_id").fetchall()
+    seen = set()
+    for row in rows:
+        chunks = [{"id": f"g:{row['native_id']}:0", "chapter": "", "text": "alpha beta"}]
+        fts.index_books([(row["lang"], int(row["native_id"]), chunks)], c)
+        group = fts.group_for(row["lang"])
+        writer, _lock = fts._writers[(str(c.fts_dir), group)]
+        seen.add((group, id(writer)))
+
+    groups = {g for g, _ in seen}
+    assert len(seen) == len(groups), f"a writer was rebuilt mid-run: {seen}"
+    assert len(fts._writers) == len(groups), "one writer per group, kept"
+    # and nothing waits for its merges inside the transaction
+    # the COMPILED call list, so the comment saying it is not called does not
+    # itself count as calling it
+    assert "wait_merging_threads" not in fts.index_books.__code__.co_names
+    assert "wait_merging_threads" in fts.close_all.__code__.co_names, \
+        "it is waited for exactly once, when the writer is let go"
+    assert fts.search(fts.group_for(rows[-1]["lang"]), "alpha", collection=c)
+    fts.close_all()

@@ -13,6 +13,8 @@ from . import stemming
 
 _lock = threading.Lock()
 _indexes: dict[tuple[str, str], tantivy.Index] = {}
+#: the same key -> (the one writer for that index, its lock). See `_writer`.
+_writers: dict = {}
 
 def group_for(lang: str) -> str:
     lang = (lang or "und").split("-")[0]
@@ -96,6 +98,7 @@ def get_index(group: str, collection=None) -> tantivy.Index:
         if pystem_algorithm(group):
             idx.register_tokenizer("stem_tok", _stem_analyzer())
         _indexes[key] = idx
+        _writers.pop(key, None)     # a new Index object: a writer on the old one is stale
         return idx
 
 def existing_groups(collection=None) -> list[str]:
@@ -171,16 +174,55 @@ def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict]):
         writer.add_document(tantivy.Document(**fields))
 
 
+def _writer(key, idx):
+    """The worker's ONE writer for this index, created on first use and kept
+    — the same thing app/catalog.py does for the catalog, and for the same
+    reason it says there: a writer per batch had to `wait_merging_threads()`
+    before it could let go of the directory, and that wait happens inside the
+    fts stage's manifest transaction, which every other writer of that
+    manifest is queued behind.
+
+    MEASURED, 2026-09-22: a fixed 4.5 s per fts batch, against 35 ms per
+    document — a 64 MB heap allocated, a commit, and those merges, none of
+    which shrink with the batch. The sizer now amortises a fixed cost over a
+    bigger batch (app/sizing.py); this removes most of it instead.
+
+    Returns (writer, lock). The lock is the writer's: tantivy allows ONE
+    writer per directory, so the search path's deletes and the stage's
+    commits take turns rather than racing for it."""
+    with _lock:
+        got = _writers.get(key)
+        if got is None:
+            got = _writers[key] = (idx.writer(heap_size=64_000_000), threading.Lock())
+        return got
+
+
+def close_all() -> None:
+    """Let go of every writer this process holds — for tests, whose
+    collections come and go. The worker keeps its writers until it exits.
+    Each under ITS OWN lock: taking a writer from a thread still inside a
+    commit raises "Already borrowed" (app/catalog.py learned that live)."""
+    with _lock:
+        held = list(_writers.items())
+        _writers.clear()
+    for _key, (writer, lock) in held:
+        with lock:
+            writer.wait_merging_threads()      # consumes it: the directory is free
+
+
 def index_books(entries, collection=None) -> None:
     """Index several documents through ONE writer per language group.
 
     `entries` is an iterable of (lang, book_id, chunks).
 
-    The per-document writer this replaces cost a fresh 64 MB allocation, a
-    `commit()` and a `wait_merging_threads()` for EVERY document — a fixed
-    cost that does not shrink with the document. Measured live: ~30s for a
-    2 kb genome scaffold, the same as for a 23 MB chromosome arm, because
-    the work is in the commit and not in the content.
+    The per-document writer this replaced cost a fresh 64 MB allocation, a
+    commit and a merge wait for EVERY document — a fixed cost that does not
+    shrink with the document. Measured live: ~30s for a 2 kb genome
+    scaffold, the same as for a 23 MB chromosome arm, because the work is in
+    the commit and not in the content. The per-BATCH writer that replaced it
+    still cost 4.5 s a batch (the node, 2026-09-22, regressing duration on
+    batch size over 31 batches, against 35 ms per document), so the writer is
+    now KEPT — see `_writer`.
 
     Still idempotent per document: `delete_documents(book_id)` stays keyed on
     the individual book, so re-running a batch — in whole or in part — cannot
@@ -194,11 +236,17 @@ def index_books(entries, collection=None) -> None:
     for group, items in by_group.items():
         idx = get_index(group, collection)
         algorithm = pystem_algorithm(group)
-        writer = idx.writer(heap_size=64_000_000)
-        for lang, book_id, chunks in items:
-            _add_one(writer, algorithm, lang, book_id, chunks)
-        writer.commit()
-        writer.wait_merging_threads()
+        writer, lock = _writer((str(collection.fts_dir if collection is not None
+                                     else collections_mod.default_collection().fts_dir),
+                                group), idx)
+        with lock:
+            for lang, book_id, chunks in items:
+                _add_one(writer, algorithm, lang, book_id, chunks)
+            writer.commit()
+        # NOT wait_merging_threads(): the merges run on the writer's own
+        # threads and the writer is kept, so nothing here waits for them —
+        # which is the whole point, because this runs inside the manifest's
+        # write transaction.
 
 
 def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
@@ -206,11 +254,14 @@ def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
     index_books([(lang, book_id, chunks)], collection)
 
 def delete_book(lang: str, book_id: int, collection=None):
-    idx = get_index(group_for(lang), collection)
-    writer = idx.writer()
-    writer.delete_documents("book_id", book_id)
-    writer.commit()
-    writer.wait_merging_threads()
+    group = group_for(lang)
+    idx = get_index(group, collection)
+    base = (collection.fts_dir if collection is not None
+            else collections_mod.default_collection().fts_dir)
+    writer, lock = _writer((str(base), group), idx)
+    with lock:
+        writer.delete_documents("book_id", book_id)
+        writer.commit()
 
 def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
     """Every stored chunk of one document — the reader's text source

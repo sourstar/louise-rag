@@ -50,3 +50,37 @@ def test_sync_all(tmp_path):
     results = refs_store.sync_all(con, FIXTURE_REFS)
     assert results["hgnc"]["rows"] == 4
     assert results["clinvar-mini"]["rows"] == 2
+
+
+def test_the_store_is_opened_once_per_thread_not_once_per_batch(tmp_path, monkeypatch):
+    """A COST test. `get_store()` opened a connection and ran every
+    registered source's `ensure_schema` on EVERY fts batch — inside the
+    manifest's BEGIN IMMEDIATE, where every other writer of that manifest
+    queues behind it. Measured on the node, 2026-09-22: 4.5 s of fixed cost
+    per fts batch, of which this was a part.
+
+    Kept per THREAD, because a SQLite connection may not cross one, and
+    keyed on the database's PATH, because a test's refs.db comes and goes
+    with its DATA_DIR while the thread stays."""
+    import threading
+
+    from app import config
+
+    monkeypatch.setattr(config, "REFS_DB_PATH", tmp_path / "a" / "refs.db")
+    opened = []
+    real = refs_store.connect
+    monkeypatch.setattr(refs, "connect", lambda p=None: opened.append(p) or real(p))
+
+    first, second = refs.get_store(), refs.get_store()
+    assert first is second, "the same store, not a new connection per call"
+    assert len(opened) == 1, f"opened {len(opened)} times"
+
+    # another database is another store, even on the same thread
+    monkeypatch.setattr(config, "REFS_DB_PATH", tmp_path / "b" / "refs.db")
+    assert refs.get_store() is not first and len(opened) == 2
+
+    # and another thread gets its own, because the connection cannot travel
+    seen = []
+    t = threading.Thread(target=lambda: seen.append(refs.get_store()))
+    t.start(); t.join()
+    assert seen and seen[0] is not first and len(opened) == 3

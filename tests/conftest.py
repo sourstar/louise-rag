@@ -190,5 +190,6 @@ def _catalog_writers_closed():
     """app/catalog.py keeps one writer per collection for the worker's life;
     a test's collection lives for one test."""
     yield
-    from app import catalog
+    from app import catalog, fts
     catalog.close_all()
+    fts.close_all()       # the same: one writer per index, kept for the worker's life
