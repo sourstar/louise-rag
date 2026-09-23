@@ -205,7 +205,12 @@ def test_a_broken_pool_falls_back_and_recovers(isolated_config, tmp_path, corpus
     assert parallel.compute("chunks", c, rows) == expected
     assert parallel.health()["failures"] == 1
     parallel.reset_failures()
-    assert parallel.health() == {"processes": 4, "pool": False, "failures": 0, "disabled": False}
+    got = parallel.health()
+    # occupancy is a time average over whatever this test just did, so it is
+    # reported but never pinned here — tests/test_parallel.py's own
+    # occupancy tests are where its value is asserted
+    assert got.pop("busy_children") >= 0
+    assert got == {"processes": 4, "pool": False, "failures": 0, "disabled": False}
 
 
 def test_the_window_stays_full_instead_of_draining_between_waves(isolated_config, tmp_path,
@@ -255,36 +260,55 @@ def test_the_window_stays_full_instead_of_draining_between_waves(isolated_config
     monkeypatch.setattr(config, "PARSE_PROCESSES", 11)
     monkeypatch.setattr(parallel, "pool", lambda: pool)
     parallel.forget_users()
+    # A SECOND COLLECTION holding slots, because that is the only way the
+    # boundary exists at all: a batch is cut into ~PARTS_PER_CHILD tasks per
+    # child and the window is IN_FLIGHT_PER_CHILD per child, so a collection
+    # ALONE always submits every part at once and never refills. Halve its
+    # admission and the parts no longer fit — which is exactly the live case
+    # this was found in, and the case the old code drained the pool in.
+    parallel._want("another-collection", 1)
+    parallel._occupy("another-collection", 12)
+    n = parallel.processes()
+    window = parallel.slots("g", n * parallel.IN_FLIGHT_PER_CHILD)
     got = parallel.compute("chunks", c, rows)
 
     assert got == expected, "order and content are unchanged"
-    n = parallel.processes()
-    window = n * parallel.IN_FLIGHT_PER_CHILD
     assert len(submits) > window, "the batch is cut into more parts than one window"
     assert max(submits) == window - 1, "the window fills to the cap and no further"
     # the whole point: after the window first fills, no submission ever finds
     # the pool empty again — that emptiness WAS the wave barrier
     assert min(submits[window:]) == window - 1, \
         f"the children drained between waves: in-flight at submit {submits}"
-    assert parallel.held() == {}, "the batch kept slots it is no longer using"
-    assert parallel.wanting() == {}, "the batch is still counted as asking"
+    # the batch gave back every slot it took, and left the other collection's
+    # holding exactly as it found it
+    assert parallel.held() == {"another-collection": 12}
+    assert parallel.wanting() == {"another-collection": 1}
 
 
-def test_a_batch_is_cut_into_many_more_tasks_than_there_are_children(
+def test_a_batch_is_not_cut_finer_than_the_children_can_use(
         isolated_config, tmp_path, corpus_dir, monkeypatch):
-    """A COST test, for STRAGGLERS — the other half of keeping the pool fed.
+    """A COST test, and a REGRESSION test for a fix that made things worse.
 
-    A part is the unit of load balancing, so its size bounds how unevenly a
-    batch can finish. Cut into ~2 tasks per child, a 2,000-document batch
-    became 22 parts of 91 documents — and wikipedia's documents differ by two
-    orders of magnitude (median ~0 ms, tail past 100 ms), so one dear
-    document idles a child until the whole batch is done, with nothing left
-    to hand out. Finer parts cost nothing per row, since a part still carries
-    at least MIN_PART rows and the bytes pickled are the same bytes.
+    The tempting reasoning: a part is the unit of load balancing, so cutting
+    finer stops one dear document idling a child, and it "costs nothing per
+    row" because a part still carries MIN_PART rows and the bytes pickled
+    are the same bytes. That was deployed on 2026-09-23 at eight tasks per
+    child and measured on the node:
 
-    Separate from, and smaller than, the admission defect: the measurement
-    that found the pool at 132 % of twelve cores found it starved, not
-    unbalanced. This one bounds the tail of each batch.
+        wikipedia rdf   6.3 -> 28.8 ms/doc
+        wikipedia fts  10.2 -> 27.2 ms/doc
+        worker CPU      77% -> 193% of 1200%
+        throughput     54.2 -> 24.3 docs/s
+
+    More CPU for less work is redundant computation. A part's cost is NOT
+    independent of the other parts: wikipedia's documents come out of shared
+    multistream blocks, the cut is by equal COUNT, so every child holding a
+    document from a block decompresses that whole block — four times the
+    parts, four times the re-decompression.
+
+    So the cut is bounded ABOVE, and this test is what says so. Balance can
+    only be bought once the cut follows the blocks; until then, finer is
+    slower.
     """
     c, rows = _gutenberg(tmp_path, corpus_dir)
     rows = (rows * 40)[:400]
@@ -311,15 +335,77 @@ def test_a_batch_is_cut_into_many_more_tasks_than_there_are_children(
     parallel.compute("chunks", c, rows)
 
     n = parallel.processes()
-    # as fine as TASKS_PER_CHILD asks for, or as fine as the MIN_PART floor
-    # allows when the batch is small — whichever binds first. Both bounds
-    # matter: the floor is what keeps a part worth pickling.
-    want = min(n * parallel.TASKS_PER_CHILD, len(rows) // parallel.MIN_PART)
     assert sum(parts) == len(rows), "every row is computed exactly once"
-    assert len(parts) >= want, \
-        f"{len(parts)} tasks for {n} children — a slow document idles the pool"
-    assert len(parts) > n * 2, \
-        "~2 tasks per child is the cut that left seven children waiting"
+    # THE CEILING. One spare task per child so no child waits on the parent,
+    # and no more: past that, shared work is repeated rather than divided.
+    assert len(parts) <= n * parallel.PARTS_PER_CHILD, \
+        (f"{len(parts)} tasks for {n} children — cutting finer than "
+         f"{parallel.PARTS_PER_CHILD} per child cost 4.6x live, see the "
+         f"docstring")
+    # ...and still more than one task per child, or there is no pool at all
+    assert len(parts) > n, f"{len(parts)} tasks cannot occupy {n} children"
     # the last part is whatever is left over; every other one is full
     assert min(parts[:-1] or parts) >= parallel.MIN_PART, \
         f"a part smaller than MIN_PART pays more in pickling than it saves: {parts}"
+
+
+# ------------------------------------------------- occupancy (the instrument)
+
+def test_the_pool_reports_how_many_of_its_children_had_work(monkeypatch):
+    """A COST test for the INSTRUMENT, not for the pool.
+
+    A starved pool and a slow pool look identical from outside: both show
+    long batches. On 2026-09-23 admission handed wikipedia 3 of 11 children
+    for a day, and the batch log, `docker stats` and the sizer all reported
+    "slow" — the sizer even fitted a cost model to a machine running on one
+    core and shrank the batches, which read as the sizer working. The one
+    number that tells the two apart is how many children actually had work,
+    and nothing published it. This is that number.
+    """
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 8)
+    parallel.forget_users()
+    assert parallel.occupancy()["busy_children"] == 0, "an idle pool is idle"
+
+    parallel._occupy("wikipedia", 4)
+    time.sleep(0.05)
+    parallel._occupy("wikipedia", -4)
+    got = parallel.occupancy()
+    assert 0 < got["busy_children"] <= 4, got
+    assert got["processes"] == 8
+    assert got["utilisation"] == pytest.approx(got["busy_children"] / 8, abs=1e-3)
+
+    # and the read RESET it: the next interval starts from nothing, or every
+    # line would report the whole life of the process
+    time.sleep(0.02)
+    assert parallel.occupancy()["busy_children"] == 0
+
+
+def test_queued_tasks_are_not_counted_as_extra_busy_children(monkeypatch):
+    """A slot is a task in flight, and the window deliberately holds more
+    tasks than children (IN_FLIGHT_PER_CHILD) so no child waits for the
+    parent. A task queued behind a busy child is not a second busy child,
+    and counting it would report a saturated pool exactly when it is not —
+    the failure this instrument exists to catch."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.forget_users()
+    parallel._occupy("wikipedia", 10)
+    time.sleep(0.05)
+    parallel._occupy("wikipedia", -10)
+    got = parallel.occupancy()
+    assert got["busy_children"] <= 2, f"ten tasks cannot busy more than two children: {got}"
+    assert got["utilisation"] <= 1.0
+
+
+def test_health_reports_occupancy_without_consuming_it(monkeypatch):
+    """`health()` answers a question; `_log_shares` owns the meter. If a
+    health check reset the interval, whoever polled it would silently blank
+    the next log line."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    parallel.forget_users()
+    parallel._occupy("wikipedia", 2)
+    time.sleep(0.05)
+    parallel._occupy("wikipedia", -2)
+    first = parallel.health()["busy_children"]
+    assert first > 0
+    assert parallel.health()["busy_children"] > 0, "health() consumed the interval"
+    assert parallel.occupancy()["busy_children"] > 0, "health() consumed the interval"

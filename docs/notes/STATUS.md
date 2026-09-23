@@ -5166,6 +5166,45 @@ on a fresh clone (fixture mtimes are pinned to the golden's values).
 Recorded because each was invisible until it wasn't, and each would be easy
 to reintroduce.
 
+- **A fair share handed to collections that had no work** (2026-09-23).
+  The parse pool's admission divided the children by PRESENCE —
+  collections seen in a 30 s window — so wikipedia, the only one parsing,
+  got `11 // 3 = 3` children and a 6-task window out of 22. gutenberg only
+  embeds (its chunking is in-process, `worker._load_chunks`) and pubmed
+  was caught up; both registered anyway, through `genesis.drain_held`.
+  Measured: 11 children alive, **1 running**, 10 in `futex_do_wait`, the
+  worker tree at 77 % of 1200 %, and `pipeline-wikipedia` parked in
+  `future.result()` inside `parallel.compute`. Two lessons. **Presence is
+  not demand** — every share must count what is HELD, the way the encoder
+  rotation counts real work. And **nothing logged it**: the batch log
+  shows duration and size, so the batches read as merely slow, and the
+  sizer then faithfully fitted a cost model to a machine running on one
+  core and shrank the batches, which read as the sizer working. Four
+  scheduling fixes the night before had moved throughput 19.9 → 64 docs/s
+  without moving the CPU — *that* was the signal, and it was there for a
+  day before anyone read it as one. Instrument occupancy, not just
+  duration: `parallel.occupancy()` now integrates how many children had
+  work and `_log_shares` prints it (`parse pool — 1.3 of 11 children busy
+  (12%)`). (docs/notes/scheduling.md §11; use `py-spy dump`, not `record` —
+  `record` drops threads blocked in `wait` unless `--idle`, and the first
+  profile therefore reported zero samples in the pool, which is the
+  opposite of the truth.)
+- **"Finer parts balance the load" — measured, and it was 4.6x WORSE**
+  (2026-09-23, same night). Shipped alongside the admission fix above: cut
+  a batch into 8 tasks per child instead of 2, so one dear document cannot
+  idle a child. It looks free — a part still carries `MIN_PART` rows, so
+  the bytes pickled are the same bytes. Live it took wikipedia's rdf from
+  6.3 to 28.8 ms/doc and fts from 10.2 to 27.2, with the CPU UP (77 % →
+  193 % of 1200 %) and throughput DOWN (54.2 → 24.3 docs/s). **More CPU for
+  less work is redundant computation**; the likeliest redundancy is
+  locality — the cut is by equal COUNT while wikipedia's documents come out
+  of shared multistream blocks, so every child holding one of a block's
+  documents decompresses the whole block. Reverted; the ceiling is now a
+  test. The lesson is the assumption, not the constant: **a part's cost is
+  not independent of the other parts**, so balance cannot be bought with
+  granularity until the cut follows the blocks. And: deploying two changes
+  together nearly buried a win under a loss — the admission fix had to be
+  re-measured alone.
 - **A fallback that cannot be declined.** `load_all()` synthesized the
   legacy default collection whenever no TOML existed — so on Louise2,
   removing the last collection made "gutenberg" reappear, with no file to

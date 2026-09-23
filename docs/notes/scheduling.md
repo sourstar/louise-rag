@@ -382,9 +382,20 @@ after "run everything". The suite could not have shown the first number.
 7. **Write the regression test as a COST test**: count the lookups, the
    row groups, the windows; assert the plan. Behaviour alone never
    catches any of this.
-8. **Deploy, then verify on the live node with the code's own code
-   paths** — not with SQL you copied into a probe (that mistake reported
-   a fix as ineffective when it was not even testing it).
+8. **Deploy ONE change, then verify on the live node with the code's own
+   code paths** — not with SQL you copied into a probe (that mistake
+   reported a fix as ineffective when it was not even testing it). One
+   change per deploy: on 2026-09-23 two went out together and the loss hid
+   the win, so the good half had to be re-measured alone.
+9. **Open a row in [`scheduling-log.md`](scheduling-log.md) before the
+   deploy and complete it after.** The BEFORE numbers and the SCENARIO —
+   which collections have work and of what kind, the node mode, where in
+   the corpus, what else is running — go in first. A throughput number
+   without its scenario is not evidence: wikipedia's documents differ by
+   two orders of magnitude, so two windows over different parts of the
+   corpus are not comparable, and `docs/s` will happily show a win that is
+   only a different set of articles. When `docs/s` and `ms/doc` disagree,
+   believe `ms/doc`.
 
 ## 7. How to measure
 
@@ -789,18 +800,74 @@ newcomer TAKING slots, not by the incumbent anticipating: the surplus
 queues for one wave, and the incumbent then stops refilling past its own
 share.
 
-The second half of the same problem is the **part size**. A part is the
-unit of load balancing: at ~2 tasks per child one dear document idles a
-child for the rest of the batch, and wikipedia's documents span two orders
-of magnitude. Measured 2026-09-23, the worker peaked at ~455 % of twelve
-cores in a parse phase — four children working, seven waiting on the
-stragglers. Cut at ~8 tasks per child (floor `MIN_PART` rows, so the bytes
-pickled are unchanged) the window has something to hand out to the last
-document of the batch.
+**The part size was changed with it, and that half was WRONG — recorded
+because the reasoning is seductive.** A part is the unit of load balancing,
+so cutting finer should stop one dear document idling a child, and it looks
+free: a part still carries `MIN_PART` rows, so the bytes pickled are the
+same bytes. Deployed at eight tasks per child and measured on the node the
+same night:
+
+| | before | after 8/child |
+|---|---|---|
+| wikipedia rdf | 6.3 ms/doc | **28.8** |
+| wikipedia fts | 10.2 ms/doc | **27.2** |
+| worker CPU | 77 % of 1200 % | 193 % |
+| throughput | 54.2 docs/s | **24.3** |
+
+More CPU for less work is **redundant computation** — that much the numbers
+settle. *Which* redundancy was not isolated, and this note does not pretend
+otherwise; the likeliest is locality, since the cut is by equal COUNT and
+wikipedia's documents come out of shared **multistream blocks**, so every
+child holding one of a block's documents decompresses that whole block and
+four times the parts is four times the re-decompression. (`PARSE_TASKS_PER_CHILD`,
+a different knob with a confusingly similar name, recycles a child every
+500 tasks; finer parts recycle more often, but ~45 minutes apart is too
+rare to be the main term.) Reverted to two per child, and the ceiling is
+now a test.
+
+The error in the reasoning is the part worth keeping: **a part's cost is
+not independent of the other parts.** "It costs nothing per row, the bytes
+pickled are the same bytes" is true and irrelevant when the parts share
+work that each one redoes.
+
+Balance can only be bought once the cut FOLLOWS THE BLOCKS — group a
+batch's rows by the origin unit they share, then hand whole groups to
+children. That is a real change (it needs the plugin to say what a row's
+origin unit is) and it is not made here.
 
 Neither of these touches the GPU feed: the embed thread does not use the
 pool, and children sit at the worker's nice + 10, so feeding the encoder
 outranks parsing by construction (§12).
+
+**And the reason it survived six reworks: nothing measured occupancy.** A
+starved pool and a slow pool look identical from outside — both show long
+batches. The batch log has duration and size, `docker stats` has the
+container, and the sizer will faithfully fit a cost model to a machine
+running on one core and shrink the batches, which reads as the sizer
+working. The four fixes of the night before had moved throughput
+19.9 → 64 docs/s *without moving the CPU*; that was the signal, and it sat
+unread for a day. `parallel.occupancy()` now integrates how many children
+actually had work, and `_log_shares` publishes it every interval:
+
+```
+[node info:sched] parse pool — 1.3 of 11 children busy (12%) over 600s
+```
+
+A number well below `processes()` while a collection has parse work queued
+is the defect, stated. Integrated rather than sampled, because a sample
+lands between batches as often as inside one; and counted as
+`min(in flight, processes())`, because a task queued behind a busy child is
+not a second busy child.
+
+**Where each stage's write lock begins.** Related, and found the same way:
+`stage_rdf` held `BEGIN IMMEDIATE` across the whole pool round trip — 51.7 s
+per 2,000-document batch — so every other writer of wikipedia's manifest
+queued behind a parse. `stage_fts` had been fixed the same way in September
+after one chromosome wedged genome-hg38's manifest for 68 minutes. Both now
+open the lock themselves, late, once only SQLite writes remain;
+`worker._NO_OUTER_TRANSACTION` is what stops `_execute_step` opening one on
+their behalf, and a stage missing from that tuple silently gets the old
+behaviour, so a test pins the names.
 
 That is admission control, not CPU weighting. How the kernel divides CPU
 *between* the running children is `cgroups v2 cpu.weight`'s job, and the

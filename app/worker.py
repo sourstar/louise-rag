@@ -163,8 +163,8 @@ def _waiting_because_off(con, collection) -> str:
 
 def stage_rdf(con, row, collection) -> None:
     """Extract metadata for `row`, and for as many other rdf-pending
-    documents as RDF_BATCH_DOCS allows, inside the ONE transaction the
-    caller (_execute_step) already opened.
+    documents as RDF_BATCH_DOCS allows, through ONE transaction — opened
+    HERE, after the parse, and committed by the caller (_execute_step).
 
     Profiled live on pubmed: 95% of a warm rdf step was SQLite, not parsing
     (0.8 ms) — the UPDATE against a 33M-row table plus the catalog_fts FTS5
@@ -195,6 +195,17 @@ def stage_rdf(con, row, collection) -> None:
     ok, first = metas[0]
     if not ok:
         parallel.raise_for(first)            # unguarded: its failure IS the round's
+    # THE WRITE LOCK BEGINS HERE, not before the parse (CLAUDE.md: long
+    # non-DB work stays outside the transaction). The pool round trip above
+    # is the batch's long part — 51.7 s for 2,000 documents, measured on the
+    # node 2026-09-23 — and it used to run inside `BEGIN IMMEDIATE`, so
+    # every other writer of this manifest (the discovery scan, the event
+    # log, an acquire) queued behind a parse. stage_fts has opened its lock
+    # late since the genome collection wedged its manifest for 68 minutes
+    # the same way; this is that fix on the other stage. Only the writes
+    # below need the lock, and they are seconds for a batch.
+    if not con.in_transaction:               # direct callers wrap the stage
+        con.execute("BEGIN IMMEDIATE")
     entries = [_rdf_one(con, row, collection, plugin, now, meta=first)]
     n = 1
     for peer, (ok, meta) in zip(peers, metas[1:]):
@@ -1039,6 +1050,17 @@ def _next_embed(con, scope, collection=None):
     return None, None
 
 STAGES = {"rdf": stage_rdf, "fts": stage_fts, "embed": stage_embed}
+
+#: Stages `_execute_step` must NOT open the manifest's write transaction
+#: for. Each one's long part is not SQLite — the parse pool, the tantivy
+#: commit, the encoder call — and CLAUDE.md is explicit that long non-DB
+#: work stays outside the transaction: the RESERVED lock blocks every other
+#: writer of that manifest, including the discovery scan and the event log.
+#: rdf and fts take `BEGIN IMMEDIATE` themselves, late, once only SQLite
+#: writes remain; embed takes none at all and lets `upsert_book` lock the
+#: vector store for the Lance write alone. A stage NOT listed here is one
+#: whose whole duration is SQLite, and holding the lock for it is right.
+_NO_OUTER_TRANSACTION = ("embed", "fts", "rdf")
 
 
 def _embed_candidates(con, scope, limit: int, collection=None):
@@ -2383,8 +2405,14 @@ def _execute_step(con, collection, stage, row) -> bool:
     while every writer of a manifest sat on one thread; with the discovery
     scan on its own thread (committing a batch every second or so) fts was
     deferred six times for every success. The RESERVED lock is held for the
-    step — seconds for a batch — and contenders wait busy_timeout instead of
-    failing. The embed step opens NO outer transaction: its long part is the
+    SQLite writes only — seconds for a batch — and contenders wait
+    busy_timeout instead of failing. Both stages open it THEMSELVES, late:
+    their long part is not SQLite (the parse pool, the tantivy commit) and
+    holding the manifest's write lock across it blocks every other writer,
+    which wedged genome-hg38 for 68 minutes through fts and cost rdf 51.7 s
+    a batch on wikipedia. `_NO_OUTER_TRANSACTION` is what keeps this step
+    from opening one on their behalf. The embed step opens NO outer
+    transaction at all: its long part is the
     encoder call, and holding the manifest's write lock across minutes of
     network I/O would stall the web process and every other writer; instead
     `upsert_book` embeds outside any lock and takes `vector_write_lock`
@@ -2395,11 +2423,7 @@ def _execute_step(con, collection, stage, row) -> bool:
     (delete-then-insert, invariant 2).
     """
     t0 = time.time()
-    if stage not in ("embed", "fts"):
-        # fts opens its own BEGIN IMMEDIATE late — after chunk loading and
-        # the tantivy commit — so hours of pure compute on a huge document
-        # never hold the manifest's write lock (stage_fts explains). The
-        # commit/rollback below covers it either way (in_transaction).
+    if stage not in _NO_OUTER_TRANSACTION:
         con.execute("BEGIN IMMEDIATE")
     try:
         STAGES[stage](con, row, collection)
@@ -3322,6 +3346,20 @@ def _log_shares(con, live_paths=None) -> None:
             for n, e in sorted(busy.items())
         ]
         db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
+    # THE PARSE POOL'S OCCUPANCY — how many of its children actually had
+    # work, time-averaged over this interval. Everything else here measures
+    # how long something took; this is the only line that says whether the
+    # machine was being used to do it, and its absence is why admission
+    # handed wikipedia 3 of 11 children for a day while every other
+    # instrument reported "slow" (2026-09-23, docs/notes/scheduling.md §11).
+    # A number well below `processes()` while a collection has parse work
+    # queued is the defect this line exists to show.
+    pool = parallel.occupancy()
+    if pool["elapsed_s"] > 0:
+        db.log_event(con, "info", "sched",
+                     f"parse pool — {pool['busy_children']:.1f} of "
+                     f"{pool['processes']} children busy "
+                     f"({pool['utilisation']:.0%}) over {pool['elapsed_s']:.0f}s")
     # ...and what the units themselves now cost, which is what the sizes
     # above are derived from (app/sizing.py). A batch that drifts away from
     # BATCH_TARGET_S is visible here before it is visible as unfairness.

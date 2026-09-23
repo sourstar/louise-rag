@@ -145,7 +145,10 @@ def reset_failures() -> None:
 
 def health() -> dict:
     return {"processes": processes(), "pool": _pool is not None,
-            "failures": _failures, "disabled": _disabled}
+            "failures": _failures, "disabled": _disabled,
+            # read WITHOUT resetting: health is a question, not a meter
+            # read — `_log_shares` owns the reset (see occupancy).
+            "busy_children": occupancy(reset=False)["busy_children"]}
 
 
 # ---- the work ---------------------------------------------------------------
@@ -227,8 +230,27 @@ IN_FLIGHT_PER_CHILD = 2
 #: never fewer than one child and a task queued behind it, whatever the
 #: arithmetic says — a share of zero is a stalled collection.
 MIN_SLOTS = 2
-#: how many tasks a batch is cut into per child (see `compute`)
-TASKS_PER_CHILD = 8
+#: how many tasks a batch is cut into per child (see `compute`).
+#:
+#: TWO, and it was measured back DOWN to two. Eight was deployed on
+#: 2026-09-23 to stop a dear document idling a child, and it cost 4.6x:
+#: wikipedia's rdf went from 6.3 to 28.8 ms/doc and fts from 10.2 to 27.2,
+#: with the CPU UP (77% -> 193% of 1200%) and throughput DOWN (54.2 -> 24.3
+#: docs/s). More CPU for less work is REDUNDANT COMPUTATION — that much the
+#: numbers settle. Which redundancy was not isolated; the likeliest is
+#: locality, since the parts are cut by equal COUNT and wikipedia's
+#: documents come out of shared multistream blocks, so every child holding
+#: one of a block's documents decompresses that whole block and four times
+#: the parts is four times the re-decompression. (`PARSE_TASKS_PER_CHILD`
+#: — a different knob with a confusingly similar name — recycles a child
+#: every 500 tasks, so finer parts also recycle more often; that was ~45
+#: minutes apart and too rare to be the main term.)
+#:
+#: Either way the lesson holds and is the reason for the ceiling: a part's
+#: cost is NOT independent of the other parts, so balance cannot be bought
+#: with granularity. The cut has to follow the blocks first
+#: (docs/notes/scheduling.md §11).
+PARTS_PER_CHILD = 2
 #: rows below which pickling a part outweighs the work in it
 MIN_PART = 4
 
@@ -243,8 +265,62 @@ def slots(name: str | None, budget: int) -> int:
     return max(MIN_SLOTS, budget // max(1, asking), budget - others)
 
 
-def _occupy(name: str | None, delta: int) -> None:
+# ---------------------------------------------------------------- occupancy
+#
+# THE MEASUREMENT THIS MODULE DID NOT HAVE. A starved pool and a slow pool
+# look identical from outside: both show long batches. The batch log has
+# duration and size, `docker stats` has the container, and the sizer will
+# faithfully fit a cost model to a machine running on one core — so on
+# 2026-09-23 admission handed wikipedia 3 of 11 children for a day and
+# every instrument agreed things were merely slow. What was missing is the
+# one number that says which: how many children actually had work.
+#
+# Integrated over time, not sampled — a sample lands between batches as
+# often as inside one. `min(in flight, processes())` because a task queued
+# behind a busy child is not a second busy child.
+_busy_slots = 0                    # tasks in flight, all collections
+_busy_integral = 0.0               # child-seconds accrued since _busy_read_at
+_busy_since = time.monotonic()     # last point the integral was advanced to
+_busy_read_at = time.monotonic()   # last occupancy(reset=True)
+
+
+def _advance(now: float, n: int) -> None:
+    """Accrue child-seconds up to `now`. Caller holds _held_lock."""
+    global _busy_integral, _busy_since
+    if now > _busy_since:
+        _busy_integral += min(_busy_slots, n) * (now - _busy_since)
+    _busy_since = now
+
+
+def occupancy(reset: bool = True) -> dict:
+    """How busy the pool has been SINCE THE LAST READ: the time-average
+    number of children with work, and that as a share of the pool.
+
+    Published by the beat thread, never by a pipeline thread (CLAUDE.md:
+    telemetry is published by someone other than the thread doing the work).
+    """
+    global _busy_integral, _busy_read_at
+    n = processes()
     with _held_lock:
+        now = time.monotonic()
+        _advance(now, n)
+        span = now - _busy_read_at
+        child_s = _busy_integral
+        if reset:
+            _busy_integral = 0.0
+            _busy_read_at = now
+    busy = child_s / span if span > 0 else 0.0
+    return {"busy_children": round(busy, 2), "processes": n,
+            "utilisation": round(busy / n, 4) if n else 0.0,
+            "elapsed_s": round(span, 1)}
+
+
+def _occupy(name: str | None, delta: int) -> None:
+    global _busy_slots
+    n = processes()
+    with _held_lock:
+        _advance(time.monotonic(), n)
+        _busy_slots = max(0, _busy_slots + delta)
         got = _held.get(name, 0) + delta
         if got > 0:
             _held[name] = got
@@ -272,9 +348,13 @@ def wanting() -> dict[str, int]:
 
 
 def forget_users() -> None:
+    global _busy_slots, _busy_integral, _busy_since, _busy_read_at
     with _held_lock:
         _held.clear()
         _wanting.clear()
+        _busy_slots = 0
+        _busy_integral = 0.0
+        _busy_since = _busy_read_at = time.monotonic()
 
 
 def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
@@ -288,19 +368,14 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
         return _compute(kind, collection, plain)
     n = processes()
     # THE PART IS THE UNIT OF LOAD BALANCING, so its size decides how
-    # unevenly a batch may finish. At ~2 tasks per child a 2,000-document
-    # batch was cut into 22 parts of 91 documents, and wikipedia's documents
-    # differ by two orders of magnitude (median ~0 ms, tail >100 ms): one
-    # dear document then idles a child until the whole batch is done, and
-    # there is nothing left to hand out. Finer parts cost nothing per row (a
-    # part still carries at least MIN_PART rows, so the bytes pickled are
-    # the same bytes) and they are what lets the window below keep every
-    # child fed to the last document.
-    #
-    # This is a SEPARATE defect from the admission one above, and smaller:
-    # the measurement that found the pool at 132 % of twelve cores found it
-    # starved, not unbalanced. What this bounds is the tail of each batch.
-    size = max(MIN_PART, -(-len(plain) // (n * TASKS_PER_CHILD)))
+    # unevenly a batch may finish — and ALSO how often shared work is
+    # repeated, which is the term that wins. "Finer parts cost nothing per
+    # row, the bytes pickled are the same bytes" was the reasoning for
+    # cutting eight ways per child, and it was wrong by 4.6x live: a part's
+    # cost is not independent of the other parts, because wikipedia's
+    # documents come out of shared multistream blocks. See PARTS_PER_CHILD.
+    # Cut to follow the blocks before cutting finer.
+    size = max(MIN_PART, -(-len(plain) // (n * PARTS_PER_CHILD)))
     parts = [plain[i:i + size] for i in range(0, len(plain), size)]
     # ADMISSION (docs/notes/scheduling.md §10, B) — see `slots` above. The
     # budget is the whole pool; the cap is recomputed on every refill, so a

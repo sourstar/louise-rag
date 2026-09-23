@@ -13,6 +13,7 @@ What is here, and why it is kept:
 | `no-central-node.md`, `certified-collections.md`, `lineage.md` | the three proposals that became §2.7–2.8, §3.7–3.8 and §4 — with the reasoning and the alternatives that were rejected |
 | `embedding-redundancy.md`, `pack-live-edge.md`, `p2p-discovery.md`, `storage-tiering.md`, `dna-search-axes.md` | proposals with their measurements; partly absorbed, partly parked |
 | `scheduling.md` | the worker's scheduling model, the measured costs, and every pitfall that has cost a rework — read before touching what runs when |
+| `scheduling-log.md` | one row per deployed scheduling change: the scenario it ran under and what it measured, before and after. Append-only, and filled in before the deploy — a throughput number without its scenario is not evidence |
 | `calibration.md`, `calibration.live.md`, `approved-encoders.md` | how the tolerance was measured, and which encoder builds were found compliant on which hardware |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
 | `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
