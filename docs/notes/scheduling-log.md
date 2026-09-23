@@ -13,8 +13,14 @@ regression — and *nothing in the record could rule out "different
 articles"*, because wikipedia's documents differ by two orders of
 magnitude and the two windows covered different parts of the corpus. The
 regression happened to be real, and was only confirmed because the
-per-document unit cost moved too. That was luck. A throughput number
-without its scenario is not evidence.
+per-document unit cost moved too. That was luck.
+
+Then it happened again with the sign reversed: the next row, the same
+change's good half on its own, read as "+3.5 % throughput for 4.1x the
+CPU" — a second regression — until `chunks/doc` turned out to have gone
+from 0.65 to 3.59. It was a 5.7x win. **A wikipedia document is not a unit
+of work**, and a throughput number without its scenario is not evidence in
+either direction.
 
 ## The rules
 
@@ -23,12 +29,21 @@ without its scenario is not evidence.
 2. **Record the scenario, not just the number.** Which collections had
    work and of what kind, the node mode, where in the corpus, what else was
    running. Two rows are comparable only if their scenarios are.
-3. **Prefer scenario-independent metrics.** `docs/s` depends on which
-   documents; `ms/doc` per stage, pool occupancy and CPU do so much less.
-   When they disagree, the per-document cost is the one to believe.
-4. **One change per deploy.** 2026-09-23 shipped two and the loss buried
+3. **Normalise by CHUNKS, not documents.** This is the one that matters and
+   it was learned the hard way, twice in one night, in both directions. A
+   wikipedia document is not a unit of work: a redirect-dense stretch of the
+   corpus yields **~0.6 chunks per document**, a stretch of real articles
+   **~3.6** — so `docs/s` between two windows can compare workloads that
+   differ five-fold. Always record `chunks/doc`; it is what says whether two
+   rows are comparable at all. Compare `chunks/s`, and `CPU per chunk` for
+   efficiency. `ms/doc` inherits the same flaw and is only usable between
+   rows with the same `chunks/doc`.
+4. **A throughput number that moves without CPU moving, or CPU that moves
+   without throughput, is a question, not a result.** Both times that
+   happened here the answer was in `chunks/doc`.
+5. **One change per deploy.** 2026-09-23 shipped two and the loss buried
    the win; the good half had to be re-measured on its own.
-5. **Record reverts as rows.** A change that was backed out is the most
+6. **Record reverts as rows.** A change that was backed out is the most
    valuable row in the file.
 
 ## How a row is measured
@@ -40,7 +55,7 @@ Same commands every time, so the numbers mean the same thing
 # worker-tree CPU over 60 s, as a share of 1200 % (12 cores)
 #   — the whole process tree, so the pool's children are counted
 # throughput and the share of wall time actually inside batches
-bash /tmp/measure-after.sh <window-minutes>
+bash tools/sched_measure.sh <window-minutes>   # run ON THE NODE
 
 # per-document unit cost, per stage — the scenario-independent one
 docker logs --since <N>m ix-louise-rag-worker-1 | grep 'unit costs'
@@ -109,8 +124,16 @@ stranger had been on the card earlier in the day. `PARSE_PROCESSES=11`.
 | wall time inside batches | 945 s of 1800 s (53 %) |
 | wikipedia rdf | 6.3 ms/doc |
 | wikipedia fts | 10.2 ms/doc |
+| **chunks/doc** | **~0.65** (fts lines: 1215/2025, 669/1024, 437/888, 1882/2700, 736/1000) |
+| **chunks/s** | **~35** |
+| **CPU per chunk** | **~22 ms** |
 | pool children busy | 1 running, 10 in `futex_do_wait`; 132 % of 1200 % between them |
 | parent thread | 5 % of one core |
+
+**Corpus position: a redirect-dense stretch.** 0.65 chunks per document
+means most of these documents produced no text at all — wikipedia's
+redirects are kept as records. This is the number that makes the rows below
+comparable, and it was very nearly not recorded.
 
 `py-spy dump`: `pipeline-wikipedia` parked in `future.result()` inside
 `parallel.compute`. The node was blocked end to end on pool admission
@@ -137,33 +160,69 @@ the comparability problem this file exists to stop.
 | wall inside batches | 53 % | 40 % | ↓ |
 | wikipedia rdf | 6.3 ms/doc | **28.8** | ↑ 4.6x |
 | wikipedia fts | 10.2 ms/doc | **27.2** | ↑ 2.7x |
+| **chunks/doc** | ~0.65 | **0.13 – 0.69** | comparable, if anything LIGHTER |
 | manifest deferrals | — | 0 | |
 | errors | — | none | |
 
-**Verdict: (b) REVERTED, (a) not yet attributable.** More CPU for less work
-is redundant computation, and the per-document cost — the metric that does
-not depend on which articles — moved with it, which is what makes the
-regression real rather than a window artefact. Which redundancy was not
-isolated; the likeliest is locality (parts are cut by equal COUNT while
-wikipedia's documents come out of shared multistream blocks, so every child
-holding one of a block's documents decompresses the whole block).
+**Verdict: (b) REVERTED, (a) not attributable from this row.** More CPU for
+less work is redundant computation. The `chunks/doc` row is what makes this
+a finding rather than a window artefact: the documents in the "after"
+window were no heavier than the baseline's — several batches were markedly
+lighter (1000 documents for 129 chunks) — and the per-document cost still
+rose 4.6x. Which redundancy was not isolated; the likeliest is locality
+(parts are cut by equal COUNT while wikipedia's documents come out of
+shared multistream blocks, so every child holding one of a block's
+documents decompresses the whole block).
+
+*(`chunks/doc` added to this row retrospectively, from the captured log
+lines, once the next row showed why it was the number that mattered.)*
 
 **What this row cost, and the process lesson:** two changes in one deploy,
 the loss hid the win, and (a) — which the `py-spy dump` above shows was a
-real end-to-end block — has to be re-measured alone. Rule 4 above comes
+real end-to-end block — has to be re-measured alone. Rule 5 above comes
 from here.
 
 ---
 
-### 2026-09-23 (pending) — admission alone, `PARTS_PER_CHILD` back to 2
+### 2026-09-23 01:24 — `8b1aced`, admission alone (`PARTS_PER_CHILD` back to 2)
 
-**Scenario to hold constant:** same as the baseline row; measure over a
-window of the same length (30 min), starting at least 10 min after the
-restart so the sizer has re-converged.
+The win from `601b3c0`, with the loss removed. Stated in advance: pool
+occupancy should rise from ~1.3 children, and if `ms/doc` did not return to
+≈6.3 / ≈10.2 then admission was not the win the thread dump implied.
 
-**Watch:** `parse pool — N of 11 children busy` (the line added with this
-change) should move from ~1.3 to near 11 while wikipedia has parse work.
-`ms/doc` must return to ≈6.3 / ≈10.2 or better; if it does not, admission
-is not the win the dump suggested and this row says so.
+**Scenario.** As the baseline row — wikipedia the only collection parsing,
+gutenberg embedding, pubmed idle, `PARSE_PROCESSES=11` — **except that the
+corpus had moved into a stretch of real articles.** 11 min window starting
+~1 min after the recreate.
 
-*(to be completed)*
+| metric | baseline | this row | |
+|---|---|---|---|
+| **chunks/doc** | ~0.65 | **3.59** | **the workload is 5.5x heavier** |
+| pool children busy | ~1.3 of 11 | **8.5 of 11 (77 %)** | 6.5x |
+| worker tree CPU | 77 % of 1200 % | 316 % | 4.1x |
+| **chunks/s** | ~35 | **~201** | **5.7x** |
+| **CPU per chunk** | ~22 ms | **~15.7 ms** | **1.4x more efficient** |
+| docs/s (do not use) | 54.2 | 56.1 | +3.5 %, meaningless |
+| wikipedia rdf | 6.3 ms/doc | 11.8 | on 5.5x the text |
+| wikipedia fts | 10.2 ms/doc | 13.0 | on 5.5x the text |
+| wall inside batches | 53 % | 51 % | |
+| manifest deferrals | — | 0 | |
+| errors | — | none | |
+
+**Verdict: KEPT.** 5.7x the work for 4.1x the CPU, so efficiency improved
+as well — the pool is doing more per core, not just running hotter.
+
+**The stated falsifier fired, and was wrong.** `ms/doc` did NOT return to
+6.3/10.2; by the rule written in advance this row should have read "not the
+win the dump implied". It reads the opposite because `chunks/doc` — which
+that falsifier did not control for — had gone from 0.65 to 3.59. Read on
+raw `docs/s` alone (+3.5 % for 4.1x the CPU) this looked like a second
+regression, and was within one step of being recorded as one. **A criterion
+stated in advance is only as good as the normaliser it is stated in.**
+Rules 3 and 4 above are the correction, and this is the row that bought
+them.
+
+**Still open:** 49 % of wall time is outside any batch, untouched by this
+change and not yet attributed; and the parse/commit phases still do not
+overlap (the audit's first open item — it would raise the average rather
+than the peak).
