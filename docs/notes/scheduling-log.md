@@ -304,44 +304,69 @@ is off and gutenberg is GPU-bound.
 
 ---
 
-### 2026-09-23 (pending) — cut the batch along its work units, balanced by cost
+### 2026-09-23 02:55 — `8592c33`, cut the batch along its work units
 
 One change: `parallel._partition` cuts contiguous parts on multistream
 CHUNK boundaries and balances them by chunk bytes, via a new
 `plugin_io.work_span` the wikipedia source implements. gutenberg and pubmed
-return None and keep the equal-count cut unchanged.
+return None and keep the equal-count cut. (Carried with it, behaviourally
+inert: the `slots_in_flight` rename of `59a6b55`.)
 
-**Why, from the row above.** The pipeline thread is 96.6 % blocked in
-`compute`; the commit is 2 % and the embed feeder burns nothing. The trough
-is the straggler tail, and `source._stream_pages` is a ONE-SLOT, PER-PROCESS
-cache over chunks of ~55 pages whose compressed size spans 27x
-(p10 6.9k, p50 26k, max 186k, sampled from the manifest). So equal COUNT is
-not equal WORK, and a chunk split across two children is decompressed twice.
+**Scenario.** As the rows above, except the corpus stretch is lighter:
+**chunks/doc 1.69** against 3.51. 9 min window, 10 min after the recreate.
 
-**Simulated first, on real locators from this manifest**, parts scheduled
-onto 11 children:
-
-| rows / chunks | total work | makespan | worst part |
+| metric | previous row | this row | |
 |---|---|---|---|
-| 2200 / 48 | 0.72x | 0.64x | 242k → 92k |
-| 6000 / 109 | 0.89x | 0.74x | 452k → 186k |
-| 3000 / 39 | 0.70x | 0.46x | 412k → 169k |
+| chunks/doc | 3.51 | 1.69 | lighter stretch |
+| **chunks/s of wall** | 73.3 | **103.7** | **+41 %** |
+| worker tree CPU | 408 % | 372 % | −9 % |
+| **CPU per chunk** | 5.57 | **3.59** | **−36 %** |
+| wikipedia rdf | 10.9–14.4 ms/doc | **2.0** | |
+| wikipedia fts | 8.1–13.6 ms/doc | **0.4** | |
+| **running children (mean of 11)** | **3.7** | **1.7** | **FELL** |
+| running children at 0 | 10 s of 90 | **33 s of 90** | worse |
+| slots in flight | 73–81 % | 61 % | |
+| wall inside batches | 54 % | 48 % | worse |
+| deferrals / errors | 0 / none | **0 / none** | |
 
-The simulation also caught a 2x error before deployment: treating the part
-target as a CAP stacked every leftover run into the last part — makespan
-2.03x worse while total work fell to 0.72x. Both are cost tests now.
+**Verdict: KEPT — and the stated falsifier FIRED.** It said mean running
+children must rise well above 3.7. It fell to 1.7. Both halves are true and
+they do not conflict:
 
-**Scenario to hold constant:** as the row above — wikipedia the only
-collection parsing, gutenberg embedding, pubmed idle, `PARSE_PROCESSES=11`.
-Record `chunks/doc` and compare `chunks/s`, never `docs/s`.
+* The **work** got cheaper, as simulated: 36 % less CPU per chunk, 41 %
+  more chunks/s at 9 % less CPU. That is the locality half — chunks are no
+  longer decompressed by two children — and it matches the simulation's
+  0.72–0.89x total work.
+* The **pool is idler**, because the work it was given shrank while nothing
+  else changed. The bottleneck MOVED OUT OF THE POOL. A falsifier written
+  in the right normaliser can still be the wrong QUESTION: "are the
+  children busy" stops being the goal the moment the children stop being
+  the constraint.
 
-**The measure is RUNNING CHILDREN** (`tools/sched_measure.sh`, 1 Hz), not
-slots in flight: the whole batch is still submitted at once, so the
-in-process metric cannot see this change at all. Baseline to beat:
-**mean 3.7 of 11, at 0 for 10 s of every 90**.
+**Where it moved.** `py-spy record --idle`, 180 s: the pipeline thread is
+still 80 % blocked in `compute` (2,873 of 3,600 samples), 19 % running. But
+the children are 77 % asleep on `futex_do_wait` / `anon_pipe_read` —
+waiting for work, not for disk (zero `D` state, 1.8 MB/s read). So the
+parent waits on ONE straggler while ten children have nothing left to take.
+`slots_in_flight` read 6.7 while 1.7 ran, which is exactly its documented
+flaw: a task finished but not yet COLLECTED still counts, because results
+are consumed in order.
 
-**What would falsify it:** if mean running children does not rise well
-above 3.7, or if `chunks/s` at equal `chunks/doc` does not improve, the
-simulation did not transfer and the row says so. A simulation is not a node.
+The batch log names the shape: batches are now **20,000 documents** (the
+sizer grew them as the work got cheap, to its `hi` clamp) taking
+**0.9–2.6 s**, with occasional **52.5 s** and **53.7 s** outliers. Most
+batches no longer fill the pool at all, and the outliers are not the large
+ones.
 
-*(to be completed)*
+**The balance half did NOT transfer, and the cost model is why.** Parts are
+balanced by COMPRESSED CHUNK BYTES, which is a proxy for decompression
+only. A 26 kB chunk can hold 55 stubs or one enormous article, and the
+parse cost — wikitext, not bz2 — does not follow it. Left unfinished rather
+than guessed at: the next step is to MEASURE per-part durations, which
+needs instrumenting `compute`, not to invent a second proxy. The first
+proxy is what this row is about.
+
+**Distance to the target.** CPU 372 % of 1200 % against the ask of
+>1140 %. The efficiency gain is real and idleness is now the whole problem:
+52 % of wall outside any batch, and inside a batch one part holds the rest.
+Neither is an admission or a partitioning question any more.
