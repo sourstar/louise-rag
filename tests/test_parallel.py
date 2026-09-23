@@ -209,7 +209,7 @@ def test_a_broken_pool_falls_back_and_recovers(isolated_config, tmp_path, corpus
     # occupancy is a time average over whatever this test just did, so it is
     # reported but never pinned here — tests/test_parallel.py's own
     # occupancy tests are where its value is asserted
-    assert got.pop("busy_children") >= 0
+    assert got.pop("slots_in_flight") >= 0
     assert got == {"processes": 4, "pool": False, "failures": 0, "disabled": False}
 
 
@@ -364,23 +364,23 @@ def test_the_pool_reports_how_many_of_its_children_had_work(monkeypatch):
     """
     monkeypatch.setattr(config, "PARSE_PROCESSES", 8)
     parallel.forget_users()
-    assert parallel.occupancy()["busy_children"] == 0, "an idle pool is idle"
+    assert parallel.occupancy()["slots_in_flight"] == 0, "an idle pool is idle"
 
     parallel._occupy("wikipedia", 4)
     time.sleep(0.05)
     parallel._occupy("wikipedia", -4)
     got = parallel.occupancy()
-    assert 0 < got["busy_children"] <= 4, got
+    assert 0 < got["slots_in_flight"] <= 4, got
     assert got["processes"] == 8
-    assert got["utilisation"] == pytest.approx(got["busy_children"] / 8, abs=1e-3)
+    assert got["utilisation"] == pytest.approx(got["slots_in_flight"] / 8, abs=1e-3)
 
     # and the read RESET it: the next interval starts from nothing, or every
     # line would report the whole life of the process
     time.sleep(0.02)
-    assert parallel.occupancy()["busy_children"] == 0
+    assert parallel.occupancy()["slots_in_flight"] == 0
 
 
-def test_queued_tasks_are_not_counted_as_extra_busy_children(monkeypatch):
+def test_queued_tasks_are_not_counted_beyond_the_pool_size(monkeypatch):
     """A slot is a task in flight, and the window deliberately holds more
     tasks than children (IN_FLIGHT_PER_CHILD) so no child waits for the
     parent. A task queued behind a busy child is not a second busy child,
@@ -392,7 +392,7 @@ def test_queued_tasks_are_not_counted_as_extra_busy_children(monkeypatch):
     time.sleep(0.05)
     parallel._occupy("wikipedia", -10)
     got = parallel.occupancy()
-    assert got["busy_children"] <= 2, f"ten tasks cannot busy more than two children: {got}"
+    assert got["slots_in_flight"] <= 2, f"ten tasks cannot busy more than two children: {got}"
     assert got["utilisation"] <= 1.0
 
 
@@ -405,7 +405,7 @@ def test_health_reports_occupancy_without_consuming_it(monkeypatch):
     parallel._occupy("wikipedia", 2)
     time.sleep(0.05)
     parallel._occupy("wikipedia", -2)
-    first = parallel.health()["busy_children"]
+    first = parallel.health()["slots_in_flight"]
     assert first > 0
-    assert parallel.health()["busy_children"] > 0, "health() consumed the interval"
-    assert parallel.occupancy()["busy_children"] > 0, "health() consumed the interval"
+    assert parallel.health()["slots_in_flight"] > 0, "health() consumed the interval"
+    assert parallel.occupancy()["slots_in_flight"] > 0, "health() consumed the interval"

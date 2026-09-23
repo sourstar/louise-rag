@@ -200,7 +200,7 @@ Two windows, 11 min and 25 min, agreeing — the second is the one to quote.
 | metric | baseline | 11 min | **25 min** | |
 |---|---|---|---|---|
 | **chunks/doc** | ~0.65 | 3.59 | **3.51** | the workload is ~5.4x heavier |
-| **pool children busy** | **~1.3 of 11 (12 %)** | 8.5 (77 %) | **8.1 / 8.9 / 8.5 (73–81 %)** | **sustained over three 10-min intervals** |
+| pool **slots in flight** | ~1.3 of 11 (12 %) | 8.5 (77 %) | 8.1 / 8.9 / 8.5 (73–81 %) | **NOT running children — see the correction below** |
 | worker tree CPU | 77 % of 1200 % | 316 % | **408 %** | |
 | chunks/s of wall | *see caveat* | — | **73.3** | |
 | docs/s inside batches | 54.2 | 56.1 | 69.3 | *do not compare across chunks/doc* |
@@ -210,13 +210,34 @@ Two windows, 11 min and 25 min, agreeing — the second is the one to quote.
 | manifest deferrals | — | 0 | **0** | |
 | errors | — | none | **none** | |
 
-**Verdict: KEPT**, on the occupancy evidence.
+**Verdict: KEPT**, but on the `py-spy dump` evidence, not on the number
+this row first quoted.
 
-**What is rigorous here and what is not — say it plainly.** The rigorous
-number is **pool occupancy: 12 % → 73–81 %, sustained**. It is
-scenario-independent by construction (it measures whether children had
-work, not how much work each document was) and it was the defect the
-`py-spy dump` identified, so it is the claim and the evidence matching.
+### CORRECTION, same night — the occupancy metric overstated this
+
+`parallel.occupancy()` counts **tasks in flight** (submitted and not yet
+collected), capped at the pool size. `compute` submits a whole batch at
+once — parts ≈ `PARTS_PER_CHILD x n` = the cap — so the slots stay in
+flight through the entire straggler tail while the children that finished
+early sit idle. It therefore answers *"was the pool allowed work?"*, which
+is the admission question and a real one, and NOT *"were the children
+working?"*, which is what the metric's name, this row, and its commit
+message all claimed.
+
+Measured directly, sampling children in state `R` at 1 Hz for 90 s:
+
+```
+1110bbbbb6222221110bb7543332221111111111111113342152103b2032205bb6411111bb0502bb1bbbb41000
+mean 3.7 running of 11;  at 0 for 10 s;  >= 8 for 18 s
+```
+
+**73–81 % in flight, 34 % actually running.** Both numbers are true and
+they answer different questions. Renamed to `slots_in_flight`; the log line
+now reads "slots in flight".
+
+The admission fix is still right — `py-spy dump` showed
+`pipeline-wikipedia` blocked in `future.result()` and the pool provably
+under-admitted — but the size of the win is not established by this row.
 
 The throughput multiple is an **estimate, not a measurement**. Baseline
 `chunks/s of wall` cannot be recovered: the container has been recreated
@@ -242,17 +263,41 @@ them.
 third of the way, and the three remaining terms are now all measured
 rather than guessed:
 
-1. **46 % of wall time falls outside any batch** (54 % inside, unchanged
-   from the baseline's 53 %). Nothing here touched it and it is not yet
-   attributed — `py-spy record --idle` over a full window is the next
-   instrument, since the thread in question is blocked, not burning.
-2. **Parse and commit never overlap.** One pipeline thread per collection
-   alternates a pooled parse (many cores) with a commit (one core). This
-   is the audit's first open item and the only one that raises the
-   AVERAGE rather than the peak.
-3. **Occupancy is 77 %, not 100 %** — the tail of each batch, which is the
-   straggler problem the reverted change tried and failed to fix by
-   granularity. The real fix is to cut parts along the origin blocks.
+### What the 300-second profile then showed — the three items are ONE
 
-Beyond those the ceiling is policy, not scheduling: wikipedia's embedding
+`py-spy record --idle --threads`, 300 s, 5,960 samples per thread. The
+operator had described it from outside first: *"peaks in which all cores
+are at 99 %, then the workload goes down, and up again"*, and asked whether
+the single-threaded part was the GPU embedding feeder.
+
+| thread | where it was |
+|---|---|
+| **pipeline-wikipedia** | **5,756 / 5,960 (96.6 %) in `compute` — blocked on the pool** |
+| pipeline-wikipedia | 77 catalog `_commit`, 47 `fts.index_books` (the commit phase: **2 %**) |
+| pipeline-wikipedia | selection, archive, bundle drain: **< 1 % combined** |
+| embed-gutenberg | 5,954 / 5,960 blocked in `_embed_parallel` — waiting on the GPU, burning nothing |
+| embed-wikipedia, embed-pubmed | 100 % idle sleep |
+| MainThread, index-maintainer, stats-publisher | 100 % idle |
+
+**No: the embed feeder is not the single-threaded phase**, and neither is
+the commit, at 2 %. The only CPU consumers are the pool's children, and the
+single-threaded stretches are **stragglers** — one child still on its part
+while ten have nothing.
+
+**And the three open items above are one phenomenon: the batch is a
+barrier.** With `PARTS_PER_CHILD = 2` a batch cuts into ~22 parts and the
+cap is 22, so `compute` submits the ENTIRE batch at once and then drains
+it. There is no refill — the operator's phrase, "the problem seems to be
+the refill of the work queues", is exactly right and more literal than it
+sounds. One sawtooth per batch: burst at submission, decay as parts finish,
+trough of straggler tail + commit + selection, then the next burst. The
+"46 % outside batches" and the "77 % occupancy" are two views of the same
+trough, and "parse and commit never overlap" is its cause.
+
+So the next change is not any of the three separately. It is to stop the
+pool draining between batches — overlap batch N's tail with batch N+1's
+parse — and it must go out ALONE, with running-children sampling as its
+measure, since slots-in-flight cannot see this at all.
+
+Beyond that the ceiling is policy, not scheduling: wikipedia's embedding
 is off and gutenberg is GPU-bound.

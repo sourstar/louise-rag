@@ -62,3 +62,36 @@ echo "--- deferrals (a writer that lost the manifest lock) ---"
 docker logs --since ${WIN}m ix-louise-rag-worker-1 2>&1 | grep -c "round deferred" || true
 echo "--- errors ---"
 docker logs --since ${WIN}m ix-louise-rag-worker-1 2>&1 | grep -iE "error|traceback" | tail -5 || true
+
+# RUNNING CHILDREN, sampled at 1 Hz. The in-process metric (`parse pool —
+# N of 11 slots in flight`) counts tasks SUBMITTED, and `compute` submits a
+# whole batch at once, so it reads near-full through the straggler tail
+# while most children are idle: 73-81 % in flight against 34 % running,
+# measured 2026-09-23. This is the one that sees the sawtooth.
+echo "--- running pool children, 1 Hz for ${2:-90} s ---"
+INIT=$(docker inspect -f '{{.State.Pid}}' ix-louise-rag-worker-1)
+PY=$(ps -eo pid,ppid --no-headers | awk -v p=$INIT '$2==p {print $1; exit}')
+python3 - "$PY" "${2:-90}" <<'PY'
+import os, sys, time, subprocess
+par, secs = sys.argv[1], int(sys.argv[2])
+def kids():
+    return [l.split()[0] for l in subprocess.run(['ps','-eo','pid,ppid','--no-headers'],
+            capture_output=True, text=True).stdout.splitlines() if l.split()[1] == par]
+def running(ps):
+    n = 0
+    for p in ps:
+        try:
+            f = open(f'/proc/{p}/stat').read()
+            if f[f.rindex(')')+2:].split()[0] == 'R':
+                n += 1
+        except OSError:
+            pass
+    return n
+line = []
+for _ in range(secs):
+    line.append(running(kids())); time.sleep(1)
+# one hex digit per second, so a sawtooth is visible as a shape
+print("".join(f"{v:x}" if v < 16 else "F" for v in line))
+n = len(line) or 1
+print(f"mean {sum(line)/n:.1f} running;  at 0: {line.count(0)}s;  >=8: {sum(1 for v in line if v>=8)}s")
+PY

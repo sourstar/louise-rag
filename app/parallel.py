@@ -148,7 +148,7 @@ def health() -> dict:
             "failures": _failures, "disabled": _disabled,
             # read WITHOUT resetting: health is a question, not a meter
             # read — `_log_shares` owns the reset (see occupancy).
-            "busy_children": occupancy(reset=False)["busy_children"]}
+            "slots_in_flight": occupancy(reset=False)["slots_in_flight"]}
 
 
 # ---- the work ---------------------------------------------------------------
@@ -272,12 +272,26 @@ def slots(name: str | None, budget: int) -> int:
 # duration and size, `docker stats` has the container, and the sizer will
 # faithfully fit a cost model to a machine running on one core — so on
 # 2026-09-23 admission handed wikipedia 3 of 11 children for a day and
-# every instrument agreed things were merely slow. What was missing is the
-# one number that says which: how many children actually had work.
+# every instrument agreed things were merely slow.
+#
+# WHAT THIS IS, EXACTLY — read this before quoting it. It is the time
+# average of TASKS IN FLIGHT (submitted and not yet collected), capped at
+# the pool size. It answers the ADMISSION question: did the pool have work
+# it was allowed to run? It does NOT say how many children were running,
+# and the two diverge badly, because `compute` submits a whole batch at
+# once (parts ~= PARTS_PER_CHILD x n = the cap) and then drains it: the
+# slots stay "in flight" all the way through the straggler tail, while the
+# children that finished early sit idle.
+#
+# Measured on the node the night this was written: this metric read 73-81 %
+# while children actually in state R averaged 3.7 of 11 (34 %) — sampled at
+# 1 Hz, `tools/sched_measure.sh`. Both numbers are true and they are
+# answers to different questions. It was first shipped labelled
+# "busy_children", which was simply wrong, and the log row it produced
+# overstated the change it was measuring.
 #
 # Integrated over time, not sampled — a sample lands between batches as
-# often as inside one. `min(in flight, processes())` because a task queued
-# behind a busy child is not a second busy child.
+# often as inside one.
 _busy_slots = 0                    # tasks in flight, all collections
 _busy_integral = 0.0               # child-seconds accrued since _busy_read_at
 _busy_since = time.monotonic()     # last point the integral was advanced to
@@ -310,7 +324,7 @@ def occupancy(reset: bool = True) -> dict:
             _busy_integral = 0.0
             _busy_read_at = now
     busy = child_s / span if span > 0 else 0.0
-    return {"busy_children": round(busy, 2), "processes": n,
+    return {"slots_in_flight": round(busy, 2), "processes": n,
             "utilisation": round(busy / n, 4) if n else 0.0,
             "elapsed_s": round(span, 1)}
 

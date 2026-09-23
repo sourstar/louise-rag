@@ -3346,19 +3346,25 @@ def _log_shares(con, live_paths=None) -> None:
             for n, e in sorted(busy.items())
         ]
         db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
-    # THE PARSE POOL'S OCCUPANCY — how many of its children actually had
-    # work, time-averaged over this interval. Everything else here measures
-    # how long something took; this is the only line that says whether the
-    # machine was being used to do it, and its absence is why admission
-    # handed wikipedia 3 of 11 children for a day while every other
-    # instrument reported "slow" (2026-09-23, docs/notes/scheduling.md §11).
-    # A number well below `processes()` while a collection has parse work
-    # queued is the defect this line exists to show.
+    # THE PARSE POOL'S ADMISSION — the time average of tasks IN FLIGHT,
+    # capped at the pool size. Everything else here measures how long
+    # something took; this says whether the pool was ALLOWED work, and its
+    # absence is why admission handed wikipedia 3 of 11 children for a day
+    # while every other instrument reported "slow" (2026-09-23,
+    # docs/notes/scheduling.md §11). A number well below `processes()` while
+    # a collection has parse work queued is the defect it exists to show.
+    #
+    # It is NOT how many children were running, and the wording says so on
+    # purpose: `compute` submits a whole batch at once, so the slots stay in
+    # flight through the straggler tail while the early-finishing children
+    # idle. Measured the night this was written, the two read 73-81 % and
+    # 34 % over comparable windows. For running children, sample state R at
+    # 1 Hz — tools/sched_measure.sh.
     pool = parallel.occupancy()
     if pool["elapsed_s"] > 0:
         db.log_event(con, "info", "sched",
-                     f"parse pool — {pool['busy_children']:.1f} of "
-                     f"{pool['processes']} children busy "
+                     f"parse pool — {pool['slots_in_flight']:.1f} of "
+                     f"{pool['processes']} slots in flight "
                      f"({pool['utilisation']:.0%}) over {pool['elapsed_s']:.0f}s")
     # ...and what the units themselves now cost, which is what the sizes
     # above are derived from (app/sizing.py). A batch that drifts away from
