@@ -195,22 +195,37 @@ gutenberg embedding, pubmed idle, `PARSE_PROCESSES=11` — **except that the
 corpus had moved into a stretch of real articles.** 11 min window starting
 ~1 min after the recreate.
 
-| metric | baseline | this row | |
-|---|---|---|---|
-| **chunks/doc** | ~0.65 | **3.59** | **the workload is 5.5x heavier** |
-| pool children busy | ~1.3 of 11 | **8.5 of 11 (77 %)** | 6.5x |
-| worker tree CPU | 77 % of 1200 % | 316 % | 4.1x |
-| **chunks/s** | ~35 | **~201** | **5.7x** |
-| **CPU per chunk** | ~22 ms | **~15.7 ms** | **1.4x more efficient** |
-| docs/s (do not use) | 54.2 | 56.1 | +3.5 %, meaningless |
-| wikipedia rdf | 6.3 ms/doc | 11.8 | on 5.5x the text |
-| wikipedia fts | 10.2 ms/doc | 13.0 | on 5.5x the text |
-| wall inside batches | 53 % | 51 % | |
-| manifest deferrals | — | 0 | |
-| errors | — | none | |
+Two windows, 11 min and 25 min, agreeing — the second is the one to quote.
 
-**Verdict: KEPT.** 5.7x the work for 4.1x the CPU, so efficiency improved
-as well — the pool is doing more per core, not just running hotter.
+| metric | baseline | 11 min | **25 min** | |
+|---|---|---|---|---|
+| **chunks/doc** | ~0.65 | 3.59 | **3.51** | the workload is ~5.4x heavier |
+| **pool children busy** | **~1.3 of 11 (12 %)** | 8.5 (77 %) | **8.1 / 8.9 / 8.5 (73–81 %)** | **sustained over three 10-min intervals** |
+| worker tree CPU | 77 % of 1200 % | 316 % | **408 %** | |
+| chunks/s of wall | *see caveat* | — | **73.3** | |
+| docs/s inside batches | 54.2 | 56.1 | 69.3 | *do not compare across chunks/doc* |
+| wall inside batches | 53 % | 51 % | **54 %** | **unchanged — untouched by this** |
+| wikipedia rdf | 6.3 ms/doc | 11.8 | 10.9 – 14.4 | on ~5.4x the text |
+| wikipedia fts | 10.2 ms/doc | 13.0 | 8.1 – 13.6 | on ~5.4x the text |
+| manifest deferrals | — | 0 | **0** | |
+| errors | — | none | **none** | |
+
+**Verdict: KEPT**, on the occupancy evidence.
+
+**What is rigorous here and what is not — say it plainly.** The rigorous
+number is **pool occupancy: 12 % → 73–81 %, sustained**. It is
+scenario-independent by construction (it measures whether children had
+work, not how much work each document was) and it was the defect the
+`py-spy dump` identified, so it is the claim and the evidence matching.
+
+The throughput multiple is an **estimate, not a measurement**. Baseline
+`chunks/s of wall` cannot be recovered: the container has been recreated
+twice and `docker logs` only holds the current one, so it rests on 5
+sampled fts lines (chunks/doc ≈ 0.65) and an assumption that about half of
+the 83 batches were fts — giving ~9 chunks/s of wall against 73.3 now,
+call it ~8x with wide error bars. **A future row must not be in this
+position:** capture the full `chunks` totals into the row *before*
+recreating anything.
 
 **The stated falsifier fired, and was wrong.** `ms/doc` did NOT return to
 6.3/10.2; by the rule written in advance this row should have read "not the
@@ -222,7 +237,22 @@ stated in advance is only as good as the normaliser it is stated in.**
 Rules 3 and 4 above are the correction, and this is the row that bought
 them.
 
-**Still open:** 49 % of wall time is outside any batch, untouched by this
-change and not yet attributed; and the parse/commit phases still do not
-overlap (the audit's first open item — it would raise the average rather
-than the peak).
+**Distance to the operator's target.** The ask is the CPU constantly above
+95 % — above ~1140 % of 1200 %. This row is at **408 %**, so roughly a
+third of the way, and the three remaining terms are now all measured
+rather than guessed:
+
+1. **46 % of wall time falls outside any batch** (54 % inside, unchanged
+   from the baseline's 53 %). Nothing here touched it and it is not yet
+   attributed — `py-spy record --idle` over a full window is the next
+   instrument, since the thread in question is blocked, not burning.
+2. **Parse and commit never overlap.** One pipeline thread per collection
+   alternates a pooled parse (many cores) with a commit (one core). This
+   is the audit's first open item and the only one that raises the
+   AVERAGE rather than the peak.
+3. **Occupancy is 77 %, not 100 %** — the tail of each batch, which is the
+   straggler problem the reverted change tried and failed to fix by
+   granularity. The real fix is to cut parts along the origin blocks.
+
+Beyond those the ceiling is policy, not scheduling: wikipedia's embedding
+is off and gutenberg is GPU-bound.
