@@ -409,3 +409,131 @@ def test_health_reports_occupancy_without_consuming_it(monkeypatch):
     assert first > 0
     assert parallel.health()["slots_in_flight"] > 0, "health() consumed the interval"
     assert parallel.occupancy()["slots_in_flight"] > 0, "health() consumed the interval"
+
+
+# ------------------------------------------- cutting a batch along its units
+
+class _Chunked:
+    """A plugin whose rows come in shared units of `per` rows, each unit
+    costing `sizes[i]` — wikipedia's multistream chunks in miniature."""
+
+    def __init__(self, sizes, per):
+        self.sizes, self.per = sizes, per
+
+    def work_span(self, row):
+        u = int(row["uid"]) // self.per
+        return (f"chunk{u}", self.sizes[u])
+
+
+def _rows(n):
+    return [{"uid": str(i)} for i in range(n)]
+
+
+def _units(part, per):
+    return {int(r["uid"]) // per for r in part}
+
+
+def test_a_batch_is_cut_between_units_never_through_one(monkeypatch):
+    """THE 4.6x. wikipedia's pages arrive in multistream chunks of ~100 and
+    `source._stream_pages` caches ONE chunk per process, so a chunk split
+    across two children is decompressed twice. Cutting 8 parts per child
+    instead of 2 put a third of a chunk in each part and cost 4.6x on the
+    node (2026-09-23) — the defect was never the number of parts, it was
+    cutting through the unit. No part may share a unit with another."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    per, n_units = 10, 24
+    plugin = _Chunked([1000] * n_units, per)
+    monkeypatch.setattr(parallel, "_spans",
+                        lambda c, rows: [plugin.work_span(r) for r in rows])
+
+    parts = parallel._partition(object(), _rows(per * n_units), 8)
+    assert sum(len(p) for p in parts) == per * n_units, "every row exactly once"
+    assert [r for p in parts for r in p] == _rows(per * n_units), "order kept"
+    seen: dict = {}
+    for i, p in enumerate(parts):
+        for u in _units(p, per):
+            assert u not in seen, \
+                f"unit {u} is in part {seen[u]} AND part {i} — decompressed twice"
+            seen[u] = i
+
+
+def test_parts_are_balanced_by_cost_not_by_count(monkeypatch):
+    """THE STRAGGLER TAIL. Equal COUNT is not equal WORK when the units
+    differ: measured live, 3.7 of 11 children running on average, bursting
+    to 11 and troughing at 0, because the batch ended with ten children
+    waiting on one. Here one unit costs 100x its neighbours; cut by count it
+    lands in a part like any other and that part takes 100x as long."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    per = 10
+    sizes = [10] * 24
+    sizes[5] = 10_000                       # one very dear chunk
+    plugin = _Chunked(sizes, per)
+    monkeypatch.setattr(parallel, "_spans",
+                        lambda c, rows: [plugin.work_span(r) for r in rows])
+    rows = _rows(per * len(sizes))
+
+    parts = parallel._partition(object(), rows, 8)
+    cost = [sum(sizes[u] for u in _units(p, per)) for p in parts]
+    # the dear unit is alone, or nearly: the cut spends its budget on it
+    dear = [i for i, p in enumerate(parts) if 5 in _units(p, per)][0]
+    assert len(_units(parts[dear], per)) <= 2, \
+        f"the expensive unit was bundled with {len(_units(parts[dear], per))-1} others"
+    # and no OTHER part carries a wildly disproportionate share of the rest
+    rest = sorted(c for i, c in enumerate(cost) if i != dear)
+    assert rest[-1] <= 4 * max(1, rest[0]), f"parts still lopsided: {cost}"
+
+
+def test_a_plugin_with_no_units_keeps_the_plain_equal_count_cut(monkeypatch):
+    """gutenberg and pubmed: a document IS the unit, so equal count already
+    is equal work and nothing here should change what they get."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    monkeypatch.setattr(parallel, "_spans", lambda c, rows: None)
+    rows = _rows(100)
+    parts = parallel._partition(object(), rows, 8)
+    assert [r for p in parts for r in p] == rows
+    assert len(parts) == 8 and {len(p) for p in parts} == {13, 100 - 13 * 7}
+
+
+def test_a_plugin_whose_hint_raises_falls_back_instead_of_failing(monkeypatch):
+    """The span is an optimisation hint. A plugin that cannot answer must
+    cost a worse cut, never a failed batch."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+
+    class Boom:
+        def work_span(self, row):
+            raise RuntimeError("no idea")
+
+    class Coll:
+        def plugin_instance(self):
+            return Boom()
+
+    rows = _rows(40)
+    parts = parallel._partition(Coll(), rows, 8)
+    assert [r for p in parts for r in p] == rows
+
+
+def test_the_part_target_is_a_size_not_a_cap(monkeypatch):
+    """A COST test for a 2x mistake caught in simulation, not on the node.
+
+    Refusing to open part number `want` forces every remaining run into the
+    last part. Simulated on real wikipedia locators that final part cost
+    607k against equal-count's worst of 242k, and the makespan over eleven
+    children came out 2.03x WORSE — while total work fell to 0.72x, so the
+    idea was right and the greedy was wrong.
+
+    Extra parts are free here in a way they are not for an equal-count cut:
+    a part never splits a unit, so nothing is decompressed twice however
+    many parts there are. The tail must be spread, not stacked."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    per = 10
+    sizes = [10] * 60                       # many cheap units, one target
+    plugin = _Chunked(sizes, per)
+    monkeypatch.setattr(parallel, "_spans",
+                        lambda c, rows: [plugin.work_span(r) for r in rows])
+    rows = _rows(per * len(sizes))
+
+    parts = parallel._partition(object(), rows, 8)
+    cost = [sum(sizes[u] for u in _units(p, per)) for p in parts]
+    assert [r for p in parts for r in p] == rows, "order kept"
+    assert max(cost) <= 2 * (sum(cost) / len(cost)), \
+        f"one part carries the tail: {cost}"

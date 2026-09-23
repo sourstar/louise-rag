@@ -111,6 +111,12 @@ def split_locator(locator: str) -> tuple[Path, int, int]:
 # parallel embed stage fetches from threads.
 import threading
 
+#: what to assume a dump's LAST multistream chunk costs: its locator
+#: gives end == 0 (runs to end of file), so its size cannot be read off the
+#: locator. A chunk is ~1 MB compressed; this only has to be the right
+#: ORDER for the balance, never exact.
+_LAST_CHUNK_BYTES = 1 << 20
+
 _stream_lock = threading.Lock()
 _stream_cache: dict = {}        # (dump, start, end) -> {page_id: the page Element}
 
@@ -467,6 +473,37 @@ class WikipediaSource:
             sections=[("", archive.embed_input(r["title"], r["text"])) for r in rows],
             raw_hash=raw.raw_hash,
         )
+
+    def work_span(self, row) -> tuple[str, int] | None:
+        """The multistream CHUNK this page lives in, and its compressed
+        size — `plugin_io.work_span` for the parse pool.
+
+        A chunk holds ~100 pages and `_stream_pages` caches one per
+        process, so the chunk is what a child actually does work on: the
+        pool must keep a chunk's pages together (splitting it decompresses
+        it twice) and must weigh a part by chunk bytes, not by page count.
+
+        Cheap on purpose — it runs once per row while a batch is being cut,
+        and reads only the locator already in the manifest row. An archive
+        locator names parquet segments instead; its first segment is the
+        shared unit for the same reason. Anything unparseable returns None
+        and simply falls back to the plain cut.
+        """
+        locator = str(row.get("path") or "")
+        if not locator:
+            return None
+        try:
+            if archive.is_archive_locator(locator):
+                path, start, end = archive.split_locator(locator)[0]
+                return f"a:{path}|{start}", max(1, int(end) - int(start))
+            dump, start, end = split_locator(locator)
+            # the LAST chunk of a dump is indexed as running to the end of
+            # the file (end == 0); it is one chunk like any other, and its
+            # size is not knowable from the locator alone
+            size = int(end) - int(start) if end else _LAST_CHUNK_BYTES
+            return f"{dump}|{start}", max(1, size)
+        except (ValueError, IndexError):
+            return None
 
     def fetch(self, ref: DocRef) -> RawDoc:
         """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`

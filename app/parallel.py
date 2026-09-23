@@ -371,6 +371,104 @@ def forget_users() -> None:
         _busy_since = _busy_read_at = time.monotonic()
 
 
+def _spans(collection, rows) -> list[tuple[str, int]] | None:
+    """`plugin_io.work_span` for every row, or None when this plugin has no
+    shared work units (then the plain equal-count cut is equal work)."""
+    try:
+        from . import plugin_io
+        plugin = collection.plugin_instance()
+        out = [plugin_io.work_span(plugin, r) for r in rows]
+    except Exception:   # noqa: BLE001 — a hint, never a reason to fail a batch
+        return None
+    return out if any(s is not None for s in out) else None
+
+
+def _partition(collection, rows: list[dict], want: int) -> list[list[dict]]:
+    """Cut `rows` into at most `want` CONTIGUOUS parts.
+
+    Contiguous because the rows arrive in the corpus's own order, which for
+    a dump is stream order — so neighbouring rows already share work, and
+    any reordering would scatter it.
+
+    By COST and on UNIT BOUNDARIES when the plugin says what the units are
+    (`plugin_io.work_span`), because equal COUNT is not equal WORK:
+    wikipedia's pages come in multistream chunks of ~100, a chunk costs its
+    decompression whoever touches it, and `_stream_pages` caches one chunk
+    per process. Cutting mid-chunk decompresses it twice; cutting by count
+    leaves parts of wildly different cost, and the batch then ends with ten
+    children idle behind one. Both were measured on the node 2026-09-23 —
+    4.6x for the first, 3.7 of 11 children running for the second.
+
+    Equal count otherwise, which is what gutenberg and pubmed want: their
+    documents are independent files and a row IS the unit.
+
+    SIMULATED against real locators sampled from the node's manifest before
+    it was deployed (55 pages per chunk; chunk bytes p10 6.9k, p50 26k, max
+    186k — a 27x spread, which is the straggler), cutting into ~22 parts for
+    eleven children and scheduling the parts onto them:
+
+        rows/chunks      total work      makespan      worst part
+        2200 /  48         0.72x          0.64x        242k -> 92k
+        6000 / 109         0.89x          0.74x        452k -> 186k
+        3000 /  39         0.70x          0.46x        412k -> 169k
+
+    Work falls because chunks stop being decompressed by two children;
+    makespan falls further because the worst part is what the batch waits
+    for. A simulation is not the node — this must still be measured there.
+    """
+    spans = _spans(collection, rows)
+    if spans is None:
+        size = max(MIN_PART, -(-len(rows) // want))
+        return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+    # RUNS: the contiguous rows sharing one unit. A run is indivisible — the
+    # whole point — so the cut happens between runs and never inside one. A
+    # unit is charged ONCE, to the run, plus the cheap per-row parse.
+    runs: list[tuple[list[dict], float]] = []
+    for i, row in enumerate(rows):
+        key = spans[i][0] if spans[i] else None
+        prev_key = spans[i - 1][0] if i and spans[i - 1] else None
+        if runs and key is not None and key == prev_key:
+            runs[-1][0].append(row)
+            runs[-1] = (runs[-1][0], runs[-1][1] + 1.0)
+        else:
+            runs.append(([row], float(spans[i][1]) if spans[i] else 1.0))
+    target = sum(c for _, c in runs) / max(1, want)
+
+    parts: list[list[dict]] = []
+    cur: list[dict] = []
+    acc = 0.0
+
+    def close() -> None:
+        nonlocal cur, acc
+        if cur:
+            parts.append(cur)
+            cur, acc = [], 0.0
+
+    # `want` IS A TARGET SIZE, NOT A CAP — and that distinction was worth
+    # 2x. Refusing to open part number `want` forces every remaining run
+    # into the last one: simulated on real locators, the final part cost
+    # 607k against equal-count's worst of 242k, and the makespan across
+    # eleven children came out 2.03x WORSE even though total work fell to
+    # 0.72x. Extra parts are free here in the way they were not before,
+    # because a part never splits a unit: nothing is decompressed twice
+    # however many parts there are. Overshooting `want` by a third beats
+    # one part carrying the tail.
+    for rows_of, cost in runs:
+        # CLOSE BEFORE OVERSHOOTING, not after. Closing only once the budget
+        # is already spent bundles a dear unit with everything ahead of it:
+        # with one unit costing 100x its neighbours the part that gets it
+        # carried five others too, and that part IS the straggler tail.
+        if cur and acc + cost > target:
+            close()
+        cur.extend(rows_of)
+        acc += cost
+        if acc >= target:
+            close()
+    close()
+    return parts
+
+
 def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     """chunks | metadata | record for every row, in order. `rows` may be
     sqlite3.Row objects (converted; only plain fields travel)."""
@@ -381,16 +479,7 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     if ex is None or len(plain) == 1:
         return _compute(kind, collection, plain)
     n = processes()
-    # THE PART IS THE UNIT OF LOAD BALANCING, so its size decides how
-    # unevenly a batch may finish — and ALSO how often shared work is
-    # repeated, which is the term that wins. "Finer parts cost nothing per
-    # row, the bytes pickled are the same bytes" was the reasoning for
-    # cutting eight ways per child, and it was wrong by 4.6x live: a part's
-    # cost is not independent of the other parts, because wikipedia's
-    # documents come out of shared multistream blocks. See PARTS_PER_CHILD.
-    # Cut to follow the blocks before cutting finer.
-    size = max(MIN_PART, -(-len(plain) // (n * PARTS_PER_CHILD)))
-    parts = [plain[i:i + size] for i in range(0, len(plain), size)]
+    parts = _partition(collection, plain, n * PARTS_PER_CHILD)
     # ADMISSION (docs/notes/scheduling.md §10, B) — see `slots` above. The
     # budget is the whole pool; the cap is recomputed on every refill, so a
     # collection alone holds all of it and gives slots up only to a

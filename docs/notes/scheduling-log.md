@@ -301,3 +301,47 @@ measure, since slots-in-flight cannot see this at all.
 
 Beyond that the ceiling is policy, not scheduling: wikipedia's embedding
 is off and gutenberg is GPU-bound.
+
+---
+
+### 2026-09-23 (pending) — cut the batch along its work units, balanced by cost
+
+One change: `parallel._partition` cuts contiguous parts on multistream
+CHUNK boundaries and balances them by chunk bytes, via a new
+`plugin_io.work_span` the wikipedia source implements. gutenberg and pubmed
+return None and keep the equal-count cut unchanged.
+
+**Why, from the row above.** The pipeline thread is 96.6 % blocked in
+`compute`; the commit is 2 % and the embed feeder burns nothing. The trough
+is the straggler tail, and `source._stream_pages` is a ONE-SLOT, PER-PROCESS
+cache over chunks of ~55 pages whose compressed size spans 27x
+(p10 6.9k, p50 26k, max 186k, sampled from the manifest). So equal COUNT is
+not equal WORK, and a chunk split across two children is decompressed twice.
+
+**Simulated first, on real locators from this manifest**, parts scheduled
+onto 11 children:
+
+| rows / chunks | total work | makespan | worst part |
+|---|---|---|---|
+| 2200 / 48 | 0.72x | 0.64x | 242k → 92k |
+| 6000 / 109 | 0.89x | 0.74x | 452k → 186k |
+| 3000 / 39 | 0.70x | 0.46x | 412k → 169k |
+
+The simulation also caught a 2x error before deployment: treating the part
+target as a CAP stacked every leftover run into the last part — makespan
+2.03x worse while total work fell to 0.72x. Both are cost tests now.
+
+**Scenario to hold constant:** as the row above — wikipedia the only
+collection parsing, gutenberg embedding, pubmed idle, `PARSE_PROCESSES=11`.
+Record `chunks/doc` and compare `chunks/s`, never `docs/s`.
+
+**The measure is RUNNING CHILDREN** (`tools/sched_measure.sh`, 1 Hz), not
+slots in flight: the whole batch is still submitted at once, so the
+in-process metric cannot see this change at all. Baseline to beat:
+**mean 3.7 of 11, at 0 for 10 s of every 90**.
+
+**What would falsify it:** if mean running children does not rise well
+above 3.7, or if `chunks/s` at equal `chunks/doc` does not improve, the
+simulation did not transfer and the row says so. A simulation is not a node.
+
+*(to be completed)*

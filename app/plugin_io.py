@@ -201,6 +201,36 @@ def prepare_key(plugin, row) -> str | None:
     return str(row.get("path") or "") or None
 
 
+def work_span(plugin, row) -> tuple[str, int] | None:
+    """`(shared-unit key, its cost in bytes)` for one row, or None when the
+    plugin has no such structure — what the PARSE POOL cuts a batch along.
+
+    A document is often not the unit of work. wikipedia's pages arrive in
+    multistream bz2 chunks of ~100 pages: whoever touches one page of a
+    chunk decompresses the whole ~1 MB chunk, and `source._stream_pages`
+    caches exactly one of them PER PROCESS. So two facts follow, and both
+    are about the pool:
+
+      LOCALITY. A chunk split across two children is decompressed twice.
+      Cutting a batch into 8 parts per child instead of 2 put a third of a
+      chunk in each part and cost 4.6x on the node (2026-09-23); the cost
+      is in this function's absence, not in the number of parts.
+
+      BALANCE. Chunks differ in size, so parts of equal COUNT are not parts
+      of equal WORK, and the batch ends with ten children idle waiting for
+      one. Measured the same night: 3.7 of 11 children running on average,
+      with bursts to 11 and troughs at 0.
+
+    The key says which rows share work; the cost says how much that share
+    is, and it is charged ONCE per unit, not per row. Plugins whose
+    documents are independent files (gutenberg, pubmed) return None and
+    keep the plain equal-count cut, which for them is equal work.
+    """
+    if hasattr(plugin, "work_span"):
+        return plugin.work_span(row)
+    return None
+
+
 class FiguresUnsupported(RuntimeError):
     """A plugin yielded figures and cannot hand over their bytes.
 
