@@ -7,7 +7,6 @@ allowed to interrupt. Each is a cost test: none of them changes what the
 pipeline produces, only when.
 """
 import shutil
-import time
 from pathlib import Path
 
 import pytest
@@ -131,31 +130,59 @@ def test_the_index_maintainer_serves_in_fair_share_order(tmp_path, isolated_conf
 
 # ------------------------------------------------------- parse-pool admission
 
-def test_one_collection_alone_still_gets_every_child(monkeypatch):
-    monkeypatch.setattr(config, "PARSE_PROCESSES", 8)
+def test_the_only_collection_with_work_takes_the_whole_pool():
+    """The live case, and the reason the old rule was wrong. Admission used
+    to divide the children by how many collections had TOUCHED the pool in
+    the last 30 s. On the node gutenberg only embeds — the embed path chunks
+    in-process on its own thread and never enters the pool — so wikipedia is
+    the only collection parsing and indexing, and it was still sized for half
+    the children: six of twelve cores with nothing to run on them."""
     parallel.forget_users()
-    assert parallel.active_users("solo") == 1
+    assert parallel.slots("wikipedia", 22) == 22
 
 
-def test_children_are_shared_when_several_collections_are_busy(monkeypatch):
-    """The executor is FIFO and a submission is ~2 tasks per child, so
-    whichever collection submits first takes every child — and one whose
-    documents cost 30 s each holds them for the whole batch."""
+def test_a_collection_gives_up_only_the_slots_another_is_really_holding():
     parallel.forget_users()
-    for name in ("pubmed", "gutenberg", "wikivec"):
-        parallel.active_users(name)
-    assert parallel.active_users("pubmed") == 3
+    parallel._want("gutenberg", 1)
+    parallel._occupy("gutenberg", 4)
+    assert parallel.slots("wikipedia", 22) == 18
+    assert parallel.slots("gutenberg", 22) == 22, \
+        "a collection must not be charged for what it is holding itself"
 
 
-def test_a_collection_that_stopped_using_the_pool_stops_counting(monkeypatch):
-    """Otherwise a finished collection would permanently shrink everyone
-    else's share — the share must follow real demand, like the rotation."""
-    monkeypatch.setattr(parallel, "ACTIVE_WINDOW_S", 0.05)
+def test_a_collection_arriving_at_a_full_pool_still_gets_its_share():
+    """Work-conserving is not first-come-takes-everything. The starvation the
+    old share existed to prevent is real: a collection whose documents cost
+    30 s each would hold every child for its whole batch, and the one waiting
+    behind it holds BEGIN IMMEDIATE on its manifest the while. So the old
+    fair share survives as the FLOOR — the surplus queues, and the incumbent
+    stops refilling past its own share, so the two converge within a wave."""
     parallel.forget_users()
-    parallel.active_users("gone")
-    parallel.active_users("here")
-    time.sleep(0.1)
-    assert parallel.active_users("here") == 1
+    parallel._want("wikipedia", 1)
+    parallel._occupy("wikipedia", 22)              # it started alone
+    assert parallel.slots("pubmed", 22) == 11
+
+    # and it converges by the newcomer TAKING them, not by the incumbent
+    # anticipating: until pubmed holds something there is nothing to give up,
+    # and once it does the incumbent stops refilling past its own share.
+    parallel._want("pubmed", 1)
+    parallel._occupy("pubmed", 11)
+    assert parallel.slots("wikipedia", 22) == 11
+
+
+def test_a_collection_that_finished_its_batch_holds_nothing():
+    """The old rule counted presence for 30 s after the fact, so a collection
+    that had STOPPED using the pool went on shrinking everyone else's share.
+    A slot is released as its result is taken, and compute() releases whatever
+    is left on the way out — including the timeout and broken-pool paths,
+    where a whole window is still in flight."""
+    parallel.forget_users()
+    parallel._want("gone", 1)
+    parallel._occupy("gone", 8)
+    parallel._occupy("gone", -8)
+    parallel._want("gone", -1)
+    assert parallel.held() == {} and parallel.wanting() == {}
+    assert parallel.slots("here", 22) == 22
 
 
 # ------------------------------------------------------- query priority (A5)

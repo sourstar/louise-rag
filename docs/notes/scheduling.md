@@ -768,6 +768,40 @@ holds them for the whole batch. A submission may now occupy at most its
 share of the children while other collections are active; alone, it gets
 all of them and nothing changes.
 
+*Amended 2026-09-23, and the amendment is the point.* "While other
+collections are active" was measured by PRESENCE — collections seen in a
+30 s window — and presence is not work. On the node gutenberg only
+**embeds**, and the embed path chunks in-process on its own thread
+(`worker._load_chunks`), never through the pool; wikipedia was the only
+collection parsing and indexing and was still sized for half the children,
+so six of twelve cores had nothing to run on them. Admission now counts
+what is **held**: a collection takes every task slot nobody else is
+occupying, recomputed on each refill. Alone — the live case — it takes the
+whole pool.
+
+The old share survives as the **floor**, because it was protecting
+something real: a collection whose documents cost 30 s each would hold
+every child for its whole batch, and the collection queued behind it holds
+`BEGIN IMMEDIATE` on its manifest the whole time it crawls. So a collection
+inside `compute` counts as *asking*, and is never admitted below
+`budget // asking` however much the others hold. Convergence is by the
+newcomer TAKING slots, not by the incumbent anticipating: the surplus
+queues for one wave, and the incumbent then stops refilling past its own
+share.
+
+The second half of the same problem is the **part size**. A part is the
+unit of load balancing: at ~2 tasks per child one dear document idles a
+child for the rest of the batch, and wikipedia's documents span two orders
+of magnitude. Measured 2026-09-23, the worker peaked at ~455 % of twelve
+cores in a parse phase — four children working, seven waiting on the
+stragglers. Cut at ~8 tasks per child (floor `MIN_PART` rows, so the bytes
+pickled are unchanged) the window has something to hand out to the last
+document of the batch.
+
+Neither of these touches the GPU feed: the embed thread does not use the
+pool, and children sit at the worker's nice + 10, so feeding the encoder
+outranks parsing by construction (§12).
+
 That is admission control, not CPU weighting. How the kernel divides CPU
 *between* the running children is `cgroups v2 cpu.weight`'s job, and the
 right move there is to use it rather than write a second scheduler in

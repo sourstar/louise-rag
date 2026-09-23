@@ -188,25 +188,93 @@ def raise_for(err: dict):
     raise RuntimeError(f"{err.get('type')}: {err.get('msg')}")
 
 
-# Which collections have used the pool lately — the denominator of the
-# admission share below. A name is enough here: this decides how many
-# children a submission may occupy, not what anything is keyed on.
-_recent_users: dict[str, float] = {}
-ACTIVE_WINDOW_S = 30.0
+# ----------------------------------------------------------------- admission
+#
+# WORK-CONSERVING, by what is HELD. The rule here used to be a fair share by
+# PRESENCE: divide the children by however many collections had touched the
+# pool in the last 30 s. That is wrong in the one way that matters — it hands
+# half the machine to a collection that has no work for the pool at all.
+# Live on the node, 2026-09-23: gutenberg only EMBEDS, and the embed path
+# chunks IN-PROCESS on its own thread (worker._load_chunks) and never enters
+# the pool; wikipedia is the only collection parsing and indexing, and it was
+# sized for half the children anyway, so six of twelve cores had nothing to
+# run on them.
+#
+# So a collection takes every task slot nobody else is occupying, recomputed
+# each time the window is refilled. Alone — the live case — it takes all of
+# them.
+#
+# The old fair share survives as the FLOOR, because it was protecting
+# something real: a collection whose documents cost 30 s each would
+# otherwise hold every child for its whole batch, and the collection waiting
+# behind it holds `BEGIN IMMEDIATE` on its manifest the whole time it
+# crawls. So a collection that is inside `compute` counts as wanting the
+# pool, and is never admitted below `budget // wanting` however much the
+# others are already holding — the surplus queues and the incumbent stops
+# refilling past its own share, so the two converge within one wave.
+#
+# What this is still NOT: CPU weighting. How the kernel divides CPU BETWEEN
+# running children is cgroups' job (§11), and it says nothing about the GPU
+# feed — the embed thread does not use the pool, and children sit at the
+# worker's nice + 10, so feeding the encoder outranks parsing by
+# construction (docs/notes/scheduling.md §12).
+_held: dict[str, int] = {}                 # collection name -> slots in flight
+_wanting: dict[str, int] = {}              # collection name -> batches inside compute
+_held_lock = threading.Lock()
+#: task slots in flight per child: one running, one queued behind it, so a
+#: child never idles while the parent notices the previous result.
+IN_FLIGHT_PER_CHILD = 2
+#: never fewer than one child and a task queued behind it, whatever the
+#: arithmetic says — a share of zero is a stalled collection.
+MIN_SLOTS = 2
+#: how many tasks a batch is cut into per child (see `compute`)
+TASKS_PER_CHILD = 8
+#: rows below which pickling a part outweighs the work in it
+MIN_PART = 4
 
 
-def active_users(name: str | None = None) -> int:
-    """How many collections are currently competing for the pool."""
-    now = time.monotonic()
-    if name is not None:
-        _recent_users[name] = now
-    for stale in [k for k, t in _recent_users.items() if now - t > ACTIVE_WINDOW_S]:
-        del _recent_users[stale]
-    return max(1, len(_recent_users))
+def slots(name: str | None, budget: int) -> int:
+    """How many task slots this collection may hold right now: the budget
+    less what the OTHERS are actually holding, and never less than its share
+    among the collections that are currently asking."""
+    with _held_lock:
+        others = sum(v for k, v in _held.items() if k != name)
+        asking = len(_wanting) + (0 if name in _wanting else 1)
+    return max(MIN_SLOTS, budget // max(1, asking), budget - others)
+
+
+def _occupy(name: str | None, delta: int) -> None:
+    with _held_lock:
+        got = _held.get(name, 0) + delta
+        if got > 0:
+            _held[name] = got
+        else:
+            _held.pop(name, None)
+
+
+def _want(name: str | None, delta: int) -> None:
+    with _held_lock:
+        got = _wanting.get(name, 0) + delta
+        if got > 0:
+            _wanting[name] = got
+        else:
+            _wanting.pop(name, None)
+
+
+def held() -> dict[str, int]:
+    with _held_lock:
+        return dict(_held)
+
+
+def wanting() -> dict[str, int]:
+    with _held_lock:
+        return dict(_wanting)
 
 
 def forget_users() -> None:
-    _recent_users.clear()
+    with _held_lock:
+        _held.clear()
+        _wanting.clear()
 
 
 def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
@@ -219,23 +287,27 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     if ex is None or len(plain) == 1:
         return _compute(kind, collection, plain)
     n = processes()
-    # ~2 tasks per process so a slow document does not idle the others;
-    # never smaller than 4 rows, or the pickling outweighs the work
-    size = max(4, -(-len(plain) // (n * 2)))
-    parts = [plain[i:i + size] for i in range(0, len(plain), size)]
-    # ADMISSION (docs/notes/scheduling.md §10, B). The executor is FIFO, and a
-    # submission is ~2 tasks per child — so whichever collection submits
-    # first takes every child, and one whose documents cost 30 s each holds
-    # them for the whole batch while a collection with 2 ms documents
-    # waits. Each collection may occupy at most its share of the children
-    # while others are active; alone, it gets all of them and nothing
-    # changes.
+    # THE PART IS THE UNIT OF LOAD BALANCING, so its size decides how
+    # unevenly a batch may finish. At ~2 tasks per child a 2,000-document
+    # batch was cut into 22 parts of 91 documents, and wikipedia's documents
+    # differ by two orders of magnitude (median ~0 ms, tail >100 ms): one
+    # dear document then idles a child until the whole batch is done, and
+    # there is nothing left to hand out. Finer parts cost nothing per row (a
+    # part still carries at least MIN_PART rows, so the bytes pickled are
+    # the same bytes) and they are what lets the window below keep every
+    # child fed to the last document.
     #
-    # Note what this is NOT: it is admission control, not CPU weighting.
-    # How the kernel divides CPU BETWEEN the running children is
-    # cgroups' job (cpu.weight), not ours — see §11.
-    share = max(1, n // active_users(getattr(collection, "name", None)))
-    wave = max(1, share * 2)          # the same ~2 tasks per child, capped
+    # This is a SEPARATE defect from the admission one above, and smaller:
+    # the measurement that found the pool at 132 % of twelve cores found it
+    # starved, not unbalanced. What this bounds is the tail of each batch.
+    size = max(MIN_PART, -(-len(plain) // (n * TASKS_PER_CHILD)))
+    parts = [plain[i:i + size] for i in range(0, len(plain), size)]
+    # ADMISSION (docs/notes/scheduling.md §10, B) — see `slots` above. The
+    # budget is the whole pool; the cap is recomputed on every refill, so a
+    # collection alone holds all of it and gives slots up only to a
+    # collection that is really using them.
+    name = getattr(collection, "name", None)
+    budget = n * IN_FLIGHT_PER_CHILD
     # BOUNDED: the pool is an optimisation, and a caller that waits on it
     # forever is worse than no pool at all — live 2026-08-28, pubmed's
     # pipeline thread sat in the executor with every child gone, so the
@@ -245,31 +317,34 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # stops using children until it restarts.
     #
     # THE WINDOW IS KEPT FULL, not refilled a wave at a time. It used to
-    # submit `wave` tasks, wait for ALL of them, and only then submit the
-    # next `wave` — so at every wave boundary the children drained to idle
-    # while the last task of the wave finished alone, and a batch cut into
-    # three waves paid that three times. With per-document costs that span
-    # two orders of magnitude (wikipedia: median ~0 ms, tail >100 ms) the
-    # last task is reliably far behind the rest, so the barrier cost most of
-    # the pool. MEASURED on the node, 2026-09-22: a document costs 59 ms of
-    # CPU on its own, and the pipeline thread saw 41 ms per document with
-    # ELEVEN children — a speedup of 1.4 where the pool exists to give ten.
-    # Now a slot is refilled the moment its result is taken, so `wave` tasks
-    # are in flight from the first submission to the last: the same cap on
-    # how many children one collection may occupy, without the idle gaps.
-    # Results are still consumed in order, so a failing document still costs
-    # itself and never its neighbours.
+    # submit a wave of tasks, wait for ALL of them, and only then submit the
+    # next — so at every wave boundary the children drained to idle while the
+    # last task of the wave finished alone, and a batch cut into three waves
+    # paid that three times. MEASURED on the node, 2026-09-22: a document
+    # costs 59 ms of CPU on its own, and the pipeline thread saw 41 ms per
+    # document with ELEVEN children — a speedup of 1.4 where the pool exists
+    # to give ten. Now a slot is refilled the moment its result is taken, so
+    # the window is full from the first submission to the last. Results are
+    # still consumed in order, so a failing document still costs itself and
+    # never its neighbours.
     futures: list = []
+    mine = 0
+    _want(name, 1)
     try:
         deadline = time.monotonic() + config.PARSE_TIMEOUT_S
         out: list[tuple[bool, object]] = []
         nxt = 0
         while nxt < len(parts) or futures:
-            while nxt < len(parts) and len(futures) < wave:
+            cap = slots(name, budget)
+            while nxt < len(parts) and len(futures) < cap:
                 futures.append(ex.submit(_compute, kind, collection, parts[nxt]))
                 nxt += 1
+                mine += 1
+                _occupy(name, 1)
             oldest = futures.pop(0)
             out.extend(oldest.result(timeout=max(1.0, deadline - time.monotonic())))
+            mine -= 1
+            _occupy(name, -1)
         _note_success()
         return out
     except (BrokenProcessPool, TimeoutError, OSError) as e:
@@ -277,6 +352,13 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
             f.cancel()
         _note_failure(e)
         return _compute(kind, collection, plain)
+    finally:
+        # whatever is still held on the way out — the timeout and the broken
+        # pool leave a window's worth — or the next collection inherits a
+        # budget that has been eaten by a batch that is long over.
+        if mine:
+            _occupy(name, -mine)
+        _want(name, -1)
 
 
 def chunks_for_rows(collection, rows) -> list[tuple[bool, object]]:

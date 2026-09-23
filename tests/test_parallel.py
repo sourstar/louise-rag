@@ -254,21 +254,72 @@ def test_the_window_stays_full_instead_of_draining_between_waves(isolated_config
     pool = Pool()
     monkeypatch.setattr(config, "PARSE_PROCESSES", 11)
     monkeypatch.setattr(parallel, "pool", lambda: pool)
-    # TWO collections competing, which is the live case: wikipedia's rdf and
-    # fts against gutenberg's embed chunking. Alone, a collection's window
-    # already covers every part it cuts (parts and wave are both ~2 per
-    # child) and there is no boundary at all — the barrier appears exactly
-    # when the share is halved and the parts no longer fit in one window.
     parallel.forget_users()
-    parallel.active_users("another-collection")
     got = parallel.compute("chunks", c, rows)
 
     assert got == expected, "order and content are unchanged"
     n = parallel.processes()
-    wave = max(1, (n // max(1, parallel.active_users())) * 2)
-    assert len(submits) > wave, "the batch is cut into more parts than one window"
-    assert max(submits) == wave - 1, "the window fills to the cap and no further"
+    window = n * parallel.IN_FLIGHT_PER_CHILD
+    assert len(submits) > window, "the batch is cut into more parts than one window"
+    assert max(submits) == window - 1, "the window fills to the cap and no further"
     # the whole point: after the window first fills, no submission ever finds
     # the pool empty again — that emptiness WAS the wave barrier
-    assert min(submits[wave:]) == wave - 1, \
+    assert min(submits[window:]) == window - 1, \
         f"the children drained between waves: in-flight at submit {submits}"
+    assert parallel.held() == {}, "the batch kept slots it is no longer using"
+    assert parallel.wanting() == {}, "the batch is still counted as asking"
+
+
+def test_a_batch_is_cut_into_many_more_tasks_than_there_are_children(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """A COST test, for STRAGGLERS — the other half of keeping the pool fed.
+
+    A part is the unit of load balancing, so its size bounds how unevenly a
+    batch can finish. Cut into ~2 tasks per child, a 2,000-document batch
+    became 22 parts of 91 documents — and wikipedia's documents differ by two
+    orders of magnitude (median ~0 ms, tail past 100 ms), so one dear
+    document idles a child until the whole batch is done, with nothing left
+    to hand out. Finer parts cost nothing per row, since a part still carries
+    at least MIN_PART rows and the bytes pickled are the same bytes.
+
+    Separate from, and smaller than, the admission defect: the measurement
+    that found the pool at 132 % of twelve cores found it starved, not
+    unbalanced. This one bounds the tail of each batch.
+    """
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = (rows * 40)[:400]
+    parts: list[int] = []
+
+    class Fake:
+        def __init__(self, part):
+            self.part = part
+
+        def result(self, timeout=None):
+            return parallel._compute("chunks", c, self.part)
+
+        def cancel(self):
+            return True
+
+    class Pool:
+        def submit(self, _fn, _kind, _collection, part):
+            parts.append(len(part))
+            return Fake(part)
+
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 11)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    parallel.forget_users()
+    parallel.compute("chunks", c, rows)
+
+    n = parallel.processes()
+    # as fine as TASKS_PER_CHILD asks for, or as fine as the MIN_PART floor
+    # allows when the batch is small — whichever binds first. Both bounds
+    # matter: the floor is what keeps a part worth pickling.
+    want = min(n * parallel.TASKS_PER_CHILD, len(rows) // parallel.MIN_PART)
+    assert sum(parts) == len(rows), "every row is computed exactly once"
+    assert len(parts) >= want, \
+        f"{len(parts)} tasks for {n} children — a slow document idles the pool"
+    assert len(parts) > n * 2, \
+        "~2 tasks per child is the cut that left seven children waiting"
+    # the last part is whatever is left over; every other one is full
+    assert min(parts[:-1] or parts) >= parallel.MIN_PART, \
+        f"a part smaller than MIN_PART pays more in pickling than it saves: {parts}"
