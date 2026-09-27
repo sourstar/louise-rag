@@ -784,3 +784,54 @@ it.
 the card by itself (the first bake-off wanted 44 GiB of a 32 GiB card), and
 it never gives up a model in use. Anything that needs the card beside
 RAGE should still go through RAGE, or run with RAGE's models unloaded.
+
+## 20. LocalAI's rerankers backend and MedCPT's segment ids, checked (2026-09-27)
+
+§3 left LocalAI's fit for `medcpt-rerank` an open question — the model is on
+OpenVINO today (deploy/medcpt-rerank) specifically because "llama.cpp and
+OVMS both zero" the segment ids MedCPT-Cross-Encoder's pairs need (§2).
+Checked whether LocalAI's `rerankers` backend, which wraps
+[AnswerDotAI/rerankers](https://github.com/AnswerDotAI/rerankers), does the
+same.
+
+**Method.** huggingface.co is blocked by this environment's egress policy,
+so the real `ncbi/MedCPT-Cross-Encoder` weights and tokenizer could not be
+pulled. Read the real source instead — `rerankers==0.10.0` from PyPI, and
+LocalAI's `backend/python/rerankers/backend.py` from its repo — and ran the
+real `rerankers.models.transformer_ranker.TransformerRanker` code path
+against a synthetic model: a real `BertForSequenceClassification`
+(`type_vocab_size=2`, same family PubMedBERT/MedCPT-Cross-Encoder is built
+on) with random weights and a small local vocab, no download needed. Random
+weights don't matter for the question asked — whether the wiring passes
+`token_type_ids` through and whether a BERT embedding layer consumes them —
+only real pretrained weights would matter for score *quality*, not for this.
+
+**Result: it passes them correctly, through the path LocalAI actually
+uses.**
+- `backend/python/rerankers/backend.py` calls `self.model.rank(query=...,
+  docs=..., doc_ids=...)` — never the library's other method, `.score()`.
+- `TransformerRanker.rank()` builds `[(query, doc.text) for doc in docs]` —
+  proper `(text, text_pair)` tuples — and tokenizes the batch. Given that
+  shape, the tokenizer emits one joint sequence per pair with
+  `token_type_ids` correctly split (`0…0 1…1`, query then doc), and
+  `model(**tokenized_inputs)` forwards them straight in. Zeroing
+  `token_type_ids` on the same encoding measurably changed the logit, so the
+  embedding layer does consume them — this is not a no-op field.
+- So on LocalAI, unlike llama.cpp and OVMS, `medcpt-rerank` would not need
+  the segment-id workaround that put it on our own OpenVINO server in the
+  first place. Still unverified: score *quality* against the real weights,
+  and everything else in §3's LocalAI row (Intel image provenance, D5's
+  offline-fetch requirement, one gRPC backend per exotic model for MADLAD
+  and DNABERT-2) — none of that is settled by this.
+
+**A bug found on the way, irrelevant to LocalAI's path but worth knowing if
+anyone reaches for the library by hand.** `TransformerRanker.score(query,
+doc)` calls `self.tokenizer((query, doc))` — a bare tuple, not
+`[(query, doc)]`. HF's tokenizer reads a bare tuple of two strings as a
+*batch of two unrelated single-sentence texts*, not one text pair: shape
+`[2, N]` instead of `[1, N]`, `token_type_ids` all-zero in both rows, no
+`[SEP]` joining them, no cross-attention between query and doc at all — not
+"segment ids zeroed" but no joint encoding whatsoever. LocalAI never calls
+`.score()` for `/rerank` (confirmed above), so this doesn't affect it; it
+would silently corrupt scores for anyone scripting against the `rerankers`
+library's `.score()` method directly.
