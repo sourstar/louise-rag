@@ -835,3 +835,104 @@ doc)` calls `self.tokenizer((query, doc))` — a bare tuple, not
 `.score()` for `/rerank` (confirmed above), so this doesn't affect it; it
 would silently corrupt scores for anyone scripting against the `rerankers`
 library's `.score()` method directly.
+
+## 21. LocalAI's backend binaries, spawned by RAGE directly (2026-09-27)
+
+Not "RAGE in front of LocalAI's own core" (ruled out above: LocalAI's
+`spawnGRPCModel` sends the weights path over a `LoadModel` gRPC call
+*after* the process starts, never on argv, so RAGE's `/proc/<pid>/cmdline`
+match — the whole mechanism 09 §9.12 uses to turn "what was declared" into
+"what was observed" — has nothing to match against). A narrower question:
+can RAGE use the same backend *binaries* LocalAI ships, spawned and owned
+by RAGE itself, with LocalAI's own Go core out of the picture entirely.
+
+**Checked against the source, not inferred.** `backend/python/rerankers/backend.py`
+(every LocalAI Python backend follows the same `backend/python/common/libbackend.sh`
+pattern) starts as:
+
+```
+venv/bin/python backend.py --addr 127.0.0.1:${PORT}
+```
+
+— one flag, no LocalAI core required, a plain standalone gRPC server. It
+implements `backend.proto`'s `LoadModel`/`Predict`/`Embedding`/`Rerank`/`Health`.
+`LoadModel` takes `{Model: "<name or path>"}` over the wire, not argv — so
+if RAGE spawns it directly and makes that call itself, synchronously, as
+the launch step, RAGE is the one that hashed the weights file at that path
+and bound it to the pid, not a report from the child. That is what 09
+§9.12's `weights` leg asks for — hashed at every launch, from the bytes on
+disk — and it is RAGE doing the hashing and the call, not trusting either.
+
+**A second benefit, not asked for but true.** The `/proc` argv-match exists
+because llama-swap sits between RAGE and the child and can restart it
+without RAGE commanding it (rage.md §8: "llama-swap restarts a child that
+died on its next request, and that is another launch — hashed and matched
+again"). A RAGE-spawned, RAGE-parented child cannot be swapped out from
+under it silently: RAGE gets `SIGCHLD`/`wait()` on every exit of a process
+it directly forked, the same as it already does for the three custom
+Python servers. The run identity's weights leg becomes "the file RAGE
+hashed and bound with the `LoadModel` call it made to the pid it is still
+parenting" — first-hand, not parsed out of a cmdline string.
+
+**Cost.** RAGE needs a small `backend.proto` gRPC client — `LoadModel`,
+`Predict`, `Embedding`, `Rerank`, `Health` — replacing the plain HTTP proxy
+it speaks to llama-swap and the three FastAPI servers today. Real, not
+free, but a stable documented protocol, not a screen-scrape.
+
+**A version bump's cost, checked against existing collections.** Nothing
+at the space level: `space_id` (02 §2.4, amendment `0d85f7f`) hashes the
+weights digest, the chunker layers, `cleaning_version` and the space
+block — "never the engine" — so a vendored backend's version has no path
+to touch stored vectors, and invariant 1's dim/space refuse-to-start check
+has nothing to trip. But it is NOT free at the run level, and the cost
+lands somewhere non-obvious: every vendored backend shares one
+`deploy/rage/Dockerfile`, one image, one digest, and the run identity's
+`image` leg is that whole container's digest (09 §9.12). Bumping
+`medcpt-rerank`'s vendored `rerankers` version mints a new RAGE image,
+which mints a new `run_id` for EVERY engine RAGE launches — `bge-m3`,
+`qwen3-embedding-4b`, `medcpt-article`/`medcpt-query` included — not only
+the one whose backend actually changed. §9 already names this as accepted,
+general behaviour: "A rebuild is a revalidation... `image` is in the run,
+so a new image re-gates every space on the node." So a one-line dependency
+bump for a reranker forces wikipedia's and gutenberg's encoders to
+re-pass calibration on next restart too, purely from image co-residence.
+It stays a deferral, never silent corruption — 03 §3.3: an untested run
+answers no query while its space is in quarantine, and a peer that fails
+may still search with what it holds — but it is a real, node-wide cost of
+one small change, and worth knowing before treating a backend bump as
+routine. (§18 already notes "a reranker defines no space": `medcpt-rerank`
+itself never needs to pass a gate; the cost above is entirely secondhand,
+from sharing an image digest with collections that do.)
+
+**Where it lives.** `deploy/rage/Dockerfile`, one venv per backend, exactly
+the shape §9/D4 already committed to for madlad, dnabert2 and medcpt's own
+servers — this is three (or more) additional venvs of the same kind, not a
+new pattern.
+
+**Scope: not llama.cpp.** LocalAI's `llama-cpp` backend is its own
+gRPC-wrapped build (`backend-assets/grpc/llama-cpp`), a different artifact
+from the `ghcr.io/ggml-org/llama.cpp:server-intel-bXXXXX` image §16 pins
+today. Adopting it means re-earning its Intel/SYCL provenance from
+scratch — the same "any runtime that is not one of these starts that
+search again" cost §2 already paid once — for models (`bge-m3`,
+`qwen3-embedding-4b`, `medcpt-article`/`medcpt-query`, `bge-reranker`) that
+already have a working engine. The candidates worth the integration cost
+are the ones that don't: `medcpt-rerank` (§20 — already checked, correct
+`token_type_ids` handling through `.rank()`), and possibly MADLAD and
+DNABERT-2 via the `transformers` backend, following the same standalone
+launch pattern — seq2seq/translation support there is still unverified
+(rage.md §3 raised it, unresolved).
+
+**Licensing, checked 2026-09-27.** `mudler/LocalAI`'s `LICENSE` is MIT
+(copyright Ettore Di Giacinto), no restriction on vendoring `backend.py`
+and its venv into `deploy/rage/Dockerfile` beyond keeping the copyright
+notice and licence text alongside the vendored source — MIT's one real
+condition. Not checked: each backend's own runtime dependencies'
+licences individually before actually vendoring one — `rerankers` and
+`transformers` (both pulled for §20's test) are themselves Apache-2.0,
+nothing found here suggests a blocker, but a licence is a property of
+each dependency, not of LocalAI, and should be confirmed per backend
+adopted, not assumed from these two.
+
+**Not built.** Design note only; nothing on the node runs this. Follow it
+if `medcpt-rerank`, MADLAD or DNABERT-2 ever move off their own servers.
