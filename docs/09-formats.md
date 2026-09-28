@@ -379,6 +379,31 @@ object)`. It names an engine wherever a producer's engine is recorded:
 the bundle header (§9.7), attestations (§9.8), benchmarks (§9.9) and
 calibration objects (§9.12).
 
+**An engine that is a gRPC backend** (amendment `loadmodel-in-args`,
+operator, 2026-09-28 — 02 §2.4; docs/notes/rage.md §21). Such a program
+is started empty and the model is set up afterwards by one message,
+`LoadModel`, whose fields change the vectors. That message is therefore
+part of how the reference was computed, and the engine object has no
+other place for it: `args` ends with the two elements
+
+```
+"rpc:LoadModel", "<canonical JSON of the LoadModel message>"
+```
+
+`rpc:LoadModel` occurs once and is second to last; the JSON is the last
+element, in the canonical form of §9.1 (sorted keys, no whitespace, no
+floats), an object whose `Model` and `ModelFile` are both `${WEIGHTS}`.
+Everything before the marker is the argument vector the program is
+started with (`${PORT}` there, and nowhere after the marker);
+`${WEIGHTS}` occurs in the JSON element only. To reproduce the engine a
+peer starts that vector, waits until the program is healthy, and sends
+the message with `${WEIGHTS}` replaced by its weights path — the
+marker and the JSON are never passed to the program as arguments. The
+platform's check that the process it launched matches `args` (§9.12)
+covers the vector before the marker; the message it sent is the one in
+`args` by construction. No new field exists and `engine_id` is unchanged
+in kind: the marker and the JSON are inside the hashed `args`.
+
 **The weights digest.** For a model held as one file — a GGUF —
 `weights` is `H(bytes of the file)`. For a model held as a directory —
 a Hugging Face snapshot, an OpenVINO IR beside its tokenizer — it is
