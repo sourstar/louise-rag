@@ -440,6 +440,22 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   (`louise-calibration-run`, 09 §9.12) follows the same rule: version 3
   exactly when its engine carries `load`, version 2 otherwise, so no kept
   statement is re-signed.
+- **A validation is this node's, and is re-checked on start** (operator,
+  2026-09-28). Validations stay valid across restarts (dd9bef4 stands).
+  Two guards against one planted in `state/calibration/`:
+  - **Signed by this node.** A statement counts only when its `key` is
+    this node's own. An envelope verifies under the key written inside it,
+    so before this any key at all made a "pass" count. That was a defect in
+    `app/hold/runs.py`, and it is fixed.
+  - **Re-checked once per process.** The first time a kept statement is
+    relied on, its own sixteen sampled texts are embedded again by the run
+    and compared with the reference, as the gate did. If it fails, the
+    statement is set aside (`state/calibration/set-aside/`) and the run is
+    gated from scratch.
+  - **Cost.** Sixteen texts per run and role per process start. A write
+    that arrives first is deferred until the stage has re-checked.
+  - **Not covered.** The web process relies on the worker's re-check (it
+    makes none of its own) while quarantine is report-only.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the

@@ -32,6 +32,9 @@ from app.hold import collection as col, drag as drag_mod, envelope as env, runs 
 from app.hold.codex import canonical_json
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM
+
+#: this node's public key, as a statement names it: the only signer counted
+ME = env.key_text(KEY.verify_key)
 from tests.hold.test_template import SPACE, recipe as a_recipe
 from tests.test_run_check import (DOC_URL, QUERY_URL, R1, R2, RAGE,  # noqa: F401
                                   chunks, node, opening, opening_query, rage, stored)
@@ -106,7 +109,7 @@ def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, r
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     s = state_of(collection)
     assert s.test("gate").status == "passed" and s.state == "quarantine"
-    assert len(hold_runs.statements(root, "gutenberg", codex, "query")) == 1, \
+    assert len(hold_runs.statements(root, "gutenberg", codex, "query", signer=ME)) == 1, \
         "an asymmetric space's query run is gated too, at once and by itself"
 
     attest(root, codex, "records-vs-origin")
@@ -259,7 +262,7 @@ def test_a_changed_run_requarantines_every_collection_of_that_encoder_and_only_t
     # the gate runs AT ONCE, with nothing to embed and nobody asking
     con = db.connect(loaded["sister"])
     worker._settle_the_run(con, loaded["sister"])
-    assert R2 in hold_runs.statements(root, "sister", made["sister"])
+    assert R2 in hold_runs.statements(root, "sister", made["sister"], signer=ME)
     for name in ("gutenberg", "sister"):
         assert state_of(loaded[name]).state == "in-use", \
             "a pass validates the run for the SPACE: it counts for both"
@@ -286,7 +289,7 @@ def test_the_gate_comes_before_quarantine_at_the_embed_stage(node, rage, tmp_pat
     enforce(tmp_path)
     con = db.connect(collection)
     assert worker._embedding_allowed(con, collection) is False, "still in quarantine"
-    assert R1 in hold_runs.statements(root, "gutenberg", codex), "and the gate has run"
+    assert R1 in hold_runs.statements(root, "gutenberg", codex, signer=ME), "and the gate has run"
 
 
 # ---- a run that failed -------------------------------------------------------------------------

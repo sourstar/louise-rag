@@ -31,6 +31,21 @@ too, so the run is not retried against the same set"). Read through
 `embedder.read_statement`, which VERIFIES the envelope: the whole value of
 the gate is that it cannot be satisfied by writing a file that says pass.
 
+A SIGNATURE IS NOT ENOUGH: IT MUST BE THIS NODE'S (operator, 2026-09-28).
+An envelope verifies under the key written inside it, so a file signed by
+any key at all verifies. A statement counts only when its `key` is the
+`signer` the caller names — this node's own public key, the one that signs
+its statements when a gate passes. Any other is ignored, and named by
+`foreign`, so that a validation cannot be planted in `state/` with a key
+made for the purpose.
+
+A KEPT STATEMENT IS RE-CHECKED ONCE PER PROCESS (`recheck`): the first time
+it is relied on after start, the sixteen texts it says it sampled are
+embedded again by the run it names and compared with the reference, as the
+gate compared them. A statement that fails is `set_aside` and the run is
+gated from scratch. Validations stay valid across restarts; this re-checks
+the evidence they carry, it does not repeat the gate.
+
 Like the rest of `app/hold/`, this module does no embedding: the callers
 inject it. It does one HTTP GET, to ask the platform what a run stands for.
 """
@@ -123,47 +138,131 @@ def _listing(d: Path, role: str) -> tuple:
         return ()
 
 
-def statements(root: Path, name: str, codex: Codex, role: str = "document"
-               ) -> dict[str, dict[str, Any]]:
-    """run id -> verified body, for THIS space and role. A file that does not
-    verify, or speaks of another space, is not a statement about this one."""
+#: (directory, role) -> the files the last read IGNORED because another key
+#: signed them. Reported by `foreign`; never read as statements.
+_foreign: dict[tuple[str, str], tuple[str, ...]] = {}
+
+
+def statements(root: Path, name: str, codex: Codex, role: str = "document", *,
+               signer: str | None) -> dict[str, dict[str, Any]]:
+    """run id -> verified body, for THIS space and role, signed by `signer`
+    — this node's public key as an envelope spells it. A file that does not
+    verify, speaks of another space, or was signed by any other key is not a
+    statement this node made. `signer` None (a peer with no key) holds none."""
     d = directory(root, name)
+    if signer is None:
+        return {}
     held = _listing(d, role)
-    key = (str(d), role, codex.space_id)
+    key = (str(d), role, codex.space_id, signer)
     cached = _read.get(key)
     if cached is not None and cached[0] == held:
         return cached[1]
     out: dict[str, dict[str, Any]] = {}
+    strangers: list[str] = []
     for fname, _, _ in held:
         try:
             body = emb.read_statement(json.loads((d / fname).read_bytes()))
         except Exception:                               # noqa: BLE001
             continue
+        if body.get("key") != signer:
+            strangers.append(fname)
+            continue
         if (body.get("version", 1) >= 2 and body.get("space_id") == codex.space_id
                 and body.get("role", "document") == role and body.get("run")):
             out[body["run"]] = body
     _read[key] = (held, out)
+    _foreign[(str(d), role)] = tuple(strangers)
     return out
 
 
-def statements_for_space(root: Path, name: str, codex: Codex, role: str = "document"
-                         ) -> dict[str, dict[str, Any]]:
+def foreign(root: Path, name: str, role: str = "document") -> tuple[str, ...]:
+    """The files of this collection's `state/calibration/` that the last read
+    ignored because another key signed them — for the caller to report."""
+    return _foreign.get((str(directory(root, name)), role), ())
+
+
+def statements_for_space(root: Path, name: str, codex: Codex, role: str = "document", *,
+                         signer: str | None) -> dict[str, dict[str, Any]]:
     """run id -> statement, for this SPACE. A pass validates a run FOR THE
     SPACE (03 §3.3), so one kept under another collection of the same space
     on this peer counts here — which is what makes the gate run once per
     (space, run) and not once per collection, and what lets every collection
     of a space leave quarantine together (03 §3.6). This collection's own
     come first."""
-    out = dict(statements(root, name, codex, role))
-    try:
-        others = sorted(p.name for p in Path(root).iterdir() if p.name != name
-                        and (p / "state" / "calibration").is_dir())
-    except OSError:
-        others = []
-    for other in others:
-        for run_id, body in statements(root, other, codex, role).items():
+    out = dict(statements(root, name, codex, role, signer=signer))
+    for other in _others(root, name):
+        for run_id, body in statements(root, other, codex, role, signer=signer).items():
             out.setdefault(run_id, body)
     return out
+
+
+def _others(root: Path, name: str) -> list[str]:
+    try:
+        return sorted(p.name for p in Path(root).iterdir() if p.name != name
+                      and (p / "state" / "calibration").is_dir())
+    except OSError:
+        return []
+
+
+# ---- the re-check of a kept statement ----------------------------------------------
+
+def recheck(codex: Codex, body: dict[str, Any], *, reference, embed,
+            role: str = "document") -> tuple[bool, int, float]:
+    """(does it still pass, how many reached tolerance, their median): the
+    statement's own `sampled` texts embedded again by `embed` and compared
+    with `reference`, exactly as the gate compared them (03 §3.3, both
+    conjuncts). A statement whose sample is not the space's quorum — a
+    malformed or planted one — does not pass. Embedding is the caller's."""
+    from . import calibration as cal
+    texts = cal.verify(codex.modality, codex.space.calibration.set)
+    if role == "query" and codex.space.query.instruction:
+        texts = [f"{codex.space.query.instruction}{t}" for t in texts]
+    sampled = body.get("sampled")
+    if (not isinstance(sampled, list) or len(sampled) != codex.space.calibration.n
+            or len(reference) != len(texts)
+            or not all(isinstance(i, int) and not isinstance(i, bool)
+                       and 0 <= i < len(texts) for i in sampled)):
+        return False, 0, 0.0
+    got = embed([texts[i] for i in sampled])
+    if len(got) != len(sampled) or any(len(v) != codex.space.dim for v in got):
+        return False, 0, 0.0
+    import statistics
+    cosines = [emb.cosine(got[k], reference[i]) for k, i in enumerate(sampled)]
+    tolerance = float(codex.space.tolerance)
+    passed = sum(1 for c in cosines if c >= tolerance)
+    median = statistics.median(cosines)
+    ok = (passed >= codex.space.calibration.min_pass
+          and Decimal(f"{median:.6f}") >= Decimal(codex.space.tolerance))
+    return ok, passed, median
+
+
+def set_aside(root: Path, name: str, codex: Codex, run_id: str,
+              role: str = "document") -> list[Path]:
+    """Move every statement this peer keeps for (`run_id`, `role`) in this
+    space — under this collection or another of the space — into its
+    directory's `set-aside/`. Kept, not deleted: it is the evidence of what
+    failed. Returns where each went."""
+    moved: list[Path] = []
+    for who in [name, *_others(root, name)]:
+        src = path_for(root, who, run_id, role)
+        if not src.is_file():
+            continue
+        try:
+            body = json.loads(src.read_bytes()).get("body", {})
+        except (OSError, ValueError):
+            body = {}
+        if body.get("space_id") not in (None, codex.space_id):
+            continue
+        dest_dir = src.parent / "set-aside"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"{src.stem}.{n}{src.suffix}"
+            n += 1
+        os.replace(src, dest)
+        moved.append(dest)
+    return moved
 
 
 # ---- what a run stands for ------------------------------------------------------
@@ -206,7 +305,7 @@ def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
 # ---- the check before a write ------------------------------------------------------
 
 def check(root: Path, name: str, codex: Codex, answered: set, *,
-          role: str = "document", batched: bool = True) -> None:
+          signer: str | None, role: str = "document", batched: bool = True) -> None:
     """May vectors from answers naming `answered` be written? Silent when
     they may. `answered` is the set of `Louise-Run` values seen on the
     answers that carried them; `None` in it is an answer that stated none.
@@ -227,11 +326,11 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
     # THE COMMON CASE IS ONE LOOKUP: the run is one this collection has a
     # statement for. Only a run it has none for sends the check to the other
     # collections of the space on this peer.
-    known = statements(root, name, codex, role)
+    known = statements(root, name, codex, role, signer=signer)
     for run_id in sorted(answered):
         body = known.get(run_id)
         if body is None:
-            known = statements_for_space(root, name, codex, role)
+            known = statements_for_space(root, name, codex, role, signer=signer)
             body = known.get(run_id)
         if body is None:
             raise RunUnvalidated(

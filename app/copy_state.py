@@ -380,7 +380,7 @@ def _statement_v2_shape(root: Path, name: str, codex: Codex) -> dict[str, Any] |
 
 def space_statements(root: Path, name: str, codex: Codex, role: str) -> dict[str, dict]:
     """run id -> statement, for this SPACE (`runs.statements_for_space`)."""
-    return runs_mod.statements_for_space(root, name, codex, role)
+    return runs_mod.statements_for_space(root, name, codex, role, signer=own_key())
 
 
 def _gate(root: Path, name: str, codex: Codex,
@@ -400,7 +400,7 @@ def _gate(root: Path, name: str, codex: Codex,
         run_id = answering.get(role)
         # this collection's own statements first — one directory; the other
         # collections of the space are asked only when these do not settle it
-        known = runs_mod.statements(root, name, codex, role)
+        known = runs_mod.statements(root, name, codex, role, signer=own_key())
         if not known or (run_id is not None and run_id not in known):
             known = space_statements(root, name, codex, role)
         clears = ("the gate, which runs by itself the moment the encoder answers; or "
