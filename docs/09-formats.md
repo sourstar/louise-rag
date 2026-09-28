@@ -1506,7 +1506,7 @@ domain `louise/calibration/v1`, kept in `state/` and published in this
 peer's digest (§9.9), with body
 
 ```
-{kind: "louise-calibration-run", version: 2,
+{kind: "louise-calibration-run", version: 2 · 3,
  space_id, collection_id, set, role: "document" | "query",
  run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
  fingerprint: <id>, batch_invariant: <boolean>,
@@ -1536,7 +1536,11 @@ A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
 the space (03 §3.3). Version 1 of this body carried `encoder_image`, the
 engine's image digest alone, in place of the run, and had no
-fingerprint.
+fingerprint. Version 3 is version 2 whose `engine` carries `load` (§9.3,
+the load amendment), and it is written EXACTLY when the engine does: a
+statement for an engine without `load` is version 2, byte for byte, and
+a version-3 statement without it, or a version-2 one with it, is
+refused.
 
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`
 (`sha256:6b1a3f0e9c2d4b7f…`); the PubMed Codex names it, and its member
@@ -1851,7 +1855,7 @@ names one schema, the one its section fixes:
 | `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 2 | §9.12 |
-| `louise-calibration-run` | 2 | §9.12 |
+| `louise-calibration-run` | 2 · 3 | §9.12 (3 exactly when the engine carries `load`) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
 

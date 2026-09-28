@@ -436,7 +436,10 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   `load`, instead of inside `args`. Codex version 4 is version 3 plus that
   field and is written exactly when an engine carries it, so no existing
   Codex, `engine_id` or run changes: every engine without `load` is the
-  same bytes (CLAUDE.md rule 1).
+  same bytes (CLAUDE.md rule 1). The calibration statement
+  (`louise-calibration-run`, 09 §9.12) follows the same rule: version 3
+  exactly when its engine carries `load`, version 2 otherwise, so no kept
+  statement is re-signed.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the

@@ -220,6 +220,15 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     )
 
 
+#: 09 §9.12: the statement's version 3 is version 2 whose `engine` carries
+#: `load` (the load amendment, operator 2026-09-28; Codex version 4). It is
+#: written EXACTLY when the engine carries it, so every statement for an
+#: engine without `load` stays version 2, byte for byte, and keeps its
+#: signature. `read_statement` holds the rule both ways.
+STATEMENT_LOAD_VERSION = 3
+STATEMENT_VERSIONS = (1, 2, STATEMENT_LOAD_VERSION)
+
+
 def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
     """09 §9.12's *peer's calibration statement* — an envelope under
     `louise/calibration/v1`, kept in `state/` and published in this peer's
@@ -273,7 +282,8 @@ def _statement_v2(run: Run, key, *, now: str) -> dict[str, Any]:
     if run.role not in ("document", "query"):
         raise GateError(f"role is document or query, got {run.role!r}")
     body = {
-        "kind": "louise-calibration-run", "version": 2,
+        "kind": "louise-calibration-run",
+        "version": STATEMENT_LOAD_VERSION if "load" in run.stated.engine else 2,
         "space_id": run.space_id,
         "collection_id": run.collection_id,
         "set": run.set_id,
@@ -304,6 +314,18 @@ def read_statement(envelope_: dict[str, Any]) -> dict[str, Any]:
     if body.get("kind") != "louise-calibration-run":
         raise GateError(f"not a calibration statement: kind="
                         f"{body.get('kind')!r}")
+    version = body.get("version", 1)
+    if version not in STATEMENT_VERSIONS:
+        raise GateError(f"unsupported calibration statement version {version!r}; "
+                        f"this build reads {list(STATEMENT_VERSIONS)} (09 §9.18)")
+    if version >= 2:
+        has_load = isinstance(body.get("engine"), dict) and "load" in body["engine"]
+        if has_load != (version == STATEMENT_LOAD_VERSION):
+            raise GateError(
+                f"a version {version} calibration statement "
+                f"{'carries' if has_load else 'lacks'} the engine's `load`: version "
+                f"{STATEMENT_LOAD_VERSION} is written exactly when the engine carries "
+                f"one (09 §9.12)")
     return body
 
 
