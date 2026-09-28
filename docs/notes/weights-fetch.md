@@ -126,6 +126,26 @@ Codex's weights digest. So a gallery entry can also serve as an origin
 for any collection whose digest it lists, found by lookup, and wrong
 bytes still fail the digest check.
 
+**Or the creator's own model** (operator, 2026-09-28). The gallery is one
+way to get the first copy, not the only one. A creator may name weights
+they already hold: a file or a directory. From creation on, nothing
+distinguishes the two:
+
+1. **Hash.** Louise hashes the weights by the §9.3 rule.
+2. **Pin.** The digest goes into the Codex.
+3. **Reference vectors.** They are embedded from those same bytes.
+
+What differs is only where the first copy comes from:
+- **Shareable, open weights: allowed.** The creator's node is the first
+  seeder, and every peer that keeps the collection seeds the model after
+  it (§2). The list of encoders records them as redistributable with no
+  origin. Until a second peer holds them, the collection depends on the
+  creator's node being reachable: the single point of failure 04 §4.3
+  warns about, gone once others seed.
+- **Weights that may not be passed on: refused at creation.** A stranger
+  could not obtain them, so no one but the creator could check or extend
+  the collection (02 §2.4).
+
 ## 4. What the spec does not say yet — decisions needed
 
 a. **The manifest message.** The fetcher knows only the SHA-256 digest.
@@ -193,3 +213,8 @@ e. **Gated licences.** Some weights require accepting terms before
     revision.
   - Either way, the origin is written to the list of encoders and not to
     the Codex.
+- Creation from the creator's own weights:
+  - Shareable weights pin their digest, are recorded with no origin, and
+    are announced by the creator's node.
+  - Weights marked not redistributable are refused, and the refusal
+    names 02 §2.4.
