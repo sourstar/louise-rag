@@ -481,6 +481,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
     work = dict(recipe["work"])
     work.setdefault("per", default_per(update.cadence))
 
+    space = _space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped)
     codex = Codex(
         descriptive=Descriptive(**recipe["descriptive"]),
         plugin=plugin,
@@ -495,7 +496,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "layers" in recipe else default_layers(source)),
         slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
                  else default_slicing(source)),
-        space=_space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped),
+        space=space,
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
         erasure=recipe.get("erasure", source.erasure.value),
@@ -512,7 +513,10 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
-        version=space_version if image_shaped else codex_mod.CODEX_VERSION,
+        # 09 §9.3: version 4 exactly when an engine carries `load`
+        version=(space_version if image_shaped
+                 else codex_mod.LOAD_VERSION if space.has_load
+                 else codex_mod.CODEX_VERSION),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)

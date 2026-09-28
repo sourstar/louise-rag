@@ -39,7 +39,7 @@ CODEX_VERSION = 3
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3)
+CODEX_VERSIONS = (1, 2, 3, 4)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -50,6 +50,16 @@ CODEX_VERSIONS = (1, 2, 3)
 #: `{image, weights, label}`, the engine's image digest alone, and that
 #: image IS inside `space_id`. A version-2 Codex keeps that for ever.
 ENGINE_VERSION = 3
+
+#: THE LOAD AMENDMENT (operator, 2026-09-28; 09 §9.3, *the engine*). An
+#: engine that is a gRPC backend — LocalAI's backend ABI — starts empty and
+#: is set up by one `LoadModel` message whose fields change the vectors, so
+#: the engine states that message in its own field, `load`. Version 4 is
+#: version 3 plus that field, and it is written EXACTLY when an engine
+#: carries it: a Codex whose engines have none is written at 3, byte for
+#: byte what it was, and a version-4 Codex without one is refused — else
+#: one recipe would name two collections.
+LOAD_VERSION = 4
 
 #: 09 §9.5's two record shapes: 1 without a `figures` key, 2 with it. Only
 #: 1 can be CREATED here — `record_line` 2 needs the figures containers,
@@ -239,11 +249,19 @@ class Engine:
     args: tuple[str, ...]
     env: dict[str, str]
     device: str
+    #: the LoadModel message of a gRPC backend (LOAD_VERSION), `${WEIGHTS}`
+    #: for the weights; None for an engine configured by `args` alone
+    load: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "build": self.build, "variant": self.variant,
-                "image": self.image, "args": list(self.args), "env": dict(self.env),
-                "device": self.device}
+        d = {"name": self.name, "build": self.build, "variant": self.variant,
+             "image": self.image, "args": list(self.args), "env": dict(self.env),
+             "device": self.device}
+        if self.load is not None:
+            # ABSENT, not null, when unused: an engine without it is the
+            # version-3 object byte for byte, and so is its engine_id
+            d["load"] = dict(self.load)
+        return d
 
     @property
     def engine_id(self) -> str:
@@ -330,6 +348,14 @@ class Space:
     def has_engine(self) -> bool:
         """Is this the version-3 shape — an engine, not an image alone."""
         return self.encoder.engine is not None
+
+    @property
+    def has_load(self) -> bool:
+        """Does an engine of this space carry a LoadModel message — the
+        one thing a version-4 Codex has that a version-3 one has not."""
+        encoders = (self.encoder, self.query.encoder)
+        return any(e is not None and e.engine is not None and e.engine.load is not None
+                   for e in encoders)
 
     def to_dict(self) -> dict[str, Any]:
         return {"encoder": self.encoder.to_dict(), "dim": self.dim,
@@ -878,6 +904,26 @@ def _validate_engine(engine: Engine, where: str) -> None:
     for key, value in engine.env.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise CodexError(f"{where}.env maps names to strings, got {key!r}: {value!r}")
+    if engine.load is not None:
+        _validate_load(engine, where)
+
+
+def _validate_load(engine: Engine, where: str) -> None:
+    """09 §9.3, `load`: the message a gRPC backend is sent once healthy.
+    The weights are named there and only there; the port stays in `args`."""
+    load = engine.load
+    if not isinstance(load, dict) or not load:
+        raise CodexError(f"{where}.load is the LoadModel message, a non-empty object")
+    text = canonical_json(load).decode("utf-8")      # refuses a float (09 §9.1)
+    if load.get("Model") != "${WEIGHTS}" or load.get("ModelFile") != "${WEIGHTS}":
+        raise CodexError(f"{where}.load names the weights as `${{WEIGHTS}}` in Model "
+                         f"and ModelFile")
+    if any("${WEIGHTS}" in a for a in engine.args):
+        raise CodexError(f"{where}: an engine with `load` names the weights there, "
+                         f"not in args")
+    if "${PORT}" in text:
+        raise CodexError(f"{where}.load: `${{PORT}}` belongs to args, where the "
+                         f"program is started")
 
 
 def _validate_encoder_shape(codex: Codex) -> None:
@@ -897,6 +943,11 @@ def _validate_encoder_shape(codex: Codex) -> None:
                     f"reference vectors were computed with — {{weights, engine, …}} — "
                     f"not an image alone (09 §9.3; 02 §2.4)")
             _validate_engine(enc.engine, f"{where}.engine")
+            if enc.engine.load is not None and codex.version < LOAD_VERSION:
+                raise CodexError(
+                    f"{where}.engine.load: a version {codex.version} engine has no "
+                    f"`load`; an engine that carries one is written in a version "
+                    f"{LOAD_VERSION} Codex (09 §9.3)")
         else:
             if enc.engine is not None:
                 raise CodexError(
@@ -908,6 +959,11 @@ def _validate_encoder_shape(codex: Codex) -> None:
         if not _DIGEST_RE.match(enc.weights):
             raise CodexError(f"{where}.weights must be a sha256: digest, got "
                              f"{enc.weights!r}")
+    if codex.version >= LOAD_VERSION and not sp.has_load:
+        raise CodexError(
+            f"a version {codex.version} Codex is written only when an engine carries "
+            f"`load`; without one it is version {ENGINE_VERSION}, byte for byte "
+            f"(09 §9.3) — else one recipe would name two collections")
     qv = sp.calibration.query_vectors
     if codex.version >= ENGINE_VERSION and sp.query.encoder is not None:
         if not isinstance(qv, str) or not _DIGEST_RE.match(qv):
@@ -1401,11 +1457,15 @@ def _layer(l: dict[str, Any], i: int) -> Layer:
 def _engine(e: Any, where: str) -> Engine:
     if not isinstance(e, dict):
         raise CodexError(f"{where} must be an object (09 §9.3, the engine)")
-    e = _only(e, ("name", "build", "variant", "image", "args", "env", "device"), where)
+    keys = ("name", "build", "variant", "image", "args", "env", "device")
+    e = _only(e, keys + (("load",) if "load" in e else ()), where)
     if not isinstance(e["args"], list) or not isinstance(e["env"], dict):
         raise CodexError(f"{where}: args is a list of strings and env an object")
+    if "load" in e and not isinstance(e["load"], dict):
+        raise CodexError(f"{where}.load is the LoadModel message, an object")
     return Engine(e["name"], e["build"], e["variant"], e["image"],
-                  tuple(e["args"]), dict(e["env"]), e["device"])
+                  tuple(e["args"]), dict(e["env"]), e["device"],
+                  dict(e["load"]) if "load" in e else None)
 
 
 def _space(sp: dict[str, Any]) -> Space:

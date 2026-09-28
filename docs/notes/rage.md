@@ -431,6 +431,12 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
 - **8bbc66a** (2026-09-19) — the run identity made computable, the
   weights digest of a directory, `Louise-Level`, the model's URL,
   `RAGE_URL`.
+- **The load amendment** (operator, 2026-09-28) — an engine that is a
+  gRPC backend (§21) states its `LoadModel` message in its own field,
+  `load`, instead of inside `args`. Codex version 4 is version 3 plus that
+  field and is written exactly when an engine carries it, so no existing
+  Codex, `engine_id` or run changes: every engine without `load` is the
+  same bytes (CLAUDE.md rule 1).
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the

@@ -494,3 +494,17 @@ def test_a_well_formed_layer_still_works():
         platform_image=PLATFORM)
     assert [(l.chunker.id, l.chunker.version, l.rule) for l in c.layers] == \
         [("abstract", 1, "default")]
+
+
+def test_a_recipe_whose_engine_carries_load_is_a_version_4_codex():
+    """09 §9.3, the load amendment: version 4 exactly when an engine carries
+    `load`; the same recipe without it stays version 3, byte for byte."""
+    grpc = dict(ENGINE_TABLE, args=["python", "backend.py", "--addr", "127.0.0.1:${PORT}"],
+                load={"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}",
+                      "Type": "cross-encoder"})
+    space = dict(SPACE, encoder=dict(SPACE["encoder"], engine=grpc))
+    codex = from_recipe("gutenberg", recipe(space=space), platform_image=PLATFORM)
+    cx.validate(codex)
+    assert codex.version == cx.LOAD_VERSION
+    assert codex.space.encoder.engine.load["Type"] == "cross-encoder"
+    assert from_recipe("gutenberg", recipe(), platform_image=PLATFORM).version == cx.CODEX_VERSION == 3
