@@ -192,55 +192,6 @@ def test_an_engine_that_cannot_be_run_again_is_refused(codex, change, rule):
         cx.validate(_on(codex, replace(codex.space.encoder.engine, **change)))
 
 
-# ---- an engine that is a gRPC backend (09 §9.3, amendment loadmodel-in-args) -----
-
-_MSG = json.dumps({"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}", "Type": "cross-encoder"},
-                  sort_keys=True, separators=(",", ":"))
-_GRPC_ARGS = ("python", "backend.py", "--addr", "127.0.0.1:${PORT}", "rpc:LoadModel", _MSG)
-
-
-def test_a_grpc_engine_carries_its_loadmodel_message_in_args(codex):
-    """No new field: the message is the last two elements of the hashed
-    `args`, so it is part of `engine_id` and of the collection's identity."""
-    engine = replace(codex.space.encoder.engine, args=_GRPC_ARGS)
-    other = _on(codex, engine)
-    cx.validate(other)
-    assert other.space_id == codex.space_id, "the engine is outside space_id (02 §2.4)"
-    assert other.collection_id != codex.collection_id
-    changed = replace(engine, args=_GRPC_ARGS[:-1] + (_MSG.replace("cross-encoder", "bi"),))
-    assert changed.engine_id != engine.engine_id, "another message is another engine"
-
-
-@pytest.mark.parametrize("args, rule", [
-    (_GRPC_ARGS[:-1], "occurs once, second to last"),
-    (("p", "rpc:LoadModel", _MSG, "--late"), "occurs once, second to last"),
-    (_GRPC_ARGS[:4] + ("rpc:LoadModel",) + _GRPC_ARGS[4:], "occurs once, second to last"),
-    (_GRPC_ARGS[:-1] + ("{not json",), "as JSON"),
-    (_GRPC_ARGS[:-1] + ('{"ModelFile": "${WEIGHTS}", "Model": "${WEIGHTS}"}',), "canonical form"),
-    (_GRPC_ARGS[:-1] + ('{"Model":"${WEIGHTS}","ModelFile":"/x"}',), "names the weights"),
-    (("p", "${WEIGHTS}", "rpc:LoadModel", _MSG), "more than once"),
-    (("p", "rpc:LoadModel",
-      '{"Model":"${WEIGHTS}","ModelFile":"${WEIGHTS}","x":"${PORT}"}'),
-     "not to the LoadModel message"),
-])
-def test_a_malformed_loadmodel_tail_is_refused(codex, args, rule):
-    with pytest.raises(CodexError, match=rule):
-        cx.validate(_on(codex, replace(codex.space.encoder.engine, args=args)))
-
-
-def test_a_float_in_the_loadmodel_message_is_refused(codex):
-    """A float has no stable canonical form (09 §9.1): the message is
-    written with a decimal string or an integer."""
-    args = _GRPC_ARGS[:-1] + ('{"Model":"${WEIGHTS}","ModelFile":"${WEIGHTS}","T":0.5}',)
-    with pytest.raises(CodexError, match="floats"):
-        cx.validate(_on(codex, replace(codex.space.encoder.engine, args=args)))
-
-
-def test_the_spec_states_the_rule_it_is_checked_by():
-    spec = open("docs/09-formats.md", encoding="utf-8").read()
-    assert "amendment `loadmodel-in-args`" in spec and cx.LOAD_MODEL in spec
-
-
 def test_an_asymmetric_space_pins_its_query_reference_and_a_symmetric_one_has_none(codex):
     lost = replace(codex, space=replace(codex.space, calibration=replace(
         codex.space.calibration, query_vectors=None)))

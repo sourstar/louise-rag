@@ -855,35 +855,6 @@ def _validate_layers(codex: Codex) -> None:
         raise CodexError("one chunker per layer: two layers name the same chunker")
 
 
-#: 09 §9.3, *an engine that is a gRPC backend*: `args` ends with this marker
-#: and the canonical JSON of the message sent once the program is healthy.
-LOAD_MODEL = "rpc:LoadModel"
-
-
-def _validate_load_model(args: tuple[str, ...], where: str) -> None:
-    """The `LoadModel` tail of a gRPC engine's `args`, when there is one."""
-    if LOAD_MODEL not in args:
-        return
-    if args.count(LOAD_MODEL) != 1 or len(args) < 3 or args[-2] != LOAD_MODEL:
-        raise CodexError(f"{where}.args: `{LOAD_MODEL}` occurs once, second to last, after "
-                         f"the program's own arguments and before the message (09 §9.3)")
-    message = args[-1]
-    try:
-        obj = json.loads(message)
-    except ValueError:
-        raise CodexError(f"{where}.args: the element after `{LOAD_MODEL}` is the "
-                         f"LoadModel message as JSON") from None
-    if not isinstance(obj, dict) or canonical_json(obj).decode("utf-8") != message:
-        raise CodexError(f"{where}.args: the LoadModel message is a JSON object in the "
-                         f"canonical form of 09 §9.1 (sorted keys, no whitespace, no floats)")
-    if obj.get("Model") != "${WEIGHTS}" or obj.get("ModelFile") != "${WEIGHTS}":
-        raise CodexError(f"{where}.args: the LoadModel message names the weights as "
-                         f"`${{WEIGHTS}}` in Model and ModelFile")
-    if "${PORT}" in message:
-        raise CodexError(f"{where}.args: `${{PORT}}` belongs to the program's argument "
-                         f"vector, not to the LoadModel message")
-
-
 def _validate_engine(engine: Engine, where: str) -> None:
     """09 §9.3, *the engine*. What binds is `image`, `args` and `env`; the
     rest is readable. `args` names the weights and the port by placeholder
@@ -904,7 +875,6 @@ def _validate_engine(engine: Engine, where: str) -> None:
     for placeholder in ("${WEIGHTS}", "${PORT}"):
         if sum(1 for a in engine.args if placeholder in a) > 1:
             raise CodexError(f"{where}.args carries {placeholder} more than once")
-    _validate_load_model(engine.args, where)
     for key, value in engine.env.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise CodexError(f"{where}.env maps names to strings, got {key!r}: {value!r}")

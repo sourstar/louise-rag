@@ -431,13 +431,6 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
 - **8bbc66a** (2026-09-19) — the run identity made computable, the
   weights digest of a directory, `Louise-Level`, the model's URL,
   `RAGE_URL`.
-- **`loadmodel-in-args`** (operator, 2026-09-28) — an engine that is a gRPC
-  backend (§21) states its `LoadModel` message in `args`: the marker
-  `rpc:LoadModel`, then the message as canonical JSON, the last two
-  elements. 09 §9.3 says so and `app/hold/codex.py` refuses a malformed
-  tail. Made under CLAUDE.md rule 1: nothing had been frozen under the
-  unwritten reading (a reranker names no space), so no collection was
-  replaced. No field was added, and `space_id` is unchanged.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the
@@ -844,9 +837,6 @@ would silently corrupt scores for anyone scripting against the `rerankers`
 library's `.score()` method directly.
 
 ## 21. LocalAI's backend binaries, spawned by RAGE directly (2026-09-27)
-
-*Amended 2026-09-28: the `LoadModel` message's place in the engine is now
-written down (`loadmodel-in-args`, §13 and 09 §9.3).*
 
 Not "RAGE in front of LocalAI's own core" (ruled out above: LocalAI's
 `spawnGRPCModel` sends the weights path over a `LoadModel` gRPC call
