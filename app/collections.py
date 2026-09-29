@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, gutenberg, normattiva, pubmed, wikipedia
+from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 # `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
 # reference until converted to the final format or dropped.
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
+    "deposit": deposit.SOURCE,
     "embedded": embedded.SOURCE,
     "gutenberg": gutenberg.SOURCE,
     "normattiva": normattiva.SOURCE,

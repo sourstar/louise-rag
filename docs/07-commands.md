@@ -62,7 +62,7 @@ one.
 louise hold
   collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
                                                                        write a Codex; print its id
-              create deposit --name N [--encoder URL | --space-from CODEX]
+              create deposit --name N [--encoder URL] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
@@ -759,6 +759,9 @@ variable, a file, a log line or a message.
 [deposit]    encoder = "http://nas:30450/upstream/granite-embedding-107m-multilingual"
              # the encoder a deposit collection is created with when none is named (02 §2.9);
              # granite-embedding-107m-multilingual, LocalAGI's own default, unless changed here
+             space = "deposit-space.toml"       # its space block, beside this file: read once, by the
+                                                # first deposit collection on it; later ones copy its space
+             # or: space_from = "sha256:…"      # a Codex to copy the space from instead
 [deposit.collections.alice]  space_from = "sha256:…"    # one name's encoder, for a collection a client creates
 ```
 
@@ -829,10 +832,12 @@ collection is another name.
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
 
-A deposit collection (02 §2.9) has the same tree without `drag/`: its
-`origin/` holds the deposits, byte-exact, and is the only copy of them
-anywhere; `state/`, `index/` and `lance/` hold what is derived from
-them, and erasing a deposit removes it from all four.
+A deposit collection (02 §2.9) has the same tree, and its `drag/` holds
+only `codex.json` and the calibration member. Its `origin/` holds the
+deposits, byte-exact — one directory per deposit, named by its deposit
+number, with the file under the name the client gave it — and is the
+only copy of them anywhere; `state/`, `index/` and `lance/` hold what is
+derived from them, and erasing a deposit removes it from all four.
 
 `drag/` holds only what the Codex or a snapshot names, so a member is
 hashed as it lies and `share` refuses a drag directory holding a file

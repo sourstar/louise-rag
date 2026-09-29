@@ -397,6 +397,11 @@ def _origin_from_recipe(block: dict[str, Any]) -> Origin:
     if b.get("jurisdiction") == "":
         b["jurisdiction"] = None
     spec = dict(b.get("spec") or {})
+    if spec.get("source_id") == "deposit":
+        # 09 §9.17: a deposit collection's spec is exactly {source_id,
+        # nonce} — it has no acquisition spec, so no `files` either
+        b["spec"] = spec
+        return Origin(**b)
     spec.setdefault("files", None)
     if spec.get("files") in ([], {}):
         spec["files"] = None

@@ -1131,7 +1131,10 @@ consistent:
 
 A never-share collection built from a plugin's corpus MAY keep the rest
 — its records are built the same way either way — but a deposit
-collection has none of it: no drag, no snapshot, no shard.
+collection has none of it: no snapshot, no shard, no signature. Its
+`drag/` holds exactly `codex.json` and the calibration member (09
+§9.12) — the Codex, and the reference the gate compares a run against —
+and nothing serves it.
 
 **Its Codex.** Every field is present, as for any collection
 (09 §9.3). What differs:
@@ -1145,11 +1148,13 @@ collection has none of it: no drag, no snapshot, no shard.
   directory. A deposit is reproducible from no public origin, so no two
   deposit collections are ever the same one, and the identity says so.
   `origin.form` is `"deposit: the bytes as the client sent them"`,
-  `unit` `"file"`, `clock` `"UTC"`, `cutoff_rule` `"the deposits held
-  at the instant"`, `jurisdiction` null.
+  `unit` `"file"`, `clock` `"UTC"`, `cutoff_rule` `"record-date"` (a
+  deposit's date is when it was deposited), `jurisdiction` null.
 - `space`: the encoder is the node's deposit default,
   `granite-embedding-107m-multilingual` unless `platform.toml` names
   another (07 §7.8), or the one `create` is given. The first deposit
+  collection on an encoder is given its space block once — a file, or a
+  Codex to copy it from. The first deposit
   collection on an encoder runs `create`'s calibration; every later one
   copies that space block whole — encoder, engine, calibration,
   envelope, tolerance — because the calibration set does not depend on

@@ -1314,12 +1314,14 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 `app/retrieval.py`, `app/licensing.py`, `app/auth.py`, `app/api.py`,
 the transfer manager and the worker's stage selection.*
 
-- **15a — the plugin and the Codex.** `app/plugins/deposit/`; `hold
+- **15a — the plugin and the Codex. DONE 2026-09-29**
+  (`tests/deposit/test_deposit_identity.py`, 21; `test_deposit_config.py`, 5).
+  `app/plugins/deposit/`, `app/hold/deposit.py`; `hold
   collection create deposit --name`, with the nonce in `origin.spec`,
   the node's `[deposit] encoder` or `--encoder`/`--space-from`, and the
   space block copied whole — no calibration run — when a deposit
   collection on that encoder already exists. `hold deposit
-  add|erase|list|show`. Proven by `tests/deposit/test_identity.py`: two
+  add|erase|list|show`. Proven by `tests/deposit/test_deposit_identity.py`: two
   collections from one set of defaults have two ids; a re-added key
   replaces; `native_id`s ascend node-wide.
 - **15b — parse.** `.txt`, `.md`, `.pdf` through `pypdfium2`, pinned

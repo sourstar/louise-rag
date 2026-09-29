@@ -81,6 +81,11 @@ def _recipe(path: str) -> dict:
 
 
 def cmd_create(a) -> int:
+    if a.plugin == "deposit":
+        return cmd_create_deposit(a)
+    if not a.recipe:
+        raise CodexError("--recipe is required: a collection is a plugin and a "
+                         "recipe (06 §6.6); only `create deposit` needs none")
     if a.plugin is None:
         # the pre-template form: the file IS a Codex
         spec = _json(a.recipe)
@@ -96,6 +101,83 @@ def cmd_create(a) -> int:
                               query_encoder=a.query_encoder)
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
+    return 0
+
+
+def create_deposit(root, name: str, *, platform_image: str | None = None,
+                   encoder: str | None = None, space_from: str | None = None,
+                   space: str | None = None):
+    """`hold collection create deposit --name N` (07 §7.3; 02 §2.9) — for the
+    command line and for the LocalAGI route alike. Whatever the creator does
+    not name comes from `platform.toml`'s `[deposit]`. Returns the Codex and
+    the collection file it wrote."""
+    from app import platform_config
+    from app.hold import deposit
+    from app.bundles import keys as node_keys
+
+    cfg = platform_config.load().deposit
+    encoder = encoder or cfg.encoder
+    space_from = space_from or cfg.by_name.get(name) or cfg.space_from
+    source = col.read(root, space_from) if space_from else None
+    block = None
+    if source is None and deposit.space_source(root, encoder) is None:
+        path = space or (str(cfg.space) if cfg.space else None)
+        block = _recipe(path) if path else None
+        if block is not None and "space" in block:
+            block = block["space"]
+    codex = deposit.create(
+        root, name, platform_image=preflight_create({}, platform_image),
+        encoder_url=encoder, space_from=source, space=block,
+        embed=(_embed_for_recipe(block, encoder) if block is not None else None),
+        # the key signs the calibration member, which only the first
+        # deposit collection on an encoder writes; the others copy it
+        key=node_keys.load_signing_key() if block is not None else None,
+        now=_utc_now())
+    return codex, deposit.write_held_file(root, codex, encoder)
+
+
+def cmd_create_deposit(a) -> int:
+    if not a.name:
+        raise CodexError("create deposit takes --name: a deposit collection is "
+                         "named by whoever creates it (07 §7.3)")
+    codex, held = create_deposit(a.root, a.name, platform_image=a.platform_image,
+                                 encoder=a.encoder, space_from=a.space_from,
+                                 space=a.space)
+    print(f"held: {held}", file=sys.stderr)
+    print(codex.collection_id)
+    return 0
+
+
+def cmd_deposit_add(a) -> int:
+    from app.hold import deposit
+    path = Path(a.file)
+    _print(deposit.add(a.collection, a.key or path.name, path.read_bytes()))
+    return 0
+
+
+def cmd_deposit_erase(a) -> int:
+    from app.hold import deposit
+    if not a.yes:
+        raise CodexError("erase removes a deposit leaving no trace (02 §2.9): "
+                         "pass --yes")
+    _print({"remaining": deposit.erase(a.collection, a.key)})
+    return 0
+
+
+def cmd_deposit_list(a) -> int:
+    from app.hold import deposit
+    keys = deposit.keys(a.collection)
+    if a.json:
+        _print(keys)
+    else:
+        for k in keys:
+            print(k)
+    return 0
+
+
+def cmd_deposit_show(a) -> int:
+    from app.hold import deposit
+    _print(deposit.show(a.collection, a.key))
     return 0
 
 
@@ -1601,8 +1683,14 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p)
     p.add_argument("plugin", nargs="?", default=None,
                    help="the plugin the collection is of; omit when the file is a whole Codex")
-    p.add_argument("--recipe", required=True,
-                   help="TOML with every Codex field the plugin does not default (06 Â§6.6)")
+    p.add_argument("--recipe", default=None,
+                   help="TOML with every Codex field the plugin does not default (06 Â§6.6); "
+                        "`create deposit` takes none")
+    p.add_argument("--name", default=None,
+                   help="the collection's name; `create deposit` requires it (02 §2.9)")
+    p.add_argument("--space", default=None, metavar="FILE",
+                   help="create deposit: the space block, for the first deposit "
+                        "collection on an encoder (later ones copy its space)")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--platform-image", default=None,
                    help="the digest of the platform image this command runs in "
@@ -1679,6 +1767,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_collection_ack)
 
     # ---- hold records ---------------------------------------------------
+    dep = nouns.add_parser("deposit", help="a deposit collection's documents (02 §2.9)")
+    dverbs = dep.add_subparsers(dest="verb", required=True)
+    p = dverbs.add_parser("add", help="store a file as a deposit; an existing key is replaced whole")
+    p.add_argument("collection"); p.add_argument("file")
+    p.add_argument("--key", default=None, help="the deposit's key (default: the file's name)")
+    p.set_defaults(fn=cmd_deposit_add)
+    p = dverbs.add_parser("erase", help="remove a deposit, leaving no trace (02 §2.9)")
+    p.add_argument("collection"); p.add_argument("key")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_deposit_erase)
+    p = dverbs.add_parser("list", help="the collection's deposit keys")
+    p.add_argument("collection"); p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_deposit_list)
+    p = dverbs.add_parser("show", help="a deposit's text and its chunk count")
+    p.add_argument("collection"); p.add_argument("key")
+    p.set_defaults(fn=cmd_deposit_show)
+
     recs = nouns.add_parser("records", help="the parsed text of documents")
     rverbs = recs.add_subparsers(dest="verb", required=True)
 

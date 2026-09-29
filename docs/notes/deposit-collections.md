@@ -479,7 +479,7 @@ own default encoder, overridable (A3).
   decodes it (status code, envelope, the unwrapped upload body).
 - `tests/deposit/test_erasure.py`: A4's no-trace assertion, including
   Lance's old versions and unmerged index segments.
-- `tests/deposit/test_identity.py`: two deposit collections from one
+- `tests/deposit/test_deposit_identity.py`: two deposit collections from one
   template have different `collection_id`s; a re-deposited key
   replaces; `native_id`s ascend.
 - `tests/deposit/test_auth.py`: open `ask` routes and the Ask page

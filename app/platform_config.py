@@ -98,12 +98,28 @@ class AskConfig:
 
 
 @dataclass(frozen=True)
+class DepositConfig:
+    """`[deposit]` (07 §7.8; 02 §2.9): what a deposit collection is created
+    with when the creator names nothing — a client's create carries no
+    model. `encoder` is the endpoint; `space` a file holding the space
+    block for it, needed once, by the first deposit collection on that
+    encoder (later ones copy its space); `space_from` a Codex to copy the
+    space from instead. `[deposit.collections.<name>] space_from` does the
+    same for one name."""
+    encoder: str | None = None
+    space: Path | None = None
+    space_from: str | None = None
+    by_name: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
+    deposit: DepositConfig = DepositConfig()
     # [encoder_defaults.<plugin>] -> the raw [encoder]-shaped table. Kept
     # RAW here on purpose: app/collections.py owns EmbedRecipe and parses
     # it, and importing that module from this one would close an import
@@ -348,7 +364,9 @@ def _load_one(path: Path) -> PlatformConfig:
             "node.quarantine_in_use_before must be a list of collection ids, each "
             f"\"sha256:\" and 64 hex digits (`louise hold collection show`), got {before_raw!r}")
 
+    deposit = _deposit(raw.get("deposit") or {}, path)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
+                          deposit=deposit,
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
                           ask=ask,
@@ -357,6 +375,35 @@ def _load_one(path: Path) -> PlatformConfig:
                           quarantine=quarantine_raw,
                           quarantine_in_use_before=tuple(before_raw),
                           source_path=path)
+
+
+def _deposit(raw: Any, path: Path) -> DepositConfig:
+    if not isinstance(raw, dict):
+        raise schedule_mod.ScheduleError("[deposit] is a table (07 §7.8)")
+    known = {"encoder", "space", "space_from", "collections"}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        # refused, not ignored: a misspelt key would silently leave every
+        # client-created collection on another encoder than the one meant
+        raise schedule_mod.ScheduleError(
+            f"[deposit]: unknown key(s) {', '.join(unknown)}; it takes "
+            f"encoder, space, space_from and [deposit.collections.<name>]")
+    for k in ("encoder", "space", "space_from"):
+        if k in raw and not isinstance(raw[k], str):
+            raise schedule_mod.ScheduleError(f"deposit.{k} is a string, got {raw[k]!r}")
+    by_name = {}
+    for name, table in (raw.get("collections") or {}).items():
+        if not isinstance(table, dict) or set(table) != {"space_from"} \
+                or not isinstance(table["space_from"], str):
+            raise schedule_mod.ScheduleError(
+                f"[deposit.collections.{name}] carries space_from and nothing else")
+        by_name[name] = table["space_from"]
+    space = raw.get("space")
+    return DepositConfig(
+        encoder=raw.get("encoder") or None,
+        space=((path.parent / space) if space else None),
+        space_from=raw.get("space_from") or None,
+        by_name=by_name)
 
 
 def load() -> PlatformConfig:

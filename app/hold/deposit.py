@@ -1,0 +1,433 @@
+"""hold.deposit — deposit collections: created and written by a client of
+this node, never shared. docs/02 §2.9, 06 §6.7, 07 §7.3; the design is
+docs/notes/deposit-collections.md (migration step 15a).
+
+    hold collection create deposit --name N   → `create`
+    hold deposit add <collection> FILE        → `add`
+    hold deposit erase <collection> <key>     → `erase`
+    hold deposit list <collection>            → `keys`
+    hold deposit show <collection> <key>      → `show`
+
+A deposit is stored byte-exact under the collection's `origin/` and then
+taken through THE WORKER'S OWN rdf and fts stages, for that document, inside
+the call — so it is searchable by text when `add` returns, by exactly the
+code that indexes every other document (wrap, do not rewrite). Vectors stay
+the worker's: nothing here calls an encoder, because a request that waits on
+the GPU is a request that times out whenever the GPU is busy (07 §7.4).
+"""
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import shutil
+import sqlite3
+import time
+from contextlib import closing
+from pathlib import Path
+from typing import Any
+
+from . import codex as cx
+from .codex import Codex, CodexError
+
+PLUGIN = "deposit"
+
+#: The node-wide deposit number's key in `state/node.sqlite`'s control
+#: table (02 §2.9: unique within the plugin, later deposits sort after
+#: earlier ones). Node state, beside the node's mode.
+SEQ_KEY = "deposit_seq"
+
+#: The deposit key lives in `documents.txt_name`, and `add`, `erase` and
+#: `show` find a deposit by it. An index, so that finding one is a lookup
+#: and never a walk of the collection (CLAUDE.md: a per-call cost scales
+#: with the work, not with what has been deposited so far). Created on a
+#: deposit collection's manifest only: no other plugin reads by it.
+_KEY_INDEX = ("CREATE INDEX IF NOT EXISTS idx_documents_deposit_key "
+              "ON documents(txt_name)")
+
+ORIGIN_FORM = "deposit: the bytes as the client sent them"
+#: 09 §9.3's closed list; a deposit's date is when it was deposited
+CUTOFF_RULE = "record-date"
+SUMMARY = "Deposits written by a client of this node; never shared (02 §2.9)."
+
+
+class DepositError(CodexError):
+    """Refused, with nothing stored."""
+
+
+# --------------------------------------------------------------------------
+# the collection
+
+def _source():
+    from app.plugins.deposit import source
+    return source
+
+
+def recipe(name: str, space: dict[str, Any]) -> dict[str, Any]:
+    """The whole recipe of a deposit collection — every field the plugin
+    does not default, derived and never asked for (02 §2.9).
+
+    `origin.spec` is `{source_id, nonce}` and nothing else (09 §9.17). The
+    nonce is load-bearing: `collection_id` hashes the Codex without
+    `descriptive`, where the name lives, so without it two agents'
+    collections made from these defaults would be ONE collection."""
+    return {
+        "descriptive": {"title": name, "summary": SUMMARY},
+        "space": space,
+        # 02 §2.9: written, not run — nothing ever measures a deposit
+        # collection against it; 1, because §9.3 wants it positive
+        "work": {"tokens": 1},
+        "origin": {"spec": {"source_id": PLUGIN, "nonce": secrets.token_hex(16)},
+                   "form": ORIGIN_FORM, "unit": "file", "clock": "UTC",
+                   "cutoff_rule": CUTOFF_RULE, "jurisdiction": None},
+        # 02 §2.9 / 03 §3.2: a never-share collection runs these two and
+        # nothing else — nobody else holds it to prove anything to.
+        # 09 §9.3 wants a shard fraction for a sampled check; there are no
+        # shards, and the local timer samples chunks (step 15c).
+        "validation": {"checks": ["calibration", "vectors-sample"],
+                       "sample": {"vectors-sample": {"shards": "1"}},
+                       "required": []},
+        "layers": [_source().fixed_layer(int(space["ctx"]))],
+        "update": {"cadence": "monthly", "day": 1, "grace_days": 0},
+    }
+
+
+def is_deposit(codex: Codex) -> bool:
+    return codex.plugin == PLUGIN
+
+
+def held_file(root: Path, name: str) -> Path:
+    """Where `collections/<name>.toml` is for a collection under `root` —
+    the node's CONFIG_DIR for the node's own root, beside it otherwise
+    (the rule `louise._write_held_file` follows)."""
+    from app import collections as collections_mod
+    node_root = collections_mod.louise_root() / "collections"
+    if Path(root).resolve() == node_root.resolve():
+        return collections_mod.config_toml_path(name)
+    return Path(root) / f"{name}.toml"
+
+
+def encoder_of(root: Path, name: str) -> str | None:
+    import tomllib
+    p = held_file(root, name)
+    try:
+        with open(p, "rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, ValueError):
+        return None
+    enc = raw.get("encoder") or {}
+    return str(enc.get("url")) if isinstance(enc, dict) and enc.get("url") else None
+
+
+def space_source(root: Path, encoder_url: str | None) -> Codex | None:
+    """A deposit collection this root already holds on the same encoder
+    endpoint — whose space, calibration included, a new one copies whole
+    instead of embedding the calibration set again (02 §2.9; CLAUDE.md
+    RULE 1: the bytes would be identical). The oldest such, so the choice
+    is stable."""
+    from . import collection as col
+    if not encoder_url:
+        return None
+    found = [(name, c) for name, c in col.list_named(root)
+             if is_deposit(c) and encoder_of(root, name) == encoder_url]
+    if not found:
+        return None
+    found.sort(key=lambda nc: nc[0])
+    return found[0][1]
+
+
+def create(root: Path, name: str, *, platform_image: str,
+           encoder_url: str | None = None,
+           space_from: Codex | None = None, space: dict[str, Any] | None = None,
+           embed=None, key=None, now: str | None = None) -> Codex:
+    """`hold collection create deposit --name N` (07 §7.3).
+
+    The space comes, in order, from `space_from` (a Codex whose space is
+    copied whole, calibration and all), from a deposit collection already
+    held on the same encoder endpoint (the same), or from `space` — a space
+    block without its computed hashes, which `create` fills by embedding
+    the calibration set with `embed`, exactly as any `create` does (06
+    §6.6). The first deposit collection on an encoder pays that once; the
+    others copy it.
+
+    A name held by any collection is refused (07 §7.4: 409). Creation is
+    NOT idempotent by name the way a recipe's is by hash: the nonce makes
+    every call a new collection, so asking twice for one name is refused
+    rather than answered with a second identity."""
+    from . import collection as col, template
+
+    col.check_name(name)
+    if (Path(root) / name).exists() or held_file(root, name).exists():
+        raise DepositError(f"the name {name!r} is held already; a name holds "
+                           f"one collection for its life (07 §7.8)")
+    source = space_from or space_source(root, encoder_url)
+    if source is not None:
+        if source.modality != "text":
+            raise DepositError(
+                f"{source.collection_id} is a {source.modality} collection; a "
+                f"deposit collection's encoder is a text encoder (02 §2.9)")
+        # The hashes are spliced in as `create` would have computed them —
+        # they are the source's, computed by its own `create` — and the
+        # member they name is copied and checked against them below.
+        space_block = source.space.to_dict()
+        space_block.pop("envelope", None)
+        space_block["calibration"] = {k: v for k, v in space_block["calibration"].items()
+                                      if k not in ("vectors", "query_vectors")}
+        r = recipe(name, space_block)
+        codex = template.from_recipe(
+            PLUGIN, r, platform_image=platform_image,
+            calibration=(source.space.calibration.vectors, source.space.envelope,
+                         source.space.calibration.query_vectors),
+            space_version=source.version)
+        created = col.create(root, codex, name=name)
+        d = col.drag_of(root, name)
+        col.carry_calibration(root, created, d, source)
+        return created
+    if space is None:
+        raise DepositError(
+            "no space to create a deposit collection in: name one with "
+            "--space-from CODEX, or give the space block once with --space "
+            "FILE — later deposit collections on the same encoder copy it "
+            "(02 §2.9)")
+    if embed is None:
+        raise DepositError("the first deposit collection on an encoder embeds "
+                           "the calibration set (06 §6.6): name the encoder")
+    return col.create_from_recipe(root, PLUGIN, recipe(name, dict(space)),
+                                  platform_image=platform_image, embed=embed,
+                                  name=name, key=key, now=now)
+
+
+def write_held_file(root: Path, codex: Codex, encoder_url: str | None) -> Path:
+    """07 §7.8's collection file for a deposit collection: every slice (it
+    has none), records and vectors, EVERY deposit embedded (a deposit is
+    small and is asked for as soon as it lands), never shared."""
+    from . import collection as col
+    name = col.name_of(root, codex.collection_id)
+    path = held_file(root, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(f'codex = "{codex.collection_id}"\n'
+                   'slices = "all"\n'
+                   'kinds = ["records", "vectors"]\n'
+                   'embed = "all"\n'
+                   "share = false\n"
+                   + (f'\n[encoder]\nurl = "{encoder_url}"\napi = "openai"\n'
+                      if encoder_url else ""),
+                   encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+# --------------------------------------------------------------------------
+# the node-wide deposit number
+
+def next_native_id() -> int:
+    """02 §2.9: node-wide and monotonic — unique within the plugin, and a
+    later deposit sorts after every earlier one, in every deposit
+    collection. Taken under `BEGIN IMMEDIATE` (a writer that reads first),
+    so two concurrent deposits never draw the same number."""
+    from app import node_state
+    with closing(node_state.connect()) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            row = con.execute("SELECT value FROM control WHERE key=?",
+                              (SEQ_KEY,)).fetchone()
+            n = int(row[0]) + 1 if row else 1
+            con.execute("INSERT INTO control(key,value) VALUES(?,?) ON CONFLICT(key) "
+                        "DO UPDATE SET value=excluded.value", (SEQ_KEY, str(n)))
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    return n
+
+
+# --------------------------------------------------------------------------
+# deposits
+
+def _collection(name: str):
+    from app import collections as collections_mod
+    c = collections_mod.by_name(name)
+    if c is None:
+        raise DepositError(f"no collection {name!r} is held")
+    if c.codex is None or not is_deposit(c.codex):
+        raise DepositError(f"{name!r} is not a deposit collection; only a deposit "
+                           f"collection is written by a client (02 §2.9)")
+    return c
+
+
+def _connect(collection) -> sqlite3.Connection:
+    from app import db
+    con = db.connect(collection)
+    con.execute(_KEY_INDEX)
+    return con
+
+
+def _row(con, key: str):
+    return con.execute("SELECT * FROM documents WHERE source=? AND txt_name=?",
+                       (PLUGIN, key)).fetchone()
+
+
+def _fsync_write(path: Path, data: bytes) -> None:
+    tmp = path.with_name(path.name + ".part")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+
+
+def add(name: str, key: str, data: bytes, *, url: str | None = None,
+        now: float | None = None) -> dict[str, Any]:
+    """`hold deposit add` — store `data` as the deposit `key`, replacing a
+    deposit already under that key (02 §2.9: replaced whole, never edited),
+    and index it for text search before returning.
+
+    Refused before anything is written: a key 02 §2.9 does not allow, a
+    form 06 §6.7 does not take, text that is not UTF-8."""
+    src = _source()
+    try:
+        src.check_key(key)
+        if not src.accepted(key):
+            raise src.DepositError(
+                f"{key}: a deposit is .txt, .md or .pdf (06 §6.7)")
+        src.decode_text(key, data)
+    except src.DepositError as e:
+        raise DepositError(str(e)) from e
+
+    collection = _collection(name)
+    with closing(_connect(collection)) as con:
+        if _row(con, key) is not None:
+            _erase(collection, con, key)
+        nid = next_native_id()
+        d = Path(collection.corpus_dir) / str(nid)
+        d.mkdir(parents=True, exist_ok=False)
+        f = d / key
+        _fsync_write(f, data)
+        stamp = time.gmtime(now if now is not None else time.time())
+        meta = {"key": key, "deposited_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp),
+                "url": url}
+        # The sidecar LAST: `discover` lists a deposit only once it exists,
+        # so a deposit half-written by a crash is never taken for one.
+        _fsync_write(d / src.SIDECAR,
+                     json.dumps(meta, sort_keys=True).encode("utf-8"))
+        st = f.stat()
+        uid = f"{PLUGIN}:{nid}"
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute(
+                "INSERT INTO documents(uid,source,native_id,path,txt_name,lang,"
+                "mtime,size,txt_hash,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (uid, PLUGIN, str(nid), str(f), key, "und", int(st.st_mtime),
+                 st.st_size, src.origin_hash(data), int(time.time())))
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        _index(collection, con, uid)
+        row = con.execute("SELECT chunks FROM documents WHERE uid=?", (uid,)).fetchone()
+    return {"collection": name, "key": key, "uid": uid, "native_id": nid,
+            "chunks": int(row["chunks"] or 0)}
+
+
+def _index(collection, con, uid: str) -> None:
+    """The worker's rdf and fts stages, for this document, now. Each stage
+    opens its own `BEGIN IMMEDIATE` once its long part is done and leaves
+    the commit to its caller (app/worker.py) — this is that caller."""
+    from app import worker
+    for stage in (worker.stage_rdf, worker.stage_fts):
+        row = con.execute("SELECT * FROM documents WHERE uid=?", (uid,)).fetchone()
+        try:
+            stage(con, row, collection)
+            if con.in_transaction:
+                con.execute("COMMIT")
+        except BaseException:
+            if con.in_transaction:
+                con.execute("ROLLBACK")
+            raise
+
+
+def erase(name: str, key: str) -> list[str]:
+    """`hold deposit erase` — remove the deposit `key`; the remaining keys.
+
+    Step 15a's erase: the deposit leaves the origin, the text index, the
+    vector table and the manifest. Step 15c adds what makes it leave NO
+    TRACE (02 §2.9): merged index segments, cleaned-up table versions."""
+    collection = _collection(name)
+    with closing(_connect(collection)) as con:
+        if _row(con, key) is None:
+            raise DepositError(f"{name!r} holds no deposit {key!r}")
+        _erase(collection, con, key)
+        return _keys(con)
+
+
+def _erase(collection, con, key: str) -> None:
+    """The ORDER is what makes a crash harmless: the sidecar goes first, so
+    no rescan can take the deposit back in; the derived copies next; the
+    row after them, so a re-run still finds the deposit by its key; the
+    directory last."""
+    from app import embeddings, fts
+    from app.plugins.deposit import source as src
+
+    row = _row(con, key)
+    d = Path(row["path"]).parent
+    (d / src.SIDECAR).unlink(missing_ok=True)
+    book_id = int(row["native_id"])
+    fts.delete_book(row["lang"] or "und", book_id, collection)
+    embeddings.delete_book(book_id, collection, lock_con=con)
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        for table in ("documents", "doc_keys", "embed_queue", "summaries",
+                      "chunk_verification"):
+            if _has_uid(con, table):
+                con.execute(f"DELETE FROM {table} WHERE uid=?", (row["uid"],))
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def _has_uid(con, table: str) -> bool:
+    return any(r[1] == "uid" for r in con.execute(f"PRAGMA table_info({table})"))
+
+
+def _keys(con) -> list[str]:
+    return [r[0] for r in con.execute(
+        "SELECT txt_name FROM documents WHERE source=? AND txt_name IS NOT NULL "
+        "ORDER BY CAST(native_id AS INTEGER)", (PLUGIN,))]
+
+
+def keys(name: str) -> list[str]:
+    """`hold deposit list` — the collection's keys, oldest deposit first."""
+    collection = _collection(name)
+    with closing(_connect(collection)) as con:
+        return _keys(con)
+
+
+def show(name: str, key: str) -> dict[str, Any]:
+    """`hold deposit show` — the deposit's whole text and its chunk count,
+    which is what LocalAGI's `GetEntryContent` reads (07 §7.4)."""
+    from app import plugin_io
+    collection = _collection(name)
+    with closing(_connect(collection)) as con:
+        row = _row(con, key)
+        if row is None:
+            raise DepositError(f"{name!r} holds no deposit {key!r}")
+        src = _source()
+        data = Path(row["path"]).read_bytes()
+        if Path(key).suffix.lower() in src.TEXT_SUFFIXES:
+            text = src.decode_text(key, data)     # the file, as deposited
+        else:
+            doc = plugin_io.canonical_doc(collection.plugin_instance(), row)
+            text = "\n\n".join(b for _, b in doc.sections)
+        return {"collection": name, "key": key, "uid": row["uid"],
+                "content": text, "chunk_count": int(row["chunks"] or 0)}
+
+
+def is_named_deposit(root: Path, name: str) -> bool:
+    from . import collection as col
+    try:
+        return is_deposit(col.read(root, name))
+    except CodexError:
+        return False
