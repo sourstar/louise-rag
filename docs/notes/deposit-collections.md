@@ -168,8 +168,11 @@ present as usual. What differs:
   `granite-embedding-107m-multilingual`** (D6): IBM, 107M parameters,
   384 dimensions, 512-token context, Apache-2.0, Italian among its
   languages; RAGE serves it through llama.cpp from a GGUF build
-  (`bartowski/granite-embedding-107m-multilingual-GGUF`). It is named
-  in `platform.toml` `[deposit] encoder`. The FIRST deposit collection
+  (`bartowski/granite-embedding-107m-multilingual-GGUF`) — or, as
+  LocalAGI itself gets it, from LocalAI's model gallery at creation
+  ([`weights-fetch.md`](weights-fetch.md) §3), the gallery's `sha256`
+  being the Codex's weights digest. It is named in `platform.toml`
+  `[deposit] encoder`. The FIRST deposit collection
   created on it runs `create`'s calibration once (about a minute);
   every later one copies that space block whole — encoder, engine,
   calibration, envelope, tolerance — and skips it, **the bytes being
