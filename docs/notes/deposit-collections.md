@@ -286,7 +286,8 @@ PubMed's backlog, nor starve behind it.
 
 ## 5. Decisions for the operator
 
-Each has a recommendation; none is taken.
+**D1, D2 and D4 accepted by the operator, 2026-09-29.** D3, D5 and D6
+open.
 
 - **D1 — Adopt A1–A8 as the amendment to 01, 02, 04, 06 and 07?**
   09 needs no change: nothing here is hashed, signed or moved between
