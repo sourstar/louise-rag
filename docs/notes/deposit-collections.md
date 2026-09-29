@@ -86,6 +86,29 @@ definition of what "no trace" means in bytes.
 
 ## 3. The amendments
 
+### A0 — Compliance, not proof (operator, 2026-09-29)
+
+*"A non-shareable collection has only to fulfil the criteria of
+compliance: I don't need to demonstrate to others that the vectors have
+not been maliciously modified, but I still need to ensure that I keep
+producing consistent embeddings."*
+
+So a `never-share` collection carries the machinery that keeps **its
+own vectors consistent**, and none of the machinery that **proves them
+to someone else**:
+
+| kept — consistency | dropped — proof to others |
+|---|---|
+| the Codex, pinning the space; a mismatch refuses that collection at start (invariant 1) | snapshots, record shards, the drag (02 §2.2–2.6) |
+| the calibration gate on the run, and the per-answer `Louise-Run` check before every vector write (03 §3.3) | signatures, attestations, bundles (03 §3.5–3.6) |
+| deterministic cleaning and chunking (invariant 3), so a re-embed cuts the same chunks | `records-vs-origin` and the published validation plan |
+| a local `vectors-sample` on a timer: re-embed a few chunks through today's validated run and compare with the stored vectors at `tolerance` — the only thing that catches an engine that drifted after passing the gate | |
+| the deposited bytes (A2), because re-embedding under a new encoder and `GetEntryContent` both need them | |
+
+The Codex still names `validation` and `update` because the schema
+(09 §9.3) requires every field; for a never-share collection they are
+written and not run.
+
 ### A1 — Vocabulary: *deposit* (01, vocabulary table)
 
 | term | meaning |
@@ -176,12 +199,10 @@ from it, on this node, before the call returns success**:
 4. its vectors **including in Lance's older table versions** — Lance
    keeps deleted rows until `cleanup_old_versions` runs, so an erase
    runs it on that table (bounded: a deposit table is small);
-5. every record-shard version and snapshot that contains it. **An
-   erasable collection keeps only its current snapshot**: 02 §2.3's
-   "a superseded version is renamed and kept" and 02 §2.2's
-   `delta.tombstoned` do not apply to it, and an erased uid is named in
-   no delta. Promise 7 is about what is *published*; a never-share
-   collection publishes nothing, so there is nothing it preserves here.
+5. there are no shards or snapshots to purge: A0 drops them, so 02
+   §2.3's "a superseded version is kept" and 02 §2.2's
+   `delta.tombstoned` never arise. Promise 7 is about what is
+   *published*; a never-share collection publishes nothing.
 6. SQLite: the build has `SECURE_DELETE` on (`app/db.py`), so freed
    pages are zeroed; the deposit manifests must never turn it off the
    way the catalog drop does.
@@ -254,6 +275,27 @@ envelope.
   admin token. Never-share is not only about peers — a guest on the LAN
   is not the depositor either.
 
+### A7b — How data arrives: one file per request
+
+LocalAGI never sends a folder. Its paths into a collection are:
+
+- **agent memory** — `Store(text)`, one upload per memory: each user
+  message, the whole conversation, or its summary, per the agent's
+  memory mode (`core/agent/knowledgebase.go`);
+- **the agent's own action** `add_to_knowledge_base` — one text;
+- **compaction** — one summary per period, then the originals deleted;
+- **the Web UI** — one file per upload (a single `<input type=file>`,
+  no `multiple`, no directory picker);
+- **sources** (D3) — one URL, re-fetched on a timer.
+
+So the surface is one deposit per request, and nothing more is needed
+for LocalAGI. Bulk loading of a folder is a node operator's job and
+already has its form: a folder is a corpus, and a corpus becomes a
+collection through a plugin (06 §6.6) — curated, and then visible to
+agents read-only (D2). If a deposit-side bulk path is wanted later, it
+is `hold records fetch` over a mounted folder with the `deposit`
+parser, not a new route.
+
 ### A8 — When a deposit becomes searchable
 
 LocalAGI stores a memory and may search for it on the next turn. The
@@ -302,14 +344,33 @@ open.
   budget (invariant 5), origin etiquette. Doing it properly is a
   plugin of its own; doing it improperly is the bypass invariant 9
   forbids. LocalAGI's UI shows the error; agents never call these.
-- **D4 — Licence class of a deposit.** *Recommended: green*, with
-  `LICENSE-TERMS` stating that deposited content is the depositor's and
-  never leaves the node. Yellow or red would demand an acknowledgement
-  per collection that the depositor would be giving to themselves; red
-  would make records pointers, which has no meaning here.
+
+  *How LocalRecall does it* (read at `4cae67b`): a goroutine ticks
+  every minute and re-fetches each URL whose interval has passed —
+  `.git` is shallow-cloned and every text file concatenated, a
+  `sitemap.xml` has every page fetched and joined, anything else is one
+  page through `html2text`. The result is ONE entry,
+  `source-<collection>-<url>.txt`, replaced whole each time. No
+  bandwidth budget, no terms, no robots.txt, and no record of which
+  page each passage came from — a whole site becomes one document.
+  Louise could keep the contract (URL + interval) and do it properly:
+  one deposit per page, with its URL as `origin`, through the transfer
+  manager — but still not in a green, ack-free collection, because a
+  web page is not the depositor's content.
+
 - **D5 — Which formats in v1.** *Recommended: UTF-8 text and Markdown
   only* — all LocalAGI's agent memory produces. PDF on request, with
   the library chosen then.
+
+  *How LocalRecall does it:* `.txt`, `.md` and `.pdf` are chunked;
+  any other file is stored "raw-only" — listed, downloadable, never
+  searched. PDF text comes from PDFium compiled to WebAssembly
+  (`klippa-app/go-pdfium`, no cgo), under a 60 s timeout. For Louise
+  the equivalent is `pypdfium2` — the same PDFium, Apache-2.0/BSD,
+  prebuilt wheels — pinned, because extraction must be deterministic
+  (invariant 3) for a re-embed to cut the same chunks. That is a new
+  dependency and needs the operator's yes.
+
 - **D6 — `space_from`.** Which collection's encoder deposits use.
   *Recommended: `gutenberg`'s (`qwen3-embedding-4b`)* — multilingual,
   general-purpose, already served by RAGE and already calibrated. Not
@@ -321,6 +382,16 @@ open.
   chosen. A later change of encoder is a sister with a new space
   (`hold collection derive --space-from`): deposits are small, so
   re-embedding them costs minutes.
+
+  *How LocalRecall does it:* one `EMBEDDING_MODEL` name for every
+  collection. On chromem nothing records which model wrote a vector,
+  so changing the setting silently mixes spaces in every existing
+  collection. On postgres the model NAME and dimension are stored per
+  collection, and a changed name re-embeds the whole collection at
+  start. Either way the identity is a string: new weights, a new
+  quantisation or a new server build behind the same name are never
+  noticed — exactly the drift A0's gate and `vectors-sample` exist to
+  catch.
 
 ## 6. How it would be proved done
 
@@ -340,5 +411,6 @@ open.
 - An operator's stop, like step 6: one LocalAGI agent on the node with
   `local_rag_url` pointed at Louise, memory stored, found, compacted.
 
-In `migration-plan.md` this is a new step after 2, 4 and 5 (it builds
-records, vectors and runs checks), independent of 9–12.
+In `migration-plan.md` this is a new step after 3 and 4 (the gate and
+`vectors build`); A0 removes its dependence on 2 and 5. Independent of
+9–12.
