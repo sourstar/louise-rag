@@ -286,7 +286,9 @@ LocalAGI never sends a folder. Its paths into a collection are:
 - **compaction** — one summary per period, then the originals deleted;
 - **the Web UI** — one file per upload (a single `<input type=file>`,
   no `multiple`, no directory picker);
-- **sources** (D3) — one URL, re-fetched on a timer.
+- **sources** (D3) — one URL, re-fetched on a timer. **Added by a
+  person in the Web UI, never by an agent**: no agent action or memory
+  path calls `AddSource` (only `webui/collections_handlers.go` does).
 
 So the surface is one deposit per request, and nothing more is needed
 for LocalAGI. Bulk loading of a folder is a node operator's job and
@@ -328,7 +330,8 @@ PubMed's backlog, nor starve behind it.
 
 ## 5. Decisions for the operator
 
-**D1, D2 and D4 accepted by the operator, 2026-09-29.** D3, D5 and D6
+**D1, D2 and D4 accepted by the operator, 2026-09-29. D5 decided the
+same day: PDF is in v1, through `pypdfium2` (pinned).** D3 and D6
 open.
 
 - **D1 — Adopt A1–A8 as the amendment to 01, 02, 04, 06 and 07?**
@@ -369,7 +372,14 @@ open.
   the equivalent is `pypdfium2` — the same PDFium, Apache-2.0/BSD,
   prebuilt wheels — pinned, because extraction must be deterministic
   (invariant 3) for a re-embed to cut the same chunks. That is a new
-  dependency and needs the operator's yes.
+  dependency and needs the operator's yes — **given 2026-09-29**.
+  Promise 9 applies to it: the PDF's own metadata (title, author,
+  subject, keywords, creation and modification dates) is kept — `title`
+  and `creators` where they have a natural home, `extra` otherwise —
+  and the page structure is kept as sections, one per page. Extraction
+  runs under a timeout, and a PDF that yields no text (a scan) is
+  refused at upload with 415 rather than stored unsearchable: OCR is
+  not in v1.
 
 - **D6 — `space_from`.** Which collection's encoder deposits use.
   *Recommended: `gutenberg`'s (`qwen3-embedding-4b`)* — multilingual,
@@ -382,6 +392,16 @@ open.
   chosen. A later change of encoder is a sister with a new space
   (`hold collection derive --space-from`): deposits are small, so
   re-embedding them costs minutes.
+
+  *LocalAGI's default* is `granite-embedding-107m-multilingual`
+  (`cmd/env.go`; LocalRecall's docker-compose uses the same, and its
+  own binary has no default at all): IBM Granite, 107M parameters,
+  384 dimensions, 512-token context, Apache-2.0, Italian among its
+  languages, served by LocalAI. In HTTP mode LocalAGI sends no model —
+  the server decides — so Louise's choice is free. Granite would be a
+  new model in RAGE and a new calibration; `qwen3-embedding-4b` is
+  already both, and far stronger, at more GPU per chunk — which agent
+  memory, a few kilobytes per turn, does not notice.
 
   *How LocalRecall does it:* one `EMBEDDING_MODEL` name for every
   collection. On chromem nothing records which model wrote a vector,
