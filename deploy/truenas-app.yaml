@@ -2,13 +2,14 @@
 #
 # Successor to the legacy gutenberg-rag app: same two-container shape
 # (web + worker), same corpus/data mounts, plus the platform's additions —
-# a config mount (collections/*.toml, platform.toml, node key, space
-# artifacts), admin auth for the librarian pages, and the bundle machinery.
+# a config mount (collections/*.toml, platform.toml, space artifacts), a
+# read-only node key, admin auth for the librarian pages, and the bundle
+# machinery.
 #
 # DATA LAYOUT. The platform runs on its own dataset, /mnt/ssd4/apps/louise-rag
 # (NVMe gen4, 2 TB): data/ holds the manifest + fts + lancedb COPIED from the
-# legacy app on 2026-08-17, config/ holds the node key and TOML config. The
-# original at /mnt/ssd5/apps/gutenberg-rag is NEVER mounted or written by
+# legacy app on 2026-08-17, config/ holds the TOML config, secrets/ the node
+# key. The original at /mnt/ssd5/apps/gutenberg-rag is NEVER mounted or written by
 # this app — it stays pristine as the offline fallback, together with the
 # stopped gutenberg-rag app. Every step below operates on the copy only.
 #
@@ -17,9 +18,11 @@
 #   1. Build the image (from a checkout of this repo on the NAS):
 #        docker build -t louise-rag:local .
 #
-#   2. Create the node key (config/ already exists on the dataset):
-#        docker run --rm -v /mnt/ssd4/apps/louise-rag/config:/config \
-#          louise-rag:local python -m app.cli bundle keygen /config/node.key
+#   2. Create the node key, in its own dataset (see NODE KEY below):
+#        mkdir -p -m 700 /mnt/ssd4/apps/louise-rag/secrets
+#        docker run --rm -v /mnt/ssd4/apps/louise-rag/secrets:/secrets \
+#          louise-rag:local python -m app.cli bundle keygen /secrets/node.key
+#        chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key
 #
 #   3. Migrate the copied manifest (books -> documents; idempotent, verified
 #      against a copy of this exact manifest on 2026-08-16 — keeps all 79k
@@ -59,22 +62,32 @@
 # nothing could tell. The platform's space pinning + verify-on-use exists
 # for exactly this, but only helps once vectors are made under it.
 #
-# NODE KEY — keep it out of reach of whatever can write state/ (docs/notes/
+# NODE KEY — kept out of reach of whatever can write state/ (docs/notes/
 # rage.md §13, "layer 2"). A validation counts only when this node's key
 # signed it, so a planted statement is harmless only while the key cannot be
-# read by what planted it. Recommended layout, not yet applied here:
-#   - the key in its own dataset, never under data/ (where state/ lives) and
-#     never in a folder shared over SMB/NFS or replicated to another host:
-#        mkdir -p /mnt/ssd4/apps/louise-rag/secrets
-#        mv /mnt/ssd4/apps/louise-rag/config/node.key /mnt/ssd4/apps/louise-rag/secrets/
-#        chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key   # owned by the container's user
-#   - mounted read-only, as a file, in web and worker only (never gpu-probe):
-#        - /mnt/ssd4/apps/louise-rag/secrets/node.key:/run/louise/node.key:ro
-#     with NODE_KEY_PATH: /run/louise/node.key
-# The node refuses a key readable by group or others (app/bundles/keys.py).
+# read by what planted it. The key therefore lives in its own dataset,
+# secrets/ — never under data/ (where state/ lives), never in a folder
+# shared over SMB/NFS or replicated to another host — mode 0400, owned by
+# root (the containers' user), mounted read-only into web and worker only
+# (never gpu-probe). The FOLDER is mounted, not the file: a file mount whose
+# source is missing makes Docker create a directory in its place, and a later
+# `mv` of the key would land inside it. The node refuses a key readable by
+# group or others (app/bundles/keys.py).
 # The limit: code running inside web or worker can read the key; this guards
 # against file-level writes to state/ — a copied or restored state/, a share,
 # another container on the dataset.
+#
+# MOVING AN EXISTING KEY here (the key made before 2026-09-29 sits in
+# config/). MOVE it, never regenerate it: a new key is a new identity —
+# peers stop recognising this node's bundles and packs, and every validation
+# it signed is ignored, so every encoder is gated again. In this order:
+#   1. stop the app;
+#   2. mkdir -p -m 700 /mnt/ssd4/apps/louise-rag/secrets
+#      mv /mnt/ssd4/apps/louise-rag/config/node.key /mnt/ssd4/apps/louise-rag/secrets/
+#      chown root:root /mnt/ssd4/apps/louise-rag/secrets/node.key
+#      chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key
+#   3. install this YAML (its mounts name secrets/), then start the app.
+# Keep a copy of node.key offline: losing it is the same as regenerating it.
 #
 # Set ADMIN_TOKEN before installing: it gates the Library/Network/System
 # pages and the mutating API. Unset = those areas are locked out entirely
@@ -110,7 +123,7 @@ services:
       DATA_DIR: /data
       CORPUS_DIR: /corpus
       CONFIG_DIR: /config
-      NODE_KEY_PATH: /config/node.key
+      NODE_KEY_PATH: /run/louise/node.key   # read-only mount below — see NODE KEY
       # ── model endpoints (unchanged from the legacy app) ──
       CHAT_URL: http://192.168.178.10:30068
       CHAT_MODEL: qwen3:8b
@@ -138,6 +151,7 @@ services:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data
       - /mnt/ssd4/apps/louise-rag/config:/config
+      - /mnt/ssd4/apps/louise-rag/secrets:/run/louise:ro
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://localhost:8742/healthz']
       interval: 30s
@@ -155,6 +169,7 @@ services:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data
       - /mnt/ssd4/apps/louise-rag/config:/config
+      - /mnt/ssd4/apps/louise-rag/secrets:/run/louise:ro
     stop_grace_period: 120s
 
   # THE GPU PROBE (app/gpu_probe.py): each card's memory and every process's
