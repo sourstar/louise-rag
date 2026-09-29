@@ -648,3 +648,70 @@ content; a resolver never returns a bare symbol.
 From then on the platform's monthly cycle — fetch the delta by the
 cutoff rule, build the changed shards, embed the changed chunks — needs
 nothing from the plugin that the first pass did not.
+
+## 6.7 The deposit plugin
+
+*Operator, 2026-09-29; `notes/deposit-collections.md`.* The plugin of
+every deposit collection (02 §2.9). It is platform code like any
+plugin, and its origin is the client: what arrives over HTTP (07 §7.4)
+is written byte-exact to the collection's `origin/` (07 §7.8), and that
+is the corpus `discover` lists and `fetch` reads. Like every `origin/`
+it is never a member; unlike most, no other copy of it exists anywhere.
+
+| declaration | value |
+|---|---|
+| `license_class` | green — nothing is taken from a third party by the plugin itself; a URL source is §4.4's |
+| `privacy_class`, `erasure` | never-share, erasable — fixed: a recipe may not change them |
+| `modality` | text |
+| `mutability` | immutable — a deposit is replaced whole, never edited |
+| `native_id_order` | numeric — the node-wide deposit number (02 §2.9) |
+| `corpus_provider`, `corpus_attribution` | "the depositor", "Deposited by a client of this node." |
+| `default_layers` | one layer, `fixed`, its window sized to the encoder's context |
+
+**Parse.** Three forms are accepted and nothing else:
+
+- `.txt` and `.md`: UTF-8, cut into sections at Markdown headings, one
+  untitled section when there are none;
+- `.pdf`: text extracted with PDFium (the `pypdfium2` binding, pinned
+  in the platform image, because extraction must give the same text
+  every time for a re-embed to cut the same chunks), one section per
+  page, under a timeout. What the PDF says about itself — title,
+  author, subject, keywords, creation and modification dates — is kept
+  (§6.4): `title` and `creators` where they belong, `extra` otherwise.
+
+Anything else, text that is not valid UTF-8, and a PDF that yields no
+text (a scan: there is no OCR) are refused when they arrive, and never
+stored. `origin_hash` is BLAKE2b-128 of the bytes as deposited, and the
+record's `origin` is their path under `origin/`. `extra` carries `key`
+(the name the client gave), `deposited_at`, and `url` for a source's
+text.
+
+**URL sources.** A deposit collection may be subscribed to URLs, each
+with a refresh interval in minutes (default 60). The subscription is
+desired state, in the collection's file (07 §7.8). Each source is ONE
+deposit, whose key is `source-<collection>-<sanitised url>.txt`: the
+URL lower-cased, each of `://` `/` `?` `&` `=` `#` `@` `:` `.` `+` and
+space replaced by `-`, runs of `-` collapsed to one, leading and
+trailing `-` removed, cut at 255 bytes. What it holds depends on the
+URL:
+
+- ending `.git`: the repository shallow-cloned at HEAD, its text files
+  concatenated;
+- ending `sitemap.xml`: every page the sitemap lists, fetched and their
+  texts joined;
+- anything else: the one page, its HTML converted to text.
+
+A source is fetched when it is added, then again whenever its interval
+has passed; the deposit is replaced whole each time, and a fetch that
+fails or returns nothing keeps the previous one. Removing the source
+erases its deposit (02 §2.9). Every fetch draws from the transfer
+budget, and none happens before §4.4's rule for web sources is met: a
+git repository over SSH with this node's key (`GIT_PRIVATE_KEY_FILE`,
+07 §7.8) needs nothing more; every other URL needs the web-sources
+disclaimer.
+
+This is the behaviour of LocalAGI's knowledge base, whose clients Louise
+serves (07 §7.4), reproduced so that they cannot tell the difference;
+the budget, the disclaimer and the key held by path are the only
+additions.
+

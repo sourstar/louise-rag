@@ -1306,6 +1306,54 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
+### Step 15 — Deposit collections and the LocalAGI routes — *specified 2026-09-29, not built*
+*01 (vocabulary), 02 §2.9, 03 §3.2, 04 §4.4, 06 §6.7, 07 §7.2–7.4,
+§7.6–7.8, 09 §9.13, §9.17. Design and reasons:
+[`deposit-collections.md`](deposit-collections.md). Wraps
+`app/hold/codex.py`, `app/hold/collection.py`, `app/layers.py`,
+`app/retrieval.py`, `app/licensing.py`, `app/auth.py`, `app/api.py`,
+the transfer manager and the worker's stage selection.*
+
+- **15a — the plugin and the Codex.** `app/plugins/deposit/`; `hold
+  collection create deposit --name`, with the nonce in `origin.spec`,
+  the node's `[deposit] encoder` or `--encoder`/`--space-from`, and the
+  space block copied whole — no calibration run — when a deposit
+  collection on that encoder already exists. `hold deposit
+  add|erase|list|show`. Proven by `tests/deposit/test_identity.py`: two
+  collections from one set of defaults have two ids; a re-added key
+  replaces; `native_id`s ascend node-wide.
+- **15b — parse.** `.txt`, `.md`, `.pdf` through `pypdfium2`, pinned
+  in `requirements.txt` (operator's yes, 2026-09-29); every chunk cut
+  through `layers.chunks_for_document`. Proven by golden files: the
+  same bytes give the same record and the same chunks, PDF metadata
+  kept, a scan and non-UTF-8 text refused.
+- **15c — no trace.** Erase removes the origin bytes, the rows, the
+  text-index postings (segments merged), the vectors including old
+  table versions (cleaned up), with `SECURE_DELETE` never turned off.
+  Proven by `tests/deposit/test_erasure.py`: deposit, embed, erase, and
+  the deposit's bytes appear in no file under the collection.
+- **15d — the LocalAGI routes.** 07 §7.4's table on `app/api.py`,
+  `DEPOSIT_TOKEN_FILE`, deposit collections withheld from every open
+  `ask` route and the Ask page. The upload commits record, chunks and
+  text index in its request and never calls the encoder; vectors are
+  the worker's next round. Proven by
+  `tests/deposit/test_localagi_contract.py` — every request LocalAGI's
+  `pkg/localrag/client.go` (at `7e0947d`) sends, decoded the way it
+  decodes the answer — and `tests/deposit/test_auth.py`.
+- **15e — URL sources.** `hold source add|erase|list`, `[[sources]]` in
+  the collection's file, `hold collection ack --web-sources`,
+  `GIT_PRIVATE_KEY_FILE`; every fetch through the transfer manager.
+  Proven by `tests/deposit/test_sources.py`: keys equal LocalRecall's
+  `sanitizeURL` on its own cases; nothing is requested before the
+  disclaimer; one deposit per source, replaced whole, kept on a failed
+  refresh.
+- **The worker.** Embedding deposits and refreshing sources change what
+  runs when: [`scheduling.md`](scheduling.md) §6's checklist and `dev
+  schedule-report` numbers before 15d and 15e are deployed.
+- **15f — the operator's stop,** like 6: one LocalAGI agent with
+  `local_rag_url` on the node — memory stored, found, compacted; a file
+  uploaded from its UI; one URL source.
+
 ## 4. Dependencies between steps
 
 ```
@@ -1341,6 +1389,10 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 - 14 needs 5 (the checks it derives from), 8 (collections with a Codex)
   and 13e (validated runs). 9's `share` honours it from the day it
   enforces.
+- **15 (added 2026-09-29)** needs 3 and 4 (the gate and `vectors
+  build`) and 13e (validated runs), and nothing of 2, 5 or 8–12: a
+  deposit collection has no drag, no snapshot and no published checks
+  (02 §2.9). Its sub-steps run in order, 15a first.
 
 ## 5. Kick-off prompt for Claude Code
 

@@ -50,7 +50,9 @@ does — the three tools of §5.4 plus the listing of 05 §5.7 — and
 `chat` and `serve` expose them to a model and over MCP; `contribute`
 and `attest` are `share`'s two wrappers of `hold vectors build` and
 `hold check`; `peers` is the one noun `share` has that `hold` has not;
-`start`, `stop`, `pause` and `resume` belong to `node` alone. A new verb
+`start`, `stop`, `pause` and `resume` belong to `node` alone; `add` and
+`erase` put a deposit, or a URL source, into a deposit collection and
+take it out leaving no trace (02 §2.9, 06 §6.7). A new verb
 that does not fit one of these rows is probably a flag on an existing
 one.
 
@@ -60,6 +62,8 @@ one.
 louise hold
   collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
                                                                        write a Codex; print its id
+              create deposit --name N [--encoder URL | --space-from CODEX]
+                                                                       a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
@@ -70,10 +74,18 @@ louise hold
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
               ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
+              ack --web-sources [--yes]                                print the web-sources disclaimer; record this node's acceptance, once (04 §4.4)
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes]                  stop holding: remove this peer's copy and its state
               list [--all]                                             collections held, by lineage; --all includes the dormant
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
+  deposit     add <collection> FILE [--key K]                          store a file as a deposit; an existing key is replaced whole
+              erase <collection> <key> [--yes]                         remove a deposit, leaving no trace (02 §2.9)
+              list <collection>                                        the collection's deposit keys
+              show <collection> <key>                                  a deposit's text and its chunk count
+  source      add <collection> <url> [--interval MIN]                  subscribe a deposit collection to a URL; fetched now, then every interval (06 §6.7)
+              erase <collection> <url> [--yes]                         end the subscription and erase its deposit
+              list <collection>                                        the subscriptions, each with its last fetch
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
@@ -451,11 +463,50 @@ Who may call what:
   `ADMIN_TOKEN_FILE`, presented as a bearer token. With no token file
   configured they answer 401 — never open.
 - `ask` routes are read-only and open on the LAN by default, so a guest
-  and an MCP client (§5.4) need no token. They return nothing secret.
+  and an MCP client (§5.4) need no token. They return nothing secret —
+  and so they never return a deposit collection, which is searched only
+  with the deposit token or the admin token. Never-share is not only
+  about peers: a guest on the LAN is not the depositor either.
+- the LocalAGI routes below require the token read from
+  `DEPOSIT_TOKEN_FILE`, reads included, and that token opens nothing
+  else: an agent that can write its memory cannot pause the node.
 - `share` is not an HTTP API of the node: it is the signed peer-to-peer
   messages of 09 §9.9 and the torrents of 09 §9.16. A sender is
   identified by its key and nothing else, and the aggregate limit of
   08 §8.2 bounds what an unknown key can cost.
+
+**The LocalAGI routes** (operator, 2026-09-29;
+`notes/deposit-collections.md`). The second protocol alias beside
+`/v1/chat/completions`: the knowledge-base API that LocalAGI's HTTP
+client speaks (`pkg/localrag/client.go`), so that an agent pointed at
+this node (`LOCALAGI_LOCALRAG_URL`, or an agent's `local_rag_url`) uses
+it as its knowledge base unchanged. Each route is one command of the
+tree, answered in LocalAGI's shape rather than §7.7's:
+
+| route | is |
+|---|---|
+| `POST /api/collections` `{name}` | `hold collection create deposit --name` — 201 |
+| `GET /api/collections` | `hold collection list`: deposit collections, and every held collection read-only |
+| `GET /api/collections/{c}/entries` | `hold deposit list` |
+| `GET /api/collections/{c}/entries/{key}` | `hold deposit show` — the whole text and `chunk_count` |
+| `DELETE /api/collections/{c}/entry/delete` `{entry}` | `hold deposit erase`, then the remaining keys |
+| `POST /api/collections/{c}/search` `{query, max_results}` | `ask search` over `{c}` alone |
+| `POST /api/collections/{c}/reset` | `hold deposit erase` of every key |
+| `POST /api/collections/{c}/upload` (multipart `file`) | `hold deposit add`; the answer is the bare object `{status, filename, key}` |
+| `POST`, `DELETE`, `GET /api/collections/{c}/sources` | `hold source add`, `erase`, `list` |
+
+Every other answer is the envelope `{success, message, data, error:
+{code, message, details}}`; success is 200 except create's 201, and a
+failure carries §7.7's status with the envelope. A search result is
+`{id, content, metadata, similarity}`: the uid, the chunk text, the
+record's citation fields as strings, and the vector leg's cosine — 0
+for a hit the text index alone found. A write to a collection that is
+not a deposit collection answers 409; a source added before the
+web-sources disclaimer is accepted answers 409 and fetches nothing
+(04 §4.4). A deposit is searchable by text as soon as its upload is
+answered — record, chunks and text index are committed in the request —
+and by vector once the node's next round has embedded it; the request
+never waits on the encoder.
 
 ## 7.5 Rules for anyone adding a command
 
@@ -508,6 +559,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `/api/control`, the Library's pause and embed-mode controls | `node pause` / `resume`, `hold config apply --set embed=…` |
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
+| LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
 | `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync` |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
@@ -630,6 +682,8 @@ signal does not shorten that. The unit per stage:
 | `index build` | the shard |
 | `check`, `share attest` | the sampled shard; an attestation is written only for a completed check |
 | `forget` | the member; a member is gone entire or still there |
+| `deposit add`, `deposit erase`, `source erase` | the deposit: stored or erased entire, never half |
+| a source's refresh | the source: its deposit is replaced entire or kept as it was |
 
 A re-run after 130 continues from the last committed unit and writes the
 same bytes it would have written uninterrupted. The node stops every
@@ -642,7 +696,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
@@ -669,7 +723,11 @@ key, and `bundle public-key` for a key that has none.
 `NODE_KEY_PATH` unset means this peer cannot sign — no bundles, no
 attestations, no `share` of its own work; import, check and search work
 without it. `ADMIN_TOKEN_FILE` unset means the `hold` and `node` routes
-answer 401 (§7.4). There is no default encoder: a collection names
+answer 401 (§7.4); `DEPOSIT_TOKEN_FILE` unset means the LocalAGI routes
+do. `GIT_PRIVATE_KEY_FILE` names the SSH key a deposit collection's
+`.git` sources are cloned with (06 §6.7); unset, such a source is
+cloned without one and needs the web-sources disclaimer like any
+URL. There is no default encoder: a collection names
 its own in its file's `[encoder]`, and a file that names none is a
 non-compliant collection — refused, not served, shared or searched, the
 reason named by `hold collection show` — and everything that would need
@@ -698,6 +756,10 @@ variable, a file, a log line or a message.
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
              # of 50; a deeper list gets it in proportion (05 §5.6)
+[deposit]    encoder = "http://nas:30450/upstream/granite-embedding-107m-multilingual"
+             # the encoder a deposit collection is created with when none is named (02 §2.9);
+             # granite-embedding-107m-multilingual, LocalAGI's own default, unless changed here
+[deposit.collections.alice]  space_from = "sha256:…"    # one name's encoder, for a collection a client creates
 ```
 
 **`collections/<name>.toml`** — one held collection; the file existing
@@ -721,6 +783,10 @@ query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query si
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
+
+[[sources]]                                    # a deposit collection only (06 §6.7): one per subscribed URL
+url = "https://example.org/sitemap.xml"
+interval = 60                                  # minutes
 ```
 
 The encoder endpoint is the collection's `[encoder]` and nothing else: a
@@ -759,9 +825,14 @@ collection is another name.
 │       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
 │       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here
-├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json
+├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json; web-sources-ack.json (09 §9.13)
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
+
+A deposit collection (02 §2.9) has the same tree without `drag/`: its
+`origin/` holds the deposits, byte-exact, and is the only copy of them
+anywhere; `state/`, `index/` and `lance/` hold what is derived from
+them, and erasing a deposit removes it from all four.
 
 `drag/` holds only what the Codex or a snapshot names, so a member is
 hashed as it lies and `share` refuses a drag directory holding a file

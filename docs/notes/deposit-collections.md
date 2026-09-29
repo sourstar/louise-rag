@@ -1,6 +1,8 @@
 # Deposit collections — Louise as LocalAGI's knowledge base
 
-**Status: PROPOSAL, for the operator's decision. Nothing built.**
+**Status: ADOPTED 2026-09-29 — written into 01, 02 §2.9, 03 §3.2, 04
+§4.4, 06 §6.7, 07 and 09 §9.13, §9.17; migration step 15. Nothing
+built.** Where this note and those documents differ, the documents win.
 Written 2026-09-29 at the operator's request: *make Louise able to offer
 the connectivity LocalAGI expects of a knowledge base, so it can take
 that place in LocalAGI's ecosystem.* The reference project is
@@ -140,10 +142,9 @@ holds a copy of it.
   metadata kept (D5). Anything else — and text that is not valid UTF-8
   — is refused at upload (415), never stored and never guessed at.
 - `origin_hash` is BLAKE2b-128 of the bytes exactly as deposited; the
-  record's `origin` is the store path relative to its base. So
-  `records-vs-origin` re-parses the kept bytes and must reproduce the
-  record — invariant 11 holds, because the origin is kept for as long
-  as the record exists, and both go together (A4).
+  record's `origin` is the store path relative to its base. The origin
+  is kept for as long as the record exists, and both go together (A4),
+  so a re-embed or a re-parse always has its input.
 - The **deposit key** (the filename the client sent) is kept as
   `extra.key`; the upload time as `extra.deposited_at`. The latter is
   kind (c) of promise 9 and could be dropped; it is kept because
@@ -193,11 +194,10 @@ present as usual. What differs:
   encoder share one space — an agent's memory and its URL sources (A9)
   are one ranked list — while a curated collection, with its own
   chunker, is another space, fused by RRF (05 §5.1).
-- **`update`** — the schema (09 §9.3) requires a cadence; deposit
-  collections take `monthly`, day 1, grace 0. The snapshots stay local
-  (A4).
-- `credits` holds the single `corpus` entry; `validation` samples like
-  any collection; `publication: "open"`, `certifier: null`.
+- **`update`, `validation`, `work`** — written because the schema
+  (09 §9.3) requires them, and not run (A0).
+- `credits` holds the single `corpus` entry; `publication: "open"`,
+  `certifier: null`.
 
 ### A4 — What "no trace" means for an erasable collection (02 §2.2–2.3, 04 §4.4)
 
@@ -241,8 +241,8 @@ appear in no file under the collection's state and drag directories.
 ### A6 — Creating a collection from an API (07 §7.3)
 
 `hold collection create deposit --name <name> [--space-from CODEX]` —
-the existing verb with the `deposit` plugin; `--name` is the one new
-flag, and the recipe is the plugin's defaults, so none is needed. It
+the existing verb with the `deposit` plugin and its existing `--name`;
+the recipe is the plugin's defaults, so none is needed. It
 writes `collections/<name>.toml` (desired state lives in files,
 invariant 10 — never in the DB, even when an API created it), the
 Codex of A3, and the empty `origin/`. The name is
@@ -392,9 +392,7 @@ PubMed's backlog, nor starve behind it.
 
 - **No sharing of deposits, ever.** Not as an option, not later:
   erasable ⇒ never-share is arithmetic (04 §4.4).
-- **No PDF, DOCX or other binary formats in v1.** Each needs a pinned
-  extraction library in the image — a new dependency, the operator's
-  call (D5).
+- **No DOCX or other binary formats but PDF in v1**, and no OCR (D5).
 - **No compatibility beyond what LocalAGI's client sends.** LocalRecall's
   other routes (raw file download, its own UI) are not a target.
 - **No change to any curated collection.** They gain a read-only view,
@@ -409,8 +407,8 @@ other URLs behind a one-time disclaimer (A9); D6 with LocalAGI's
 own default encoder, overridable (A3).
 
 - **D1 — Adopt A0–A9 as the amendment to 01, 02, 04, 06 and 07?**
-  09 needs no change: nothing here is hashed, signed or moved between
-  peers, except the Codex, whose schema is unchanged.
+  Adopted. 09 needed two additions after all: the deposit plugin's
+  `origin.spec` (§9.17) and the web-sources acceptance file (§9.13).
 - **D2 — Do curated collections appear to LocalAGI?** *Accepted, as recommended:
   yes, read-only.* It is what makes the integration worth more than
   LocalRecall: an agent searches Normattiva beside its own memory. The
@@ -430,9 +428,7 @@ own default encoder, overridable (A3).
   page each passage came from. A9 reproduces this behaviour; it adds only the
   disclaimer, the key-by-path and the transfer budget.
 
-- **D5 — Which formats in v1.** *Recommended: UTF-8 text and Markdown
-  only* — all LocalAGI's agent memory produces. PDF on request, with
-  the library chosen then.
+- **D5 — Which formats in v1. DECIDED: text, Markdown and PDF.**
 
   *How LocalRecall does it:* `.txt`, `.md` and `.pdf` are chunked;
   any other file is stored "raw-only" — listed, downloadable, never
@@ -482,8 +478,7 @@ own default encoder, overridable (A3).
   replayed against the app; every response decoded the way that client
   decodes it (status code, envelope, the unwrapped upload body).
 - `tests/deposit/test_erasure.py`: A4's no-trace assertion, including
-  Lance's old versions, unmerged index segments and superseded shard
-  files.
+  Lance's old versions and unmerged index segments.
 - `tests/deposit/test_identity.py`: two deposit collections from one
   template have different `collection_id`s; a re-deposited key
   replaces; `native_id`s ascend.
