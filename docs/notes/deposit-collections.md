@@ -311,46 +311,61 @@ agents read-only (D2). If a deposit-side bulk path is wanted later, it
 is `hold records fetch` over a mounted folder with the `deposit`
 parser, not a new route.
 
-### A9 — URL sources, gated on a licence (D3)
+### A9 — URL sources, exactly as LocalAGI and LocalRecall do them (D3)
 
-A person adds a source in LocalAGI's Web UI: a URL and an interval.
-The page is not the depositor's content, so it does not go into the
-deposit collection — it goes into **a collection of its own**, and
-nothing is fetched until its licence is acknowledged.
+The behaviour is LocalRecall's (`rag/source_manager.go`, `rag/sources/`
+at `4cae67b`; LocalAGI embeds it as `localrecall v0.6.5`), reproduced.
+A source is a **subscription inside the collection**:
 
-- **`AddSource` registers, it does not fetch.** It creates a *source
-  collection* — plugin `web`, `privacy: never-share`,
-  `erasure: erasable`, licence class `yellow` by default (`red` if the
-  operator says so) — in the same space as the deposit collection it
-  belongs to. It answers 200 with the message *"registered; nothing is
-  fetched until its terms are acknowledged in Louise"*, and
-  `ListSources` shows it with an empty `last_update` until then.
-- **The gate is invariant 9's, unchanged.** The operator supplies the
-  terms text — a site's terms page, a repository's `LICENSE` — as a
-  file: `hold collection ack <source> --terms FILE`. Its sha256 goes
-  in the ack record, byte-exact, never converted; `app/licensing.py`
-  resolves it like any other collection's. **Not one byte leaves the
-  origin before that ack**, the terms page included: Louise does not
-  fetch the terms for you, because fetching them is already fetching.
-- **Fetched properly** — the places LocalRecall does not (D3): every
-  request through the transfer manager (invariant 5); `robots.txt`
-  honoured; **one record per page** — a `sitemap.xml` becomes one
-  record per listed page, a `.git` URL one record per text file at
-  HEAD — each with its URL as `origin`, its bytes' hash as
-  `origin_hash`, its bytes in that collection's `origin/`. HTML is
-  cleaned to text, and what the page says about itself (title,
-  author, dates, language, keywords in its metadata) is kept (promise
-  9). PDFs linked as the source go through D5's parser.
-- **Refresh** on the interval: a changed page replaces its record (A5),
-  a page gone from the site or the sitemap is erased (A4).
-- **Seen from LocalAGI**: `ListSources` lists the collection's source
-  collections; `Search` on the deposit collection covers them too (one
-  space, one list); `ListEntries` does NOT list source pages, so
-  compaction never summarises and deletes them. `RemoveSource` is A4's
-  erasure of the whole source collection.
+- **Attached to the collection** that holds the agent's memory and
+  uploads — no separate collection. The subscription (URL, interval in
+  minutes, default 60) is desired state, so it lives in
+  `collections/<name>.toml` `[[sources]]` (invariant 10).
+- **One URL = one entry**, key `source-<collection>-<sanitised url>.txt`
+  (LocalRecall's `sanitizeURL`, byte for byte: lower-cased, `://` `/`
+  `?` `&` `=` `#` `@` `:` `.` `+` and space to `-`, runs of `-`
+  collapsed, trimmed, cut at 255), metadata `{url}`:
+  - a URL ending `.git` is shallow-cloned (depth 1, HEAD) and its text
+    files concatenated;
+  - a URL ending `sitemap.xml` has every listed page fetched and the
+    texts joined;
+  - anything else is one page, HTML converted to text.
+- **Refreshed by replacement**: when the interval has passed the URL is
+  fetched again and the entry replaced whole (A5). A failed or empty
+  fetch keeps the previous entry.
+- **An ordinary entry**: listed by `ListEntries`, searched with memory
+  and uploads, readable, deletable. Compaction skips it (no date
+  prefix).
+- **`RemoveSource`** drops the subscription and erases the entry (A4).
+- **Fetched at once when added.** LocalRecall persists a new source but
+  does not put it on the running ticker, so as read it is first fetched
+  at the next restart; Louise fetches it immediately, which is what
+  `RegisterCollection`'s immediate update shows was intended.
 
-Stored like any collection: `collections/<name>--src-<n>/` with its own
-`origin/`, `state/`, `index/`, `lance/`, and its ack in `state/ack.json`.
+**The licence gate (operator, 2026-09-29).**
+
+- **Git with the node's key: implicit.** A repository cloned over SSH
+  with the operator's own key is one the operator is authorised to
+  read. The key is referenced by path, `GIT_PRIVATE_KEY_FILE`
+  (invariant 8) — LocalRecall's `GIT_PRIVATE_KEY` carries it base64 in
+  an env value, which Louise never does.
+- **Every other URL: a generic disclaimer, accepted once per node.**
+  Its text ships with the platform, byte-exact
+  (`app/plugins/deposit/WEB-DISCLAIMER.txt`): *all fetched content is
+  the property of its owners; its licences must be respected; the
+  collection is never shared, and the operator who adds a source is
+  liable for any infringement.* Accepting it records the timestamp and
+  the sha256 of that text, as every acknowledgement is recorded
+  (invariant 9's form). Until it is accepted, `AddSource` answers 409
+  with *"accept the web-sources disclaimer in Louise first"*; nothing is
+  fetched.
+- This is compatible with invariant 9 as written: a deposit collection
+  is green (D4) and never shared, and the disclaimer is the operator's
+  standing acceptance for the URLs they subscribe it to.
+
+The one Louise rule kept that LocalRecall does not have: every fetch
+draws from the transfer manager's budget (invariant 5). It changes no
+behaviour LocalAGI can see.
 
 ### A8 — When a deposit becomes searchable
 
@@ -386,7 +401,8 @@ PubMed's backlog, nor starve behind it.
 
 **All six decided by the operator, 2026-09-29:** D1, D2 and D4 as
 recommended; D5 with PDF in v1 through `pypdfium2`; D3 with URL sources
-in v1, each gated on an acknowledged licence (A9); D6 with LocalAGI's
+in v1 exactly as LocalAGI does them, git authorised by the node's key and
+other URLs behind a one-time disclaimer (A9); D6 with LocalAGI's
 own default encoder, overridable (A3).
 
 - **D1 — Adopt A0–A9 as the amendment to 01, 02, 04, 06 and 07?**
@@ -397,8 +413,9 @@ own default encoder, overridable (A3).
   LocalRecall: an agent searches Normattiva beside its own memory. The
   cost: LocalAGI's UI will offer "upload" and "reset" buttons on them,
   which answer 409.
-- **D3 — `sources` routes. DECIDED: in v1, each source gated on an
-  acknowledged licence (A9).**
+- **D3 — `sources` routes. DECIDED: as LocalAGI and LocalRecall do
+  it (A9), with git authorised by the node's key and every other URL
+  behind a one-time disclaimer.**
 
   *How LocalRecall does it* (read at `4cae67b`): a goroutine ticks
   every minute and re-fetches each URL whose interval has passed —
@@ -407,8 +424,8 @@ own default encoder, overridable (A3).
   page through `html2text`. The result is ONE entry,
   `source-<collection>-<url>.txt`, replaced whole each time. No
   bandwidth budget, no terms, no robots.txt, and no record of which
-  page each passage came from. A9 keeps the contract (URL + interval)
-  and fixes each of those.
+  page each passage came from. A9 reproduces this behaviour; it adds only the
+  disclaimer, the key-by-path and the transfer budget.
 
 - **D5 — Which formats in v1.** *Recommended: UTF-8 text and Markdown
   only* — all LocalAGI's agent memory produces. PDF on request, with
@@ -470,10 +487,12 @@ own default encoder, overridable (A3).
 - `tests/deposit/test_auth.py`: open `ask` routes and the Ask page
   never return a deposit collection; the deposit token opens nothing
   else.
-- `tests/deposit/test_sources.py`: `AddSource` fetches nothing — the
-  transfer manager records zero requests to the origin — until the
-  ack exists; after it, one record per sitemap page, each through the
-  budget; `RemoveSource` leaves no trace (A4).
+- `tests/deposit/test_sources.py`: entry keys equal LocalRecall's
+  `sanitizeURL` on its own test cases; `AddSource` before the
+  disclaimer answers 409 and the transfer manager records zero
+  requests; after it, the entry exists once and is replaced whole on
+  refresh; a failed refresh keeps it; `RemoveSource` leaves no trace
+  (A4).
 - An operator's stop, like step 6: one LocalAGI agent on the node with
   `local_rag_url` pointed at Louise, memory stored, found, compacted.
 
