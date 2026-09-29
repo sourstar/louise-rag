@@ -164,21 +164,32 @@ present as usual. What differs:
   be *the same collection* — same id, same drag path. A deposit is not
   reproducible from a public origin, so no two deposit collections are
   ever the same one; the nonce says so in the identity.
-- **`space`** is copied whole — encoder, engine, calibration, envelope,
-  tolerance — by `create`'s existing `--space-from CODEX`, defaulting to
-  `platform.toml` `[deposit] space_from` when the API creates. That
-  collection's encoder has already passed the gate, and the calibration
-  set does not depend on the corpus (03 §3.3), so **the minute `create`
-  spends embedding the calibration set is skipped: the bytes are
+- **`space`** — the default encoder is **LocalAGI's own default,
+  `granite-embedding-107m-multilingual`** (D6): IBM, 107M parameters,
+  384 dimensions, 512-token context, Apache-2.0, Italian among its
+  languages; RAGE serves it through llama.cpp from a GGUF build
+  (`bartowski/granite-embedding-107m-multilingual-GGUF`). It is named
+  in `platform.toml` `[deposit] encoder`. The FIRST deposit collection
+  created on it runs `create`'s calibration once (about a minute);
+  every later one copies that space block whole — encoder, engine,
+  calibration, envelope, tolerance — and skips it, **the bytes being
   identical** (CLAUDE.md RULE 1: the default, reported, not asked).
-  `space_from` must name a `modality: text` collection; `create`
-  refuses anything else.
+  **The operator may choose another encoder**: on the command line
+  with `--space-from CODEX` or `--encoder URL`; for collections LocalAGI
+  creates (its create carries no model), per name in `platform.toml`
+  `[deposit.collections.<name>] space_from`, or node-wide by changing
+  `[deposit] encoder`. The choice is fixed when the collection is
+  created (it is in the Codex); changing it later is a sister with a
+  new space (`hold collection derive --space-from`), whose deposits
+  are re-embedded from `origin/` — minutes, not days. Whatever the
+  encoder, it must be `modality: text`, and `create` refuses anything
+  else.
 - **`layers`** are the deposit plugin's default: one layer, `fixed`.
-  `space_id` hashes layers, so a deposit collection is in the same
-  space as `space_from` only if that collection is also one `fixed`
-  layer; otherwise it is its own space on the same encoder, and 05
-  §5.1 fuses the two by RRF — correct either way, since both answer
-  the same question.
+  Its window is sized to the encoder's context (512 tokens for the
+  default). `space_id` hashes layers, so deposit collections on one
+  encoder share one space — an agent's memory and its URL sources (A9)
+  are one ranked list — while a curated collection, with its own
+  chunker, is another space, fused by RRF (05 §5.1).
 - **`update`** — the schema (09 §9.3) requires a cadence; deposit
   collections take `monthly`, day 1, grace 0. The snapshots stay local
   (A4).
@@ -300,6 +311,47 @@ agents read-only (D2). If a deposit-side bulk path is wanted later, it
 is `hold records fetch` over a mounted folder with the `deposit`
 parser, not a new route.
 
+### A9 — URL sources, gated on a licence (D3)
+
+A person adds a source in LocalAGI's Web UI: a URL and an interval.
+The page is not the depositor's content, so it does not go into the
+deposit collection — it goes into **a collection of its own**, and
+nothing is fetched until its licence is acknowledged.
+
+- **`AddSource` registers, it does not fetch.** It creates a *source
+  collection* — plugin `web`, `privacy: never-share`,
+  `erasure: erasable`, licence class `yellow` by default (`red` if the
+  operator says so) — in the same space as the deposit collection it
+  belongs to. It answers 200 with the message *"registered; nothing is
+  fetched until its terms are acknowledged in Louise"*, and
+  `ListSources` shows it with an empty `last_update` until then.
+- **The gate is invariant 9's, unchanged.** The operator supplies the
+  terms text — a site's terms page, a repository's `LICENSE` — as a
+  file: `hold collection ack <source> --terms FILE`. Its sha256 goes
+  in the ack record, byte-exact, never converted; `app/licensing.py`
+  resolves it like any other collection's. **Not one byte leaves the
+  origin before that ack**, the terms page included: Louise does not
+  fetch the terms for you, because fetching them is already fetching.
+- **Fetched properly** — the places LocalRecall does not (D3): every
+  request through the transfer manager (invariant 5); `robots.txt`
+  honoured; **one record per page** — a `sitemap.xml` becomes one
+  record per listed page, a `.git` URL one record per text file at
+  HEAD — each with its URL as `origin`, its bytes' hash as
+  `origin_hash`, its bytes in that collection's `origin/`. HTML is
+  cleaned to text, and what the page says about itself (title,
+  author, dates, language, keywords in its metadata) is kept (promise
+  9). PDFs linked as the source go through D5's parser.
+- **Refresh** on the interval: a changed page replaces its record (A5),
+  a page gone from the site or the sitemap is erased (A4).
+- **Seen from LocalAGI**: `ListSources` lists the collection's source
+  collections; `Search` on the deposit collection covers them too (one
+  space, one list); `ListEntries` does NOT list source pages, so
+  compaction never summarises and deletes them. `RemoveSource` is A4's
+  erasure of the whole source collection.
+
+Stored like any collection: `collections/<name>--src-<n>/` with its own
+`origin/`, `state/`, `index/`, `lance/`, and its ack in `state/ack.json`.
+
 ### A8 — When a deposit becomes searchable
 
 LocalAGI stores a memory and may search for it on the next turn. The
@@ -332,23 +384,21 @@ PubMed's backlog, nor starve behind it.
 
 ## 5. Decisions for the operator
 
-**D1, D2 and D4 accepted by the operator, 2026-09-29. D5 decided the
-same day: PDF is in v1, through `pypdfium2` (pinned).** D3 and D6
-open.
+**All six decided by the operator, 2026-09-29:** D1, D2 and D4 as
+recommended; D5 with PDF in v1 through `pypdfium2`; D3 with URL sources
+in v1, each gated on an acknowledged licence (A9); D6 with LocalAGI's
+own default encoder, overridable (A3).
 
-- **D1 — Adopt A1–A8 as the amendment to 01, 02, 04, 06 and 07?**
+- **D1 — Adopt A0–A9 as the amendment to 01, 02, 04, 06 and 07?**
   09 needs no change: nothing here is hashed, signed or moved between
   peers, except the Codex, whose schema is unchanged.
-- **D2 — Do curated collections appear to LocalAGI?** *Recommended:
+- **D2 — Do curated collections appear to LocalAGI?** *Accepted, as recommended:
   yes, read-only.* It is what makes the integration worth more than
   LocalRecall: an agent searches Normattiva beside its own memory. The
   cost: LocalAGI's UI will offer "upload" and "reset" buttons on them,
   which answer 409.
-- **D3 — `sources` routes.** *Recommended: answer 501 in v1.* A URL
-  fetched on a timer is acquisition — licence gates, the transfer
-  budget (invariant 5), origin etiquette. Doing it properly is a
-  plugin of its own; doing it improperly is the bypass invariant 9
-  forbids. LocalAGI's UI shows the error; agents never call these.
+- **D3 — `sources` routes. DECIDED: in v1, each source gated on an
+  acknowledged licence (A9).**
 
   *How LocalRecall does it* (read at `4cae67b`): a goroutine ticks
   every minute and re-fetches each URL whose interval has passed —
@@ -357,11 +407,8 @@ open.
   page through `html2text`. The result is ONE entry,
   `source-<collection>-<url>.txt`, replaced whole each time. No
   bandwidth budget, no terms, no robots.txt, and no record of which
-  page each passage came from — a whole site becomes one document.
-  Louise could keep the contract (URL + interval) and do it properly:
-  one deposit per page, with its URL as `origin`, through the transfer
-  manager — but still not in a green, ack-free collection, because a
-  web page is not the depositor's content.
+  page each passage came from. A9 keeps the contract (URL + interval)
+  and fixes each of those.
 
 - **D5 — Which formats in v1.** *Recommended: UTF-8 text and Markdown
   only* — all LocalAGI's agent memory produces. PDF on request, with
@@ -383,27 +430,20 @@ open.
   refused at upload with 415 rather than stored unsearchable: OCR is
   not in v1.
 
-- **D6 — `space_from`.** Which collection's encoder deposits use.
-  *Recommended: `gutenberg`'s (`qwen3-embedding-4b`)* — multilingual,
-  general-purpose, already served by RAGE and already calibrated. Not
-  Normattiva: no Normattiva collection exists, and its encoder is the
-  operator's own (ita-legal-embed; STATUS.md, 2026-09-14). Nor does the
-  choice buy one ranked list with a curated collection: that needs the
-  same layers as well as the same encoder (A3), and curated collections
-  use their own chunkers, so D2's results are fused by RRF whatever is
-  chosen. A later change of encoder is a sister with a new space
-  (`hold collection derive --space-from`): deposits are small, so
-  re-embedding them costs minutes.
+- **D6 — the encoder. DECIDED: LocalAGI's default,
+  `granite-embedding-107m-multilingual`, overridable by the operator
+  (A3).**
 
   *LocalAGI's default* is `granite-embedding-107m-multilingual`
   (`cmd/env.go`; LocalRecall's docker-compose uses the same, and its
   own binary has no default at all): IBM Granite, 107M parameters,
   384 dimensions, 512-token context, Apache-2.0, Italian among its
   languages, served by LocalAI. In HTTP mode LocalAGI sends no model —
-  the server decides — so Louise's choice is free. Granite would be a
-  new model in RAGE and a new calibration; `qwen3-embedding-4b` is
-  already both, and far stronger, at more GPU per chunk — which agent
-  memory, a few kilobytes per turn, does not notice.
+  the server decides — so Louise's choice is free. Granite costs one new
+  model in RAGE and one calibration, once; it is small enough to stay
+  resident beside the others. `qwen3-embedding-4b`, already in RAGE and
+  calibrated, remains the obvious override where retrieval quality
+  matters more than footprint.
 
   *How LocalRecall does it:* one `EMBEDDING_MODEL` name for every
   collection. On chromem nothing records which model wrote a vector,
@@ -430,6 +470,10 @@ open.
 - `tests/deposit/test_auth.py`: open `ask` routes and the Ask page
   never return a deposit collection; the deposit token opens nothing
   else.
+- `tests/deposit/test_sources.py`: `AddSource` fetches nothing — the
+  transfer manager records zero requests to the origin — until the
+  ack exists; after it, one record per sitemap page, each through the
+  budget; `RemoveSource` leaves no trace (A4).
 - An operator's stop, like step 6: one LocalAGI agent on the node with
   `local_rag_url` pointed at Louise, memory stored, found, compacted.
 
