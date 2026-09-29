@@ -128,15 +128,17 @@ holds a copy of it.
 | `license_class` | green | nothing is fetched from anyone; see D4 |
 | `privacy_class` | never-share | not tightenable further, and may not be loosened (06 §6.1) |
 | `erasure` | erasable | a deposit may be withdrawn and must leave no trace (A4) |
-| `modality` | text | v1 accepts text only (D5) |
+| `modality` | text | text, Markdown and PDF, all extracted to text (D5) |
 | `mutability` | immutable | a deposit is replaced whole, never edited in place |
 | `native_id_order` | numeric | A5 |
 | `corpus_provider` / `corpus_attribution` | "the depositor" / "Deposited by a client of this node." | declared, like every plugin's, green included |
 
 - `discover` lists the store; `fetch` reads the deposited bytes;
-  `parse` decodes UTF-8 and cuts sections on Markdown headings, one
-  untitled section otherwise. Bytes that are not valid UTF-8 are
-  refused at upload (415), never stored and never guessed at.
+  `parse` takes `.txt` and `.md` as UTF-8, cut into sections on
+  Markdown headings (one untitled section otherwise), and `.pdf`
+  through pinned `pypdfium2`, one section per page with the PDF's own
+  metadata kept (D5). Anything else — and text that is not valid UTF-8
+  — is refused at upload (415), never stored and never guessed at.
 - `origin_hash` is BLAKE2b-128 of the bytes exactly as deposited; the
   record's `origin` is the store path relative to its base. So
   `records-vs-origin` re-parses the kept bytes and must reproduce the
