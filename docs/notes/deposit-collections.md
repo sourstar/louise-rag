@@ -311,9 +311,16 @@ open.
   only* — all LocalAGI's agent memory produces. PDF on request, with
   the library chosen then.
 - **D6 — `space_from`.** Which collection's encoder deposits use.
-  *Recommended:* the text collection most searched beside agent memory
-  (for Italian law, Normattiva's), so D2's fused search compares like
-  with like.
+  *Recommended: `gutenberg`'s (`qwen3-embedding-4b`)* — multilingual,
+  general-purpose, already served by RAGE and already calibrated. Not
+  Normattiva: no Normattiva collection exists, and its encoder is the
+  operator's own (ita-legal-embed; STATUS.md, 2026-09-14). Nor does the
+  choice buy one ranked list with a curated collection: that needs the
+  same layers as well as the same encoder (A3), and curated collections
+  use their own chunkers, so D2's results are fused by RRF whatever is
+  chosen. A later change of encoder is a sister with a new space
+  (`hold collection derive --space-from`): deposits are small, so
+  re-embedding them costs minutes.
 
 ## 6. How it would be proved done
 
