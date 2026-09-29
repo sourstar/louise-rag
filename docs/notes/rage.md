@@ -454,8 +454,17 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
     gated from scratch.
   - **Cost.** Sixteen texts per run and role per process start. A write
     that arrives first is deferred until the stage has re-checked.
-  - **Not covered.** The web process relies on the worker's re-check (it
-    makes none of its own) while quarantine is report-only.
+  - **The web process** makes no re-check of its own: a search must not
+    wait for sixteen embeddings. It relies on a kept statement only when
+    the worker, in its current start, has re-checked that very statement
+    or gated the run itself. The record is `state/rechecked.json`, emptied
+    at every worker start and listing each statement by its body's digest.
+    Until then the vector leg is withheld and the text leg goes on (when
+    quarantine is enforced). A command-line process never writes the
+    record.
+  - **The limit.** The record, like the statements, is a file in `state/`.
+    Against someone holding the node's key it adds nothing: they can write
+    both. Keeping the key out of reach (layer 2) is what stands there.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the

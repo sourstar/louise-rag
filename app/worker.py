@@ -3584,6 +3584,10 @@ def run_forever():
     # worker run from a terminal that goes away would otherwise die by the
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
+    # the record of which kept statements THIS start has re-checked, which
+    # the web process reads before it relies on one (run_check); emptied now
+    from . import run_check
+    run_check.publish_rechecks()
     all_collections = collections_mod.load_all()
     # Before anything reads it: the node state leaves the manifests for
     # state/node.sqlite, from the UNFILTERED list the web wrote to.

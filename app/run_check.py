@@ -38,6 +38,7 @@ cannot finish cannot honour SIGTERM).
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -195,7 +196,7 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
             stated=stated, key=key, now=now or _now())
-        _mark(codex, role, body["run"])      # measured now: nothing to re-check
+        _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         return body
     except (runs_mod.RunRefused, emb.GateError):
         raise
@@ -236,8 +237,88 @@ _me: list[str] = []
 _rechecked: set[tuple[str, str, str]] = set()
 
 
-def _mark(codex: Codex, role: str, run_id: str) -> None:
+def _mark(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> None:
     _rechecked.add((codex.space_id, role, run_id))
+    if _publishing:
+        _publish((codex.space_id, role, run_id, _statement_digest(body)))
+
+
+# ---- the worker's re-check record, for the web process (operator, 2026-09-28) ----
+#
+# The web process never re-checks: a search must not wait for sixteen
+# embeddings. It relies on a kept statement only when THE WORKER, in its
+# current start, has re-checked that very statement (its body's digest) or
+# gated the run itself. The worker empties the record when it starts, so a
+# restart puts every statement back behind the worker's re-check.
+
+RECORD_KIND = "louise-rechecked"
+_publishing: list[bool] = []
+_record_lock = threading.Lock()
+_record_read: dict[str, tuple[tuple[int, int], frozenset]] = {}
+
+
+def record_path() -> Path:
+    return collections_mod.louise_root() / "state" / "rechecked.json"
+
+
+def _statement_digest(body: dict[str, Any]) -> str:
+    from .hold.codex import canonical_json, digest
+    return digest(canonical_json(body))
+
+
+def _write_record(checked: list) -> None:
+    path = record_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"kind": RECORD_KIND, "pid": os.getpid(),
+                               "started": _started[0], "checked": checked},
+                              sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+_started: list[str] = [""]
+_entries: list[list[str]] = []
+
+
+def publish_rechecks() -> None:
+    """THE WORKER, at start: begin a record of its own, empty. Only the
+    worker publishes — a command-line process re-checks for itself and
+    must not replace the record the web process reads."""
+    with _record_lock:
+        _publishing[:] = [True]
+        _started[0] = _now()
+        _entries.clear()
+        _write_record([])
+
+
+def _publish(entry: tuple[str, str, str, str]) -> None:
+    with _record_lock:
+        if list(entry) not in _entries:
+            _entries.append(list(entry))
+            _write_record(sorted(_entries))
+
+
+def worker_rechecked(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> bool:
+    """THE WEB PROCESS: has the worker, in its current start, re-checked
+    exactly this statement (or gated the run itself)? Read from the record,
+    and read again whenever the file changes (keyed on its path, CLAUDE.md).
+    No record — no worker has started — is no."""
+    path = record_path()
+    try:
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return False
+    cached = _record_read.get(str(path))
+    if cached is None or cached[0] != stamp:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            rows = frozenset(tuple(e) for e in doc.get("checked", [])
+                             if doc.get("kind") == RECORD_KIND and len(e) == 4)
+        except (OSError, ValueError, TypeError):
+            rows = frozenset()
+        cached = _record_read[str(path)] = (stamp, rows)
+    return (codex.space_id, role, run_id, _statement_digest(body)) in cached[1]
 
 
 def rechecked(codex: Codex, role: str, run_id: str) -> bool:
@@ -278,7 +359,7 @@ def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
             f"{sorted(str(r)[:23] for r in embed.runs if r != run_id) or 'none'}; "
             f"it is inconclusive and asked again")
     if ok:
-        _mark(codex, role, run_id)
+        _mark(codex, role, run_id, body)
         if log is not None:
             log(f"{role} run {run_id[:23]}…: its kept statement re-checked on start "
                 f"({passed} of the sample, median {median:.6f})")
@@ -443,6 +524,9 @@ def reset_cache() -> None:
     _rechecked.clear()
     _told_foreign.clear()
     _me.clear()
+    _publishing.clear()
+    _entries.clear()
+    _record_read.clear()
 
 
 def check_write(collection, recipe, answered: set) -> None:
@@ -506,6 +590,12 @@ def check_query(collection, recipe, answered: set) -> None:
                 f"{collection.name}: the {role} encoder's run {run_id[:23]}… FAILED the "
                 f"gate for this space: the vector leg is withheld and the text leg goes "
                 f"on (03 §3.3)", run_id, failed=True)
+        if not (rechecked(codex, role, run_id)
+                or worker_rechecked(codex, role, run_id, body)):
+            raise runs_mod.RunUnvalidated(
+                f"{collection.name}: the {role} encoder's run {run_id[:23]}… has a kept "
+                f"statement the worker has not re-checked since it started: the vector "
+                f"leg waits for that re-check, and the text leg goes on", run_id)
 
 
 def _look(collection, stop: Callable[[], bool] | None,
