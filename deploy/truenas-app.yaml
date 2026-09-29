@@ -59,6 +59,23 @@
 # nothing could tell. The platform's space pinning + verify-on-use exists
 # for exactly this, but only helps once vectors are made under it.
 #
+# NODE KEY — keep it out of reach of whatever can write state/ (docs/notes/
+# rage.md §13, "layer 2"). A validation counts only when this node's key
+# signed it, so a planted statement is harmless only while the key cannot be
+# read by what planted it. Recommended layout, not yet applied here:
+#   - the key in its own dataset, never under data/ (where state/ lives) and
+#     never in a folder shared over SMB/NFS or replicated to another host:
+#        mkdir -p /mnt/ssd4/apps/louise-rag/secrets
+#        mv /mnt/ssd4/apps/louise-rag/config/node.key /mnt/ssd4/apps/louise-rag/secrets/
+#        chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key   # owned by the container's user
+#   - mounted read-only, as a file, in web and worker only (never gpu-probe):
+#        - /mnt/ssd4/apps/louise-rag/secrets/node.key:/run/louise/node.key:ro
+#     with NODE_KEY_PATH: /run/louise/node.key
+# The node refuses a key readable by group or others (app/bundles/keys.py).
+# The limit: code running inside web or worker can read the key; this guards
+# against file-level writes to state/ — a copied or restored state/, a share,
+# another container on the dataset.
+#
 # Set ADMIN_TOKEN before installing: it gates the Library/Network/System
 # pages and the mutating API. Unset = those areas are locked out entirely
 # (fail-closed), while Ask/search stay LAN-open read-only.

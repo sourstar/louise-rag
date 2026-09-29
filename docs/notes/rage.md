@@ -465,6 +465,11 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   - **The limit.** The record, like the statements, is a file in `state/`.
     Against someone holding the node's key it adds nothing: they can write
     both. Keeping the key out of reach (layer 2) is what stands there.
+  - **Layer 2: the key out of reach.** Deployment, not code: the key in
+    its own dataset, outside `data/` and any share, mode `0400`, mounted
+    read-only into web and worker only. `deploy/truenas-app.yaml` gives the
+    steps. It guards against file-level writes to `state/`, not against
+    code running inside the node.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the
