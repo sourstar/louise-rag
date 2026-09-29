@@ -290,3 +290,22 @@ def test_show_names_both_hashes_and_the_space_segment(tmp_path: Path, codex):
     assert shown["space"] == c.space_segment
     assert shown["license"] == {"class": "red"}
     assert shown["refused"] is None
+
+
+def test_a_sister_whose_engines_carry_load_is_version_4_and_back(tmp_path):
+    """09 §9.3, the load amendment: a derived Codex is version 4 exactly when
+    an engine of its space carries `load`, whatever its mother was."""
+    mother = a_root(tmp_path, pubmed())
+    space = other_space(mother)
+    grpc = replace(space.encoder.engine,
+                   args=("python", "backend.py", "--addr", "127.0.0.1:${PORT}"),
+                   load={"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}"})
+    space = replace(space, encoder=replace(space.encoder, engine=grpc),
+                    query=replace(space.query,
+                                  encoder=replace(space.query.encoder, engine=grpc)))
+    sister = col.derive(tmp_path, mother.collection_id, space=space,
+                        embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
+    assert mother.version == 3 and sister.version == cx.LOAD_VERSION
+    niece = col.derive(tmp_path, sister.collection_id, space=other_space(mother),
+                       embed=fake_embed, embed_query=fake_query_embed, key=KEY, now=NOW)
+    assert niece.version == 3, "no `load`, no version 4"

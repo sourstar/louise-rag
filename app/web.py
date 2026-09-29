@@ -2844,10 +2844,15 @@ class BundleExportBody(BaseModel):
 
 @admin_router.post("/library/{name}/bundle/export")
 def collection_bundle_export(name: str, body: BundleExportBody):
-    """Same code path as `python -m app.cli bundle export`, delivered as a
-    tar.gz download. The bundle is built in a scratch dir under the
-    collection's export workspace (EXPORT_DIR, else beside its data — no
-    /tmp assumptions) and cleaned up after the response streams out."""
+    """Same code path as `python -m app.cli bundle export`, QUEUED FOR THE
+    WORKER (202): a bundle is signed with the node's private key, and this
+    process holds only the public half (app/identity.py; operator,
+    2026-09-29). The worker builds it in the collection's export workspace
+    (EXPORT_DIR, else beside its data — no /tmp assumptions); the page
+    polls `GET /api/jobs/<id>` and then downloads it from the route below,
+    which removes it. The refusals that need no work are answered here."""
+    from fastapi.responses import JSONResponse
+    from . import jobs
     from .bundles import export as bundle_export
     collection = _collection_or_404(name)
     # invariant 9, "not exchanged": the download is a signed, shareable bundle
@@ -2858,30 +2863,37 @@ def collection_bundle_export(name: str, body: BundleExportBody):
         "ORDER BY CAST(native_id AS INTEGER) LIMIT ?", (max(1, body.limit),))]
     if not uids:
         raise HTTPException(400, "no embedded documents to export")
+    try:
+        bundle_export.workspace(collection)
+    except bundle_export.ExportError as e:
+        raise HTTPException(503, str(e))
+    job_id = jobs.submit(jobs.EXPORT, {"collection": collection.name, "uids": uids})
+    return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
 
+
+@admin_router.get("/library/{name}/bundle/export/{job_id}")
+def collection_bundle_download(name: str, job_id: int):
+    """The bundle a done export job built, once: it is removed as the
+    response ends. The path comes from `state/node.sqlite` and is served
+    only if it lies in this collection's export workspace."""
+    from . import jobs
+    from .bundles import export as bundle_export
+    collection = _collection_or_404(name)
+    job = jobs.get(job_id)
+    if job is None or job.kind != jobs.EXPORT or job.args.get("collection") != name:
+        raise HTTPException(404, f"no export job {job_id} for {name}")
+    if job.state != jobs.DONE:
+        raise HTTPException(409, f"export job {job_id} is {job.state}"
+                                 + (f": {job.error}" if job.error else ""))
     try:
         where = bundle_export.workspace(collection)
     except bundle_export.ExportError as e:
         raise HTTPException(503, str(e))
-    scratch = Path(tempfile.mkdtemp(prefix="bundle-export-", dir=where))
-    try:
-        result = bundle_export.export_bundle(con, collection, uids,
-                                              scratch / "bundle")
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        tar_path = scratch / f"bundle-{name}-{stamp}.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            tar.add(scratch / "bundle", arcname=f"bundle-{name}-{stamp}")
-    except Exception as e:
-        shutil.rmtree(scratch, ignore_errors=True)
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(400, f"{type(e).__name__}: {e}")
-    db.log_event(con, "info", "bundle",
-                 f"exported {result['chunks']} chunks / {result['uids']} docs "
-                 f"via admin UI ({result['bundle_id'][:16]}…)")
-    return FileResponse(
-        tar_path, media_type="application/gzip", filename=tar_path.name,
-        background=BackgroundTask(shutil.rmtree, scratch, ignore_errors=True))
+    f = jobs.export_file(job, where)
+    if f is None:
+        raise HTTPException(410, f"export job {job_id}'s file is gone")
+    return FileResponse(f, media_type="application/gzip", filename=f.name,
+                        background=BackgroundTask(jobs.collected, job_id))
 
 
 @admin_router.post("/library/{name}/bundle/import")

@@ -136,6 +136,11 @@ REFS_SRC_DIR = Path(_refs_src_dir) if _refs_src_dir else None
 # Unset = this node cannot export bundles (import needs only public keys).
 _node_key_path = os.getenv("NODE_KEY_PATH")
 NODE_KEY_PATH = Path(_node_key_path) if _node_key_path else None
+# The PUBLIC half, for a process that recognises this node's signatures and
+# makes none — the web (app/identity.py; operator, 2026-09-29). Trusted, so
+# kept beside the private key, read-only; never in state/ or CONFIG_DIR.
+_node_public_key_path = os.getenv("NODE_PUBLIC_KEY_PATH")
+NODE_PUBLIC_KEY_PATH = Path(_node_public_key_path) if _node_public_key_path else None
 
 # Single admin token gating librarian (/admin) routes (architecture-v2.md
 # §14: "authenticated /admin API, strictly separate from the OpenAI-

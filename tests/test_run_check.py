@@ -29,6 +29,11 @@ from app.hold import collection as col, embedder as emb, runs as hold_runs
 from app.hold.codex import canonical_json, digest
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
+
+from app.hold import envelope as env
+
+#: this node's public key, as a statement names it: the only signer counted
+ME = env.key_text(KEY.verify_key)
 from tests.hold.test_template import recipe as a_recipe
 
 RAGE = "http://rage:30437"
@@ -246,11 +251,20 @@ def test_once_per_run_not_once_per_answer(node, rage):
         embeddings.upsert_book(book, "en", chunks(2, book), collection)
     assert rage.texts == gate_cost + 40
 
-    # and a verdict forgotten costs ONE tiny request an encoder, not 512: the
-    # statement is what validates the run, not the cache
+    # and a verdict forgotten — as in a new process — costs one tiny request
+    # an encoder and the re-check of each kept statement (its sixteen
+    # sampled texts), never 512: the statement is what validates the run
     run_check.reset_cache()
     assert backend_gate.embed_allowed(con, collection) is True
-    assert rage.texts == gate_cost + 40 + 2, "one probe each: document, query"
+    n = codex.space.calibration.n
+    assert rage.texts == gate_cost + 40 + 2 + 2 * n, \
+        "one probe and one re-check each: document, query"
+
+    # the re-check is once per process: asked again, only the probes
+    backend_gate.reset_cache()
+    run_check._verdicts.clear()
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert rage.texts == gate_cost + 40 + 2 + 2 * n + 2, "a probe each, no re-check"
     assert len(statements_kept(root)) == 1
 
 
@@ -386,7 +400,10 @@ def test_a_failed_run_is_kept_pauses_and_is_not_gated_again(node, rage):
     cost = rage.texts
     run_check.reset_cache()
     assert backend_gate.embed_allowed(con, collection) is False
-    assert rage.texts == cost + 2, "the failed run was gated a second time"
+    # two probes, and the passing QUERY statement re-checked (its sixteen
+    # sampled texts); the failed document run is not gated a second time
+    assert rage.texts == cost + 2 + codex.space.calibration.n, \
+        "the failed run was gated a second time"
 
     with pytest.raises(hold_runs.RunUnvalidated) as e:
         embeddings.upsert_book(7, "en", chunks(2), collection)
@@ -459,9 +476,9 @@ def test_a_statement_nobody_signed_validates_nothing(node, rage):
     forged["body"]["run"] = R2
     hold_runs.path_for(root, "gutenberg", R2).write_bytes(canonical_json(forged))
 
-    hold_runs.check(root, "gutenberg", codex, {R1})
+    hold_runs.check(root, "gutenberg", codex, {R1}, signer=ME)
     with pytest.raises(hold_runs.RunUnvalidated):
-        hold_runs.check(root, "gutenberg", codex, {R2})
+        hold_runs.check(root, "gutenberg", codex, {R2}, signer=ME)
 
 
 def test_the_check_is_a_lookup_until_the_directory_changes(node, rage, monkeypatch):
@@ -476,14 +493,118 @@ def test_the_check_is_a_lookup_until_the_directory_changes(node, rage, monkeypat
 
     monkeypatch.setattr(emb, "read_statement", counting)
     for _ in range(50):
-        hold_runs.check(root, "gutenberg", codex, {R1})
+        hold_runs.check(root, "gutenberg", codex, {R1}, signer=ME)
     assert reads["n"] == 0, "a signature was verified per answer"
 
     hold_runs.path_for(root, "gutenberg", R1).touch()
     path = hold_runs.path_for(root, "gutenberg", R1)
     path.write_bytes(path.read_bytes() + b"\n")
-    hold_runs.check(root, "gutenberg", codex, {R1})
+    hold_runs.check(root, "gutenberg", codex, {R1}, signer=ME)
     assert reads["n"] == 1, "a changed directory is read again"
+
+
+# ---- a planted validation (operator, 2026-09-28) ------------------------------------------
+
+def _forge(root, codex, run_id, key):
+    """A statement that says `run_id` passed, signed — validly — by `key`,
+    in this collection's `state/calibration/`: what anyone who can write
+    there could plant, with a key made for the purpose."""
+    path = hold_runs.path_for(root, "gutenberg", R1)
+    body = dict(json.loads(path.read_bytes())["body"], run=run_id,
+                key=env.key_text(key.verify_key))
+    out = hold_runs.path_for(root, "gutenberg", run_id)
+    out.write_bytes(canonical_json(env.sign(env.CALIBRATION, body, key)))
+    return out
+
+
+def test_a_statement_signed_by_another_key_validates_nothing(node, rage):
+    """Layer 1: the signature verifies — under the key written in the file —
+    and it counts for nothing, because this node did not make it."""
+    from nacl import signing
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    stranger = signing.SigningKey(b"\x07" * 32)
+    planted = _forge(root, codex, R2, stranger)
+    assert emb.read_statement(json.loads(planted.read_bytes()))["run"] == R2, \
+        "the planted file verifies on its own"
+
+    with pytest.raises(hold_runs.RunUnvalidated):
+        hold_runs.check(root, "gutenberg", codex, {R2}, signer=ME)
+    assert planted.name in hold_runs.foreign(root, "gutenberg")
+
+    # the endpoint now answers from R2: the gate runs, as for any untested run
+    rage.run = R2
+    before = rage.texts
+    run_check.reset_cache()
+    backend_gate.reset_cache()
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert rage.texts - before >= 512, "the planted statement spared R2 the gate"
+
+
+def test_a_node_with_no_key_counts_no_statement(node, rage):
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    assert hold_runs.statements(root, "gutenberg", codex, signer=None) == {}
+    with pytest.raises(hold_runs.RunUnvalidated):
+        hold_runs.check(root, "gutenberg", codex, {R1}, signer=None)
+
+
+def test_a_kept_statement_that_no_longer_holds_is_set_aside_and_gated_again(node, rage):
+    """Layer 3: the same run id, other answers — a statement the evidence no
+    longer supports. The first use after start re-checks it, sets it aside,
+    and gates the run from scratch, which fails and is kept."""
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert hold_runs.passing(statements_kept(root)[0], codex) is True
+
+    run_check.reset_cache()          # a new process
+    backend_gate.reset_cache()
+    rage.tag = b"another model"
+    assert backend_gate.embed_allowed(con, collection) is False
+    aside = sorted((hold_runs.directory(root, "gutenberg") / "set-aside").glob("document-*"))
+    assert len(aside) == 1, "the statement that did not hold is kept, set aside"
+    kept = statements_kept(root)
+    assert len(kept) == 1 and hold_runs.passing(kept[0], codex) is False, \
+        "the gate ran from scratch and its failure is the statement now"
+
+
+def test_a_write_waits_for_the_re_check_after_start(node, rage):
+    """A kept statement is not relied on until it has been re-checked in this
+    process: the write is deferred, never an error, and goes ahead once the
+    stage's `embed_allowed` has re-checked it."""
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    run_check.reset_cache()
+    backend_gate.reset_cache()
+    with pytest.raises(hold_runs.RunUnvalidated) as e:
+        embeddings.upsert_book(7, "en", chunks(2), collection)
+    assert e.value.failed is False and "re-checked" in str(e.value)
+    assert stored(collection) == 0
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert embeddings.upsert_book(7, "en", chunks(2), collection) == 2
+
+
+def test_a_re_check_answered_by_another_run_decides_nothing(node, rage):
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    run_check.reset_cache()
+    rage.switch_after = 0            # every answer from now on names R2
+    with pytest.raises(emb.GateDeferred, match="inconclusive"):
+        run_check.recheck(root, "gutenberg", codex,
+                          collections_mod.recipe_for(collection), R1, key=KEY)
+    assert not (hold_runs.directory(root, "gutenberg") / "set-aside").exists()
+
+
+def test_a_statement_whose_sample_is_not_the_quorum_does_not_hold(node, rage):
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    body = dict(statements_kept(root)[0], sampled=[0, 1, 2])
+    ok, _, _ = hold_runs.recheck(codex, body, reference=[[0.0]] * 512,
+                                 embed=lambda texts: [[1.0]] * len(texts))
+    assert ok is False
 
 
 # ---- the command line -------------------------------------------------------------------

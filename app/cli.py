@@ -278,8 +278,27 @@ def cmd_bundle_keygen(args) -> int:
     public = bundle_keys.public_key_hex(signing.SigningKey(seed))
     print(f"wrote node key to {path}")
     print(f"public key: {public}")
+    if args.public:
+        from . import identity
+        identity.write_public(Path(args.public), signing.SigningKey(seed))
+        print(f"wrote the public half to {args.public}: give it to the web "
+              f"process as NODE_PUBLIC_KEY_PATH")
     print(f"Set NODE_KEY_PATH={path} to export bundles. Share the PUBLIC key "
           f"with peers; never the file.")
+    return 0
+
+
+def cmd_bundle_public_key(args) -> int:
+    """Write the public half of the key at NODE_KEY_PATH, for the web
+    process (NODE_PUBLIC_KEY_PATH, app/identity.py). For a key made before
+    the file existed; the seed is read, never printed."""
+    from . import identity
+    from .bundles import keys as bundle_keys
+    try:
+        text = identity.write_public(Path(args.path), bundle_keys.load_signing_key())
+    except (bundle_keys.NodeKeyError, identity.IdentityError) as e:
+        raise SystemExit(str(e)) from None
+    print(f"wrote {text} to {args.path}")
     return 0
 
 
@@ -1195,7 +1214,14 @@ def main(argv=None) -> int:
 
     b_keygen = bundle.add_parser("keygen")
     b_keygen.add_argument("path")
+    b_keygen.add_argument("--public", default=None,
+                          help="also write the public half here (NODE_PUBLIC_KEY_PATH)")
     b_keygen.set_defaults(func=cmd_bundle_keygen)
+
+    b_public = bundle.add_parser(
+        "public-key", help="write the public half of the key at NODE_KEY_PATH")
+    b_public.add_argument("path")
+    b_public.set_defaults(func=cmd_bundle_public_key)
 
     b_export = bundle.add_parser("export")
     b_export.add_argument("collection")

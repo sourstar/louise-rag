@@ -517,7 +517,8 @@ def derive(root: Path, mother_id: str, *,
         new_space = mother.space
 
     if new_space.has_engine:
-        version = max(mother.version, cx.ENGINE_VERSION)
+        # 3, or 4 exactly when an engine carries `load` (cx.LOAD_VERSION)
+        version = cx.LOAD_VERSION if new_space.has_load else cx.ENGINE_VERSION
     elif mother.version >= cx.ENGINE_VERSION:
         raise CodexError(
             "derive: a space is written with the ENGINE its reference vectors are "

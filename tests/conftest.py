@@ -52,7 +52,8 @@ def the_real_node_store_is_never_touched():
 
     def _stamp():
         out = []
-        for p in (real, real.with_name(real.name + "-wal")):
+        for p in (real, real.with_name(real.name + "-wal"),
+                  real.with_name("rechecked.json")):
             try:
                 st = p.stat()
                 out.append((st.st_size, st.st_mtime_ns))

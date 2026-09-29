@@ -192,6 +192,72 @@ def test_an_engine_that_cannot_be_run_again_is_refused(codex, change, rule):
         cx.validate(_on(codex, replace(codex.space.encoder.engine, **change)))
 
 
+# ---- the load amendment: a gRPC backend's LoadModel message (09 §9.3) ------------
+
+_LOAD = {"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}", "Type": "cross-encoder"}
+_GRPC_ARGS = ("python", "backend.py", "--addr", "127.0.0.1:${PORT}")
+
+
+def _grpc(codex, **over):
+    engine = replace(codex.space.encoder.engine, args=_GRPC_ARGS, load=dict(_LOAD))
+    return replace(_on(codex, replace(engine, **over)), version=cx.LOAD_VERSION)
+
+
+def test_an_engine_without_load_is_the_version_3_object_byte_for_byte(codex):
+    """Absent, not null: every engine written before the amendment keeps its
+    bytes and its engine_id, so no run and no collection moves."""
+    engine = codex.space.encoder.engine
+    assert "load" not in engine.to_dict()
+    assert engine.to_dict() == ENGINE_OBJECT and codex.version == 3
+
+
+def test_a_grpc_engine_states_its_loadmodel_message_in_load(codex):
+    grpc = _grpc(codex)
+    cx.validate(grpc)
+    engine = grpc.space.encoder.engine
+    assert engine.to_dict()["load"] == _LOAD and list(engine.args) == list(_GRPC_ARGS)
+    assert grpc.space_id == codex.space_id, "the engine is outside space_id (02 §2.4)"
+    assert grpc.collection_id != codex.collection_id
+    other = replace(engine, load={**_LOAD, "Type": "bi-encoder"})
+    assert other.engine_id != engine.engine_id, "another message is another engine"
+    back = cx.from_dict(json.loads(cx.canonical_json(grpc.to_dict())))
+    assert back.collection_id == grpc.collection_id and back.space.encoder.engine.load == _LOAD
+
+
+def test_the_version_follows_load_both_ways(codex):
+    """4 exactly when an engine carries `load`: else one recipe names two
+    collections."""
+    with pytest.raises(CodexError, match="written in a version 4 Codex"):
+        cx.validate(replace(_grpc(codex), version=3))
+    with pytest.raises(CodexError, match="written only when an engine carries"):
+        cx.validate(replace(codex, version=cx.LOAD_VERSION))
+
+
+@pytest.mark.parametrize("over, rule", [
+    ({"load": {}}, "non-empty object"),
+    ({"load": {"Model": "/w", "ModelFile": "${WEIGHTS}"}}, "names the weights"),
+    ({"args": _GRPC_ARGS + ("--model", "${WEIGHTS}")}, "not in args"),
+    ({"load": {**_LOAD, "Addr": "127.0.0.1:${PORT}"}}, "belongs to args"),
+    ({"load": {**_LOAD, "Temperature": 0.5}}, "floats"),
+])
+def test_a_malformed_load_is_refused(codex, over, rule):
+    with pytest.raises(CodexError, match=rule):
+        cx.validate(_grpc(codex, **over))
+
+
+def test_load_that_is_not_an_object_is_refused_on_read(codex):
+    d = _grpc(codex).to_dict()
+    d["space"]["encoder"]["engine"]["load"] = ["Model"]
+    with pytest.raises(CodexError, match="LoadModel message, an object"):
+        cx.from_dict(d)
+
+
+def test_the_spec_names_the_field_it_is_checked_by():
+    spec = open("docs/09-formats.md", encoding="utf-8").read()
+    assert "| `load` | object | only when used |" in spec
+    assert "| `louise-codex` | 3 · 4 |" in spec
+
+
 def test_an_asymmetric_space_pins_its_query_reference_and_a_symmetric_one_has_none(codex):
     lost = replace(codex, space=replace(codex.space, calibration=replace(
         codex.space.calibration, query_vectors=None)))
@@ -354,8 +420,8 @@ def test_a_missing_field_is_refused(codex):
 
 
 def test_an_unknown_version_is_refused(codex):
-    d = dict(codex.to_dict(), version=4)
-    with pytest.raises(CodexError, match="unsupported Codex version 4"):
+    d = dict(codex.to_dict(), version=5)
+    with pytest.raises(CodexError, match="unsupported Codex version 5"):
         cx.from_dict(d)
 
 

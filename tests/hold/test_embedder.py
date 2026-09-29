@@ -374,3 +374,51 @@ def test_a_version_2_collection_keeps_the_statement_it_always_had():
     assert "run" not in body
     assert set(emb.benchmarks_entry(body)) == {"space_id", "encoder_image",
                                                "encoder_weights", "tokens_per_s"}
+
+
+# ---- the load amendment: statement version 3 (09 §9.12) -------------------
+
+_LOAD = {"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}", "Type": "cross-encoder"}
+
+
+def _with_load(stated):
+    engine = dict(stated.engine, load=dict(_LOAD))
+    return replace(stated, engine=engine)
+
+
+def test_a_statement_is_version_3_exactly_when_its_engine_carries_load():
+    codex = codex_768()
+    ref = reference()
+    plain = emb.read_statement(emb.statement(gate(codex, ref, ref=ref), codex,
+                                             a_key(), now=NOW))
+    assert plain["version"] == 2 and "load" not in plain["engine"]
+    stated = _with_load(a_stated_run(codex))
+    body = emb.read_statement(emb.statement(gate(codex, ref, ref=ref, stated=stated),
+                                            codex, a_key(), now=NOW))
+    assert body["version"] == emb.STATEMENT_LOAD_VERSION
+    assert body["engine"]["load"] == _LOAD
+
+
+@pytest.mark.parametrize("change, rule", [
+    ({"version": 3}, "lacks the engine's `load`"),
+    ({"engine_load": True}, "carries the engine's `load`"),
+    ({"version": 4}, "unsupported calibration statement version 4"),
+])
+def test_a_statement_whose_version_does_not_follow_load_is_refused(change, rule):
+    codex = codex_768()
+    ref = reference()
+    body = emb.read_statement(emb.statement(gate(codex, ref, ref=ref), codex,
+                                            a_key(), now=NOW))
+    if change.pop("engine_load", False):
+        body["engine"] = dict(body["engine"], load=dict(_LOAD))
+    body.update(change)
+    key = a_key()
+    body["key"] = env.key_text(key.verify_key)
+    with pytest.raises(GateError, match=rule):
+        emb.read_statement(env.sign(env.CALIBRATION, body, key))
+
+
+def test_the_spec_names_the_statement_versions_it_is_checked_by():
+    spec = open("docs/09-formats.md", encoding="utf-8").read()
+    assert '{kind: "louise-calibration-run", version: 2 · 3,' in spec
+    assert "| `louise-calibration-run` | 2 · 3 |" in spec

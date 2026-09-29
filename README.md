@@ -125,7 +125,8 @@ away from it.
   `RERANK_URL` as the fallback behind each collection's own reranker, version bumps
   (`CHUNK_VERSION`…), `ADMIN_TOKEN_FILE` (preferred; a path — wins over
   `ADMIN_TOKEN`), `NODE_KEY_PATH` (path to the Ed25519 node key — the key
-  *location*, never key material).
+  *location*, never key material; the worker's), `NODE_PUBLIC_KEY_PATH` (its
+  public half — the web process's, which signs nothing).
 - **Tier 2 — files** (desired state, versioned):
   `collections/*.toml` (plugin, profile, embed mode, licence ack) and
   [`platform.toml`](platform.toml.example) (`[bandwidth]` caps + schedule,
@@ -140,7 +141,8 @@ mixed embedding spaces are the one unrecoverable corruption.
 ## Sharing vectors between nodes
 
 ```bash
-python -m app.cli bundle keygen /config/node.key        # once; set NODE_KEY_PATH
+python -m app.cli bundle keygen /secrets/private/node.key --public /secrets/public/node.pub
+                                                        # once; NODE_KEY_PATH / NODE_PUBLIC_KEY_PATH
 python -m app.cli bundle export gutenberg /tmp/out      # sign & pack
 python -m app.cli bundle import gutenberg /path/bundle  # verify & apply
 python -m app.cli bundle status gutenberg               # producers, ledger

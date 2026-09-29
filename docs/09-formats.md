@@ -134,7 +134,10 @@ hexadecimal digits with an optional trailing newline; nothing else — no
 PEM, no passphrase, no algorithm field. On a POSIX filesystem the file
 is refused when group- or world-accessible. The key material never
 appears in a log, an error message, a config value or any object below;
-the public key appears everywhere a producer or verifier is named.
+the public key appears everywhere a producer or verifier is named. A
+process that only recognises this peer's signatures reads the public key
+alone, from the path `NODE_PUBLIC_KEY_PATH` names (07 §7.8): the textual
+form above and a newline, nothing else.
 Ordinary keys do not rotate: a lost key is a new key, and the bundles
 and attestations the old key signed stay valid under the old key. A
 certifier's key rotates at its anchor (§9.11), and only there.
@@ -249,7 +252,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `3` | yes | the Codex format version (§9.18). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the version-3 shape the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `3` · `4` | yes | the Codex format version (§9.18). Version 4 is version 3 with an engine that carries `load` (*the engine*, below), and it is written EXACTLY when one does: a Codex whose engines have no `load` is version 3, and a version-4 Codex without one is refused, so that one recipe never names two collections. Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the version-3 shape the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -369,6 +372,18 @@ whole so that anyone can compute them again (02 §2.4):
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}` and the listening port `${PORT}`, and nothing else in it names the host |
 | `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
+| `load` | object | only when used | for an engine that is a gRPC backend (LocalAI's backend ABI), the `LoadModel` message the platform sends once the program is healthy: `ModelOptions` field → value, `Model` and `ModelFile` both `${WEIGHTS}`. ABSENT, not `null`, on any other engine. Codex version 4 only |
+
+**An engine that is a gRPC backend** (the load amendment, operator,
+2026-09-28). Such a program is started empty — `args` only makes it
+listen — and the model is set up by one message whose fields change the
+vectors. That message is `load`. It names the weights, as `${WEIGHTS}`,
+and `args` then does not; `${PORT}` stays in `args`, where the program is
+started. To reproduce the engine a peer starts `args`, waits until the
+program is healthy, and sends `load` with `${WEIGHTS}` replaced by its
+weights path. `load` is omitted rather than `null` everywhere else, so an
+engine without it — every engine written before the amendment — is the
+same object and has the same `engine_id` as before.
 
 `name`, `build`, `variant` and `device` are readable; they are bound by
 `image` and by the reference vectors, not by any check. `image`, `args`
@@ -1494,7 +1509,7 @@ domain `louise/calibration/v1`, kept in `state/` and published in this
 peer's digest (§9.9), with body
 
 ```
-{kind: "louise-calibration-run", version: 2,
+{kind: "louise-calibration-run", version: 2 · 3,
  space_id, collection_id, set, role: "document" | "query",
  run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
  fingerprint: <id>, batch_invariant: <boolean>,
@@ -1524,7 +1539,11 @@ A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
 the space (03 §3.3). Version 1 of this body carried `encoder_image`, the
 engine's image digest alone, in place of the run, and had no
-fingerprint.
+fingerprint. Version 3 is version 2 whose `engine` carries `load` (§9.3,
+the load amendment), and it is written EXACTLY when the engine does: a
+statement for an engine without `load` is version 2, byte for byte, and
+a version-3 statement without it, or a version-2 one with it, is
+refused.
 
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`
 (`sha256:6b1a3f0e9c2d4b7f…`); the PubMed Codex names it, and its member
@@ -1826,7 +1845,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 3 | §9.3 |
+| `louise-codex` | 3 · 4 | §9.3 (4 exactly when an engine carries `load`) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
@@ -1839,7 +1858,7 @@ names one schema, the one its section fixes:
 | `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 2 | §9.12 |
-| `louise-calibration-run` | 2 | §9.12 |
+| `louise-calibration-run` | 2 · 3 | §9.12 (3 exactly when the engine carries `load`) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
 
