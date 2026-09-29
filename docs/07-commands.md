@@ -416,7 +416,11 @@ are the command's flags without their dashes; the response is the
 command's `--json` output (§7.7). The exit code is the status: 0 → 200,
 1 → 500, 2 → 409, 3 → 503, and the body carries `exit` and the message.
 A verb that outlives the request answers 202 and runs under the node;
-`node show` lists it. The web interface is a client of these routes and
+`node show` lists it. So does a verb that SIGNS, asked of the web
+process, which holds only the public key (§7.8; operator, 2026-09-29):
+`hold collection create` and the Library's bundle export are queued in
+`state/node.sqlite` and run by the worker, and `GET /api/jobs/<id>`
+follows one. A create waits while the node's mode does not embed. The web interface is a client of these routes and
 shows the command line of every action it offers.
 
 **One route is not JSON, and it is the only one.**
@@ -638,7 +642,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
@@ -653,6 +657,15 @@ from the same resolution the node uses, each value labelled with its
 tier; a value shown anywhere else comes from that resolution too.
 
 `LOUISE_ROOT` has no default; a node without it refuses to start.
+`NODE_PUBLIC_KEY_PATH` names the key's public half in 09 §9.2's textual
+form, one line, for a process that recognises what this peer signed and
+signs nothing — the web process, which is given it INSTEAD of
+`NODE_KEY_PATH` (operator, 2026-09-29). The file is trusted — whoever
+replaces it decides which signatures count as this peer's — so it is kept
+beside the key, read-only, never under `state/` or the files; one writable
+by group or others is refused, and a process given both refuses to start
+when they disagree. `louise`'s `bundle keygen --public` writes it with the
+key, and `bundle public-key` for a key that has none.
 `NODE_KEY_PATH` unset means this peer cannot sign — no bundles, no
 attestations, no `share` of its own work; import, check and search work
 without it. `ADMIN_TOKEN_FILE` unset means the `hold` and `node` routes

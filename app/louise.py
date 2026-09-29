@@ -99,6 +99,23 @@ def cmd_create(a) -> int:
     return 0
 
 
+def preflight_create(recipe: dict, platform_image: str | None) -> str:
+    """The platform image `create` pins, or its refusal — made before any
+    work. The web asks it at once, with `NO_ENCODER`, before it queues the
+    create for the worker (app/jobs.py); `create_from` asks it again."""
+    stated = (recipe.get("toolchain") or {}).get("platform_image")
+    platform_image = (stated or platform_image
+                      or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
+    if not platform_image or platform_image == cx.digest(b""):
+        raise CodexError(
+            "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
+            "the digest of the platform the command runs in unless the recipe "
+            "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
+            "--platform-image. The SHA-256 of empty bytes is a placeholder "
+            "that names no build, and a Codex is never edited")
+    return platform_image
+
+
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
                 space_from: str | None = None, encoder: str | None = None,
                 query_encoder: str | None = None):
@@ -114,16 +131,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     # its own image id). The flag used to default to digest(b""), the
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
-    stated = (recipe.get("toolchain") or {}).get("platform_image")
-    platform_image = (stated or platform_image
-                      or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
-    if not platform_image or platform_image == cx.digest(b""):
-        raise CodexError(
-            "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
-            "the digest of the platform the command runs in unless the recipe "
-            "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
-            "--platform-image. The SHA-256 of empty bytes is a placeholder "
-            "that names no build, and a Codex is never edited")
+    platform_image = preflight_create(recipe, platform_image)
     if space_from:
         source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
@@ -235,6 +243,17 @@ def _utc_now() -> str:
         microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+NO_ENCODER = (
+    "name the encoder: --encoder URL. There is no default encoder "
+    "(operator, 2026-09-18), and the new collection's file names the one "
+    "it was created with. `hold collection create` embeds the "
+    "512-text calibration set with the encoder the recipe names "
+    "and writes the reference vectors' hash into the Codex "
+    "(06 Â§6.6); there is no offline path that produces a valid "
+    "Codex, because a placeholder there is a collection no peer "
+    "can ever join")
+
+
 def _embed_for_recipe(space: dict, url: str | None):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
@@ -249,15 +268,7 @@ def _embed_for_recipe(space: dict, url: str | None):
     from app import collections as collections_mod, embeddings
 
     if not url:
-        raise CodexError(
-            "name the encoder: --encoder URL. There is no default encoder "
-            "(operator, 2026-09-18), and the new collection's file names the one "
-            "it was created with. `hold collection create` embeds the "
-            "512-text calibration set with the encoder the recipe names "
-            "and writes the reference vectors' hash into the Codex "
-            "(06 Â§6.6); there is no offline path that produces a valid "
-            "Codex, because a placeholder there is a collection no peer "
-            "can ever join")
+        raise CodexError(NO_ENCODER)
     enc = space.get("encoder") or {}
     recipe = collections_mod.EmbedRecipe(
         url=url, api="openai", model=enc.get("label") or "",

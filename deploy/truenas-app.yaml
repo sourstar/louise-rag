@@ -2,8 +2,8 @@
 #
 # Successor to the legacy gutenberg-rag app: same two-container shape
 # (web + worker), same corpus/data mounts, plus the platform's additions —
-# a config mount (collections/*.toml, platform.toml, space artifacts), a
-# read-only node key, admin auth for the librarian pages, and the bundle
+# a config mount (collections/*.toml, platform.toml, space artifacts), the
+# node key read-only (its private half in the worker only), admin auth for the librarian pages, and the bundle
 # machinery.
 #
 # DATA LAYOUT. The platform runs on its own dataset, /mnt/ssd4/apps/louise-rag
@@ -18,11 +18,12 @@
 #   1. Build the image (from a checkout of this repo on the NAS):
 #        docker build -t louise-rag:local .
 #
-#   2. Create the node key, in its own dataset (see NODE KEY below):
-#        mkdir -p -m 700 /mnt/ssd4/apps/louise-rag/secrets
-#        docker run --rm -v /mnt/ssd4/apps/louise-rag/secrets:/secrets \
-#          louise-rag:local python -m app.cli bundle keygen /secrets/node.key
-#        chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key
+#   2. Create the node key and its public half (see NODE KEY below):
+#        S=/mnt/ssd4/apps/louise-rag/secrets
+#        mkdir -p -m 700 $S/private; mkdir -p -m 755 $S/public
+#        docker run --rm -v $S:/secrets louise-rag:local python -m app.cli \
+#          bundle keygen /secrets/private/node.key --public /secrets/public/node.pub
+#        chmod 400 $S/private/node.key
 #
 #   3. Migrate the copied manifest (books -> documents; idempotent, verified
 #      against a copy of this exact manifest on 2026-08-16 — keeps all 79k
@@ -65,29 +66,43 @@
 # NODE KEY — kept out of reach of whatever can write state/ (docs/notes/
 # rage.md §13, "layer 2"). A validation counts only when this node's key
 # signed it, so a planted statement is harmless only while the key cannot be
-# read by what planted it. The key therefore lives in its own dataset,
-# secrets/ — never under data/ (where state/ lives), never in a folder
-# shared over SMB/NFS or replicated to another host — mode 0400, owned by
-# root (the containers' user), mounted read-only into web and worker only
-# (never gpu-probe). The FOLDER is mounted, not the file: a file mount whose
-# source is missing makes Docker create a directory in its place, and a later
-# `mv` of the key would land inside it. The node refuses a key readable by
-# group or others (app/bundles/keys.py).
-# The limit: code running inside web or worker can read the key; this guards
+# read by what planted it. So the key lives in its own dataset, secrets/ —
+# never under data/ (where state/ lives), never in a folder shared over
+# SMB/NFS or replicated to another host — in two folders:
+#   secrets/private/node.key  mode 0400, root (the containers' user); the
+#                             WORKER only. It signs: validations, a new
+#                             collection, bundles.
+#   secrets/public/node.pub   mode 0444; web and worker. The web only
+#                             RECOGNISES what this node signed, so it never
+#                             holds the seed (app/identity.py); the Library's
+#                             create and export are queued for the worker
+#                             (app/jobs.py).
+# Both read-only; never gpu-probe. node.pub is not secret but is TRUSTED —
+# whoever replaces it decides which signatures the web calls this node's —
+# so it is kept beside the key, never in config/. The worker refuses to start
+# when node.pub is not node.key's half; the node refuses a key readable by
+# group or others, and a public file writable by them. FOLDERS are mounted,
+# not files: a file mount whose source is missing makes Docker create a
+# directory in its place, and a later `mv` would land inside it.
+# The limit: code running inside the worker can read the key; this guards
 # against file-level writes to state/ — a copied or restored state/, a share,
-# another container on the dataset.
+# another container on the dataset — and against a compromised web process.
 #
 # MOVING AN EXISTING KEY here (the key made before 2026-09-29 sits in
 # config/). MOVE it, never regenerate it: a new key is a new identity —
 # peers stop recognising this node's bundles and packs, and every validation
 # it signed is ignored, so every encoder is gated again. In this order:
-#   1. stop the app;
-#   2. mkdir -p -m 700 /mnt/ssd4/apps/louise-rag/secrets
-#      mv /mnt/ssd4/apps/louise-rag/config/node.key /mnt/ssd4/apps/louise-rag/secrets/
-#      chown root:root /mnt/ssd4/apps/louise-rag/secrets/node.key
-#      chmod 400 /mnt/ssd4/apps/louise-rag/secrets/node.key
+#   1. build the image (step 1 above: `bundle public-key` is new), stop the app;
+#   2. S=/mnt/ssd4/apps/louise-rag/secrets
+#      mkdir -p -m 700 $S/private; mkdir -p -m 755 $S/public
+#      mv /mnt/ssd4/apps/louise-rag/config/node.key $S/private/
+#      chown root:root $S/private/node.key; chmod 400 $S/private/node.key
+#      docker run --rm -v $S:/secrets -e NODE_KEY_PATH=/secrets/private/node.key \
+#        louise-rag:local python -m app.cli bundle public-key /secrets/public/node.pub
 #   3. install this YAML (its mounts name secrets/), then start the app.
 # Keep a copy of node.key offline: losing it is the same as regenerating it.
+# Signing from the command line runs in the worker container
+# (`docker exec <worker> python -m app.cli …`): the web holds no key.
 #
 # Set ADMIN_TOKEN before installing: it gates the Library/Network/System
 # pages and the mutating API. Unset = those areas are locked out entirely
@@ -123,7 +138,9 @@ services:
       DATA_DIR: /data
       CORPUS_DIR: /corpus
       CONFIG_DIR: /config
-      NODE_KEY_PATH: /run/louise/node.key   # read-only mount below — see NODE KEY
+      # the web recognises this node's signatures and makes none: the
+      # public half only (NODE_KEY_PATH is the worker's) — see NODE KEY
+      NODE_PUBLIC_KEY_PATH: /run/louise/public/node.pub
       # ── model endpoints (unchanged from the legacy app) ──
       CHAT_URL: http://192.168.178.10:30068
       CHAT_MODEL: qwen3:8b
@@ -151,7 +168,7 @@ services:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data
       - /mnt/ssd4/apps/louise-rag/config:/config
-      - /mnt/ssd4/apps/louise-rag/secrets:/run/louise:ro
+      - /mnt/ssd4/apps/louise-rag/secrets/public:/run/louise/public:ro
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://localhost:8742/healthz']
       interval: 30s
@@ -164,7 +181,11 @@ services:
     restart: unless-stopped
     command: ['python', '-m', 'app.worker']
     init: true                  # reaps rsync's orphaned children — see web
-    environment: *env
+    environment:
+      <<: *env
+      # the worker signs (validations, the Library's create and export,
+      # app/jobs.py), so it alone holds the private key
+      NODE_KEY_PATH: /run/louise/private/node.key
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data

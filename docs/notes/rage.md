@@ -467,9 +467,18 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
     both. Keeping the key out of reach (layer 2) is what stands there.
   - **Layer 2: the key out of reach.** Deployment, not code: the key in
     its own dataset, outside `data/` and any share, mode `0400`, mounted
-    read-only into web and worker only, as `deploy/truenas-app.yaml` now
-    does (2026-09-29); its header gives the steps to move an existing key. It guards against file-level writes to `state/`, not against
-    code running inside the node.
+    read-only, as `deploy/truenas-app.yaml` now does (2026-09-29); its
+    header gives the steps to move an existing key. It guards against
+    file-level writes to `state/`, not against code running inside the
+    worker.
+  - **The web process holds no private key** (operator, 2026-09-29). It
+    only recognises what this node signed, so it gets the public half
+    (`NODE_PUBLIC_KEY_PATH`, `app/identity.py`), and the two Library
+    actions that sign — creating a collection, exporting a bundle — are
+    queued in `state/node.sqlite` and run by the worker (`app/jobs.py`).
+    A create waits while the mode does not embed. The worker refuses to
+    start when the public file is not its key's half. A compromised web
+    process can no longer sign.
 - **98ee4dc** (2026-09-19) — quarantine: a peer's own tests come before
   any use of a copy, and a run not yet tested answers no query. It is
   wider than RAGE and is migration step 14; `rage-review.md` §18 has the

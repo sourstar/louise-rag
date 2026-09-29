@@ -171,20 +171,28 @@ def in_use_before(codex: Codex | None) -> bool:
 
 # ---- this peer's key, as its attestations spell it -----------------------------
 
-_own: list[str | None] = []
+_own: list[str] = []
 
 
 def own_key() -> str | None:
     """The public half, as an envelope's `key` spells it; None on a peer with
     no key (07 §7.8: it cannot sign, and checks and searches all the same).
-    Only the public text is kept."""
-    if not _own:
-        try:
-            from .bundles import keys as node_keys
-            _own.append(env.key_text(node_keys.load_signing_key().verify_key))
-        except Exception:                               # noqa: BLE001
-            _own.append(None)
-    return _own[0]
+    From THE resolution (app/identity.py), so the web process, which holds
+    only the public file, never reads the seed.
+
+    ONLY A KEY FOUND IS REMEMBERED (as `run_check.signer`): remembering "no
+    key" outlived the key being put in place, and every statement this node
+    signed after that was ignored until a restart."""
+    if _own:
+        return _own[0]
+    try:
+        from . import identity
+        text = identity.own()
+    except Exception:                                   # noqa: BLE001
+        return None
+    if text is not None:
+        _own.append(text)
+    return text
 
 
 def reset_cache() -> None:

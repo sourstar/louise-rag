@@ -134,7 +134,10 @@ hexadecimal digits with an optional trailing newline; nothing else — no
 PEM, no passphrase, no algorithm field. On a POSIX filesystem the file
 is refused when group- or world-accessible. The key material never
 appears in a log, an error message, a config value or any object below;
-the public key appears everywhere a producer or verifier is named.
+the public key appears everywhere a producer or verifier is named. A
+process that only recognises this peer's signatures reads the public key
+alone, from the path `NODE_PUBLIC_KEY_PATH` names (07 §7.8): the textual
+form above and a newline, nothing else.
 Ordinary keys do not rotate: a lost key is a new key, and the bundles
 and attestations the old key signed stay valid under the old key. A
 certifier's key rotates at its anchor (§9.11), and only there.

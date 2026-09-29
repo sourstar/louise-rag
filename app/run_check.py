@@ -221,9 +221,11 @@ def signer(key=None) -> str | None:
     if _me:
         return _me[0]
     try:
-        from .bundles import keys as node_keys
-        text = env.key_text(node_keys.load_signing_key().verify_key)
+        from . import identity
+        text = identity.own()       # the web reads the public file only
     except Exception:                                   # noqa: BLE001
+        return None
+    if text is None:
         return None
     _me.append(text)
     return text

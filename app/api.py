@@ -219,9 +219,15 @@ def hold_collection_create(body: HoldCreateBody):
     keys are the command's flags, and a refusal (exit 2) answers 409. It
     writes the Codex and the collection file (07 §7.8) — what the Library's
     *new collection* is now (07 §7.6), in place of the form that wrote a
-    file naming no Codex."""
+    file naming no Codex.
+
+    QUEUED FOR THE WORKER, 202 (operator, 2026-09-29). Creating signs the
+    calibration member with the node's private key, and this process holds
+    only the public half (app/identity.py). The refusals that need no work
+    are answered here, at once; the rest is the job's, read at
+    `GET /api/jobs/<id>` (app/jobs.py)."""
     import tomllib
-    from . import louise
+    from . import jobs, louise
     from .hold.codex import CodexError
     if body.plugin not in collections_mod.PLUGIN_REGISTRY:
         raise HTTPException(409, f"unknown plugin: {body.plugin!r}")
@@ -230,14 +236,10 @@ def hold_collection_create(body: HoldCreateBody):
                   else dict(body.recipe))
     except tomllib.TOMLDecodeError as e:
         raise HTTPException(409, f"the recipe is not TOML: {e}") from None
-    root = louise._default_root()
-    root.mkdir(parents=True, exist_ok=True)
     try:
-        codex, held = louise.create_from(root, body.plugin, recipe,
-                                         platform_image=body.platform_image,
-                                         space_from=body.space_from,
-                                         encoder=body.encoder,
-                                         query_encoder=body.query_encoder)
+        louise.preflight_create(recipe, body.platform_image)
+        if not body.encoder:
+            raise CodexError(louise.NO_ENCODER)
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"
@@ -245,8 +247,23 @@ def hold_collection_create(body: HoldCreateBody):
         cli += f" --query-encoder {body.query_encoder}"
     if body.space_from:
         cli += f" --space-from {body.space_from}"
-    return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
-            "held": str(held), "cli": cli}
+    job_id = jobs.submit(jobs.CREATE, {
+        # the text as sent: a TOML date is not JSON, and the job parses it
+        "plugin": body.plugin, "recipe": body.recipe, "space_from": body.space_from,
+        "platform_image": body.platform_image, "encoder": body.encoder,
+        "query_encoder": body.query_encoder, "cli": cli})
+    return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
+
+
+@app.get("/api/jobs/{job_id}", dependencies=[Depends(auth.require_admin)])
+def job_status(job_id: int):
+    """A job the web queued for the worker (app/jobs.py): its state, its
+    result or its failure, and why it waits if it does."""
+    from . import jobs
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"no job {job_id}")
+    return jobs.view(job)
 
 
 @app.post("/api/control", dependencies=[Depends(auth.require_admin)])

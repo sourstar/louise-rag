@@ -56,11 +56,24 @@ def test_a_create_that_names_no_encoder_is_refused_and_writes_nothing(client, mo
     assert not collections_mod.config_toml_path("gutenberg").exists()
 
 
+def created(client, body: dict) -> dict:
+    """The route queues; the worker's job thread runs it (app/jobs.py) —
+    here, the same `run_next` it calls, once."""
+    from contextlib import closing
+    from app import jobs
+    r = client.post(ROUTE, json=body)
+    assert r.status_code == 202, r.text
+    assert r.json()["state"] == "queued"
+    with closing(jobs.connect()) as con:
+        jobs.run_next(con, "running", log=lambda m: None)
+    return client.get(f"/api/jobs/{r.json()['id']}").json()
+
+
 def test_the_route_is_the_command(client):
-    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
-                                 "encoder": ENC, "query_encoder": QENC})
-    assert r.status_code == 200, r.text
-    d = r.json()
+    j = created(client, {"plugin": "gutenberg", "recipe": recipe(),
+                         "encoder": ENC, "query_encoder": QENC})
+    assert j["state"] == "done", j
+    d = j["result"]
     assert d["exit"] == 0 and d["name"] == "gutenberg"
     assert d["held"] == str(collections_mod.config_toml_path("gutenberg"))
     assert d["cli"] == (f"louise hold collection create gutenberg --recipe FILE "
@@ -73,10 +86,10 @@ def test_the_route_is_the_command(client):
     assert (c.slices, c.acquire_enabled, c.share, c.embed_mode_default) == \
         ((), False, False, "off"), "a new collection holds nothing and spends nothing"
 
-    again = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
-                                     "encoder": ENC, "query_encoder": QENC})
-    assert again.status_code == 200
-    assert again.json()["collection_id"] == d["collection_id"], "the hash is the identity"
+    again = created(client, {"plugin": "gutenberg", "recipe": recipe(),
+                             "encoder": ENC, "query_encoder": QENC})
+    assert again["state"] == "done"
+    assert again["result"]["collection_id"] == d["collection_id"], "the hash is the identity"
 
 
 def test_a_refusal_is_409_names_its_rule_and_writes_nothing(client, monkeypatch):

@@ -3577,6 +3577,47 @@ def _move_node_control(node_con, loaded) -> None:
                 con.close()
 
 
+#: how often the job runner looks for a queued job while idle
+JOB_POLL_S = 2.0
+#: how long a stopping worker waits for the job in hand: a create's encoder
+#: call cannot be cut, and one not done by then is queued again at the next
+#: start (app/jobs.py) — the pipeline joins keep the rest of the grace period
+JOB_STOP_WAIT_S = 20.0
+#: how often finished jobs are swept
+JOB_SWEEP_S = 600.0
+
+
+def _job_runner() -> None:
+    """The work the web process queues because it holds no private key
+    (app/jobs.py; operator, 2026-09-29): creating a collection and
+    exporting a bundle. Its own thread, not the round loop: a create embeds
+    the calibration set, which takes minutes. Deferral is not failure — a
+    busy store is waited out; only the job's own refusal fails it."""
+    from . import jobs
+    con = jobs.connect()
+    swept = 0.0
+    try:
+        while not _stop.is_set():
+            try:
+                if time.time() - swept > JOB_SWEEP_S:
+                    jobs.sweep(con)
+                    swept = time.time()
+                done = jobs.run_next(con, node_state.worker_state(con),
+                                     log=lambda m: print(m, flush=True))
+            except sqlite3.Error:
+                _stop.wait(JOB_POLL_S)
+                continue
+            except Exception:                           # noqa: BLE001
+                # the thread must outlive what it runs, or no job runs again
+                print("[error:jobs] node: " + traceback.format_exc()[:1500], flush=True)
+                _stop.wait(JOB_POLL_S)
+                continue
+            if done is None or done.state == jobs.QUEUED:
+                _stop.wait(JOB_POLL_S)
+    finally:
+        con.close()
+
+
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -3584,11 +3625,13 @@ def run_forever():
     # worker run from a terminal that goes away would otherwise die by the
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
-    # the record of which kept statements THIS start has re-checked, which
-    # the web process reads before it relies on one (run_check); emptied now
-    from . import run_check
-    run_check.publish_rechecks()
+    from . import jobs, run_check
     all_collections = collections_mod.load_all()
+    # the record of which kept statements THIS start has re-checked, which
+    # the web process reads before it relies on one (run_check); emptied
+    # now, before any stage runs — and after the first read of the node's
+    # files, so a start that fails there writes nothing
+    run_check.publish_rechecks()
     # Before anything reads it: the node state leaves the manifests for
     # state/node.sqlite, from the UNFILTERED list the web wrote to.
     node_con = node_state.connect()
@@ -3638,6 +3681,14 @@ def run_forever():
     # a compaction never idles a pipeline thread or the GPU loop
     threading.Thread(target=_index_maintainer, name="index-maintainer",
                      daemon=True).start()
+    # the work the web queues because it holds no private key (app/jobs.py);
+    # what a stopped worker left running is queued again first
+    requeued = jobs.requeue_running(node_con)
+    if requeued:
+        print(f"[info:jobs] node: job(s) {requeued} interrupted by the last stop "
+              f"are queued again", flush=True)
+    job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
+    job_thread.start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)
     # restart = new documents are considered. With pipeline threads this is
     # QUEUED rather than run here: scanning five collections serially before
@@ -3790,6 +3841,10 @@ def run_forever():
                 print(traceback.format_exc()[:1500], flush=True)
             time.sleep(5)
     _main_loop_live.clear()         # the beat stands down with the loop
+    job_thread.join(timeout=JOB_STOP_WAIT_S)
+    if job_thread.is_alive():
+        print("[info:jobs] node: the job in hand did not finish before the stop; "
+              "it is queued again at the next start", flush=True)
     _join_pipeline_threads()
     parallel.shutdown()             # the parse pool's children go with the worker
     for c in all_collections:
@@ -3816,6 +3871,15 @@ def main() -> int:
     collection at its unit and exits 130 on a signal" — invariant 2 says
     the same — and it exited 0. `_stop` is set only by the signal handler."""
     _warn_if_pid1()
+    # the public key the web process recognises must be this key's half
+    # (app/identity.py): a node whose two processes disagree about who it is
+    # refuses to start, with the reason
+    from . import identity
+    try:
+        identity.check_at_start()
+    except identity.IdentityError as e:
+        print(f"REFUSED TO START: {e}", file=sys.stderr, flush=True)
+        return 2
     run_forever()
     return 130 if _stop.is_set() else 0
 
