@@ -778,6 +778,20 @@ def load_all(*, skip_unreadable: bool = False):
     return (served, unreadable) if skip_unreadable else served
 
 
+def is_private(collection) -> bool:
+    """A deposit collection (02 §2.9): never returned by an open route —
+    never-share is not only about peers, and a guest on the LAN is not the
+    depositor. Searched only with the deposit token or the admin token
+    (07 §7.4)."""
+    codex = getattr(collection, "codex", None)
+    return codex is not None and codex.plugin == "deposit"
+
+
+def load_public() -> list:
+    """Every collection an open route may name, list or search."""
+    return [c for c in load_all() if not is_private(c)]
+
+
 def is_synthesized(collection) -> bool:
     """True for the legacy default: no TOML, no collections/ directory."""
     return not collections_dir().is_dir() and not config_toml_path(collection.name).exists()

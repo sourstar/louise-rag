@@ -86,6 +86,9 @@ _source_qualified_ids = query_service.source_qualified_ids
 
 app.include_router(web.ask_router)
 app.include_router(web.admin_router)
+# 07 §7.4: LocalAGI's knowledge-base routes, the second protocol alias
+from . import localagi  # noqa: E402
+app.include_router(localagi.router)
 # index.html was fully self-contained (inline CSS/JS, no asset requests) so
 # no static mount existed before P0.6 — the new pages need admin.css and the
 # vendored htmx.min.js served for real.

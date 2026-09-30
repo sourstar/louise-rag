@@ -257,7 +257,7 @@ RESULT_LANGUAGES = (
 @ask_router.get("/ask", response_class=HTMLResponse)
 def ask_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "ask.html", {
-        "active": "ask", "collections": collections_mod.load_all(), "result": None,
+        "active": "ask", "collections": collections_mod.load_public(), "result": None,
         "result_languages": RESULT_LANGUAGES,
         "default_results": retrieval.DEFAULT_RESULTS,
         "default_rerank_depth": retrieval.RERANK_TOP_N,

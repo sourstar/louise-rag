@@ -168,6 +168,25 @@ def _resolve_admin_token(env) -> str:
 
 ADMIN_TOKEN = _resolve_admin_token(os.environ)
 
+
+# The token LocalAGI's routes require (07 §7.4) — its own, never the admin
+# token's power: an agent that can write its memory cannot pause the node.
+# A PATH only (invariant 8): unlike ADMIN_TOKEN there is no deployment that
+# predates it, so no value-in-the-environment form is accepted. Unset, the
+# routes answer 401.
+def _resolve_deposit_token(env) -> str:
+    path = env.get("DEPOSIT_TOKEN_FILE")
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError as e:
+        raise RuntimeError(f"DEPOSIT_TOKEN_FILE is set but unreadable: {path} "
+                           f"({type(e).__name__})") from None
+
+
+DEPOSIT_TOKEN = _resolve_deposit_token(os.environ)
+
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
 # Per-collection time budget per worker round (seconds). Cheap stages (a

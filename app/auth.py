@@ -18,6 +18,23 @@ from fastapi import Cookie, Header, HTTPException
 from . import config
 
 
+def deposit_caller(authorization: str | None) -> str | None:
+    """Who a LocalAGI request is (07 §7.4): "deposit" for the deposit
+    token, "admin" for the admin token, None for anything else. A bearer
+    token, as LocalAGI's client sends it. With no deposit token configured
+    the routes are closed — never open."""
+    if not config.DEPOSIT_TOKEN:
+        return None
+    scheme, _, supplied = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not supplied:
+        return None
+    if secrets.compare_digest(supplied, config.DEPOSIT_TOKEN):
+        return "deposit"
+    if config.ADMIN_TOKEN and secrets.compare_digest(supplied, config.ADMIN_TOKEN):
+        return "admin"
+    return None
+
+
 def require_admin(x_admin_token: str | None = Header(default=None),
                    admin_token: str | None = Cookie(default=None)) -> None:
     if not config.ADMIN_TOKEN:

@@ -492,7 +492,7 @@ tree, answered in LocalAGI's shape rather than §7.7's:
 | `DELETE /api/collections/{c}/entry/delete` `{entry}` | `hold deposit erase`, then the remaining keys |
 | `POST /api/collections/{c}/search` `{query, max_results}` | `ask search` over `{c}` alone |
 | `POST /api/collections/{c}/reset` | `hold deposit erase` of every key |
-| `POST /api/collections/{c}/upload` (multipart `file`) | `hold deposit add`; the answer is the bare object `{status, filename, key}` |
+| `POST /api/collections/{c}/upload` (multipart `file`) | `hold deposit add`, the key being the BASE NAME of the part's file name — LocalAGI's client sends the path it uploaded from, and Go's own server keeps the last component; the answer is the bare object `{status, filename, key}` |
 | `POST`, `DELETE`, `GET /api/collections/{c}/sources` | `hold source add`, `erase`, `list` |
 
 Every other answer is the envelope `{success, message, data, error:
@@ -503,7 +503,9 @@ record's citation fields as strings, and the vector leg's cosine — 0
 for a hit the text index alone found. A write to a collection that is
 not a deposit collection answers 409; a source added before the
 web-sources disclaimer is accepted answers 409 and fetches nothing
-(04 §4.4). A deposit is searchable by text as soon as its upload is
+(04 §4.4). A search through these routes is not written to the query
+log, which the open `/api/stats` shows: an agent's queries are its
+memory's business. A deposit is searchable by text as soon as its upload is
 answered — record, chunks and text index are committed in the request —
 and by vector once the node's next round has embedded it; the request
 never waits on the encoder.

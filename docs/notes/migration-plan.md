@@ -1343,7 +1343,17 @@ the transfer manager and the worker's stage selection.*
   table versions (cleaned up), with `SECURE_DELETE` never turned off.
   Proven by `tests/deposit/test_erasure.py`: deposit, embed, erase, and
   the deposit's bytes appear in no file under the collection.
-- **15d — the LocalAGI routes.** 07 §7.4's table on `app/api.py`,
+- **15d — the LocalAGI routes. DONE 2026-09-30**
+  (`tests/deposit/test_deposit_localagi.py`, 17; `app/localagi.py`).
+  AND RUN FOR REAL: LocalAGI's own `pkg/localrag` client, built from its
+  checkout at `7e0947d`, against a live node — create, store, count,
+  search, list, read, delete, sources, reset, create again — exit 0
+  (`tools/localagi_check/`, which 15f re-runs). Found on the way: the
+  client names an upload with its temp PATH (the key is the base name);
+  multipart parsed with the standard library, not `python-multipart`;
+  and `run_search`'s all-withheld answer had no `timings`, a KeyError in
+  `/api/search` that predates this step (fixed at the source). Sources
+  answer 501 until 15e. 07 §7.4's table on `app/api.py`,
   `DEPOSIT_TOKEN_FILE`, deposit collections withheld from every open
   `ask` route and the Ask page. The upload commits record, chunks and
   text index in its request and never calls the encoder; vectors are
