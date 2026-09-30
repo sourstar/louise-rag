@@ -141,12 +141,43 @@ def test_refusals_come_in_the_envelope(client):
     assert r.status_code == 404 and r.json()["success"] is False
 
 
-def test_sources_are_listed_and_not_yet_added(client):
-    client.post("/api/collections", json={"name": "alice"}, headers=H())
-    assert envelope(client.get("/api/collections/alice/sources", headers=H()))["sources"] == []
-    r = client.post("/api/collections/alice/sources", headers=H(),
-                    json={"url": "https://example.org/", "update_interval": 60})
-    assert r.status_code == 501 and r.json()["success"] is False
+def test_sources_through_localagis_routes(client, tmp_path):
+    """AddSource refused until the node accepts the disclaimer (04 §4.4);
+    then recorded, fetched, listed with its last fetch, and removed with its
+    deposit — LocalAGI's AddSource/ListSources/RemoveSource, as it sends them."""
+    from app import licensing
+    from app.hold import sources
+    from tests.deposit.test_deposit_sources import _Site
+    www = tmp_path / "www"
+    www.mkdir()
+    (www / "page.html").write_text("<p>La ricetta del pesto.</p>", encoding="utf-8")
+    site = _Site(www)
+    try:
+        client.post("/api/collections", json={"name": "alice"}, headers=H())
+        url = f"{site.base}/page.html"
+        body = {"url": url, "update_interval": 60}
+        r = client.post("/api/collections/alice/sources", headers=H(), json=body)
+        assert r.status_code == 409 and "disclaimer" in r.json()["error"]["message"]
+        assert site.hits == []
+
+        licensing.accept_web_sources()
+        from app import node_state
+        node_state.set_worker_state("running")
+        envelope(client.post("/api/collections/alice/sources", headers=H(), json=body))
+        sources.tick()                         # what the worker's sources thread does
+        [row] = envelope(client.get("/api/collections/alice/sources", headers=H()))["sources"]
+        assert row["url"] == url and row["update_interval"] == 60 and row["last_update"]
+        key = sources.source_key("alice", url)
+        assert key in envelope(client.get("/api/collections/alice/entries", headers=H()))["keys"]
+
+        r = client.request("DELETE", "/api/collections/alice/sources", headers=H(),
+                           json={"url": url})
+        envelope(r)
+        assert envelope(client.get("/api/collections/alice/sources", headers=H()))["sources"] == []
+        assert key not in envelope(client.get("/api/collections/alice/entries",
+                                              headers=H()))["keys"]
+    finally:
+        site.server.shutdown()
 
 
 # ---- curated collections: searchable, never written (D2) ------------------

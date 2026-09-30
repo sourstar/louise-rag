@@ -242,3 +242,13 @@ def test_the_command_line_queues_for_the_worker_by_default(node, tmp_path, capsy
     finally:
         stop.set()
         t.join(5)
+
+
+def test_create_writes_the_empty_origin(node):
+    """07 §7.8: an empty deposit collection has its corpus directory, so the
+    worker's discovery does not report it missing every round."""
+    make(node, "alice")
+    make(node, "bob")                      # the copied-space path too
+    for name in ("alice", "bob"):
+        c = collections_mod.by_name(name)
+        assert c.corpus_dir.is_dir() and not any(c.corpus_dir.iterdir())

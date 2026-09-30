@@ -704,8 +704,16 @@ URL:
 - anything else: the one page, its HTML converted to text.
 
 A source is fetched when it is added, then again whenever its interval
-has passed; the deposit is replaced whole each time, and a fetch that
-fails or returns nothing keeps the previous one. Removing the source
+has passed — by the worker's sources thread, and only where the node's
+mode runs both downloading and parsing (07 §7.8): a paused, seeding-only
+or downloading-only node lets its due sources wait. The deposit is
+replaced whole each time, and a fetch that fails or returns nothing keeps
+the previous one. A repository's files are those LocalRecall counts as
+text (by extension), each after a `--- File: <path> ---` line; a page's
+HTML is read as text with its scripts and styles left out; a page is at
+most 50 MB and 30 s, a clone 10 minutes. A streamed page draws from the
+budget per chunk; a clone, which no rate cap reaches, is charged once it
+has landed. Removing the source
 erases its deposit (02 §2.9). Every fetch draws from the transfer
 budget, and none happens before §4.4's rule for web sources is met: a
 git repository over SSH with this node's key (`GIT_PRIVATE_KEY_FILE`,

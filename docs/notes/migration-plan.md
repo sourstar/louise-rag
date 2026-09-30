@@ -1374,7 +1374,19 @@ the transfer manager and the worker's stage selection.*
   `tests/deposit/test_localagi_contract.py` — every request LocalAGI's
   `pkg/localrag/client.go` (at `7e0947d`) sends, decoded the way it
   decodes the answer — and `tests/deposit/test_auth.py`.
-- **15e — URL sources.** `hold source add|erase|list`, `[[sources]]` in
+- **15e — URL sources. DONE 2026-09-30**
+  (`tests/deposit/test_deposit_sources.py`, 29, and the LocalAGI route
+  test). `sanitize_url` checked against the OUTPUT OF LOCALRECALL'S OWN
+  FUNCTION, run with Go on eight URLs. And run for real: LocalAGI's client
+  (`tools/localagi_check … <source-url>`) against uvicorn and `python -m
+  app.worker` — AddSource, the worker's sources thread fetching within
+  two seconds, ListSources with its last fetch, the entry under
+  LocalRecall's key, RemoveSource. Settled while building: sources are
+  fetched only where the mode runs FETCH and PARSE; one write lock per
+  deposit collection (the deposit and sources threads both write, and a
+  purge rewrites whole indexes); `create` writes the empty `origin/`
+  (the worker's discovery reported it missing every round — seen in the
+  two-process run). `hold source add|erase|list`, `[[sources]]` in
   the collection's file, `hold collection ack --web-sources`,
   `GIT_PRIVATE_KEY_FILE`; every fetch through the transfer manager.
   Proven by `tests/deposit/test_sources.py`: keys equal LocalRecall's

@@ -187,6 +187,10 @@ def _resolve_deposit_token(env) -> str:
 
 DEPOSIT_TOKEN = _resolve_deposit_token(os.environ)
 
+# The SSH key a deposit collection's `.git` sources are cloned with (06
+# §6.7): a PATH (invariant 8), handed to ssh as `-i`, never read here.
+GIT_PRIVATE_KEY_FILE = os.environ.get("GIT_PRIVATE_KEY_FILE") or None
+
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))
 # Per-collection time budget per worker round (seconds). Cheap stages (a

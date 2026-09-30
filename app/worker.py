@@ -3693,6 +3693,12 @@ def run_forever():
     threading.Thread(target=jobs_mod.serve_deposits, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="deposits", daemon=True).start()
+    # a deposit collection's URL sources (06 §6.7): their own thread, since a
+    # sitemap is many pages and a clone takes minutes
+    from .hold import sources as sources_mod
+    threading.Thread(target=sources_mod.serve, args=(_stop,),
+                     kwargs={"log": lambda m: print(m, flush=True)},
+                     name="sources", daemon=True).start()
     job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
     job_thread.start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)

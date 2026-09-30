@@ -340,6 +340,12 @@ def _deposit(args: dict[str, Any]) -> dict[str, Any]:
         return {"remaining": deposit.erase(name, args["key"])}
     if op == "reset":
         return {"erased": deposit.reset(name)}
+    if op == "source-add":
+        from .hold import sources
+        return sources.add(name, args["url"], int(args.get("interval") or 60))
+    if op == "source-erase":
+        from .hold import sources
+        return sources.erase(name, args["url"])
     raise ValueError(f"unknown deposit operation {op!r}")
 
 

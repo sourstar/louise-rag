@@ -187,6 +187,7 @@ def create(root: Path, name: str, *, platform_image: str,
         created = col.create(root, codex, name=name)
         d = col.drag_of(root, name)
         col.carry_calibration(root, created, d, source)
+        _origin_of(root, name).mkdir(parents=True, exist_ok=True)
         return created
     if space is None:
         raise DepositError(
@@ -197,9 +198,18 @@ def create(root: Path, name: str, *, platform_image: str,
     if embed is None:
         raise DepositError("the first deposit collection on an encoder embeds "
                            "the calibration set (06 §6.6): name the encoder")
-    return col.create_from_recipe(root, PLUGIN, recipe(name, dict(space)),
-                                  platform_image=platform_image, embed=embed,
-                                  name=name, key=key, now=now)
+    created = col.create_from_recipe(root, PLUGIN, recipe(name, dict(space)),
+                                     platform_image=platform_image, embed=embed,
+                                     name=name, key=key, now=now)
+    _origin_of(root, name).mkdir(parents=True, exist_ok=True)
+    return created
+
+
+def _origin_of(root: Path, name: str) -> Path:
+    """07 §7.8: `create` writes the empty `origin/` — the corpus directory
+    of a collection that holds nothing yet, which discovery would otherwise
+    report missing every round."""
+    return Path(root) / name / "origin"
 
 
 def write_held_file(root: Path, codex: Codex, encoder_url: str | None) -> Path:
@@ -292,8 +302,26 @@ def _fsync_write(path: Path, data: bytes) -> None:
     tmp.replace(path)
 
 
-def add(name: str, key: str, data: bytes, *, url: str | None = None,
-        now: float | None = None) -> dict[str, Any]:
+_write_locks: dict[str, "threading.Lock"] = {}
+_write_locks_guard = __import__("threading").Lock()
+
+
+def _writing(name: str):
+    """One writer per deposit collection in this process — the deposit
+    thread and the sources thread both write, and a purge rewrites whole
+    indexes: an add landing between its read and its rewrite would be
+    lost. Keyed on the collection's directory, its physical identity."""
+    from app import collections as collections_mod
+    key = str(collections_mod.louise_root() / "collections" / name)
+    with _write_locks_guard:
+        lock = _write_locks.get(key)
+        if lock is None:
+            lock = _write_locks[key] = __import__("threading").Lock()
+    return lock
+
+
+def _add(name: str, key: str, data: bytes, *, url: str | None = None,
+         now: float | None = None) -> dict[str, Any]:
     """`hold deposit add` — store `data` as the deposit `key`, replacing a
     deposit already under that key (02 §2.9: replaced whole, never edited),
     and index it for text search before returning.
@@ -342,6 +370,25 @@ def add(name: str, key: str, data: bytes, *, url: str | None = None,
             "chunks": int(row["chunks"] or 0)}
 
 
+def add(name: str, key: str, data: bytes, *, url: str | None = None,
+        now: float | None = None) -> dict[str, Any]:
+    """`hold deposit add` — see `_add`; under the collection's write lock."""
+    with _writing(name):
+        return _add(name, key, data, url=url, now=now)
+
+
+def erase(name: str, key: str) -> list[str]:
+    """`hold deposit erase` — see `_erase_one`; under the collection's write lock."""
+    with _writing(name):
+        return _erase_one(name, key)
+
+
+def reset(name: str) -> int:
+    """Every deposit erased, one purge — see `_reset`; under the write lock."""
+    with _writing(name):
+        return _reset(name)
+
+
 def _index(collection, con, uid: str) -> None:
     """The worker's rdf and fts stages, for this document, now. Each stage
     opens its own `BEGIN IMMEDIATE` once its long part is done and leaves
@@ -359,7 +406,7 @@ def _index(collection, con, uid: str) -> None:
             raise
 
 
-def erase(name: str, key: str) -> list[str]:
+def _erase_one(name: str, key: str) -> list[str]:
     """`hold deposit erase` — remove the deposit `key`, leaving no trace
     (02 §2.9); the remaining keys."""
     collection = _collection(name)
@@ -371,7 +418,7 @@ def erase(name: str, key: str) -> list[str]:
         return _keys(con)
 
 
-def reset(name: str) -> int:
+def _reset(name: str) -> int:
     """Every deposit erased, and ONE purge after them rather than one each
     — the reset of 07 §7.4. Returns how many were erased."""
     collection = _collection(name)

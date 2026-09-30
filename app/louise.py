@@ -177,6 +177,34 @@ def cmd_deposit_erase(a) -> int:
     return 0
 
 
+def cmd_source_add(a) -> int:
+    from app.hold import deposit, sources
+    _print(sources.add(a.collection, a.url, a.interval) if a.here else
+           deposit.via_worker("source-add", a.collection, url=a.url, interval=a.interval))
+    return 0
+
+
+def cmd_source_erase(a) -> int:
+    from app.hold import deposit, sources
+    if not a.yes:
+        raise CodexError("erase removes the source's deposit leaving no trace "
+                         "(02 §2.9): pass --yes")
+    _print(sources.erase(a.collection, a.url) if a.here else
+           deposit.via_worker("source-erase", a.collection, url=a.url))
+    return 0
+
+
+def cmd_source_list(a) -> int:
+    from app.hold import sources
+    rows = sources.listing(a.collection)
+    if a.json:
+        _print(rows)
+    else:
+        for r in rows:
+            print(f"{r['url']}\tevery {r['update_interval']} min\t{r['last_update'] or 'not yet'}")
+    return 0
+
+
 def cmd_deposit_list(a) -> int:
     from app.hold import deposit
     keys = deposit.keys(a.collection)
@@ -709,6 +737,18 @@ def _ack_origin_unchecked(a, name, codex) -> int:
     return 0
 
 
+def _ack_web_sources(a) -> int:
+    """`hold collection ack --web-sources`: the node's one acceptance of the
+    web-sources disclaimer (04 §4.4, 09 §9.13). Printed unless `--yes`, like
+    every acknowledgement: one nobody read is a checkbox."""
+    from app import licensing
+    if not a.yes:
+        print(licensing.WEB_DISCLAIMER.read_text(encoding="utf-8"))
+    ack = licensing.accept_web_sources(_utc_now())
+    print(f"accepted: {ack['terms_sha256']} at {ack['time']}", file=sys.stderr)
+    return 0
+
+
 def cmd_collection_ack(a) -> int:
     """`hold collection ack <collection>` — record 09 §9.13's acknowledgement.
 
@@ -728,6 +768,10 @@ def cmd_collection_ack(a) -> int:
 
     from app.hold import collection as col, drag as drag_mod
 
+    if getattr(a, "web_sources", False):
+        return _ack_web_sources(a)
+    if not a.collection:
+        raise CodexError("ack names a collection, or takes --web-sources (04 §4.4)")
     name, codex = col.resolve(a.root, a.collection)
     if getattr(a, "origin_unchecked", False):
         return _ack_origin_unchecked(a, name, codex)
@@ -1770,14 +1814,34 @@ def build_parser() -> argparse.ArgumentParser:
     p = verbs.add_parser("ack",
                          help="record the licence acknowledgement a yellow- "
                               "or red-class collection needs (09 §9.13)")
-    root_arg(p); p.add_argument("collection")
+    root_arg(p); p.add_argument("collection", nargs="?", default=None)
     p.add_argument("--yes", action="store_true",
                    help="record WITHOUT printing the terms (07 §7.7). For a "
                         "script; a person should read them")
+    p.add_argument("--web-sources", action="store_true", dest="web_sources",
+                   help="accept the web-sources disclaimer, once for the node (04 §4.4)")
     p.add_argument("--origin-unchecked", action="store_true", dest="origin_unchecked",
                    help="record the decision to use a copy whose origin could not "
                         "be checked, every other test having passed (03 §3.6)")
     p.set_defaults(fn=cmd_collection_ack)
+
+    src_ = nouns.add_parser("source", help="a deposit collection's URL sources (06 §6.7)")
+    sverbs_ = src_.add_subparsers(dest="verb", required=True)
+    p = sverbs_.add_parser("add", help="subscribe a deposit collection to a URL")
+    p.add_argument("collection"); p.add_argument("url")
+    p.add_argument("--interval", type=int, default=60, help="minutes between fetches")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_source_add)
+    p = sverbs_.add_parser("erase", help="end a subscription and erase its deposit")
+    p.add_argument("collection"); p.add_argument("url")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_source_erase)
+    p = sverbs_.add_parser("list", help="the subscriptions, each with its last fetch")
+    p.add_argument("collection"); p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_source_list)
 
     # ---- hold records ---------------------------------------------------
     dep = nouns.add_parser("deposit", help="a deposit collection's documents (02 §2.9)")

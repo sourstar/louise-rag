@@ -322,13 +322,31 @@ def _result(collection, hit: dict) -> dict:
 @router.get("/{name}/sources")
 @_wrap
 async def list_sources(name: str):
+    """LocalAGI's `ListSources`: url, update_interval, last_update."""
+    from .hold import sources
     _deposit_collection(name)
-    return ok({"sources": []})
+    return ok({"sources": await _call(sources.listing, name)})
 
 
 @router.post("/{name}/sources")
+@_wrap
+async def add_source(name: str, body: SourceBody):
+    """LocalAGI's `AddSource`: recorded by the worker and fetched at once —
+    refused (409) before the web-sources disclaimer is accepted, except for
+    a git repository over SSH with this node's key (04 §4.4)."""
+    _deposit_collection(name)
+    got = await _in_worker("source-add", name, url=body.url,
+                           interval=max(1, int(body.update_interval or 60)))
+    return ok(got, message="source added")
+
+
+class RemoveSourceBody(BaseModel):
+    url: str
+
+
 @router.delete("/{name}/sources")
 @_wrap
-async def sources(name: str):
+async def remove_source(name: str, body: RemoveSourceBody):
     _deposit_collection(name)
-    raise LocalAgiError(501, "NOT_BUILT", "URL sources arrive with migration step 15e")
+    got = await _in_worker("source-erase", name, url=body.url)
+    return ok(got, message="source removed")

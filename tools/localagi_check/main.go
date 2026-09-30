@@ -3,7 +3,7 @@
 //
 // Built INSIDE a LocalAGI checkout, so it is exactly the client an agent uses:
 //
-//	tools/localagi_check/run.sh <localagi-checkout> <louise-url> <deposit-token-file>
+//	tools/localagi_check/run.sh <localagi-checkout> <louise-url> <deposit-token-file> [source-url]
 //
 // Verified 2026-09-30 against LocalAGI 7e0947d: exit 0, every call answered.
 //
@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mudler/LocalAGI/pkg/localrag"
 )
@@ -64,6 +65,32 @@ func main() {
 	srcs, err := c.ListSources("louise-check-agent")
 	must(err, "ListSources")
 	out["sources"] = srcs
+	// a URL source, when one is given: added, fetched by the node's worker,
+	// listed with its last fetch, then removed (06 §6.7)
+	if len(os.Args) > 3 {
+		src := os.Args[3]
+		must(c.AddSource("louise-check-agent", src, 60), "AddSource")
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			ls, err := c.ListSources("louise-check-agent")
+			must(err, "ListSources")
+			if len(ls) == 1 && ls[0].LastUpdate != "" {
+				out["source"] = ls[0]
+				break
+			}
+			if time.Now().After(deadline) {
+				must(fmt.Errorf("not fetched within 90s: %+v", ls), "source fetch")
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		ents, err := c.ListEntries("louise-check-agent")
+		must(err, "ListEntries after the source")
+		out["entries_with_source"] = ents
+		must(c.RemoveSource("louise-check-agent", src), "RemoveSource")
+		left, err := c.ListSources("louise-check-agent")
+		must(err, "ListSources after removal")
+		out["sources_after_removal"] = left
+	}
 	must(wc.Reset(), "Reset")
 	out["count_after_reset"] = wc.Count()
 	out["create_again_err"] = fmt.Sprint(c.CreateCollection("louise-check-agent"))
