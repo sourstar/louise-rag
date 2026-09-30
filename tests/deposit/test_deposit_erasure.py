@@ -213,5 +213,8 @@ def test_a_crash_before_the_purge_is_finished_on_the_next_opening(three, monkeyp
         deposit.erase("alice", f"{k}.txt")
     assert _files_holding(root, t)            # the vector table still has it
     monkeypatch.setattr(deposit, "purge", real)
-    assert deposit.keys("alice") == ["keep-one.txt", "keep-two.md"]   # opens it
+    deposit.keys("alice")                     # a READ writes nothing, purges nothing
+    assert _files_holding(root, t)
+    assert deposit.finish_pending() == ["alice"]   # the worker's deposit thread, starting
     assert _files_holding(root, t, k) == []
+    assert deposit.keys("alice") == ["keep-one.txt", "keep-two.md"]

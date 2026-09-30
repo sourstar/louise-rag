@@ -37,7 +37,20 @@ from typing import Any
 from . import node_state
 
 CREATE, EXPORT = "collection-create", "bundle-export"
-KINDS = (CREATE, EXPORT)
+#: A deposit collection's writes, queued by the web's LocalAGI routes (07
+#: §7.4): the web process must not write a collection's indexes, because
+#: tantivy allows ONE writer per index directory and the worker keeps its
+#: writers open — its catalog backfill alone holds one for every collection.
+#: Run by their own worker thread (`serve_deposits`), never behind a create
+#: that is embedding a calibration set for minutes; in every mode, because
+#: an agent writing its memory is not the node's background work.
+DEPOSIT = "deposit"
+KINDS = (CREATE, EXPORT, DEPOSIT)
+
+#: A deposit job's row names a key, and 02 §2.9 lets nothing name an erased
+#: deposit: the web deletes the row when it has read the result (`forget`),
+#: and the sweep deletes one nobody read after this long.
+DEPOSIT_KEEP_S = 600
 QUEUED, RUNNING, DONE, FAILED, EXPIRED = "queued", "running", "done", "failed", "expired"
 
 #: a finished export's file is kept this long for its download
@@ -79,7 +92,9 @@ class Job:
 
 
 def connect() -> sqlite3.Connection:
-    return ensure_schema(node_state.connect())
+    con = ensure_schema(node_state.connect())
+    con.execute("PRAGMA secure_delete=ON")     # a forgotten row is zeroed (02 §2.9)
+    return con
 
 
 def ensure_schema(con: sqlite3.Connection) -> sqlite3.Connection:
@@ -113,7 +128,9 @@ def get(job_id: int) -> Job | None:
 
 
 def kinds_allowed(mode: str) -> tuple[str, ...]:
-    return KINDS if node_state.runs(mode, node_state.EMBED) else (EXPORT,)
+    """What the general job thread may run in this mode. Deposits are not
+    among them: they have a thread of their own (`serve_deposits`)."""
+    return (CREATE, EXPORT) if node_state.runs(mode, node_state.EMBED) else (EXPORT,)
 
 
 def waiting_because(job: Job, mode: str) -> str | None:
@@ -238,15 +255,28 @@ def sweep(con: sqlite3.Connection, now: float | None = None) -> None:
         con.execute("UPDATE jobs SET state=? WHERE id=?", (EXPIRED, row["id"]))
     con.execute("DELETE FROM jobs WHERE state IN (?, ?, ?) AND finished<?",
                 (DONE, FAILED, EXPIRED, now - KEEP_ROWS_S))
+    con.execute("DELETE FROM jobs WHERE kind=? AND state IN (?, ?) AND finished<?",
+                (DEPOSIT, DONE, FAILED, now - DEPOSIT_KEEP_S))
+
+
+def forget(job_id: int) -> None:
+    """A finished deposit job's row deleted, and the node state's write-ahead
+    log truncated, so neither holds the key it named (02 §2.9). Best effort
+    on the log: a reader in the middle of a transaction keeps it for now,
+    and the next forget truncates it."""
+    with closing(connect()) as con:
+        con.execute("DELETE FROM jobs WHERE id=? AND kind=?", (job_id, DEPOSIT))
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 # ---- what the worker runs -------------------------------------------------------
 
-def run_next(con: sqlite3.Connection, mode: str, log=print) -> Job | None:
-    """Claim the oldest job this mode allows, do it, and record how it
-    ended; the job as it ended, or None when nothing was queued. The
-    worker's job thread calls this; so do the tests."""
-    job = claim(con, kinds_allowed(mode))
+def run_next(con: sqlite3.Connection, mode: str, log=print,
+             kinds: tuple[str, ...] | None = None) -> Job | None:
+    """Claim the oldest job this mode allows — or of `kinds` — do it, and
+    record how it ended; the job as it ended, or None when nothing was
+    queued. The worker's job threads call this; so do the tests."""
+    job = claim(con, kinds_allowed(mode) if kinds is None else kinds)
     if job is None:
         return None
     what = job.args.get("collection") or job.args.get("plugin") or "?"
@@ -283,7 +313,57 @@ def run(job: Job) -> dict[str, Any]:
         return _create(job.args)
     if job.kind == EXPORT:
         return _export(job.id, job.args)
+    if job.kind == DEPOSIT:
+        return _deposit(job.args)
     raise ValueError(f"unknown job kind {job.kind!r}")
+
+
+def _deposit(args: dict[str, Any]) -> dict[str, Any]:
+    """One deposit-collection write, by the command the CLI runs (07 §7.4:
+    the route is a client of the command, not a second implementation).
+    An upload's bytes wait in the collection's `state/incoming/`, written
+    there by the web, and go whatever the outcome."""
+    from . import louise
+    from .hold import deposit
+    op, name = args["op"], args["collection"]
+    if op == "create":
+        codex, _held = louise.create_deposit(louise._default_root(), name)
+        return {"collection_id": codex.collection_id}
+    if op == "add":
+        staged = Path(args["staged"])
+        try:
+            got = deposit.add(name, args["key"], staged.read_bytes())
+        finally:
+            staged.unlink(missing_ok=True)
+        return {"key": got["key"], "chunks": got["chunks"]}
+    if op == "erase":
+        return {"remaining": deposit.erase(name, args["key"])}
+    if op == "reset":
+        return {"erased": deposit.reset(name)}
+    raise ValueError(f"unknown deposit operation {op!r}")
+
+
+def serve_deposits(stop, poll_s: float = 0.2, log=print) -> None:
+    """The deposit thread: every queued deposit job, oldest first, until
+    `stop` is set. The worker runs it; a test runs it beside its client. It
+    first finishes any erase a crash cut short (02 §2.9)."""
+    from .hold import deposit
+    try:
+        deposit.finish_pending()
+    except Exception as e:                              # noqa: BLE001
+        log(f"[warn:jobs] deposits: finishing a pending purge: {type(e).__name__}: {e}")
+    con = connect()
+    try:
+        while not stop.is_set():
+            try:
+                done = run_next(con, "running", log=log, kinds=(DEPOSIT,))
+            except sqlite3.Error:
+                stop.wait(poll_s)
+                continue
+            if done is None:
+                stop.wait(poll_s)
+    finally:
+        con.close()
 
 
 def _create(args: dict[str, Any]) -> dict[str, Any]:

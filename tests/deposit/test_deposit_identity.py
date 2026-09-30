@@ -201,14 +201,14 @@ def test_the_command_line_creates_adds_lists_shows_and_erases(node, tmp_path, ca
 
     f = tmp_path / "memo.md"
     f.write_text("# Memo\n\nRemember the milk.\n", encoding="utf-8")
-    assert louise.main(["hold", "deposit", "add", "bob", str(f)]) == 0
+    assert louise.main(["hold", "deposit", "add", "bob", str(f), "--here"]) == 0
     capsys.readouterr()
     assert louise.main(["hold", "deposit", "list", "bob", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == ["memo.md"]
     assert louise.main(["hold", "deposit", "show", "bob", "memo.md"]) == 0
     assert json.loads(capsys.readouterr().out)["content"].startswith("# Memo")
     assert louise.main(["hold", "deposit", "erase", "bob", "memo.md"]) == 2
-    assert louise.main(["hold", "deposit", "erase", "bob", "memo.md", "--yes"]) == 0
+    assert louise.main(["hold", "deposit", "erase", "bob", "memo.md", "--yes", "--here"]) == 0
     capsys.readouterr()
     assert louise.main(["hold", "deposit", "list", "bob", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
@@ -219,3 +219,26 @@ def test_create_deposit_without_a_name_is_refused(node, capsys):
     assert louise.main(["hold", "collection", "create", "deposit", "--root", str(node),
                         "--platform-image", PLATFORM]) == 2
     assert "--name" in capsys.readouterr().err
+
+
+def test_the_command_line_queues_for_the_worker_by_default(node, tmp_path, capsys):
+    """On a running node only the worker writes a collection's indexes
+    (tantivy: one writer per index), so the CLI queues like the web does."""
+    import threading
+    from app import jobs, louise
+    make(node, "alice")
+    stop = threading.Event()
+    t = threading.Thread(target=jobs.serve_deposits, args=(stop,),
+                         kwargs={"poll_s": 0.02, "log": lambda m: None}, daemon=True)
+    t.start()
+    try:
+        f = tmp_path / "queued.txt"
+        f.write_text("through the worker", encoding="utf-8")
+        assert louise.main(["hold", "deposit", "add", "alice", str(f)]) == 0
+        assert json.loads(capsys.readouterr().out)["key"] == "queued.txt"
+        assert deposit.keys("alice") == ["queued.txt"]
+        assert louise.main(["hold", "deposit", "erase", "alice", "queued.txt", "--yes"]) == 0
+        assert deposit.keys("alice") == []
+    finally:
+        stop.set()
+        t.join(5)

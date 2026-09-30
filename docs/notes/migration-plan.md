@@ -1353,7 +1353,20 @@ the transfer manager and the worker's stage selection.*
   multipart parsed with the standard library, not `python-multipart`;
   and `run_search`'s all-withheld answer had no `timings`, a KeyError in
   `/api/search` that predates this step (fixed at the source). Sources
-  answer 501 until 15e. 07 §7.4's table on `app/api.py`,
+  answer 501 until 15e.
+  **A defect in 15a/15d, found at the start of 15e and fixed before it
+  (2026-09-30):** `hold deposit add` ran the fts and rdf stages in the
+  CALLING process — the web's, for a LocalAGI upload — and tantivy allows
+  one writer per index while the worker keeps its own open (its catalog
+  backfill alone holds one for every collection). Reproduced with the real
+  worker running: a second process's add failed `CatalogUnavailable …
+  LockBusy`. Single-process tests could not show it. Now every deposit
+  write is a job (`app/jobs.py` DEPOSIT) on its own worker thread
+  (`serve_deposits`), the web and the CLI queue and wait, reads stay in the
+  web, and a job's row is forgotten once read (it names a key). Proven the
+  same way: `tools/localagi_check` against uvicorn AND `python -m
+  app.worker` as two processes — exit 0, no error in the worker log.
+  07 §7.4's table on `app/api.py`,
   `DEPOSIT_TOKEN_FILE`, deposit collections withheld from every open
   `ask` route and the Ask page. The upload commits record, chunks and
   text index in its request and never calls the encoder; vectors are

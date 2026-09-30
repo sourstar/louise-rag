@@ -261,9 +261,14 @@ def _collection(name: str):
     return c
 
 
-def _connect(collection) -> sqlite3.Connection:
+def _connect(collection, *, write: bool = True) -> sqlite3.Connection:
+    """The collection's manifest. A READ (`write=False`: list, show) writes
+    nothing — it may run in the web process, which never writes a deposit
+    collection (app/jobs.py DEPOSIT)."""
     from app import db
     con = db.connect(collection)
+    if not write:
+        return con
     # 02 §2.9: freed pages are zeroed. The platform's SQLite is built with
     # it on; said here as well, so no build and no other code path decides.
     con.execute("PRAGMA secure_delete=ON")
@@ -474,7 +479,7 @@ def _keys(con) -> list[str]:
 def keys(name: str) -> list[str]:
     """`hold deposit list` — the collection's keys, oldest deposit first."""
     collection = _collection(name)
-    with closing(_connect(collection)) as con:
+    with closing(_connect(collection, write=False)) as con:
         return _keys(con)
 
 
@@ -483,7 +488,7 @@ def show(name: str, key: str) -> dict[str, Any]:
     which is what LocalAGI's `GetEntryContent` reads (07 §7.4)."""
     from app import plugin_io
     collection = _collection(name)
-    with closing(_connect(collection)) as con:
+    with closing(_connect(collection, write=False)) as con:
         row = _row(con, key)
         if row is None:
             raise DepositError(f"{name!r} holds no deposit {key!r}")
@@ -496,6 +501,55 @@ def show(name: str, key: str) -> dict[str, Any]:
             text = "\n\n".join(b for _, b in doc.sections)
         return {"collection": name, "key": key, "uid": row["uid"],
                 "content": text, "chunk_count": int(row["chunks"] or 0)}
+
+
+def stage(name: str, data: bytes) -> str:
+    """An upload's bytes, waiting for the worker in the collection's own
+    `state/incoming/` — never a directory another collection or the node
+    shares — and deleted by the job whatever its outcome (app/jobs.py)."""
+    import uuid
+    from app import collections as collections_mod
+    d = collections_mod.louise_root() / "collections" / name / "state" / "incoming"
+    d.mkdir(parents=True, exist_ok=True)
+    final = d / uuid.uuid4().hex
+    _fsync_write(final, data)
+    return str(final)
+
+
+def via_worker(op: str, name: str, *, timeout: float = 300.0, **args) -> dict:
+    """A deposit write queued for the worker and waited for (app/jobs.py
+    DEPOSIT) — how anything but the worker writes a deposit collection on
+    a running node, because tantivy allows one writer per index and the
+    worker keeps its own. The job's row is forgotten once read."""
+    from app import jobs
+    job_id = jobs.submit(jobs.DEPOSIT, {"op": op, "collection": name, **args})
+    deadline = time.monotonic() + timeout
+    while True:
+        job = jobs.get(job_id)
+        if job is not None and job.state in (jobs.DONE, jobs.FAILED):
+            jobs.forget(job_id)
+            if job.state == jobs.DONE:
+                return job.result or {}
+            raise DepositError((job.error or "").split(": ", 1)[-1])
+        if time.monotonic() > deadline:
+            raise DepositError("the worker has not done it yet; it stays queued — "
+                               "is the node's worker running? (--here runs it in "
+                               "this process, when no worker is)")
+        time.sleep(0.05)
+
+
+def finish_pending() -> list[str]:
+    """Every deposit collection whose erase a crash cut short, purged now —
+    what the worker's deposit thread does when it starts. A read never
+    does it: it may run in the web process, which writes nothing."""
+    from app import collections as collections_mod
+    done = []
+    for c in collections_mod.load_all():
+        if c.codex is None or not is_deposit(c.codex):
+            continue
+        with closing(_connect(c)) as con:    # a WRITE opening: runs the purge
+            done.append(c.name)
+    return done
 
 
 def is_named_deposit(root: Path, name: str) -> bool:

@@ -33,7 +33,17 @@ def client(node, tmp_path, monkeypatch):  # noqa: F811
     (tmp_path / "config" / "platform.toml").write_text(
         f'[deposit]\nencoder = "{ENCODER_URL}"\n', encoding="utf-8")
     make(node, "seed")            # the first deposit collection on the encoder
-    return TestClient(api.app)
+    # the worker's deposit thread, beside the client, as on a node: the web
+    # routes only queue a deposit write (app/jobs.py DEPOSIT)
+    import threading
+    from app import jobs
+    stop = threading.Event()
+    t = threading.Thread(target=jobs.serve_deposits, args=(stop,),
+                         kwargs={"poll_s": 0.02, "log": lambda m: None}, daemon=True)
+    t.start()
+    yield TestClient(api.app)
+    stop.set()
+    t.join(5)
 
 
 def H(token=TOKEN):
@@ -214,3 +224,37 @@ def test_the_key_is_the_base_name_of_what_the_client_sent(client):
     assert r.json()["key"] == "città-appunti.md"
     assert envelope(client.get("/api/collections/alice/entries", headers=H()))["keys"] \
         == ["città-appunti.md"]
+
+
+# ---- the web process writes nothing itself (app/jobs.py DEPOSIT) ----------
+
+def test_with_no_worker_a_write_is_queued_and_nothing_is_written(node, tmp_path,  # noqa: F811
+                                                                   monkeypatch):
+    """tantivy allows one writer per index and the worker keeps its own, so
+    the web process only queues. With no worker to take the job: 503 after
+    the wait, and not a byte in the collection's origin or index."""
+    from app import localagi
+    monkeypatch.setattr(config, "DEPOSIT_TOKEN", TOKEN)
+    monkeypatch.setattr(localagi, "WORKER_WAIT_S", 0.3)
+    make(node, "seed")
+    c = collections_mod.by_name("seed")
+    before = sorted(p.name for p in c.fts_dir.rglob("*")) if c.fts_dir.exists() else []
+    r = store(TestClient(api.app), "seed", "a.txt", b"queued, not written")
+    assert r.status_code == 503 and r.json()["error"]["code"] == "QUEUED"
+    assert not c.corpus_dir.exists() or not any(c.corpus_dir.iterdir())
+    after = sorted(p.name for p in c.fts_dir.rglob("*")) if c.fts_dir.exists() else []
+    assert after == before
+
+
+def test_a_finished_deposit_job_leaves_no_key_in_the_node_state(client):
+    client.post("/api/collections", json={"name": "alice"}, headers=H())
+    key = "remember-" + "q" * 20 + ".txt"
+    store(client, "alice", key, b"x")
+    client.request("DELETE", "/api/collections/alice/entry/delete", headers=H(),
+                   json={"entry": key})
+    state = collections_mod.louise_root() / "state"
+    for f in state.rglob("*"):
+        if f.is_file():
+            assert key.encode() not in f.read_bytes(), f
+    incoming = collections_mod.louise_root() / "collections" / "alice" / "state" / "incoming"
+    assert not incoming.exists() or not any(incoming.iterdir())

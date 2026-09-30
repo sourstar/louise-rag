@@ -3687,6 +3687,12 @@ def run_forever():
     if requeued:
         print(f"[info:jobs] node: job(s) {requeued} interrupted by the last stop "
               f"are queued again", flush=True)
+    # deposit writes queued by the LocalAGI routes (app/jobs.py DEPOSIT): their
+    # own thread, so an agent's memory never waits behind a create
+    from . import jobs as jobs_mod
+    threading.Thread(target=jobs_mod.serve_deposits, args=(_stop,),
+                     kwargs={"log": lambda m: print(m, flush=True)},
+                     name="deposits", daemon=True).start()
     job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
     job_thread.start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)

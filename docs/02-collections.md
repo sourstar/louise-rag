@@ -1193,7 +1193,8 @@ this node, before the erase reports success:
 
 The erase is marked pending in the manifest before it touches anything
 and unmarked by the purge that completes it, so a crash in between is
-finished the next time the collection is opened.
+finished by the next write to that collection, and by the worker when it
+starts.
 
 There are no shards or snapshots to purge, and no tombstone: a
 never-share collection publishes nothing, so promise 7 has nothing to

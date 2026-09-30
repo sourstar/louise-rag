@@ -79,8 +79,8 @@ louise hold
               forget <collection> [--kinds …] [--yes]                  stop holding: remove this peer's copy and its state
               list [--all]                                             collections held, by lineage; --all includes the dormant
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
-  deposit     add <collection> FILE [--key K]                          store a file as a deposit; an existing key is replaced whole
-              erase <collection> <key> [--yes]                         remove a deposit, leaving no trace (02 §2.9)
+  deposit     add <collection> FILE [--key K] [--here]                 store a file as a deposit; an existing key is replaced whole
+              erase <collection> <key> [--yes] [--here]                remove a deposit, leaving no trace (02 §2.9)
               list <collection>                                        the collection's deposit keys
               show <collection> <key>                                  a deposit's text and its chunk count
   source      add <collection> <url> [--interval MIN]                  subscribe a deposit collection to a URL; fetched now, then every interval (06 §6.7)
@@ -503,7 +503,12 @@ record's citation fields as strings, and the vector leg's cosine — 0
 for a hit the text index alone found. A write to a collection that is
 not a deposit collection answers 409; a source added before the
 web-sources disclaimer is accepted answers 409 and fetches nothing
-(04 §4.4). A search through these routes is not written to the query
+(04 §4.4). A write through these routes is DONE BY THE WORKER: the web
+queues it and waits (a bounded wait, then 503 with the job still queued),
+because tantivy allows one writer per index directory and the worker keeps
+its writers open. `hold deposit add` and `erase` queue the same way on a
+running node; `--here` writes in the command's own process, for a root no
+worker runs on. A search through these routes is not written to the query
 log, which the open `/api/stats` shows: an agent's queries are its
 memory's business. A deposit is searchable by text as soon as its upload is
 answered — record, chunks and text index are committed in the request —

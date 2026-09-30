@@ -149,9 +149,21 @@ def cmd_create_deposit(a) -> int:
 
 
 def cmd_deposit_add(a) -> int:
+    """Queued for the node's worker unless `--here` (app/jobs.py DEPOSIT):
+    on a running node only the worker writes a collection's indexes."""
     from app.hold import deposit
     path = Path(a.file)
-    _print(deposit.add(a.collection, a.key or path.name, path.read_bytes()))
+    key, data = a.key or path.name, path.read_bytes()
+    if a.here:
+        _print(deposit.add(a.collection, key, data))
+        return 0
+    from app.plugins.deposit import source as src
+    try:
+        src.check_content(key, data)          # refused before anything is queued
+    except src.DepositError as e:
+        raise CodexError(str(e)) from e
+    _print(deposit.via_worker("add", a.collection, key=key,
+                              staged=deposit.stage(a.collection, data)))
     return 0
 
 
@@ -160,7 +172,8 @@ def cmd_deposit_erase(a) -> int:
     if not a.yes:
         raise CodexError("erase removes a deposit leaving no trace (02 §2.9): "
                          "pass --yes")
-    _print({"remaining": deposit.erase(a.collection, a.key)})
+    _print({"remaining": deposit.erase(a.collection, a.key) if a.here
+            else deposit.via_worker("erase", a.collection, key=a.key)["remaining"]})
     return 0
 
 
@@ -1772,10 +1785,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = dverbs.add_parser("add", help="store a file as a deposit; an existing key is replaced whole")
     p.add_argument("collection"); p.add_argument("file")
     p.add_argument("--key", default=None, help="the deposit's key (default: the file's name)")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
     p.set_defaults(fn=cmd_deposit_add)
     p = dverbs.add_parser("erase", help="remove a deposit, leaving no trace (02 §2.9)")
     p.add_argument("collection"); p.add_argument("key")
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
     p.set_defaults(fn=cmd_deposit_erase)
     p = dverbs.add_parser("list", help="the collection's deposit keys")
     p.add_argument("collection"); p.add_argument("--json", action="store_true")

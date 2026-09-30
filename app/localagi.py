@@ -86,6 +86,39 @@ def _deposit_collection(name: str):
     return c
 
 
+#: How long a route waits for the worker to do a write. The first
+#: deposit collection on an encoder embeds the calibration set (a minute);
+#: an upload is a fraction of a second. Past it the answer is 503 — the
+#: job stays queued and is done (CLAUDE.md: no wait without a bound).
+WORKER_WAIT_S = 300.0
+
+
+async def _in_worker(op: str, name: str, **args) -> dict:
+    """A deposit-collection write, done by the WORKER (app/jobs.py DEPOSIT):
+    this process never writes a collection's indexes, because tantivy
+    allows one writer per index and the worker keeps its own. Queued,
+    waited for, and its row forgotten once read (02 §2.9)."""
+    import asyncio
+    import time as _time
+    from . import jobs
+    job_id = await run_in_threadpool(jobs.submit, jobs.DEPOSIT,
+                                     {"op": op, "collection": name, **args})
+    deadline = _time.monotonic() + WORKER_WAIT_S
+    while True:
+        job = await run_in_threadpool(jobs.get, job_id)
+        if job is not None and job.state in (jobs.DONE, jobs.FAILED):
+            await run_in_threadpool(jobs.forget, job_id)
+            if job.state == jobs.DONE:
+                return job.result or {}
+            msg = (job.error or "").split(": ", 1)[-1]
+            status = 404 if ("no deposit" in msg or "no collection" in msg) else 409
+            raise LocalAgiError(status, "REFUSED", msg)
+        if _time.monotonic() > deadline:
+            raise LocalAgiError(503, "QUEUED", "the worker has not done it yet; it "
+                                "stays queued and will be — is the worker running?")
+        await asyncio.sleep(0.05)
+
+
 async def _call(fn, *args, **kw):
     """A tree command, off the event loop, its refusals in LocalAGI's shape
     — 404 for what is not there, 409 for what is refused (07 §7.7's 2)."""
@@ -137,15 +170,14 @@ class SourceBody(BaseModel):
 @router.post("")
 @_wrap
 async def create(body: CreateBody):
-    from .louise import create_deposit
     if not _NAME_RE.match(body.name or ""):
         raise LocalAgiError(400, "INVALID_NAME",
                             f"{body.name!r}: a collection a client creates is named "
                             f"[a-z0-9][a-z0-9_-]{{0,63}} (02 §2.9)")
     if collections_mod.by_name(body.name) is not None:
         raise LocalAgiError(409, "EXISTS", f"{body.name!r} is held already")
-    codex, _held = await _call(create_deposit, _root(), body.name)
-    return ok({"name": body.name, "collection_id": codex.collection_id},
+    got = await _in_worker("create", body.name)
+    return ok({"name": body.name, "collection_id": got["collection_id"]},
               message="collection created", status=201)
 
 
@@ -180,7 +212,7 @@ async def entry(name: str, entry: str):
 async def delete_entry(name: str, body: DeleteBody):
     from .hold import deposit
     _deposit_collection(name)
-    remaining = await _call(deposit.erase, name, body.entry)
+    remaining = (await _in_worker("erase", name, key=body.entry))["remaining"]
     return ok({"deleted_entry": body.entry, "remaining_entries": remaining,
                "entry_count": len(remaining)})
 
@@ -190,7 +222,7 @@ async def delete_entry(name: str, body: DeleteBody):
 async def reset(name: str):
     from .hold import deposit
     _deposit_collection(name)
-    n = await _call(deposit.reset, name)
+    n = (await _in_worker("reset", name))["erased"]
     return ok({"erased": n}, message="collection reset")
 
 
@@ -206,7 +238,12 @@ async def upload(name: str, request: Request):
     if found is None:
         raise LocalAgiError(400, "NO_FILE", "the upload is multipart, field `file`")
     key, data = found
-    got = await _call(deposit.add, name, key, data)
+    from .plugins.deposit import source as src
+    try:
+        src.check_key(key)       # refused before a byte is staged
+    except src.DepositError as e:
+        raise LocalAgiError(409, "REFUSED", str(e)) from e
+    got = await _in_worker("add", name, key=key, staged=deposit.stage(name, data))
     return JSONResponse({"status": "ok", "filename": key, "key": got["key"]})
 
 
