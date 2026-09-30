@@ -45,6 +45,11 @@ SEQ_KEY = "deposit_seq"
 _KEY_INDEX = ("CREATE INDEX IF NOT EXISTS idx_documents_deposit_key "
               "ON documents(txt_name)")
 
+#: Set in the manifest before an erase begins and cleared by the purge that
+#: completes it: a crash in between leaves it set, and the next opening of
+#: the collection runs the purge — so "no trace" survives a crash too.
+PURGE_PENDING = "deposit_purge_pending"
+
 ORIGIN_FORM = "deposit: the bytes as the client sent them"
 #: 09 §9.3's closed list; a deposit's date is when it was deposited
 CUTOFF_RULE = "record-date"
@@ -259,7 +264,12 @@ def _collection(name: str):
 def _connect(collection) -> sqlite3.Connection:
     from app import db
     con = db.connect(collection)
+    # 02 §2.9: freed pages are zeroed. The platform's SQLite is built with
+    # it on; said here as well, so no build and no other code path decides.
+    con.execute("PRAGMA secure_delete=ON")
     con.execute(_KEY_INDEX)
+    if db.get_control(con, PURGE_PENDING):
+        purge(collection, con)          # an erase that did not finish did
     return con
 
 
@@ -294,7 +304,8 @@ def add(name: str, key: str, data: bytes, *, url: str | None = None,
     collection = _collection(name)
     with closing(_connect(collection)) as con:
         if _row(con, key) is not None:
-            _erase(collection, con, key)
+            _erase(collection, con, key)     # replaced whole: the old one
+            purge(collection, con)           # leaves no trace either
         nid = next_native_id()
         d = Path(collection.corpus_dir) / str(nid)
         d.mkdir(parents=True, exist_ok=False)
@@ -344,28 +355,43 @@ def _index(collection, con, uid: str) -> None:
 
 
 def erase(name: str, key: str) -> list[str]:
-    """`hold deposit erase` — remove the deposit `key`; the remaining keys.
-
-    Step 15a's erase: the deposit leaves the origin, the text index, the
-    vector table and the manifest. Step 15c adds what makes it leave NO
-    TRACE (02 §2.9): merged index segments, cleaned-up table versions."""
+    """`hold deposit erase` — remove the deposit `key`, leaving no trace
+    (02 §2.9); the remaining keys."""
     collection = _collection(name)
     with closing(_connect(collection)) as con:
         if _row(con, key) is None:
             raise DepositError(f"{name!r} holds no deposit {key!r}")
         _erase(collection, con, key)
+        purge(collection, con)
         return _keys(con)
 
 
+def reset(name: str) -> int:
+    """Every deposit erased, and ONE purge after them rather than one each
+    — the reset of 07 §7.4. Returns how many were erased."""
+    collection = _collection(name)
+    with closing(_connect(collection)) as con:
+        keys = _keys(con)
+        for key in keys:
+            _erase(collection, con, key)
+        purge(collection, con)
+        return len(keys)
+
+
 def _erase(collection, con, key: str) -> None:
-    """The ORDER is what makes a crash harmless: the sidecar goes first, so
+    """The deposit out of search, the manifest and the origin. What makes
+    that physical is `purge`, which every caller runs after it.
+
+    The ORDER is what makes a crash harmless: the sidecar goes first, so
     no rescan can take the deposit back in; the derived copies next; the
-    row after them, so a re-run still finds the deposit by its key; the
+    rows after them, so a re-run still finds the deposit by its key; the
     directory last."""
     from app import embeddings, fts
     from app.plugins.deposit import source as src
 
+    from app import db
     row = _row(con, key)
+    db.set_control(con, PURGE_PENDING, "1")
     d = Path(row["path"]).parent
     (d / src.SIDECAR).unlink(missing_ok=True)
     book_id = int(row["native_id"])
@@ -373,10 +399,8 @@ def _erase(collection, con, key: str) -> None:
     embeddings.delete_book(book_id, collection, lock_con=con)
     con.execute("BEGIN IMMEDIATE")
     try:
-        for table in ("documents", "doc_keys", "embed_queue", "summaries",
-                      "chunk_verification"):
-            if _has_uid(con, table):
-                con.execute(f"DELETE FROM {table} WHERE uid=?", (row["uid"],))
+        for table, column in _keyed_tables(con):
+            con.execute(f'DELETE FROM "{table}" WHERE "{column}"=?', (row["uid"],))
         con.execute("COMMIT")
     except BaseException:
         con.execute("ROLLBACK")
@@ -384,8 +408,61 @@ def _erase(collection, con, key: str) -> None:
     shutil.rmtree(d, ignore_errors=True)
 
 
-def _has_uid(con, table: str) -> bool:
-    return any(r[1] == "uid" for r in con.execute(f"PRAGMA table_info({table})"))
+def _keyed_tables(con) -> list[tuple[str, str]]:
+    """Every manifest table that names a document, and the column it names
+    it by — all of them, not a list someone must remember to extend: a
+    table added later that keys on the uid is erased from too."""
+    out = []
+    for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                                "AND name NOT LIKE 'sqlite_%'").fetchall():
+        cols = {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}
+        for column in ("uid", "doc_uid"):
+            if column in cols:
+                out.append((table, column))
+    return out
+
+
+def purge(collection, con) -> dict[str, Any]:
+    """What makes an erase leave NO TRACE (02 §2.9), on each store that
+    keeps deleted data by design:
+
+    - the text index and the catalog index, rewritten from their live
+      documents — tantivy keeps a deleted document's bytes in any segment
+      that still holds a live one (`fts.rewrite_without`);
+    - the vector table: deletions materialised, old versions dropped, a
+      trained index trained again (`vector_index.purge_deleted`);
+    - the manifest: freed pages zeroed (`secure_delete`, set on every
+      connection here) and the WAL checkpointed and truncated, since the
+      WAL holds the pages as they were before the delete.
+
+    Every store is rewritten whole — O(the collection), which a deposit
+    collection affords and a curated one could not; `reset` pays it once
+    for all its deposits."""
+    from app import catalog, fts, vector_index
+    t0 = time.monotonic()
+    kept = {g: fts.rewrite_without(g, collection) for g in fts.existing_groups(collection)}
+    rows = con.execute("SELECT rowid, title, authors, subjects, lang FROM documents "
+                       "WHERE rdf_done=1").fetchall()
+    catalog.rewrite(collection, [tuple(r) for r in rows])
+    vectors = vector_index.purge_deleted(collection, lock_con=con)
+    con.execute("DELETE FROM control WHERE key=?", (PURGE_PENDING,))
+    _checkpoint(con)
+    return {"text_index": kept, "catalog": len(rows), "vectors": vectors,
+            "seconds": round(time.monotonic() - t0, 3)}
+
+
+def _checkpoint(con, attempts: int = 20) -> None:
+    """`wal_checkpoint(TRUNCATE)` until it succeeds: a reader in the middle
+    of a transaction makes it answer busy, and the WAL keeps the old pages
+    until nobody reads them. Bounded: a node whose manifest is never idle
+    raises rather than reporting an erase it has not finished."""
+    for _ in range(attempts):
+        busy, _log, _done = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if not busy:
+            return
+        time.sleep(0.25)
+    raise DepositError("the manifest stayed busy; the erase is not complete "
+                       "until its write-ahead log is truncated — run it again")
 
 
 def _keys(con) -> list[str]:

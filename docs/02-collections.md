@@ -1181,14 +1181,19 @@ this node, before the erase reports success:
 
 1. the deposited bytes in the collection's `origin/`;
 2. its record, its manifest rows and its chunks;
-3. its entries in the text index — which marks a deleted document and
-   keeps its postings until the segment is merged, so an erase merges
-   the segments it touched;
-4. its vectors, including in the vector table's older versions, which
-   keep deleted rows until they are cleaned up — so an erase cleans up
-   that table;
-5. the manifest's freed pages, which the platform's SQLite zeroes
-   (`SECURE_DELETE`), and which no deposit manifest ever turns off.
+3. its entries in the text index and the catalog index — which mark a
+   deleted document and keep it in any segment that still holds a live
+   one, so both are rewritten from their live documents;
+4. its vectors, including in the vector table's deletion files and older
+   versions — so the table's deletions are materialised, its old
+   versions dropped, and a trained vector index trained again;
+5. the manifest's freed pages, which are zeroed (`secure_delete`, on for
+   every deposit manifest), and its write-ahead log, which holds the
+   pages as they were and is checkpointed and truncated.
+
+The erase is marked pending in the manifest before it touches anything
+and unmarked by the purge that completes it, so a crash in between is
+finished the next time the collection is opened.
 
 There are no shards or snapshots to purge, and no tombstone: a
 never-share collection publishes nothing, so promise 7 has nothing to

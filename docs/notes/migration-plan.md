@@ -1331,7 +1331,14 @@ the transfer manager and the worker's stage selection.*
   through `layers.chunks_for_document`. Proven by golden files: the
   same bytes give the same record and the same chunks, PDF metadata
   kept, a scan and non-UTF-8 text refused.
-- **15c — no trace.** Erase removes the origin bytes, the rows, the
+- **15c — no trace. DONE 2026-09-30** (`tests/deposit/test_deposit_erasure.py`,
+  10). Measured here (1 KB deposits, vectors written): one purge 122 ms at
+  100 deposits, 130 ms at 500, 240 ms at 1,000 — the rewrite is whole, so
+  it grows with the collection; `reset` pays it once. Measured to need it:
+  without the purge, an erased deposit's text stays in the vector table's
+  data file; and two documents in one text-index segment keep the deleted
+  one counted there, its terms in the dictionary, until the rewrite.
+  Erase removes the origin bytes, the rows, the
   text-index postings (segments merged), the vectors including old
   table versions (cleaned up), with `SECURE_DELETE` never turned off.
   Proven by `tests/deposit/test_erasure.py`: deposit, embed, erase, and

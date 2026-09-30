@@ -263,6 +263,48 @@ def delete_book(lang: str, book_id: int, collection=None):
         writer.delete_documents("book_id", book_id)
         writer.commit()
 
+def rewrite_without(group: str, collection=None) -> int:
+    """Rewrite this group's index from its own live documents, so that what
+    was deleted from it is gone from the DISK and not only from search.
+
+    tantivy deletes by marking: a segment keeps a deleted document's bytes
+    until a merge rewrites it, and it drops a segment only once every
+    document in it is deleted (measured, tantivy 0.26: a document sharing a
+    segment with a live one stayed readable in the segment's store after the
+    delete, the commit and `garbage_collect_files`). An erasable collection
+    must leave no trace (02 §2.9), so after an erase this reads every live
+    document's stored fields, deletes everything, adds them back and
+    commits: the old segments lose their last live document and go.
+
+    O(the group's documents), which is why only an erasable collection's
+    erase calls it — a deposit collection is small (an agent's memory, the
+    files one person uploaded). Returns the documents kept."""
+    idx = get_index(group, collection)
+    base = (collection.fts_dir if collection is not None
+            else collections_mod.default_collection().fts_dir)
+    writer, lock = _writer((str(base), group), idx)
+    algorithm = pystem_algorithm(group)
+    with lock:
+        idx.reload()
+        searcher = idx.searcher()
+        n = searcher.num_docs
+        hits = (searcher.search(tantivy.Query.all_query(), limit=n).hits
+                if n else [])
+        docs = [searcher.doc(addr).to_dict() for _score, addr in hits]
+        writer.delete_all_documents()
+        for d in docs:
+            body = d["body"][0]
+            fields = dict(book_id=int(d["book_id"][0]), chunk_id=d["chunk_id"][0],
+                          chapter=(d.get("chapter") or [""])[0],
+                          lang=(d.get("lang") or ["und"])[0], body=body)
+            if algorithm:
+                fields["body_stem"] = stemming.stem_text(algorithm, body)
+            writer.add_document(tantivy.Document(**fields))
+        writer.commit()
+        writer.garbage_collect_files()
+    return len(docs)
+
+
 def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
     """Every stored chunk of one document — the reader's text source
     (STATUS 5j): a term query on the `book_id` fast field, no text query,

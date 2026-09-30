@@ -167,6 +167,45 @@ def _dataset(tbl):
         return None
 
 
+def purge_deleted(collection, lock_con=None) -> dict:
+    """Make the table's deletions physical, for an erasable collection
+    (02 §2.9: an erase leaves no trace).
+
+    Lance deletes by writing a deletion file beside the data file, and keeps
+    every older version of the table until it is cleaned up — so a deleted
+    row's text and vector stay on disk twice over. This rewrites every
+    fragment that has a deletion (`materialize_deletions_threshold=0`),
+    drops every version but the current one, and, where a vector index was
+    built (its partitions were trained on the rows now gone), trains it
+    again. Called after an erase, never by the maintainer: a large curated
+    table would pay this per document."""
+    import datetime
+
+    tbl = _table(collection)
+    if tbl is None:
+        return {"purged": False, "reason": "no vector table"}
+    ds = _dataset(tbl)
+    if ds is None:
+        raise RuntimeError("the Lance dataset API (pylance) is required to make "
+                           "an erase physical (02 §2.9)")
+    with embeddings._write_lock(lock_con):
+        metrics = ds.optimize.compact_files(materialize_deletions=True,
+                                            materialize_deletions_threshold=0.0)
+        stats = ds.cleanup_old_versions(older_than=datetime.timedelta(0),
+                                        delete_unverified=True)
+    retrained = False
+    if _vector_indices(embeddings._conn(collection).open_table(embeddings.TABLE)):
+        build(collection)
+        with embeddings._write_lock(lock_con):
+            _dataset(_table(collection)).cleanup_old_versions(
+                older_than=datetime.timedelta(0), delete_unverified=True)
+        retrained = True
+    return {"purged": True,
+            "fragments_rewritten": getattr(metrics, "fragments_removed", None),
+            "bytes_removed": getattr(stats, "bytes_removed", None),
+            "index_retrained": retrained}
+
+
 def _vector_indices(tbl) -> list:
     try:
         return [ix for ix in tbl.list_indices()
