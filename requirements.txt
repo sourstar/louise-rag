@@ -70,3 +70,11 @@ libtorrent==2.1.1
 # deliberately carries no code — the format is a header and raw tensors,
 # which is why it exists where a pickle would not be safe to fetch.
 safetensors>=0.4
+# PDF text for deposit collections (06 §6.7; operator's yes, 2026-09-29).
+# PDFium — the engine Chrome renders PDFs with — with prebuilt manylinux
+# wheels (BSD-3 / Apache-2.0, no toolchain in the image). PINNED: a
+# deposit's chunks are cut from the text it extracts, and a different
+# PDFium could extract different text from the same bytes, so a re-embed
+# would no longer cut the same chunks (invariant 3). A bump is a
+# deliberate act, not a side effect of an unrelated build.
+pypdfium2==5.13.0

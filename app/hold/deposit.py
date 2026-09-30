@@ -287,11 +287,7 @@ def add(name: str, key: str, data: bytes, *, url: str | None = None,
     form 06 §6.7 does not take, text that is not UTF-8."""
     src = _source()
     try:
-        src.check_key(key)
-        if not src.accepted(key):
-            raise src.DepositError(
-                f"{key}: a deposit is .txt, .md or .pdf (06 §6.7)")
-        src.decode_text(key, data)
+        src.check_content(key, data)
     except src.DepositError as e:
         raise DepositError(str(e)) from e
 

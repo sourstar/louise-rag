@@ -35,8 +35,23 @@ SIDECAR = ".deposit.json"
 #: 02 §2.9: 1–255 bytes of UTF-8, no `/`, no NUL, no leading dot.
 KEY_MAX_BYTES = 255
 
-#: 06 §6.7's accepted forms, by the key's extension. PDF joins in step 15b.
+#: 06 §6.7's accepted forms, by the key's extension.
 TEXT_SUFFIXES = (".txt", ".md")
+PDF_SUFFIX = ".pdf"
+
+#: `extra`'s keys, the SAME for every deposit whatever its form: a record's
+#: `extra` keys are fixed for a collection's life (09 §9.5), and a text
+#: deposit beside a PDF one must not be two shapes. `url` is a source's
+#: (06 §6.7); the `pdf_*` keys are what a PDF says about itself (promise
+#: 9), null for a text deposit.
+EXTRA_KEYS = ("key", "deposited_at", "url", "pdf_title", "pdf_author",
+              "pdf_subject", "pdf_keywords", "pdf_creator", "pdf_producer",
+              "pdf_creation_date", "pdf_mod_date", "pdf_pages")
+_PDF_META = {"Title": "pdf_title", "Author": "pdf_author", "Subject": "pdf_subject",
+             "Keywords": "pdf_keywords", "Creator": "pdf_creator",
+             "Producer": "pdf_producer", "CreationDate": "pdf_creation_date",
+             "ModDate": "pdf_mod_date"}
+_PDF_DATE = re.compile(r"^D:(\d{4})(\d{2})?(\d{2})?")
 
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
@@ -89,7 +104,53 @@ def decode_text(key: str, data: bytes) -> str:
 
 
 def accepted(key: str) -> bool:
-    return Path(key).suffix.lower() in TEXT_SUFFIXES
+    return Path(key).suffix.lower() in (*TEXT_SUFFIXES, PDF_SUFFIX)
+
+
+def is_pdf(key: str) -> bool:
+    return Path(key).suffix.lower() == PDF_SUFFIX
+
+
+def pdf_content(key: str, data: bytes) -> tuple[list[tuple[str, str]], dict]:
+    """A PDF's sections — one per page that has text, titled by its page
+    number — and what it says about itself. A PDF with no text at all (a
+    scan: there is no OCR) is refused (06 §6.7)."""
+    from . import pdf
+    try:
+        got = pdf.extract(data)
+    except pdf.PdfError as e:
+        raise DepositError(f"{key}: {e}") from e
+    sections = []
+    for n, raw in enumerate(got["pages"], 1):
+        text = "\n".join(line.rstrip() for line in
+                         raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")).strip()
+        if text:
+            sections.append((f"page {n}", text))
+    if not sections:
+        raise DepositError(f"{key}: the PDF has no text — a scan, perhaps; there "
+                           f"is no OCR, so it is refused rather than stored "
+                           f"unsearchable (06 §6.7)")
+    meta = {_PDF_META[k]: (v or None) for k, v in got["meta"].items() if k in _PDF_META}
+    meta["pdf_pages"] = len(got["pages"])
+    return sections, meta
+
+
+def check_content(key: str, data: bytes) -> None:
+    """What `add` checks before storing anything: the form is taken and the
+    bytes are what it says they are."""
+    check_key(key)
+    if not accepted(key):
+        raise DepositError(f"{key}: a deposit is .txt, .md or .pdf (06 §6.7)")
+    if is_pdf(key):
+        pdf_content(key, data)
+    else:
+        decode_text(key, data)
+
+
+def _pdf_date(value: str | None) -> str | None:
+    """`D:YYYYMMDD…` as far as it goes: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`."""
+    m = _PDF_DATE.match(value or "")
+    return "-".join(g for g in m.groups() if g) if m else None
 
 
 def fixed_layer(ctx: int) -> dict:
@@ -107,7 +168,8 @@ def fixed_layer(ctx: int) -> dict:
 class DepositSource:
     source_id = "deposit"
     protocol_version = PROTOCOL_VERSION
-    PARSER_VERSION = 1
+    #: 2: PDF (step 15b), and `extra` carries every key of EXTRA_KEYS.
+    PARSER_VERSION = 2
     # Nothing is taken from a third party by the plugin itself; a URL
     # source is 04 §4.4's and has its own rule (step 15e).
     license_class = LicenseClass.GREEN
@@ -165,17 +227,27 @@ class DepositSource:
         data = raw.data if raw.data is not None else p.read_bytes()
         if not accepted(key):
             raise UnindexableDocument(f"{key}: not a form a deposit takes (06 §6.7)")
+        extra = dict.fromkeys(EXTRA_KEYS)
+        extra.update(key=key, deposited_at=meta.get("deposited_at"),
+                     url=meta.get("url") or None)
+        title, creators, date, subjects = key, [], None, []
         try:
-            sections = sections_of_text(decode_text(key, data))
+            if is_pdf(key):
+                sections, pdf_meta = pdf_content(key, data)
+                extra.update(pdf_meta)
+                title = extra["pdf_title"] or key
+                creators = [extra["pdf_author"]] if extra["pdf_author"] else []
+                date = _pdf_date(extra["pdf_creation_date"])
+                subjects = [k.strip() for k in re.split(r"[;,]", extra["pdf_keywords"] or "")
+                            if k.strip()]
+            else:
+                sections = sections_of_text(decode_text(key, data))
         except DepositError as e:
             raise UnindexableDocument(str(e)) from e
-        extra = {"key": key, "deposited_at": meta.get("deposited_at")}
-        if meta.get("url"):
-            extra["url"] = meta["url"]
         return CanonicalDoc(
-            uid=f"{self.source_id}:{raw.ref.native_id}", title=key, creators=[],
-            language="und", date=None, subjects=[], keys=[], extra=extra,
-            sections=sections, raw_hash=raw.raw_hash)
+            uid=f"{self.source_id}:{raw.ref.native_id}", title=title,
+            creators=creators, language="und", date=date, subjects=subjects,
+            keys=[], extra=extra, sections=sections, raw_hash=raw.raw_hash)
 
 
 def read_sidecar(d: Path) -> dict | None:

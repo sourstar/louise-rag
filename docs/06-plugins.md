@@ -675,7 +675,7 @@ it is never a member; unlike most, no other copy of it exists anywhere.
 - `.pdf`: text extracted with PDFium (the `pypdfium2` binding, pinned
   in the platform image, because extraction must give the same text
   every time for a re-embed to cut the same chunks), one section per
-  page, under a timeout. What the PDF says about itself — title,
+  page that has text, titled `page N`, under a timeout. What the PDF says about itself — title,
   author, subject, keywords, creation and modification dates — is kept
   (§6.4): `title` and `creators` where they belong, `extra` otherwise.
 
@@ -683,8 +683,10 @@ Anything else, text that is not valid UTF-8, and a PDF that yields no
 text (a scan: there is no OCR) are refused when they arrive, and never
 stored. `origin_hash` is BLAKE2b-128 of the bytes as deposited, and the
 record's `origin` is their path under `origin/`. `extra` carries `key`
-(the name the client gave), `deposited_at`, and `url` for a source's
-text.
+(the name the client gave), `deposited_at`, `url` for a source's text,
+and the `pdf_*` keys — what a PDF says about itself, and its page count —
+every one present on every deposit, null where it does not apply, because
+a collection's `extra` keys are fixed for its life (09 §9.5).
 
 **URL sources.** A deposit collection may be subscribed to URLs, each
 with a refresh interval in minutes (default 60). The subscription is

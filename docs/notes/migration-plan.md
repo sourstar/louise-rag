@@ -1324,7 +1324,9 @@ the transfer manager and the worker's stage selection.*
   add|erase|list|show`. Proven by `tests/deposit/test_deposit_identity.py`: two
   collections from one set of defaults have two ids; a re-added key
   replaces; `native_id`s ascend node-wide.
-- **15b — parse.** `.txt`, `.md`, `.pdf` through `pypdfium2`, pinned
+- **15b — parse. DONE 2026-09-30** (`tests/deposit/test_deposit_parse.py`,
+  14). The PDF extraction runs in a child process under a 60 s deadline.
+  `.txt`, `.md`, `.pdf` through `pypdfium2`, pinned
   in `requirements.txt` (operator's yes, 2026-09-29); every chunk cut
   through `layers.chunks_for_document`. Proven by golden files: the
   same bytes give the same record and the same chunks, PDF metadata
