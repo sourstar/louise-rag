@@ -24,6 +24,7 @@ What is here, and why it is kept:
 | `collection-classes.md`, `embedder-choice-and-supersession.md`, `reranker-scope.md` | the three general questions that corpus forced: what a collection must declare about its bytes, who chooses the encoder and what is done when the choice was wrong, and whether a pack may ever require a reranker |
 | `embedder-pool-spec.md` | the external container that serves embeddings for query and creation — specified, not built |
 | `rage.md` | RAGE, the RAG Engine: one app to add, load, unload and remove every model, whatever its runtime or device. A front that owns every decision — admission, the run identity, the clock — over a llama-swap that only runs processes, configured from one `rage.toml` — design accepted 2026-09-19, not built; migration step 13 |
+| `rage-prior-art.md` | which serving systems and LocalAI forks already do parts of RAGE's admission and eviction, the template for each part, and what extending LocalAI's scheduler would take — research, 2026-10-01 |
 | `rage-review.md` | why `rage.md` reads as it does: the review of the first proposal (four blocking gaps, seven open decisions), the solution accepted for each, and §18, the reasoning behind quarantine (03 §3.6; migration step 14) |
 | `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
 | `migration-plan.md` | the ordered steps from the current code to the documented architecture; deleted when the last step lands |
