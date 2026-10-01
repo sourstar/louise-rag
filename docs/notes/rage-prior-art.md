@@ -186,3 +186,74 @@ has least.
 LocalAI is MIT, multi-vendor and actively maintained, which fits §18 of
 `rage.md`. Each of these is a change to LocalAI's model YAML and defaults;
 upstream would see it first as an issue (#5352 is the nearest open one).
+
+## 8. Preloading the NEXT model, by the sequence of use
+
+*Operator, 2026-10-01: is there preloading driven by the order in which
+models are used — chat, query embedding, response embedding, reranking,
+translation, back to chat?*
+
+**No serving tool does it, and no paper does it for whole models on one
+GPU from learned sequences.** What exists, in source unless marked:
+
+| kind | who | what it does |
+|---|---|---|
+| a static group, all loaded at once | LocalAI realtime pipelines (`core/backend/preload.go` `PreloadStages` :95; fixed voice roles: VAD, STT, LLM, TTS — no embed, rerank or translate slot); Triton ensembles (members loaded before the ensemble, all resident); BentoML `depends()`; Lemonade "omni" collections | co-residence, no lookahead |
+| a declared pipeline, no lookahead | KServe InferenceGraph (steps run in order, the next is never woken early); Seldon Core v2 pipelines (each model scheduled alone; overcommit reloads lazily) | order known, not used for loading |
+| sets allowed to coexist | llama-swap `matrix` + `evict_costs` | it LOGS every request (`activity` table: time, model) and reads none of it; its issues #591 and #413 asking for timed preloads are open / not planned |
+| learned load VOLUME, one model | NVIDIA Dynamo planner (ARIMA, Prophet, Kalman), AIBrix `PredictiveSpec` | scales replicas; never chooses the next model |
+| nothing | Ollama, llama.cpp router, LM Studio (docs), Open WebUI (loads its in-process embedder and reranker at start, never warms remote ones), LiteLLM, Ray Serve multiplexing, ModelMesh, vLLM production-stack | — |
+
+The research that comes closest (evidence: [C] code read, [P] paper read,
+[A] abstract or summary only — arxiv, usenix and acm were unreachable):
+- **KVFlow** (NeurIPS'25, Apache-2.0) [C][P]: a DECLARED step graph gives
+  each agent its steps-to-execution (an AND-join takes the max + 1, an
+  OR-branch the min + 1). Prefetch goes to what is nearest; eviction takes
+  what is farthest. The code applies it to LoRA WEIGHTS
+  (`python/sglang/srt/lora/mem_pool.py` `prefetch_lora_weights` :217): the
+  victim's distance must be ≥ the candidate's, it may not be in the current
+  step or pinned, and a victim still loading is dropped. The closest
+  working code to what we would need.
+- **CoServe** (ASPLOS'25) [A]: chains of expert models on one memory-bound
+  device, prefetched from usage probabilities assessed in advance; no code
+  found.
+- **Xanadu** (Middleware'20) [A]: learns branch probabilities of a function
+  chain and provisions only the most-likely path, just in time; no code.
+- **Continuum** (2025) [P]: keep-alive by net benefit,
+  τ* = argmax_τ P(gap ≤ τ)·reload_cost − holding_cost·τ.
+- **WarmServe** (2025, Apache-2.0) [P]: prewarm only into memory nobody
+  uses, and give prewarmed weights up first.
+- Serverless in the Wild (ATC'20) [A], SPES (ICDE'24) [A], InstaInfer
+  (SoCC'24; its Poisson timing rule UNVERIFIED in its code), and a
+  September 2026 preprint (arXiv 2609.03335) [A] on retaining or
+  prefetching a deployment for a successor about to become ready.
+- The classics the predictor itself would come from: PPM prefetching
+  (Kroeger & Long, 1996) and Cao et al.'s "do no harm" rule (1995): never
+  prefetch over something needed sooner than what is fetched.
+
+**What this means here.** Louise's sequence is not something to learn: it
+is her own code. A search is `resolve → expand → plan → execute → fuse →
+rerank` ([`docs/05-ask.md`](../05-ask.md) §5.2), called by the chat model
+as a tool; the translator runs only when the request says `translate`, and
+the document encoder is the worker's, after the answer. So the fit is a
+DECLARED pipeline with lookahead (KVFlow's rule), with a learned
+probability needed at one branch only (translate or not). And on the
+reference node most of the chain is already resident by `preload`; what a
+lookahead would move is the models that do not fit beside the others —
+the translator (8,200 MiB) and DAR-legal-it (6,200) — while the chat model
+generates (64–92 s per call, [`scheduling.md`](scheduling.md) §12).
+
+If it is built, RAGE's own rules already bound a wrong guess, and the
+literature adds two:
+1. the pipeline declared in `rage.toml` (desired state, invariant 10), the
+   current stage read from `Louise-Level`;
+2. prefetch into FREE memory first (WarmServe); otherwise give up only an
+   idle model of strictly lower priority whose next use is farther (KVFlow,
+   Cao) — never one in use, never a pinned one;
+3. a prefetched model stays the first to be given up until it is used,
+   and a prefetch still loading is cancelled when a real request needs the
+   room.
+
+Not measured yet, and needed before any of it: each model's load time on
+the card ([`rage.md`](rage.md) §14). A lookahead pays only where load time
+is longer than the gap the request leaves.
