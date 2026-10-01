@@ -53,6 +53,13 @@ preload = ["bge-m3", "medcpt-query", "qwen3-embedding-4b", "bge-reranker", "medc
 pressure = { unload = true, idle_s = 60, restore_s = 120, restore_min_priority = 3 }
 
 # ---- llama.cpp ---------------------------------------------------------------
+#
+# NEO_CACHE_DIR, on every model that runs on the card: the GPU driver compiles
+# each kernel at first use and keeps the result in this directory, so a
+# relaunch — a model given up and brought back — does not compile it again,
+# and on /state the cache survives a redeploy (rage.md §20; operator,
+# 2026-10-01: declared here, hence in every run identity, which changes once).
+# Create it before the first start: mkdir /mnt/ssd5/apps/louise-rage/state/neo-cache
 # One complete command per device. `${WEIGHTS}` and `${PORT}` are the only
 # placeholders, each an argument of its own: this template IS the engine's
 # `args` in every run and in every Codex created here (09 §9.3).
@@ -71,6 +78,7 @@ weights = "/models/bge-m3/bge-m3-FP16.gguf"
 device  = "xpu"
 memory  = { xpu = 1400, cpu = 2600 }
 host    = { xpu = 1700 }                  # peak 1,602
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
            "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -87,6 +95,7 @@ device  = "xpu"
 # under-declared model is how a card gets over-committed
 memory  = { xpu = 9000, cpu = 6000 }
 host    = { xpu = 3100 }                  # peak 3,047
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "last", "-ngl", "999",
            "-c", "8192", "-np", "1", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -100,6 +109,7 @@ weights = "/models/medcpt/MedCPT-Article-Encoder-f16.gguf"
 device  = "xpu"
 memory  = { xpu = 400, cpu = 600 }
 host    = { xpu = 750 }                   # peak 691
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
            "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -113,6 +123,7 @@ weights = "/models/medcpt/MedCPT-Query-Encoder-f16.gguf"
 device  = "xpu"
 memory  = { xpu = 400, cpu = 600 }
 host    = { xpu = 550 }                   # peak 494
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--embeddings", "--pooling", "cls", "-ngl", "999",
            "-c", "512", "-np", "1", "-b", "512", "-ub", "512", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -127,6 +138,7 @@ weights = "/models/bge-m3/bge-reranker-v2-m3-f16.gguf"
 device  = "xpu"
 memory  = { xpu = 2200, cpu = 3200 }
 host    = { xpu = 1700 }                  # peak 1,610
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--reranking", "-ngl", "999",
            "-c", "16384", "-np", "4", "-b", "8192", "-ub", "8192", "-fa", "on", "-t", "6", "--metrics",
            "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -155,6 +167,7 @@ weights = "/models/chat/qwen3-8b.gguf"
 device  = "xpu"
 memory  = { xpu = 7600, cpu = 9000 }     # observed 7,250 MiB under RAGE (2026-09-19)
 host    = { xpu = 5700 }                  # Ollama's peak with it loaded: 5,648
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/app/llama-server", "-m", "${WEIGHTS}", "--jinja", "-ngl", "999", "-c", "16384", "-np", "1",
            "-fa", "on", "-t", "6", "--top-k", "20", "--top-p", "0.95", "--repeat-penalty", "1.0",
            "--metrics", "--host", "127.0.0.1", "--port", "${PORT}"]
@@ -176,10 +189,17 @@ weights = "/models/madlad/madlad400-3b-mt-bf16"
 device  = "xpu"
 memory  = { xpu = 8200, cpu = 12000 }     # 8 GB of the card at peak (its app's note)
 host    = { xpu = 8600 }                  # peak 8,563, at load; 3,307 at rest
+# PARKED instead of unloaded when the card must be freed (rage.md §21): the
+# process stays up, its weights move to host RAM, and the next translation
+# costs a copy back, not a launch. PLACEHOLDERS until measured: park it
+# (POST /louise/models/madlad/park) and read what GET /louise/models shows.
+# memory: what it keeps of the card (runtime, kernels); host: what it holds
+# of the host then — its ~6 GB of weights and the 3,307 it holds at rest.
+park    = { memory = { xpu = 600 }, host = { xpu = 9600 } }
 # LD_LIBRARY_PATH: torch's own SYCL runtime before the base image's older
 # one, or `import torch` dies (deploy/rage/Dockerfile). Declared, so it is in
 # the run identity; llama-server entries must NOT carry it.
-env     = { BATCH = "32", MAX_SEG_TOKENS = "96", LD_LIBRARY_PATH = "/usr/local/lib" }
+env     = { NEO_CACHE_DIR = "/state/neo-cache", BATCH = "32", MAX_SEG_TOKENS = "96", LD_LIBRARY_PATH = "/usr/local/lib" }
 cmd.xpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-madlad/bin/python", "-m", "servers.launch", "madlad", "--weights", "${WEIGHTS}",
@@ -200,7 +220,7 @@ host    = { xpu = 2800 }                   # RSS while on the card, 2.58 GiB
 # ~4x bge-m3's VRAM for a fifth of the parameters: torch's caching allocator
 # plus the O(seq^2) attention buffers, not the weights. ATTN_BUDGET trades
 # it against throughput if the card ever needs the room.
-env     = { LD_LIBRARY_PATH = "/usr/local/lib", MAX_SEQ = "8192", ATTN_BUDGET = "1.5e7", QUERY_PREFIX = "query: " }
+env     = { NEO_CACHE_DIR = "/state/neo-cache", LD_LIBRARY_PATH = "/usr/local/lib", MAX_SEQ = "8192", ATTN_BUDGET = "1.5e7", QUERY_PREFIX = "query: " }
 cmd.xpu = ["/opt/venv-st/bin/python", "-m", "servers.launch", "dar_legal_it", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-st/bin/python", "-m", "servers.launch", "dar_legal_it", "--weights", "${WEIGHTS}",
@@ -213,6 +233,7 @@ weights = "/models/medcpt/medcpt-cross-ov"
 device  = "xpu"
 memory  = { xpu = 600, cpu = 900 }
 host    = { xpu = 850 }                   # peak 781
+env     = { NEO_CACHE_DIR = "/state/neo-cache" }
 cmd.xpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",

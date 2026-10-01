@@ -6,6 +6,7 @@ the input handed back as a translation."""
 import importlib.util
 import json
 import threading
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -106,3 +107,87 @@ def test_the_weights_leave_the_page_cache_once_loaded(tmp_path, monkeypatch):
     assert server._drop_file_cache(str(tmp_path)) == 3
     assert advised == [server.os.POSIX_FADV_DONTNEED] * 3
     assert server._drop_file_cache("no-such/model-anywhere") == 0
+
+
+# ---- parked (docs/notes/rage.md §21) ---------------------------------------------
+
+def parkable(moves):
+    t = stand_in()
+    t._park = lambda: moves.append("to host")
+    t._unpark = lambda: moves.append("to device")
+    return t
+
+
+def test_parked_it_refuses_to_translate_and_unparked_it_answers_again():
+    moves = []
+    t = parkable(moves)
+    t.move(park=True)
+    assert server.handle(t, {"items": [{"text": "hello", "to": "de"}]})[0] == 503
+    t.move(park=False)
+    status, body = server.handle(t, {"items": [{"text": "hello", "to": "de"}]})
+    assert status == 200 and body["translations"] == ["<2de>|HELLO"]
+    assert moves == ["to host", "to device"]
+
+
+def test_asked_twice_a_move_is_done_once():
+    moves = []
+    t = parkable(moves)
+    t.move(park=True)
+    t.move(park=True)
+    t.move(park=False)
+    t.move(park=False)
+    assert moves == ["to host", "to device"]
+
+
+def test_a_park_waits_for_the_translation_in_progress():
+    """The same lock as a pass: the weights never move under a translation."""
+    order = []
+    started, release = threading.Event(), threading.Event()
+
+    def slow(prompts, max_new):
+        started.set()
+        release.wait(5)
+        order.append("translated")
+        return [p.upper() for p in prompts]
+
+    t = server.Translator(words, slow, lambda tok: tok in KNOWN,
+                          park=lambda: order.append("parked"), unpark=lambda: None)
+    worker = threading.Thread(target=t.translate, args=([("hello", "de")],))
+    worker.start()
+    started.wait(5)
+    parker = threading.Thread(target=t.move, args=(True,))
+    parker.start()
+    release.set()
+    worker.join(5)
+    parker.join(5)
+    assert order == ["translated", "parked"]
+
+
+def test_park_and_unpark_over_http_and_a_server_that_cannot():
+    moves = []
+    server.Handler.translator = parkable(moves)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def post(path, body=b""):
+        req = urllib.request.Request(f"{base}{path}", method="POST", data=body)
+        try:
+            r = urllib.request.urlopen(req, timeout=5)
+            return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.load(e)
+
+    try:
+        status, body = post("/park")
+        assert status == 200 and body["parked"] is True
+        status, body = post("/translate", json.dumps(
+            {"items": [{"text": "hello", "to": "de"}]}).encode())
+        assert status == 503 and "unpark" in body["error"]
+        status, body = post("/unpark")
+        assert status == 200 and body["parked"] is False
+        assert moves == ["to host", "to device"]
+        server.Handler.translator = stand_in()          # no park declared by its loader
+        assert post("/park")[0] == 501
+    finally:
+        httpd.shutdown()

@@ -59,6 +59,20 @@ class Swap:
         if r.status_code >= 400 and r.status_code != 404:    # 404: it was not running
             raise SwapError(f"unloading {variant}: llama-swap answered {r.status_code}")
 
+    async def call(self, variant: str, path: str, *, timeout_s: float = 300.0) -> None:
+        """One POST of the front's own to a running child — parking and
+        unparking (rage.md §21). Bounded: a child that does not answer is a
+        failure the front acts on, never a wait without end."""
+        try:
+            r = await self.client.post(f"/upstream/{variant}{path}", timeout=timeout_s)
+        except httpx.TimeoutException:
+            raise SwapError(f"{variant} did not answer {path} within {timeout_s:.0f} s",
+                            504) from None
+        except httpx.HTTPError as e:
+            raise SwapError(f"{variant} is unreachable: {type(e).__name__}") from None
+        if r.status_code >= 400:
+            raise SwapError(f"{variant} answered {path} with {r.status_code}: {r.text[:300]}")
+
     async def send(self, method: str, variant: str, path: str, *, query: str,
                    headers: dict[str, str], content: bytes) -> httpx.Response:
         """One request, passed on as it came: never merged with another,

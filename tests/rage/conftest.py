@@ -77,6 +77,8 @@ class Harness:
         self.requests: list[tuple[str, bytes]] = []
         self.load_delay = 0.0
         self.fail: set[str] = set()
+        self.fail_paths: set[str] = set()          # "<variant>/<path>": that call fails
+        self.call_delay = 0.0                      # seconds a park or unpark takes
         self.hostname = "container-1"
         self.during_request = None                 # a callable run inside an upstream call
 
@@ -153,6 +155,10 @@ class Harness:
                 self.launch(variant)
             if rest == "health":
                 return httpx.Response(200, text="ok")
+            if f"{variant}/{rest}" in self.fail_paths:
+                return httpx.Response(500, text="the move failed")
+            if rest in ("park", "unpark") and self.call_delay:
+                await asyncio.sleep(self.call_delay)
             self.requests.append((rest, request.content))
             if self.during_request is not None:
                 self.during_request()

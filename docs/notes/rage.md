@@ -198,18 +198,27 @@ The whole of it, for every model the node runs:
 - `name`, `build`, `variant` are readable and declared; `image`, `args`,
   `env` and `weights` are what binds.
 - `preload` is applied through admission at start and whenever the file
-  changes. A runtime load or unload lasts until the next apply.
+  changes. A runtime load or unload lasts until the next apply; a parked
+  preloaded model counts as loaded, and stays parked (§21).
+- `park = { memory = { <card> = MiB }, host = { <card> = MiB } }`, optional
+  (`path`, `unpark` default to `/park`, `/unpark`): the model is PARKED
+  instead of unloaded when its card must be freed — §21. Measured like
+  `memory`: what the parked process still holds of the card, and of the
+  host.
 - The figures above are placeholders until measured (§16).
 
 ## 6. The API
 
 ```
-GET    /louise/models                 → [{id, state: absent|unloaded|loading|ready|unstated,
-                                          device, run, pid, reason, memory: {declared, observed},
-                                          idle_s, since, source}]
+GET    /louise/models                 → [{id, state: absent|unloaded|loading|ready|unstated|parked,
+                                          device, run, pid, reason, memory: {declared, observed,
+                                          parked?}, idle_s, since, source}]
 POST   /louise/models/<id>/load       {device?}  → 200 the row, once it is up · 409 loaded on
                                           another device · 503 {error, admission: {loaded, free_mib, …}}
 POST   /louise/models/<id>/unload     → 200 · 404
+POST   /louise/models/<id>/park       → 200 the row, parked · 404 · 409 no `park` declared, or
+                                          answering · 503 no room in host RAM for it parked (§21);
+                                          `load` or its next request brings it back
 POST   /louise/models/<id>/restart    → 200 the row (the fan workaround, §11; operator only)
 GET    /louise/runs/<run_id>          → 09 §9.12's object · 404
 GET    /louise/gpu                    → the clock's state (§11)
@@ -839,9 +848,8 @@ only where loading is longer than the gap a request leaves.
 The CPU's caches (L1–L3, tens of MB) are not a tier: gigabytes stream
 through them. The `xe` driver already moves a model's buffers to host RAM
 by itself when the card is overcommitted, and back on use; RAGE relies on
-none of it (§19: the host ran out of memory). "Parked" would be a state of
-RAGE's own, charged to the host budget; a decision for the operator, not
-made.
+none of it (§19: the host ran out of memory). "Parked" is a state of
+RAGE's own, charged to the host budget — §21 (operator, 2026-10-01).
 
 **Kernel compilation, the part of a launch that is neither I/O nor
 hashing.** A kernel is one small GPU program for one operation — a matrix
@@ -872,8 +880,59 @@ named device; it would be another engine, gated like any other (03 §3.3).
 - Kept on `/state` instead (`NEO_CACHE_DIR=/state/neo-cache`), the cache
   would survive a redeploy. Declared in `rage.toml` it is part of the run
   (§8), so it changes every run id once; set for the container only it is
-  outside the run. Which of the two is the operator's call; not made.
+  outside the run. **Decided 2026-10-01 (operator): declared**, on every
+  model that runs on the card (`deploy/rage/rage.example.toml`), the
+  directory created by the deploy steps. The first start after the change
+  states new runs; the gate tests them as it tests any.
 - OpenVINO (the MedCPT reranker) compiles the whole model for the card at
   `compile_model`; its own `CACHE_DIR` would keep that compiled model, and
   `deploy/medcpt-rerank/server.py` sets none today. PyTorch's XPU path
   (MADLAD) may also build kernels per shape on first use — UNVERIFIED.
+
+## 21. Parked: the card freed, the process kept (2026-10-01)
+
+*Operator, 2026-10-01: "Add the parked state for the translator."* The
+translator is the model RAGE gives up first (priority 0), and bringing it
+back is a whole launch — 20 s on the node — although its process could keep
+its weights in host RAM and copy them back over the bus.
+
+- **Declared, not inferred.** A model whose server answers `POST /park`
+  (weights to host RAM, the card freed) and `POST /unpark` declares `park`
+  in `rage.toml` (§5), with what the PARKED process still holds: a little of
+  the card (its runtime and compiled kernels) and the host RAM its weights
+  take. Only `madlad` does: `deploy/madlad-translate/server.py`, whose
+  weights move with `model.to("cpu")` and back, under the same lock as a
+  translation. Parked, the server answers 503 to a translation; through
+  RAGE that is never seen.
+- **Where a model would have been unloaded, it is parked** — for a load that
+  needs the card (§7) and under a stranger's squeeze (§19) alike, by the
+  same rules: idle only, strictly lower priority for a load, never from
+  under an answer. The ledger is asked first with the parkable victims
+  parked; if the load does not fit that way — parked, they still hold host
+  RAM — they are unloaded as before. Parking is admitted against the host
+  budget like a load: without room, the model is unloaded.
+- **Its next request brings it back**, admitted like a load (the card must
+  have room for it whole; it may give up only what ranks below it, so the
+  translator gives up nothing and waits parked until there is room — a 503,
+  a deferral to Louise). It is the SAME process: the same pid, the same
+  argument vector, hence the same run (§8). No launch, no hash.
+- **When the HOST refuses a load**, what RAGE itself put there goes first:
+  parked models of strictly lower priority are unloaded.
+- **A move is a task of its own.** A caller that hangs up mid-park does not
+  leave the model half-moved: the move finishes, and the next caller waits
+  for it. A move that FAILS stops the process — what a half-moved child
+  holds is not known, and a guess in the ledger is how a card is
+  overcommitted — and the next request is a new launch.
+- A parked preloaded model counts as loaded: applying `rage.toml` leaves it
+  parked. It is never "pushed off the card" (§19): it left on purpose.
+- Louise sees it: `parked` in `GET /louise/models` and in the System page's
+  event table ("parked in RAM").
+
+**Not measured yet, and needed before relying on it.** The figures in the
+example (`park.memory.xpu = 600`, `park.host.xpu = 9600`) are placeholders:
+park it on the node (`POST /louise/models/madlad/park`) and read what `GET
+/louise/models` shows it holds. UNVERIFIED: that a model placed with
+`device_map` moves whole with `.to()` in transformers 4.46.3 on torch XPU,
+and how long the copy back takes against the 20 s launch it replaces.
+Tests: `tests/rage/test_park.py` (19), `tests/test_madlad_translate_server.py`.
+

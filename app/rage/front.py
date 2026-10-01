@@ -176,6 +176,13 @@ def create_app(placement: Placement, swap: Swap, clock: Clock,
         await placement.unload(model_id)
         return {"id": model_id, "state": "unloaded"}
 
+    @app.post("/louise/models/{model_id}/park", dependencies=[Depends(admin)])
+    async def park(model_id: str) -> dict[str, Any]:
+        """The card freed and the process kept, its weights in host RAM
+        (rage.md §21). Back on the card by its next request, or `load`."""
+        await placement.park(model_id, only_if_idle=False)
+        return _row(model_id)
+
     @app.post("/louise/models/{model_id}/restart", dependencies=[Depends(admin)])
     async def restart(model_id: str) -> dict[str, Any]:
         await placement.restart(model_id)

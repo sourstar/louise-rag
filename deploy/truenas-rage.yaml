@@ -43,7 +43,8 @@
 #   0. BEFORE anything stops: record, from each of today's endpoints, the
 #      vectors the first proof compares RAGE's against (docs/notes/rage.md
 #      §14). Once the apps are off there is nothing left to compare with.
-#   1. mkdir -p /mnt/ssd5/apps/louise-rage/{config,state,secrets}
+#   1. mkdir -p /mnt/ssd5/apps/louise-rage/{config,state,secrets,state/neo-cache}
+#      (state/neo-cache: the GPU driver's compiled kernels, NEO_CACHE_DIR in rage.toml)
 #      and copy deploy/rage/rage.example.toml to config/rage.toml.
 #      secrets/admin.token (chmod 600) holds the node's admin token — the SAME
 #      one louise-rag has, so the System page can load and unload models. RAGE

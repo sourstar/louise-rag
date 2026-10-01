@@ -24,6 +24,15 @@ and the pieces are put back with the text's own paragraph breaks.
     GET  /languages       -> {"languages": [code, ...]}   the targets it knows
     POST /translate {"items": [{"text": str, "to": code}, ...]}
                           -> {"translations": [str | null, ...], "ms": int}
+    POST /park            -> {"parked": true, "ms": int}   weights to host RAM, the card freed
+    POST /unpark          -> {"parked": false, "ms": int}  weights back on the card
+
+PARKED (docs/notes/rage.md §21). RAGE parks the translator instead of
+unloading it when the card must be freed: the process stays up, its weights
+move to host RAM, and the next translation costs a copy back over the bus
+instead of a launch (20 s on the node). Parked, /translate answers 503 —
+RAGE unparks before it passes a request on, so that is never seen through it.
+Park and unpark take the same lock as a translation: never under one.
 
 `null` is an item whose target the model does not know — never the input
 handed back as if it were a translation.
@@ -62,6 +71,10 @@ ALIASES = {"tl": "fil", "gla": "gd", "oji": "oj", "iw": "he", "in": "id", "ji": 
 _PARAGRAPH = re.compile(r"\n\s*\n")
 _SENTENCE = re.compile(r"(?<=[.!?;:。！？；])\s+")
 _SPACE = re.compile(r"\s+")
+
+
+class Parked(RuntimeError):
+    """The weights are in host RAM; /unpark first."""
 
 
 def target_token(code: str) -> str:
@@ -113,10 +126,13 @@ class Translator:
     per prompt; `known(token)` -> whether the model has that `<2xx>`."""
 
     def __init__(self, count, generate, known, batch: int = 32, max_seg_tokens: int = 96,
-                 release=None):
+                 release=None, park=None, unpark=None):
         self.count, self.generate, self.known = count, generate, known
         #: hands the GPU allocator's cache back; returns the pass's peak (MB)
         self.release = release or (lambda: None)
+        #: move the weights to host RAM / back to the device (rage.md §21)
+        self._park, self._unpark = park, unpark
+        self.parked = False
         self.batch, self.max_seg = max(1, batch), max(16, max_seg_tokens)
         self.lock = threading.Lock()        # one GPU, one pass at a time
 
@@ -138,6 +154,8 @@ class Translator:
         # similar lengths share a pass, so little of it is padding
         jobs.sort(key=lambda j: len(j[3]))
         with self.lock:
+            if self.parked:
+                raise Parked("the weights are parked in host RAM; POST /unpark first")
             try:
                 for s in range(0, len(jobs), self.batch):
                     chunk = jobs[s:s + self.batch]
@@ -156,6 +174,20 @@ class Translator:
         return out
 
 
+    def move(self, park: bool) -> int:
+        """Park or unpark, under the translation lock; ms taken. Asked twice,
+        the second is nothing."""
+        step = self._park if park else self._unpark
+        if step is None:
+            raise NotImplementedError("this translator cannot be parked")
+        t0 = time.monotonic()
+        with self.lock:
+            if self.parked != park:
+                step()
+                self.parked = park
+        return round(1000 * (time.monotonic() - t0))
+
+
 def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, object]:
     """One /translate request -> (HTTP status, JSON payload)."""
     items = body.get("items") if isinstance(body, dict) else None
@@ -166,7 +198,10 @@ def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, obj
     if len(items) > max_items:
         return 413, {"error": f"{len(items)} items; at most {max_items} per request"}
     t0 = time.monotonic()
-    out = translator.translate([(it["text"], it["to"]) for it in items])
+    try:
+        out = translator.translate([(it["text"], it["to"]) for it in items])
+    except Parked as e:
+        return 503, {"error": str(e)}
     return 200, {"translations": out, "ms": round(1000 * (time.monotonic() - t0)),
                  "peak_mb": getattr(translator, "peak_mb", None)}
 
@@ -204,6 +239,21 @@ def load(model_id: str, device: str, dtype_name: str):
                              do_sample=False)
         return tok.batch_decode(ids, skip_special_tokens=True)
 
+    def park():
+        # UNVERIFIED on the node: a model placed with device_map moved whole by
+        # .to(); measure the parked process (GET /louise/models) before
+        # declaring park.memory and park.host in rage.toml
+        model.to("cpu")
+        if device.startswith("xpu"):
+            torch.xpu.synchronize()
+            torch.xpu.empty_cache()
+
+    def unpark():
+        model.to(device)
+        if device.startswith("xpu"):
+            torch.xpu.synchronize()
+        _release_host_memory()          # the host copies, handed back to the system
+
     def release():
         # the pass's peak, then the cache back to the card's other tenants
         peak = None
@@ -213,7 +263,7 @@ def load(model_id: str, device: str, dtype_name: str):
             torch.xpu.reset_peak_memory_stats()
         return peak
 
-    return count, generate, known, languages, release
+    return count, generate, known, languages, release, park, unpark
 
 
 def _release_host_memory() -> None:
@@ -273,6 +323,17 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"status": "ok", "model": self.model})
 
     def do_POST(self):
+        if self.path.rstrip("/") in ("/park", "/unpark"):
+            park = self.path.rstrip("/") == "/park"
+            try:
+                ms = self.translator.move(park)
+            except NotImplementedError as e:
+                return self._send(501, {"error": str(e)})
+            except Exception as e:                      # noqa: BLE001
+                return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+            print(f"{'parked in host RAM' if park else 'back on the device'} in {ms} ms",
+                  file=sys.stderr, flush=True)
+            return self._send(200, {"parked": park, "ms": ms})
         if self.path.rstrip("/") != "/translate":
             return self._send(404, {"error": "POST /translate"})
         try:
@@ -310,12 +371,12 @@ def main() -> None:
     model_id = os.getenv("MODEL_ID", "google/madlad400-3b-mt")
     device = os.getenv("DEVICE", "xpu")
     t0 = time.monotonic()
-    count, generate, known, languages, release = load(
+    count, generate, known, languages, release, park, unpark = load(
         model_id, device, os.getenv("DTYPE", "bfloat16"))
     Handler.translator = Translator(count, generate, known,
                                     batch=int(os.getenv("BATCH", "32")),
                                     max_seg_tokens=int(os.getenv("MAX_SEG_TOKENS", "96")),
-                                    release=release)
+                                    release=release, park=park, unpark=unpark)
     Handler.model = f"{model_id} on {device}"
     Handler.languages = languages
     Handler.max_items = int(os.getenv("MAX_ITEMS", "512"))

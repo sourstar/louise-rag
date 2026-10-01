@@ -51,6 +51,20 @@ class EngineDecl:
     variant: str | None = None
 
 
+@dataclass(frozen=True)
+class ParkDecl:
+    """A model that can be PARKED: its process stays up and keeps its weights
+    in host RAM, off the card, so giving it up costs a copy back over the bus
+    instead of a launch (docs/notes/rage.md §21). Declared by a server that
+    answers two POSTs, and measured like `memory` and `host`: what the parked
+    process still holds of the card (its runtime's context and kernels) and of
+    the host (the weights, and everything it held there before)."""
+    memory: Mapping[str, int]             # MiB of each card it holds while parked
+    host: Mapping[str, int]               # MiB of host RAM it holds while parked from that card
+    path: str = "/park"                   # POST: weights to host RAM, the card freed
+    unpark: str = "/unpark"               # POST: weights back on the card
+
+
 #: The priority a model has when its entry names none: the top tier, the
 #: encoders — given up last, and brought back by itself after a squeeze
 #: (`pressure.restore_min_priority`).
@@ -84,6 +98,9 @@ class ModelEntry:
     #: the encoders DEFAULT_PRIORITY. Absent is DEFAULT_PRIORITY, so a file
     #: written before this key existed parses and behaves exactly as before.
     priority: int = DEFAULT_PRIORITY
+    #: None: given up means unloaded. Declared: given up means PARKED where the
+    #: host has room for it, unloaded where it has not.
+    park: ParkDecl | None = None
 
     @property
     def devices(self) -> tuple[str, ...]:
@@ -185,7 +202,7 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
                               f"digits, '.', '_' and '-', and never '@' or '/'")
     t = _table(raw, where)
     unknown = set(t) - {"engine", "weights", "device", "memory", "host", "cmd", "env",
-                        "health", "priority"}
+                        "health", "priority", "park"}
     if unknown:
         raise RageConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
     for key in ("engine", "weights", "device", "memory", "cmd"):
@@ -260,10 +277,46 @@ def entry_from_table(model_id: str, raw: Any, *, source: str = "") -> ModelEntry
         raise RageConfigError(f"{where}.priority must be a whole number, 0 or more "
                               f"(lower is given up first), got {priority!r}")
 
+    park = _park(t["park"], where, cmd) if "park" in t else None
+
     return ModelEntry(id=model_id, engine=EngineDecl(e["name"], e["build"], variant),
                       weights=weights, device=device, memory=memory, cmd=cmd,
                       env=dict(env), health=health, source=source, host=host,
-                      priority=priority)
+                      priority=priority, park=park)
+
+
+def _park(raw: Any, where: str, cmd: Mapping[str, Any]) -> ParkDecl:
+    t = _table(raw, f"{where}.park")
+    unknown = set(t) - {"memory", "host", "path", "unpark"}
+    if unknown:
+        raise RageConfigError(f"{where}.park: unknown key(s) {sorted(unknown)}")
+    cards = sorted(set(cmd) - {CPU})
+    if not cards:
+        raise RageConfigError(f"{where}.park: a model with no card has nothing to park; "
+                              f"parking frees a card and keeps the weights in host RAM")
+    memory = _int_map(t.get("memory", {}), f"{where}.park.memory")
+    host = _int_map(t.get("host", {}), f"{where}.park.host")
+    for d in cards:
+        if d not in memory:
+            raise RageConfigError(
+                f"{where}.park.memory.{d} is missing: the MiB of {d} the parked process "
+                f"still holds (its runtime and kernels; 0 if none) — measured, like memory")
+        if not host.get(d):
+            raise RageConfigError(
+                f"{where}.park.host.{d} is missing or zero: the host RAM, in MiB, the "
+                f"process holds while parked — its weights are there")
+    if (set(memory) | set(host)) - set(cards):
+        raise RageConfigError(f"{where}.park names {sorted((set(memory) | set(host)) - set(cards))}, "
+                              f"which are not cards of this model")
+    paths = {}
+    for key, default in (("path", "/park"), ("unpark", "/unpark")):
+        value = t.get(key, default)
+        if not isinstance(value, str) or not value.startswith("/"):
+            raise RageConfigError(f"{where}.park.{key} must be a path starting with '/'")
+        paths[key] = value
+    if paths["path"] == paths["unpark"]:
+        raise RageConfigError(f"{where}.park: path and unpark must differ")
+    return ParkDecl(memory=memory, host=host, **paths)
 
 
 def _models(doc: dict[str, Any], source: str) -> dict[str, ModelEntry]:
@@ -377,6 +430,7 @@ def entry_to_toml(entry: ModelEntry) -> str:
         engine += f", variant = {_s(e.variant)}"
     lines = [f"# written by RAGE (PUT /louise/models/{entry.id}); edit through the API",
              f"[models.{_s(entry.id)}]",
+             f"priority = {entry.priority}",
              f"engine  = {{ {engine} }}",
              f"weights = {_s(entry.weights)}",
              f"device  = {_s(entry.device)}",
@@ -389,6 +443,12 @@ def entry_to_toml(entry: ModelEntry) -> str:
     if entry.env:
         lines.append("env     = { " + ", ".join(f"{k} = {_s(v)}"
                                                 for k, v in sorted(entry.env.items())) + " }")
+    if entry.park is not None:
+        k = entry.park
+        lines.append(
+            "park    = { memory = { " + ", ".join(f"{d} = {k.memory[d]}" for d in sorted(k.memory))
+            + " }, host = { " + ", ".join(f"{d} = {k.host[d]}" for d in sorted(k.host))
+            + f" }}, path = {_s(k.path)}, unpark = {_s(k.unpark)} }}")
     for device in entry.devices:
         lines.append(f"cmd.{device} = [" + ", ".join(_s(a) for a in entry.cmd[device]) + "]")
     return "\n".join(lines) + "\n"
@@ -399,5 +459,8 @@ def entry_to_json(entry: ModelEntry) -> dict[str, Any]:
                        "variant": entry.engine.variant},
             "weights": entry.weights, "device": entry.device,
             "memory": dict(entry.memory), "host": dict(entry.host), "env": dict(entry.env),
-            "health": entry.health,
+            "health": entry.health, "priority": entry.priority,
+            "park": None if entry.park is None else {
+                "memory": dict(entry.park.memory), "host": dict(entry.park.host),
+                "path": entry.park.path, "unpark": entry.park.unpark},
             "cmd": {d: list(entry.cmd[d]) for d in entry.devices}}

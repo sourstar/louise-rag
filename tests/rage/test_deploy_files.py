@@ -130,3 +130,25 @@ def test_every_card_the_example_places_on_says_where_it_is_on_the_bus():
     cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
     cards = {d for e in cfg.models.values() for d in e.cmd} - {"cpu"}
     assert cards and cards <= set(cfg.pci), "a card with no address: its driver would be a guess"
+
+
+def test_every_model_on_the_card_keeps_its_compiled_kernels_on_state():
+    """Operator, 2026-10-01: the GPU driver's kernel cache on /state, declared
+    in rage.toml — so it survives a redeploy and is part of every run. The
+    directory must exist before the first start; the deploy steps create it."""
+    cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    for entry in cfg.models.values():
+        if set(entry.cmd) - {"cpu"}:
+            assert entry.env.get("NEO_CACHE_DIR") == "/state/neo-cache", entry.id
+    assert re.search(r"mkdir -p /mnt/ssd5/apps/louise-rage/\{[^}]*state/neo-cache", APP_YAML)
+    assert re.search(r"- /mnt/ssd5/apps/louise-rage/state:/state$", APP_YAML, re.M)
+
+
+def test_the_translator_is_parked_not_unloaded_and_its_server_can_be():
+    cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    park = cfg.models["madlad"].park
+    assert park is not None and park.path == "/park" and park.unpark == "/unpark"
+    server = (ROOT / "deploy" / "madlad-translate" / "server.py").read_text(encoding="utf-8")
+    assert '("/park", "/unpark")' in server
+    assert [m for m, e in cfg.models.items() if e.park is not None] == ["madlad"], \
+        "only a server that answers /park may declare it"

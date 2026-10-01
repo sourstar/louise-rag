@@ -119,24 +119,57 @@ def _budget(cfg: RageConfig, budget: str, what: str, model_id: str, need: int,
     return Verdict(ok=True, **base)
 
 
+def card_share(cfg: RageConfig, model_id: str, device: str, mode: str) -> int:
+    """What a model holds of its card: everything it declares, or — PARKED —
+    what its parked process still holds (rage.md §21). A model moving between
+    the two counts the larger: until the move is done both may be true."""
+    entry = cfg.models[model_id]
+    if mode == PARKED and entry.park is not None:
+        return entry.park.memory[device]
+    return entry.memory[device]
+
+
+def host_share(cfg: RageConfig, model_id: str, device: str, mode: str) -> int:
+    entry = cfg.models[model_id]
+    if entry.park is None or device == CPU or mode == ACTIVE:
+        return entry.host_need(device)
+    if mode == PARKED:
+        return entry.park.host[device]
+    return max(entry.host_need(device), entry.park.host[device])      # MOVING
+
+
+#: how a model holds its place: on the card answering, parked in host RAM, or
+#: on its way from one to the other
+ACTIVE, PARKED, MOVING = "active", "parked", "moving"
+
+
 def fits(cfg: RageConfig, loaded: Mapping[str, str], model_id: str, device: str,
-         capacity: CapacityReader, foreign: Mapping[str, int] | None = None) -> Verdict:
+         capacity: CapacityReader, foreign: Mapping[str, int] | None = None,
+         modes: Mapping[str, str] | None = None, *, as_parked: bool = False) -> Verdict:
     """`loaded` maps a model id to the device it is on (loading ones
     included: they hold their place from the moment they are admitted).
     The card is asked first, then the host; the first budget that says no
     is the answer, and a yes is the host's — the one every load passes.
     `foreign` maps a card to the MiB of it that processes outside RAGE are SEEN
-    to hold; absent or 0 where the card is not read."""
+    to hold; absent or 0 where the card is not read. `modes` names the models
+    that are PARKED or MOVING (absent: ACTIVE). `as_parked` asks whether
+    `model_id` may be PARKED where it is: what it would hold then, against
+    what everything else holds."""
     entry = cfg.models[model_id]
+    modes = modes or {}
     others = {m: d for m, d in loaded.items() if m != model_id and m in cfg.models}
+    mode = PARKED if as_parked else ACTIVE
     if device != CPU:
-        on_card = {m: cfg.models[m].memory[d] for m, d in others.items() if d == device}
-        card = _budget(cfg, device, f"device {device!r}", model_id, entry.memory[device],
+        on_card = {m: card_share(cfg, m, d, modes.get(m, ACTIVE))
+                   for m, d in others.items() if d == device}
+        card = _budget(cfg, device, f"device {device!r}", model_id,
+                       card_share(cfg, model_id, device, mode),
                        on_card, capacity, max(0, int((foreign or {}).get(device, 0))))
         if not card.ok:
             return card
-    on_host = {m: cfg.models[m].host_need(d) for m, d in others.items()}
-    return _budget(cfg, CPU, "host RAM", model_id, entry.host_need(device), on_host, capacity)
+    on_host = {m: host_share(cfg, m, d, modes.get(m, ACTIVE)) for m, d in others.items()}
+    return _budget(cfg, CPU, "host RAM", model_id, host_share(cfg, model_id, device, mode),
+                   on_host, capacity)
 
 
 # ---- reading a device's capacity --------------------------------------------
