@@ -485,7 +485,8 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   set back to `all` before the warm series. Records go to
   `state/load-profile.jsonl`; the summary goes in [`STATUS.md`](STATUS.md)
   with the scenario (models loaded, ARC size, the encoder kept busy).
-  Not measured yet.
+  `--label` keeps two series apart — the GPU kernel cache emptied, then
+  full (§20) — and each trial names the run RAGE stated. Not measured yet.
 - Vectors from every Arc placement match today's endpoints within each
   space's tolerance; wikipedia's gate passes through `/upstream/…`.
 - The OOM test: a CPU child driven past RAM dies alone; the front and
@@ -824,3 +825,55 @@ is declared rather than learned: [`rage-prior-art.md`](rage-prior-art.md)
 §8. First measure each model's load time on the card, cold and warm, idle
 and beside an embedding (§14, `tools/load_profile.py`); a lookahead pays
 only where loading is longer than the gap a request leaves.
+
+**Where a model's weights can still be when it is asked for again**
+(operator, 2026-10-01). Each place skips more of a load:
+
+| where | what a reload still costs | who keeps it there |
+|---|---|---|
+| on the card | nothing | RAGE: `preload`, priority, not giving it up |
+| in host RAM, inside a live process ("parked") | the copy back over PCIe, well under a second for 5 GB (estimate) | the server: vLLM's sleep level 1 and ServerlessLLM do it; llama.cpp cannot; our own PyTorch servers could (MADLAD) |
+| in host RAM as file cache, the process gone | a whole launch less the disk read: process, runtime, kernels, buffers, §8's hash | the kernel's page cache — on the node ZFS's ARC, which gives memory back under pressure |
+| on the NVMe 5.0 drive only | a whole launch | nobody: cold |
+
+The CPU's caches (L1–L3, tens of MB) are not a tier: gigabytes stream
+through them. The `xe` driver already moves a model's buffers to host RAM
+by itself when the card is overcommitted, and back on use; RAGE relies on
+none of it (§19: the host ran out of memory). "Parked" would be a state of
+RAGE's own, charged to the host budget; a decision for the operator, not
+made.
+
+**Kernel compilation, the part of a launch that is neither I/O nor
+hashing.** A kernel is one small GPU program for one operation — a matrix
+product for one quantisation type, a normalisation, a softmax, attention.
+A model runs a few dozen of them, and a runtime ships many more. The
+official Intel image of llama.cpp is built without `GGML_SYCL_DEVICE_ARCH`
+(`.devops/intel.Dockerfile` at b10630), so its kernels are in SPIR-V, a
+portable intermediate form, and the driver's compiler (IGC) turns them into
+the B70's machine code the first time each is used: JIT, just in time.
+llama.cpp's own documentation: "the startup is slow (JIT) in first time,
+but subsequent performance is unaffected". Building ahead of time (AOT,
+`-DGGML_SYCL_DEVICE_ARCH=…`) removes the step but binds the binary to the
+named device; it would be another engine, gated like any other (03 §3.3).
+- **Intel's driver caches the result on disk by default**
+  (`NEO_CACHE_PERSISTENT=1`, `NEO_CACHE_DIR` =
+  `$XDG_CACHE_HOME/neo_compiler_cache` else `$HOME/.cache/…`, 1 GB;
+  compute-runtime's COMPILER_CACHE.md). Its key holds the kernel source,
+  the build options, the compiler's version and the hardware, so a new
+  image does not reuse an old binary. In RAGE's container that directory
+  lives as long as the container: every relaunch after the first should
+  find its kernels, and a redeploy starts empty. UNVERIFIED on the node —
+  look for it inside RAGE's container, and measure it with two
+  `load-profile` runs, `--label kernel-cache-empty` after emptying it and
+  `--label kernel-cache-full` after.
+- **`SYCL_CACHE_PERSISTENT`, a second cache above it, is not used**:
+  llama.cpp's SYCL documentation advises against it (old and new binaries
+  mixed after an update crash) and it speeds up startup only.
+- Kept on `/state` instead (`NEO_CACHE_DIR=/state/neo-cache`), the cache
+  would survive a redeploy. Declared in `rage.toml` it is part of the run
+  (§8), so it changes every run id once; set for the container only it is
+  outside the run. Which of the two is the operator's call; not made.
+- OpenVINO (the MedCPT reranker) compiles the whole model for the card at
+  `compile_model`; its own `CACHE_DIR` would keep that compiled model, and
+  `deploy/medcpt-rerank/server.py` sets none today. PyTorch's XPU path
+  (MADLAD) may also build kernels per shape on first use — UNVERIFIED.

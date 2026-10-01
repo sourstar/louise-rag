@@ -42,6 +42,14 @@ refuses the run (exit 2). The models that were loaded when it started are
 loaded again when it ends, interrupted or not. `--cold-by drop-caches`
 empties the whole host's page cache, Louise's manifests included.
 
+THE KERNEL CACHE. A launch also compiles the GPU's kernels (rage.md §20);
+Intel's driver keeps them on disk by default (NEO_CACHE_DIR, under the
+container's $HOME), so that cost is paid once per container unless the
+cache is lost. Two runs with `--label`, one after emptying the cache in
+RAGE's container and one after, keep the two series apart in the summary.
+Each trial also records the run RAGE stated: a declared env change is a new
+run, and the summary counts them.
+
 THE RAW PHASE (once per model, unless `--skip-raw`): a plain read of the
 weights cold and warm, and their SHA-256 as RAGE computes it — the I/O and
 the hashing parts of a load, apart from the runtime's own start.
@@ -272,7 +280,7 @@ class Rage:
     def load(self, model_id: str, device: str | None = None) -> tuple[int, str]:
         r = self._authorised(self._call("POST", f"/louise/models/{model_id}/load",
                                         json={"device": device} if device else None))
-        return r.status_code, r.text[:500]
+        return r.status_code, r.text
 
     def unload(self, model_id: str) -> int:
         """200 unloaded, 404 it was not loaded; both leave it unloaded."""
@@ -397,6 +405,8 @@ class Trial:
     rep: int
     weights_mib: float
     kind: str = "trial"
+    label: str = ""                  # the series, e.g. kernel cache empty / full
+    run: str | None = None           # the run RAGE stated: an env change is a new run
     status: int = 0
     refused: str | None = None
     load_s: float | None = None
@@ -431,10 +441,11 @@ class Profiler:
     def __init__(self, rage: Rage, host: Host, cfg: rage_model.RageConfig, *,
                  cold_by: str, window_s: float, emit: Callable[[dict[str, Any]], None],
                  background: Background | None = None, busy_model: str | None = None,
+                 label: str = "",
                  clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
                  say: Callable[[str], None] = lambda s: print(s, file=sys.stderr)) -> None:
-        self.rage, self.host, self.cfg = rage, host, cfg
+        self.rage, self.host, self.cfg, self.label = rage, host, cfg, label
         self.cold_by, self.window_s, self.emit = cold_by, window_s, emit
         self.background, self.busy_model = background, busy_model
         self.clock, self.sleep, self.say = clock, sleep, say
@@ -468,7 +479,7 @@ class Profiler:
         files = self.files(model_id)
         size = self.weights_bytes(model_id)
         t = Trial(model=model_id, background=background, cache_wanted=cache, rep=rep,
-                  weights_mib=round(size / MIB, 1))
+                  weights_mib=round(size / MIB, 1), label=self.label)
         self.rage.unload(model_id)               # before evicting: a mapped page stays
         if cache == "cold":
             self.host.evict(files, self.cold_by)
@@ -489,9 +500,13 @@ class Profiler:
         t.cache_seen = cache_seen(after.read_since(before), size)
         t.arc = after.arc_since(before)
         if t.status != 200:
-            t.refused = body
+            t.refused = body[:500]
         else:
             t.load_s = round(l1 - l0, 2)
+            try:
+                t.run = json.loads(body).get("run")
+            except (ValueError, AttributeError):
+                t.run = None
             u0 = self.clock()
             self.rage.unload(model_id)
             t.unload_s = round(self.clock() - u0, 2)
@@ -567,15 +582,17 @@ def summarise(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     for r in records:
         if r.get("kind") != "trial":
             continue
-        groups.setdefault((r["model"], r["background"], r["cache_seen"]), []).append(r)
+        key = (r.get("label", ""), r["model"], r["background"], r["cache_seen"])
+        groups.setdefault(key, []).append(r)
     out = []
-    for (m, bg, seen), rs in sorted(groups.items()):
+    for (label, m, bg, seen), rs in sorted(groups.items()):
         loads = [r["load_s"] for r in rs if r.get("load_s") is not None]
         unloads = [r["unload_s"] for r in rs if r.get("unload_s") is not None]
         lost = [r["busy"]["embedding_lost_s"] for r in rs
                 if r.get("busy") and r["busy"].get("embedding_lost_s") is not None]
         out.append({
-            "model": m, "background": bg, "cache": seen, "n": len(rs),
+            "label": label or None, "model": m, "background": bg, "cache": seen,
+            "n": len(rs), "runs": len({r.get("run") for r in rs if r.get("run")}),
             "refused": sum(1 for r in rs if r.get("refused")),
             "load_s_median": round(statistics.median(loads), 2) if loads else None,
             "load_s_max": max(loads) if loads else None,
@@ -588,9 +605,9 @@ def summarise(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def render(rows: Sequence[Mapping[str, Any]]) -> str:
-    cols = ("model", "background", "cache", "n", "refused", "load_s_median", "load_s_max",
+    cols = ("label", "model", "background", "cache", "n", "refused", "load_s_median", "load_s_max",
             "unload_s_median", "read_mib_median", "weights_mib", "embedding_lost_s_median")
-    head = ("model", "background", "cache", "n", "refused", "load s", "max",
+    head = ("label", "model", "background", "cache", "n", "refused", "load s", "max",
             "unload s", "read MiB", "weights MiB", "embedding lost s")
     table = [head] + [tuple("—" if r[c] is None else str(r[c]) for c in cols) for r in rows]
     widths = [max(len(row[i]) for row in table) for i in range(len(head))]
@@ -629,6 +646,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
                    help="a block device to count reads on (default: every whole disk)")
     p.add_argument("--skip-raw", action="store_true")
     p.add_argument("--out", type=Path, default=None, help="JSON lines, one per trial")
+    p.add_argument("--label", default="",
+                   help="names this series in every record and in the summary, so two "
+                        "runs (a kernel cache empty, then full) are kept apart")
     p.add_argument("--json", action="store_true", help="the summary as JSON")
     p.add_argument("--dry-run", action="store_true", help="the plan; nothing is touched")
     a = p.parse_args(argv)
@@ -735,12 +755,14 @@ def main(argv: Sequence[str] | None = None, *, client: httpx.Client | None = Non
               "models": list(models), "busy": a.busy, "cold_by": a.cold_by,
               "devices": sorted(host.snapshot().disk), "filesystems": kinds,
               "host_mib": host.memory(), "loaded_at_start": before, "gpu": rage.gpu(),
-              "window_s": a.window, "busy_concurrency": a.busy_concurrency})
+              "window_s": a.window, "busy_concurrency": a.busy_concurrency,
+              "label": a.label})
         if a.busy and background is None:
             background = EmbeddingLoop(a.rage, a.busy, concurrency=a.busy_concurrency,
                                        chars=a.busy_chars, client=client, clock=clock)
         profiler = Profiler(rage, host, cfg, cold_by=a.cold_by, window_s=a.window,
                             emit=emit, background=background, busy_model=a.busy,
+                            label=a.label,
                             clock=clock, sleep=sleep, say=say)
         profiler.run(plan)
     except KeyboardInterrupt:

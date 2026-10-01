@@ -87,6 +87,7 @@ class World:
         self.loads: list[tuple[float, float]] = []
         self.unauthorised = 0
         self.fs = "ext4"
+        self.env = "a"
         self.can_drop = True
 
     # the clock
@@ -139,7 +140,10 @@ class World:
             self.loads.append((t0, self.t))
             body = json.loads(request.content) if request.content else {}
             self.loaded[model] = (body or {}).get("device") or "xpu"
-            return httpx.Response(200, json={"id": model, "state": "ready"})
+            return httpx.Response(200, json={"id": model, "state": "ready",
+                                             "run": f"sha256:{model}-{self.env}",
+                                             "memory": {"observed": {"ram_mib": 1} | {
+                                                 f"k{i}": i for i in range(80)}}})
         return httpx.Response(404)
 
 
@@ -434,3 +438,21 @@ def test_the_embedding_loop_keeps_requests_in_flight_and_stops() -> None:
     assert len(set(seen)) == len(seen)                    # no text twice: no cache serves it
     time.sleep(0.05)
     assert len(loop.completions()) == n                   # stopped means stopped
+
+
+def test_two_labelled_series_stay_apart_and_name_their_runs(world: World,
+                                                            tmp_path: Path, capsys) -> None:
+    out = tmp_path / "p.jsonl"
+    assert _run(world, "--models", "bge-m3", "--cache", "warm", "--reps", "2", "--skip-raw",
+                "--label", "kernel-cache-empty", out=out) == lp.EXIT_OK
+    world.env = "b"                                       # a declared env change: a new run
+    assert _run(world, "--models", "bge-m3", "--cache", "warm", "--reps", "2", "--skip-raw",
+                "--label", "kernel-cache-full", out=out) == lp.EXIT_OK
+    records = _records(out)
+    trials = [r for r in records if r["kind"] == "trial"]
+    # a long answer is still read: the run is in it
+    assert {r["run"] for r in trials} == {"sha256:bge-m3-a", "sha256:bge-m3-b"}
+    rows = lp.summarise(records)
+    assert [(r["label"], r["n"], r["runs"]) for r in rows] == [
+        ("kernel-cache-empty", 2, 1), ("kernel-cache-full", 2, 1)]
+    assert "kernel-cache-full" in capsys.readouterr().out
