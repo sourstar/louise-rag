@@ -231,6 +231,23 @@ The research that comes closest (evidence: [C] code read, [P] paper read,
   (Kroeger & Long, 1996) and Cao et al.'s "do no harm" rule (1995): never
   prefetch over something needed sooner than what is fetched.
 
+**In LocalAI, asked for by nobody** (checked 2026-10-01). No fork does it:
+the 2,882 fork-only commits of §6 searched for prefetch, preload, prewarm,
+warm-up, lookahead, predict, sequence, pipeline and workflow turn up
+dependency bumps, CI workflows, and one script that warms every model at
+once (`Daniel-DDV/LocalAI`, `scripts/windows/ai-warmup-all.ps1`). Upstream,
+the nearest threads:
+- PR #10662 (merged, 2026-07): eager warm-up of a realtime pipeline and
+  `POST /backend/load` — all members at once;
+- issue #11753 (open) and draft PR #12145: `embedding_model` and
+  `reranker_model` per agent, i.e. an agent DECLARES its embed → rerank →
+  LLM chain. Neither mentions loading ahead; it is where a KVFlow-style
+  lookahead would get its graph;
+- issue #9659 → PR #9662: `concurrency_groups`, which models may NOT
+  coexist (from llama-swap's matrix);
+- issue #5352 (open): LRU/ARC eviction and manual reclaim — the eviction
+  side only; discussion #559: preload at startup.
+
 **What this means here.** Louise's sequence is not something to learn: it
 is her own code. A search is `resolve → expand → plan → execute → fuse →
 rerank` ([`docs/05-ask.md`](../05-ask.md) §5.2), called by the chat model
