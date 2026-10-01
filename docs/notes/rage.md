@@ -784,3 +784,14 @@ it.
 the card by itself (the first bake-off wanted 44 GiB of a 32 GiB card), and
 it never gives up a model in use. Anything that needs the card beside
 RAGE should still go through RAGE, or run with RAGE's models unloaded.
+
+## 20. Open: loading the next model ahead (2026-10-01)
+
+Not designed, not built. When RAGE's load policy is next touched, the
+template is **KVFlow** (operator: "keep in mind kvflow"): a declared
+pipeline, each model's distance to its next use, prefetch the nearest,
+give up the farthest — never one in use, pinned, or of higher priority.
+Where its code is, how it maps onto §7's ledger, and why Louise's sequence
+is declared rather than learned: [`rage-prior-art.md`](rage-prior-art.md)
+§8. First measure each model's load time on the card (§14); a lookahead
+pays only where loading is longer than the gap a request leaves.

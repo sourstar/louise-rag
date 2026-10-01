@@ -243,6 +243,24 @@ lookahead would move is the models that do not fit beside the others —
 the translator (8,200 MiB) and DAR-legal-it (6,200) — while the chat model
 generates (64–92 s per call, [`scheduling.md`](scheduling.md) §12).
 
+**KVFlow is the template to keep** (operator, 2026-10-01).
+`github.com/PanZaifeng/KVFlow`, Apache-2.0, read at 7ef897e (2026-03-12);
+a fork of SGLang. Where its rule lives:
+- `SScheduler/` (`timestepManager/`, `policy/example_policies.py`): the
+  declared step graph, and each agent's distance to execution — lower is
+  sooner, and sooner is more important;
+- `python/sglang/srt/managers/scheduler.py` `prefetch_lora_timesteps`
+  :2796 → `lora/lora_manager.py` `prefetch_lora_weights` :237 →
+  `lora/mem_pool.py` `prefetch_lora_weights` :217: take a free slot, else
+  the slot whose distance is LARGEST and ≥ the candidate's, never one in
+  the current step, never a pinned one; a victim still loading is dropped
+  (`_drop_pending_load` :461); no victim → no prefetch.
+
+Carried over to RAGE: an agent becomes a model, a step becomes a stage of
+the declared pipeline, a LoRA slot becomes MiB in the ledger (§7: the
+victims must COVER the need, not free one slot), and RAGE's own conditions
+stay on top — idle, strictly lower priority, `unload(only_if_idle=True)`.
+
 If it is built, RAGE's own rules already bound a wrong guess, and the
 literature adds two:
 1. the pipeline declared in `rage.toml` (desired state, invariant 10), the
