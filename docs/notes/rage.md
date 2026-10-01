@@ -458,6 +458,34 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   another.
 - Load, unload and device change timed per model; a full calibration
   gate timed per encoder.
+- **What giving a model up costs** (operator, 2026-10-01): every model's
+  load and unload timed with its weights COLD (read from the NVMe 5.0
+  drive) and WARM (still in RAM), on a quiet node and beside an embedding
+  in progress — `python -m tools.load_profile` (`louise dev
+  load-profile`), with the node paused. Between two queries a reload may
+  be affordable; during an embedding batch it may cost the batch more than
+  it saves, and these numbers say which. What one run records, per trial:
+  - the load from the request to RAGE's answer, which includes hashing
+    the weights (§8 hashes at EVERY launch), and the unload;
+  - what the disk read during the load (`/proc/diskstats`) and ZFS's ARC
+    counters: a trial is classified cold or warm by what the disk read,
+    never by what was intended;
+  - beside `--busy <encoder>`: the encoder's answers per second alone and
+    during the load, and the seconds of embedding the load cost it;
+  - once per model, the raw read cold and warm and the SHA-256 alone — the
+    I/O and hashing shares of a load, apart from the runtime's start.
+
+  It reads the weights at the paths `rage.toml` names, so it runs in a
+  container with RAGE's volumes (`deploy/truenas-rage.yaml`). Those are
+  under `/mnt/ssd5/apps/`, a TrueNAS pool, hence ZFS: `posix_fadvise`
+  cannot evict the ARC, so a cold series runs either with
+  `--cold-by drop-caches` (a
+  privileged container; it empties the whole host's page cache) or with
+  `zfs set primarycache=metadata` on the dataset and `--cold-by none`,
+  set back to `all` before the warm series. Records go to
+  `state/load-profile.jsonl`; the summary goes in [`STATUS.md`](STATUS.md)
+  with the scenario (models loaded, ARC size, the encoder kept busy).
+  Not measured yet.
 - Vectors from every Arc placement match today's endpoints within each
   space's tolerance; wikipedia's gate passes through `/upstream/…`.
 - The OOM test: a CPU child driven past RAM dies alone; the front and
@@ -793,5 +821,6 @@ pipeline, each model's distance to its next use, prefetch the nearest,
 give up the farthest — never one in use, pinned, or of higher priority.
 Where its code is, how it maps onto §7's ledger, and why Louise's sequence
 is declared rather than learned: [`rage-prior-art.md`](rage-prior-art.md)
-§8. First measure each model's load time on the card (§14); a lookahead
-pays only where loading is longer than the gap a request leaves.
+§8. First measure each model's load time on the card, cold and warm, idle
+and beside an embedding (§14, `tools/load_profile.py`); a lookahead pays
+only where loading is longer than the gap a request leaves.
