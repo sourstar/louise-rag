@@ -1,5 +1,10 @@
 # RAGE — the RAG Engine: one container for every model
 
+*2026-10-02: a proposal hands the lifecycle — admission, eviction, preload,
+park — to LocalAI and keeps RAGE to the run identity alone:
+[`rage-over-localai.md`](rage-over-localai.md). Not accepted; this note
+stands until it is.*
+
 *Named by the operator, 2026-09-20. This note called it "the model pool"
 until then.*
 
