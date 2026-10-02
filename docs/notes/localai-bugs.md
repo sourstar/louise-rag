@@ -196,13 +196,15 @@ is.* Nobody has requested it either (searched 2026-10-02; the nearest,
 #2034, shows optimum-intel's per-model default at work:
 `Setting OpenVINO CACHE_DIR to /models/models--…/snapshots/…/model_cache`).
 
-The per-model caches cover it, with three gaps a reader of this file should
-know, none of which a global setting is needed to close:
+The per-model caches cover it, with two gaps a reader of this file should
+know, neither of which a global setting is needed to close:
 - **OpenVINO embedding models are never cached** — item 2, which is filed:
   fixed, they get the same per-model cache as the rest.
 - **A read-only models directory** (as RAGE mounts `/models`) cannot hold
   optimum-intel's `model_cache`; there the cache must be pointed elsewhere,
   as RAGE does per model (`OV_CACHE_DIR`, rage.md §20).
-- **Intel's driver cache** (`NEO_CACHE_DIR`, default `$HOME/.cache`) lives as
-  long as the container: a redeploy starts it empty unless it is on a
-  volume — again a per-deployment choice, as RAGE's `rage.toml` makes it.
+
+Intel's driver cache (`NEO_CACHE_DIR`, default `$HOME/.cache`) lasts as long
+as the container, which is not a gap worth naming (operator, 2026-10-02):
+the kernels compile once per container, in seconds, and a container lives
+through many loads.
