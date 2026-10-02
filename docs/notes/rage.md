@@ -885,9 +885,17 @@ named device; it would be another engine, gated like any other (03 §3.3).
   directory created by the deploy steps. The first start after the change
   states new runs; the gate tests them as it tests any.
 - OpenVINO (the MedCPT reranker) compiles the whole model for the card at
-  `compile_model`; its own `CACHE_DIR` would keep that compiled model, and
-  `deploy/medcpt-rerank/server.py` sets none today. PyTorch's XPU path
-  (MADLAD) may also build kernels per shape on first use — UNVERIFIED.
+  `compile_model`; its own `CACHE_DIR` keeps that compiled model.
+  **Decided 2026-10-01 (operator): declared** — `OV_CACHE_DIR =
+  "/state/ov-cache"` in its entry, read by `deploy/medcpt-rerank/server.py`
+  and passed as `CACHE_DIR`; the directory is created by the deploy steps.
+  PyTorch's XPU path (MADLAD) may also build kernels per shape on first use
+  — UNVERIFIED.
+- LocalAI has no such setting: its one OpenVINO path (the transformers
+  backend) gets optimum-intel's default, a `model_cache` beside each model,
+  on a GPU only, and never for its embedding models. Not requested upstream
+  (searched 2026-10-02); the LocalAI defects found on the way are in
+  [`localai-bugs.md`](localai-bugs.md).
 
 ## 21. Parked: the card freed, the process kept (2026-10-01)
 

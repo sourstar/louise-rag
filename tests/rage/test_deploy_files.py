@@ -152,3 +152,9 @@ def test_the_translator_is_parked_not_unloaded_and_its_server_can_be():
     assert '("/park", "/unpark")' in server
     assert [m for m, e in cfg.models.items() if e.park is not None] == ["madlad"], \
         "only a server that answers /park may declare it"
+
+
+def test_the_openvino_reranker_keeps_its_compiled_model_on_state():
+    cfg = model.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    assert cfg.models["medcpt-rerank"].env.get("OV_CACHE_DIR") == "/state/ov-cache"
+    assert re.search(r"mkdir -p /mnt/ssd5/apps/louise-rage/\{[^}]*state/ov-cache", APP_YAML)

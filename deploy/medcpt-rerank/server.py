@@ -20,7 +20,13 @@ longer than 512 tokens are cut longest-first, as the model card's
 accepted and always on. Any GET answers the health ping.
 
 Environment: MODEL_DIR (openvino_model.xml + tokenizer.json), DEVICE (GPU),
-PORT (8080), BATCH (pairs per inference, 16), MAX_TEXTS (256).
+PORT (8080), BATCH (pairs per inference, 16), MAX_TEXTS (256), OV_CACHE_DIR
+(unset: none).
+
+OV_CACHE_DIR is OpenVINO's model cache (its `CACHE_DIR`): compiling the model
+for the card is the slow part of a start, and with a cache the next start
+reads the compiled model back instead (docs/notes/rage.md §20). Under RAGE it
+is declared in rage.toml, so it is part of the run (operator, 2026-10-01).
 """
 from __future__ import annotations
 
@@ -99,9 +105,12 @@ def make_encoder(tokenizer_json: str):
     return encode
 
 
-def make_infer(model_xml: str, device: str):
+def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
     import openvino as ov
-    compiled = ov.Core().compile_model(model_xml, device)
+    # CACHE_DIR: the compiled model is kept there and read back at the next
+    # start; OpenVINO keys it on the model, the device and its own version
+    config = {"CACHE_DIR": cache_dir} if cache_dir else {}
+    compiled = ov.Core().compile_model(model_xml, device, config)
     names = {i.get_any_name() for i in compiled.inputs}
     if names != set(INPUTS):
         raise SystemExit(f"{model_xml}: inputs {sorted(names)}, expected {list(INPUTS)} — "
@@ -155,7 +164,8 @@ def main() -> None:
     model_dir = os.getenv("MODEL_DIR", "/models/medcpt-cross-ov")
     device = os.getenv("DEVICE", "GPU")
     Handler.reranker = Reranker(make_encoder(f"{model_dir}/tokenizer.json"),
-                                make_infer(f"{model_dir}/openvino_model.xml", device),
+                                make_infer(f"{model_dir}/openvino_model.xml", device,
+                                           os.getenv("OV_CACHE_DIR") or None),
                                 batch=int(os.getenv("BATCH", "16")))
     Handler.model = f"{os.path.basename(model_dir.rstrip('/'))} on {device}"
     Handler.max_texts = int(os.getenv("MAX_TEXTS", "256"))

@@ -233,7 +233,10 @@ weights = "/models/medcpt/medcpt-cross-ov"
 device  = "xpu"
 memory  = { xpu = 600, cpu = 900 }
 host    = { xpu = 850 }                   # peak 781
-env     = { NEO_CACHE_DIR = "/state/neo-cache" }
+# OV_CACHE_DIR: OpenVINO keeps the model compiled for the card there and reads
+# it back at the next start instead of compiling again (rage.md §20). Declared,
+# so it is part of the run (operator, 2026-10-01).
+env     = { NEO_CACHE_DIR = "/state/neo-cache", OV_CACHE_DIR = "/state/ov-cache" }
 cmd.xpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
            "--device", "xpu", "--host", "127.0.0.1", "--port", "${PORT}"]
 cmd.cpu = ["/opt/venv-medcpt/bin/python", "-m", "servers.launch", "medcpt", "--weights", "${WEIGHTS}",
