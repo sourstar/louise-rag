@@ -25,8 +25,8 @@ watchdog reaping a stale address, fixed) is near item 3 but not it; #5352
 | 6 | distributed scheduler | it evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | code reading, reported live in a fork |
 | 7 | loader | when busy models cannot be evicted, the load goes ahead over `max_active_backends` | certain; may be intended |
 
-And one feature that is **not requested yet**: a single compile-cache
-directory for every backend (§ at the end).
+A global compile-cache directory was considered and is **not to be filed**
+(operator, 2026-10-02): the per-model caches already exist (§ at the end).
 
 ---
 
@@ -189,24 +189,20 @@ keep the limit.
 
 ---
 
-## Feature: one compile-cache directory for every backend — not requested
+## Not filed: one compile-cache directory for every backend
 
-Searched 2026-10-02 (issues, pull requests, the web): no request for it.
-The nearest is #2034, whose log shows optimum-intel's default at work —
-`Setting OpenVINO CACHE_DIR to /models/models--…/snapshots/…/model_cache`.
+*Operator, 2026-10-02: not needed — each model is already cached where it
+is.* Nobody has requested it either (searched 2026-10-02; the nearest,
+#2034, shows optimum-intel's per-model default at work:
+`Setting OpenVINO CACHE_DIR to /models/models--…/snapshots/…/model_cache`).
 
-What LocalAI does today: nothing of its own. No setting or environment
-variable names a cache directory (no `CACHE_DIR`, `NEO_CACHE_DIR` or
-`SYCL_CACHE` anywhere in the tree). Its one OpenVINO path gets
-optimum-intel's default: a `model_cache` beside each model, on a GPU only,
-written into the models directory (impossible where that is read-only), and
-never for embedding models (item 2). Intel's GPU driver keeps its own
-compiled-kernel cache under the backend process's `$HOME/.cache` by default
-(`NEO_CACHE_PERSISTENT=1`), which lasts as long as the container.
-
-The request, as it could be filed: one LocalAI setting naming a cache root
-that the loader passes to every backend process it starts, each backend
-mapping it to its runtime — OpenVINO's `CACHE_DIR`, the Intel driver's
-`NEO_CACHE_DIR` — so that a model given up and loaded again does not
-compile again, and a container redeployed keeps its cache. Not
-`SYCL_CACHE_PERSISTENT`: llama.cpp's SYCL documentation advises against it.
+The per-model caches cover it, with three gaps a reader of this file should
+know, none of which a global setting is needed to close:
+- **OpenVINO embedding models are never cached** — item 2, which is filed:
+  fixed, they get the same per-model cache as the rest.
+- **A read-only models directory** (as RAGE mounts `/models`) cannot hold
+  optimum-intel's `model_cache`; there the cache must be pointed elsewhere,
+  as RAGE does per model (`OV_CACHE_DIR`, rage.md §20).
+- **Intel's driver cache** (`NEO_CACHE_DIR`, default `$HOME/.cache`) lives as
+  long as the container: a redeploy starts it empty unless it is on a
+  volume — again a per-deployment choice, as RAGE's `rage.toml` makes it.
