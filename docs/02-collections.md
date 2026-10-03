@@ -477,7 +477,8 @@ that is not null; a document is embedded by `space.encoder` and never
 prefixed (05 §5.1).
 
 **Not the engine either.** The software that runs the model — its build,
-the image holding it, its arguments and environment, the device — is
+the image holding it, its arguments, the options it is loaded with and
+its environment, the device — is
 how the function was computed, not the function. The Codex freezes it
 as `space.encoder.engine`: the engine the creator TESTED, the one the
 reference vectors of the calibration member came from, written out
@@ -786,10 +787,12 @@ refuses when the resulting `space_id` differs from the source's — so
 two collections meant to be searched together land in one space, on one
 reference, by construction rather than by hoping their settings match.
 A version-2 source included: its copy is written as version 2 (09 §9.3),
-because the version-3 shape takes the image out of `space_id` and would
-make it another space — which is how a root (`create --space-from`) keeps
-every vector a development collection already computed (operator,
-2026-09-21).
+because the shape of version 3 and later takes the image out of
+`space_id` and would make it another space — which is how a root
+(`create --space-from`) keeps every vector a development collection
+already computed (operator, 2026-09-21). A version-3 source needs no
+such care: its `space` is a valid version-4 one, copied as it is
+(operator, 2026-10-03).
 
 **A sister may DERIVE her vectors instead of embedding them.** Where her
 space is a pure function of another's — a quantisation of it, or a

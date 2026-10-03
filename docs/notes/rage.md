@@ -1,9 +1,10 @@
 # RAGE — the RAG Engine: one container for every model
 
-*2026-10-02: a proposal hands the lifecycle — admission, eviction, preload,
-park — to LocalAI and keeps RAGE to the run identity alone:
-[`rage-over-localai.md`](rage-over-localai.md). Not accepted; this note
-stands until it is.*
+*Accepted 2026-10-03: the lifecycle — admission, eviction, preload,
+park — moves to LocalAI and RAGE keeps the run identity alone
+([`rage-over-localai.md`](rage-over-localai.md); 03 §3.3 and 09 §9.12
+amended; migration step 15). Until step 15's cut-over this note describes
+what runs on the node; §4, §7, §19 and §21 retire with it.*
 
 *Named by the operator, 2026-09-20. This note called it "the model pool"
 until then.*
@@ -67,8 +68,11 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 
   Our three FastAPI servers exist because of this.
 - **The specs.** RAGE is the node's trusted processing platform (03
-  §3.3): it launches every engine, states the run with every answer, and
-  a vector is written only from an answer naming a validated run. Its
+  §3.3): it states the run of every answer, read from what was launched,
+  and a vector is written only from an answer naming a validated run.
+  Who launches the engines changed on 2026-10-03: a model runner,
+  LocalAI, from step 15's cut-over; RAGE itself, through llama-swap, until
+  then. Its
   image is the engine a Codex created here freezes, so it must be
   obtainable by a stranger (02 §2.4).
 
@@ -85,6 +89,10 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 | Triton | CUDA-centred; PyTorch on XPU is not a supported backend |
 
 ## 4. The design: one policy, in a front; llama-swap runs the processes
+
+*Superseded at migration step 15's cut-over by
+[`rage-over-localai.md`](rage-over-localai.md) §7: the front stays, the
+policy and llama-swap give way to LocalAI. Until then this is what runs.*
 
 One TrueNAS app, `rage`, one image, one published port, `/dev/dri`, a
 read-only models directory and a state directory. The image
@@ -899,7 +907,8 @@ named device; it would be another engine, gated like any other (03 §3.3).
 - LocalAI has no such setting: its one OpenVINO path (the transformers
   backend) gets optimum-intel's default, a `model_cache` beside each model,
   on a GPU only, and never for its embedding models. Not requested upstream
-  (searched 2026-10-02); the LocalAI defects found on the way are in
+  (searched 2026-10-02). Every LocalAI action item — the defects found
+  on the way, the patches we carry, the requests — is in
   [`localai-bugs.md`](localai-bugs.md).
 
 ## 21. Parked: the card freed, the process kept (2026-10-01)

@@ -1306,6 +1306,65 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15b DONE**
+*Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
+model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
+the run identity of every answer, read from what was launched. Spec
+amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
+4, calibration statement 3), 02 §2.4 and §2.7.
+- **15a — The formats.** Codex version 4: an engine MAY carry `options`,
+  absent for an engine started by `args` (`app/hold/codex.py`,
+  `CODEX_VERSION`, the engine's keys at its `_only` check; readers 1–4).
+  The peer's calibration statement version 3 beside 2
+  (`app/hold/embedder.py`). *Tests:* a version-3 Codex's engines keep
+  their `engine_id` byte for byte; a version-3 `space` copied by
+  `space_from` into a version-4 Codex keeps its `space_id`; `options` in
+  a version-3 Codex is refused as an unknown key; an `options` value
+  naming an absolute path other than `${WEIGHTS}` or `${MODELS}` is
+  refused, and so is a non-integer JSON number; version-2 statements
+  still read.
+- **15b — P1, the LocalAI patch. DONE 2026-10-03.** `GET /system` lists
+  each loaded model's `load_options` and `load_options_hash`
+  (`deploy/localai/patches/`, base 58830f7). Two Ginkgo specs in the
+  patch; the load spec fails with the hook removed. Recorded with every
+  LocalAI action item in [`localai-bugs.md`](localai-bugs.md);
+  `tests/rage/test_localai_patches.py` (4) holds the series to that list.
+- **15c — Go/no-go, on the node** (rage-over-localai §8.1–§8.2): LocalAI
+  at the base with the series applied, its llama-cpp SYCL backend, on the
+  B70. bge-m3 gated by hand: fingerprint, batch invariance, the
+  fingerprint again under spill, tokens per second against today's
+  llama-server. **The operator's stop**, like 13d. If it fails, today's
+  RAGE keeps running.
+- **15d — The front over LocalAI.** `app/rage/runs.py` `match` reads
+  `/system` (pid, `started_at`, `load_options`) and `/proc` in place of
+  llama-swap's argv. The options are made canonical by 09 §9.3. The
+  check before and after each answer compares (pid, start) and
+  `load_options_hash`, and the weights are hashed at every new (pid,
+  start). *Tests*, against a fake `/system` and a fake `/proc`:
+  - a reload with unchanged options states the same run;
+  - one changed option states another run;
+  - a default LocalAI filled in, absent from the YAML, is in the run;
+  - an option naming another path states no run;
+  - a process replaced mid-answer gets no header;
+  - a body naming another model than its URL is refused.
+- **15e — The image.** LocalAI built from the base with the series,
+  backends installed at build time from images pinned by digest, gallery
+  installs at run time off, LocalAI on loopback with no key. The three
+  servers become LocalAI Python backends: DNABERT-2 → `Embedding`, MedCPT
+  → `Rerank`, MADLAD → `Predict`. The app's translator client moves to
+  the completion shape. `tests/rage/test_deploy_files.py` holds them to
+  the code, as in 13d.
+- **15f — The cut-over**, as 13f: record today's vectors first, `node
+  pause`, swap the image, re-gate every space (a new engine, 03 §3.3),
+  `node resume`. To back out, deploy today's image by its digest.
+- **15g — Retirements**, through [`legacy-to-delete.md`](legacy-to-delete.md):
+  `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`,
+  `deploy/rage/servers/`, and the lifecycle keys of `rage.toml`
+  (`memory`, `priority`, `preload`, `park`, `cmd`).
+
+**Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream; run 15c
+on the node.
+
 ## 4. Dependencies between steps
 
 ```
@@ -1330,6 +1389,8 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
      13b servers ── 13c front ──┼── 13d image + proof (operator's stop) ──┐
 3, 4 ───────────────────────────┴── 13e clients ───────────────────────────┴── 13f retire apps
 5, 8, 13e ── 14 quarantine (report, then enforce) ── 12 retire
+13a ── 15a formats ───────────────────────────── 15d front ──┐
+13f ── 15b patch ── 15c node go/no-go (operator's stop) ── 15e image ──┴── 15f cut-over ── 15g retire
 ```
 
 - 13a needs only 0. 13b and 13c need nothing of the plan: the front
@@ -1341,6 +1402,10 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 - 14 needs 5 (the checks it derives from), 8 (collections with a Codex)
   and 13e (validated runs). 9's `share` honours it from the day it
   enforces.
+- **15 (added 2026-10-03)** needs 13f (a RAGE in service to replace) and
+  13a (the Codex it extends). 15d needs 15a, because a LocalAI run's
+  engine carries `options`. 15c is the operator's stop, and nothing past
+  it starts until it passes.
 
 ## 5. Kick-off prompt for Claude Code
 

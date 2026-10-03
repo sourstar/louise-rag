@@ -1,36 +1,56 @@
-# LocalAI: defects found while studying its scheduler
+# LocalAI: every action item for the LocalAI team
 
-*2026-10-02. For the operator to report upstream (`mudler/LocalAI`). Found
-while mapping LocalAI against RAGE ([`rage-prior-art.md`](rage-prior-art.md)),
-by reading its code; nothing here was run against a LocalAI install.*
+*One place for everything this project owes or asks `mudler/LocalAI`: the
+defects found (B1–B7), the patches we carry (P1), and the requests (R1–R4).
+The operator files them upstream. Started 2026-10-02 while mapping LocalAI
+against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
+requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
+2026-10-03.*
+
+| id | kind | what | for us | upstream |
+|---|---|---|---|---|
+| B1 | defect | transformers backend, OpenVINO: the device test is always true, so the GPU-only settings never apply | — | not filed |
+| B2 | defect | transformers backend, OpenVINO: embedding models are re-exported at every load, so OpenVINO's compile cache never applies | — | not filed |
+| B3 | defect | watchdog: a backend whose eviction fails keeps running, no longer counted or evicted | availability | not filed |
+| B4 | defect | memory reclaimer: memory held by another process makes it evict every model, one per 500 ms | availability: the B70 is shared | not filed |
+| B5 | defect | startup: `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1` | — | not filed |
+| B6 | defect | distributed scheduler: evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | — (one node) | not filed |
+| B7 | defect, may be intended | loader: when busy models cannot be evicted, the load goes ahead over `max_active_backends` | availability | not filed |
+| **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | **blocking**: without it RAGE states no run for any LocalAI model | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
+| R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
+| R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
+| R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
+| R4 | request | admission by declared memory, priority eviction, refusal instead of overcommit (opt-in), eviction aware of other processes' memory, restore after quiet | availability; what RAGE gives up at the cut-over | not filed; #5352 is the nearest open issue |
+
+A global compile-cache directory was considered and is **not to be filed**
+(operator, 2026-10-02): the per-model caches already exist (§ at the end).
+
+**Before filing a patch.** LocalAI's policy for AI-assisted contributions
+(`CONTRIBUTING.md`, `.agents/ai-coding-assistants.md`) forbids an AI agent to
+add `Signed-off-by` or a `Co-Authored-By` naming itself. Our patches carry
+neither. Whoever submits one applies it with `git am`, sets themselves as
+author, adds their own `Signed-off-by` (the DCO is a human's), and completes
+the `Assisted-by:` trailer in the form that policy gives.
+
+---
+
+## Defects
 
 All line references are to master at
 [`53cd6c5`](https://github.com/mudler/LocalAI/tree/53cd6c5716ab5fa608a242dee57562456860094a)
 (2026-10-01). Each entry says how sure it is: **certain** (the code cannot
 do otherwise), **code reading** (a path the code allows; not reproduced), or
-**reported live** (seen on a running system by someone).
+**reported live** (seen on a running system by someone). Nothing here was
+run against a LocalAI install.
 
 **Already reported?** LocalAI's issues and pull requests were searched for
 each one on 2026-10-02: none is. The nearest: #12331 / PR #12333 (the idle
-watchdog reaping a stale address, fixed) is near item 3 but not it; #5352
-(open) asks for LRU/ARC eviction and manual reclaim, not item 4's defect.
-
-| # | where | what | sure |
-|---|---|---|---|
-| 1 | transformers backend, OpenVINO | the device test is always true: the GPU-only settings never apply | certain |
-| 2 | transformers backend, OpenVINO | embedding models are re-exported at every load, so OpenVINO's compile cache never applies | certain |
-| 3 | watchdog | a backend whose eviction fails keeps running, no longer counted or evicted | code reading |
-| 4 | memory reclaimer | memory held by another process makes it evict every model, one per 500 ms | code reading |
-| 5 | startup | `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1` | certain |
-| 6 | distributed scheduler | it evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | code reading, reported live in a fork |
-| 7 | loader | when busy models cannot be evicted, the load goes ahead over `max_active_backends` | certain; may be intended |
-
-A global compile-cache directory was considered and is **not to be filed**
-(operator, 2026-10-02): the per-model caches already exist (§ at the end).
+watchdog reaping a stale address, fixed) is near B3 but not it; #5352
+(open) asks for LRU/ARC eviction and manual reclaim, not B4's defect.
 
 ---
 
-## 1. OpenVINO: the device test is always true
+### B1. OpenVINO: the device test is always true
 
 [`backend/python/transformers/backend.py#L163-L167`](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/backend/python/transformers/backend.py#L163-L167),
 and the same block at
@@ -56,7 +76,7 @@ fails the inner one, and `ovconfig` is then never assigned: an
 `UnboundLocalError` at `from_pretrained`. The inner `if` needs an `else`.
 Which configuration each case should get is the maintainers' call.
 
-## 2. OpenVINO: embedding models are converted again at every load
+### B2. OpenVINO: embedding models are converted again at every load
 
 [`backend.py#L195`](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/backend/python/transformers/backend.py#L195):
 `OVModelForFeatureExtraction.from_pretrained(..., export=True, ...)`.
@@ -74,7 +94,7 @@ Which configuration each case should get is the maintainers' call.
 Suggested: export once into the models directory and load the IR from
 there, or accept an IR as it is.
 
-## 3. Watchdog: a backend whose eviction fails keeps running, untracked
+### B3. Watchdog: a backend whose eviction fails keeps running, untracked
 
 [`pkg/model/watchdog.go#L580`](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/pkg/model/watchdog.go#L565-L583)
 (LRU and group eviction, `collectEvictionsLocked`),
@@ -105,7 +125,7 @@ The memory reclaimer does it the safe way:
 untracks only after a successful stop. Suggested: the same everywhere, or
 re-track on failure.
 
-## 4. Memory reclaimer: another process's memory makes it evict every model
+### B4. Memory reclaimer: another process's memory makes it evict every model
 
 [`watchdog.go` `checkMemory`, L776–L810](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/pkg/model/watchdog.go#L776-L810),
 and `evictLRUModel` (L814):
@@ -134,7 +154,7 @@ LocalAI already computes what its own backends hold
 evict only when LocalAI's own share can bring usage under the threshold,
 and wait for the reading to settle after an eviction.
 
-## 5. `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1`
+### B5. `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1`
 
 [`core/application/startup.go#L558`](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/core/application/startup.go#L558):
 `if options.LoadToMemory != nil && !options.SingleBackend {`, and
@@ -147,7 +167,7 @@ So on a single-GPU node configured as the documentation recommends
 logs nothing: the first request pays the load. Suggested: load the first
 model of the list (or the last), or log that the list was skipped and why.
 
-## 6. Distributed: eviction does not check that it frees enough
+### B6. Distributed: eviction does not check that it frees enough
 
 [`core/services/nodes/router.go` `scheduleNewModel`, L1067](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/core/services/nodes/router.go#L1067):
 - **L1177–L1184:** when no node has room, `evictLRUAndFreeNodeFrom` (L2121)
@@ -173,7 +193,7 @@ upstream's pull requests.
 Suggested: evict until the estimate fits on the node being freed (or
 refuse), and never treat an unknown size as zero.
 
-## 7. Loader: the load goes ahead over `max_active_backends`
+### B7. Loader: the load goes ahead over `max_active_backends`
 
 [`pkg/model/initializers.go` `retryEnforce`, L366–L388](https://github.com/mudler/LocalAI/blob/53cd6c5716ab5fa608a242dee57562456860094a/pkg/model/initializers.go#L366-L388):
 when the models that would have to be evicted are busy, the loader retries
@@ -189,6 +209,116 @@ keep the limit.
 
 ---
 
+## Patches we carry
+
+The RAGE image builds LocalAI from the base commit in
+[`deploy/localai/patches/series`](../../deploy/localai/patches/series) with
+these patches applied in order. A patch leaves the series when upstream
+merges it, or when a merged change makes it unnecessary.
+`tests/rage/test_localai_patches.py` holds the series, the files and this
+section to each other.
+
+### P1. `GET /system` lists the options each loaded model was given
+
+*Base: master
+[`58830f7`](https://github.com/mudler/LocalAI/tree/58830f7ac508845a6f4efa32cfca06af422d4d82)
+(2026-10-02). File: `0001-system-list-load-options.patch`. 9 files, 201
+lines added, none removed.*
+
+**Why.** LocalAI completes a model's config before loading it. It guesses
+`ContextSize` and `NGPULayers` from the GGUF (`core/config/gguf.go`
+L57–L95), applies the hardware auto-tuning, and fills in the application's
+runtime settings (`LoadOptionContextSize(appConfig.ContextSize)`,
+`model_config_loader.go` L252). What the backend received therefore
+appears in no file and on no endpoint, only in a DEBUG log line
+(`initializers.go` L194). RAGE must state, with every answer, the options
+the answering run was loaded with (09 §9.3 `options`, §9.12). Without them
+it states no run, and Louise writes nothing. The distributed registry
+already hashes these options per replica (`EffectiveModelOptionsHash`,
+`core/services/nodes/router.go` L410); on a single node, neither the
+options nor the hash are kept.
+
+**What it changes.**
+- `pkg/model/model.go`: `Model.SetLoadOptions` and `Model.LoadOptions`,
+  each with its own copy, under the model's lock.
+- `pkg/model/initializers.go`: one line. After a successful `LoadModel`,
+  the options sent are recorded on the model.
+- `core/schema/localai.go`: `SysInfoModel` gains `load_options` (protojson
+  with proto field names; unset fields omitted) and `load_options_hash`.
+  Both are omitted when this host did not issue the load.
+- `core/http/endpoints/localai/system.go`: fills both fields.
+- `swagger/`: the two properties, added by hand. Regenerating with
+  `swag` v1.16.6, the version `go.mod` pins, also rewrites unrelated
+  definitions on master, which is worth telling upstream separately.
+
+**Tests**, Ginkgo, beside the existing ones:
+- `pkg/model/load_options_test.go`: a model loaded through an in-process
+  gRPC backend records exactly what `LoadModel` received, including the
+  per-load fields set just before the call. This spec fails with the
+  one-line hook removed. Neither the caller's copy nor the returned copy
+  can change what was recorded.
+- `core/http/endpoints/localai/system_info_test.go`: `/system` lists the
+  options under their proto names, and a hash equal to
+  `EffectiveModelOptionsHash`.
+
+**Run** with Go 1.26.0 after `make protogen-go`:
+- `go test ./pkg/model/ ./core/schema/ ./core/config/` passes.
+- In `./core/http/endpoints/localai/`, the new spec passes. 42 other specs
+  fail identically with and without the patch: they need NATS, a database
+  or the network.
+
+**What it exposes.** `/system` is an admin route. The options carry no
+key: the proxy options name a key's variable or file, not the key. A
+model's `env:` is copied into them (`core/backend/options.go` L580),
+which the DEBUG log already shows.
+
+---
+
+## Requests
+
+Searched on 2026-10-02 and 2026-10-03: nobody has asked for R1, R2 or R3.
+The nearest hit for R3 is #4576 (CORS and API key, closed), a different
+problem.
+
+### R1. Name the instance that answered
+
+On one node a model has one backend process, so RAGE can learn which
+process answered by checking its (pid, start time) from `/system` before
+and after the request. A response header naming the instance would make
+that a single read, and it would stay exact in distributed mode, where a
+model has replicas.
+
+### R2. A batched `Embedding` call
+
+`/v1/embeddings` calls the backend once per input, in sequence
+(`core/http/endpoints/openai/embeddings.go` L112). llama.cpp's own server
+embeds a batch in one pass. File this only if the node's benchmark (03
+§3.3, tokens per second) measures a loss against llama-server, which is
+rage-over-localai §8.2.
+
+### R3. API keys from a file
+
+Keys come only from `LOCALAI_API_KEY` or `--api-keys`
+(`core/cli/run.go` L78). Our invariant 8 keeps tokens out of environment
+values. That matters only if LocalAI's own UI is published: inside the
+RAGE image LocalAI listens on loopback with no key, and RAGE's front
+guards the admin routes.
+
+### R4. The scheduling RAGE gives up
+
+What RAGE did that LocalAI does not, proposed as opt-in changes to the
+model YAML and its defaults in [`rage-prior-art.md`](rage-prior-art.md)
+§7:
+- admission by declared memory per device, with a reserve;
+- priority eviction that checks the freed memory is enough;
+- a refusal (503 + `Retry-After`) instead of a load over the limit (B7);
+- eviction aware of other processes' memory (B4);
+- restoring preloaded models after a quiet period.
+
+To be filed as one issue, next to #5352.
+
+---
+
 ## Not filed: one compile-cache directory for every backend
 
 *Operator, 2026-10-02: not needed — each model is already cached where it
@@ -198,7 +328,7 @@ is.* Nobody has requested it either (searched 2026-10-02; the nearest,
 
 The per-model caches cover it, with two gaps a reader of this file should
 know, neither of which a global setting is needed to close:
-- **OpenVINO embedding models are never cached** — item 2, which is filed:
+- **OpenVINO embedding models are never cached** — B2, which is to be filed:
   fixed, they get the same per-model cache as the rest.
 - **A read-only models directory** (as RAGE mounts `/models`) cannot hold
   optimum-intel's `model_cache`; there the cache must be pointed elsewhere,

@@ -249,7 +249,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `3` | yes | the Codex format version (§9.18). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the version-3 shape the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `4` | yes | the Codex format version (§9.18). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -368,11 +368,12 @@ whole so that anyone can compute them again (02 §2.4):
 | `image` | id | yes | the digest of the OCI image holding that build, the one that was run. It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}` and the listening port `${PORT}`, and nothing else in it names the host |
 | `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
+| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
 
 `name`, `build`, `variant` and `device` are readable; they are bound by
-`image` and by the reference vectors, not by any check. `image`, `args`
-and `env` are what a peer runs to reproduce the reference, and running
+`image` and by the reference vectors, not by any check. `image`, `args`,
+`env` and `options` are what a peer runs to reproduce the reference, and running
 them on the named device is how a peer may get `space.calibration.vectors`
 back bit for bit. **`engine_id`** = `H(canonical JSON of the engine
 object)`. It names an engine wherever a producer's engine is recorded:
@@ -453,7 +454,7 @@ string or null` in their place.
 fields that carry its choices (every other field is present in the file):
 
 ```
-{"kind":"louise-codex","version":3,
+{"kind":"louise-codex","version":4,
  "descriptive":{"title":"PubMed","summary":"Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
  "plugin":"pubmed",
  "origin":{"spec":{…ftp.ncbi.nlm.nih.gov/pubmed/baseline and updatefiles…},
@@ -1429,8 +1430,9 @@ measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
-**The run identity** (03 §3.3). What RAGE, the node's model container, states
-with every answer, in the response header `Louise-Run`:
+**The run identity** (03 §3.3). What RAGE states with every answer, for
+every engine the node's model runner launched, in the response header
+`Louise-Run`:
 
 ```
 run_id = H( canonical JSON of
@@ -1444,25 +1446,33 @@ declaration. It describes a run on request (`GET /louise/runs/<run_id>`
 → that same object), which is where a statement's `engine`, `weights`
 and `driver` come from.
 
-Three things make "what it launched" computable, and a platform that
-states a run follows all three:
+Four things make "what it launched" computable, and a platform that
+states a run follows all four:
 - **`image`.** A process cannot see the digest of the image it runs in;
   only the container runtime knows it. The platform therefore learns its
   `image` from a deployment pinned by digest and refuses to start
   otherwise: a tag is not an image. A digest-pinned deployment IS the
-  observation, since the runtime runs nothing else.
+  observation, since the runtime runs nothing else. An engine the
+  runner installed after the image was built — a backend fetched at
+  run time — is not in that image, and states no run.
 - **`args` and `env`.** They are the engine's as §9.3 writes them —
   `${WEIGHTS}` and `${PORT}` unsubstituted, and only the variables set
   for the engine — never the process's raw argument vector and
   environment, which carry a port, a path and a container's host name
   that change at every start and would make every restart another run.
-  The platform checks that the process it launched matches them before
-  it states the run; a process that does not match states none.
+  The platform checks that the process serving the answer is the one it
+  read them for — by pid and start time, before and after the answer —
+  and that it matches them; a process that does not match states none.
+- **`options`.** For an engine that receives its load options over its
+  own protocol, the options as the runner sent them (§9.3), read at
+  every launch from the runner's record of that load — never from its
+  configuration, which the runner completes with defaults of its own.
+  Absent for an engine started by its argument vector alone.
 - **`weights`.** Hashed at every launch, from the bytes on disk.
 
 So the same engine relaunched unchanged states the same run, and a
-changed flag, a changed weights file, a changed image or a changed
-driver each states another.
+changed flag, a changed load option, a changed weights file, a changed
+image or a changed driver each states another.
 
 **The request's level.** Every request a node makes to a model endpoint
 — an encoder, a reranker, the chat model, the translation model —
@@ -1494,7 +1504,7 @@ domain `louise/calibration/v1`, kept in `state/` and published in this
 peer's digest (§9.9), with body
 
 ```
-{kind: "louise-calibration-run", version: 2,
+{kind: "louise-calibration-run", version: 3,
  space_id, collection_id, set, role: "document" | "query",
  run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
  fingerprint: <id>, batch_invariant: <boolean>,
@@ -1522,9 +1532,12 @@ single-text, one-at-a-time work only.
 
 A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
-the space (03 §3.3). Version 1 of this body carried `encoder_image`, the
-engine's image digest alone, in place of the run, and had no
-fingerprint.
+the space (03 §3.3). Version 2 is this body with an `engine` that
+cannot carry `options` (§9.3). A version-2 statement stays valid as
+written and is read beside version 3: its run is unchanged, and gating
+it again would recompute a verdict already held (operator, 2026-10-03).
+Version 1 of this body carried `encoder_image`, the engine's image
+digest alone, in place of the run, and had no fingerprint.
 
 **Worked example.** The text set shipped as `calibration/6b1a3f0e9c2d4b7f.jsonl`
 (`sha256:6b1a3f0e9c2d4b7f…`); the PubMed Codex names it, and its member
@@ -1826,7 +1839,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 3 | §9.3 |
+| `louise-codex` | 4 | §9.3 |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
@@ -1839,7 +1852,7 @@ names one schema, the one its section fixes:
 | `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 2 | §9.12 |
-| `louise-calibration-run` | 2 | §9.12 |
+| `louise-calibration-run` | 3 | §9.12 |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
 
@@ -1851,7 +1864,11 @@ and the shard's frame layout did not. `louise-digest` left `louise-event`
 and `louise-pull` the same way, when its benchmarks began naming an
 engine rather than an image — the engine amendment, which moved the
 Codex, the bundle header, the attestation and both calibration objects
-with it. `protocol_version` (§9.3, §9.17)
+with it. The options amendment (2026-10-03) moved only the two objects
+that carry an engine WHOLE, the Codex and the peer's calibration
+statement; the bundle header, the attestation, the digest and the
+space author's calibration member carry an `engine_id` and kept their
+versions. `protocol_version` (§9.3, §9.17)
 is 2 and is not in this table: it versions the plugin contract, which
 is a boundary inside one platform rather than a byte on the wire.
 

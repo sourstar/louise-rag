@@ -1,13 +1,15 @@
 # RAGE over LocalAI: the protocol, the guarantee, the runner
 
-*2026-10-02. **Proposal, not accepted.** The operator: "RAGE grants the
+*2026-10-02. **Accepted 2026-10-03**: the patch (§4, carried), §5's
+choice and §6's text (applied to 02, 03 and 09). The operator: "RAGE grants the
 compliance of the vectors only, while LocalAI will manage pre-build,
 preload, caching and eviction policies. RAGE addresses a fundamental RAG
 need that no platform addresses today." And: "Louise implements a new
 protocol to create, derive, share and contribute collections."*
 
-*Nothing in docs/01–09 changes until the operator approves §6. §5 is a
-wire-format change, so it is asked first (CLAUDE.md).*
+*Operator, 2026-10-03: "1. Patch LocalAI, note all LocalAI patches in the
+same file reporting its bugs. 2. and 3. approved." The work is migration
+step 15.*
 
 LocalAI was read at `mudler/LocalAI` 58830f7 (2026-10-02, master), except
 where a line says UNVERIFIED.
@@ -81,7 +83,7 @@ break this, and each is handled:
 | the weights file | `weights` | `ModelOptions.Model` (covered by gap 1); a GGUF also shows as an mmap in `/proc/<pid>/maps` | RAGE hashes the file itself, as today |
 | proof that the answer came from that process | the run per answer | single node: one process per model; no header names it | none: checking (pid, start) before and after is enough. A response header naming the instance would be cleaner (gap 2, optional) |
 
-**Gap 1 is the only blocker.** Without it RAGE can state no run for any
+**Gap 1 is the only blocker, and it is patched.** Without it RAGE can state no run for any
 model LocalAI serves. Louise would then search and write nothing (03 §3.3),
 so the node could not embed at all. Nobody upstream has asked for it: a
 search on 2026-10-02 found no issue. The fix is small. LocalAI already
@@ -89,8 +91,11 @@ builds these options and hashes them for its distributed registry. The
 single-node path needs to keep them on the loaded model and list them,
 with their hash, in `/system`'s `loaded_models`.
 
-**Your choice:** wait for LocalAI to merge it, or carry the patch in our
-image until they do.
+**Operator, 2026-10-03: carry the patch.** It is P1 in
+[`localai-bugs.md`](localai-bugs.md), the one list of LocalAI action
+items, and `deploy/localai/patches/` holds it with its base commit. With
+it, `GET /system` lists `load_options` and `load_options_hash` for each
+loaded model.
 
 ## 5. The engine object for a LocalAI run — a wire-format decision
 
@@ -100,23 +105,31 @@ backend is started with `--addr` alone. Everything that shapes its
 numbers arrives in `LoadModel`: context size, batch, pooling, GPU layers,
 flash attention, threads, seed.
 
-- **A (recommended): add `options` to the engine.** Type: object or null,
-  required. It holds the load options the engine received over its own
+- **A (accepted 2026-10-03): add `options` to the engine.** Type: object,
+  present only where needed (below). It holds the load options the engine received over its own
   protocol, as canonical JSON (§9.1): proto field names, with non-integer
   values as the shortest decimal string that reads back to the same f32.
   The weights path is written `${WEIGHTS}`. Any other path is refused, so a
   run that loads a second file (a projector, a LoRA, a draft model) cannot
-  be stated yet. `options` is `null` for an engine started by `args` alone.
+  be stated yet. The runner's models directory is written `${MODELS}`.
+  - **Absent, not null, for an engine started by `args` alone.** This was
+    proposed as "`null`, required". Applied as "absent" under CLAUDE.md
+    RULE 1, and named here as that amendment: with `null`, every engine
+    in use today would gain a key. Every `engine_id`, every run and every
+    calibration statement would change, and every space would be
+    re-gated for nothing. Absent, an argv engine keeps its bytes, and a
+    version-3 `space` is a valid version-4 one.
   - What it bumps: `louise-codex` 3 → 4 and `louise-calibration-run`
-    2 → 3, the two objects that carry the engine whole. The bundle header,
+    2 → 3, the two objects that carry the engine whole. Version-2
+    statements stay valid and are read beside version 3. The bundle header,
     the attestation and the digest carry only `engine_id`, so their
     schemas stay.
   - What it leaves alone: Codexes already written stay at version 3, and
     their engines stay reproducible from the images they name.
   - What it costs: LocalAI serving the same weights is another engine, so
     the gate admits it like any new build (03 §3.3). Every space on the
-    node is re-gated once at cut-over. rage.md §9 already accepted that
-    cost for a rebuild.
+    node is re-gated once at cut-over, and only then. rage.md §9 already
+    accepted that cost for a rebuild.
 - **B, rejected: options written into `args`,** for example as
   `--louise-options=<json>`. No byte changes, but `args` would stop being
   the argument vector. A verifier who ran it would pass a flag the backend
@@ -131,7 +144,7 @@ With A, the readable fields take this form: `name` is
 and `variant` is the backend's variant (`"intel-sycl-f16"`). `args` is the
 backend's own argv, with `127.0.0.1:${PORT}`.
 
-## 6. The amendment, for approval
+## 6. The amendment (applied 2026-10-03)
 
 **03 §3.3**, in the paragraph "Validate once": "the exact arguments and
 environment" becomes "the exact arguments, load options and
@@ -159,14 +172,17 @@ The rest of the sentence is unchanged.
   > own protocol, the options as the runner sent them, read at every
   > launch from the runner's record of that load — never from its
   > configuration, which the runner completes with defaults of its own.
-  > `null` for an engine started by its argument vector alone.
+  > Absent for an engine started by its argument vector alone.
 
 - "The platform checks that the process it launched matches them" becomes
   "The platform checks that the process serving the answer is the one it
   read them for — by pid and start time, before and after the answer".
 
 **09 §9.3** gains A's `options` row. **09 §9.18** moves the two versions.
-**rage.md** §2 and §4 are rewritten when this is accepted, not before.
+**02 §2.4** names the load options among what the engine is, and **02
+§2.7** says a version-3 space copies into a version-4 Codex as it is.
+**rage.md** §2 now says who launches, and §4 is marked superseded at the
+cut-over.
 
 ## 7. What RAGE keeps, and what goes
 
@@ -219,10 +235,10 @@ compliance (§3).
 
 ## 9. Order of work
 
-0. **You:** approve the split, §5's choice and §6's text.
-1. **Upstream:** gap 1 as an issue and a PR, plus
-   [`localai-bugs.md`](localai-bugs.md). Later, gap 3 and rage-prior-art
-   §7 (ledger, priority, refuse instead of overcommit).
+0. **Done 2026-10-03:** the split, §5's choice and §6's text approved
+   and applied; P1 written, tested and carried.
+1. **Upstream:** everything in [`localai-bugs.md`](localai-bugs.md), filed
+   by the operator.
 2. **On the node:** §8.1 and §8.2. This is where the go/no-go is decided.
    If it fails, today's RAGE keeps running unchanged.
 3. **The front over LocalAI.** Tests first: `test_runs` and `test_front`
@@ -233,4 +249,4 @@ compliance (§3).
    today's image by its digest.
 6. **Retirements**, through `legacy-to-delete.md`.
 
-This becomes a migration step after 13f, numbered when it is accepted.
+This is migration step 15 ([`migration-plan.md`](migration-plan.md)).

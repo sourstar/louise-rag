@@ -47,6 +47,25 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
+
+The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
+LocalAI will launch, load, preload, cache and evict the models, and RAGE
+will state the run of every answer. That is migration step 15. Done the
+same day:
+- **The spec.** 03 §3.3 says who launches. 09 §9.3 gives an engine
+  `options`, the load options a runner sends over its own protocol. The
+  field is absent for an engine started by `args`, so no `engine_id`
+  changes and nothing in use is re-gated. Codex 4 and calibration
+  statement 3 in §9.18.
+- **15b.** The one LocalAI patch RAGE cannot work without: `GET /system`
+  lists each model's load options and their hash. It is in
+  `deploy/localai/patches/` and tested in LocalAI's own suite.
+  [`localai-bugs.md`](localai-bugs.md) is now the one list of LocalAI
+  action items: 7 defects, 1 patch, 4 requests, none filed yet.
+
+Nothing changed on the node; RAGE as deployed keeps running until 15f.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was
