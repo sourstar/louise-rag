@@ -17,6 +17,11 @@ that record the engine's `options`, byte for byte as 09 §9.3 fixes them:
   draft model — would be a file no digest names. Absolute paths are refused
   by the Codex's own rule (`validate_options`); the fields LocalAI fills with
   a file NAME, relative to its models directory, are refused here by name.
+- the model's `env:`, which LocalAI copies into the load call as `EnvVars`
+  (`core/backend/options.go` L579), is the engine's `env` and is written
+  there once, not again among the options (09 §9.3, operator 2026-10-03):
+  the variables set for an engine are `env`'s, paths included, as
+  `NEO_CACHE_DIR` is on every engine today.
 
 NOTHING HERE DECIDES WHAT MATTERS. Every option LocalAI sent is kept: an
 option believed inert and dropped would be a declaration where 02 §2.4 asks
@@ -50,7 +55,7 @@ class Unstatable(ValueError):
 class Canon:
     options: dict[str, Any]       # 09 §9.3's `options`, ready to hash
     weights_path: str             # the file the backend loaded, to hash (09 §9.12)
-    env: dict[str, str]           # the model's `env:`, which LocalAI sends with the load
+    env: dict[str, str]           # the model's `env:` (`EnvVars`): the engine's `env`, not an option
 
 
 def parse(text: str | bytes) -> Any:
@@ -95,7 +100,8 @@ def canonical(raw: Any) -> Canon:
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str)
                                             for k, v in env.items()):
         raise Unstatable(f"its EnvVars are not a map of names to strings: {env!r}")
-    options = _canon(dict(raw), "load_options")
+    # 09 §9.3: the variables set for the engine are its `env`, stated once
+    options = _canon({k: v for k, v in raw.items() if k != "EnvVars"}, "load_options")
     options["ModelFile"] = WEIGHTS_PLACEHOLDER
     if isinstance(raw.get("ModelPath"), str) and raw["ModelPath"]:
         options["ModelPath"] = MODELS_PLACEHOLDER

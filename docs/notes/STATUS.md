@@ -88,6 +88,12 @@ answer, one run across two restarts. It found a random seed per load (now
 pinned) and LocalAI bug B8. Left: the Python models as LocalAI backends,
 and the translator client.
 
+**A defect in it, fixed the same day**: LocalAI copies a model's `env:`
+into the load call, and the options' path rule refused it, so the six
+YAMLs' `NEO_CACHE_DIR` would have stated no run on the node. 09 §9.3 now
+states the environment once, as the engine's `env` (operator). A test
+states a run for every shipped YAML.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

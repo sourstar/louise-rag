@@ -368,7 +368,7 @@ whole so that anyone can compute them again (02 §2.4):
 | `image` | id | yes | the digest of the OCI image holding that build, the one that was run. It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}` and the listening port `${PORT}`, and nothing else in it names the host |
 | `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
-| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
+| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
 
 `name`, `build`, `variant` and `device` are readable; they are bound by
@@ -1467,6 +1467,7 @@ states a run follows all four:
   own protocol, the options as the runner sent them (§9.3), read at
   every launch from the runner's record of that load — never from its
   configuration, which the runner completes with defaults of its own.
+  The environment the runner sets for it is its `env`, not an option.
   Absent for an engine started by its argument vector alone.
 - **`weights`.** Hashed at every launch, from the bytes on disk.
 

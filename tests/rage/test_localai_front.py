@@ -153,7 +153,7 @@ def test_a_default_localai_filled_in_is_in_the_run(node):
 
 @pytest.mark.parametrize("over,why", [
     ({"mmproj": "projector.gguf"}, "second file"),
-    ({"env": {"EXTRA_DATA": "/srv/vocab.txt"}}, "absolute path"),
+    ({"options": ["parallel:1", "vocab:/srv/vocab.txt"]}, "absolute path"),
 ])
 def test_an_option_naming_another_file_states_no_run(node, over, why):
     _put(node, **over)
@@ -161,6 +161,19 @@ def test_an_option_naming_another_file_states_no_run(node, over, why):
     assert r.status_code == 200 and RUN_HEADER not in r.headers, \
         "it answers — search works — and states no run, so nothing is written (03 §3.3)"
     assert why in node.observer.row("bge-m3")["reason"]
+
+
+def test_the_models_env_is_the_engines_env_stated_once(node):
+    """LocalAI copies `env:` into the load call as `EnvVars`; 09 §9.3 states
+    it once, as the engine's `env`, where a path is allowed — the shipped
+    YAMLs' NEO_CACHE_DIR made every run unstatable while it was an option."""
+    _put(node, env={"NEO_CACHE_DIR": "/state/neo-cache"})
+    first = _run(node)
+    engine = node.http.get(f"/louise/runs/{first}").json()["engine"]
+    assert engine["env"] == {"NEO_CACHE_DIR": "/state/neo-cache"}
+    assert "EnvVars" not in engine["options"]
+    _put(node, env={"NEO_CACHE_DIR": "/state/other-cache"})
+    assert _run(node) != first, "the environment is in the run, as an argv engine's is"
 
 
 def test_a_process_replaced_mid_answer_gets_no_header(node):

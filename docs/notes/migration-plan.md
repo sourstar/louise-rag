@@ -1443,6 +1443,11 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   - **The smoke test found** a random seed per load (now pinned, and
     required by `PUT`) and LocalAI bug B8 (reload never forgets a deleted
     YAML; `DELETE` says so).
+  - **A defect, fixed before 15e-2:** LocalAI copies `env:` into the load
+    call as `EnvVars`, and the options' path rule refused the six YAMLs'
+    `NEO_CACHE_DIR`: no run on the node. 09 §9.3 amended (operator,
+    2026-10-03): the environment is the engine's `env`, stated once.
+    `test_every_model_yaml_states_a_run_once_localai_has_completed_it`.
   - **Not built here:** the final stage. Its Intel base is on ghcr.io,
     whose blob storage this sandbox cannot reach. It builds on the node.
   - **Left, 15e-2:**

@@ -130,6 +130,15 @@ flash attention, threads, seed.
     the gate admits it like any new build (03 §3.3). Every space on the
     node is re-gated once at cut-over, and only then. rage.md §9 already
     accepted that cost for a rebuild.
+  - **`EnvVars` is the engine's `env`, stated once** (amended 2026-10-03,
+    operator). LocalAI copies a model's `env:` into the load call
+    (`core/backend/options.go` L579), and the options' path rule refused
+    it there: `NEO_CACHE_DIR=/state/neo-cache` on all six YAMLs made every
+    run unstatable. The smoke model had no `env:`, so §11 missed it;
+    `tests/rage/test_localai_deploy.py` now states a run for every
+    shipped YAML. 09 §9.3 says the environment is `env`'s, where paths
+    were always allowed, and never again an option. No recorded engine
+    changes: none is a LocalAI one yet.
 - **B, rejected: options written into `args`,** for example as
   `--louise-options=<json>`. No byte changes, but `args` would stop being
   the argument vector. A verifier who ran it would pass a flag the backend

@@ -9,8 +9,10 @@ import re
 import tomllib
 from pathlib import Path
 
+from app.rage import loadopts
 from app.rage.front_localai import MARKER, unpinned
 from app.rage.observer import Observer
+from tests.rage.localai_fake import FakeLocalAI
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = (ROOT / "deploy" / "rage" / "Dockerfile.localai").read_text(encoding="utf-8")
@@ -84,6 +86,20 @@ def test_every_model_yaml_pins_what_localai_would_fill_in():
         assert unpinned(body) == [], f"{path.name}: {unpinned(body)}"
         assert body["name"] == path.stem and body["backend"] == "llama-cpp"
         assert body["parameters"]["model"].startswith("weights/")
+
+
+def test_every_model_yaml_states_a_run_once_localai_has_completed_it(tmp_path):
+    """What LocalAI sends for each shipped YAML, `env:` included as
+    `EnvVars`, is 09 §9.3's options. The smoke model had no `env:`, so §11
+    missed that NEO_CACHE_DIR made all six unstatable."""
+    fake = FakeLocalAI(tmp_path)
+    for path in MODELS:
+        body = _yaml(path)
+        fake.configs[body["name"]] = body
+        sent = loadopts.parse(json.dumps(fake.materialise(body["name"])))
+        canon = loadopts.canonical(sent)
+        assert canon.env == body.get("env", {}), path.name
+        assert "EnvVars" not in canon.options, f"{path.name}: the environment is `env`'s"
 
 
 def test_the_yamls_cover_every_llama_cpp_model_the_node_serves_today():
