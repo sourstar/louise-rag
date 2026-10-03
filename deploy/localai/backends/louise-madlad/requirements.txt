@@ -1,0 +1,8 @@
+# louise-madlad's venv, beside the image's one torch (--system-site-packages),
+# with the pins deploy/rage/Dockerfile's venv-madlad was proven with:
+# transformers 5.x loads the checkpoint wrongly and translates everything to
+# `ě ě ě` (node, 2026-09-18).
+-r ../requirements-grpc.txt
+transformers==4.46.3
+accelerate
+sentencepiece

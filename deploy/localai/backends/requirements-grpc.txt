@@ -1,0 +1,7 @@
+# What every Louise backend needs to answer LocalAI (louise_backend.py), at the
+# versions its stubs are generated with (deploy/rage/Dockerfile.localai,
+# `louise-backends`): grpcio-tools 1.84.0 writes code that needs protobuf
+# >= 7.35.1 at run time. grpcio is the version LocalAI's own rerankers backend
+# pins at the series' base (58830f7).
+grpcio==1.84.0
+protobuf==7.36.1

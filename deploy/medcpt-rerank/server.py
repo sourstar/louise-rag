@@ -90,11 +90,11 @@ def handle(reranker: Reranker, body, max_texts: int = 256) -> tuple[int, object]
     return 200, [{"index": i, "score": scores[i]} for i in ranked]
 
 
-def make_encoder(tokenizer_json: str):
+def make_encoder(tokenizer_json: str, max_tokens: int = MAX_TOKENS):
     import numpy as np
     from tokenizers import Tokenizer
     tok = Tokenizer.from_file(tokenizer_json)
-    tok.enable_truncation(MAX_TOKENS)       # longest_first, as the model card
+    tok.enable_truncation(max_tokens)       # longest_first, as the model card
     tok.enable_padding()                    # [PAD] = 0
 
     def encode(pairs):

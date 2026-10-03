@@ -94,6 +94,14 @@ YAMLs' `NEO_CACHE_DIR` would have stated no run on the node. 09 §9.3 now
 states the environment once, as the engine's `env` (operator). A test
 states a run for every shipped YAML.
 
+**15e-2, the same day**: the three Python models are LocalAI backends
+(`deploy/localai/backends/`), and the translator's batch travels in one
+completion prompt (`TRANSLATE_API=completion`, operator). The MedCPT
+backend ran on a real LocalAI on a CPU: ranked right, a run on every
+answer, the same run after a restart. It found `run.sh` giving relative
+`args`, now fixed. DAR-legal-it and MADLAD need torch, which this sandbox
+cannot reach: they first run on the node.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

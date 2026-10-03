@@ -367,3 +367,17 @@ confirm, only then delete):
 Not part of this: `embed-gpu-qwen3-8b` (stopped before, referenced by no
 collection) and the raw container `dnabert2-xpu` — DNA is frozen
 (operator, 2026-09-19), so it is neither migrated nor deleted.
+
+## 8. RAGE's lifecycle and the old model servers — at migration step 15g
+
+Written 2026-10-03, when 15e-2 put the three Python models under LocalAI.
+Nothing here goes before the cut-over (15f) has served the node for a full
+day of ordinary work, the gates pass through it, and the operator confirms.
+
+| what | why it stays until then |
+|---|---|
+| `app/rage/admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, `front.py`'s `park` route | llama-swap's RAGE, the way back |
+| `deploy/rage/Dockerfile`, `deploy/rage/servers/`, `deploy/truenas-rage.yaml` | the same |
+| `TRANSLATE_API="translate"` and its branch in `app/translate.py` | the shape the deployed MADLAD server speaks until 15f |
+| the HTTP handlers and `main` of `deploy/madlad-translate/server.py` (`/translate`, `/languages`, `/park`), `deploy/medcpt-rerank/server.py` (TEI `/rerank`) and `deploy/dar-legal-it/server.py` | served by llama-swap's RAGE. **Their model code stays**: the LocalAI backends import it |
+| `rage.toml`'s lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) | read by the llama-swap front only |

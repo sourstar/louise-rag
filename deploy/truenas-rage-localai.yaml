@@ -31,7 +31,12 @@
 #      loads one, and `/louise/gpu`'s events show its run.
 #   5. The URLs in Louise's collection files stay as they are
 #      (.../upstream/<model>): the URL names the model, and the front gives
-#      LocalAI that model whatever the body says.
+#      LocalAI that model whatever the body says. Two things change on
+#      Louise's side, both for the Python models (15e-2):
+#      - pubmed's [reranker]: `api = "jina"`, url .../upstream/medcpt-rerank/v1/rerank
+#        (LocalAI's /v1/rerank; the server's TEI /rerank is gone);
+#      - TRANSLATE_API=completion beside TRANSLATE_URL (app/config.py): the
+#        translator is LocalAI's /v1/completions, the batch in one prompt.
 #   6. Every space is re-gated by itself (a new engine, 03 §3.3), then
 #      `node resume`.
 #   BACK OUT: the previous image by its digest, and deploy/truenas-rage.yaml's
@@ -76,6 +81,9 @@ services:
       - /mnt/ssd5/apps/madlad-models:/state/localai-models/weights/madlad:ro
       - /mnt/ssd5/apps/llama-embed:/state/localai-models/weights/llama-embed:ro
       - /mnt/ssd5/apps/louise-rage/models/chat:/state/localai-models/weights/chat:ro
+      # DAR-legal-it's snapshot directory, wherever it is on the node
+      # (DEPLOYMENT.md): deploy/truenas-rage.yaml has no bind for it either
+      - /mnt/ssd5/apps/<dar-legal-it-snapshot>:/state/localai-models/weights/dar-legal-it:ro
       # the clock: the colon-free symlink of deploy/truenas-rage.yaml
       - /mnt/ssd5/apps/louise-rage/gpufreq:/gpufreq
       - /mnt/ssd5/apps/louise-rage/secrets/admin.token:/run/rage/admin.token:ro

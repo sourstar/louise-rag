@@ -37,6 +37,12 @@ ARG LLAMA_CPP_BACKEND_IMAGE=localai/localai-backends@sha256:eb0c909e0e405c6a8111
 # the same commit (`sha-58830f7-cpu-llama-cpp`, 48 MiB), and a Python base.
 ARG LLAMA_CPP_CPU_BACKEND_IMAGE=localai/localai-backends@sha256:fe237fef5dccd0e177dcdc53b0064354efbbc29b10cd5fbe3d40a7d73a98965a
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+# The platform's Python backends (migration step 15e-2): the stub generator, at
+# the grpcio of deploy/localai/backends/requirements-grpc.txt, and the one torch
+# — the version deploy/rage/Dockerfile built and imported (2.14.0+xpu), here
+# pinned rather than whatever the index serves that day.
+ARG GRPCIO_TOOLS_VERSION=1.84.0
+ARG TORCH_VERSION=2.14.0
 # The base, as deploy/rage/Dockerfile's: the Intel llama.cpp image whose
 # Level Zero / OpenCL runtime drives the Arc Pro B70. No default: pass the
 # digest, as there.
@@ -93,6 +99,38 @@ RUN set -eu; cd /build; \
 FROM ${LLAMA_CPP_BACKEND_IMAGE} AS llama-cpp-backend
 FROM ${LLAMA_CPP_CPU_BACKEND_IMAGE} AS llama-cpp-cpu-backend
 
+# ---- the platform's Python models as LocalAI backends, without their venvs ---------------------
+# deploy/localai/backends (15e-2): in each backend's directory its backend.py,
+# the server it wraps under the name it imports, louise_backend.py, run.sh, the
+# gRPC stubs generated here from the series' own backend.proto, and LocalAI's
+# interceptors from the same commit (`grpc_auth`: the model-identity check, its
+# token, the watcher that ends a backend whose LocalAI died). The venvs are
+# made in the image, against its python and its torch.
+FROM ${PYTHON_IMAGE} AS louise-backends
+ARG GRPCIO_TOOLS_VERSION
+COPY deploy/localai/backends/requirements-grpc.txt /src/requirements-grpc.txt
+RUN pip install --no-cache-dir -q "grpcio-tools==${GRPCIO_TOOLS_VERSION}" -r /src/requirements-grpc.txt
+COPY --from=localai-source /build/backend/backend.proto /proto/backend.proto
+COPY --from=localai-source /build/backend/python/common/grpc_auth.py \
+     /build/backend/python/common/model_identity.py \
+     /build/backend/python/common/parent_watch.py /common/
+COPY deploy/localai/backends /src
+COPY deploy/madlad-translate/server.py /src/louise-madlad/madlad.py
+COPY deploy/medcpt-rerank/server.py    /src/louise-medcpt-rerank/medcpt.py
+COPY deploy/dar-legal-it/server.py     /src/louise-dar-legal-it/dar_legal_it.py
+RUN set -eu; mkdir /stubs /out; \
+    python -m grpc_tools.protoc -I/proto --python_out=/stubs --grpc_python_out=/stubs backend.proto; \
+    cp /src/requirements-grpc.txt /out/; \
+    for d in /src/louise-*; do \
+      name="$(basename "$d")"; out="/out/$name"; mkdir "$out"; \
+      cp "$d"/*.py "$d"/requirements.txt /src/run.sh /src/louise_backend.py /stubs/*.py /common/*.py "$out"/; \
+      chmod 0755 "$out/run.sh"; \
+      printf '{"name": "%s"}\n' "$name" > "$out/metadata.json"; \
+      (cd "$out" && python -c "import backend_pb2, backend_pb2_grpc, grpc_auth, louise_backend"); \
+    done; \
+    find /out -name __pycache__ -type d -prune -exec rm -rf {} +; \
+    ls /out
+
 # ---- `smoke`: RAGE over this LocalAI on any CPU, never published ------------------------------
 # The same LocalAI and front, the CPU backend of the same commit, no card. It
 # proves the chain on a machine without the B70 — `docker build --target
@@ -102,7 +140,15 @@ FROM ${PYTHON_IMAGE} AS smoke
 COPY --from=localai-build /out/local-ai /usr/bin/local-ai
 COPY --from=localai-build /out/version  /etc/rage/localai-version
 COPY --from=llama-cpp-cpu-backend / /var/lib/local-ai/backends/llama-cpp/
+# and one Python backend, MedCPT's on OpenVINO's CPU (no torch, which only the
+# node's image carries): LocalAI spawning a Louise backend from the system
+# path, its gRPC, and a run stated for it (rage-over-localai §11)
+COPY --from=louise-backends /out/requirements-grpc.txt /var/lib/local-ai/backends/
+COPY --from=louise-backends /out/louise-medcpt-rerank /var/lib/local-ai/backends/louise-medcpt-rerank/
 RUN printf '%s\n' '{"name": "llama-cpp"}' > /var/lib/local-ai/backends/llama-cpp/metadata.json \
+ && cd /var/lib/local-ai/backends && python3 -m venv louise-medcpt-rerank/venv \
+ && louise-medcpt-rerank/venv/bin/pip install --no-cache-dir -q -r louise-medcpt-rerank/requirements.txt \
+ && (cd louise-medcpt-rerank && venv/bin/python -c "import backend") \
  && python3 -m venv /opt/venv-front \
  && /opt/venv-front/bin/pip install --no-cache-dir -q \
       "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27"
@@ -126,7 +172,7 @@ FROM ${LLAMA_CPP_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates curl \
+ && apt-get install -y --no-install-recommends python3 python3-venv python3-pip ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 # What the run identity calls the compute runtime (09 §9.12, `driver`), as in
@@ -146,6 +192,32 @@ COPY --from=llama-cpp-backend / /var/lib/local-ai/backends/llama-cpp/
 RUN printf '%s\n' '{"name": "llama-cpp", "uri": "localai/localai-backends:sha-58830f7-gpu-intel-sycl-f16-llama-cpp"}' \
       > /var/lib/local-ai/backends/llama-cpp/metadata.json \
  && test -x /var/lib/local-ai/backends/llama-cpp/run.sh
+
+# The platform's three Python models beside it (15e-2): DAR-legal-it
+# (`Embedding`), MedCPT (`Rerank`) and MADLAD (`Predict`); DNABERT-2 is frozen
+# and not served. ONE TORCH, as in deploy/rage/Dockerfile: it is tied to the
+# compute runtime, so the two torch backends see the system's through
+# --system-site-packages, each venv keeping the pins it was proven with
+# (requirements.txt), and each backend's lib/ puts torch's SYCL runtime before
+# the base's older oneAPI loader (run.sh). PROOF, still, as there: that torch
+# sees the card through this base's Level Zero loader (15c, on the node).
+ARG TORCH_VERSION
+RUN pip3 install --no-cache-dir --break-system-packages "torch==${TORCH_VERSION}" \
+      --index-url https://download.pytorch.org/whl/xpu
+COPY --from=louise-backends /out/ /var/lib/local-ai/backends/
+RUN set -eu; cd /var/lib/local-ai/backends; \
+    python3 -m venv --system-site-packages louise-madlad/venv; \
+    python3 -m venv --system-site-packages louise-dar-legal-it/venv; \
+    python3 -m venv louise-medcpt-rerank/venv; \
+    ln -s /usr/local/lib louise-madlad/lib; \
+    ln -s /usr/local/lib louise-dar-legal-it/lib; \
+    for b in louise-madlad louise-dar-legal-it louise-medcpt-rerank; do \
+      "$b/venv/bin/pip" install --no-cache-dir -r "$b/requirements.txt"; \
+      (cd "$b" && LD_LIBRARY_PATH="$PWD/lib" venv/bin/python -c "import backend"); \
+    done; \
+    LD_LIBRARY_PATH=/usr/local/lib louise-madlad/venv/bin/python -c "import torch, transformers; print(torch.__version__, transformers.__version__)"; \
+    LD_LIBRARY_PATH=/usr/local/lib louise-dar-legal-it/venv/bin/python -c "import torch, sentence_transformers; print(sentence_transformers.__version__)"; \
+    louise-medcpt-rerank/venv/bin/python -c "import openvino, tokenizers; print(openvino.__version__)"
 
 # The front: app/rage and the two modules it borrows — the clock, and the ONE
 # definition of canonical JSON and of the hash (as deploy/rage/Dockerfile).

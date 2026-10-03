@@ -206,7 +206,7 @@ cut-over.
 | `front.py`: `POST /louise/models/<id>/restart`, the operator's button for the fan (rage.md §11) | kept. It calls `/backend/shutdown` and then `/backend/load` for that model and no other: never another model, never another app (operator, 2026-09-20). With the options pinned (§10), the reload states the same run |
 | `model.py`: `rage.toml` | shrinks to what the identity needs: card names, `pci`, the device per model. The lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) move to LocalAI's model YAML |
 | `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, and the `park` route | retired at cut-over, through [`legacy-to-delete.md`](legacy-to-delete.md). Until then they are the reference for the upstream proposals (rage-prior-art §7) |
-| `deploy/rage/servers/` and the three servers | become LocalAI Python backends: DAR-legal-it → `Embedding`, MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen, and served by neither front). Louise's translator client moves from `/translate` to the completion shape, a change in the app |
+| `deploy/rage/servers/` and the three servers | become LocalAI Python backends (`deploy/localai/backends/`, done 2026-10-03): DAR-legal-it → `Embedding`, MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen, and served by neither front). Each wraps its server's model code unchanged and reads its settings from the load call: `context_size` and `batch` where they mean what LocalAI means, `options` for the rest. MedCPT is read as `api = "jina"` at `/v1/rerank`. **The translator's batch travels in one prompt** (operator, 2026-10-03): LocalAI calls `Predict` once per prompt, so the prompt is the JSON request and the completion's text its JSON answer; Louise's client speaks it under `TRANSLATE_API=completion`, beside today's `/translate` until 15g |
 
 **What the node loses until upstream takes it:** the declared ledger,
 priority eviction, stranger-aware pressure and parking (rage.md §7, §19,
@@ -389,3 +389,49 @@ docker run -p 18080:8080 -e RAGE_IMAGE=sha256:<64 hex> -e ADMIN_TOKEN_FILE=/run/
    /louise/models` shows the model with `file: null`, and it goes at
    LocalAI's next start. This settles §8's UNVERIFIED point the other way.
 
+
+### 11.1 A Python backend (15e-2, the same day)
+
+The same target, with `louise-medcpt-rerank` added on OpenVINO's CPU (no
+torch: only the node's image has it). The model is
+`tools/rage_smoke_reranker.py`: MedCPT's three inputs and a BERT pair
+tokenizer, with a logit that counts "whale" in the document segment only.
+
+```
+python tools/rage_smoke_reranker.py <dir>/models/weights/medcpt/medcpt-cross-ov
+# run as above; PUT deploy/rage/localai-models/medcpt-rerank.yaml with options ["device:cpu"]
+# POST /upstream/medcpt-rerank/v1/rerank {"query": ..., "documents": [...]}
+```
+
+**What held.**
+- LocalAI found the backend in the system path, spawned its `run.sh`, and
+  loaded it over gRPC with the stubs generated from the series' own
+  `backend.proto`.
+- `/v1/rerank` ranked 2 "whale"s, then 1, then none, with TEI's sigmoid
+  scores (0.881, 0.731, 0.5). A body naming another model was answered by
+  the URL's.
+- First answer 2.46 s with the load, then 11 ms. Both carried `Louise-Run`.
+- The run: `name` `localai/louise-medcpt-rerank`; `env` with
+  `NEO_CACHE_DIR` and `OV_CACHE_DIR`, and no `EnvVars` among the options
+  (§5); the weights digest of the directory; device `cpu`.
+- OpenVINO wrote its compiled model to `/state/ov-cache`.
+- A restart gave a new process (pid 24 → 66) and stated the same run.
+- A misspelt option (`devise:cpu`) refused the load, and the caller got
+  the backend's reason in LocalAI's error.
+- What MADLAD's design rests on, checked with a throwaway backend built
+  from `louise_backend.py` that answers its prompt back: a JSON prompt
+  with Unicode, paragraph breaks and edge spaces reached `Predict` byte for
+  byte through `/v1/completions`, and the reply came back as the
+  completion's text, unchanged. A vector declared `FINAL` came back from
+  `/v1/embeddings` as sent, not normalised.
+
+**What it found.** LocalAI starts `run.sh` as `./run.sh` from the
+backend's directory, so the first run's `args` were
+`./venv/bin/python ./backend.py`. That is an argv relative to a directory
+the run does not state. `run.sh` now resolves its directory to an
+absolute path, and a test starts it the way LocalAI does.
+
+Not run here: DAR-legal-it and MADLAD, whose torch is on PyTorch's index,
+which this sandbox cannot reach. Their gRPC methods are tested with
+stand-in models (`tests/test_localai_backends.py`). Their libraries are
+imported at the image's build, on the node.

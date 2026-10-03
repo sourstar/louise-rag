@@ -206,8 +206,10 @@ def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, obj
                  "peak_mb": getattr(translator, "peak_mb", None)}
 
 
-def load(model_id: str, device: str, dtype_name: str):
-    """The real model: (count, generate, known, languages, release)."""
+def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
+    """The real model: (count, generate, known, languages, release, park,
+    unpark). `beams` unset is BEAMS from the environment, as this server's
+    own `main` reads it; the LocalAI backend passes its load call's."""
     import torch
     from transformers import AutoTokenizer, T5ForConditionalGeneration
     dtype = getattr(torch, dtype_name)
@@ -224,7 +226,7 @@ def load(model_id: str, device: str, dtype_name: str):
     codes = {t[2:-1] for t in vocab if t.startswith("<2") and t.endswith(">")}
     # the platform's own codes too, where ALIASES maps them to a known one
     languages = sorted(codes | {a for a, c in ALIASES.items() if c in codes})
-    beams = int(os.getenv("BEAMS", "1"))
+    beams = int(os.getenv("BEAMS", "1")) if beams is None else beams
 
     def count(text: str) -> int:
         return len(tok(text, add_special_tokens=False).input_ids)

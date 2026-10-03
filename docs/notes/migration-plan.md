@@ -1306,7 +1306,7 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
-### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE; 15e IN PART**
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE; 15e DONE BUT ITS FINAL STAGE, WHICH BUILDS ON THE NODE**
 *Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
 model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
 the run identity of every answer, read from what was launched. Spec
@@ -1423,7 +1423,7 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     - either one on a hand-written YAML is 409, and without the token
       401.
   The front's `park` route goes with `placement.py`.
-- **15e — The image. IN PART, 2026-10-03.**
+- **15e — The image. DONE 2026-10-03, but for its final stage, which builds on the node.**
   - **Done** (`tests/rage/test_localai_deploy.py`, 8):
     - `deploy/rage/Dockerfile.localai`: LocalAI from the series' base with
       the series applied; `protoc` by checksum; the web UI built; LocalAI's
@@ -1450,10 +1450,28 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     `test_every_model_yaml_states_a_run_once_localai_has_completed_it`.
   - **Not built here:** the final stage. Its Intel base is on ghcr.io,
     whose blob storage this sandbox cannot reach. It builds on the node.
-  - **Left, 15e-2:**
-    - the Python models as LocalAI backends: DAR-legal-it → `Embedding`,
-      MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen);
-    - the translator client in the completion shape.
+  - **15e-2, DONE the same day** (`tests/test_localai_backends.py`, 23;
+    three mutations of the backends each caught):
+    - `deploy/localai/backends/`: `louise-dar-legal-it` (`Embedding`),
+      `louise-medcpt-rerank` (`Rerank`), `louise-madlad` (`Predict`). Each
+      wraps its server's model code unchanged and reads its settings from
+      the load call; a misspelt option refuses the load. Their YAMLs are in
+      `deploy/rage/localai-models/`, pinned like the six.
+    - The image: stubs generated from the series' `backend.proto`,
+      LocalAI's `grpc_auth` from the same commit, one torch (pinned
+      2.14.0), each venv with the pins its server was proven with.
+    - **The translator's batch travels in one prompt** (operator): LocalAI
+      calls `Predict` once per prompt. `app/translate.py` speaks it under
+      `TRANSLATE_API=completion`, beside today's `/translate` until 15g.
+      A contract test runs the client against the backend.
+    - MedCPT is read as `api = "jina"`; the cut-over steps in the app file
+      say what changes in the pubmed collection's file.
+    - **Run here** (rage-over-localai §11.1): the MedCPT backend on a real
+      LocalAI, on a CPU. It found `run.sh` started relatively, which made
+      `args` relative; fixed and tested. DAR-legal-it and MADLAD need
+      torch, which this sandbox cannot download: they run at 15c.
+    - The app file has no host path for DAR-legal-it's weights (nor does
+      today's): a placeholder the operator fills from DEPLOYMENT.md.
 
   As scoped: LocalAI built from the base with the series,
   backends installed at build time from images pinned by digest, gallery
