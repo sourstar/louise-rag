@@ -1381,6 +1381,11 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
       (`embeddings._side`).
     - Under LocalAI that would have embedded a MedCPT query with the
       article encoder, under the query encoder's run.
+    - Fixed at the source too (2026-10-03): `_side` names the model the
+      query URL names (`collections.model_named_by`), and names none for
+      a URL outside the model container. An endpoint that needs a name
+      then refuses rather than embedding with the wrong model
+      (`tests/test_embed_recipe.py`).
     - Tested: `test_a_query_is_embedded_by_the_query_encoder_its_url_names`.
 
   As scoped: `app/rage/runs.py` `match` reads

@@ -14,7 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 import lancedb
@@ -63,15 +63,13 @@ def _request_vectors(batch: list[str], timeout: float,
     level = dispatch.level_headers()
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
-            r = httpc.post(f"{recipe.url}/v1/embeddings",
-                           json={"model": recipe.model, "input": batch},
+            r = httpc.post(f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
                            timeout=timeout, headers=level)
             r.raise_for_status()
             _note_run(r, runs)
             data = sorted(r.json()["data"], key=lambda d: d["index"])
             return [d["embedding"] for d in data]
-        r = httpc.post(f"{recipe.url}/api/embed",
-                       json={"model": recipe.model, "input": batch},
+        r = httpc.post(f"{recipe.url}/api/embed", json=_body(recipe, batch),
                        timeout=timeout, headers=level)
         r.raise_for_status()
         _note_run(r, runs)
@@ -178,16 +176,30 @@ def _embed_batch(batch: list[str], timeout: float,
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
 
+def _body(recipe: "collections_mod.EmbedRecipe", batch: list[str]) -> dict:
+    """The request: the texts, and the model's name where the side has one."""
+    return {"input": batch, **({"model": recipe.model} if recipe.model else {})}
+
+
 def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
     """The recipe of the side that is asked: the query encoder's when the
-    collection declares one and a query is being embedded, else the recipe."""
+    collection declares one and a query is being embedded, else the recipe.
+
+    THE QUERY SIDE NAMES THE MODEL ITS URL NAMES, never the document
+    encoder's. It used to send `recipe.model` — the DOCUMENT encoder's name —
+    to the query encoder's URL. llama-swap ignored the field; a runner that
+    picks the model from the body (LocalAI, Ollama) would embed a MedCPT query
+    with the article encoder, a coherent-looking wrong neighbourhood
+    (operator, 2026-10-03). On the model container the URL says which model
+    (`…/upstream/<model>`, 07 §7.8); elsewhere the side names none, so an
+    endpoint that needs a name refuses rather than guessing the wrong one.
+
+    Every other field is carried as it is (`replace`): a field rebuilt by
+    hand and forgotten is a field silently dropped."""
     if not (query and recipe.query_url):
         return recipe
-    return collections_mod.EmbedRecipe(
-        url=recipe.query_url, api=recipe.api, model=recipe.model,
-        dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
-        concurrency=recipe.concurrency, device=recipe.device,
-        query_instruction=recipe.query_instruction)
+    return replace(recipe, url=recipe.query_url, query_url=None,
+                   model=collections_mod.model_named_by(recipe.query_url) or "")
 
 
 def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",

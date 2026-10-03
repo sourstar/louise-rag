@@ -107,6 +107,40 @@ def test_query_routing_uses_the_query_encoder(isolated_config, monkeypatch):
     assert calls[0]["url"] == "http://sym:3/v1/embeddings"
 
 
+@pytest.mark.parametrize("api,path", [("openai", "/v1/embeddings"), ("ollama", "/api/embed")])
+def test_a_query_names_the_query_encoder_its_url_names_never_the_documents(
+        isolated_config, monkeypatch, api, path):
+    """Operator, 2026-10-03. The query side sent the DOCUMENT encoder's name
+    to the query encoder's URL; a runner that picks the model from the body
+    would have embedded the query with the article encoder."""
+    calls = _capture_posts(monkeypatch)
+    rage = collections_mod.EmbedRecipe(
+        url="http://nas:30450/upstream/medcpt-article", api=api,
+        model="MedCPT-Article-Encoder", dtype="f16", ctx=512,
+        query_url="http://nas:30450/upstream/medcpt-query")
+    embeddings.embed_texts(["is aspirin safe?"], recipe=rage, query=True)
+    assert calls[0]["url"] == f"http://nas:30450/upstream/medcpt-query{path}"
+    assert calls[0]["json"]["model"] == "medcpt-query"
+    calls.clear()
+    embeddings.embed_texts(["an abstract"], recipe=rage)
+    assert calls[0]["json"]["model"] == "MedCPT-Article-Encoder", "documents unchanged"
+
+    calls.clear()
+    elsewhere = collections_mod.EmbedRecipe(
+        url="http://article:1", api=api, model="medcpt", dtype="f16", ctx=512,
+        query_url="http://query:2")
+    embeddings.embed_texts(["q"], recipe=elsewhere, query=True)
+    assert "model" not in calls[0]["json"], \
+        "no name rather than the wrong one: an endpoint that needs one refuses"
+
+
+def test_the_model_a_url_names():
+    assert collections_mod.model_named_by("http://nas:30450/upstream/bge-m3") == "bge-m3"
+    assert collections_mod.model_named_by("http://nas:30450/upstream/bge-m3/v1") == "bge-m3"
+    assert collections_mod.model_named_by("http://nas:30450/upstream/") is None
+    assert collections_mod.model_named_by("http://query:2") is None
+
+
 def test_recipe_ctx_bounds_the_char_budget(isolated_config, monkeypatch):
     calls = _capture_posts(monkeypatch)
     recipe = collections_mod.EmbedRecipe(
