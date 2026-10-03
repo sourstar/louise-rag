@@ -46,6 +46,7 @@ from . import admission, model, runs, swapyaml
 from .model import CPU, ModelEntry, RageConfig
 from .procfs import ProcFS
 from .store import RunStore
+from .wire import Refused  # noqa: F401 — defined once for both fronts (wire.py)
 from .swap import SwapError
 
 READY, UNSTATED, LOADING = "ready", "unstated", "loading"
@@ -76,16 +77,6 @@ class Runner(Protocol):
     async def load(self, variant: str, health: str) -> None: ...
     async def unload(self, variant: str) -> None: ...
     async def call(self, variant: str, path: str) -> None: ...
-
-
-class Refused(Exception):
-    """The front will not do it. `status` and `body` are the HTTP answer;
-    503 is a deferral to Louise's worker, never an error on a document."""
-
-    def __init__(self, status: int, reason: str, **extra: Any) -> None:
-        super().__init__(reason)
-        self.status = status
-        self.body = {"error": reason, **extra}
 
 
 @dataclass

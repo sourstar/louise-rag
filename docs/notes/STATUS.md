@@ -72,6 +72,13 @@ Nothing changed on the node; RAGE as deployed keeps running until 15f.
 are written at version 4. Every existing Codex, engine id, run and
 statement stays as it is. Whole suite 3439 passed.
 
+**15d, the same day**: RAGE's front over LocalAI, beside today's
+(`RAGE_RUNNER=localai`). Runs are read from LocalAI's `/system` and the
+kernel: options, argv, environment, the card from the process's DRM
+clients, and weights hashed per process. Also built: the admin door, the
+panel, the restart, and `PUT`/`DELETE` of LocalAI's YAML. 37 tests against
+a fake LocalAI. Not run against a real one: that is 15c on the node.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

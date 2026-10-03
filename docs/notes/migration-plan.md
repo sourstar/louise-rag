@@ -1306,7 +1306,7 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
-### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b DONE**
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE**
 *Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
 model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
 the run identity of every answer, read from what was launched. Spec
@@ -1349,7 +1349,34 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   fingerprint again under spill, tokens per second against today's
   llama-server. **The operator's stop**, like 13d. If it fails, today's
   RAGE keeps running.
-- **15d — The front over LocalAI.** `app/rage/runs.py` `match` reads
+- **15d — The front over LocalAI. DONE 2026-10-03**, beside today's front
+  and chosen by `RAGE_RUNNER=localai` (`tests/rage/test_localai_front.py`,
+  37, against a fake LocalAI that does what 58830f7 does; seven mutations
+  of the code each caught; all RAGE tests 213).
+  - New modules: `localai.py` (client), `loadopts.py` (09 §9.3 options),
+    `observer.py` (instances and runs), `localai_config.py`,
+    `front_localai.py`.
+  - `wire.py` holds what both fronts share, so 15g can delete the old one.
+  - Where it differs from the scope below:
+    - The device is read, not declared: the card is the one its DRM
+      clients report (`drm-pdev`), or the CPU when it holds none. A model
+      that fell back to the CPU is stated as a CPU run.
+    - `name`, `build` and `variant` come from LocalAI: `localai/<backend>`,
+      its `/version`, null. `rage.toml` declares only the cards.
+    - The before/after check is (pid, start ticks) from `/proc`, because
+      every LocalAI load is a new process. `load_options_hash` is not
+      needed for it.
+    - With no process before the request, the answer is attributed only
+      to a process that started before its headers arrived.
+    - `PUT` writes JSON, which is YAML, so no YAML library is added.
+    - `LOCALAI_API_KEY` is stripped and the §10 switches are forced on the
+      LocalAI that `__main__` starts.
+  - **For 15f:** the front refuses a body whose `model` is not its URL's.
+    Under llama-swap that field was ignored, so each collection's
+    `[encoder] model` and `CHAT_MODEL` must equal the model id in its URL
+    before the cut-over.
+
+  As scoped: `app/rage/runs.py` `match` reads
   `/system` (pid, `started_at`, `load_options`) and `/proc` in place of
   llama-swap's argv. The options are made canonical by 09 §9.3. The
   check before and after each answer compares (pid, start) and

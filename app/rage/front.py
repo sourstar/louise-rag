@@ -41,33 +41,12 @@ from .clock import HEADER as LEVEL_HEADER, Clock, is_interactive
 from .placement import Placement, Refused
 from .swap import Swap, SwapError
 
-RUN_HEADER = "Louise-Run"
-#: not passed on in either direction: they describe one hop, not the message
-_HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-                  "te", "trailers", "transfer-encoding", "upgrade", "host",
-                  "content-length"})
+from .wire import HOP as _HOP, RUN_HEADER, read_admin_token  # noqa: F401 — re-exported
 WATCH_S = 5.0
 #: how often the cards are looked at (placement.relieve). A stranger filled 21
 #: GiB of the card in under a minute on 2026-09-20; one ioctl and a dozen small
 #: files per look.
 PRESSURE_S = 3.0
-
-
-def read_admin_token(environ: dict[str, str] | os._Environ) -> str | None:
-    """The token, from the file `ADMIN_TOKEN_FILE` names. Unset: None, and
-    the operator's routes answer 401. Set and unreadable: a boot error that
-    names the path and never the material."""
-    path = environ.get("ADMIN_TOKEN_FILE")
-    if not path:
-        return None
-    try:
-        token = Path(path).read_text(encoding="utf-8").strip()
-    except OSError as e:
-        raise RuntimeError(f"ADMIN_TOKEN_FILE={path} cannot be read: "
-                           f"{type(e).__name__}") from None
-    if not token:
-        raise RuntimeError(f"ADMIN_TOKEN_FILE={path} is empty")
-    return token
 
 
 def create_app(placement: Placement, swap: Swap, clock: Clock,
