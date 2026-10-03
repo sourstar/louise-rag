@@ -250,3 +250,79 @@ compliance (§3).
 6. **Retirements**, through `legacy-to-delete.md`.
 
 This is migration step 15 ([`migration-plan.md`](migration-plan.md)).
+
+## 10. What a change of options touches (operator's question, 2026-10-03)
+
+*"A trivial options change, from LocalAI's point of view, may disrupt the
+formal compliance of all the collections." Checked against 09 and
+LocalAI 58830f7.*
+
+**The identifiers.**
+
+| identifier | holds `options`? | when an option changes |
+|---|---|---|
+| `space_id` (09 §9.3) | no: the engine is outside it | nothing. Vectors stay comparable and nothing stored changes |
+| `collection_id` | only through the engine a Codex freezes at creation | nothing for an existing collection. A collection created afterwards names the new engine, as a changed flag does today |
+| `engine_id`, `run_id` (09 §9.12) | yes | a new run |
+
+**What a new run costs.** Stored vectors carry no run (03 §3.3), and
+attestations already made stand, so nothing published changes and no
+wrong vector gets in. The cost is availability on this node:
+- Every space the model serves goes into quarantine: the vector leg of
+  search is withheld and writes are deferred.
+- This lasts until the gate, which starts at once by itself, passes the
+  new run.
+- If the change really alters the numbers, the gate fails, or limits the
+  peer to verifying, and contribution stops. That is the gate doing its
+  job. A context below the space's `ctx` is the likely case.
+
+The cost scales with the number of distinct option sets, not with
+reloads. A statement is kept per run, so a run that comes back is valid
+at once. The gate's duration is not measured yet (rage.md §14).
+
+**Why this is worse than llama-swap.** Today only an edit to `rage.toml`
+changes a run. LocalAI fills in every field a model's YAML leaves unset,
+from inputs nobody edits per model:
+
+| option | filled from | where |
+|---|---|---|
+| `ContextSize` | the app-wide `context_size` runtime setting; otherwise `autoContextSize`, which steps down with the detected VRAM | `model_config.go` L1617, `context_fit.go` L106–L136 |
+| `NBatch`, for an embedding or rerank model with a context above 512 | `SinglePassBatchForContext(detected VRAM)` | `core/backend/options.go` L345–L356 |
+| `Options` `parallel:N` | detected VRAM and context | `hardware_defaults.go` L262 |
+| `Threads` | the app-wide `threads` runtime setting | `model_config.go` L1599, `runtime_settings_registry.go` L222 |
+| all three VRAM-driven rows | the `vram_budget` runtime setting caps the detected VRAM; detection runs at every load and a failure reads as 0, which takes another branch | `runtime_settings_registry.go` L244, `xsysinfo/gpu.go` L170–L200, `hardware_defaults.go` L287 |
+| a companion artifact's path | a cache key that changes when the artifact is resolved again | `core/backend/options.go` L362–L367 |
+
+So one change in LocalAI's settings page, `vram_budget` say, can give
+every unpinned embedding model a new run at its next load. Every space on
+the node then goes into quarantine in turn, at whatever moment LocalAI
+reloads each model. That is the disruption the operator foresaw.
+
+**The answer: pin, and make drift visible. The identity stays as it is.**
+1. **Pin (15e).** Every model RAGE serves sets, in its YAML, every field
+   the table names: `context_size`, `batch`, `threads`, `gpu_layers`, and
+   `parallel` in `options`. Add `f16`, `flash_attention` and `mmap` while
+   at it. The image sets `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
+   `LOCALAI_DISABLE_GUESSING=true`. Explicit config always wins in
+   LocalAI, so no runtime setting reaches a pinned field. A run then
+   changes only by a deliberate edit, as a llama-server flag does today. A
+   test holds every model YAML to the list, which is re-read whenever the
+   LocalAI base moves.
+2. **Visible (15d).** When a model's run changes, RAGE records an event
+   naming the options that differ from its previous run, on the System
+   page, for example "bge-m3: new run — NBatch 512 → 2048".
+3. **Not narrowing `options` to what "matters".** Dropping options
+   believed inert is a declaration, not a measurement (02 §2.4). If one
+   such option did change the numbers, the vectors it produced would pass
+   every check while being wrong. An extra gate is the safe way to fail.
+4. **Not proposed: lift quarantine on a fingerprint match.** A new run
+   whose sixteen fingerprint vectors equal a validated run's bit for bit
+   (03 §3.3: "stronger evidence than any tolerance") could stop the
+   quarantine before the full gate ends. That is a spec change, and it is
+   worth considering only if pinning leaves the window costly once the
+   node has measured it.
+
+The one LocalAI-side improvement is R5 in
+[`localai-bugs.md`](localai-bugs.md): a strict mode in which LocalAI
+fills in nothing.
+

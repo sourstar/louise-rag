@@ -1,7 +1,7 @@
 # LocalAI: every action item for the LocalAI team
 
 *One place for everything this project owes or asks `mudler/LocalAI`: the
-defects found (B1–B7), the patches we carry (P1), and the requests (R1–R4).
+defects found (B1–B7), the patches we carry (P1), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
 against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
 requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
@@ -21,6 +21,7 @@ requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
 | R4 | request | admission by declared memory, priority eviction, refusal instead of overcommit (opt-in), eviction aware of other processes' memory, restore after quiet | availability; what RAGE gives up at the cut-over | not filed; #5352 is the nearest open issue |
+| R5 | request | a strict mode: LocalAI fills in no load option the model's YAML leaves unset — no GGUF guess, no hardware tuning, no app-wide setting — or says, per option, where each value came from | settings changed in LocalAI's UI would otherwise give runs nobody asked for; we pin instead (rage-over-localai §10) | not filed |
 
 A global compile-cache directory was considered and is **not to be filed**
 (operator, 2026-10-02): the per-model caches already exist (§ at the end).
@@ -276,9 +277,10 @@ which the DEBUG log already shows.
 
 ## Requests
 
-Searched on 2026-10-02 and 2026-10-03: nobody has asked for R1, R2 or R3.
+Searched on 2026-10-02 and 2026-10-03: nobody has asked for R1, R2, R3 or R5.
 The nearest hit for R3 is #4576 (CORS and API key, closed), a different
-problem.
+problem. For R5, #11022 (closed) made the Ollama-compatible routes honour
+the hardware-aware context clamp: the opposite wish.
 
 ### R1. Name the instance that answered
 
@@ -316,6 +318,28 @@ model YAML and its defaults in [`rage-prior-art.md`](rage-prior-art.md)
 - restoring preloaded models after a quiet period.
 
 To be filed as one issue, next to #5352.
+
+### R5. A strict mode for load options
+
+LocalAI fills in any option a model's YAML leaves unset. The values come
+from:
+- the GGUF (`context_fit.go` L106);
+- the detected VRAM, read again at every load, with a failed reading
+  taken as 0 (`hardware_defaults.go` L287, `xsysinfo/gpu.go` L170);
+- the app-wide runtime settings `threads`, `context_size` and
+  `vram_budget` (`runtime_settings_registry.go` L222–L246).
+
+A setting changed in the UI therefore changes how models already
+configured run, at their next load. `LOCALAI_DISABLE_HARDWARE_DEFAULTS`
+and `LOCALAI_DISABLE_GUESSING` switch off two of these sources but not
+the app-wide settings. Ask for either:
+- a strict mode, in which an unset field stays at the backend's own
+  default; or
+- a per-option record of where each value in `load_options` came from
+  (P1).
+
+Until then RAGE's models pin every such field
+([`rage-over-localai.md`](rage-over-localai.md) §10).
 
 ---
 

@@ -1346,10 +1346,17 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   - a default LocalAI filled in, absent from the YAML, is in the run;
   - an option naming another path states no run;
   - a process replaced mid-answer gets no header;
-  - a body naming another model than its URL is refused.
+  - a body naming another model than its URL is refused;
+  - a new run records an event naming the options that changed since
+    the model's previous run (rage-over-localai §10).
 - **15e — The image.** LocalAI built from the base with the series,
   backends installed at build time from images pinned by digest, gallery
-  installs at run time off, LocalAI on loopback with no key. The three
+  installs at run time off, LocalAI on loopback with no key,
+  `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
+  `LOCALAI_DISABLE_GUESSING=true`. Every model's YAML pins every option
+  LocalAI would otherwise fill in (rage-over-localai §10: `context_size`,
+  `batch`, `threads`, `gpu_layers`, `parallel`), so that only an edit
+  changes a run. A test holds each YAML to that list. The three
   servers become LocalAI Python backends: DNABERT-2 → `Embedding`, MedCPT
   → `Rerank`, MADLAD → `Predict`. The app's translator client moves to
   the completion shape. `tests/rage/test_deploy_files.py` holds them to
