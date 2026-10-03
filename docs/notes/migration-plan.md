@@ -1358,15 +1358,26 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     model loaded or unloaded between two `/system` readings, and a new run;
   - **the restart**: it shuts down and loads the named model only, and
     with unchanged options the reload states the same run.
-  The front's `park` route goes with `placement.py`. `PUT` and `DELETE`
-  (adding and removing a model) stay open until 15d starts: they would
-  write LocalAI's model YAML instead of `rage.d/`
-  (rage-over-localai §7).
+  - **`PUT` and `DELETE`** write LocalAI's model YAML (operator,
+    2026-10-03; rage-over-localai §7):
+    - `PUT` writes `<id>.yaml` and calls `/models/reload`;
+    - `PUT` refuses with 422 a YAML that leaves an option of §10's list
+      unpinned;
+    - `PUT` of a loaded model shuts it down, and its next load states a
+      new run with the changed options in the event;
+    - `DELETE` shuts the model down, removes its YAML and reloads, and
+      the model is gone from `/system` and from LocalAI's model list;
+    - either one on a hand-written YAML is 409, and without the token
+      401.
+  The front's `park` route goes with `placement.py`.
 - **15e — The image.** LocalAI built from the base with the series,
   backends installed at build time from images pinned by digest, gallery
   installs at run time off, LocalAI on loopback with no key,
   `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
-  `LOCALAI_DISABLE_GUESSING=true`. Every model's YAML pins every option
+  `LOCALAI_DISABLE_GUESSING=true`. The models path is a writable
+  directory under RAGE's state holding the YAMLs, with the weights
+  bind-mounted read-only inside it, and `HF_HOME` is set outside it.
+  Every model's YAML pins every option
   LocalAI would otherwise fill in (rage-over-localai §10: `context_size`,
   `batch`, `threads`, `gpu_layers`, `parallel`), so that only an edit
   changes a run. A test holds each YAML to that list. The three
