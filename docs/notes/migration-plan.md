@@ -1348,7 +1348,20 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   - a process replaced mid-answer gets no header;
   - a body naming another model than its URL is refused;
   - a new run records an event naming the options that changed since
-    the model's previous run (rage-over-localai §10).
+    the model's previous run (rage-over-localai §10);
+  - **the admin guard**: `load` and `unload` reach LocalAI's
+    `/backend/load` and `/backend/shutdown` only with the token, and a
+    request without it is 401 and never reaches LocalAI;
+  - **the panel**: `GET /louise/gpu` gives the card's real memory split
+    by model from `size_vram`, with the rest as a stranger's; each process
+    is labelled with its model by `process.pid`; and the events are a
+    model loaded or unloaded between two `/system` readings, and a new run;
+  - **the restart**: it shuts down and loads the named model only, and
+    with unchanged options the reload states the same run.
+  The front's `park` route goes with `placement.py`. `PUT` and `DELETE`
+  (adding and removing a model) stay open until 15d starts: they would
+  write LocalAI's model YAML instead of `rage.d/`
+  (rage-over-localai §7).
 - **15e — The image.** LocalAI built from the base with the series,
   backends installed at build time from images pinned by digest, gallery
   installs at run time off, LocalAI on loopback with no key,
