@@ -1306,7 +1306,7 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
-### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE**
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE; 15e IN PART**
 *Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
 model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
 the run identity of every answer, read from what was launched. Spec
@@ -1423,7 +1423,34 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     - either one on a hand-written YAML is 409, and without the token
       401.
   The front's `park` route goes with `placement.py`.
-- **15e — The image.** LocalAI built from the base with the series,
+- **15e — The image. IN PART, 2026-10-03.**
+  - **Done** (`tests/rage/test_localai_deploy.py`, 8):
+    - `deploy/rage/Dockerfile.localai`: LocalAI from the series' base with
+      the series applied; `protoc` by checksum; the web UI built; LocalAI's
+      SYCL llama.cpp backend from the same commit, by digest, in the
+      read-only system backends path; galleries off. Every base is pinned
+      by digest; the Intel base is passed, as before.
+    - `deploy/rage/localai-models/`: the six llama.cpp models' YAML, every
+      §10 option pinned.
+    - `deploy/truenas-rage-localai.yaml`: the weights mounted read-only
+      inside the writable models directory.
+    - The observer refuses a backend whose program lies outside the
+      image's backends path (09 §9.12).
+  - **Built here**: every LocalAI stage, giving
+    `58830f7+patches.17b54353635e`. **Run here**: the `smoke` target on a
+    CPU (rage-over-localai §11), real LocalAI under RAGE's front. A run
+    was stated on every answer.
+  - **The smoke test found** a random seed per load (now pinned, and
+    required by `PUT`) and LocalAI bug B8 (reload never forgets a deleted
+    YAML; `DELETE` says so).
+  - **Not built here:** the final stage. Its Intel base is on ghcr.io,
+    whose blob storage this sandbox cannot reach. It builds on the node.
+  - **Left, 15e-2:**
+    - the Python models as LocalAI backends: DAR-legal-it → `Embedding`,
+      MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen);
+    - the translator client in the completion shape.
+
+  As scoped: LocalAI built from the base with the series,
   backends installed at build time from images pinned by digest, gallery
   installs at run time off, LocalAI on loopback with no key,
   `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and

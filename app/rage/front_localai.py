@@ -69,7 +69,12 @@ MARKER = "# written by RAGE (PUT /louise/models/<id>): change it through the API
 #: (rage-over-localai §10), each of which changes a run when it changes. A
 #: YAML written through the API pins every one.
 PINNED = ("context_size", "threads", "gpu_layers")
-PINNED_PARAMETERS = ("model", "batch")
+#: `seed` too: unset, or LocalAI's -1 (`RAND_SEED`), LocalAI draws a random
+#: one at EVERY load (`core/backend/options.go`, `getSeed`) — found by
+#: running it (2026-10-03): each reload was another run, "Seed 551695963 →
+#: 1045691491", and each would have been gated again.
+PINNED_PARAMETERS = ("model", "batch", "seed")
+RAND_SEED = -1
 
 
 def _ours(path: Path) -> bool:
@@ -84,7 +89,8 @@ def unpinned(body: dict[str, Any]) -> list[str]:
     """The fields of §10's list a model YAML leaves to LocalAI."""
     missing = [k for k in PINNED if body.get(k) is None]
     params = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
-    missing += [f"parameters.{k}" for k in PINNED_PARAMETERS if params.get(k) is None]
+    missing += [f"parameters.{k}" for k in PINNED_PARAMETERS
+                if params.get(k) is None or (k == "seed" and params[k] == RAND_SEED)]
     backend = str(body.get("backend") or "")
     if backend.startswith("llama"):
         options = body.get("options") if isinstance(body.get("options"), list) else []
@@ -147,7 +153,11 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
         rows = []
         for model_id in sorted(configured | set(observer.instances)):
             row = observer.row(model_id)
-            row["file"] = "rage" if _ours(models_dir / f"{model_id}.yaml") else "operator"
+            files = _files(model_id)
+            # None: LocalAI lists a model no file defines any more. Its reload
+            # never forgets one (localai-bugs.md B8); it goes at its next start.
+            row["file"] = (None if not files else
+                           "rage" if any(_ours(p) for p in files) else "operator")
             rows.append(row)
         return rows
 
@@ -213,8 +223,10 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
             raise Refused(409, f"{model_id} is defined in {hand[0]}, the operator's file; "
                                f"edit it there. The API writes only the files it wrote")
         if not files and model_id in await client.models():
-            raise Refused(409, f"LocalAI already has a model {model_id!r} from a file of the "
-                               f"operator's; edit it there")
+            raise Refused(409, f"LocalAI has a model {model_id!r} that no file of RAGE's "
+                               f"defines: the operator's, under another name, or one whose "
+                               f"file was removed, which LocalAI forgets only at its next "
+                               f"start (localai-bugs.md B8)")
         return files
 
     @app.put("/louise/models/{model_id}", dependencies=[Depends(admin)])
@@ -262,8 +274,11 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
         await client.reload_configs()
         await observer.refresh()
         if model_id in await client.models():
+            # LocalAI 58830f7: /models/reload adds and updates, never removes
+            # (localai-bugs.md B8; seen on the real one, 2026-10-03)
             raise Refused(502, f"{model_id}: its file is removed, but LocalAI still lists it "
-                               f"after /models/reload; it goes at LocalAI's next start")
+                               f"after /models/reload; it goes at LocalAI's next start "
+                               f"(localai-bugs.md B8)")
         return {"id": model_id, "state": "removed"}
 
     # ---- the models ----------------------------------------------------------------

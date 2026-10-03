@@ -1,7 +1,7 @@
 # LocalAI: every action item for the LocalAI team
 
 *One place for everything this project owes or asks `mudler/LocalAI`: the
-defects found (B1–B7), the patches we carry (P1), and the requests (R1–R5).
+defects found (B1–B8), the patches we carry (P1), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
 against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
 requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
@@ -16,6 +16,7 @@ requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 | B5 | defect | startup: `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1` | — | not filed |
 | B6 | defect | distributed scheduler: evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | — (one node) | not filed |
 | B7 | defect, may be intended | loader: when busy models cannot be evicted, the load goes ahead over `max_active_backends` | availability | not filed |
+| B8 | defect | `POST /models/reload` never forgets a model whose YAML was removed: it lists and serves it until LocalAI restarts | RAGE's `DELETE` answers 502 and says so | not filed; seen on a real LocalAI, 2026-10-03 |
 | **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | **blocking**: without it RAGE states no run for any LocalAI model | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
@@ -210,6 +211,26 @@ keep the limit.
 
 ---
 
+### B8. `/models/reload` never forgets a removed model
+
+*Seen on a real LocalAI at 58830f7 with P1 (RAGE's smoke test,
+docs/notes/rage-over-localai.md §11), and certain from the code.*
+
+[`ReloadModelsEndpoint`](https://github.com/mudler/LocalAI/blob/58830f7ac508845a6f4efa32cfca06af422d4d82/core/http/endpoints/localai/edit_model.go#L123-L140)
+calls `LoadModelConfigsFromPath`, whose non-strict path only sets
+`bcl.configs[c.Name]` for each YAML it finds
+([`model_config_loader.go` L849–L930](https://github.com/mudler/LocalAI/blob/58830f7ac508845a6f4efa32cfca06af422d4d82/core/config/model_config_loader.go#L849-L930)).
+A model whose file was deleted stays in `GET /v1/models` and stays loadable
+until LocalAI restarts. Nothing says it is a model without a file.
+
+Suggested: on reload, drop a config whose source file lies in the models
+path and no longer exists. `LoadModelConfigsFromPathStrict` already builds
+an authoritative snapshot; the reload endpoint could use those semantics.
+`/models/delete/:name` is not the answer: it is the gallery's, and it
+deletes the model's files too.
+
+---
+
 ## Patches we carry
 
 The RAGE image builds LocalAI from the base commit in
@@ -327,7 +348,10 @@ from:
 - the detected VRAM, read again at every load, with a failed reading
   taken as 0 (`hardware_defaults.go` L287, `xsysinfo/gpu.go` L170);
 - the app-wide runtime settings `threads`, `context_size` and
-  `vram_budget` (`runtime_settings_registry.go` L222–L246).
+  `vram_budget` (`runtime_settings_registry.go` L222–L246);
+- a RANDOM seed at every load when `parameters.seed` is unset or -1
+  (`core/backend/options.go`, `getSeed`). RAGE's smoke test saw each
+  reload become another run: "Seed 551695963 → 1045691491".
 
 A setting changed in the UI therefore changes how models already
 configured run, at their next load. `LOCALAI_DISABLE_HARDWARE_DEFAULTS`

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections import deque
@@ -72,12 +73,14 @@ class Observer:
                  runtime_versions: Path = Path("/etc/rage/runtime-versions"),
                  card: Callable[[str], tuple[int | None, int | None, str | None]] | None = None,
                  hash_weights: Callable[[Path], str] = runs.weights_digest,
+                 backends_root: Path = Path("/var/lib/local-ai/backends"),
                  log: Callable[[str], None] = print) -> None:
         self.cfg, self.client, self.store, self.image = cfg, client, store, image
         self.procfs = procfs or ProcFS()
         self.sys_root, self.proc_root, self.runtime_versions = sys_root, proc_root, runtime_versions
         self.card = card or (lambda pci: gpu_memory.read(pci, sys_root=sys_root))
         self.hash_weights = hash_weights
+        self.backends_root = Path(backends_root)
         self.log = log
         self.instances: dict[str, Instance] = {}
         #: model -> (run id, run object) of the last run it stated, for the
@@ -147,6 +150,23 @@ class Observer:
         argv = self.procfs.cmdline(pid)
         if not argv:
             raise loadopts.Unstatable("its process shows no argument vector")
+        # 09 §9.12: "an engine the runner installed after the image was built
+        # — a backend fetched at run time — is not in that image, and states
+        # no run". The image's backends are in LocalAI's SYSTEM path
+        # (deploy/rage/Dockerfile.localai); one anywhere else came later.
+        program = argv[0]
+        if not os.path.isabs(program):
+            cwd = self.procfs.cwd(pid)
+            if cwd is None:
+                raise loadopts.Unstatable(f"its program {program!r} is relative and its "
+                                          f"directory cannot be read")
+            program = os.path.join(cwd, program)
+        program = os.path.normpath(program)
+        root = os.path.normpath(self.backends_root)
+        if os.path.commonpath([program, root]) != root:
+            raise loadopts.Unstatable(
+                f"its program {program} is not one of the image's backends ({root}): a "
+                f"backend installed after the image was built states no run (09 §9.12)")
         out, found = [], 0
         for arg in argv:
             m = _ADDR.fullmatch(arg)

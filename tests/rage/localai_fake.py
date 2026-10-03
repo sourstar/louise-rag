@@ -19,6 +19,8 @@ import hashlib
 import itertools
 import json
 import os
+import random
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -28,7 +30,7 @@ import httpx
 from app.rage.front_localai import MARKER
 
 PCI = "0000:03:00.0"
-BACKEND_ARGV = "/backends/llama-cpp/llama-cpp-fallback"
+BACKEND_ARGV = "/var/lib/local-ai/backends/llama-cpp/llama-cpp-fallback"
 
 
 def hand_written(models_dir: Path, name: str, config: dict[str, Any]) -> Path:
@@ -41,7 +43,7 @@ def hand_written(models_dir: Path, name: str, config: dict[str, Any]) -> Path:
 def pinned(model_file: str, **over: Any) -> dict[str, Any]:
     """A YAML that pins every option of rage-over-localai §10."""
     return {"backend": "llama-cpp", "context_size": 8192, "threads": 8, "gpu_layers": 99,
-            "parameters": {"model": model_file, "batch": 512},
+            "parameters": {"model": model_file, "batch": 512, "seed": 0},
             "options": ["parallel:1"], "embeddings": True, **over}
 
 
@@ -65,6 +67,7 @@ class FakeLocalAI:
         self.calls: list[tuple[str, str, Any]] = []
         self.on_card_mib = 1400                     # what a loaded model holds of the card
         self.pdev: str | None = PCI
+        self.program = BACKEND_ARGV                 # what the next load runs
         self.during_request: Callable[[], None] | None = None
         self.reload_configs()
 
@@ -75,6 +78,7 @@ class FakeLocalAI:
         d = self.proc / str(pid)
         (d / "fdinfo").mkdir(parents=True)
         (d / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
+        (d / "cwd").symlink_to("/")                 # run.sh: `cd /`
         (d / "environ").write_bytes(
             b"\0".join(f"{k}={v}".encode() for k, v in env.items()) + b"\0")
         ticks = int((time.time() - self.btime) * os.sysconf("SC_CLK_TCK")) - 1
@@ -88,22 +92,28 @@ class FakeLocalAI:
         return pid
 
     def kill(self, pid: int) -> None:
-        for f in sorted((self.proc / str(pid)).rglob("*"), reverse=True):
-            f.unlink() if f.is_file() else f.rmdir()
-        (self.proc / str(pid)).rmdir()
+        # rmtree removes the `cwd` link without following it into the real /
+        shutil.rmtree(self.proc / str(pid))
 
     # ---- what LocalAI does ------------------------------------------------------------
 
     def reload_configs(self) -> None:
-        """`POST /models/reload`: every YAML in the models directory, again —
-        and a config whose file is gone is forgotten."""
-        self.configs = {}
+        """`POST /models/reload`: every YAML in the models directory, again.
+        A config whose file is gone is NOT forgotten — the real LocalAI's
+        reload only adds and updates (localai-bugs.md B8); `restart()` is
+        LocalAI's next start, which reads the directory afresh."""
         for path in sorted(self.models_dir.glob("*.yaml")):
             text = path.read_text(encoding="utf-8")
             if text.startswith(MARKER):
                 text = text.split("\n", 1)[1]
             config = json.loads(text)
             self.configs[config["name"]] = config
+
+    def restart(self) -> None:
+        for name in list(self.loaded):
+            self.shutdown(name)
+        self.configs = {}
+        self.reload_configs()
 
     def materialise(self, name: str) -> dict[str, Any]:
         """The options the backend is sent: the YAML completed with the
@@ -118,7 +128,10 @@ class FakeLocalAI:
                    "NBatch": params.get("batch", self.settings["batch"]),
                    "NGPULayers": c.get("gpu_layers", 99),
                    "Embeddings": bool(c.get("embeddings")),
-                   "RopeFreqBase": 10000.5}
+                   "RopeFreqBase": 10000.5,
+                   # LocalAI's getSeed: unset or -1 is a random seed at EVERY load
+                   "Seed": (params["seed"] if params.get("seed", -1) != -1
+                            else random.randint(1, 2**31 - 1))}
         if c.get("options"):
             options["Options"] = list(c["options"])
         if c.get("env"):
@@ -133,7 +146,7 @@ class FakeLocalAI:
             return self.loaded[name]
         opts = self.materialise(name)
         env = {"PATH": "/usr/bin", "HOSTNAME": "rage-1", **opts.get("EnvVars", {})}
-        argv = [BACKEND_ARGV, "--addr", f"127.0.0.1:{next(self._ports)}"]
+        argv = [self.program, "--addr", f"127.0.0.1:{next(self._ports)}"]
         pid = self.spawn(argv, env, card_mib=self.on_card_mib if opts["NGPULayers"] else 0)
         self.loaded[name], self.options[name] = pid, opts
         return pid

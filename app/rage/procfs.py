@@ -53,6 +53,13 @@ class ProcFS:
                 out[name.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
         return out
 
+    def cwd(self, pid: int) -> str | None:
+        """The directory the process runs in, as the kernel links it."""
+        try:
+            return os.readlink(self.root / str(pid) / "cwd")
+        except OSError:
+            return None
+
     def exe_digest(self, pid: int) -> str | None:
         """The digest of the program that is running — evidence for the log
         beside a stated run, not part of the run (09 §9.12)."""

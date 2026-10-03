@@ -192,12 +192,12 @@ cut-over.
 | `runs.py`, `procfs.py`, `store.py`: the identity, `/proc`, the runs | kept. `match` reads `/system` and `/proc` in place of llama-swap's argv |
 | `clock.py`: `Louise-Level` holds the card's clock | kept. The front is the only process that reads the header, and the header changes no answer |
 | `front.py`: the admin routes, behind `ADMIN_TOKEN_FILE` | kept, as the only door to LocalAI's admin routes. LocalAI takes keys only from an environment value (§8.4), so it listens on loopback with no key and publishes nothing. The front's `load` and `unload` pass through to LocalAI's `POST /backend/load` and `POST /backend/shutdown`, and a request without the token never reaches LocalAI |
-| `front.py`: `PUT` and `DELETE /louise/models/<id>`, adding and removing a model | kept, and they now write LocalAI's model YAML, the file for the desired state (operator, 2026-10-03; invariant 10). **Where:** LocalAI reads the YAMLs and the weights from one models path, and refuses weights outside it (`VerifyPath`, `pkg/utils/path.go` L34). So the models path is a writable directory under RAGE's state holding the YAMLs, and the weights are bind-mounted read-only inside it, as today (rage.md §10, invariant 5). `HF_HOME` is set elsewhere, because LocalAI points it at the models path when it is unset (`initializers.go` L122). **`PUT`** writes `<id>.yaml` and calls `POST /models/reload`. It refuses with 422 a YAML that leaves any option in §10's list unpinned, so the API cannot bring back the drift §10 removes. If the model is loaded, `PUT` also shuts it down, so the change arrives as a new run, named and gated. **`DELETE`** shuts the model down, removes its YAML and reloads. Whether LocalAI's reload forgets a config whose file is gone is UNVERIFIED. **Hand-written YAMLs:** today's `rage.d/` rule carries over. The API overwrites only the files it wrote, which it marks with a first-line comment; a hand-written YAML is edited by hand (409) |
+| `front.py`: `PUT` and `DELETE /louise/models/<id>`, adding and removing a model | kept, and they now write LocalAI's model YAML, the file for the desired state (operator, 2026-10-03; invariant 10). **Where:** LocalAI reads the YAMLs and the weights from one models path, and refuses weights outside it (`VerifyPath`, `pkg/utils/path.go` L34). So the models path is a writable directory under RAGE's state holding the YAMLs, and the weights are bind-mounted read-only inside it, as today (rage.md §10, invariant 5). `HF_HOME` is set elsewhere, because LocalAI points it at the models path when it is unset (`initializers.go` L122). **`PUT`** writes `<id>.yaml` and calls `POST /models/reload`. It refuses with 422 a YAML that leaves any option in §10's list unpinned, so the API cannot bring back the drift §10 removes. If the model is loaded, `PUT` also shuts it down, so the change arrives as a new run, named and gated. **`DELETE`** shuts the model down, removes its YAML and reloads. LocalAI's reload does NOT forget a config whose file is gone (§11; localai-bugs.md B8), so `DELETE` answers 502 and says the model goes at LocalAI's next start. **Hand-written YAMLs:** today's `rage.d/` rule carries over. The API overwrites only the files it wrote, which it marks with a first-line comment; a hand-written YAML is edited by hand (409) |
 | `front.py`: `GET /louise/gpu`, the System tab's panel | kept, fed by other sources. The clock and the container name stay as they are. The card's real memory is still read from the driver (rage.md §19), now split by model using `/system`'s `size_vram`; whatever is left over is a stranger's. Each GPU process is labelled with its model from `/system`'s `process.pid`, joined to the host's pids through `NSpid` as before (rage.md §11). The events become what RAGE sees rather than what it decided: a model loaded or unloaded, from one `/system` reading to the next, and a new run with the options that changed (§10) |
 | `front.py`: `POST /louise/models/<id>/restart`, the operator's button for the fan (rage.md §11) | kept. It calls `/backend/shutdown` and then `/backend/load` for that model and no other: never another model, never another app (operator, 2026-09-20). With the options pinned (§10), the reload states the same run |
 | `model.py`: `rage.toml` | shrinks to what the identity needs: card names, `pci`, the device per model. The lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) move to LocalAI's model YAML |
 | `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, and the `park` route | retired at cut-over, through [`legacy-to-delete.md`](legacy-to-delete.md). Until then they are the reference for the upstream proposals (rage-prior-art §7) |
-| `deploy/rage/servers/` and the three servers | become LocalAI Python backends: DNABERT-2 → `Embedding`, MedCPT → `Rerank`, MADLAD → `Predict`. Louise's translator client moves from `/translate` to the completion shape, a change in the app |
+| `deploy/rage/servers/` and the three servers | become LocalAI Python backends: DAR-legal-it → `Embedding`, MedCPT → `Rerank`, MADLAD → `Predict` (DNABERT-2 is frozen, and served by neither front). Louise's translator client moves from `/translate` to the completion shape, a change in the app |
 
 **What the node loses until upstream takes it:** the declared ledger,
 priority eviction, stranger-aware pressure and parking (rage.md §7, §19,
@@ -225,8 +225,9 @@ compliance (§3).
 4. **Invariant 8.** LocalAI takes API keys only from an environment value
    or a flag (`LOCALAI_API_KEY`, `core/cli/run.go` :78). LocalAI therefore
    listens on 127.0.0.1 inside the image, as llama-swap does today, with no
-   key set. The front's `ADMIN_TOKEN_FILE` guards admin requests. That no
-   key opens `/system` is UNVERIFIED. Publishing LocalAI's own UI would
+   key set. The front's `ADMIN_TOKEN_FILE` guards admin requests. With no
+   key set, the admin routes RAGE uses answer without one (§11, on the
+   real LocalAI). Publishing LocalAI's own UI would
    need upstream to read the key from a file.
 5. **Backends in the image.** The run's `image` is the node image's digest
    only if every backend is in that image. Install them at build time, from
@@ -296,6 +297,7 @@ from inputs nobody edits per model:
 | `Threads` | the app-wide `threads` runtime setting | `model_config.go` L1599, `runtime_settings_registry.go` L222 |
 | all three VRAM-driven rows | the `vram_budget` runtime setting caps the detected VRAM; detection runs at every load and a failure reads as 0, which takes another branch | `runtime_settings_registry.go` L244, `xsysinfo/gpu.go` L170–L200, `hardware_defaults.go` L287 |
 | a companion artifact's path | a cache key that changes when the artifact is resolved again | `core/backend/options.go` L362–L367 |
+| `Seed` | a RANDOM number at every load, when `parameters.seed` is unset or -1. Found by the smoke test (§11), not by reading: each reload was another run | `core/backend/options.go`, `getSeed` |
 
 So one change in LocalAI's settings page, `vram_budget` say, can give
 every unpinned embedding model a new run at its next load. Every space on
@@ -304,8 +306,8 @@ reloads each model. That is the disruption the operator foresaw.
 
 **The answer: pin, and make drift visible. The identity stays as it is.**
 1. **Pin (15e).** Every model RAGE serves sets, in its YAML, every field
-   the table names: `context_size`, `batch`, `threads`, `gpu_layers`, and
-   `parallel` in `options`. Add `f16`, `flash_attention` and `mmap` while
+   the table names: `context_size`, `batch`, `threads`, `gpu_layers`,
+   `seed` (not -1), and `parallel` in `options`. Add `f16`, `flash_attention` and `mmap` while
    at it. The image sets `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
    `LOCALAI_DISABLE_GUESSING=true`. Explicit config always wins in
    LocalAI, so no runtime setting reaches a pinned field. A run then
@@ -329,4 +331,52 @@ reloads each model. That is the disruption the operator foresaw.
 The one LocalAI-side improvement is R5 in
 [`localai-bugs.md`](localai-bugs.md): a strict mode in which LocalAI
 fills in nothing.
+
+## 11. Smoke test on a CPU (2026-10-03)
+
+*`deploy/rage/Dockerfile.localai`, target `smoke`: LocalAI built from the
+series' base with P1, its CPU llama.cpp backend from the same commit, and
+RAGE's front. The model is `tools/rage_smoke_model.py`, a 480 KB GGUF with
+random weights. Built and run in the development sandbox. No card is
+involved, so this is not 15c.*
+
+```
+docker build -f deploy/rage/Dockerfile.localai --target smoke \
+  --build-arg LLAMA_CPP_IMAGE=ubuntu:24.04 -t rage-smoke .
+python tools/rage_smoke_model.py <dir>/models/weights/tiny/tiny.gguf
+docker run -p 18080:8080 -e RAGE_IMAGE=sha256:<64 hex> -e ADMIN_TOKEN_FILE=/run/token \
+  -v <dir>/config:/config -v <dir>/models:/state/localai-models \
+  -v <dir>/token:/run/token:ro rage-smoke
+# PUT /louise/models/tiny with the token, then POST /upstream/tiny/v1/embeddings
+```
+
+**What held.**
+- The series applies at the base commit, and the build gives
+  `58830f7+patches.17b54353635e`.
+- `PUT` writes the YAML and LocalAI reads it.
+- The first answer arrives in 2.17 s with the load included; the next in
+  0.027 s.
+- Both carry `Louise-Run`. The run object is built from the real process:
+  - argv `…/llama-cpp/lib/ld.so …/llama-cpp-cpu-all --addr 127.0.0.1:${PORT}`,
+    under the system backends path;
+  - device `cpu`, driver `cpu`;
+  - options with `${WEIGHTS}` and `${MODELS}`.
+- A body naming another model was answered by the URL's.
+- The admin routes refuse without the token.
+- With the seed pinned, three answers across two restarts (pids 25, 52
+  and 78) stated ONE run, and the events said "the same run".
+
+**What it found.**
+1. **The seed.** Unset, LocalAI draws a random one at every load. Each
+   reload was another run, and RAGE's event named it: "Seed 551695963 →
+   1045691491". Now on §10's list: `PUT` requires `parameters.seed`
+   (not -1), and the six YAMLs pin it.
+2. **Fixed defaults.** LocalAI also fills `FlashAttention: "auto"`,
+   `MMap: true` and `cache_reuse:256`. These are constants of the build:
+   they move only with the image, which is a new run anyway. They are not
+   required.
+3. **B8.** `/models/reload` never forgets a deleted YAML
+   (localai-bugs.md). `DELETE` answers 502 and says so, `GET
+   /louise/models` shows the model with `file: null`, and it goes at
+   LocalAI's next start. This settles §8's UNVERIFIED point the other way.
 

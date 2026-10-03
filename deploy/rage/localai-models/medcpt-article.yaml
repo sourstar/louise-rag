@@ -1,0 +1,33 @@
+# medcpt-article — LocalAI's model YAML, the operator's (migration step 15e;
+# docs/notes/rage-over-localai.md §7, §10). Copied once into LocalAI's models
+# directory (/mnt/ssd5/apps/louise-rage/state/localai-models/) at the cut-over;
+# no first-line marker, so RAGE's API never rewrites it (409): edit it by hand.
+# JSON, which is YAML: one parser for LocalAI and for tests/rage/test_localai_deploy.py.
+# EVERY OPTION LocalAI WOULD FILL IN BY ITSELF IS PINNED (§10): context_size,
+# threads, gpu_layers, parameters.batch and seed (unset, LocalAI draws a
+# random one at every load), and options parallel — taken from the
+# llama-server flags in deploy/rage/rage.example.toml, the engine it replaces.
+# -c 512 -np 1 -b 512 -ub 512 --pooling cls -fa on -t 6 -ngl 999 (pubmed: documents)
+{
+  "name": "medcpt-article",
+  "backend": "llama-cpp",
+  "embeddings": true,
+  "context_size": 512,
+  "threads": 6,
+  "gpu_layers": 999,
+  "flash_attention": "on",
+  "mmap": true,
+  "parameters": {
+    "model": "weights/medcpt/MedCPT-Article-Encoder-f16.gguf",
+    "batch": 512,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "pooling:cls",
+    "ubatch:512"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/state/neo-cache"
+  }
+}

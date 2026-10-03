@@ -127,7 +127,7 @@ def test_one_changed_option_states_another_run_and_the_event_names_it(node):
     first = _run(node)
     r = node.http.put("/louise/models/bge-m3", headers=ADMIN,
                       json=pinned("bge-m3.gguf", parameters={"model": "bge-m3.gguf",
-                                                             "batch": 1024}))
+                                                             "batch": 1024, "seed": 0}))
     assert r.status_code == 200
     assert "bge-m3" not in node.fake.loaded, "a PUT on a loaded model stops it"
     second = _run(node)
@@ -218,6 +218,17 @@ def test_a_model_that_fell_back_to_the_cpu_is_stated_as_the_cpu_run_it_is(node):
     assert obj["engine"]["device"] == "cpu"
 
 
+def test_a_backend_from_outside_the_image_states_no_run(node):
+    """09 §9.12: "an engine the runner installed after the image was built —
+    a backend fetched at run time — is not in that image, and states no
+    run". The image's are in LocalAI's system path."""
+    _put(node)
+    node.fake.program = "/state/localai-backends/llama-cpp/llama-cpp-fallback"
+    r = _embed(node)
+    assert r.status_code == 200 and RUN_HEADER not in r.headers
+    assert "not one of the image's backends" in node.observer.row("bge-m3")["reason"]
+
+
 # ---- the operator's routes -------------------------------------------------------------------
 
 @pytest.mark.parametrize("method,path", [
@@ -284,6 +295,24 @@ def test_put_refuses_a_yaml_that_leaves_a_10_option_to_localai(node, drop, named
     no_batch = dict(pinned("bge-m3.gguf"), parameters={"model": "bge-m3.gguf"})
     r = node.http.put("/louise/models/bge-m3", headers=ADMIN, json=no_batch)
     assert r.status_code == 422 and "parameters.batch" in r.json()["error"]
+    for seed in ({}, {"seed": -1}):                 # -1 is LocalAI's "random"
+        config = pinned("bge-m3.gguf", parameters={"model": "bge-m3.gguf", "batch": 512, **seed})
+        r = node.http.put("/louise/models/bge-m3", headers=ADMIN, json=config)
+        assert r.status_code == 422 and "parameters.seed" in r.json()["error"]
+
+
+def test_an_unpinned_seed_makes_every_reload_another_run(node):
+    """Found by running the real LocalAI (2026-10-03): with no seed it draws
+    a random one at every load, so each reload was a new run to gate."""
+    config = pinned("bge-m3.gguf")
+    del config["parameters"]["seed"]
+    hand_written(node.fake.models_dir, "bge-m3", config)
+    node.fake.reload_configs()
+    first = _run(node)
+    node.fake.replace("bge-m3")
+    assert _run(node) != first
+    assert _events(node, NEW_RUN)[-1]["detail"].startswith(f"run ")
+    assert "Seed " in _events(node, NEW_RUN)[-1]["detail"]
 
 
 def test_put_refuses_a_name_that_is_not_its_url(node):
@@ -292,12 +321,18 @@ def test_put_refuses_a_name_that_is_not_its_url(node):
     assert r.status_code == 400
 
 
-def test_delete_stops_the_model_removes_its_yaml_and_localai_forgets_it(node):
+def test_delete_stops_the_model_and_removes_its_yaml_and_says_localai_still_lists_it(node):
+    """LocalAI's /models/reload never forgets a config whose file is gone
+    (seen on the real one, 2026-10-03; localai-bugs.md B8): DELETE says so
+    with a 502 and the model goes at LocalAI's next start."""
     _put(node)
     _run(node)
     r = node.http.delete("/louise/models/bge-m3", headers=ADMIN)
-    assert r.status_code == 200 and r.json()["state"] == "removed"
+    assert r.status_code == 502 and "B8" in r.json()["error"]
     assert "bge-m3" not in node.fake.loaded and not (node.fake.models_dir / "bge-m3.yaml").exists()
+    assert {"id": "bge-m3", "state": "unloaded", "file": None} in \
+        node.http.get("/louise/models").json()
+    node.fake.restart()                             # LocalAI's next start
     assert all(row["id"] != "bge-m3" for row in node.http.get("/louise/models").json())
     assert node.http.delete("/louise/models/bge-m3", headers=ADMIN).status_code == 404
 

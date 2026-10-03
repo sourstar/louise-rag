@@ -83,7 +83,9 @@ def main_localai(env: dict[str, str] | os._Environ, image: str, token: str | Non
         print(f"[rage] refusing to start: {e}", file=sys.stderr, flush=True)
         return 2
     client = LocalAI(f"http://127.0.0.1:{port}")
-    observer = Observer(cfg, client, RunStore(state / "rage.sqlite"), image=image)
+    observer = Observer(cfg, client, RunStore(state / "rage.sqlite"), image=image,
+                        backends_root=Path(env.get("LOCALAI_BACKENDS_SYSTEM_PATH",
+                                                   "/var/lib/local-ai/backends")))
     freq = env.get("RAGE_FREQ_DIR")
     clock = Clock(Path(freq) if freq else None)
 

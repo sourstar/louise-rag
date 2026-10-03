@@ -79,6 +79,15 @@ clients, and weights hashed per process. Also built: the admin door, the
 panel, the restart, and `PUT`/`DELETE` of LocalAI's YAML. 37 tests against
 a fake LocalAI. Not run against a real one: that is 15c on the node.
 
+**15e in part, the same day**: `deploy/rage/Dockerfile.localai` builds the
+patched LocalAI (version `58830f7+patches.17b54353635e`) with its SYCL
+backend pinned by digest. It ships the six llama.cpp models' YAML and an
+app file. Its `smoke` target ran the whole chain on a CPU with a real
+LocalAI: first answer 2.17 s with the load, then 0.027 s, a run on every
+answer, one run across two restarts. It found a random seed per load (now
+pinned) and LocalAI bug B8. Left: the Python models as LocalAI backends,
+and the translator client.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was
