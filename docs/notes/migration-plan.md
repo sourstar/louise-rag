@@ -1371,10 +1371,17 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     - `PUT` writes JSON, which is YAML, so no YAML library is added.
     - `LOCALAI_API_KEY` is stripped and the §10 switches are forced on the
       LocalAI that `__main__` starts.
-  - **For 15f:** the front refuses a body whose `model` is not its URL's.
-    Under llama-swap that field was ignored, so each collection's
-    `[encoder] model` and `CHAT_MODEL` must equal the model id in its URL
-    before the cut-over.
+  - **The URL names the model, and nothing else does** (operator,
+    2026-10-03: "the user should not bother about choosing the right
+    model"). The front sets the body's `model` to the URL's. It first
+    refused a mismatch, which would have made every client spell the
+    model twice.
+    - The refusal also hid a defect: Louise's query side sends the
+      DOCUMENT encoder's name to the query encoder's URL
+      (`embeddings._side`).
+    - Under LocalAI that would have embedded a MedCPT query with the
+      article encoder, under the query encoder's run.
+    - Tested: `test_a_query_is_embedded_by_the_query_encoder_its_url_names`.
 
   As scoped: `app/rage/runs.py` `match` reads
   `/system` (pid, `started_at`, `load_options`) and `/proc` in place of
@@ -1387,7 +1394,7 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   - a default LocalAI filled in, absent from the YAML, is in the run;
   - an option naming another path states no run;
   - a process replaced mid-answer gets no header;
-  - a body naming another model than its URL is refused;
+  - a body naming another model than its URL is answered by the URL's;
   - a new run records an event naming the options that changed since
     the model's previous run (rage-over-localai §10);
   - **the admin guard**: `load` and `unload` reach LocalAI's

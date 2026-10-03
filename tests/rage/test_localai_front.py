@@ -173,14 +173,34 @@ def test_a_process_replaced_mid_answer_gets_no_header(node):
     assert _run(node) == first, "the next answer, from the new process, states the run"
 
 
-def test_a_body_naming_another_model_is_refused_and_one_naming_none_is_named(node):
+def test_the_url_names_the_model_whatever_the_body_says(node):
+    """Operator, 2026-10-03: whoever asks never chooses a model. The body's
+    `model` is set to the URL's, so the model that answers is the one whose
+    run the header states."""
     _put(node)
-    asked = len(node.fake.calls)
+    _put(node, "reranker")
+    stated = _run(node)
     r = _embed(node, model="reranker")
-    assert r.status_code == 400 and "names the model 'bge-m3'" in r.text
-    assert len(node.fake.calls) == asked, "LocalAI never saw it"
+    assert r.status_code == 200 and r.json()["model"] == "bge-m3"
+    assert r.headers[RUN_HEADER] == stated
+    assert "reranker" not in node.fake.loaded, "the model the body named was never asked"
     r = node.http.post("/upstream/bge-m3/v1/embeddings", json={"input": ["a"]})
     assert r.status_code == 200 and r.json()["model"] == "bge-m3"
+
+
+def test_a_query_is_embedded_by_the_query_encoder_its_url_names(node):
+    """An asymmetric space (MedCPT): Louise's query side posts to the query
+    encoder's URL with the DOCUMENT encoder's name in the body
+    (app/embeddings.py, `_side`). Taken from the body, LocalAI would embed
+    the query with the article encoder under the query encoder's run."""
+    for name, weights in (("medcpt-article", "bge-m3.gguf"), ("medcpt-query", "reranker.gguf")):
+        assert node.http.put(f"/louise/models/{name}", headers=ADMIN,
+                             json=pinned(weights)).status_code == 200
+    r = node.http.post("/upstream/medcpt-query/v1/embeddings",
+                       json={"model": "medcpt-article", "input": ["is aspirin safe?"]})
+    assert r.status_code == 200 and r.json()["model"] == "medcpt-query"
+    assert list(node.fake.loaded) == ["medcpt-query"]
+    assert r.headers[RUN_HEADER] == node.observer.row("medcpt-query")["run"]
 
 
 def test_a_model_on_the_cpu_is_a_cpu_run(node):

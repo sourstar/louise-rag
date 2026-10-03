@@ -17,9 +17,17 @@ card's clock while a person waits (clock.py); the only door to LocalAI's
 admin routes, which listen on loopback with no key (§8.4); and the System
 tab's panel. Loading, eviction, preload and caching are LocalAI's.
 
-A URL NAMES A MODEL, and a body naming another is refused: LocalAI picks the
-model from the body, so a body that disagreed with its URL would be answered
-by a model the URL never named. A body that names none is given the URL's.
+A URL NAMES A MODEL, AND NOTHING ELSE DOES. LocalAI picks the model from the
+body, and RAGE states the run of the model the URL names; so the body's
+`model` is set to the URL's, whatever it said. Nobody who asks — a person, an
+agent, Louise's own search — chooses a model: the collection's file names the
+URL, and the run on the answer is checked against the space before the vector
+is used (03 §3.3). A refusal instead would have made every client spell the
+model twice and keep the two in step; Louise's query side did not (it sent the
+DOCUMENT encoder's name to the query encoder's URL, `embeddings._side`), and
+under LocalAI that would have embedded a MedCPT query with the article
+encoder while the header named the query encoder's run (operator, 2026-10-03:
+"the user should not bother about choosing the right model").
 
 THE MODEL YAML IS THE DESIRED STATE (invariant 10; operator, 2026-10-03).
 `PUT` writes `<id>.yaml` into LocalAI's models directory — JSON, which is
@@ -261,24 +269,18 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
     # ---- the models ----------------------------------------------------------------
 
     def _named(model_id: str, raw: bytes, content_type: str) -> bytes:
-        """The body, naming the URL's model. Refused when it names another."""
+        """The body, naming the URL's model whatever it named. Passed on as it
+        came when it already does, so nothing is re-serialised for nothing."""
         if not raw.strip() or "json" not in content_type.lower():
             return raw
         try:
             body = json.loads(raw)
         except ValueError:
             return raw
-        if not isinstance(body, dict):
+        if not isinstance(body, dict) or body.get("model") == model_id:
             return raw
-        named = body.get("model")
-        if named is None:
-            body["model"] = model_id
-            return json.dumps(body, ensure_ascii=False).encode("utf-8")
-        if named != model_id:
-            raise Refused(400, f"this URL names the model {model_id!r} and the body names "
-                               f"{named!r}. A URL names a model (07 §7.8): send the body "
-                               f"to /upstream/{named}/…, or name {model_id!r} in it")
-        return raw
+        body["model"] = model_id
+        return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     @app.api_route("/upstream/{model_id}/{path:path}",
                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])

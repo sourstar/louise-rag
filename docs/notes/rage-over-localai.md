@@ -188,7 +188,7 @@ cut-over.
 
 | today (`app/rage/`) | becomes |
 |---|---|
-| `front.py`: the proxy and `Louise-Run` | kept. It proxies to LocalAI on loopback and refuses a body whose `model` is not the one in the URL. URLs stay `/upstream/<model>/…` (07 §7.8) |
+| `front.py`: the proxy and `Louise-Run` | kept. It proxies to LocalAI on loopback and sets the body's `model` to the URL's: the URL, from the collection's file, is the only thing that names a model (operator, 2026-10-03). URLs stay `/upstream/<model>/…` (07 §7.8) |
 | `runs.py`, `procfs.py`, `store.py`: the identity, `/proc`, the runs | kept. `match` reads `/system` and `/proc` in place of llama-swap's argv |
 | `clock.py`: `Louise-Level` holds the card's clock | kept. The front is the only process that reads the header, and the header changes no answer |
 | `front.py`: the admin routes, behind `ADMIN_TOKEN_FILE` | kept, as the only door to LocalAI's admin routes. LocalAI takes keys only from an environment value (§8.4), so it listens on loopback with no key and publishes nothing. The front's `load` and `unload` pass through to LocalAI's `POST /backend/load` and `POST /backend/shutdown`, and a request without the token never reaches LocalAI |
