@@ -1306,13 +1306,27 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
-### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15b DONE**
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b DONE**
 *Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
 model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
 the run identity of every answer, read from what was launched. Spec
 amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
 4, calibration statement 3), 02 §2.4 and §2.7.
-- **15a — The formats.** Codex version 4: an engine MAY carry `options`,
+- **15a — The formats. DONE 2026-10-03** (`tests/hold/test_engine_options.py`,
+  17; four mutations of the code each caught; whole suite 3439 passed).
+  What landed:
+  - `CODEX_VERSION` 4 and `OPTIONS_VERSION`. `Engine.options` is written
+    only when present, so a version-3 engine keeps its `engine_id`.
+  - `validate_options` enforces the rules in 09 §9.3: no absolute path (a
+    URL included), no float, never null, never empty.
+  - `derive`: a sister in a new space is written at `CODEX_VERSION`, as
+    its docstring always said; in her mother's space she keeps the
+    mother's version unless her engine carries `options`.
+  - Statements are written at version 3 with the engine checked before
+    signing; `read_statement` reads versions 1–3 and refuses the rest.
+  - Five tests that pinned the old versions moved with them.
+
+  As scoped: Codex version 4: an engine MAY carry `options`,
   absent for an engine started by `args` (`app/hold/codex.py`,
   `CODEX_VERSION`, the engine's keys at its `_only` check; readers 1–4).
   The peer's calibration statement version 3 beside 2

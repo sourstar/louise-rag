@@ -40,7 +40,7 @@ ENGINE_OBJECT = {
     "env": {}, "device": "Intel(R) Arc(TM) Pro B70 Graphics"}
 
 WORKED_EXAMPLE = {
-    "kind": "louise-codex", "version": 3,
+    "kind": "louise-codex", "version": 4,
     "descriptive": {
         "title": "PubMed",
         "summary": "Every MEDLINE abstract, sliced by year, for biomedical retrieval."},
@@ -354,8 +354,8 @@ def test_a_missing_field_is_refused(codex):
 
 
 def test_an_unknown_version_is_refused(codex):
-    d = dict(codex.to_dict(), version=4)
-    with pytest.raises(CodexError, match="unsupported Codex version 4"):
+    d = dict(codex.to_dict(), version=5)
+    with pytest.raises(CodexError, match="unsupported Codex version 5"):
         cx.from_dict(d)
 
 

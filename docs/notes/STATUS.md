@@ -66,6 +66,12 @@ same day:
 
 Nothing changed on the node; RAGE as deployed keeps running until 15f.
 
+**15a, the same day**: Codex 4 and calibration statement 3 in the code
+(`app/hold/codex.py`, `embedder.py`, `collection.py`;
+`tests/hold/test_engine_options.py`, 17). Once deployed, new collections
+are written at version 4. Every existing Codex, engine id, run and
+statement stays as it is. Whole suite 3439 passed.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

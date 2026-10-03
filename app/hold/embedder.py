@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from . import calibration as cal, envelope as env
-from .codex import ENGINE_VERSION, Codex, CodexError, sample
+from .codex import ENGINE_VERSION, Codex, CodexError, engine_from_dict, sample
 
 #: 03 §3.1's third outcome. An unreachable encoder is not a failure: it is
 #: a deferral, and CLAUDE.md forbids waiting on it without a bound.
@@ -227,7 +227,7 @@ def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
     encoder"; the space author's calibration MEMBER is a different object
     defined in the same section."""
     if codex.version >= ENGINE_VERSION:
-        return _statement_v2(run, key, now=now)
+        return _statement_run(run, key, now=now)
     body = {
         "kind": "louise-calibration-run", "version": 1,
         "space_id": run.space_id,
@@ -248,12 +248,27 @@ def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
     return env.sign(env.CALIBRATION, body, key)
 
 
-def _statement_v2(run: Run, key, *, now: str) -> dict[str, Any]:
-    """09 §9.12's body at version 2: "this RUN, on this peer, is compliant
+#: 09 §9.12's statement versions: what is WRITTEN, and what is READ. Version
+#: 3 is the options amendment's (operator, 2026-10-03): its `engine` may carry
+#: `options`. "A version-2 statement stays valid as written and is read
+#: beside version 3: its run is unchanged, and gating it again would
+#: recompute a verdict already held" — so 2 is read for ever, and 1 with it.
+STATEMENT_VERSION = 3
+STATEMENT_VERSIONS = (1, 2, 3)
+
+
+def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
+    """09 §9.12's body at version 3: "this RUN, on this peer, is compliant
     with this space" (dd9bef4). A peer keeps one per run it has validated,
     and a vector is written only from an answer naming a run with a passing
-    one. "Version 1 of this body carried `encoder_image` … in place of the
-    run, and had no fingerprint."
+    one. Version 2 is this body with an engine that cannot carry `options`;
+    "Version 1 of this body carried `encoder_image` … in place of the run,
+    and had no fingerprint."
+
+    THE ENGINE IS CHECKED BEFORE IT IS SIGNED, by the rules a Codex holds
+    an engine to (09 §9.3): a statement is published, and a peer that
+    adopted one naming a malformed engine — `options` naming a file no
+    weights digest covers, say — could not repair it.
 
     IT NEEDS A RUN TO NAME. 03 §3.3: "An endpoint that states no run
     identity cannot be held to a validated run: a peer may search with it
@@ -272,8 +287,12 @@ def _statement_v2(run: Run, key, *, now: str) -> dict[str, Any]:
                         "whether it is batch-invariant; this pass measured neither")
     if run.role not in ("document", "query"):
         raise GateError(f"role is document or query, got {run.role!r}")
+    try:
+        _validate_stated_engine(run.stated.engine)
+    except CodexError as e:
+        raise GateError(f"the run's engine cannot be signed into a statement: {e}") from e
     body = {
-        "kind": "louise-calibration-run", "version": 2,
+        "kind": "louise-calibration-run", "version": STATEMENT_VERSION,
         "space_id": run.space_id,
         "collection_id": run.collection_id,
         "set": run.set_id,
@@ -297,13 +316,26 @@ def _statement_v2(run: Run, key, *, now: str) -> dict[str, Any]:
     return env.sign(env.CALIBRATION, body, key)
 
 
+def _validate_stated_engine(engine: Any) -> None:
+    from .codex import _validate_engine
+    _validate_engine(engine_from_dict(engine, "engine"), "engine")
+
+
 def read_statement(envelope_: dict[str, Any]) -> dict[str, Any]:
     """The body of a calibration statement, verified. A statement that does
-    not verify under `louise/calibration/v1` is not one."""
+    not verify under `louise/calibration/v1` is not one, and a version this
+    build does not implement is refused, never half-read (09 §9.18)."""
     body = env.verify(env.CALIBRATION, envelope_)
     if body.get("kind") != "louise-calibration-run":
         raise GateError(f"not a calibration statement: kind="
                         f"{body.get('kind')!r}")
+    version = body.get("version")
+    if isinstance(version, bool) or version not in STATEMENT_VERSIONS:
+        raise GateError(f"calibration statement version {version!r}; this build reads "
+                        f"{', '.join(str(v) for v in STATEMENT_VERSIONS)} (09 §9.18)")
+    if version == 2 and isinstance(body.get("engine"), dict) and "options" in body["engine"]:
+        raise GateError("a version-2 calibration statement names an engine without "
+                        "`options`; one that carries them is a version-3 body (09 §9.12)")
     return body
 
 
