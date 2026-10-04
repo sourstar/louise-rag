@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from app import config, dispatch, gpu, gpu_governor, node_state
+from app import config, dispatch, gpu, gpu_clock, gpu_governor, node_state
 
 
 def _card(tmp_path, *, min_mhz=400, max_mhz=2800, floor=400):
@@ -37,7 +37,10 @@ def test_the_clock_is_held_for_the_claim_and_let_go_after(tmp_path, store):
     d = _card(tmp_path)
     g = gpu_governor.Governor(d)
     assert g.step(False) is False and _min(d) == 400
-    assert g.step(True) is True and _min(d) == 2800
+    # HALF the card's own maximum, not the maximum (operator, 2026-09-23):
+    # the sag was what cost time, not the peak, and holding the top left the
+    # card at full clock through every gap between batches.
+    assert g.step(True) is True and _min(d) == 1400
     assert g.step(True) is False, "already held: nothing to write"
     assert g.step(False) is True and _min(d) == 400
 
@@ -46,7 +49,7 @@ def test_a_governor_that_died_holding_the_clock_rests_at_the_floor(tmp_path, sto
     """Killed while pinning, it leaves min_freq at the maximum; the next one
     must not take that for the rest value, or the card would stay pinned
     for good."""
-    d = _card(tmp_path, min_mhz=2800)
+    d = _card(tmp_path, min_mhz=1400)      # left at what WE would write
     g = gpu_governor.Governor(d)
     assert g.rest == 400
     g.step(True)
@@ -83,11 +86,11 @@ def test_the_loop_follows_the_claim_and_restores_on_stop(tmp_path, store, monkey
         raise AssertionError(what)
     until(lambda: gpu.governor()["state"] == "running", "the governor never said it runs")
     with dispatch.interactive(dispatch.Level.CHAT):
-        until(lambda: _min(d) == 2800, "the clock was not held while a chat ran")
+        until(lambda: _min(d) == 1400, "the clock was not held while a chat ran")
         until(lambda: gpu.governor().get("pinned") is True, "the tab did not see it held")
     until(lambda: _min(d) == 400, "the clock was not let go after the chat")
     with dispatch.interactive(dispatch.Level.QUERY):
-        until(lambda: _min(d) == 2800, "held again")
+        until(lambda: _min(d) == 1400, "held again")
         stop.set()
         t.join(5)
     assert _min(d) == 400, "a stopping governor gives the clock back"
@@ -174,3 +177,34 @@ def test_a_rage_that_does_not_answer_never_breaks_the_page(monkeypatch):
     monkeypatch.setattr(config, "RAGE_URL", "http://rage:30437")
     monkeypatch.setattr(gpu, "_get_json", gone)
     assert gpu.governor() == {"state": "absent"}
+
+
+def test_the_hold_is_a_fraction_of_the_card_not_a_frequency(tmp_path, store):
+    """VENDOR INDEPENDENCE (memory: rage-vendor-independent). The hold is
+    computed from what the card itself reports, so the same rule carries to
+    any GPU and no vendor's clock range is written down anywhere."""
+    for top, floor in ((2800, 400), (1550, 200), (900, 300)):
+        d = tmp_path / f"c{top}"
+        d.mkdir()
+        (d / "min_freq").write_text(f"{floor}\n")
+        (d / "rp0_freq").write_text(f"{top}\n")
+        (d / "rpn_freq").write_text(f"{floor}\n")
+        g = gpu_governor.Governor(d)
+        assert g.hold == max(floor, int(top * gpu_clock.HOLD_FRACTION))
+        assert floor <= g.hold <= top, "never below the floor, never above the top"
+        g.step(True)
+        assert _min(d) == g.hold
+        assert g.status()["hold_mhz"] == g.hold
+
+
+def test_a_card_whose_floor_is_above_half_its_top_gets_the_floor(tmp_path, store):
+    """A narrow range must not produce a min_freq the driver would refuse."""
+    d = tmp_path / "narrow"
+    d.mkdir()
+    (d / "min_freq").write_text("1000\n")
+    (d / "rp0_freq").write_text("1200\n")
+    (d / "rpn_freq").write_text("1000\n")     # floor above half the top
+    g = gpu_governor.Governor(d)
+    assert g.hold == 1000
+    g.step(True)
+    assert _min(d) == 1000

@@ -114,9 +114,9 @@ def test_the_clock_is_held_from_the_first_waiter_to_the_last(tmp_path):
     clock = Clock(d)
     clock.enter()
     clock.enter()
-    assert _min(d) == 2800
+    assert _min(d) == 1400
     clock.leave()
-    assert _min(d) == 2800, "someone still waits"
+    assert _min(d) == 1400, "someone still waits"
     clock.leave()
     assert _min(d) == 400
     clock.leave()

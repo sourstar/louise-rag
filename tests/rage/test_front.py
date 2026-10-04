@@ -203,7 +203,7 @@ def test_the_clock_is_held_while_a_person_waits_and_only_then(rage, tmp_path):
         with client.stream("POST", "/upstream/bge-m3/v1/chat/completions", json={},
                            headers={"Louise-Level": "chat"}) as r:
             b"".join(r.iter_raw())
-        assert seen == [400, 2800, 2800]
+        assert seen == [400, 1400, 1400]
         assert int((d / "min_freq").read_text()) == 400, "given back after the last token"
         assert client.get("/louise/gpu").json()["clock"]["running"] is True
 
@@ -214,7 +214,7 @@ def test_stopping_the_front_gives_the_clock_back(rage, tmp_path):
     app, _ = _app(rage, clock=clock)
     with TestClient(app):
         clock.enter()                       # someone is mid-answer when SIGTERM lands
-        assert int((d / "min_freq").read_text()) == 2800
+        assert int((d / "min_freq").read_text()) == 1400
     assert int((d / "min_freq").read_text()) == 400
 
 
