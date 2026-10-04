@@ -106,11 +106,26 @@ def _over_budget(response) -> bool:
     return response.status_code == 500 and "too large to process" in response.text
 
 
+def _numeric_failure(response) -> bool:
+    """Did the server fail to SEND a vector because it held a NaN or an Inf?
+
+    llama-server writes such a vector as nulls, which `_invalid` catches and
+    the loop below retries. LocalAI cannot encode it at all and fails the
+    whole request: 500 "json: error calling MarshalJSON for type schema.Item:
+    json: unsupported value: NaN". Seen on the node 2026-10-04 (migration step
+    15c), in two of three passes of wikipedia's gate over bge-m3 on the B70,
+    and never in the same texts when they were asked for again. The same fault
+    as the nulls, in another spelling, so the same remedy: retry."""
+    return response.status_code == 500 and any(
+        f"unsupported value: {v}" in response.text for v in ("NaN", "+Inf", "-Inf"))
+
+
 def _embed_batch(batch: list[str], timeout: float,
                  recipe: "collections_mod.EmbedRecipe", *,
                  raw: bool = False, runs: set | None = None) -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
-    - null/NaN vectors (intermittent SYCL corruption) -> plain retry
+    - null/NaN vectors (intermittent SYCL corruption) -> plain retry; also
+      when the server could not send them at all (`_numeric_failure`, LocalAI)
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
       truncation underestimates tokens for CJK/dense scripts) -> halve the
       char budget and retry until it fits.
@@ -158,6 +173,10 @@ def _embed_batch(batch: list[str], timeout: float,
             # tokens; the dense tail case needs ~10 % less, not 50 %).
             if _over_budget(e.response) and budget > 256:
                 budget = max(256, int(budget * 0.8))
+                continue
+            if _numeric_failure(e.response):
+                n_bad = len(batch)
+                time.sleep(0.3 * (attempt + 1))
                 continue
             detail = e.response.text[:200].replace("\n", " ")
             raise RuntimeError(

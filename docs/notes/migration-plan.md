@@ -1343,7 +1343,17 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   patch; the load spec fails with the hook removed. Recorded with every
   LocalAI action item in [`localai-bugs.md`](localai-bugs.md);
   `tests/rage/test_localai_patches.py` (4) holds the series to that list.
-- **15c — Go/no-go, on the node** (rage-over-localai §8.1–§8.2): LocalAI
+- **15c — Go/no-go, on the node. RUN 2026-10-04, unattended (operator):
+  bge-m3 PASSES; the operator decides.** Results in rage-over-localai §12.
+  wikipedia's own gate passed three times out of three on the new engine
+  (16/16, every one of the 512 cosines ≥ 0.999004), at 10,700 tokens/s
+  against the live engine's 9,509. The MedCPT reranker on the card matched
+  the live one to 3e-8. It found LocalAI bug B9 (a NaN vector fails the
+  whole request), now retried by Louise's client. Not run: the spill test,
+  and DAR-legal-it and MADLAD on the card. Each would have squeezed the
+  live models.
+
+  As scoped (rage-over-localai §8.1–§8.2): LocalAI
   at the base with the series applied, its llama-cpp SYCL backend, on the
   B70. bge-m3 gated by hand: fingerprint, batch invariance, the
   fingerprint again under spill, tokens per second against today's

@@ -435,3 +435,74 @@ Not run here: DAR-legal-it and MADLAD, whose torch is on PyTorch's index,
 which this sandbox cannot reach. Their gRPC methods are tested with
 stand-in models (`tests/test_localai_backends.py`). Their libraries are
 imported at the image's build, on the node.
+
+## 12. The go/no-go on the node (15c, 2026-10-04)
+
+*Run unattended at the operator's word. The image
+`ghcr.io/sourstar/rage@sha256:b203a361…a092d` ran as a throwaway container
+(`rage-15c`, port 30499, its own folder `/mnt/ssd5/apps/louise-rage-15c`,
+no clock) beside the live RAGE, which was not touched. The scripts were
+`gate15c.py`, `nan15c*.py` and `fp15c.py`, run from Louise's own image with
+the branch's code. They are throwaway and kept in `/tmp/15c-scripts` on
+the node.*
+
+**bge-m3, by wikipedia's own gate** (03 §3.3: its Codex, its 512
+calibration texts, its tolerance 0.95), through Louise's client:
+
+| engine | gate | lowest of 512 cosines | tokens/s | batch-invariant |
+|---|---|---|---|---|
+| live: llama-server b10630 under llama-swap | 16/16, median 1.0000 | 0.999004 | 9,509 | false |
+| LocalAI 58830f7 + P1, SYCL f16 backend, 3 passes | 16/16, median 1.0000, each pass | 0.999004–0.999006 | 10,651–10,756 | false |
+
+- On the card: 1,036 MiB at first, 1,149 MiB once warm. The first answer
+  took 12.6 s with the load and the weights hash; RAGE stated a run on
+  every answer.
+- **Throughput (§8.2).** One text per backend call is 12 % FASTER than
+  llama-server's batches here. R2 (a batched `Embedding`) is not needed.
+- **The fingerprint is not stable on either engine.** Five passes of the
+  sixteen fingerprint texts gave five fingerprints on each. 3 or 4 of the
+  16 texts vary in their last bits, with an absolute difference of at most
+  2.0e-4 on the live engine and 1.6e-4 on LocalAI. It is a property of the
+  SYCL encoder, not of LocalAI. The fingerprint stays what 03 §3.3 makes
+  it, evidence and never a check the worker repeats. But two statements of
+  one run will not carry equal fingerprints.
+- **Batch invariance** is false on both engines, in line with the point
+  above.
+
+**What it found: LocalAI bug B9.** Two of the first three gate passes
+ended in HTTP 500 "json: unsupported value: NaN". The NaN is intermittent:
+the same texts, alone or in the same batches, came back finite on every
+retry, and 512 texts sent alone gave none. llama-server sends such a vector
+as nulls, which Louise's client has always retried. LocalAI cannot encode
+it and fails the request. Louise would have recorded an error on the
+document, and an error takes the document out of every selection.
+**Fixed before going on:** `embeddings._numeric_failure` retries that 500
+exactly as a null vector is retried, and never cuts the input
+(`tests/test_embed_recipe.py`, two tests, both failing without the fix).
+With it, three gate passes out of three.
+
+Over-long inputs: both engines refuse the same ~61 raw calibration texts
+above the context. LocalAI's "too large to process" 500 is the one Louise
+already shrinks on (`_over_budget`, 2026-09-15).
+
+**The MedCPT reranker on the card** (OpenVINO GPU, `louise-medcpt-rerank`),
+against the live one on five PubMed-style pairs:
+- the same order;
+- largest score difference 2.9e-8;
+- 289 MiB on the card;
+- 4.7 s for the first answer with the load, 29 ms after;
+- a run stated.
+
+**Not run, and why:**
+- **The fingerprint under spill (§8.1).** Spilling means overcommitting
+  the card, which would push the live models off it.
+- **DAR-legal-it (≈6 GB) and MADLAD (≈8 GB) on the card.** About 6 GB was
+  free beside the live models.
+
+Both need a window in which the live RAGE gives up its models, or the
+cut-over itself.
+
+**What the test did to the live node:** while it held 1.4 GB of the card,
+the live RAGE gave up MADLAD (idle) under pressure, by design (rage.md
+§19). It comes back on the next translation, at the cost of a load.
+Nothing else changed, and the test container is removed.

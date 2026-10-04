@@ -107,6 +107,14 @@ cannot reach: they first run on the node.
 (`localai-58830f7-1`). Every backend's libraries imported at build; nothing
 run on the card yet. Next: 15c, the operator's go/no-go.
 
+**15c, the same day, unattended**: bge-m3 on the B70 under LocalAI passes
+wikipedia's own gate three times out of three, 12 % faster than today's
+engine. The MedCPT reranker on the card matches today's to 3e-8. It found
+LocalAI bug B9: an intermittent NaN fails the whole request. Louise now
+retries it as she retries llama-server's null vectors. Not run: the spill
+test, DAR-legal-it and MADLAD on the card, because each needs room the live
+models hold. The go is the operator's (rage-over-localai §12).
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

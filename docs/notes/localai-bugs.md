@@ -1,7 +1,7 @@
 # LocalAI: every action item for the LocalAI team
 
 *One place for everything this project owes or asks `mudler/LocalAI`: the
-defects found (B1–B8), the patches we carry (P1), and the requests (R1–R5).
+defects found (B1–B9), the patches we carry (P1), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
 against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
 requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
@@ -17,6 +17,7 @@ requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 | B6 | defect | distributed scheduler: evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | — (one node) | not filed |
 | B7 | defect, may be intended | loader: when busy models cannot be evicted, the load goes ahead over `max_active_backends` | availability | not filed |
 | B8 | defect | `POST /models/reload` never forgets a model whose YAML was removed: it lists and serves it until LocalAI restarts | RAGE's `DELETE` answers 502 and says so | not filed; seen on a real LocalAI, 2026-10-03 |
+| B9 | defect | `/v1/embeddings`: a vector holding a NaN fails the whole request with 500 ("json: unsupported value: NaN"), losing every other vector and the reason | Louise retries it as the null vector llama-server sends (`embeddings._numeric_failure`) | not filed; seen on the node, 2026-10-04 (15c) |
 | **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | **blocking**: without it RAGE states no run for any LocalAI model | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
@@ -228,6 +229,27 @@ path and no longer exists. `LoadModelConfigsFromPathStrict` already builds
 an authoritative snapshot; the reload endpoint could use those semantics.
 `/models/delete/:name` is not the answer: it is the gallery's, and it
 deletes the model's files too.
+
+---
+
+### B9. A NaN in one vector fails the whole `/v1/embeddings` request
+
+*Seen on the node at 58830f7 with P1, the SYCL f16 llama.cpp backend of the
+same commit, bge-m3 on an Arc Pro B70 (migration step 15c, 2026-10-04).*
+
+Two of three passes of a 512-text calibration set, sent in batches, ended
+in HTTP 500 `json: error calling MarshalJSON for type schema.Item: json:
+unsupported value: NaN`. The same texts asked again, alone or in the same
+batches, came back finite: the NaN is intermittent and comes from the
+backend. Go's `encoding/json` cannot encode a NaN or an Inf in a `float32`
+slice, so the response is lost whole: every finite vector in the request,
+and which input was bad.
+
+llama-server, on the same card and weights, sends such a vector as nulls,
+which a client can recognise and retry. Suggested: check each embedding
+for non-finite values before encoding, and either answer an error naming
+the input's index, or retry that input once in the backend. Either way the
+client learns which text failed rather than losing the batch.
 
 ---
 

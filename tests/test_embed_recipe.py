@@ -241,6 +241,53 @@ def test_any_other_500_is_still_an_error(isolated_config, monkeypatch):
         embeddings.embed_texts(["an abstract"], recipe=recipe)
 
 
+LOCALAI_NAN = ('{"error":{"code":500,"message":"json: error calling MarshalJSON for type '
+               'schema.Item: json: unsupported value: NaN","type":""}}')
+
+
+def test_localais_nan_500_is_retried_as_a_nan_vector_is(isolated_config, monkeypatch):
+    """LocalAI cannot send a NaN vector and fails the request with 500 (node,
+    2026-10-04, 15c: two of three gate passes over bge-m3). llama-server sends
+    nulls, which were always retried; the same fault must get the same remedy,
+    never an error written to a document — and never a shortened input."""
+    import httpx as httpx_mod
+    monkeypatch.setattr(embeddings.time, "sleep", lambda s: None)
+    sent = []
+
+    class Resp:
+        def __init__(self, status_code):
+            self.status_code = status_code
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx_mod.HTTPStatusError(
+                    "failed", request=httpx_mod.Request("POST", "http://x"),
+                    response=httpx_mod.Response(self.status_code, text=LOCALAI_NAN))
+        def json(self):
+            return {"data": [{"index": 0, "embedding": [3.0, 4.0]}]}
+        headers = {}
+
+    def flaky(url, json=None, timeout=None, headers=None):
+        sent.append(json["input"][0])
+        return Resp(500 if len(sent) < 3 else 200)
+    monkeypatch.setattr(embeddings.httpc, "post", flaky)
+    recipe = collections_mod.EmbedRecipe(
+        url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
+        ctx=8192)
+    assert embeddings.embed_texts(["a sentence"], recipe=recipe) == [[0.6, 0.8]]
+    assert sent == ["a sentence"] * 3, "retried whole, never cut"
+
+
+def test_localais_nan_500_that_never_clears_is_the_numeric_failure_it_is(
+        isolated_config, monkeypatch):
+    monkeypatch.setattr(embeddings.time, "sleep", lambda s: None)
+    _refusing_server(monkeypatch, 500, LOCALAI_NAN, limit=0)
+    recipe = collections_mod.EmbedRecipe(
+        url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
+        ctx=8192)
+    with pytest.raises(RuntimeError, match="null/NaN vectors even after retries"):
+        embeddings.embed_texts(["a sentence"], recipe=recipe)
+
+
 def test_space_components_come_from_the_recipe(isolated_config, config_dir):
     _write_toml(config_dir, "medcpt", MEDCPT_TOML)
     c = collections_mod.by_name("medcpt")
