@@ -97,6 +97,19 @@ def test_every_model_yaml_pins_what_localai_would_fill_in():
         assert body["parameters"]["model"].startswith("weights/")
 
 
+def test_a_chat_model_gets_its_own_chat_template():
+    """Without `use_tokenizer_template` LocalAI joins the messages itself and
+    Qwen3 rambled ("Rome. Answer: Rome. Answer: Rome…") where llama-server's
+    --jinja answered one sentence (node, 2026-10-04). Every llama.cpp model
+    that is not an encoder or a reranker is a chat model here."""
+    chats = [p for p in ALL if _yaml(p)["backend"] == "llama-cpp"
+             and not _yaml(p).get("embeddings") and not _yaml(p).get("reranking")]
+    assert [p.stem for p in chats] == ["chat"]
+    for p in chats:
+        assert _yaml(p).get("template", {}).get("use_tokenizer_template") is True, p.name
+        assert "use_jinja:true" in _yaml(p)["options"], p.name
+
+
 def test_each_python_yaml_is_a_load_its_backend_accepts():
     """Every option a Python model's YAML gives is one its backend reads, at
     a value it takes: a misspelt one would load with a default while the run

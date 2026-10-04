@@ -8,9 +8,17 @@
 # random one at every load), and options parallel — taken from the
 # llama-server flags in deploy/rage/rage.example.toml, the engine it replaces.
 # --jinja -c 16384 -np 1 -fa on -t 6 -ngl 999 --top-k 20 --top-p 0.95 --repeat-penalty 1.0; -b and -ub at llama-server's own defaults, 2048 and 512, now written down
+# template.use_tokenizer_template: the messages go to the backend whole and the
+# model's own chat template (the GGUF's) is applied there, as llama-server's
+# --jinja did. Without it LocalAI joins the messages itself, and Qwen3 answered
+# "Rome. Answer: Rome. Answer: Rome…" where llama-server answered one
+# sentence (node, 2026-10-04, before the cut-over).
 {
   "name": "chat",
   "backend": "llama-cpp",
+  "template": {
+    "use_tokenizer_template": true
+  },
   "context_size": 16384,
   "threads": 6,
   "gpu_layers": 999,
