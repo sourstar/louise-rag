@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = (ROOT / "deploy" / "rage" / "Dockerfile.localai").read_text(encoding="utf-8")
 APP_YAML = (ROOT / "deploy" / "truenas-rage-localai.yaml").read_text(encoding="utf-8")
 MODELS = sorted((ROOT / "deploy" / "rage" / "localai-models").glob("*.yaml"))
+#: models whose YAML is kept but not served: copied in at no cut-over and mounted
+#: by no app file. DAR-legal-it, suspended by the operator 2026-10-04 (it
+#: serves no live collection).
+SUSPENDED = sorted((ROOT / "deploy" / "rage" / "localai-models" / "suspended").glob("*.yaml"))
+ALL = MODELS + SUSPENDED
 BACKENDS = ROOT / "deploy" / "localai" / "backends"
 #: the platform's Python backends (15e-2), by the name a YAML's `backend` gives
 PYTHON_BACKENDS = sorted(d.name for d in BACKENDS.iterdir() if d.name.startswith("louise-"))
@@ -82,7 +87,7 @@ def test_nothing_is_installed_after_the_image_is_built():
 
 def test_every_model_yaml_pins_what_localai_would_fill_in():
     assert MODELS
-    for path in MODELS:
+    for path in ALL:
         body = _yaml(path)
         assert not path.read_text(encoding="utf-8").startswith(MARKER), \
             f"{path.name}: the operator's, edited by hand"
@@ -101,7 +106,7 @@ def test_each_python_yaml_is_a_load_its_backend_accepts():
                "louise-medcpt-rerank": medcpt_backend}
     assert sorted(by_name) == PYTHON_BACKENDS
     served = {}
-    for path in MODELS:
+    for path in ALL:
         body = _yaml(path)
         if body["backend"] in by_name:
             module = by_name[body["backend"]]
@@ -139,7 +144,7 @@ def test_every_model_yaml_states_a_run_once_localai_has_completed_it(tmp_path):
     `EnvVars`, is 09 §9.3's options. The smoke model had no `env:`, so §11
     missed that NEO_CACHE_DIR made all six unstatable."""
     fake = FakeLocalAI(tmp_path)
-    for path in MODELS:
+    for path in ALL:
         body = _yaml(path)
         fake.configs[body["name"]] = body
         sent = loadopts.parse(json.dumps(fake.materialise(body["name"])))
@@ -150,7 +155,8 @@ def test_every_model_yaml_states_a_run_once_localai_has_completed_it(tmp_path):
 
 def test_the_yamls_cover_every_model_the_node_serves_today():
     today = tomllib.loads((ROOT / "deploy" / "rage" / "rage.example.toml").read_text())
-    assert {p.stem for p in MODELS} == set(today["models"])
+    assert {p.stem for p in ALL} == set(today["models"])
+    assert {p.stem for p in SUSPENDED} == {"dar-legal-it"}, "suspended: the operator's word"
 
 
 def test_the_weights_are_mounted_read_only_inside_the_models_directory():
