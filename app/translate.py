@@ -12,9 +12,18 @@ and reading "only texts in German" out of a question.
 
 Every call is bounded (TIMEOUT_S): a search never waits on this without a
 limit, and a failure is an empty answer the caller falls back from.
+
+TWO SHAPES, by TRANSLATE_API (app/config.py). "translate" is the server's own:
+POST /translate {"items": [...]} and GET /languages. "completion" is the same
+two requests under LocalAI (migration step 15e-2): each one, as JSON, is the
+prompt of one /v1/completions call, and the completion's text is the server's
+JSON answer (deploy/localai/backends/louise-madlad/backend.py). One prompt
+carries the whole batch, because LocalAI calls the model once per prompt and
+the model translates a batch in one pass (operator, 2026-10-03).
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -36,6 +45,24 @@ def available() -> bool:
     return bool(config.TRANSLATE_URL)
 
 
+def health_url() -> str:
+    """What the System page pings: a route that answers without loading the
+    model in either shape."""
+    if config.TRANSLATE_API == "completion":
+        return f"{config.TRANSLATE_URL}/v1/models"
+    return f"{config.TRANSLATE_URL}/health"
+
+
+def _completion(request: dict, timeout: float, headers: dict[str, str] | None = None):
+    """One request in the completion shape: `request` as the prompt, the
+    answer read back from the completion's text."""
+    r = httpx.post(f"{config.TRANSLATE_URL}/v1/completions",
+                   json={"prompt": json.dumps(request, ensure_ascii=False)},
+                   timeout=timeout, headers=headers or {})
+    r.raise_for_status()
+    return json.loads(r.json()["choices"][0]["text"])
+
+
 def languages() -> frozenset[str]:
     """The target codes the server knows; empty when it cannot be asked."""
     global _languages
@@ -46,9 +73,13 @@ def languages() -> frozenset[str]:
     if cached is not None and time.monotonic() - cached[0] < _LANGUAGES_TTL_S:
         return cached[1]
     try:
-        r = httpx.get(f"{config.TRANSLATE_URL}/languages", timeout=10.0)
-        r.raise_for_status()
-        got = frozenset(str(c) for c in r.json().get("languages", []))
+        if config.TRANSLATE_API == "completion":
+            answer = _completion({"languages": True}, 10.0)
+        else:
+            r = httpx.get(f"{config.TRANSLATE_URL}/languages", timeout=10.0)
+            r.raise_for_status()
+            answer = r.json()
+        got = frozenset(str(c) for c in answer.get("languages", []))
     except Exception:   # noqa: BLE001 — unreachable is "no languages", not an error
         return frozenset()
     with _lock:
@@ -67,14 +98,18 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
     model knows no such target; [] when the call failed as a whole."""
     if not items or not available():
         return []
+    request = {"items": [{"text": t, "to": to} for t, to in items]}
     try:
         with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
                            timeout=TIMEOUT_S):
-            r = httpx.post(f"{config.TRANSLATE_URL}/translate",
-                           json={"items": [{"text": t, "to": to} for t, to in items]},
-                           timeout=TIMEOUT_S, headers=dispatch.level_headers())
-        r.raise_for_status()
-        out = r.json().get("translations")
+            if config.TRANSLATE_API == "completion":
+                answer = _completion(request, TIMEOUT_S, dispatch.level_headers())
+            else:
+                r = httpx.post(f"{config.TRANSLATE_URL}/translate", json=request,
+                               timeout=TIMEOUT_S, headers=dispatch.level_headers())
+                r.raise_for_status()
+                answer = r.json()
+        out = answer.get("translations")
     except Exception:   # noqa: BLE001 — the caller falls back and says so
         return []
     if not isinstance(out, list) or len(out) != len(items):

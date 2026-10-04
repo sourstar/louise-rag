@@ -202,6 +202,43 @@ def test_the_system_page_names_and_pings_the_translation_model(isolated_config, 
     assert "chat model translates" in web._effective_config()["tier1"]["TRANSLATE_URL"]
 
 
+def test_under_localai_it_speaks_completions_and_a_failure_is_still_empty(monkeypatch):
+    """TRANSLATE_API=completion (migration step 15e-2): the request as the
+    prompt, the answer as the text; anything else is no translation."""
+    monkeypatch.setattr(config, "TRANSLATE_URL", "http://nas:30437/upstream/madlad")
+    monkeypatch.setattr(config, "TRANSLATE_API", "completion")
+    answers = iter(['{"translations": ["ciao"]}', "not json", '{"no": "translations"}'])
+
+    def post(url, json=None, timeout=None, headers=None):
+        assert url.endswith("/v1/completions") and "items" in __import__("json").loads(
+            json["prompt"])
+        return httpx.Response(200, json={"choices": [{"text": next(answers)}]},
+                              request=httpx.Request("POST", url))
+    monkeypatch.setattr(mt.httpx, "post", post)
+    assert mt.translate([("hello", "it")]) == ["ciao"]
+    assert mt.translate([("hello", "it")]) == []
+    assert mt.translate([("hello", "it")]) == []
+
+
+def test_translate_api_is_one_of_two_and_todays_until_the_cut_over():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def api(value):
+        env = {k: v for k, v in os.environ.items() if k != "TRANSLATE_API"}
+        if value is not None:
+            env["TRANSLATE_API"] = value
+        return subprocess.run([sys.executable, "-c", "from app import config; "
+                               "print(config.TRANSLATE_API)"], env=env, text=True,
+                              capture_output=True, cwd=Path(__file__).resolve().parents[1])
+    assert api(None).stdout.strip() == "translate"
+    assert api(" Completion ").stdout.strip() == "completion"
+    refused = api("grpc")
+    assert refused.returncode != 0 and "TRANSLATE_API must be" in refused.stderr
+
+
 def test_each_mixed_group_is_searched_in_every_language_it_holds(isolated_config, monkeypatch):
     from app import db, retrieval
     c = collections_mod.default_collection()

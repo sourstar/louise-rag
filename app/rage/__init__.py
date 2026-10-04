@@ -10,6 +10,14 @@ memory, loads and unloads, computes the run identity from what is actually
 running and states it on every answer (`Louise-Run`), holds the card's clock
 while a person waits, and guards the operator's routes with the admin token.
 
+TWO RUNNERS, ONE AT A TIME, until migration step 15's cut-over
+(docs/notes/rage-over-localai.md). `RAGE_RUNNER=llama-swap`, today's: the
+front decides everything and llama-swap runs the processes, as below.
+`RAGE_RUNNER=localai`: LocalAI launches, loads and evicts, and the front
+keeps one job — the run of every answer, read from what LocalAI launched
+(observer.py) — and three beside it: the clock, the door to LocalAI's admin
+routes, the panel (front_localai.py).
+
 llama-swap RUNS THE PROCESSES AND DECIDES NOTHING. Its yaml is generated
 from `rage.toml` (swapyaml.py): one group holding every entry, no swapping,
 no exclusivity, no TTL, bound to localhost. With no group at all llama-swap
@@ -37,5 +45,11 @@ are child processes; torch lives in them.
     store.py      the runs this front has stated, kept across its restarts
     swap.py       the HTTP client of the local llama-swap
     front.py      the HTTP surface: /upstream, /louise/models, /louise/runs
-    __main__.py   boot: refuse a tag, write the yaml, start llama-swap, serve
+    wire.py       what both fronts say on the wire: the run header, the refusal, the token
+    localai.py    the HTTP client of the local LocalAI                  (RAGE_RUNNER=localai)
+    loadopts.py   a LocalAI load call as 09 §9.3's engine `options`
+    observer.py   what LocalAI runs, and the run each answer states
+    localai_config.py  rage.toml with LocalAI: the cards, nothing of the lifecycle
+    front_localai.py   the HTTP surface over LocalAI
+    __main__.py   boot: refuse a tag, write the yaml, start llama-swap or LocalAI, serve
 """

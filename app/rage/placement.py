@@ -21,6 +21,15 @@ died on its next request, and that is another launch — the weights are
 hashed again and the process matched again before any run is named.
 `still_the_run` asks once more after the answer's headers arrive: a child
 replaced mid-request gets no `Louise-Run`, and Louise writes nothing from it.
+
+PARKED (rage.md §21). A model that declares `park` is not unloaded when the
+card must be freed: its process is asked to move its weights to host RAM and
+stays up, holding what it declares parked — a little of the card, its weights
+in the host — so its next request costs a copy back instead of a launch. It is
+the same process, so it is the same run. Parking is admitted against the host
+budget like a load; where the host has no room the model is unloaded as
+before. The move, either way, runs as a task of its own: a caller that hangs
+up does not leave a model half moved, and the next caller waits for it.
 """
 from __future__ import annotations
 
@@ -37,9 +46,11 @@ from . import admission, model, runs, swapyaml
 from .model import CPU, ModelEntry, RageConfig
 from .procfs import ProcFS
 from .store import RunStore
+from .wire import Refused  # noqa: F401 — defined once for both fronts (wire.py)
 from .swap import SwapError
 
 READY, UNSTATED, LOADING = "ready", "unstated", "loading"
+PARKED, PARKING, UNPARKING = "parked", "parking", "unparking"
 ABSENT, UNLOADED = "absent", "unloaded"
 EXITED = "exited"          # only ever REPORTED: the process that was checked is gone
 #: a child's oom_score_adj: the killer takes the model that grew, never the
@@ -56,6 +67,7 @@ PUSHED_OUT_MIB = 256
 #: them at `/louise/gpu` — they are her notification
 EVENTS_KEPT = 50
 REFUSED, RELIEVED, RESTORED = "refused", "unloaded-under-pressure", "restored"
+PARKED_EVENT = "parked"
 
 #: a card's PCI address -> (total bytes, used bytes, why a number is missing)
 CardReader = Callable[[str], "tuple[int | None, int | None, str | None]"]
@@ -64,16 +76,7 @@ CardReader = Callable[[str], "tuple[int | None, int | None, str | None]"]
 class Runner(Protocol):
     async def load(self, variant: str, health: str) -> None: ...
     async def unload(self, variant: str) -> None: ...
-
-
-class Refused(Exception):
-    """The front will not do it. `status` and `body` are the HTTP answer;
-    503 is a deferral to Louise's worker, never an error on a document."""
-
-    def __init__(self, status: int, reason: str, **extra: Any) -> None:
-        super().__init__(reason)
-        self.status = status
-        self.body = {"error": reason, **extra}
+    async def call(self, variant: str, path: str) -> None: ...
 
 
 @dataclass
@@ -89,6 +92,7 @@ class Placed:
     reason: str | None = None
     observed: dict[str, int | None] = field(default_factory=dict)
     in_flight: int = 0          # requests being answered now: never idle while > 0
+    resume: str | None = None   # parked: the state it answers in once unparked
 
 
 def least_given_up(holding: "list[tuple[Placed, int]]", deficit: int) -> "list[Placed]":
@@ -183,6 +187,8 @@ class Placement:
         self._dropped: dict[str, dict[str, Any]] = {}
         #: card -> since when nothing has squeezed it (None: squeezed now)
         self._quiet_since: dict[str, float | None] = {}
+        #: model -> its park or unpark, running (`_move`)
+        self._moves: dict[str, asyncio.Task] = {}
         self.cfg: RageConfig = model.load(self.config_path)
         self._write_yaml()
 
@@ -234,6 +240,9 @@ class Placement:
             except Refused as e:
                 self.log(f"{model_id}: removed from rage.toml, not unloaded: {e}")
         for model_id in self.cfg.preload:
+            placed = self.placed.get(model_id)
+            if placed is not None and placed.state == PARKED:
+                continue                    # up, and back on the card at its next request
             try:
                 await self.ensure(model_id)
             except Refused as e:
@@ -247,16 +256,23 @@ class Placement:
     def _holding(self) -> dict[str, str]:
         return {m: p.device for m, p in self.placed.items()}
 
+    def _modes(self) -> dict[str, str]:
+        return {m: admission.PARKED if p.state == PARKED
+                else admission.MOVING if p.state in (PARKING, UNPARKING) else admission.ACTIVE
+                for m, p in self.placed.items()}
+
     def _priority(self, model_id: str) -> int:
         entry = self.cfg.models.get(model_id)
         return entry.priority if entry is not None else model.DEFAULT_PRIORITY
 
     def _fits(self, entry: ModelEntry, device: str,
-              loaded: dict[str, str] | None = None) -> admission.Verdict:
+              loaded: dict[str, str] | None = None, modes: dict[str, str] | None = None,
+              *, as_parked: bool = False) -> admission.Verdict:
         foreign = {} if device == CPU else {
             device: self.card_memory(device).get("foreign_mib") or 0}
         return admission.fits(self.cfg, self._holding() if loaded is None else loaded,
-                              entry.id, device, self.capacity, foreign)
+                              entry.id, device, self.capacity, foreign,
+                              self._modes() if modes is None else modes, as_parked=as_parked)
 
     async def _make_room(self, entry: ModelEntry, device: str,
                          verdict: admission.Verdict) -> bool:
@@ -276,9 +292,11 @@ class Placement:
         Nothing is given up unless the ledger, asked with those models gone,
         says yes — card and host both. Giving up four models and refusing
         anyway would destroy them for nothing (scheduling.md §6, item 6)."""
-        if device == CPU or verdict.device != device or verdict.free_mib is None:
+        if verdict.free_mib is None or not self.cfg.pressure["unload"]:
             return False
-        if not self.cfg.pressure["unload"]:
+        if verdict.device == CPU:
+            return await self._make_host_room(entry, device, verdict)
+        if device == CPU or verdict.device != device:
             return False
         rank = self._priority(entry.id)
         now = time.time()
@@ -290,27 +308,96 @@ class Placement:
                                       self._priority, must_cover=True)
         if not victims:
             return False
+        # PARKED WHERE IT CAN BE, UNLOADED WHERE IT CANNOT: asked of the ledger
+        # first with the parkable victims parked — they keep their host RAM and a
+        # little of the card — and, if that does not fit, with all of them gone.
         gone = {v.model for v in victims}
-        if not self._fits(entry, device, {m: d for m, d in self._holding().items()
-                                          if m not in gone}).ok:
+        parkable = {m for m in gone if self.cfg.models[m].park is not None}
+        modes = self._modes()
+        if parkable and self._fits(
+                entry, device, {m: d for m, d in self._holding().items()
+                                if m not in gone - parkable},
+                modes | {m: admission.PARKED for m in parkable}).ok:
+            may_park = True
+        elif self._fits(entry, device, {m: d for m, d in self._holding().items()
+                                        if m not in gone}).ok:
+            may_park = False
+        else:
             return False                        # even with them gone it would not fit
         given_up = False
         why = f"to make room for {entry.id}, which needs {verdict.need_mib} MiB"
         for placed in victims:
             idle_for = int(now - placed.last_used)
             try:
-                if not await self.unload(placed.model, only_if_idle=True):
-                    continue                    # a request reached it meanwhile: left alone
+                how = await self._give_up(placed.model, may_park=may_park)
             except Refused as e:
                 self.log(f"{placed.model}: not given up for {entry.id}: {e}")
                 continue
-            self._dropped[placed.model] = {"device": device, "time": int(now), "why": why}
-            self._event(RELIEVED, placed.model, device,
-                        f"idle for {idle_for} s and unloaded {why}")
-            self.log(f"{placed.model}@{device}: GIVEN UP FOR A LOAD, idle for "
+            if how is None:
+                continue                        # a request reached it meanwhile: left alone
+            self._record_given_up(placed.model, device, how, now, idle_for, why)
+            self.log(f"{placed.model}@{device}: GIVEN UP FOR A LOAD ({how}), idle for "
                      f"{idle_for} s — {why}")
             given_up = True
         return given_up
+
+    async def _make_host_room(self, entry: ModelEntry, device: str,
+                              verdict: admission.Verdict) -> bool:
+        """The HOST said no. What RAGE itself put in host RAM — PARKED models —
+        goes first, by the same rule as the card: only ranked strictly below,
+        lowest first, and only if that is enough. A parked model answers
+        nothing, so it is idle by definition."""
+        rank = self._priority(entry.id)
+        holding = [(p, self.cfg.models[p.model].park.host[p.device])
+                   for p in self.placed.values()
+                   if p.state == PARKED and p.model != entry.id
+                   and self._priority(p.model) < rank]
+        victims = victims_by_priority(holding, verdict.need_mib - verdict.free_mib,
+                                      self._priority, must_cover=True)
+        gone = {v.model for v in victims}
+        if not victims or not self._fits(entry, device, {
+                m: d for m, d in self._holding().items() if m not in gone}).ok:
+            return False
+        now = time.time()
+        why = f"to make room in host RAM for {entry.id}"
+        given_up = False
+        for placed in victims:
+            try:
+                if not await self.unload(placed.model, only_if_idle=True):
+                    continue
+            except Refused as e:
+                self.log(f"{placed.model}: not given up for {entry.id}: {e}")
+                continue
+            self._record_given_up(placed.model, placed.device, UNLOADED, now,
+                                  int(now - placed.last_used), why)
+            self.log(f"{placed.model}@{placed.device}: PARKED, UNLOADED FOR A LOAD — {why}")
+            given_up = True
+        return given_up
+
+    def _record_given_up(self, model_id: str, device: str, how: str, now: float,
+                         idle_for: int, why: str, sep: str = " ") -> None:
+        """`sep` joins the verb and the reason: "unloaded to make room for …",
+        "unloaded: processes outside RAGE hold …"."""
+        if how == PARKED:
+            self._event(PARKED_EVENT, model_id, device,
+                        f"idle for {idle_for} s and parked in host RAM{sep}{why}")
+            return
+        self._dropped[model_id] = {"device": device, "time": int(now), "why": why}
+        self._event(RELIEVED, model_id, device, f"idle for {idle_for} s and unloaded{sep}{why}")
+
+    async def _give_up(self, model_id: str, *, may_park: bool = True) -> str | None:
+        """PARKED, UNLOADED, or None when a request reached it meanwhile and it
+        was left alone. A model is parked when it declares `park` and the host
+        has room for it parked; otherwise unloaded, as before."""
+        entry = self.cfg.models.get(model_id)
+        if may_park and entry is not None and entry.park is not None:
+            try:
+                return PARKED if await self.park(model_id, only_if_idle=True) else None
+            except Refused as e:
+                if model_id not in self.placed:
+                    return UNLOADED             # its park failed and it went whole
+                self.log(f"{model_id}: not parked, unloaded instead: {e}")
+        return UNLOADED if await self.unload(model_id, only_if_idle=True) else None
 
     async def ensure(self, model_id: str, device: str | None = None) -> Placed:
         """The model, loaded — on `device`, or wherever it is or defaults to."""
@@ -321,11 +408,14 @@ class Placement:
             raise Refused(400, f"{model_id} declares no command for device {device!r}; "
                                f"it has {list(entry.devices)}")
         async with self._lock(model_id):
+            await self._settled(model_id)
             placed = self.placed.get(model_id)
             if placed is not None:
                 if device not in (None, placed.device):
                     raise Refused(409, f"{model_id} is loaded on {placed.device}; unload it "
                                        f"before loading it on {device}", device=placed.device)
+                if placed.state == PARKED:
+                    return await self._unpark(entry, placed)
                 return await self._verified(entry, placed)
             return await self._admit(entry, device or entry.device)
 
@@ -441,6 +531,7 @@ class Placement:
         reached it while we waited for its lock: a model is never taken from
         under an answer it is giving."""
         async with self._lock(model_id):
+            await self._settled(model_id)
             placed = self.placed.get(model_id)
             if placed is None:
                 raise Refused(404, f"{model_id} is not loaded")
@@ -453,6 +544,126 @@ class Placement:
             self.placed.pop(model_id, None)
             self.log(f"{model_id}@{placed.device}: unloaded")
             return True
+
+    # ---- parking (rage.md §21) ----------------------------------------------------
+
+    async def _settled(self, model_id: str) -> None:
+        """Wait for a park or unpark still running — one whose caller hung up —
+        so nobody acts on a model halfway between card and host."""
+        move = self._moves.get(model_id)
+        if move is not None:
+            try:
+                await asyncio.shield(move)
+            except BaseException:               # noqa: BLE001 — the move settled the state
+                pass
+
+    def _move(self, entry: ModelEntry, placed: Placed, *, park: bool) -> asyncio.Task:
+        """The child asked to move its weights, as a task of its own. Done, the
+        state says where the weights are; failed, the process goes whole and
+        its next request is a new launch — what a half-moved child holds is not
+        known, and a guess in the ledger is how a card is overcommitted."""
+        variant = entry.variant_id(placed.device)
+        path = entry.park.path if park else entry.park.unpark
+
+        async def move() -> None:
+            t0 = time.monotonic()
+            try:
+                await self.runner.call(variant, path)
+            except BaseException as e:
+                self.log(f"{variant}: {'parking' if park else 'unparking'} failed, the "
+                         f"process is stopped: {type(e).__name__}: {e}")
+                self.placed.pop(entry.id, None)
+                try:
+                    await self.runner.unload(variant)
+                except BaseException:           # noqa: BLE001 — logged above; nothing more to do
+                    pass
+                raise
+            if park:
+                placed.state = PARKED
+            else:
+                placed.state, placed.resume = placed.resume or READY, None
+                placed.last_used = time.time()
+            if placed.pid is not None:
+                placed.observed = self._observed(placed.pid)
+            self.log(f"{variant}: {'parked in host RAM' if park else 'back on the card'} "
+                     f"in {time.monotonic() - t0:.1f} s")
+
+        task = asyncio.ensure_future(move())
+        self._moves[entry.id] = task
+
+        def done(t: asyncio.Task) -> None:
+            if self._moves.get(entry.id) is t:
+                del self._moves[entry.id]
+            if not t.cancelled():
+                t.exception()                   # retrieved: its caller may have hung up
+
+        task.add_done_callback(done)
+        return task
+
+    async def park(self, model_id: str, *, only_if_idle: bool = True) -> bool:
+        """Parked (or already), or — with `only_if_idle` — left alone because a
+        request is being answered. Refused when the model declares no `park`,
+        is not on a card, or the host has no room for it parked (503)."""
+        entry = self.cfg.models.get(model_id)
+        if entry is None:
+            raise Refused(404, f"{model_id!r} is not a model of this container")
+        if entry.park is None:
+            raise Refused(409, f"{model_id} declares no park in rage.toml; it can only be "
+                               f"unloaded")
+        async with self._lock(model_id):
+            await self._settled(model_id)
+            placed = self.placed.get(model_id)
+            if placed is None:
+                raise Refused(404, f"{model_id} is not loaded")
+            if placed.state == PARKED:
+                return True
+            if placed.device == CPU:
+                raise Refused(409, f"{model_id} is on the CPU: there is no card to free")
+            if placed.state not in (READY, UNSTATED):
+                raise Refused(409, f"{model_id} is {placed.state}")
+            if placed.in_flight:
+                if only_if_idle:
+                    return False
+                raise Refused(409, f"{model_id} is answering {placed.in_flight} request(s); "
+                                   f"it is never parked from under an answer")
+            if placed.pid is not None and tuple(self.procfs.cmdline(placed.pid)) != placed.argv:
+                # asked to park, llama-swap would start it again first: there is
+                # nothing to park, and its next request is another launch
+                raise Refused(409, f"{model_id}: its process (pid {placed.pid}) is gone; its "
+                                   f"next request starts it again")
+            verdict = self._fits(entry, placed.device, as_parked=True)
+            if not verdict.ok:
+                raise Refused(503, f"no room to park {model_id}: {verdict.reason}",
+                              admission=verdict.to_json())
+            placed.resume, placed.state = placed.state, PARKING     # no await since fits()
+            try:
+                await asyncio.shield(self._move(entry, placed, park=True))
+            except SwapError as e:
+                raise Refused(e.status, f"{model_id} could not be parked: {e}") from None
+            return True
+
+    async def _unpark(self, entry: ModelEntry, placed: Placed) -> Placed:
+        """Back on the card, admitted like a load — the card must have room
+        for it whole — under the model's lock (`ensure`)."""
+        if placed.pid is None or tuple(self.procfs.cmdline(placed.pid)) != placed.argv:
+            self.log(f"{entry.id}@{placed.device}: the parked process is gone; its next "
+                     f"start is another launch")
+            self.placed.pop(entry.id, None)
+            return await self._admit(entry, placed.device)
+        device = placed.device
+        verdict = self._fits(entry, device)
+        if not verdict.ok and await self._make_room(entry, device, verdict):
+            verdict = self._fits(entry, device)
+        if not verdict.ok:
+            self._event(REFUSED, entry.id, device, verdict.reason or "does not fit")
+            raise Refused(503, verdict.reason or "does not fit", admission=verdict.to_json(),
+                          state=PARKED)
+        placed.state = UNPARKING                # no await since fits(): the place is held
+        try:
+            await asyncio.shield(self._move(entry, placed, park=False))
+        except SwapError as e:
+            raise Refused(e.status, f"{entry.id} could not be unparked: {e}") from None
+        return placed
 
     # ---- the card's real memory, and a stranger on it ---------------------------------
     #
@@ -490,12 +701,15 @@ class Placement:
             own_host += in_host or 0
         pushed = []
         for model_id, placed in self.placed.items():
-            if placed.device != device or placed.pid is None:
+            if placed.device != device or placed.pid is None or placed.state != READY \
+                    and placed.state != UNSTATED:
                 continue
             on_card, in_host = self.procfs.gpu_mib(placed.pid)
             if in_host is not None and in_host >= PUSHED_OUT_MIB and in_host > (on_card or 0):
                 pushed.append(model_id)
-        declared = sum(self.cfg.models[m].memory[p.device] for m, p in self.placed.items()
+        modes = self._modes()
+        declared = sum(admission.card_share(self.cfg, m, device, modes[m])
+                       for m, p in self.placed.items()
                        if p.device == device and m in self.cfg.models)
         out: dict[str, Any] = {
             "declared_capacity_mib": self.cfg.capacity_mib.get(device),
@@ -593,15 +807,14 @@ class Placement:
             for placed, why in victims:
                 idle_for = int(now - placed.last_used)
                 try:
-                    if not await self.unload(placed.model, only_if_idle=True):
-                        continue
+                    how = await self._give_up(placed.model)
                 except Refused as e:
-                    self.log(f"{placed.model}: not unloaded under pressure: {e}")
+                    self.log(f"{placed.model}: not given up under pressure: {e}")
                     continue
-                self._dropped[placed.model] = {"device": device, "time": int(now), "why": why}
-                self._event(RELIEVED, placed.model, device,
-                            f"idle for {idle_for} s and unloaded: {why}")
-                self.log(f"{placed.model}@{device}: UNLOADED UNDER PRESSURE, idle for "
+                if how is None:
+                    continue
+                self._record_given_up(placed.model, device, how, now, idle_for, why, ": ")
+                self.log(f"{placed.model}@{device}: {how.upper()} UNDER PRESSURE, idle for "
                          f"{idle_for} s — {why}")
                 given_up.append(placed.model)
         await self._restore(now)
@@ -673,6 +886,9 @@ class Placement:
                 "memory": {"declared": dict(entry.memory), "host": dict(entry.host),
                            "observed": None},
                 "source": entry.source}
+            if entry.park is not None:
+                row["memory"]["parked"] = {"declared": dict(entry.park.memory),
+                                           "host": dict(entry.park.host)}
             if placed is None:
                 dropped = self._dropped.get(model_id)
                 row |= {"state": UNLOADED if Path(entry.weights).exists() else ABSENT,

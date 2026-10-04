@@ -1,0 +1,364 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 3 Oct 2026 05:14:12 +0000
+Subject: [PATCH] feat(system): list the options each loaded model was given
+
+LocalAI completes a model's config before it loads it: the context size
+and GPU layers guessed from the GGUF, the hardware auto-tuning, the
+application's runtime settings. What the backend actually received is
+therefore in no file and on no endpoint, only in a DEBUG log line. A
+client that must know exactly how a model runs, to tell two runs apart
+or to notice that a reload changed them, cannot read it.
+
+Record the options sent with LoadModel on the loaded model, and list
+them in GET /system's loaded_models together with their
+EffectiveModelOptionsHash, the hash the distributed registry already
+keeps per replica:
+
+  "load_options": {"Model": "bge-m3.gguf", "ContextSize": 8192, ...},
+  "load_options_hash": "6f1c..."
+
+Single node only: a model a remote worker holds lists none. /system is
+an admin route. The options carry no key (the proxy options name a
+key's variable or file, not the key), but a model's `env:` is copied
+into them, as the DEBUG log already shows.
+
+The swagger entries are added by hand: regenerating with swag v1.16.6
+also rewrites unrelated definitions on master.
+
+Assisted-by: Claude Code
+---
+ core/http/endpoints/localai/system.go         | 11 +++
+ .../endpoints/localai/system_info_test.go     | 30 +++++++
+ core/schema/localai.go                        | 10 +++
+ pkg/model/initializers.go                     |  1 +
+ pkg/model/load_options_test.go                | 89 +++++++++++++++++++
+ pkg/model/model.go                            | 30 +++++++
+ swagger/docs.go                               |  8 ++
+ swagger/swagger.json                          |  8 ++
+ swagger/swagger.yaml                          | 14 +++
+ 9 files changed, 201 insertions(+)
+ create mode 100644 pkg/model/load_options_test.go
+
+diff --git a/core/http/endpoints/localai/system.go b/core/http/endpoints/localai/system.go
+index 9c4ba75..0e1148d 100644
+--- a/core/http/endpoints/localai/system.go
++++ b/core/http/endpoints/localai/system.go
+@@ -9,6 +9,7 @@ import (
+ 	"github.com/mudler/LocalAI/core/services/monitoring"
+ 	"github.com/mudler/LocalAI/pkg/model"
+ 	"github.com/mudler/LocalAI/pkg/xsysinfo"
++	"google.golang.org/protobuf/encoding/protojson"
+ )
+ 
+ // SystemInformations returns the system informations
+@@ -48,6 +49,16 @@ func SystemInformations(cl *config.ModelConfigLoader, ml *model.ModelLoader, app
+ 					entry.SizeVRAM = &used
+ 				}
+ 			}
++			// What the backend was actually given, not what the YAML says:
++			// LocalAI completes the config before the load, so the two differ.
++			if opts := m.LoadOptions(); opts != nil {
++				raw, rawErr := protojson.MarshalOptions{UseProtoNames: true}.Marshal(opts)
++				hash, hashErr := config.EffectiveModelOptionsHash(opts)
++				if rawErr == nil && hashErr == nil {
++					entry.LoadOptions = raw
++					entry.LoadOptionsHash = hash
++				}
++			}
+ 			sysmodels = append(sysmodels, entry)
+ 		}
+ 		if sampler != nil {
+diff --git a/core/http/endpoints/localai/system_info_test.go b/core/http/endpoints/localai/system_info_test.go
+index 83f7daa..238f296 100644
+--- a/core/http/endpoints/localai/system_info_test.go
++++ b/core/http/endpoints/localai/system_info_test.go
+@@ -11,6 +11,7 @@ import (
+ 	"github.com/labstack/echo/v4"
+ 	"github.com/mudler/LocalAI/core/config"
+ 	"github.com/mudler/LocalAI/core/http/endpoints/localai"
++	pb "github.com/mudler/LocalAI/pkg/grpc/proto"
+ 	"github.com/mudler/LocalAI/pkg/model"
+ 	"github.com/mudler/LocalAI/pkg/system"
+ 	process "github.com/mudler/go-processmanager"
+@@ -46,4 +47,33 @@ var _ = Describe("SystemInformations memory", func() {
+ 			map[string]any{"id": "stopped"},
+ 		))
+ 	})
++
++	It("lists the options each model was loaded with, and their hash", func() {
++		sent := &pb.ModelOptions{Model: "encoder.gguf", ContextSize: 8192, Embeddings: true, RopeFreqBase: 10000.5}
++		loaded := model.NewModel("encoder", "worker:50051", nil)
++		loaded.SetLoadOptions(sent)
++		ml := model.NewModelLoader(&system.SystemState{})
++		store := model.NewInMemoryModelStore()
++		store.Set("encoder", loaded)
++		ml.SetModelStore(store)
++		app := echo.New()
++		path, err := os.MkdirTemp("", "system-info-")
++		Expect(err).NotTo(HaveOccurred())
++		DeferCleanup(os.RemoveAll, path)
++		app.GET("/system", localai.SystemInformations(config.NewModelConfigLoader(path), ml, &config.ApplicationConfig{}, nil))
++		rec := httptest.NewRecorder()
++		app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/system", nil))
++		Expect(rec.Code).To(Equal(http.StatusOK))
++		var response struct {
++			Models []map[string]any `json:"loaded_models"`
++		}
++		Expect(json.Unmarshal(rec.Body.Bytes(), &response)).To(Succeed())
++		Expect(response.Models).To(HaveLen(1))
++		Expect(response.Models[0]["load_options"]).To(Equal(map[string]any{
++			"Model": "encoder.gguf", "ContextSize": float64(8192), "Embeddings": true, "RopeFreqBase": 10000.5,
++		}), "proto field names, unset fields omitted")
++		hash, err := config.EffectiveModelOptionsHash(sent)
++		Expect(err).NotTo(HaveOccurred())
++		Expect(response.Models[0]["load_options_hash"]).To(Equal(hash))
++	})
+ })
+diff --git a/core/schema/localai.go b/core/schema/localai.go
+index 44a859c..568c736 100644
+--- a/core/schema/localai.go
++++ b/core/schema/localai.go
+@@ -211,6 +211,16 @@ type SysInfoModel struct {
+ 	// SizeVRAM is DRM-accounted resident device memory in bytes. Nil means
+ 	// the backend process tree has no complete supported reading.
+ 	SizeVRAM *uint64 `json:"size_vram,omitempty"`
++	// LoadOptions are the options the backend's LoadModel call received, as
++	// LocalAI sent them: the model's config completed with LocalAI's
++	// defaults (the GGUF guess, the hardware auto-tuning, the application's
++	// settings). protojson with proto field names; unset fields omitted.
++	// Absent when this host did not issue the load.
++	LoadOptions json.RawMessage `json:"load_options,omitempty" swaggertype:"object"`
++	// LoadOptionsHash is config.EffectiveModelOptionsHash of the same
++	// options, the hash the distributed registry records per replica: it
++	// changes exactly when a reload gave the backend different options.
++	LoadOptionsHash string `json:"load_options_hash,omitempty"`
+ }
+ 
+ // SysInfoProcess is a point-in-time reading of one backend process.
+diff --git a/pkg/model/initializers.go b/pkg/model/initializers.go
+index 2ae9242..99a2de1 100644
+--- a/pkg/model/initializers.go
++++ b/pkg/model/initializers.go
+@@ -202,6 +202,7 @@ func (ml *ModelLoader) spawnGRPCModel(backend, uri string, o *Options, modelID,
+ 		ml.stopLoadProcess(client, modelID)
+ 		return nil, fmt.Errorf("could not load model (no success): %s", res.Message)
+ 	}
++	client.SetLoadOptions(options)
+ 
+ 	// Register size for size-aware eviction using the caller-supplied estimate
+ 	// (computed via pkg/vram, which handles multi-file and non-GGUF models).
+diff --git a/pkg/model/load_options_test.go b/pkg/model/load_options_test.go
+new file mode 100644
+index 0000000..9369b02
+--- /dev/null
++++ b/pkg/model/load_options_test.go
+@@ -0,0 +1,89 @@
++package model
++
++import (
++	"context"
++	"net"
++	"sync"
++
++	pb "github.com/mudler/LocalAI/pkg/grpc/proto"
++	"github.com/mudler/LocalAI/pkg/system"
++	"google.golang.org/grpc"
++	"google.golang.org/protobuf/proto"
++
++	. "github.com/onsi/ginkgo/v2"
++	. "github.com/onsi/gomega"
++)
++
++// recordingBackend answers the two RPCs a load makes and keeps what
++// LoadModel received, so a test can compare it with what the loader recorded.
++type recordingBackend struct {
++	pb.UnimplementedBackendServer
++	mu       sync.Mutex
++	received *pb.ModelOptions
++}
++
++func (b *recordingBackend) Health(context.Context, *pb.HealthMessage) (*pb.Reply, error) {
++	return &pb.Reply{Message: []byte("OK")}, nil
++}
++
++func (b *recordingBackend) LoadModel(_ context.Context, opts *pb.ModelOptions) (*pb.Result, error) {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.received = proto.Clone(opts).(*pb.ModelOptions)
++	return &pb.Result{Success: true}, nil
++}
++
++// A model's YAML is not what its backend runs with: LocalAI completes it
++// before the load. The options the backend actually received are therefore
++// recorded on the loaded model, so that they can be listed (GET /system).
++var _ = Describe("Model load options", func() {
++	It("records exactly what the backend's LoadModel received", func() {
++		lis, err := net.Listen("tcp", "127.0.0.1:0")
++		Expect(err).ToNot(HaveOccurred())
++		backend := &recordingBackend{}
++		server := grpc.NewServer()
++		pb.RegisterBackendServer(server, backend)
++		go func() { _ = server.Serve(lis) }()
++		DeferCleanup(server.Stop)
++
++		systemState, err := system.GetSystemState(system.WithModelPath(GinkgoT().TempDir()))
++		Expect(err).ToNot(HaveOccurred())
++		ml := NewModelLoader(systemState)
++		ml.SetExternalBackend("recording", lis.Addr().String())
++
++		_, err = ml.backendLoader(
++			WithModelID("encoder"),
++			WithModel("encoder.gguf"),
++			WithBackendString("recording"),
++			WithLoadGRPCLoadModelOpts(&pb.ModelOptions{ContextSize: 8192, NBatch: 512, Embeddings: true}),
++		)
++		Expect(err).ToNot(HaveOccurred())
++
++		backend.mu.Lock()
++		received := backend.received
++		backend.mu.Unlock()
++		Expect(received).ToNot(BeNil())
++		Expect(received.ContextSize).To(Equal(int32(8192)))
++		Expect(received.Model).To(Equal("encoder.gguf"), "the per-load fields are set before the call")
++
++		loaded := ml.CheckIsLoaded("encoder")
++		Expect(loaded).ToNot(BeNil())
++		recorded := loaded.LoadOptions()
++		Expect(proto.Equal(recorded, received)).To(BeTrue(),
++			"the recorded options are the ones sent, per-load fields included")
++	})
++
++	It("keeps its own copy", func() {
++		m := NewModel("encoder", "127.0.0.1:1", nil)
++		Expect(m.LoadOptions()).To(BeNil(), "a model registered without a load has none")
++
++		sent := &pb.ModelOptions{ContextSize: 4096}
++		m.SetLoadOptions(sent)
++		sent.ContextSize = 1
++		Expect(m.LoadOptions().ContextSize).To(Equal(int32(4096)), "changing what was sent changes nothing recorded")
++
++		got := m.LoadOptions()
++		got.ContextSize = 2
++		Expect(m.LoadOptions().ContextSize).To(Equal(int32(4096)), "changing what was returned changes nothing recorded")
++	})
++})
+diff --git a/pkg/model/model.go b/pkg/model/model.go
+index 3af79ab..991dba2 100644
+--- a/pkg/model/model.go
++++ b/pkg/model/model.go
+@@ -5,7 +5,9 @@ import (
+ 	"time"
+ 
+ 	grpc "github.com/mudler/LocalAI/pkg/grpc"
++	pb "github.com/mudler/LocalAI/pkg/grpc/proto"
+ 	process "github.com/mudler/go-processmanager"
++	"google.golang.org/protobuf/proto"
+ )
+ 
+ // healthCheckTTL is the duration for which a successful health check is cached.
+@@ -20,6 +22,7 @@ type Model struct {
+ 	process         *process.Process
+ 	lastHealthCheck time.Time
+ 	healthMu        sync.Mutex
++	loadOptions     *pb.ModelOptions
+ 	sync.Mutex
+ }
+ 
+@@ -45,6 +48,33 @@ func (m *Model) Process() *process.Process {
+ 	return m.process
+ }
+ 
++// SetLoadOptions records the options the backend's LoadModel call received,
++// as sent. They are what the model actually runs with: its config completed
++// with LocalAI's defaults (the GGUF guess, the hardware auto-tuning, the
++// application's settings), which neither the model's YAML nor any endpoint
++// shows otherwise. A copy is kept, so the caller may go on using opts.
++func (m *Model) SetLoadOptions(opts *pb.ModelOptions) {
++	m.Lock()
++	defer m.Unlock()
++	if opts == nil {
++		m.loadOptions = nil
++		return
++	}
++	m.loadOptions = proto.Clone(opts).(*pb.ModelOptions)
++}
++
++// LoadOptions returns a copy of what SetLoadOptions recorded, or nil when
++// this host did not issue the load (a model a remote worker holds, or one
++// registered without a load).
++func (m *Model) LoadOptions() *pb.ModelOptions {
++	m.Lock()
++	defer m.Unlock()
++	if m.loadOptions == nil {
++		return nil
++	}
++	return proto.Clone(m.loadOptions).(*pb.ModelOptions)
++}
++
+ // IsRecentlyHealthy returns true if the model passed a health check within the TTL.
+ func (m *Model) IsRecentlyHealthy() bool {
+ 	m.Lock()
+diff --git a/swagger/docs.go b/swagger/docs.go
+index f155d52..7990dde 100644
+--- a/swagger/docs.go
++++ b/swagger/docs.go
+@@ -8260,6 +8260,14 @@ const docTemplate = `{
+                 "id": {
+                     "type": "string"
+                 },
++                "load_options": {
++                    "description": "LoadOptions are the options the backend's LoadModel call received, as\nLocalAI sent them: the model's config completed with LocalAI's\ndefaults (the GGUF guess, the hardware auto-tuning, the application's\nsettings). protojson with proto field names; unset fields omitted.\nAbsent when this host did not issue the load.",
++                    "type": "object"
++                },
++                "load_options_hash": {
++                    "description": "LoadOptionsHash is config.EffectiveModelOptionsHash of the same\noptions, the hash the distributed registry records per replica: it\nchanges exactly when a reload gave the backend different options.",
++                    "type": "string"
++                },
+                 "process": {
+                     "description": "Process is the backend process serving the model on this host. Absent\nwhen the model has no local process (a distributed worker holds it) or\nthe process could not be read.",
+                     "allOf": [
+diff --git a/swagger/swagger.json b/swagger/swagger.json
+index dd53808..0f159f5 100644
+--- a/swagger/swagger.json
++++ b/swagger/swagger.json
+@@ -8257,6 +8257,14 @@
+                 "id": {
+                     "type": "string"
+                 },
++                "load_options": {
++                    "description": "LoadOptions are the options the backend's LoadModel call received, as\nLocalAI sent them: the model's config completed with LocalAI's\ndefaults (the GGUF guess, the hardware auto-tuning, the application's\nsettings). protojson with proto field names; unset fields omitted.\nAbsent when this host did not issue the load.",
++                    "type": "object"
++                },
++                "load_options_hash": {
++                    "description": "LoadOptionsHash is config.EffectiveModelOptionsHash of the same\noptions, the hash the distributed registry records per replica: it\nchanges exactly when a reload gave the backend different options.",
++                    "type": "string"
++                },
+                 "process": {
+                     "description": "Process is the backend process serving the model on this host. Absent\nwhen the model has no local process (a distributed worker holds it) or\nthe process could not be read.",
+                     "allOf": [
+diff --git a/swagger/swagger.yaml b/swagger/swagger.yaml
+index f4d10dd..43865bd 100644
+--- a/swagger/swagger.yaml
++++ b/swagger/swagger.yaml
+@@ -2798,6 +2798,20 @@ definitions:
+         type: string
+       id:
+         type: string
++      load_options:
++        description: |-
++          LoadOptions are the options the backend's LoadModel call received, as
++          LocalAI sent them: the model's config completed with LocalAI's
++          defaults (the GGUF guess, the hardware auto-tuning, the application's
++          settings). protojson with proto field names; unset fields omitted.
++          Absent when this host did not issue the load.
++        type: object
++      load_options_hash:
++        description: |-
++          LoadOptionsHash is config.EffectiveModelOptionsHash of the same
++          options, the hash the distributed registry records per replica: it
++          changes exactly when a reload gave the backend different options.
++        type: string
+       process:
+         allOf:
+         - $ref: '#/definitions/schema.SysInfoProcess'

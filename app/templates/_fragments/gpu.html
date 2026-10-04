@@ -71,7 +71,7 @@
   <table style="margin-top:6px"><tr><th>when</th><th>what RAGE did</th><th>model</th><th>why</th></tr>
     {% for e in rage.events[:8] %}
     <tr><td class="note">{{ e.time|ago }}</td>
-      <td>{% if e.kind == "refused" %}<span class="badge err">could not load</span>{% elif e.kind == "restored" %}<span class="badge ok">restored</span>{% else %}<span class="badge brass">unloaded, idle</span>{% endif %}{% if e.count and e.count > 1 %} <span class="note">×{{ e.count }}</span>{% endif %}</td>
+      <td>{% if e.kind == "refused" %}<span class="badge err">could not load</span>{% elif e.kind == "restored" %}<span class="badge ok">restored</span>{% elif e.kind == "parked" %}<span class="badge brass" title="Off the card, its process kept and its weights in host RAM: its next request copies them back instead of starting it again.">parked in RAM</span>{% else %}<span class="badge brass">unloaded, idle</span>{% endif %}{% if e.count and e.count > 1 %} <span class="note">×{{ e.count }}</span>{% endif %}</td>
       <td>{{ e.model }}</td><td class="note">{{ e.detail }}</td></tr>
     {% endfor %}
   </table>

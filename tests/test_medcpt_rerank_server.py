@@ -107,7 +107,7 @@ def test_sigterm_stops_the_server_at_once(tmp_path):
         f"spec = importlib.util.spec_from_file_location('srv', {str(_spec.origin)!r})\n"
         "srv = importlib.util.module_from_spec(spec); spec.loader.exec_module(srv)\n"
         "srv.make_encoder = lambda path: (lambda pairs: pairs)\n"
-        "srv.make_infer = lambda xml, device: (lambda pairs: [0.0] * len(pairs))\n"
+        "srv.make_infer = lambda xml, device, cache=None: (lambda pairs: [0.0] * len(pairs))\n"
         "srv.main()\n")
     proc = subprocess.Popen([sys.executable, str(script)], env={"PORT": str(port), "PATH": ""},
                             stderr=subprocess.PIPE)
@@ -125,3 +125,32 @@ def test_sigterm_stops_the_server_at_once(tmp_path):
     finally:
         proc.kill()
         proc.wait()
+
+
+def test_the_compiled_model_is_kept_where_rage_toml_says(monkeypatch):
+    """OV_CACHE_DIR reaches OpenVINO as CACHE_DIR; unset, nothing is cached
+    (docs/notes/rage.md §20)."""
+    import sys
+    import types
+    calls = []
+
+    class Input:
+        def __init__(self, name):
+            self.name = name
+
+        def get_any_name(self):
+            return self.name
+
+    class Compiled:
+        inputs = [Input(n) for n in server.INPUTS]
+
+    class Core:
+        def compile_model(self, xml, device, config=None):
+            calls.append((xml, device, config))
+            return Compiled()
+
+    monkeypatch.setitem(sys.modules, "openvino", types.SimpleNamespace(Core=Core))
+    server.make_infer("/m/openvino_model.xml", "GPU", "/state/ov-cache")
+    server.make_infer("/m/openvino_model.xml", "GPU")
+    assert calls == [("/m/openvino_model.xml", "GPU", {"CACHE_DIR": "/state/ov-cache"}),
+                     ("/m/openvino_model.xml", "GPU", {})]

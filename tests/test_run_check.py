@@ -221,7 +221,7 @@ def test_the_gate_runs_at_once_and_work_resumes_under_the_run(node, rage):
     kept = statements_kept(root)
     assert [b["run"] for b in kept] == [R1]
     body = kept[0]
-    assert body["version"] == 2 and body["role"] == "document"
+    assert body["version"] == 3 and body["role"] == "document"
     assert body["space_id"] == codex.space_id
     assert body["engine"] == R1_OBJ["engine"] and body["driver"] == R1_OBJ["driver"]
     assert body["batch_invariant"] is True and body["fingerprint"].startswith("sha256:")

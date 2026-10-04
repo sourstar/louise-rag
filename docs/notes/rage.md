@@ -1,5 +1,11 @@
 # RAGE — the RAG Engine: one container for every model
 
+*Accepted 2026-10-03: the lifecycle — admission, eviction, preload,
+park — moves to LocalAI and RAGE keeps the run identity alone
+([`rage-over-localai.md`](rage-over-localai.md); 03 §3.3 and 09 §9.12
+amended; migration step 15). Until step 15's cut-over this note describes
+what runs on the node; §4, §7, §19 and §21 retire with it.*
+
 *Named by the operator, 2026-09-20. This note called it "the model pool"
 until then.*
 
@@ -62,8 +68,11 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 
   Our three FastAPI servers exist because of this.
 - **The specs.** RAGE is the node's trusted processing platform (03
-  §3.3): it launches every engine, states the run with every answer, and
-  a vector is written only from an answer naming a validated run. Its
+  §3.3): it states the run of every answer, read from what was launched,
+  and a vector is written only from an answer naming a validated run.
+  Who launches the engines changed on 2026-10-03: a model runner,
+  LocalAI, from step 15's cut-over; RAGE itself, through llama-swap, until
+  then. Its
   image is the engine a Codex created here freezes, so it must be
   obtainable by a stranger (02 §2.4).
 
@@ -80,6 +89,10 @@ time" in `gpu-time-slots.md` and `step6-preflight.md` predates that.
 | Triton | CUDA-centred; PyTorch on XPU is not a supported backend |
 
 ## 4. The design: one policy, in a front; llama-swap runs the processes
+
+*Superseded at migration step 15's cut-over by
+[`rage-over-localai.md`](rage-over-localai.md) §7: the front stays, the
+policy and llama-swap give way to LocalAI. Until then this is what runs.*
 
 One TrueNAS app, `rage`, one image, one published port, `/dev/dri`, a
 read-only models directory and a state directory. The image
@@ -198,18 +211,27 @@ The whole of it, for every model the node runs:
 - `name`, `build`, `variant` are readable and declared; `image`, `args`,
   `env` and `weights` are what binds.
 - `preload` is applied through admission at start and whenever the file
-  changes. A runtime load or unload lasts until the next apply.
+  changes. A runtime load or unload lasts until the next apply; a parked
+  preloaded model counts as loaded, and stays parked (§21).
+- `park = { memory = { <card> = MiB }, host = { <card> = MiB } }`, optional
+  (`path`, `unpark` default to `/park`, `/unpark`): the model is PARKED
+  instead of unloaded when its card must be freed — §21. Measured like
+  `memory`: what the parked process still holds of the card, and of the
+  host.
 - The figures above are placeholders until measured (§16).
 
 ## 6. The API
 
 ```
-GET    /louise/models                 → [{id, state: absent|unloaded|loading|ready|unstated,
-                                          device, run, pid, reason, memory: {declared, observed},
-                                          idle_s, since, source}]
+GET    /louise/models                 → [{id, state: absent|unloaded|loading|ready|unstated|parked,
+                                          device, run, pid, reason, memory: {declared, observed,
+                                          parked?}, idle_s, since, source}]
 POST   /louise/models/<id>/load       {device?}  → 200 the row, once it is up · 409 loaded on
                                           another device · 503 {error, admission: {loaded, free_mib, …}}
 POST   /louise/models/<id>/unload     → 200 · 404
+POST   /louise/models/<id>/park       → 200 the row, parked · 404 · 409 no `park` declared, or
+                                          answering · 503 no room in host RAM for it parked (§21);
+                                          `load` or its next request brings it back
 POST   /louise/models/<id>/restart    → 200 the row (the fan workaround, §11; operator only)
 GET    /louise/runs/<run_id>          → 09 §9.12's object · 404
 GET    /louise/gpu                    → the clock's state (§11)
@@ -458,6 +480,35 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
   another.
 - Load, unload and device change timed per model; a full calibration
   gate timed per encoder.
+- **What giving a model up costs** (operator, 2026-10-01): every model's
+  load and unload timed with its weights COLD (read from the NVMe 5.0
+  drive) and WARM (still in RAM), on a quiet node and beside an embedding
+  in progress — `python -m tools.load_profile` (`louise dev
+  load-profile`), with the node paused. Between two queries a reload may
+  be affordable; during an embedding batch it may cost the batch more than
+  it saves, and these numbers say which. What one run records, per trial:
+  - the load from the request to RAGE's answer, which includes hashing
+    the weights (§8 hashes at EVERY launch), and the unload;
+  - what the disk read during the load (`/proc/diskstats`) and ZFS's ARC
+    counters: a trial is classified cold or warm by what the disk read,
+    never by what was intended;
+  - beside `--busy <encoder>`: the encoder's answers per second alone and
+    during the load, and the seconds of embedding the load cost it;
+  - once per model, the raw read cold and warm and the SHA-256 alone — the
+    I/O and hashing shares of a load, apart from the runtime's start.
+
+  It reads the weights at the paths `rage.toml` names, so it runs in a
+  container with RAGE's volumes (`deploy/truenas-rage.yaml`). Those are
+  under `/mnt/ssd5/apps/`, a TrueNAS pool, hence ZFS: `posix_fadvise`
+  cannot evict the ARC, so a cold series runs either with
+  `--cold-by drop-caches` (a
+  privileged container; it empties the whole host's page cache) or with
+  `zfs set primarycache=metadata` on the dataset and `--cold-by none`,
+  set back to `all` before the warm series. Records go to
+  `state/load-profile.jsonl`; the summary goes in [`STATUS.md`](STATUS.md)
+  with the scenario (models loaded, ARC size, the encoder kept busy).
+  `--label` keeps two series apart — the GPU kernel cache emptied, then
+  full (§20) — and each trial names the run RAGE stated. Not measured yet.
 - Vectors from every Arc placement match today's endpoints within each
   space's tolerance; wikipedia's gate passes through `/upstream/…`.
 - The OOM test: a CPU child driven past RAM dies alone; the front and
@@ -784,3 +835,126 @@ it.
 the card by itself (the first bake-off wanted 44 GiB of a 32 GiB card), and
 it never gives up a model in use. Anything that needs the card beside
 RAGE should still go through RAGE, or run with RAGE's models unloaded.
+
+## 20. Open: loading the next model ahead (2026-10-01)
+
+Not designed, not built. When RAGE's load policy is next touched, the
+template is **KVFlow** (operator: "keep in mind kvflow"): a declared
+pipeline, each model's distance to its next use, prefetch the nearest,
+give up the farthest — never one in use, pinned, or of higher priority.
+Where its code is, how it maps onto §7's ledger, and why Louise's sequence
+is declared rather than learned: [`rage-prior-art.md`](rage-prior-art.md)
+§8. First measure each model's load time on the card, cold and warm, idle
+and beside an embedding (§14, `tools/load_profile.py`); a lookahead pays
+only where loading is longer than the gap a request leaves.
+
+**Where a model's weights can still be when it is asked for again**
+(operator, 2026-10-01). Each place skips more of a load:
+
+| where | what a reload still costs | who keeps it there |
+|---|---|---|
+| on the card | nothing | RAGE: `preload`, priority, not giving it up |
+| in host RAM, inside a live process ("parked") | the copy back over PCIe, well under a second for 5 GB (estimate) | the server: vLLM's sleep level 1 and ServerlessLLM do it; llama.cpp cannot; our own PyTorch servers could (MADLAD) |
+| in host RAM as file cache, the process gone | a whole launch less the disk read: process, runtime, kernels, buffers, §8's hash | the kernel's page cache — on the node ZFS's ARC, which gives memory back under pressure |
+| on the NVMe 5.0 drive only | a whole launch | nobody: cold |
+
+The CPU's caches (L1–L3, tens of MB) are not a tier: gigabytes stream
+through them. The `xe` driver already moves a model's buffers to host RAM
+by itself when the card is overcommitted, and back on use; RAGE relies on
+none of it (§19: the host ran out of memory). "Parked" is a state of
+RAGE's own, charged to the host budget — §21 (operator, 2026-10-01).
+
+**Kernel compilation, the part of a launch that is neither I/O nor
+hashing.** A kernel is one small GPU program for one operation — a matrix
+product for one quantisation type, a normalisation, a softmax, attention.
+A model runs a few dozen of them, and a runtime ships many more. The
+official Intel image of llama.cpp is built without `GGML_SYCL_DEVICE_ARCH`
+(`.devops/intel.Dockerfile` at b10630), so its kernels are in SPIR-V, a
+portable intermediate form, and the driver's compiler (IGC) turns them into
+the B70's machine code the first time each is used: JIT, just in time.
+llama.cpp's own documentation: "the startup is slow (JIT) in first time,
+but subsequent performance is unaffected". Building ahead of time (AOT,
+`-DGGML_SYCL_DEVICE_ARCH=…`) removes the step but binds the binary to the
+named device; it would be another engine, gated like any other (03 §3.3).
+- **Intel's driver caches the result on disk by default**
+  (`NEO_CACHE_PERSISTENT=1`, `NEO_CACHE_DIR` =
+  `$XDG_CACHE_HOME/neo_compiler_cache` else `$HOME/.cache/…`, 1 GB;
+  compute-runtime's COMPILER_CACHE.md). Its key holds the kernel source,
+  the build options, the compiler's version and the hardware, so a new
+  image does not reuse an old binary. In RAGE's container that directory
+  lives as long as the container: every relaunch after the first should
+  find its kernels, and a redeploy starts empty. UNVERIFIED on the node —
+  look for it inside RAGE's container, and measure it with two
+  `load-profile` runs, `--label kernel-cache-empty` after emptying it and
+  `--label kernel-cache-full` after.
+- **`SYCL_CACHE_PERSISTENT`, a second cache above it, is not used**:
+  llama.cpp's SYCL documentation advises against it (old and new binaries
+  mixed after an update crash) and it speeds up startup only.
+- Kept on `/state` instead (`NEO_CACHE_DIR=/state/neo-cache`), the cache
+  would survive a redeploy. Declared in `rage.toml` it is part of the run
+  (§8), so it changes every run id once; set for the container only it is
+  outside the run. **Decided 2026-10-01 (operator): declared**, on every
+  model that runs on the card (`deploy/rage/rage.example.toml`), the
+  directory created by the deploy steps. The first start after the change
+  states new runs; the gate tests them as it tests any.
+- OpenVINO (the MedCPT reranker) compiles the whole model for the card at
+  `compile_model`; its own `CACHE_DIR` keeps that compiled model.
+  **Decided 2026-10-01 (operator): declared** — `OV_CACHE_DIR =
+  "/state/ov-cache"` in its entry, read by `deploy/medcpt-rerank/server.py`
+  and passed as `CACHE_DIR`; the directory is created by the deploy steps.
+  PyTorch's XPU path (MADLAD) may also build kernels per shape on first use
+  — UNVERIFIED.
+- LocalAI has no such setting: its one OpenVINO path (the transformers
+  backend) gets optimum-intel's default, a `model_cache` beside each model,
+  on a GPU only, and never for its embedding models. Not requested upstream
+  (searched 2026-10-02). Every LocalAI action item — the defects found
+  on the way, the patches we carry, the requests — is in
+  [`localai-bugs.md`](localai-bugs.md).
+
+## 21. Parked: the card freed, the process kept (2026-10-01)
+
+*Operator, 2026-10-01: "Add the parked state for the translator."* The
+translator is the model RAGE gives up first (priority 0), and bringing it
+back is a whole launch — 20 s on the node — although its process could keep
+its weights in host RAM and copy them back over the bus.
+
+- **Declared, not inferred.** A model whose server answers `POST /park`
+  (weights to host RAM, the card freed) and `POST /unpark` declares `park`
+  in `rage.toml` (§5), with what the PARKED process still holds: a little of
+  the card (its runtime and compiled kernels) and the host RAM its weights
+  take. Only `madlad` does: `deploy/madlad-translate/server.py`, whose
+  weights move with `model.to("cpu")` and back, under the same lock as a
+  translation. Parked, the server answers 503 to a translation; through
+  RAGE that is never seen.
+- **Where a model would have been unloaded, it is parked** — for a load that
+  needs the card (§7) and under a stranger's squeeze (§19) alike, by the
+  same rules: idle only, strictly lower priority for a load, never from
+  under an answer. The ledger is asked first with the parkable victims
+  parked; if the load does not fit that way — parked, they still hold host
+  RAM — they are unloaded as before. Parking is admitted against the host
+  budget like a load: without room, the model is unloaded.
+- **Its next request brings it back**, admitted like a load (the card must
+  have room for it whole; it may give up only what ranks below it, so the
+  translator gives up nothing and waits parked until there is room — a 503,
+  a deferral to Louise). It is the SAME process: the same pid, the same
+  argument vector, hence the same run (§8). No launch, no hash.
+- **When the HOST refuses a load**, what RAGE itself put there goes first:
+  parked models of strictly lower priority are unloaded.
+- **A move is a task of its own.** A caller that hangs up mid-park does not
+  leave the model half-moved: the move finishes, and the next caller waits
+  for it. A move that FAILS stops the process — what a half-moved child
+  holds is not known, and a guess in the ledger is how a card is
+  overcommitted — and the next request is a new launch.
+- A parked preloaded model counts as loaded: applying `rage.toml` leaves it
+  parked. It is never "pushed off the card" (§19): it left on purpose.
+- Louise sees it: `parked` in `GET /louise/models` and in the System page's
+  event table ("parked in RAM").
+
+**Not measured yet, and needed before relying on it.** The figures in the
+example (`park.memory.xpu = 600`, `park.host.xpu = 9600`) are placeholders:
+park it on the node (`POST /louise/models/madlad/park`) and read what `GET
+/louise/models` shows it holds. UNVERIFIED: that a model placed with
+`device_map` moves whole with `.to()` in transformers 4.46.3 on torch XPU,
+and how long the copy back takes against the 20 s launch it replaces.
+Tests: `tests/rage/test_park.py` (19), `tests/test_madlad_translate_server.py`.
+

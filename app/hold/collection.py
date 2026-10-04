@@ -462,8 +462,10 @@ def derive(root: Path, mother_id: str, *,
     mother's version: a version-2 mother's space_id has the engine's image in
     it (09 §9.3), so a version-3 sister would land in another space and
     could not share the vectors she is defined to inherit. In a NEW space
-    she is written as new Codices are — version 3, naming the engine her
-    reference vectors are computed with.
+    she is written as new Codices are — CODEX_VERSION, naming the engine her
+    reference vectors are computed with. An engine carrying load options
+    needs version 4 (09 §9.3) wherever she is: the engine is outside
+    `space_id`, so a sister in her mother's space may name a new one.
 
     `embed` IS REQUIRED WHEN THE SISTER'S ENCODER DIFFERS, and ignored when
     it does not. A new build needs its own reference vectors — the mother's
@@ -517,7 +519,17 @@ def derive(root: Path, mother_id: str, *,
         new_space = mother.space
 
     if new_space.has_engine:
-        version = max(mother.version, cx.ENGINE_VERSION)
+        # In her mother's space she keeps her mother's version; in a new one
+        # she is written as new Codices are. An engine carrying `options`
+        # needs version 4 either way (09 §9.3): in her mother's space too,
+        # since the engine is outside `space_id` and a sister may name a new
+        # one there.
+        in_mothers_space = (mother.version >= cx.ENGINE_VERSION
+                            and _replace(mother, space=new_space,
+                                         layers=new_layers).space_id == mother.space_id)
+        version = mother.version if in_mothers_space else cx.CODEX_VERSION
+        if new_space.has_options:
+            version = max(version, cx.OPTIONS_VERSION)
     elif mother.version >= cx.ENGINE_VERSION:
         raise CodexError(
             "derive: a space is written with the ENGINE its reference vectors are "

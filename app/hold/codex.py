@@ -31,15 +31,15 @@ CODEX_KIND = "louise-codex"
 #: What a NEW Codex is written at. 09 §9.3: "`version` tracks what wrote
 #: the Codex, `record_line` tracks what is in the shards, and a figureless
 #: collection created under a later format writes `version` 3 with
-#: `record_line` 1".
-CODEX_VERSION = 3
+#: `record_line` 1" — and 4 since the options amendment (OPTIONS_VERSION).
+CODEX_VERSION = 4
 
 #: What this build can READ. "A Codex already written stays at its version
 #: and cannot be moved, because `version` is inside the canonical bytes and
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3)
+CODEX_VERSIONS = (1, 2, 3, 4)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -50,6 +50,26 @@ CODEX_VERSIONS = (1, 2, 3)
 #: `{image, weights, label}`, the engine's image digest alone, and that
 #: image IS inside `space_id`. A version-2 Codex keeps that for ever.
 ENGINE_VERSION = 3
+
+#: THE OPTIONS AMENDMENT (operator, 2026-10-03; 09 §9.3, migration step 15a).
+#: From this version an engine MAY carry `options`: what a model runner sent
+#: the engine when it loaded the weights over its own protocol (a LocalAI
+#: backend's `LoadModel`), which no argument vector shows. ABSENT, never
+#: null, for an engine started by `args` alone — so such an engine keeps the
+#: bytes and the `engine_id` it had at version 3, and a version-3 `space` is
+#: a valid version-4 one. Below this version `options` is an unknown key.
+OPTIONS_VERSION = 4
+
+#: The engine's fields (§9.3). `options` is the one that may be absent.
+ENGINE_FIELDS = ("name", "build", "variant", "image", "args", "env", "device")
+
+#: The placeholders an engine's `options` carries for the host's paths
+#: (09 §9.3): the weights file, and the runner's models directory.
+OPTION_PLACEHOLDERS = ("${WEIGHTS}", "${MODELS}")
+
+#: An absolute path where an option value can start one: at its start, or
+#: after a separator (`name:/path`, `--flag=/path`, a list inside a string).
+_ABSOLUTE_PATH_RE = re.compile(r"""(?:^|[\s:=,;'"(\[])/""")
 
 #: 09 §9.5's two record shapes: 1 without a `figures` key, 2 with it. Only
 #: 1 can be CREATED here — `record_line` 2 needs the figures containers,
@@ -239,11 +259,19 @@ class Engine:
     args: tuple[str, ...]
     env: dict[str, str]
     device: str
+    #: From Codex version 4 (OPTIONS_VERSION): the load options a model
+    #: runner sent the engine over its own protocol. `None` means ABSENT
+    #: from the object — never written as null — so an engine started by
+    #: `args` alone hashes exactly as it did at version 3.
+    options: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "build": self.build, "variant": self.variant,
-                "image": self.image, "args": list(self.args), "env": dict(self.env),
-                "device": self.device}
+        out = {"name": self.name, "build": self.build, "variant": self.variant,
+               "image": self.image, "args": list(self.args), "env": dict(self.env),
+               "device": self.device}
+        if self.options is not None:
+            out["options"] = self.options
+        return out
 
     @property
     def engine_id(self) -> str:
@@ -330,6 +358,13 @@ class Space:
     def has_engine(self) -> bool:
         """Is this the version-3 shape — an engine, not an image alone."""
         return self.encoder.engine is not None
+
+    @property
+    def has_options(self) -> bool:
+        """Does either engine carry load options — which only a Codex of
+        OPTIONS_VERSION or later can hold (09 §9.3)."""
+        return any(e is not None and e.engine is not None and e.engine.options is not None
+                   for e in (self.encoder, self.query.encoder))
 
     def to_dict(self) -> dict[str, Any]:
         return {"encoder": self.encoder.to_dict(), "dim": self.dim,
@@ -878,6 +913,54 @@ def _validate_engine(engine: Engine, where: str) -> None:
     for key, value in engine.env.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise CodexError(f"{where}.env maps names to strings, got {key!r}: {value!r}")
+    if engine.options is not None:
+        validate_options(engine.options, f"{where}.options")
+
+
+def validate_options(options: Any, where: str = "options") -> None:
+    """09 §9.3's `options`: the runner's record of the load call, with the
+    host's paths as placeholders and every non-integer number as its decimal
+    string. ABSENT when there are none — so an empty object, a third way of
+    saying "none" that would hash differently from the absence, is refused.
+
+    AN OPTION NAMING ANY OTHER ABSOLUTE PATH IS REFUSED: the weights digest
+    covers `${WEIGHTS}` and nothing else, so a run that loads a second file —
+    a projector, a LoRA, a draft model — would carry a file no digest names
+    (09 §9.3: such a run "cannot be stated yet")."""
+    if not isinstance(options, dict) or not options:
+        raise CodexError(
+            f"{where} is a non-empty object of the options the engine was loaded with, "
+            f"and ABSENT for an engine started by `args` alone — never null, never "
+            f"empty (09 §9.3)")
+
+    def walk(value: Any, path: str) -> None:
+        if value is None or isinstance(value, (bool, int)):
+            return
+        if isinstance(value, float):
+            raise CodexError(f"{path}: a number that is not an integer is written as its "
+                             f"decimal string (09 §9.1, §9.3), got {value!r}")
+        if isinstance(value, str):
+            if _ABSOLUTE_PATH_RE.search(value):
+                raise CodexError(
+                    f"{path} names an absolute path ({value!r}). The weights file is "
+                    f"written {OPTION_PLACEHOLDERS[0]} and the runner's models directory "
+                    f"{OPTION_PLACEHOLDERS[1]}; any other file is one no weights digest "
+                    f"covers, so a run that loads it cannot be stated yet (09 §9.3)")
+            return
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if not isinstance(k, str) or not k:
+                    raise CodexError(f"{path}: option names are non-empty strings, "
+                                     f"got {k!r}")
+                walk(v, f"{path}.{k}")
+            return
+        if isinstance(value, (list, tuple)):
+            for i, v in enumerate(value):
+                walk(v, f"{path}[{i}]")
+            return
+        raise CodexError(f"{path}: not a JSON value: {value!r}")
+
+    walk(options, where)
 
 
 def _validate_encoder_shape(codex: Codex) -> None:
@@ -897,6 +980,12 @@ def _validate_encoder_shape(codex: Codex) -> None:
                     f"reference vectors were computed with — {{weights, engine, …}} — "
                     f"not an image alone (09 §9.3; 02 §2.4)")
             _validate_engine(enc.engine, f"{where}.engine")
+            if enc.engine.options is not None and codex.version < OPTIONS_VERSION:
+                raise CodexError(
+                    f"{where}.engine.options: an engine's load options are a version "
+                    f"{OPTIONS_VERSION} field, unknown to a version {codex.version} Codex "
+                    f"(09 §9.3, §9.18). A Codex already written stays at its version: "
+                    f"`version` is inside `collection_id`")
         else:
             if enc.engine is not None:
                 raise CodexError(
@@ -1398,14 +1487,25 @@ def _layer(l: dict[str, Any], i: int) -> Layer:
     return Layer(Chunker(ch["id"], ch["version"], ch["params"]), l["rule"])
 
 
-def _engine(e: Any, where: str) -> Engine:
+def engine_from_dict(e: Any, where: str = "engine") -> Engine:
+    """An engine object (09 §9.3) as written, with `options` when it carries
+    them. Whether a Codex's version admits `options` is `validate`'s to
+    check, against that version."""
     if not isinstance(e, dict):
         raise CodexError(f"{where} must be an object (09 §9.3, the engine)")
-    e = _only(e, ("name", "build", "variant", "image", "args", "env", "device"), where)
-    if not isinstance(e["args"], list) or not isinstance(e["env"], dict):
+    has_options = "options" in e
+    if has_options and e["options"] is None:
+        raise CodexError(f"{where}.options is ABSENT for an engine started by `args` "
+                         f"alone, never null (09 §9.3)")
+    fields = _only({k: v for k, v in e.items() if k != "options"}, ENGINE_FIELDS, where)
+    if not isinstance(fields["args"], list) or not isinstance(fields["env"], dict):
         raise CodexError(f"{where}: args is a list of strings and env an object")
-    return Engine(e["name"], e["build"], e["variant"], e["image"],
-                  tuple(e["args"]), dict(e["env"]), e["device"])
+    return Engine(fields["name"], fields["build"], fields["variant"], fields["image"],
+                  tuple(fields["args"]), dict(fields["env"]), fields["device"],
+                  e["options"] if has_options else None)
+
+
+_engine = engine_from_dict
 
 
 def _space(sp: dict[str, Any]) -> Space:

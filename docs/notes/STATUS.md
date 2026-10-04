@@ -47,6 +47,74 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
+
+The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
+LocalAI will launch, load, preload, cache and evict the models, and RAGE
+will state the run of every answer. That is migration step 15. Done the
+same day:
+- **The spec.** 03 §3.3 says who launches. 09 §9.3 gives an engine
+  `options`, the load options a runner sends over its own protocol. The
+  field is absent for an engine started by `args`, so no `engine_id`
+  changes and nothing in use is re-gated. Codex 4 and calibration
+  statement 3 in §9.18.
+- **15b.** The one LocalAI patch RAGE cannot work without: `GET /system`
+  lists each model's load options and their hash. It is in
+  `deploy/localai/patches/` and tested in LocalAI's own suite.
+  [`localai-bugs.md`](localai-bugs.md) is now the one list of LocalAI
+  action items: 7 defects, 1 patch, 4 requests, none filed yet.
+
+Nothing changed on the node; RAGE as deployed keeps running until 15f.
+
+**15a, the same day**: Codex 4 and calibration statement 3 in the code
+(`app/hold/codex.py`, `embedder.py`, `collection.py`;
+`tests/hold/test_engine_options.py`, 17). Once deployed, new collections
+are written at version 4. Every existing Codex, engine id, run and
+statement stays as it is. Whole suite 3439 passed.
+
+**15d, the same day**: RAGE's front over LocalAI, beside today's
+(`RAGE_RUNNER=localai`). Runs are read from LocalAI's `/system` and the
+kernel: options, argv, environment, the card from the process's DRM
+clients, and weights hashed per process. Also built: the admin door, the
+panel, the restart, and `PUT`/`DELETE` of LocalAI's YAML. 37 tests against
+a fake LocalAI. Not run against a real one: that is 15c on the node.
+
+**15e in part, the same day**: `deploy/rage/Dockerfile.localai` builds the
+patched LocalAI (version `58830f7+patches.17b54353635e`) with its SYCL
+backend pinned by digest. It ships the six llama.cpp models' YAML and an
+app file. Its `smoke` target ran the whole chain on a CPU with a real
+LocalAI: first answer 2.17 s with the load, then 0.027 s, a run on every
+answer, one run across two restarts. It found a random seed per load (now
+pinned) and LocalAI bug B8. Left: the Python models as LocalAI backends,
+and the translator client.
+
+**A defect in it, fixed the same day**: LocalAI copies a model's `env:`
+into the load call, and the options' path rule refused it, so the six
+YAMLs' `NEO_CACHE_DIR` would have stated no run on the node. 09 §9.3 now
+states the environment once, as the engine's `env` (operator). A test
+states a run for every shipped YAML.
+
+**15e-2, the same day**: the three Python models are LocalAI backends
+(`deploy/localai/backends/`), and the translator's batch travels in one
+completion prompt (`TRANSLATE_API=completion`, operator). The MedCPT
+backend ran on a real LocalAI on a CPU: ranked right, a run on every
+answer, the same run after a restart. It found `run.sh` giving relative
+`args`, now fixed. DAR-legal-it and MADLAD need torch, which this sandbox
+cannot reach: they first run on the node.
+
+**The image, 2026-10-04**: built on the node and published,
+`ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+(`localai-58830f7-1`). Every backend's libraries imported at build; nothing
+run on the card yet. Next: 15c, the operator's go/no-go.
+
+**15c, the same day, unattended**: bge-m3 on the B70 under LocalAI passes
+wikipedia's own gate three times out of three, 12 % faster than today's
+engine. The MedCPT reranker on the card matches today's to 3e-8. It found
+LocalAI bug B9: an intermittent NaN fails the whole request. Louise now
+retries it as she retries llama-server's null vectors. Not run: the spill
+test, DAR-legal-it and MADLAD on the card, because each needs room the live
+models hold. The go is the operator's (rage-over-localai §12).
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

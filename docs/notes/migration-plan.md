@@ -1306,6 +1306,215 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d, 15e DONE**
+*Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
+model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
+the run identity of every answer, read from what was launched. Spec
+amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
+4, calibration statement 3), 02 §2.4 and §2.7.
+- **15a — The formats. DONE 2026-10-03** (`tests/hold/test_engine_options.py`,
+  17; four mutations of the code each caught; whole suite 3439 passed).
+  What landed:
+  - `CODEX_VERSION` 4 and `OPTIONS_VERSION`. `Engine.options` is written
+    only when present, so a version-3 engine keeps its `engine_id`.
+  - `validate_options` enforces the rules in 09 §9.3: no absolute path (a
+    URL included), no float, never null, never empty.
+  - `derive`: a sister in a new space is written at `CODEX_VERSION`, as
+    its docstring always said; in her mother's space she keeps the
+    mother's version unless her engine carries `options`.
+  - Statements are written at version 3 with the engine checked before
+    signing; `read_statement` reads versions 1–3 and refuses the rest.
+  - Five tests that pinned the old versions moved with them.
+
+  As scoped: Codex version 4: an engine MAY carry `options`,
+  absent for an engine started by `args` (`app/hold/codex.py`,
+  `CODEX_VERSION`, the engine's keys at its `_only` check; readers 1–4).
+  The peer's calibration statement version 3 beside 2
+  (`app/hold/embedder.py`). *Tests:* a version-3 Codex's engines keep
+  their `engine_id` byte for byte; a version-3 `space` copied by
+  `space_from` into a version-4 Codex keeps its `space_id`; `options` in
+  a version-3 Codex is refused as an unknown key; an `options` value
+  naming an absolute path other than `${WEIGHTS}` or `${MODELS}` is
+  refused, and so is a non-integer JSON number; version-2 statements
+  still read.
+- **15b — P1, the LocalAI patch. DONE 2026-10-03.** `GET /system` lists
+  each loaded model's `load_options` and `load_options_hash`
+  (`deploy/localai/patches/`, base 58830f7). Two Ginkgo specs in the
+  patch; the load spec fails with the hook removed. Recorded with every
+  LocalAI action item in [`localai-bugs.md`](localai-bugs.md);
+  `tests/rage/test_localai_patches.py` (4) holds the series to that list.
+- **15c — Go/no-go, on the node. RUN 2026-10-04, unattended (operator):
+  bge-m3 PASSES; the operator decides.** Results in rage-over-localai §12.
+  wikipedia's own gate passed three times out of three on the new engine
+  (16/16, every one of the 512 cosines ≥ 0.999004), at 10,700 tokens/s
+  against the live engine's 9,509. The MedCPT reranker on the card matched
+  the live one to 3e-8. It found LocalAI bug B9 (a NaN vector fails the
+  whole request), now retried by Louise's client. Not run: the spill test,
+  and DAR-legal-it and MADLAD on the card. Each would have squeezed the
+  live models.
+
+  As scoped (rage-over-localai §8.1–§8.2): LocalAI
+  at the base with the series applied, its llama-cpp SYCL backend, on the
+  B70. bge-m3 gated by hand: fingerprint, batch invariance, the
+  fingerprint again under spill, tokens per second against today's
+  llama-server. **The operator's stop**, like 13d. If it fails, today's
+  RAGE keeps running.
+- **15d — The front over LocalAI. DONE 2026-10-03**, beside today's front
+  and chosen by `RAGE_RUNNER=localai` (`tests/rage/test_localai_front.py`,
+  37, against a fake LocalAI that does what 58830f7 does; seven mutations
+  of the code each caught; all RAGE tests 213).
+  - New modules: `localai.py` (client), `loadopts.py` (09 §9.3 options),
+    `observer.py` (instances and runs), `localai_config.py`,
+    `front_localai.py`.
+  - `wire.py` holds what both fronts share, so 15g can delete the old one.
+  - Where it differs from the scope below:
+    - The device is read, not declared: the card is the one its DRM
+      clients report (`drm-pdev`), or the CPU when it holds none. A model
+      that fell back to the CPU is stated as a CPU run.
+    - `name`, `build` and `variant` come from LocalAI: `localai/<backend>`,
+      its `/version`, null. `rage.toml` declares only the cards.
+    - The before/after check is (pid, start ticks) from `/proc`, because
+      every LocalAI load is a new process. `load_options_hash` is not
+      needed for it.
+    - With no process before the request, the answer is attributed only
+      to a process that started before its headers arrived.
+    - `PUT` writes JSON, which is YAML, so no YAML library is added.
+    - `LOCALAI_API_KEY` is stripped and the §10 switches are forced on the
+      LocalAI that `__main__` starts.
+  - **The URL names the model, and nothing else does** (operator,
+    2026-10-03: "the user should not bother about choosing the right
+    model"). The front sets the body's `model` to the URL's. It first
+    refused a mismatch, which would have made every client spell the
+    model twice.
+    - The refusal also hid a defect: Louise's query side sends the
+      DOCUMENT encoder's name to the query encoder's URL
+      (`embeddings._side`).
+    - Under LocalAI that would have embedded a MedCPT query with the
+      article encoder, under the query encoder's run.
+    - Fixed at the source too (2026-10-03): `_side` names the model the
+      query URL names (`collections.model_named_by`), and names none for
+      a URL outside the model container. An endpoint that needs a name
+      then refuses rather than embedding with the wrong model
+      (`tests/test_embed_recipe.py`).
+    - Tested: `test_a_query_is_embedded_by_the_query_encoder_its_url_names`.
+
+  As scoped: `app/rage/runs.py` `match` reads
+  `/system` (pid, `started_at`, `load_options`) and `/proc` in place of
+  llama-swap's argv. The options are made canonical by 09 §9.3. The
+  check before and after each answer compares (pid, start) and
+  `load_options_hash`, and the weights are hashed at every new (pid,
+  start). *Tests*, against a fake `/system` and a fake `/proc`:
+  - a reload with unchanged options states the same run;
+  - one changed option states another run;
+  - a default LocalAI filled in, absent from the YAML, is in the run;
+  - an option naming another path states no run;
+  - a process replaced mid-answer gets no header;
+  - a body naming another model than its URL is answered by the URL's;
+  - a new run records an event naming the options that changed since
+    the model's previous run (rage-over-localai §10);
+  - **the admin guard**: `load` and `unload` reach LocalAI's
+    `/backend/load` and `/backend/shutdown` only with the token, and a
+    request without it is 401 and never reaches LocalAI;
+  - **the panel**: `GET /louise/gpu` gives the card's real memory split
+    by model from `size_vram`, with the rest as a stranger's; each process
+    is labelled with its model by `process.pid`; and the events are a
+    model loaded or unloaded between two `/system` readings, and a new run;
+  - **the restart**: it shuts down and loads the named model only, and
+    with unchanged options the reload states the same run.
+  - **`PUT` and `DELETE`** write LocalAI's model YAML (operator,
+    2026-10-03; rage-over-localai §7):
+    - `PUT` writes `<id>.yaml` and calls `/models/reload`;
+    - `PUT` refuses with 422 a YAML that leaves an option of §10's list
+      unpinned;
+    - `PUT` of a loaded model shuts it down, and its next load states a
+      new run with the changed options in the event;
+    - `DELETE` shuts the model down, removes its YAML and reloads, and
+      the model is gone from `/system` and from LocalAI's model list;
+    - either one on a hand-written YAML is 409, and without the token
+      401.
+  The front's `park` route goes with `placement.py`.
+- **15e — The image. DONE 2026-10-03; built and published from the node 2026-10-04:**
+  `ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+  (tag `localai-58830f7-1`, from dd84df6; base `server-intel-b10630` by digest).
+  Built in it: LocalAI `58830f7+patches.17b54353635e`, torch 2.14.0+xpu,
+  transformers 4.46.3 (MADLAD), sentence-transformers 5.1.0 (DAR-legal-it),
+  OpenVINO 2026.3.1 (MedCPT); every backend imported at build. Not yet run:
+  that is 15c.
+  - **Done** (`tests/rage/test_localai_deploy.py`, 8):
+    - `deploy/rage/Dockerfile.localai`: LocalAI from the series' base with
+      the series applied; `protoc` by checksum; the web UI built; LocalAI's
+      SYCL llama.cpp backend from the same commit, by digest, in the
+      read-only system backends path; galleries off. Every base is pinned
+      by digest; the Intel base is passed, as before.
+    - `deploy/rage/localai-models/`: the six llama.cpp models' YAML, every
+      §10 option pinned.
+    - `deploy/truenas-rage-localai.yaml`: the weights mounted read-only
+      inside the writable models directory.
+    - The observer refuses a backend whose program lies outside the
+      image's backends path (09 §9.12).
+  - **Built here**: every LocalAI stage, giving
+    `58830f7+patches.17b54353635e`. **Run here**: the `smoke` target on a
+    CPU (rage-over-localai §11), real LocalAI under RAGE's front. A run
+    was stated on every answer.
+  - **The smoke test found** a random seed per load (now pinned, and
+    required by `PUT`) and LocalAI bug B8 (reload never forgets a deleted
+    YAML; `DELETE` says so).
+  - **A defect, fixed before 15e-2:** LocalAI copies `env:` into the load
+    call as `EnvVars`, and the options' path rule refused the six YAMLs'
+    `NEO_CACHE_DIR`: no run on the node. 09 §9.3 amended (operator,
+    2026-10-03): the environment is the engine's `env`, stated once.
+    `test_every_model_yaml_states_a_run_once_localai_has_completed_it`.
+  - **Not built in the cloud sandbox:** the final stage, whose Intel base is
+    on ghcr.io's blob storage. Built on the node instead (above).
+  - **15e-2, DONE the same day** (`tests/test_localai_backends.py`, 23;
+    three mutations of the backends each caught):
+    - `deploy/localai/backends/`: `louise-dar-legal-it` (`Embedding`),
+      `louise-medcpt-rerank` (`Rerank`), `louise-madlad` (`Predict`). Each
+      wraps its server's model code unchanged and reads its settings from
+      the load call; a misspelt option refuses the load. Their YAMLs are in
+      `deploy/rage/localai-models/`, pinned like the six.
+    - The image: stubs generated from the series' `backend.proto`,
+      LocalAI's `grpc_auth` from the same commit, one torch (pinned
+      2.14.0), each venv with the pins its server was proven with.
+    - **The translator's batch travels in one prompt** (operator): LocalAI
+      calls `Predict` once per prompt. `app/translate.py` speaks it under
+      `TRANSLATE_API=completion`, beside today's `/translate` until 15g.
+      A contract test runs the client against the backend.
+    - MedCPT is read as `api = "jina"`; the cut-over steps in the app file
+      say what changes in the pubmed collection's file.
+    - **Run here** (rage-over-localai §11.1): the MedCPT backend on a real
+      LocalAI, on a CPU. It found `run.sh` started relatively, which made
+      `args` relative; fixed and tested. DAR-legal-it and MADLAD need
+      torch, which this sandbox cannot download: they run at 15c.
+    - The app file has no host path for DAR-legal-it's weights (nor does
+      today's): a placeholder the operator fills from DEPLOYMENT.md.
+
+  As scoped: LocalAI built from the base with the series,
+  backends installed at build time from images pinned by digest, gallery
+  installs at run time off, LocalAI on loopback with no key,
+  `LOCALAI_DISABLE_HARDWARE_DEFAULTS=true` and
+  `LOCALAI_DISABLE_GUESSING=true`. The models path is a writable
+  directory under RAGE's state holding the YAMLs, with the weights
+  bind-mounted read-only inside it, and `HF_HOME` is set outside it.
+  Every model's YAML pins every option
+  LocalAI would otherwise fill in (rage-over-localai §10: `context_size`,
+  `batch`, `threads`, `gpu_layers`, `parallel`), so that only an edit
+  changes a run. A test holds each YAML to that list. The three
+  servers become LocalAI Python backends: DNABERT-2 → `Embedding`, MedCPT
+  → `Rerank`, MADLAD → `Predict`. The app's translator client moves to
+  the completion shape. `tests/rage/test_deploy_files.py` holds them to
+  the code, as in 13d.
+- **15f — The cut-over**, as 13f: record today's vectors first, `node
+  pause`, swap the image, re-gate every space (a new engine, 03 §3.3),
+  `node resume`. To back out, deploy today's image by its digest.
+- **15g — Retirements**, through [`legacy-to-delete.md`](legacy-to-delete.md):
+  `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`,
+  `deploy/rage/servers/`, and the lifecycle keys of `rage.toml`
+  (`memory`, `priority`, `preload`, `park`, `cmd`).
+
+**Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream; run 15c
+on the node.
+
 ## 4. Dependencies between steps
 
 ```
@@ -1330,6 +1539,8 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
      13b servers ── 13c front ──┼── 13d image + proof (operator's stop) ──┐
 3, 4 ───────────────────────────┴── 13e clients ───────────────────────────┴── 13f retire apps
 5, 8, 13e ── 14 quarantine (report, then enforce) ── 12 retire
+13a ── 15a formats ───────────────────────────── 15d front ──┐
+13f ── 15b patch ── 15c node go/no-go (operator's stop) ── 15e image ──┴── 15f cut-over ── 15g retire
 ```
 
 - 13a needs only 0. 13b and 13c need nothing of the plan: the front
@@ -1341,6 +1552,10 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 - 14 needs 5 (the checks it derives from), 8 (collections with a Codex)
   and 13e (validated runs). 9's `share` honours it from the day it
   enforces.
+- **15 (added 2026-10-03)** needs 13f (a RAGE in service to replace) and
+  13a (the Codex it extends). 15d needs 15a, because a LocalAI run's
+  engine carries `options`. 15c is the operator's stop, and nothing past
+  it starts until it passes.
 
 ## 5. Kick-off prompt for Claude Code
 

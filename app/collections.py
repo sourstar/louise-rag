@@ -28,6 +28,15 @@ PLUGIN_REGISTRY: dict[str, CorpusSource] = {
 }
 
 
+def model_named_by(url: str) -> str | None:
+    """The model a URL names, where the URL is the model container's —
+    `http://<node>:<port>/upstream/<model>` (07 §7.8: "an `[encoder]` URL
+    names a model and never a device"); None for any other URL."""
+    _, sep, tail = url.partition("/upstream/")
+    model = tail.split("/", 1)[0] if sep else ""
+    return model or None
+
+
 @dataclass(frozen=True)
 class EmbedRecipe:
     """A collection's embedding recipe — architecture-v2.md §14 amendment 9.

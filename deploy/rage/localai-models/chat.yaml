@@ -1,0 +1,35 @@
+# chat — LocalAI's model YAML, the operator's (migration step 15e;
+# docs/notes/rage-over-localai.md §7, §10). Copied once into LocalAI's models
+# directory (/mnt/ssd5/apps/louise-rage/state/localai-models/) at the cut-over;
+# no first-line marker, so RAGE's API never rewrites it (409): edit it by hand.
+# JSON, which is YAML: one parser for LocalAI and for tests/rage/test_localai_deploy.py.
+# EVERY OPTION LocalAI WOULD FILL IN BY ITSELF IS PINNED (§10): context_size,
+# threads, gpu_layers, parameters.batch and seed (unset, LocalAI draws a
+# random one at every load), and options parallel — taken from the
+# llama-server flags in deploy/rage/rage.example.toml, the engine it replaces.
+# --jinja -c 16384 -np 1 -fa on -t 6 -ngl 999 --top-k 20 --top-p 0.95 --repeat-penalty 1.0; -b and -ub at llama-server's own defaults, 2048 and 512, now written down
+{
+  "name": "chat",
+  "backend": "llama-cpp",
+  "context_size": 16384,
+  "threads": 6,
+  "gpu_layers": 999,
+  "flash_attention": "on",
+  "mmap": true,
+  "parameters": {
+    "model": "weights/chat/qwen3-8b.gguf",
+    "batch": 2048,
+    "top_k": 20,
+    "top_p": 0.95,
+    "repeat_penalty": 1.0,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "ubatch:512",
+    "use_jinja:true"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/state/neo-cache"
+  }
+}

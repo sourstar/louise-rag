@@ -133,6 +133,8 @@ louise node
 louise dev                                                             operator instruments; read-only unless the line says otherwise
   schedule-report      what the worker spent its rounds on
   embedder-profile     the concurrency an endpoint sustains
+  load-profile         how long each model takes to come back to the card, from disk and from RAM,
+                       idle and beside an embedding; loads and unloads models, and puts back what it found
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   migrate pack <name> --recipe FILE [--platform-image D]               give a pre-Codex pack its Codexes and first snapshot (§7.6); writes.
                                                                        The recipe carries, per space in the pack, what the pack cannot supply — the encoder's weights
@@ -504,7 +506,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `/api/control`, the Library's pause and embed-mode controls | `node pause` / `resume`, `hold config apply --set embed=…` |
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
-| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync` |
+| `tools/sched_report`, `profile_embed`, `load_profile`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev load-profile`, `dev migrate schema`, `dev refs-sync` |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 

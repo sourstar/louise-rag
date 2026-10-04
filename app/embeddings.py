@@ -14,7 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 import lancedb
@@ -63,15 +63,13 @@ def _request_vectors(batch: list[str], timeout: float,
     level = dispatch.level_headers()
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
-            r = httpc.post(f"{recipe.url}/v1/embeddings",
-                           json={"model": recipe.model, "input": batch},
+            r = httpc.post(f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
                            timeout=timeout, headers=level)
             r.raise_for_status()
             _note_run(r, runs)
             data = sorted(r.json()["data"], key=lambda d: d["index"])
             return [d["embedding"] for d in data]
-        r = httpc.post(f"{recipe.url}/api/embed",
-                       json={"model": recipe.model, "input": batch},
+        r = httpc.post(f"{recipe.url}/api/embed", json=_body(recipe, batch),
                        timeout=timeout, headers=level)
         r.raise_for_status()
         _note_run(r, runs)
@@ -108,11 +106,26 @@ def _over_budget(response) -> bool:
     return response.status_code == 500 and "too large to process" in response.text
 
 
+def _numeric_failure(response) -> bool:
+    """Did the server fail to SEND a vector because it held a NaN or an Inf?
+
+    llama-server writes such a vector as nulls, which `_invalid` catches and
+    the loop below retries. LocalAI cannot encode it at all and fails the
+    whole request: 500 "json: error calling MarshalJSON for type schema.Item:
+    json: unsupported value: NaN". Seen on the node 2026-10-04 (migration step
+    15c), in two of three passes of wikipedia's gate over bge-m3 on the B70,
+    and never in the same texts when they were asked for again. The same fault
+    as the nulls, in another spelling, so the same remedy: retry."""
+    return response.status_code == 500 and any(
+        f"unsupported value: {v}" in response.text for v in ("NaN", "+Inf", "-Inf"))
+
+
 def _embed_batch(batch: list[str], timeout: float,
                  recipe: "collections_mod.EmbedRecipe", *,
                  raw: bool = False, runs: set | None = None) -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
-    - null/NaN vectors (intermittent SYCL corruption) -> plain retry
+    - null/NaN vectors (intermittent SYCL corruption) -> plain retry; also
+      when the server could not send them at all (`_numeric_failure`, LocalAI)
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
       truncation underestimates tokens for CJK/dense scripts) -> halve the
       char budget and retry until it fits.
@@ -161,6 +174,10 @@ def _embed_batch(batch: list[str], timeout: float,
             if _over_budget(e.response) and budget > 256:
                 budget = max(256, int(budget * 0.8))
                 continue
+            if _numeric_failure(e.response):
+                n_bad = len(batch)
+                time.sleep(0.3 * (attempt + 1))
+                continue
             detail = e.response.text[:200].replace("\n", " ")
             raise RuntimeError(
                 f"embed server HTTP {e.response.status_code}: {detail}") from e
@@ -178,16 +195,30 @@ def _embed_batch(batch: list[str], timeout: float,
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
 
+def _body(recipe: "collections_mod.EmbedRecipe", batch: list[str]) -> dict:
+    """The request: the texts, and the model's name where the side has one."""
+    return {"input": batch, **({"model": recipe.model} if recipe.model else {})}
+
+
 def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
     """The recipe of the side that is asked: the query encoder's when the
-    collection declares one and a query is being embedded, else the recipe."""
+    collection declares one and a query is being embedded, else the recipe.
+
+    THE QUERY SIDE NAMES THE MODEL ITS URL NAMES, never the document
+    encoder's. It used to send `recipe.model` — the DOCUMENT encoder's name —
+    to the query encoder's URL. llama-swap ignored the field; a runner that
+    picks the model from the body (LocalAI, Ollama) would embed a MedCPT query
+    with the article encoder, a coherent-looking wrong neighbourhood
+    (operator, 2026-10-03). On the model container the URL says which model
+    (`…/upstream/<model>`, 07 §7.8); elsewhere the side names none, so an
+    endpoint that needs a name refuses rather than guessing the wrong one.
+
+    Every other field is carried as it is (`replace`): a field rebuilt by
+    hand and forgotten is a field silently dropped."""
     if not (query and recipe.query_url):
         return recipe
-    return collections_mod.EmbedRecipe(
-        url=recipe.query_url, api=recipe.api, model=recipe.model,
-        dtype=recipe.dtype, ctx=recipe.ctx, dim=recipe.dim,
-        concurrency=recipe.concurrency, device=recipe.device,
-        query_instruction=recipe.query_instruction)
+    return replace(recipe, url=recipe.query_url, query_url=None,
+                   model=collections_mod.model_named_by(recipe.query_url) or "")
 
 
 def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",

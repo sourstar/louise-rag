@@ -40,10 +40,16 @@ def test_a_version_2_space_copied_is_the_same_space(tmp_path, monkeypatch):
     assert codex.relation == "root"
 
 
-def test_a_version_3_space_copied_stays_version_3(tmp_path, monkeypatch):
+def test_a_version_3_space_copied_is_written_at_version_4_in_the_same_space(
+        tmp_path, monkeypatch):
+    """09 §9.3 (operator, 2026-10-03): "a version-3 `space` is a valid
+    version-4 one, and `space_from` copies it into a version-4 Codex
+    unchanged" — the engine carries no `options` there, so not a byte of it
+    moves, and its space is the source's."""
     from tests.hold.conftest import pubmed
-    source, codex = _create(tmp_path, monkeypatch, pubmed())
-    assert codex.version == cx.ENGINE_VERSION
+    source, codex = _create(tmp_path, monkeypatch, pubmed(version=3))
+    assert source.version == 3 and codex.version == cx.CODEX_VERSION == 4
+    assert codex.space.to_dict()["encoder"] == source.space.to_dict()["encoder"]
     assert codex.space_id == source.space_id
 
 

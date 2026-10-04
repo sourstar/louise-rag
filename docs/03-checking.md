@@ -179,13 +179,18 @@ writes its calibration member without calling an encoder at all.
 **Validate once; then every answer says which run gave it.** A pass
 validates a RUN: one engine as it was actually launched. That is the
 image by the digest that is running (never a tag), the weights, the
-exact arguments and environment, the device, and the device's driver and
+exact arguments, load options and environment, the device, and the device's driver and
 compute runtime, all named by a **run identity** (09 §9.12). What keeps
 later work honest is not a test repeated during the work. It is the
-platform that serves the models: RAGE, the RAG Engine — the node's model container. It launches
-every engine itself, computes the run identity from what it launched
-rather than from what was declared, and states it with every answer.
-That makes it a trusted processing platform: a model reloaded with
+platform that serves the models, in two parts. A model runner — LocalAI
+on this node — launches, loads, keeps and evicts the engines; what it
+decides changes when an answer comes, never what it says. RAGE, the RAG
+Engine, stands in front of the runner and does one thing: it computes
+the run identity of every answer from what was actually launched — the
+process the kernel shows, the image it runs from, the weights it holds,
+the options the runner sent it — never from what a configuration
+declares, and states it with that answer (operator, 2026-10-03).
+Together they are a trusted processing platform: a model reloaded with
 another flag, an image whose tag moved, a driver updated underneath it
 is each a different run, and says so on its next answer.
 

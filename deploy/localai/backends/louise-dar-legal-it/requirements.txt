@@ -1,0 +1,8 @@
+# louise-dar-legal-it's venv, beside the image's one torch (--system-site-packages),
+# with the pins deploy/rage/Dockerfile's venv-st was proven with: the pair
+# jurifindit/DAR-legal-it's card names as what produced the figures
+# gazzetta-plugin.md §7.1b checks against.
+-r ../requirements-grpc.txt
+sentence-transformers==5.1.0
+transformers==4.55.4
+einops

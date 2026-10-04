@@ -1,0 +1,31 @@
+# medcpt-rerank — LocalAI's model YAML, the operator's (migration step 15e-2;
+# docs/notes/rage-over-localai.md §7, §10). Copied once into LocalAI's models
+# directory at the cut-over, as the six llama.cpp ones; no first-line marker,
+# so RAGE's API never rewrites it (409): edit it by hand.
+# THE BACKEND is deploy/localai/backends/louise-medcpt-rerank: `Rerank`, served
+# at /v1/rerank in Jina's shape — the pubmed collection's [reranker] becomes
+# `api = "jina"` with url .../upstream/medcpt-rerank/v1/rerank at the cut-over.
+# READ by the backend: context_size (tokens per pair, the model card's 512),
+# parameters.batch (pairs per inference, the server's BATCH), the device
+# option, and OV_CACHE_DIR (in the run, operator 2026-10-01). PINNED and not
+# read: threads, gpu_layers and seed — so that LocalAI fills in nothing (§10).
+{
+  "name": "medcpt-rerank",
+  "backend": "louise-medcpt-rerank",
+  "reranking": true,
+  "context_size": 512,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/medcpt/medcpt-cross-ov",
+    "batch": 16,
+    "seed": 0
+  },
+  "options": [
+    "device:xpu"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/state/neo-cache",
+    "OV_CACHE_DIR": "/state/ov-cache"
+  }
+}
