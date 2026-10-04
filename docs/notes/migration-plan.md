@@ -1306,7 +1306,7 @@ failure re-quarantines; in the reporting deploy nothing is withheld.
 
 **Operator**: the word to enforce, after the reporting deploy.
 
-### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d DONE; 15e DONE BUT ITS FINAL STAGE, WHICH BUILDS ON THE NODE**
+### Step 15 — RAGE over LocalAI: the run identity alone — **ACCEPTED 2026-10-03; 15a, 15b, 15d, 15e DONE**
 *Why:* [`rage-over-localai.md`](rage-over-localai.md). LocalAI takes the
 model lifecycle (launch, load, preload, cache, evict); RAGE keeps one job,
 the run identity of every answer, read from what was launched. Spec
@@ -1423,7 +1423,13 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     - either one on a hand-written YAML is 409, and without the token
       401.
   The front's `park` route goes with `placement.py`.
-- **15e — The image. DONE 2026-10-03, but for its final stage, which builds on the node.**
+- **15e — The image. DONE 2026-10-03; built and published from the node 2026-10-04:**
+  `ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+  (tag `localai-58830f7-1`, from dd84df6; base `server-intel-b10630` by digest).
+  Built in it: LocalAI `58830f7+patches.17b54353635e`, torch 2.14.0+xpu,
+  transformers 4.46.3 (MADLAD), sentence-transformers 5.1.0 (DAR-legal-it),
+  OpenVINO 2026.3.1 (MedCPT); every backend imported at build. Not yet run:
+  that is 15c.
   - **Done** (`tests/rage/test_localai_deploy.py`, 8):
     - `deploy/rage/Dockerfile.localai`: LocalAI from the series' base with
       the series applied; `protoc` by checksum; the web UI built; LocalAI's
@@ -1448,8 +1454,8 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
     `NEO_CACHE_DIR`: no run on the node. 09 §9.3 amended (operator,
     2026-10-03): the environment is the engine's `env`, stated once.
     `test_every_model_yaml_states_a_run_once_localai_has_completed_it`.
-  - **Not built here:** the final stage. Its Intel base is on ghcr.io,
-    whose blob storage this sandbox cannot reach. It builds on the node.
+  - **Not built in the cloud sandbox:** the final stage, whose Intel base is
+    on ghcr.io's blob storage. Built on the node instead (above).
   - **15e-2, DONE the same day** (`tests/test_localai_backends.py`, 23;
     three mutations of the backends each caught):
     - `deploy/localai/backends/`: `louise-dar-legal-it` (`Embedding`),

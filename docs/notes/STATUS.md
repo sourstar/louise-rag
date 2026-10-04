@@ -102,6 +102,11 @@ answer, the same run after a restart. It found `run.sh` giving relative
 `args`, now fixed. DAR-legal-it and MADLAD need torch, which this sandbox
 cannot reach: they first run on the node.
 
+**The image, 2026-10-04**: built on the node and published,
+`ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+(`localai-58830f7-1`). Every backend's libraries imported at build; nothing
+run on the card yet. Next: 15c, the operator's go/no-go.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was
