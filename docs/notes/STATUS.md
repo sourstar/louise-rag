@@ -115,6 +115,14 @@ retries it as she retries llama-server's null vectors. Not run: the spill
 test, DAR-legal-it and MADLAD on the card, because each needs room the live
 models hold. The go is the operator's (rage-over-localai §12).
 
+**15f ready, not run (2026-10-04)**: the operator gave the go ("suspend
+dar-legal for now, go on with the rest"; DAR-legal-it serves no
+collection). Merged to main, rebuilt and published
+(`ghcr.io/sourstar/rage@sha256:e64893cf…4e26`). Every model was tried under
+LocalAI beside the live one, which found and fixed chat's template. The
+swap itself was refused to the agent as a production deploy, so it is two
+scripts on the node for the operator, with a backout (migration-plan 15f).
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was

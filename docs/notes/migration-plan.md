@@ -1504,7 +1504,62 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   → `Rerank`, MADLAD → `Predict`. The app's translator client moves to
   the completion shape. `tests/rage/test_deploy_files.py` holds them to
   the code, as in 13d.
-- **15f — The cut-over**, as 13f: record today's vectors first, `node
+- **15f — The cut-over. READY, NOT RUN (2026-10-04): the operator runs it.**
+  Operator, 2026-10-04: "suspend dar-legal for now, go on with the rest",
+  "run unattended". The permission classifier refused the deploy from the
+  agent's session, so it is two scripts for the operator. They were placed
+  on the node with the commit's tree:
+
+      ssh root@192.168.178.10
+      bash /mnt/ssd5/apps/louise-rage-15c/tree/deploy/rage/15f/phase1.sh 2>&1 | tee /mnt/ssd5/apps/louise-rage-15c/cutover/phase1.log
+      # ends "phase 1 done"; then
+      bash /mnt/ssd5/apps/louise-rage-15c/tree/deploy/rage/15f/phase2.sh 2>&1 | tee /mnt/ssd5/apps/louise-rage-15c/cutover/phase2.log
+      # anything wrong, at any point:
+      bash /mnt/ssd5/apps/louise-rage-15c/tree/deploy/rage/15f/backout.sh
+
+  - **Phase 1** (`deploy/rage/15f/phase1.sh`). It stops at the first
+    failure.
+    1. Backs up both apps' definitions (Louise's with its token in a
+       0600 file, never printed), `rage.toml` and `pubmed.toml`. Tags
+       `louise-rag:pre-15f` and `rage:pre-15f`.
+    2. Pauses Louise.
+    3. Copies the eight served YAMLs in and cuts `rage.toml` to the cards.
+    4. Updates `louise-rage` to the new image,
+       `ghcr.io/sourstar/rage@sha256:e64893cf…4e26` (built from main
+       6246334, with the half-maximum clock), with the volumes of
+       `deploy/truenas-rage-localai.yaml`.
+    5. Edits pubmed's two `[reranker]` lines to LocalAI's `/v1/rerank` and
+       `api = "jina"`, refusing any other diff.
+    6. Deploys Louise from the tree, staged and then promoted per
+       DEPLOYMENT.md, builds it, runs the suite, and sets
+       `TRANSLATE_API=completion`.
+    7. Asserts that web and worker run the new image.
+  - **Phase 2** (`deploy/rage/15f/phase2.sh`).
+    1. Sends one request to each of the eight models and requires a run on
+       every one.
+    2. Resumes Louise (`running`, the mode it had).
+    3. Records every collection's calibration answers again and prints
+       their cosines against the ones recorded before the swap
+       (`record15f.py`; the "before" records are in
+       `/mnt/ssd5/apps/louise-rage-15c/cutover/`).
+
+    The worker then re-gates each new run by itself.
+  - **Backout** (`deploy/rage/15f/backout.sh`): both apps from the
+    backups, `rage.toml`, `pubmed.toml`, `src.old` and
+    `louise-rag:pre-15f`. Louise is left paused for the operator to
+    resume.
+  - **Proven before it, on the node, beside the live RAGE** (2026-10-04):
+    - every one of the eight models under LocalAI against the live one:
+      encoders at cosine 1.000000, rerankers in the same order (bge
+      exact, MedCPT within 2e-8);
+    - MADLAD correct through the one-prompt batch;
+    - chat answering word for word as today, once `chat.yaml` asked for
+      the model's own template (944fd50);
+    - main 6246334 + 944fd50: 3532 tests on the node.
+  - **DAR-legal-it: suspended** (operator). No collection uses it; its YAML
+    is in `localai-models/suspended/`.
+
+  As scoped: as 13f: record today's vectors first, `node
   pause`, swap the image, re-gate every space (a new engine, 03 §3.3),
   `node resume`. To back out, deploy today's image by its digest.
 - **15g — Retirements**, through [`legacy-to-delete.md`](legacy-to-delete.md):
