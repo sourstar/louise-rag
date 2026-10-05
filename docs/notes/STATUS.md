@@ -137,6 +137,16 @@ until 15g.
 went in under the previous commit's message by mistake. Its description is
 in the commit after it. The node keeps `rage:pre-15f`, `louise-rag:pre-15f`
 and the backups until the operator removes them.
+- **Louise deployed at 736fc52** (06:47 UTC). The translator now speaks only
+  the completion shape: 499 languages, a sentence translated, a null for an
+  unknown target. The first attempt stopped itself on a failing test. The
+  node's `src/deploy` is overlaid, never replaced, so the Dockerfiles 15g
+  deleted were still there; they were removed by hand, with copies in
+  `src.old/deploy`.
+- **RAGE not redeployed on purpose.** 15g changed its code only by
+  deletion, and a new image is a new run for every model and a re-gate of
+  every space. `e64893cf…` stays, reproducible from 6246334, and the next
+  real RAGE change carries 15g.
 
 ### 2026-09-22: one branch
 
