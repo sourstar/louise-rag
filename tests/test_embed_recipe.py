@@ -229,6 +229,24 @@ def test_llama_servers_500_too_large_shrinks_the_budget_as_teis_413_does(
     assert llama[-1] <= 1000
 
 
+def test_localais_500_over_the_context_shrinks_the_budget_too(isolated_config, monkeypatch):
+    """LocalAI refuses an input over the model's context with 500 "request
+    (11187 tokens) exceeds the available context size (8192 tokens)" (node,
+    2026-10-05, at the cut-over). It must cut as TEI's 413 does, never become
+    an error on a document."""
+    recipe = collections_mod.EmbedRecipe(
+        url="http://rage:1/upstream/qwen3-embedding-4b", api="openai",
+        model="qwen3-embedding-4b", dtype="f16", ctx=512)
+    localai = _refusing_server(
+        monkeypatch, 500, '{"error":{"code":500,"message":"rpc error: code = Internal '
+        'desc = request (11187 tokens) exceeds the available context size (8192 '
+        'tokens), try increasing it","type":""}}')
+    assert len(embeddings.embed_texts(["A" * 10_000], recipe=recipe)) == 1
+    tei = _refusing_server(monkeypatch, 413, "Input validation error")
+    embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    assert localai == tei, "the same cuts, step for step, on either server"
+
+
 def test_any_other_500_is_still_an_error(isolated_config, monkeypatch):
     """Only the over-budget refusal shrinks the cut: a server that fails for
     any other reason must say so, not have its input quietly shortened ten

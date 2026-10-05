@@ -103,7 +103,13 @@ def _over_budget(response) -> bool:
     still surfaces with the server's message."""
     if response.status_code in (400, 413):
         return True
-    return response.status_code == 500 and "too large to process" in response.text
+    # LocalAI says it a fourth way, for an input over the model's context
+    # (rather than its batch): 500 "request (11187 tokens) exceeds the
+    # available context size (8192 tokens)". Seen at the cut-over to LocalAI
+    # (node, 2026-10-05), on Qwen3-Embedding-4B with gutenberg's calibration.
+    return response.status_code == 500 and (
+        "too large to process" in response.text
+        or "exceeds the available context size" in response.text)
 
 
 def _numeric_failure(response) -> bool:
