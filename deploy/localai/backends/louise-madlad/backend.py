@@ -8,7 +8,7 @@ THE BATCH TRAVELS IN ONE PROMPT (operator, 2026-10-03). LocalAI's
 is on the node because it translates a whole batch in one pass: a query into
 51 languages in 1.5 s, where one pass per language would cost one each. So the
 prompt is a JSON request and the completion text is its JSON answer — a format
-only Louise's client speaks (app/translate.py, TRANSLATE_API=completion):
+only Louise's client speaks (app/translate.py):
 
     POST /v1/completions {"prompt": "{\"items\": [{\"text\": str, \"to\": code}, ...]}"}
       -> choices[0].text = {"translations": [str | null, ...], "ms": int, "peak_mb": int | null}
@@ -22,8 +22,8 @@ untouched while the model's YAML sets no template and none of `echo`,
 (`core/backend/llm.go`, Finetune); tests/rage/test_localai_deploy.py holds the
 YAML to that.
 
-Parking (rage.md §21) is not here: it was RAGE's placement, which LocalAI's
-lifecycle replaces (rage-over-localai §7).
+Parking (rage.md §21) is not here: it was the llama-swap placement's, retired at
+15g with it (LocalAI unloads instead; rage-over-localai §7).
 
 The load call:
     ModelFile     the snapshot directory
@@ -83,7 +83,7 @@ class Servicer:
             if request.NBatch <= 0:
                 raise lb.LoadError("batch (segments per pass) is set in the model's YAML")
             t0 = time.monotonic()
-            count, generate, known, languages, release, _park, _unpark = self._load(
+            count, generate, known, languages, release = self._load(
                 str(path), opts["device"], opts["dtype"], beams=opts["beams"])
             translator = madlad.Translator(count, generate, known, batch=request.NBatch,
                                            max_seg_tokens=opts["max_seg_tokens"],

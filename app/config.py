@@ -56,20 +56,11 @@ if CHAT_API not in ("ollama", "openai"):
 # gets — which is enough to check every one of them. Every model is still
 # reached by its own URL (`<RAGE_URL>/upstream/<model>`), never through this.
 RAGE_URL = os.getenv("RAGE_URL", "").rstrip("/")
-# The node's translation model (app/translate.py, deploy/madlad-translate):
+# The node's translation model (app/translate.py; MADLAD under LocalAI, spoken
+# to in the completion shape):
 # every query translation and every translation on the Ask page. Unset, the
 # chat model translates, slowly (operator, 2026-09-18).
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "").rstrip("/")
-# WHICH PROTOCOL TRANSLATE_URL SPEAKS (app/translate.py): "translate" — the
-# MADLAD server's own POST /translate and GET /languages, as the node runs it
-# today — or "completion" — LocalAI's /v1/completions, the batch as one JSON
-# prompt (deploy/localai/backends/louise-madlad; migration step 15e-2).
-# Beside the old one, as CHAT_API is: switched the day RAGE moves to LocalAI
-# (15f), and the old shape retires at 15g (legacy-to-delete.md).
-TRANSLATE_API = os.getenv("TRANSLATE_API", "translate").strip().lower()
-if TRANSLATE_API not in ("translate", "completion"):
-    raise RuntimeError(f"TRANSLATE_API must be 'translate' or 'completion', "
-                       f"not {TRANSLATE_API!r}")
 # The GPU probe (app/gpu_probe.py, the `gpu-probe` service): the System
 # page's GPU panel asks it for each card's memory and every process's
 # share. Unset, the panel says so and nothing else changes.

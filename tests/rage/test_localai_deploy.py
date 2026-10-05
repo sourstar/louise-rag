@@ -1,12 +1,11 @@
 """The files RAGE over LocalAI is deployed from, held to the code that reads
 them (deploy/rage/Dockerfile.localai, deploy/rage/localai-models/,
-deploy/truenas-rage-localai.yaml; migration-plan step 15e), as
-test_deploy_files.py holds llama-swap's.
+deploy/truenas-rage-localai.yaml; migration-plan step 15e). llama-swap's,
+held by test_deploy_files.py, were retired at 15g.
 """
 import inspect
 import json
 import re
-import tomllib
 from pathlib import Path
 
 from app.rage import loadopts
@@ -166,9 +165,18 @@ def test_every_model_yaml_states_a_run_once_localai_has_completed_it(tmp_path):
         assert "EnvVars" not in canon.options, f"{path.name}: the environment is `env`'s"
 
 
-def test_the_yamls_cover_every_model_the_node_serves_today():
-    today = tomllib.loads((ROOT / "deploy" / "rage" / "rage.example.toml").read_text())
-    assert {p.stem for p in ALL} == set(today["models"])
+def test_the_example_rage_toml_is_the_cards_the_front_accepts():
+    from app.rage import localai_config
+    cfg = localai_config.load(ROOT / "deploy" / "rage" / "rage.example.toml")
+    assert cfg.card_at("0000:03:00.0") == "xpu"
+
+
+def test_the_yamls_are_the_models_the_node_served_before_the_cut_over():
+    """Every model llama-swap served at 15f has its YAML (rage.example.toml
+    listed them until 15g); DAR-legal-it's is kept, suspended."""
+    assert {p.stem for p in ALL} == {"bge-m3", "bge-reranker", "chat", "madlad",
+                                     "medcpt-article", "medcpt-query", "medcpt-rerank",
+                                     "qwen3-embedding-4b", "dar-legal-it"}
     assert {p.stem for p in SUSPENDED} == {"dar-legal-it"}, "suspended: the operator's word"
 
 

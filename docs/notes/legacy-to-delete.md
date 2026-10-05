@@ -368,7 +368,28 @@ Not part of this: `embed-gpu-qwen3-8b` (stopped before, referenced by no
 collection) and the raw container `dnabert2-xpu` — DNA is frozen
 (operator, 2026-09-19), so it is neither migrated nor deleted.
 
-## 8. RAGE's lifecycle and the old model servers — at migration step 15g
+## 8. RAGE's lifecycle and the old model servers — RETIRED 2026-10-05 (15g)
+
+**Done in the repository, at the operator's word** ("go for 15g", the
+day of the cut-over, before the full day this section asked for). The way
+back does not depend on the repository: backout.sh uses the images and
+src.old kept on the node (`rage:pre-15f`, `louise-rag:pre-15f`), which stay
+until the operator removes them. What went:
+- `app/rage/admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, the
+  llama-swap `front.py` (and with it the `park` route); `model.py` and
+  `procfs.py` cut to what the LocalAI front reads; `runs.py` without the argv
+  matcher; `RAGE_RUNNER=llama-swap` refuses to start.
+- `deploy/rage/Dockerfile`, `deploy/rage/servers/`, `deploy/truenas-rage.yaml`;
+  `rage.example.toml` is the cards alone.
+- `TRANSLATE_API` and the `/translate` shape: the completion shape is the only
+  one.
+- The three servers' HTTP handlers, `main`s and MADLAD's parking. Their model
+  code stays (the backends import it). Their per-model apps' Dockerfiles and
+  `truenas-madlad-xpu-translate.yaml` went with them.
+- `tools/load_profile.py` was KEPT and ported: it reads LocalAI's YAML and
+  states.
+
+The section as written on 2026-10-03:
 
 Written 2026-10-03, when 15e-2 put the three Python models under LocalAI.
 Nothing here goes before the cut-over (15f) has served the node for a full

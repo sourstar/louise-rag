@@ -1,10 +1,8 @@
-"""What both fronts say on the wire, defined once: the run header, the
+"""What the front says on the wire, defined once: the run header, the
 headers that describe one hop, the refusal, the admin token and its check.
 
-The llama-swap front (front.py) and the LocalAI front (front_localai.py)
-live side by side until migration step 15's cut-over, and the first retires
-with `placement.py` at 15g; what the second needs of them is here, so that
-retiring one deletes nothing the other stands on.
+Kept apart from front_localai.py since the llama-swap front shared it; that
+front retired at migration step 15g (docs/notes/legacy-to-delete.md §8).
 """
 from __future__ import annotations
 

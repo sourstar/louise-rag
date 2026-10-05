@@ -32,8 +32,8 @@ def posts(monkeypatch):
             pass
 
         def json(self):
-            if self.url.endswith("/translate"):
-                return {"translations": ["ciao"]}
+            if self.url.endswith("/v1/completions"):        # the translator, 15e-2
+                return {"choices": [{"text": '{"translations": ["ciao"]}'}]}
             if "rerank" in self.url:
                 return {"results": [{"index": 0, "relevance_score": 0.9}]}
             if self.url.endswith("/v1/embeddings"):

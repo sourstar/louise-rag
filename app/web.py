@@ -3120,7 +3120,6 @@ def _effective_config() -> dict:
         "CHAT_MODEL": config.CHAT_MODEL,
         "RAGE_URL": config.RAGE_URL or "(unset — no list of models, no load or unload)",
         "TRANSLATE_URL": config.TRANSLATE_URL or "(unset — the chat model translates, slowly)",
-        "TRANSLATE_API": f"{config.TRANSLATE_API} — the protocol TRANSLATE_URL speaks",
         "GPU_PROBE_URL": config.GPU_PROBE_URL or "(unset — no GPU panel)",
         "RERANK_URL": (f"{config.RERANK_URL} — the reranker of last resort, "
                        f"{_falls_back(rerank_users)}") if config.RERANK_URL

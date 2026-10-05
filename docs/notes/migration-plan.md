@@ -1578,7 +1578,9 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   As scoped: as 13f: record today's vectors first, `node
   pause`, swap the image, re-gate every space (a new engine, 03 §3.3),
   `node resume`. To back out, deploy today's image by its digest.
-- **15g — Retirements**, through [`legacy-to-delete.md`](legacy-to-delete.md):
+- **15g — Retirements. DONE 2026-10-05** in the repository (legacy-to-delete §8;
+  suite 3378 on the node). The node keeps the backups until the operator
+  removes them. As scoped, through [`legacy-to-delete.md`](legacy-to-delete.md):
   `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`,
   `deploy/rage/servers/`, and the lifecycle keys of `rage.toml`
   (`memory`, `priority`, `preload`, `park`, `cmd`).

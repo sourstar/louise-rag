@@ -8,12 +8,10 @@ digest) and §9.12 (the run identity), as amended 8bbc66a:
 THREE RULES MAKE IT COMPUTABLE, and this module is the three of them.
 - `image` comes from a deployment pinned by digest (`boot_image`): a process
   cannot see the digest of the image it runs in, and a tag is not an image.
-- `args` and `env` are the ENTRY'S — the template with `${WEIGHTS}` and
-  `${PORT}` unsubstituted, and the declared variables only. The raw argument
-  vector carries a port and a path, and the raw environment the container's
-  host name: hashed, every restart would be another run and re-gate every
-  space. What keeps this honest is `match`: the process is checked against
-  the template before a run is stated, and one that does not match states none.
+- `args`, `env` and `options` are read from what LocalAI launched, with the
+  port and the paths as placeholders (app/rage/observer.py, loadopts.py): the
+  raw argument vector carries a port and a path, and hashed, every restart
+  would be another run and re-gate every space.
 - `weights` are hashed at every launch, from the bytes on disk.
 
 The canonical JSON and the hash are the Codex's own (app/hold/codex.py):
@@ -25,13 +23,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from ..hold.codex import canonical_json, digest
-from .model import CPU, PORT, WEIGHTS, ModelEntry
-from .procfs import ProcFS
+from .model import CPU
 
 MIB = 1 << 20
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -101,16 +97,6 @@ def weights_digest(path: Path) -> str:
 
 # ---- the engine, the driver, the run ----------------------------------------
 
-def engine_object(entry: ModelEntry, device: str, *, image: str,
-                  device_name: str) -> dict[str, Any]:
-    """09 §9.3's engine, as launched: the entry's template for the device
-    that ran, its declared environment, the image actually running."""
-    return {"name": entry.engine.name, "build": entry.engine.build,
-            "variant": entry.engine.variant, "image": image,
-            "args": list(entry.template(device)), "env": dict(entry.env),
-            "device": device_name}
-
-
 def engine_id(engine: Mapping[str, Any]) -> str:
     return digest(canonical_json(dict(engine)))
 
@@ -161,7 +147,7 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
 
     The kernel and the module are the host's, so they are read. The
     compute runtime is the image's: its package versions are written into
-    the image when it is built (`deploy/rage/Dockerfile`), one `name
+    the image when it is built (`deploy/rage/Dockerfile.localai`), one `name
     version` a line, and read back here — no package manager runs at start."""
     if device == CPU:
         return CPU
@@ -194,63 +180,3 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
     except OSError:
         pass
     return "; ".join(parts)
-
-
-# ---- is the process the engine we are about to name -------------------------
-
-@dataclass(frozen=True)
-class Match:
-    pid: int | None
-    port: int | None
-    reason: str | None        # why no run can be stated; None when one can
-
-    @property
-    def ok(self) -> bool:
-        return self.reason is None
-
-
-def _argv_matches(argv: list[str], template: tuple[str, ...], weights: str) -> int | None:
-    """The port when `argv` is the template with `${WEIGHTS}` → the path and
-    `${PORT}` → an integer, else None."""
-    if len(argv) != len(template):
-        return None
-    port: int | None = None
-    for got, want in zip(argv, template):
-        if want == PORT:
-            if not got.isdigit():
-                return None
-            port = int(got)
-        elif got != (weights if want == WEIGHTS else want):
-            return None
-    return port
-
-
-def match(procfs: ProcFS, entry: ModelEntry, device: str) -> Match:
-    """Exactly one process whose argument vector is the entry's template and
-    whose environment carries every declared variable at its declared value.
-    None, or two: no run is stated, and 03 §3.3 already says what that
-    means — search with it, write nothing through it."""
-    template = entry.template(device)
-    found: list[tuple[int, int]] = []
-    wrong_env: list[str] = []
-    for pid in procfs.pids():
-        port = _argv_matches(procfs.cmdline(pid), template, entry.weights)
-        if port is None:
-            continue
-        env = procfs.environ(pid)
-        missing = sorted(k for k, v in entry.env.items() if env.get(k) != v)
-        if missing:
-            wrong_env.append(f"pid {pid}: {', '.join(missing)}")
-            continue
-        found.append((pid, port))
-    if len(found) == 1:
-        return Match(pid=found[0][0], port=found[0][1], reason=None)
-    if found:
-        return Match(None, None, f"{len(found)} processes match the engine of "
-                                 f"{entry.variant_id(device)} (pids "
-                                 f"{[p for p, _ in found]}); a run is one process")
-    if wrong_env:
-        return Match(None, None, f"a process has the engine's arguments but not its "
-                                 f"declared environment ({'; '.join(wrong_env)})")
-    return Match(None, None, f"no process runs the engine of {entry.variant_id(device)} "
-                             f"as rage.toml declares it")

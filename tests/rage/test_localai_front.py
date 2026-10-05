@@ -62,11 +62,17 @@ def node(tmp_path):
                         runtime_versions=versions,
                         card=lambda pci: (32_000 * MIB, used["mib"] * MIB, None),
                         log=logs.append)
-    app = create_localai_app(observer, client, Clock(None), "the-token",
+    freq = tmp_path / "freq0"               # the card's clock, as RAGE_FREQ_DIR shows it
+    freq.mkdir()
+    for name, mhz in (("min_freq", 400), ("rp0_freq", 2800), ("rpn_freq", 400)):
+        (freq / name).write_text(f"{mhz}\n")
+    clock = Clock(freq)
+    app = create_localai_app(observer, client, clock, "the-token",
                              models_dir=fake.models_dir, watch=False)
     with TestClient(app) as http:
         yield SimpleNamespace(fake=fake, observer=observer, http=http, logs=logs, used=used,
-                              config=config)
+                              config=config, freq=freq, clock=clock)
+    clock.close()
 
 
 def _put(node, name="bge-m3", **over):
@@ -350,6 +356,51 @@ def test_delete_stops_the_model_and_removes_its_yaml_and_says_localai_still_list
     assert node.http.delete("/louise/models/bge-m3", headers=ADMIN).status_code == 404
 
 
+def _min_freq(node) -> int:
+    return int((node.freq / "min_freq").read_text())
+
+
+def test_the_clock_is_held_while_a_person_waits_and_only_then(node):
+    """rage.md §11, carried from llama-swap's front at 15g: a request at
+    `query` or above holds the card at half its maximum while it is in flight
+    (app/gpu_clock.py HOLD_FRACTION); corpus work never does."""
+    _put(node)
+    seen: list[int] = []
+    node.fake.during_request = lambda: seen.append(_min_freq(node))
+    for level in ("corpus", "query", "chat"):
+        r = node.http.post("/upstream/bge-m3/v1/embeddings", json={"input": ["a"]},
+                           headers={"Louise-Level": level})
+        assert r.status_code == 200, r.text
+    assert seen == [400, 1400, 1400]
+    assert _min_freq(node) == 400, "given back after the answer"
+
+
+def test_stopping_the_front_gives_the_clock_back(node):
+    node.clock.enter()                          # someone is mid-answer when SIGTERM lands
+    assert _min_freq(node) == 1400
+    node.clock.close()
+    assert _min_freq(node) == 400
+
+
+def test_the_token_is_read_from_a_file_and_never_shown(tmp_path):
+    from app.rage.wire import read_admin_token
+    f = tmp_path / "admin.token"
+    f.write_text("s3cret\n")
+    assert read_admin_token({"ADMIN_TOKEN_FILE": str(f)}) == "s3cret"
+    assert read_admin_token({}) is None
+    with pytest.raises(RuntimeError) as e:
+        read_admin_token({"ADMIN_TOKEN_FILE": str(tmp_path / "missing")})
+    assert "missing" in str(e.value) and "s3cret" not in str(e.value)
+
+
+def test_a_runner_other_than_localai_refuses_to_start(monkeypatch, capsys):
+    """llama-swap was retired at migration step 15g."""
+    from app.rage.__main__ import main
+    monkeypatch.setenv("RAGE_RUNNER", "llama-swap")
+    assert main() == 2
+    assert "retired at migration step 15g" in capsys.readouterr().err
+
+
 def test_the_operators_own_yaml_is_edited_by_hand(node):
     hand_written(node.fake.models_dir, "bge-m3", pinned("bge-m3.gguf"))
     node.fake.reload_configs()
@@ -429,6 +480,10 @@ def test_rage_toml_with_localai_declares_the_cards_and_nothing_of_the_lifecycle(
     path.write_text(f'[rage]\ndevice_names = {{ xpu = "{CARD}" }}\n')
     with pytest.raises(RageConfigError, match="pci.xpu"):
         localai_config.load(path)
+    for bad in ('03:00.0', 'renderD128'):          # not as `lspci -D` prints it
+        path.write_text(f'[rage]\ndevice_names = {{ xpu = "{CARD}" }}\npci = {{ xpu = "{bad}" }}\n')
+        with pytest.raises(RageConfigError, match="lspci -D"):
+            localai_config.load(path)
     path.write_text(RAGE_TOML)
     assert localai_config.load(path).card_at(PCI) == "xpu"
 

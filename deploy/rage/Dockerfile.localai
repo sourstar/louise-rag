@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 # RAGE over LocalAI — migration step 15e (docs/notes/rage-over-localai.md).
 # LocalAI launches, loads and evicts the models; RAGE's front states the run
-# of every answer. Beside deploy/rage/Dockerfile (llama-swap), which keeps
-# serving until 15f's cut-over and retires at 15g.
+# of every answer. RAGE's only image since 15g: deploy/rage/Dockerfile, the
+# llama-swap one this file cites below, was retired then (its text is in git).
 #
 #   docker build -f deploy/rage/Dockerfile.localai \
 #     --build-arg LLAMA_CPP_IMAGE=ghcr.io/ggml-org/llama.cpp@sha256:<digest of server-intel-b10630> \

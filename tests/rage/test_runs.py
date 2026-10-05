@@ -1,18 +1,17 @@
-"""The run identity (app/rage/runs.py) — docs/09-formats.md §9.3 and §9.12
-as amended 8bbc66a.
+"""The run identity (app/rage/runs.py) — docs/09-formats.md §9.3 and §9.12.
 
-The first design hashed "the exact argv and env" of the process. Those carry
-the port llama-swap picked, the weights' path and the container's host name,
-so every restart would have been another run and re-gated every space on
-the node. What is hashed is the ENTRY'S template and declared environment;
-what keeps that honest is that the process is checked against them first.
+What is hashed is never the raw argument vector or environment: those carry
+a port, a path and a container's host name, so every restart would be
+another run and re-gate every space. The observer writes them with
+placeholders (tests/rage/test_localai_front.py); here, the parts every run
+is made of — the image, the weights digest, the driver — and the hash.
 """
 import hashlib
 
 import pytest
 
 from app.hold.codex import canonical_json, digest
-from app.rage import model, runs
+from app.rage import runs
 from app.rage.procfs import ProcFS
 from tests.rage.conftest import IMAGE
 
@@ -74,99 +73,48 @@ def test_an_empty_directory_names_no_model(tmp_path):
         runs.weights_digest(tmp_path / "m")
 
 
-# ---- the engine and the run -----------------------------------------------------
+# ---- the run -----------------------------------------------------------------------
 
-def _run(rage, *, image=IMAGE, device="xpu", weights="sha256:" + "11" * 32,
-         driver="kernel 6.18; xe 9F"):
-    entry = model.load(rage.config).models["bge-m3"]
-    engine = runs.engine_object(entry, device, image=image,
-                                device_name="Intel(R) Arc(TM) Pro B70 Graphics")
-    return engine, runs.run_object(driver=driver, engine=engine, weights=weights)
+def _run(*, image=IMAGE, weights="sha256:" + "11" * 32, driver="kernel 6.18; xe 9F",
+         args=("./backend", "--addr", "127.0.0.1:${PORT}")):
+    engine = {"name": "localai/llama-cpp", "build": "v", "variant": None, "image": image,
+              "args": list(args), "env": {}, "device": "a card",
+              "options": {"ModelFile": "${WEIGHTS}"}}
+    return runs.run_object(driver=driver, engine=engine, weights=weights)
 
 
-def test_the_engine_is_09_9_3s_object_with_its_placeholders_unsubstituted(rage):
-    engine, run = _run(rage)
-    assert sorted(engine) == ["args", "build", "device", "env", "image", "name", "variant"]
-    assert engine["args"] == ["/opt/llama/llama-server", "-m", "${WEIGHTS}", "--embedding",
-                              "-ngl", "99", "--port", "${PORT}"]
-    assert engine["env"] == {"LD_LIBRARY_PATH": "/opt/llama/lib"}, "declared, nothing more"
-    assert engine["image"] == IMAGE
+def test_the_run_is_its_three_parts_and_its_id_their_hash():
+    run = _run()
     assert sorted(run) == ["driver", "engine", "weights"]
     assert runs.run_id(run) == digest(canonical_json(run))
-    assert runs.engine_id(engine) == digest(canonical_json(engine))
+    assert runs.engine_id(run["engine"]) == digest(canonical_json(run["engine"]))
 
 
-def test_each_thing_the_spec_names_changes_the_run_and_nothing_else_does(rage):
-    _, base = _run(rage)
-    same = runs.run_id(_run(rage)[1])
-    assert runs.run_id(base) == same
-    for changed in (_run(rage, image="sha256:" + "cd" * 32),
-                    _run(rage, device="cpu"),                     # another template
-                    _run(rage, weights="sha256:" + "22" * 32),
-                    _run(rage, driver="kernel 6.19; xe 9F")):
-        assert runs.run_id(changed[1]) != same
-
-
-def test_the_driver_is_read_not_declared(rage, tmp_path):
-    p = rage.placement()
-    assert p._driver("cpu") == "cpu"
-    assert p._driver("xpu") == ("kernel 6.18.0-production; xe 9F2C1A; "
-                                "libze-intel-gpu1 26.05.1; intel-opencl-icd 26.05.1")
-
-
-# ---- is the process the engine we are about to name -----------------------------
-
-def test_the_process_is_matched_whatever_port_and_host_name_it_got(rage):
-    entry = model.load(rage.config).models["bge-m3"]
-    rage.hostname = "container-A"
-    rage.launch("bge-m3@xpu")
-    found = runs.match(ProcFS(rage.proc), entry, "xpu")
-    assert found.ok and found.port == 10001 and found.pid == rage.running["bge-m3@xpu"]
-
-    rage.kill("bge-m3@xpu")
-    rage.hostname = "container-B"                   # a restarted container
-    rage.launch("bge-m3@xpu")                       # and another port
-    again = runs.match(ProcFS(rage.proc), entry, "xpu")
-    assert again.ok and again.port == 10002
-
-
-def test_another_flag_is_another_engine_so_no_run_is_stated(rage):
-    entry = model.load(rage.config).models["bge-m3"]
-    rage.launch("bge-m3@cpu")                       # -ngl 0 is running
-    found = runs.match(ProcFS(rage.proc), entry, "xpu")     # -ngl 99 is asked about
-    assert not found.ok and "no process" in found.reason
-
-
-def test_a_declared_variable_the_process_lacks_states_no_run(rage):
-    entry = model.load(rage.config).models["bge-m3"]
-    argv = [entry.weights if a == "${WEIGHTS}" else "10001" if a == "${PORT}" else a
-            for a in entry.template("xpu")]
-    rage.spawn(argv, {"LD_LIBRARY_PATH": "/somewhere/else"})
-    found = runs.match(ProcFS(rage.proc), entry, "xpu")
-    assert not found.ok and "LD_LIBRARY_PATH" in found.reason
-
-
-def test_two_processes_are_not_one_run(rage):
-    entry = model.load(rage.config).models["bge-m3"]
-    rage.launch("bge-m3@xpu")
-    rage.running.pop("bge-m3@xpu")
-    rage.launch("bge-m3@xpu")
-    found = runs.match(ProcFS(rage.proc), entry, "xpu")
-    assert not found.ok and "2 processes" in found.reason
+def test_each_thing_the_spec_names_changes_the_run_and_nothing_else_does():
+    same = runs.run_id(_run())
+    assert runs.run_id(_run()) == same
+    for changed in (_run(image="sha256:" + "cd" * 32), _run(weights="sha256:" + "22" * 32),
+                    _run(driver="kernel 6.19; xe 9F"), _run(args=("./backend", "--other"))):
+        assert runs.run_id(changed) != same
 
 
 # ---- procfs ---------------------------------------------------------------------
 
-def test_card_memory_is_counted_once_per_drm_client(rage):
-    """The harness gives every child ONE client through two descriptors, as
-    llama-server holds them; summing per descriptor would double it."""
-    pid = rage.launch("bge-m3@xpu")
-    fs = ProcFS(rage.proc)
-    assert fs.vram_mib(pid) == 1400 and fs.rss_mib(pid) == 500
-    assert fs.set_oom_score_adj(pid, 800)
-    assert (rage.proc / str(pid) / "oom_score_adj").read_text() == "800"
-    assert fs.exe_digest(pid) == digest(b"the program")
-    assert fs.cmdline(99999) == [] and fs.rss_mib(99999) is None, "a gone process is not an error"
+def test_card_memory_is_counted_once_per_drm_client_and_per_card(tmp_path):
+    """One client held through two descriptors is counted once; a process on
+    no card is an empty mapping (a CPU process); a gone one is None."""
+    fdinfo = tmp_path / "7" / "fdinfo"
+    fdinfo.mkdir(parents=True)
+    for fd in ("3", "4"):
+        (fdinfo / fd).write_text("drm-client-id: 12\ndrm-pdev: 0000:03:00.0\n"
+                                 "drm-resident-vram0: 1433600 KiB\n")
+    (fdinfo / "5").write_text("pos: 0\n")
+    (tmp_path / "8" / "fdinfo").mkdir(parents=True)
+    fs = ProcFS(tmp_path)
+    assert fs.card_mib_by_device(7) == {"0000:03:00.0": 1400}
+    assert fs.card_mib_by_device(8) == {}
+    assert fs.card_mib_by_device(99999) is None and fs.cmdline(99999) == [], \
+        "a gone process is not an error"
 
 
 # ---- the driver is the one the card is bound to ------------------------------------
@@ -245,19 +193,3 @@ def test_an_address_with_no_card_or_no_driver_is_not_guessed(tmp_path):
     with pytest.raises(runs.DriverUnknown, match="no PCI device 0000:99:00.0"):
         runs.driver_string("xpu", pci="0000:99:00.0", **host)
     assert runs.driver_string("cpu", pci=None, **host) == "cpu"
-
-
-def test_the_cards_address_is_declared_in_rage_toml_and_checked(rage):
-    text = rage.config.read_text(encoding="utf-8")
-    rage.config.write_text(text.replace("[rage]\n", '[rage]\npci = { xpu = "0000:03:00.0" }\n', 1),
-                           encoding="utf-8")
-    assert model.load(rage.config).pci == {"xpu": "0000:03:00.0"}
-    for bad, why in (('"03:00.0"', "PCI address"), ('"renderD128"', "PCI address"), ("3", "PCI address")):
-        rage.config.write_text(text.replace("[rage]\n", f"[rage]\npci = {{ xpu = {bad} }}\n", 1),
-                               encoding="utf-8")
-        with pytest.raises(model.RageConfigError, match=why):
-            model.load(rage.config)
-    rage.config.write_text(text.replace("[rage]\n", '[rage]\npci = { cpu = "0000:03:00.0" }\n', 1),
-                           encoding="utf-8")
-    with pytest.raises(model.RageConfigError, match="not a card"):
-        model.load(rage.config)

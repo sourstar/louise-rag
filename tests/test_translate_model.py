@@ -4,6 +4,7 @@ query into 51 languages in 1.5 s, one whole entry in 5.9 s — against 9.2 s
 for 19 languages and 58–84 s per entry by the chat model, which stays the
 fallback."""
 import json
+import json as _json        # `json` is also the stand-in's keyword argument
 
 import httpx
 import pytest
@@ -39,20 +40,23 @@ class _Resp:
 
 def _server(monkeypatch, known=("de", "en", "fr", "it", "la", "eo", "ja", "zh", "ko"),
             fail=False, calls=None):
-    """A stand-in translation server: `<code>:text`, null for an unknown code."""
+    """A stand-in translator under LocalAI: the request in the completion's
+    prompt, the answer as its text (app/translate.py) — `<code>:text`, null
+    for an unknown code."""
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://gpu:30448")
 
-    def get(url, timeout=None):
-        return _Resp({"languages": list(known)})
-
     def post(url, json=None, timeout=None, headers=None):
-        if calls is not None:
-            calls.append([(it["text"], it["to"]) for it in json["items"]])
+        assert url.endswith("/v1/completions"), url
+        asked = _json.loads(json["prompt"])
         if fail:
             raise httpx.ConnectError("refused")
-        return _Resp({"translations": [f"{it['to']}:{it['text']}" if it["to"] in known
-                                       else None for it in json["items"]]})
-    monkeypatch.setattr(mt.httpx, "get", get)
+        if asked == {"languages": True}:
+            return _Resp({"choices": [{"text": _json.dumps({"languages": list(known)})}]})
+        if calls is not None:
+            calls.append([(it["text"], it["to"]) for it in asked["items"]])
+        out = [f"{it['to']}:{it['text']}" if it["to"] in known else None
+               for it in asked["items"]]
+        return _Resp({"choices": [{"text": _json.dumps({"translations": out})}]})
     monkeypatch.setattr(mt.httpx, "post", post)
 
 
@@ -196,17 +200,16 @@ def test_the_system_page_names_and_pings_the_translation_model(isolated_config, 
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://gpu:30448")
     monkeypatch.setattr(web, "_ping", lambda url: True)
     assert web._effective_config()["tier1"]["TRANSLATE_URL"] == "http://gpu:30448"
-    assert any("TRANSLATE_URL" in h["names"] and h["url"] == "http://gpu:30448/health"
+    assert any("TRANSLATE_URL" in h["names"] and h["url"] == "http://gpu:30448/v1/models"
                for h in web._health_pings())
     monkeypatch.setattr(config, "TRANSLATE_URL", "")
     assert "chat model translates" in web._effective_config()["tier1"]["TRANSLATE_URL"]
 
 
 def test_under_localai_it_speaks_completions_and_a_failure_is_still_empty(monkeypatch):
-    """TRANSLATE_API=completion (migration step 15e-2): the request as the
+    """The completion shape (migration step 15e-2): the request as the
     prompt, the answer as the text; anything else is no translation."""
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://nas:30437/upstream/madlad")
-    monkeypatch.setattr(config, "TRANSLATE_API", "completion")
     answers = iter(['{"translations": ["ciao"]}', "not json", '{"no": "translations"}'])
 
     def post(url, json=None, timeout=None, headers=None):
@@ -218,25 +221,6 @@ def test_under_localai_it_speaks_completions_and_a_failure_is_still_empty(monkey
     assert mt.translate([("hello", "it")]) == ["ciao"]
     assert mt.translate([("hello", "it")]) == []
     assert mt.translate([("hello", "it")]) == []
-
-
-def test_translate_api_is_one_of_two_and_todays_until_the_cut_over():
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    def api(value):
-        env = {k: v for k, v in os.environ.items() if k != "TRANSLATE_API"}
-        if value is not None:
-            env["TRANSLATE_API"] = value
-        return subprocess.run([sys.executable, "-c", "from app import config; "
-                               "print(config.TRANSLATE_API)"], env=env, text=True,
-                              capture_output=True, cwd=Path(__file__).resolve().parents[1])
-    assert api(None).stdout.strip() == "translate"
-    assert api(" Completion ").stdout.strip() == "completion"
-    refused = api("grpc")
-    assert refused.returncode != 0 and "TRANSLATE_API must be" in refused.stderr
 
 
 def test_each_mixed_group_is_searched_in_every_language_it_holds(isolated_config, monkeypatch):

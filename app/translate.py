@@ -1,5 +1,5 @@
-"""The node's translation model: TRANSLATE_URL, a MADLAD-400 server on the
-GPU (deploy/madlad-translate). HTTP only — the app never loads a model
+"""The node's translation model: TRANSLATE_URL, MADLAD-400 on the GPU, served
+by LocalAI (deploy/localai/backends/louise-madlad). HTTP only — the app never loads a model
 (invariant 7).
 
 It translates everything the node translates: a search's query into every
@@ -13,11 +13,12 @@ and reading "only texts in German" out of a question.
 Every call is bounded (TIMEOUT_S): a search never waits on this without a
 limit, and a failure is an empty answer the caller falls back from.
 
-TWO SHAPES, by TRANSLATE_API (app/config.py). "translate" is the server's own:
-POST /translate {"items": [...]} and GET /languages. "completion" is the same
-two requests under LocalAI (migration step 15e-2): each one, as JSON, is the
-prompt of one /v1/completions call, and the completion's text is the server's
-JSON answer (deploy/localai/backends/louise-madlad/backend.py). One prompt
+THE COMPLETION SHAPE (migration step 15e-2). The two requests — translate
+`{"items": [...]}`, and the language list `{"languages": true}` — are each, as
+JSON, the prompt of one /v1/completions call, and the completion's text is the
+backend's JSON answer (deploy/localai/backends/louise-madlad/backend.py). The
+server's own POST /translate and GET /languages, and TRANSLATE_API that chose
+between the two, were retired at 15g. One prompt
 carries the whole batch, because LocalAI calls the model once per prompt and
 the model translates a batch in one pass (operator, 2026-10-03).
 """
@@ -47,10 +48,8 @@ def available() -> bool:
 
 def health_url() -> str:
     """What the System page pings: a route that answers without loading the
-    model in either shape."""
-    if config.TRANSLATE_API == "completion":
-        return f"{config.TRANSLATE_URL}/v1/models"
-    return f"{config.TRANSLATE_URL}/health"
+    model."""
+    return f"{config.TRANSLATE_URL}/v1/models"
 
 
 def _completion(request: dict, timeout: float, headers: dict[str, str] | None = None):
@@ -73,12 +72,7 @@ def languages() -> frozenset[str]:
     if cached is not None and time.monotonic() - cached[0] < _LANGUAGES_TTL_S:
         return cached[1]
     try:
-        if config.TRANSLATE_API == "completion":
-            answer = _completion({"languages": True}, 10.0)
-        else:
-            r = httpx.get(f"{config.TRANSLATE_URL}/languages", timeout=10.0)
-            r.raise_for_status()
-            answer = r.json()
+        answer = _completion({"languages": True}, 10.0)
         got = frozenset(str(c) for c in answer.get("languages", []))
     except Exception:   # noqa: BLE001 — unreachable is "no languages", not an error
         return frozenset()
@@ -102,13 +96,7 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
     try:
         with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
                            timeout=TIMEOUT_S):
-            if config.TRANSLATE_API == "completion":
-                answer = _completion(request, TIMEOUT_S, dispatch.level_headers())
-            else:
-                r = httpx.post(f"{config.TRANSLATE_URL}/translate", json=request,
-                               timeout=TIMEOUT_S, headers=dispatch.level_headers())
-                r.raise_for_status()
-                answer = r.json()
+            answer = _completion(request, TIMEOUT_S, dispatch.level_headers())
         out = answer.get("translations")
     except Exception:   # noqa: BLE001 — the caller falls back and says so
         return []

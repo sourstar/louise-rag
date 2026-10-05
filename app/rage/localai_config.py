@@ -1,4 +1,4 @@
-"""`rage.toml` when LocalAI runs the models (`RAGE_RUNNER=localai`; migration
+"""`rage.toml`: the cards, and nothing of the lifecycle (migration
 step 15, docs/notes/rage-over-localai.md §7).
 
 It shrinks to what the run identity needs and nothing of the lifecycle: the
@@ -6,8 +6,8 @@ cards, each as its driver names it (09 §9.3's `device`) and by its PCI
 address. The address does two jobs: the kernel driver stated in a run is the
 one THAT card is bound to (runs.driver_string), and a model is placed on the
 card whose address its process's DRM clients report (`drm-pdev`) — read,
-never declared. Models are LocalAI's own YAML; a `[models]` table here is the
-llama-swap front's, and refused so that a half-moved file says so.
+never declared. Models are LocalAI's own YAML; a `[models]` table here was the
+llama-swap front's (retired at 15g), and is refused so that an old file says so.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def load(path: Path) -> LocalAIConfig:
         raise RageConfigError(f"{path}: {e}") from None
     if "models" in doc:
         raise RageConfigError(
-            f"{path}: [models] is the llama-swap front's. With RAGE_RUNNER=localai the models "
+            f"{path}: [models] was the llama-swap front's, retired at migration step 15g. The models "
             f"are LocalAI's YAML (PUT /louise/models/<id>), and rage.toml declares only the "
             f"cards: [rage] device_names and pci")
     unknown = set(doc) - {"rage"}
@@ -53,8 +53,8 @@ def load(path: Path) -> LocalAIConfig:
         raise RageConfigError(f"{path}: [rage] is a table")
     unknown = set(head) - {"device_names", "pci"}
     if unknown:
-        raise RageConfigError(f"{path}: [rage] has unknown key(s) {sorted(unknown)}; with "
-                              f"RAGE_RUNNER=localai it declares device_names and pci only")
+        raise RageConfigError(f"{path}: [rage] has unknown key(s) {sorted(unknown)}; "
+                              f"it declares device_names and pci only")
     names, pci = head.get("device_names", {}), head.get("pci", {})
     if not isinstance(names, dict) or not isinstance(pci, dict):
         raise RageConfigError(f"{path}: [rage] device_names and pci are tables")

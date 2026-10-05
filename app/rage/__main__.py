@@ -1,27 +1,23 @@
-"""`python -m app.rage` — boot the front and the process runner under it.
+"""`python -m app.rage` — boot the front and LocalAI under it.
 
 Identity comes from the environment (tier 1; docs/notes/rage.md §8, §12):
 
     RAGE_IMAGE          sha256:… — the digest the deployment pins. REQUIRED:
                         a tag, or nothing, refuses to start (09 §9.12)
-    RAGE_CONFIG         rage.toml                      (/config/rage.toml)
-    RAGE_STATE_DIR      the run table, the generated yaml        (/state)
+    RAGE_CONFIG         rage.toml: the cards             (/config/rage.toml)
+    RAGE_STATE_DIR      the run table                            (/state)
     RAGE_PORT           the published port                         (8080)
-    RAGE_SWAP_PORT      llama-swap's, on 127.0.0.1 only            (9090)
-    LLAMA_SWAP_BIN      the process runner      (/usr/local/bin/llama-swap)
     RAGE_FREQ_DIR       the card's frequency directory; unset = no clock
     ADMIN_TOKEN_FILE    the operator's token, by path; unset = routes 401
-
-    RAGE_RUNNER         `llama-swap` (the default, until migration step 15's
-                        cut-over) or `localai`: LocalAI runs the models and RAGE
-                        states the run of every answer (rage-over-localai.md)
-    LOCALAI_MODELS_DIR  with `localai`: the models' YAML, which PUT and DELETE
-                        write; the weights are mounted read-only inside it
-    LOCALAI_PORT        with `localai`: LocalAI's, on 127.0.0.1 only    (8081)
-    LOCALAI_BIN         with `localai`: the runner to start      (/usr/bin/local-ai)
+    LOCALAI_MODELS_DIR  the models' YAML, which PUT and DELETE write; the
+                        weights are mounted read-only inside it. REQUIRED
+    LOCALAI_PORT        LocalAI's, on 127.0.0.1 only                (8081)
+    LOCALAI_BIN         the runner to start                (/usr/bin/local-ai)
+    RAGE_RUNNER         `localai`, or unset. llama-swap was retired at
+                        migration step 15g (docs/notes/legacy-to-delete.md §8)
 
 A refusal exits 2 and says which rule stood in the way (07 §7.7's exit
-codes). llama-swap dying takes the front down with it: a front that answers
+codes). LocalAI dying takes the front down with it: a front that answers
 while nothing can run a model would turn every request into a slow failure,
 and the container's restart policy is the recovery.
 """
@@ -38,10 +34,12 @@ import uvicorn
 
 from . import model, runs
 from .clock import Clock
-from .front import create_app, read_admin_token
-from .placement import Placement
+from .front_localai import create_localai_app
+from .localai import LocalAI
+from .localai_config import load as load_localai_config
+from .observer import Observer
 from .store import RunStore
-from .swap import Swap
+from .wire import read_admin_token
 
 
 #: Set on the LocalAI RAGE starts, whatever the deployment says: with them
@@ -67,11 +65,6 @@ def localai_child(env: dict[str, str] | os._Environ, *, state: Path, models_dir:
 
 
 def main_localai(env: dict[str, str] | os._Environ, image: str, token: str | None) -> int:
-    from .front_localai import create_localai_app
-    from .localai import LocalAI
-    from .localai_config import load as load_localai_config
-    from .observer import Observer
-
     try:
         state = Path(env.get("RAGE_STATE_DIR", "/state"))
         models_dir = Path(env["LOCALAI_MODELS_DIR"]) if env.get("LOCALAI_MODELS_DIR") else None
@@ -89,6 +82,11 @@ def main_localai(env: dict[str, str] | os._Environ, image: str, token: str | Non
     freq = env.get("RAGE_FREQ_DIR")
     clock = Clock(Path(freq) if freq else None)
 
+    # As PID 1 the kernel gives SIGTERM no default action, so a stop that
+    # lands before uvicorn has installed its own handlers would be ignored
+    # and end in SIGKILL at the grace period's end (medcpt-rerank, each NAS
+    # poweroff of 2026-09-16 and -17). uvicorn replaces this while it serves
+    # and puts it back when it stops.
     def _stop(*_: object) -> None:
         raise SystemExit(0)
 
@@ -121,69 +119,18 @@ def main_localai(env: dict[str, str] | os._Environ, image: str, token: str | Non
 
 def main() -> int:
     env = os.environ
-    if env.get("RAGE_RUNNER", "llama-swap") == "localai":
-        try:
-            image = runs.boot_image(env)
-            token = read_admin_token(env)
-        except (runs.BootError, RuntimeError) as e:
-            print(f"[rage] refusing to start: {e}", file=sys.stderr, flush=True)
-            return 2
-        return main_localai(env, image, token)
-    if env.get("RAGE_RUNNER", "llama-swap") != "llama-swap":
-        print(f"[rage] refusing to start: RAGE_RUNNER is llama-swap or localai, got "
-              f"{env['RAGE_RUNNER']!r}", file=sys.stderr, flush=True)
+    if env.get("RAGE_RUNNER", "localai") != "localai":
+        print(f"[rage] refusing to start: RAGE_RUNNER is `localai` or unset, got "
+              f"{env['RAGE_RUNNER']!r} — llama-swap was retired at migration step 15g",
+              file=sys.stderr, flush=True)
         return 2
     try:
         image = runs.boot_image(env)
         token = read_admin_token(env)
-        state = Path(env.get("RAGE_STATE_DIR", "/state"))
-        swap_port = int(env.get("RAGE_SWAP_PORT", "9090"))
-        swap = Swap(f"http://127.0.0.1:{swap_port}")
-        placement = Placement(config_path=Path(env.get("RAGE_CONFIG", "/config/rage.toml")),
-                              yaml_path=state / "llama-swap.yaml", image=image,
-                              runner=swap, store=RunStore(state / "rage.sqlite"))
-    except (runs.BootError, model.RageConfigError, RuntimeError, ValueError) as e:
+    except (runs.BootError, RuntimeError) as e:
         print(f"[rage] refusing to start: {e}", file=sys.stderr, flush=True)
         return 2
-
-    freq = env.get("RAGE_FREQ_DIR")
-    clock = Clock(Path(freq) if freq else None)
-
-    # As PID 1 the kernel gives SIGTERM no default action, so a stop that
-    # lands before uvicorn has installed its own handlers would be ignored
-    # and end in SIGKILL at the grace period's end (medcpt-rerank, each NAS
-    # poweroff of 2026-09-16 and -17). uvicorn replaces this while it serves
-    # and puts it back when it stops.
-    def _stop(*_: object) -> None:
-        raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, _stop)
-
-    runner: subprocess.Popen | None = None
-    try:
-        runner = subprocess.Popen([env.get("LLAMA_SWAP_BIN", "/usr/local/bin/llama-swap"),
-                                   "-config", str(placement.yaml_path),
-                                   "-listen", f"127.0.0.1:{swap_port}", "-watch-config"])
-        started = runner
-
-        def _runner_died() -> None:
-            code = started.wait()
-            print(f"[rage] llama-swap exited with {code}; stopping", file=sys.stderr,
-                  flush=True)
-            os.kill(os.getpid(), signal.SIGTERM)
-
-        threading.Thread(target=_runner_died, daemon=True).start()
-        uvicorn.run(create_app(placement, swap, clock, token), host="0.0.0.0",
-                    port=int(env.get("RAGE_PORT", "8080")), log_level="warning")
-    finally:
-        clock.close()                           # the card gets its clock back
-        if runner is not None and runner.poll() is None:
-            runner.terminate()                  # it stops its children in turn
-            try:
-                runner.wait(timeout=45)
-            except subprocess.TimeoutExpired:
-                runner.kill()
-    return 0
+    return main_localai(env, image, token)
 
 
 if __name__ == "__main__":

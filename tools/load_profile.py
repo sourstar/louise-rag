@@ -2,13 +2,14 @@
 from the NVMe and from RAM, on a quiet node and beside an embedding in progress.
 
     python -m tools.load_profile --rage http://nas:30437 \
-        --config /rage/config/rage.toml --token-file /rage/secrets/admin_token \
+        --models-dir /state/localai-models --token-file /rage/secrets/admin_token \
         --models chat,madlad,bge-m3 --busy qwen3-embedding-4b \
         --reps 3 --out /data/load-profile.jsonl
 
 `louise dev load-profile` (docs/07 §7.3); docs/notes/rage.md §14. It reads the
-weights at the paths `rage.toml` names: run it in a container with RAGE's
-volumes (deploy/truenas-rage.yaml), the node paused.
+weights at the paths LocalAI's model YAML names (`parameters.model`, under its
+models directory): run it in a container with RAGE's volumes
+(deploy/truenas-rage-localai.yaml), the node paused.
 
 WHY (operator, 2026-10-01). RAGE frees the card on demand (rage.md §7) and a
 lookahead would load the next model before it is asked for (rage.md §20,
@@ -76,7 +77,6 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 import httpx
 
-from app.rage import model as rage_model
 from app.rage import runs
 
 MIB = 1 << 20
@@ -87,14 +87,50 @@ COLD_SHARE = 0.5                 # the disk read at least half the weights
 WARM_SHARE = 0.05                # the disk read less than a twentieth of them
 IN_USE_S = 60                    # a model asked this recently is someone's
 
-#: RAGE's states for a model that holds a place (placement.py). `exited` is
-#: not one: its process is gone, and the run does not start it again.
-HOLDING = frozenset({"loading", "ready", "unstated"})
+#: RAGE's state for a model LocalAI holds: `loaded` (app/rage/front_localai.py),
+#: whether or not a run is stated for it.
+HOLDING = frozenset({"loaded"})
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED, EXIT_DEFERRED, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
 
 _WHOLE_DISK = re.compile(r"^(nvme\d+n\d+|sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|mmcblk\d+)$")
 _ARC_KEYS = ("demand_data_hits", "demand_data_misses", "prefetch_data_hits",
              "prefetch_data_misses", "size")
+
+
+class ModelsError(ValueError):
+    """LocalAI's models directory cannot say which weights a model reads."""
+
+
+@dataclass(frozen=True)
+class Weights:
+    weights: str
+
+
+@dataclass(frozen=True)
+class ModelsDir:
+    models: dict[str, Weights]
+
+
+def models_dir(path: Path) -> ModelsDir:
+    """Each model's weights, from LocalAI's YAML: `parameters.model` under the
+    models directory. The YAMLs are JSON, which is YAML, after their comment
+    lines (deploy/rage/localai-models/, and what RAGE's PUT writes); one that
+    is not is refused rather than guessed at."""
+    if not path.is_dir():
+        raise ModelsError(f"{path} is not LocalAI's models directory")
+    out: dict[str, Weights] = {}
+    for f in sorted(path.glob("*.yaml")):
+        body = "\n".join(l for l in f.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        try:
+            doc = json.loads(body)
+            out[str(doc["name"])] = Weights(str(path / doc["parameters"]["model"]))
+        except (ValueError, KeyError, TypeError) as e:
+            raise ModelsError(f"{f.name}: no name and parameters.model to read "
+                              f"({type(e).__name__}: {e})") from None
+    if not out:
+        raise ModelsError(f"{path} holds no model YAML")
+    return ModelsDir(out)
 
 
 class Refusal(Exception):
@@ -438,7 +474,7 @@ class Plan:
 
 
 class Profiler:
-    def __init__(self, rage: Rage, host: Host, cfg: rage_model.RageConfig, *,
+    def __init__(self, rage: Rage, host: Host, cfg: "ModelsDir", *,
                  cold_by: str, window_s: float, emit: Callable[[dict[str, Any]], None],
                  background: Background | None = None, busy_model: str | None = None,
                  label: str = "",
@@ -626,8 +662,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         description="how long each model takes to come back to the card, from disk and "
                     "from RAM, idle and beside an embedding; loads and unloads models")
     p.add_argument("--rage", required=True, help="RAGE's URL (RAGE_URL)")
-    p.add_argument("--config", required=True, type=Path,
-                   help="rage.toml, for the weights each model reads")
+    p.add_argument("--models-dir", required=True, type=Path,
+                   help="LocalAI's models directory (LOCALAI_MODELS_DIR): each model's "
+                        "YAML names its weights")
     p.add_argument("--token-file", type=Path,
                    default=Path(os.environ["ADMIN_TOKEN_FILE"])
                    if os.environ.get("ADMIN_TOKEN_FILE") else None,
@@ -686,19 +723,19 @@ def main(argv: Sequence[str] | None = None, *, client: httpx.Client | None = Non
         print(message, file=sys.stderr)
 
     try:
-        cfg = rage_model.load(a.config)
-    except rage_model.RageConfigError as e:
+        cfg = models_dir(a.models_dir)
+    except ModelsError as e:
         say(f"refused: {e}")
         return EXIT_REFUSED
     models = a.models or tuple(sorted(cfg.models))
     unknown = [m for m in (*models, *([a.busy] if a.busy else [])) if m not in cfg.models]
     if unknown:
-        say(f"refused: not models of {a.config}: {unknown}")
+        say(f"refused: not models of {a.models_dir}: {unknown}")
         return EXIT_REFUSED
     missing = [m for m in models if not Path(cfg.models[m].weights).exists()]
     if missing:
         say(f"refused: weights not readable here for {missing}; mount the models "
-            f"directory at the paths rage.toml names")
+            f"directory where LocalAI reads it")
         return EXIT_REFUSED
     host = host or Host(devices=a.device)
     backgrounds = ("idle",) + ((f"busy:{a.busy}",) if a.busy else ())

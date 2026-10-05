@@ -310,7 +310,7 @@ def _madlad(seen=None):
             seen["batches"].append(list(prompts))
             return [p.split(" ", 1)[0] + "|" + p.split(" ", 1)[1].upper() for p in prompts]
         return (lambda t: len(t.split()), generate, lambda t: t in KNOWN_TARGETS,
-                ["de", "it", "la"], lambda: 7, None, None)
+                ["de", "it", "la"], lambda: 7)
     return madlad_backend.Servicer(PB, STATUS, load=load,
                                    settle=lambda path: seen.setdefault("settled", path))
 
@@ -369,7 +369,7 @@ def test_a_prompt_that_is_not_a_request_is_refused_not_translated(tmp_path, prom
 
 
 def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, monkeypatch):
-    """app/translate.py under TRANSLATE_API=completion, through LocalAI's
+    """app/translate.py, through LocalAI's
     /v1/completions as it is at 58830f7 for a model with no template: the
     prompt reaches `Predict` as sent and the reply comes back as the text."""
     from app import config
@@ -387,7 +387,6 @@ def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, 
             request=httpx.Request("POST", url))
 
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://rage:8080/upstream/madlad")
-    monkeypatch.setattr(config, "TRANSLATE_API", "completion")
     monkeypatch.setattr(mt.httpx, "post", localai)
     mt.reset()
     assert mt.languages() == frozenset({"de", "it", "la"})

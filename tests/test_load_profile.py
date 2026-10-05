@@ -22,37 +22,7 @@ from tools import load_profile as lp
 TOKEN = "s3cret-admin-token"
 MIB = 1 << 20
 
-RAGE_TOML = """\
-[rage]
-reserve_mib  = {{ xpu = 1000, cpu = 2000 }}
-capacity_mib = {{ xpu = 10000, cpu = 20000 }}
-device_names = {{ xpu = "a card" }}
-
-[models.chat]
-engine  = {{ name = "llama.cpp", build = "b10630", variant = "sycl" }}
-weights = "{models}/chat.gguf"
-device  = "xpu"
-memory  = {{ xpu = 5000, cpu = 6000 }}
-host    = {{ xpu = 5600 }}
-cmd.xpu = ["/app/llama-server", "-m", "${{WEIGHTS}}", "--port", "${{PORT}}"]
-cmd.cpu = ["/app/llama-server", "-m", "${{WEIGHTS}}", "-ngl", "0", "--port", "${{PORT}}"]
-
-[models.bge-m3]
-engine  = {{ name = "llama.cpp", build = "b10630", variant = "sycl" }}
-weights = "{models}/bge-m3.gguf"
-device  = "xpu"
-memory  = {{ xpu = 1400, cpu = 2600 }}
-host    = {{ xpu = 1600 }}
-cmd.xpu = ["/app/llama-server", "-m", "${{WEIGHTS}}", "--embeddings", "--port", "${{PORT}}"]
-
-[models.madlad]
-engine  = {{ name = "louise-madlad-server", build = "2" }}
-weights = "{models}/madlad"
-device  = "xpu"
-memory  = {{ xpu = 8200, cpu = 12000 }}
-host    = {{ xpu = 8600 }}
-cmd.xpu = ["/venv/bin/python", "-m", "servers.launch", "madlad", "--weights", "${{WEIGHTS}}", "--port", "${{PORT}}"]
-"""
+MODELS = {"chat": "weights/chat.gguf", "bge-m3": "weights/bge-m3.gguf", "madlad": "weights/madlad"}
 
 
 class World:
@@ -61,14 +31,17 @@ class World:
     COLD_S, WARM_S, UNLOAD_S = 6.0, 1.5, 0.3
 
     def __init__(self, root: Path) -> None:
-        models = root / "models"
+        self.models_dir = root / "localai-models"
+        models = self.models_dir / "weights"
         (models / "madlad").mkdir(parents=True)
         (models / "chat.gguf").write_bytes(b"c" * (2 * MIB))
         (models / "bge-m3.gguf").write_bytes(b"b" * MIB)
         (models / "madlad" / "model.safetensors").write_bytes(b"m" * MIB)
         (models / "madlad" / "config.json").write_text('{"model_type": "t5"}')
-        self.config = root / "rage.toml"
-        self.config.write_text(RAGE_TOML.format(models=models), encoding="utf-8")
+        for name, rel in MODELS.items():         # LocalAI's YAML: JSON after its comments
+            (self.models_dir / f"{name}.yaml").write_text(
+                "# a model\n" + json.dumps({"name": name, "backend": "llama-cpp",
+                                             "parameters": {"model": rel}}), encoding="utf-8")
         self.token_file = root / "token"
         self.token_file.write_text(TOKEN + "\n", encoding="utf-8")
         self.sizes = {"chat": 2 * MIB, "bge-m3": MIB,
@@ -112,7 +85,7 @@ class World:
             rows = []
             for m in ("bge-m3", "chat", "madlad"):
                 if m in self.loaded:
-                    rows.append({"id": m, "state": "ready", "device": self.loaded[m],
+                    rows.append({"id": m, "state": "loaded", "device": self.loaded[m],
                                  "idle_s": self.idle.get(m, 999)})
                 else:
                     rows.append({"id": m, "state": "unloaded", "device": None})
@@ -140,7 +113,7 @@ class World:
             self.loads.append((t0, self.t))
             body = json.loads(request.content) if request.content else {}
             self.loaded[model] = (body or {}).get("device") or "xpu"
-            return httpx.Response(200, json={"id": model, "state": "ready",
+            return httpx.Response(200, json={"id": model, "state": "loaded",
                                              "run": f"sha256:{model}-{self.env}",
                                              "memory": {"observed": {"ram_mib": 1} | {
                                                  f"k{i}": i for i in range(80)}}})
@@ -206,7 +179,7 @@ def world(tmp_path: Path) -> World:
 
 def _run(world: World, *args: str, background=None, out: Path | None = None) -> int:
     client = httpx.Client(transport=httpx.MockTransport(world.handler))
-    argv = ["--rage", "http://rage:30437", "--config", str(world.config),
+    argv = ["--rage", "http://rage:30437", "--models-dir", str(world.models_dir),
             "--token-file", str(world.token_file), *args]
     if out is not None:
         argv += ["--out", str(out)]
@@ -303,7 +276,7 @@ def test_a_label_the_disk_contradicts_is_reported_as_the_disk_saw_it(world: Worl
     world.cached.add("chat")
     out = tmp_path / "p.jsonl"
     client = httpx.Client(transport=httpx.MockTransport(world.handler))
-    code = lp.main(["--rage", "http://rage:30437", "--config", str(world.config),
+    code = lp.main(["--rage", "http://rage:30437", "--models-dir", str(world.models_dir),
                     "--token-file", str(world.token_file), "--models", "chat",
                     "--cache", "cold", "--reps", "1", "--skip-raw", "--out", str(out)],
                    client=client, host=NoEvict(world), clock=world.clock, sleep=world.sleep)
@@ -338,7 +311,7 @@ def test_dry_run_touches_nothing_and_needs_no_token(world: World, capsys) -> Non
     def never(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"dry run sent {request.method} {request.url}")
 
-    code = lp.main(["--rage", "http://rage:30437", "--config", str(world.config),
+    code = lp.main(["--rage", "http://rage:30437", "--models-dir", str(world.models_dir),
                     "--models", "chat", "--busy", "bge-m3", "--reps", "2", "--dry-run"],
                    client=httpx.Client(transport=httpx.MockTransport(never)),
                    host=FakeHost(world), clock=world.clock, sleep=world.sleep)
@@ -350,7 +323,7 @@ def test_unreachable_rage_is_a_deferral(world: World) -> None:
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    code = lp.main(["--rage", "http://rage:30437", "--config", str(world.config),
+    code = lp.main(["--rage", "http://rage:30437", "--models-dir", str(world.models_dir),
                     "--token-file", str(world.token_file), "--skip-raw"],
                    client=httpx.Client(transport=httpx.MockTransport(down)),
                    host=FakeHost(world), clock=world.clock, sleep=world.sleep)

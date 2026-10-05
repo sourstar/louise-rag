@@ -3,7 +3,7 @@
 # directory at the cut-over, as the six llama.cpp ones; no first-line marker,
 # so RAGE's API never rewrites it (409): edit it by hand.
 # THE BACKEND is deploy/localai/backends/louise-madlad: `Predict`, the batch as
-# one JSON prompt, read by app/translate.py with TRANSLATE_API=completion. So
+# one JSON prompt, read by app/translate.py (the completion shape). So
 # NO template, and none of echo, cutstrings, extract_regex, trimspace or
 # trimsuffix: the completion's text must be the backend's JSON, untouched.
 # READ by the backend: parameters.batch (segments per pass, the server's BATCH)

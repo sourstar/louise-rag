@@ -12,34 +12,21 @@ and in llama-server, but neither runs its encoder: Ollama hung and answered
 completion tool translates correctly, one text per process at 18 s of load.
 So it runs here, on PyTorch XPU, the runtime verified on this card
 (DEPLOYMENT "Running PyTorch on the Arc"), with transformers pinned to
-4.46.3 (see the Dockerfile).
+4.46.3 (deploy/localai/backends/louise-madlad/requirements.txt).
 
 The target language is a token in front of the text, `<2de>`; there is no
 source language to name. The model saw sentences, and its window is 512
-tokens, so a long text is cut into sentences packed up to MAX_SEG_TOKENS,
+tokens, so a long text is cut into sentences packed up to `max_seg_tokens`,
 every piece of every item goes through the GPU in length-sorted batches,
 and the pieces are put back with the text's own paragraph breaks.
 
-    GET  /, /health       -> {"status": "ok", "model": ...}
-    GET  /languages       -> {"languages": [code, ...]}   the targets it knows
-    POST /translate {"items": [{"text": str, "to": code}, ...]}
-                          -> {"translations": [str | null, ...], "ms": int}
-    POST /park            -> {"parked": true, "ms": int}   weights to host RAM, the card freed
-    POST /unpark          -> {"parked": false, "ms": int}  weights back on the card
-
-PARKED (docs/notes/rage.md §21). RAGE parks the translator instead of
-unloading it when the card must be freed: the process stays up, its weights
-move to host RAM, and the next translation costs a copy back over the bus
-instead of a launch (20 s on the node). Parked, /translate answers 503 —
-RAGE unparks before it passes a request on, so that is never seen through it.
-Park and unpark take the same lock as a translation: never under one.
+SERVED BY LocalAI since migration step 15f: deploy/localai/backends/louise-madlad
+imports this module and answers `Predict` with `handle`, the batch as one JSON
+prompt. Its HTTP server and its parking (rage.md §21) went with llama-swap at
+15g (docs/notes/legacy-to-delete.md §8); its settings are the model YAML's.
 
 `null` is an item whose target the model does not know — never the input
 handed back as if it were a translation.
-
-Environment: MODEL_ID (google/madlad400-3b-mt), HF_HOME (/data), DEVICE
-(xpu), DTYPE (bfloat16), PORT (8080), BATCH (segments per pass, 32),
-MAX_SEG_TOKENS (96), BEAMS (1), MAX_ITEMS (512).
 
 THE CARD IS SHARED — with the node's encoders, rerankers and chat model —
 so memory is the budget, not speed. The decoder's cache grows with batch x
@@ -55,14 +42,10 @@ page of twelve entries from 50 s to 17 s (at batch 128).
 """
 from __future__ import annotations
 
-import json
 import os
 import re
-import signal
-import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 #: an ISO code the platform stores -> the token MADLAD was trained with,
 #: where the two name the same language differently
@@ -71,10 +54,6 @@ ALIASES = {"tl": "fil", "gla": "gd", "oji": "oj", "iw": "he", "in": "id", "ji": 
 _PARAGRAPH = re.compile(r"\n\s*\n")
 _SENTENCE = re.compile(r"(?<=[.!?;:。！？；])\s+")
 _SPACE = re.compile(r"\s+")
-
-
-class Parked(RuntimeError):
-    """The weights are in host RAM; /unpark first."""
 
 
 def target_token(code: str) -> str:
@@ -126,13 +105,10 @@ class Translator:
     per prompt; `known(token)` -> whether the model has that `<2xx>`."""
 
     def __init__(self, count, generate, known, batch: int = 32, max_seg_tokens: int = 96,
-                 release=None, park=None, unpark=None):
+                 release=None):
         self.count, self.generate, self.known = count, generate, known
         #: hands the GPU allocator's cache back; returns the pass's peak (MB)
         self.release = release or (lambda: None)
-        #: move the weights to host RAM / back to the device (rage.md §21)
-        self._park, self._unpark = park, unpark
-        self.parked = False
         self.batch, self.max_seg = max(1, batch), max(16, max_seg_tokens)
         self.lock = threading.Lock()        # one GPU, one pass at a time
 
@@ -154,8 +130,6 @@ class Translator:
         # similar lengths share a pass, so little of it is padding
         jobs.sort(key=lambda j: len(j[3]))
         with self.lock:
-            if self.parked:
-                raise Parked("the weights are parked in host RAM; POST /unpark first")
             try:
                 for s in range(0, len(jobs), self.batch):
                     chunk = jobs[s:s + self.batch]
@@ -174,22 +148,10 @@ class Translator:
         return out
 
 
-    def move(self, park: bool) -> int:
-        """Park or unpark, under the translation lock; ms taken. Asked twice,
-        the second is nothing."""
-        step = self._park if park else self._unpark
-        if step is None:
-            raise NotImplementedError("this translator cannot be parked")
-        t0 = time.monotonic()
-        with self.lock:
-            if self.parked != park:
-                step()
-                self.parked = park
-        return round(1000 * (time.monotonic() - t0))
-
-
 def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, object]:
-    """One /translate request -> (HTTP status, JSON payload)."""
+    """One request, `{"items": [{"text", "to"}, ...]}` -> (status, payload): 200, or
+    422 and 413 for a request it refuses. The status is HTTP's, as the server
+    answered it until 15g; the LocalAI backend says it in gRPC's words."""
     items = body.get("items") if isinstance(body, dict) else None
     if not isinstance(items, list) or not all(
             isinstance(it, dict) and isinstance(it.get("text"), str)
@@ -198,18 +160,15 @@ def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, obj
     if len(items) > max_items:
         return 413, {"error": f"{len(items)} items; at most {max_items} per request"}
     t0 = time.monotonic()
-    try:
-        out = translator.translate([(it["text"], it["to"]) for it in items])
-    except Parked as e:
-        return 503, {"error": str(e)}
+    out = translator.translate([(it["text"], it["to"]) for it in items])
     return 200, {"translations": out, "ms": round(1000 * (time.monotonic() - t0)),
                  "peak_mb": getattr(translator, "peak_mb", None)}
 
 
 def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
-    """The real model: (count, generate, known, languages, release, park,
-    unpark). `beams` unset is BEAMS from the environment, as this server's
-    own `main` reads it; the LocalAI backend passes its load call's."""
+    """The real model: (count, generate, known, languages, release). `beams`
+    is the load call's (the LocalAI backend's option); unset, BEAMS from the
+    environment, else one."""
     import torch
     from transformers import AutoTokenizer, T5ForConditionalGeneration
     dtype = getattr(torch, dtype_name)
@@ -241,21 +200,6 @@ def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
                              do_sample=False)
         return tok.batch_decode(ids, skip_special_tokens=True)
 
-    def park():
-        # UNVERIFIED on the node: a model placed with device_map moved whole by
-        # .to(); measure the parked process (GET /louise/models) before
-        # declaring park.memory and park.host in rage.toml
-        model.to("cpu")
-        if device.startswith("xpu"):
-            torch.xpu.synchronize()
-            torch.xpu.empty_cache()
-
-    def unpark():
-        model.to(device)
-        if device.startswith("xpu"):
-            torch.xpu.synchronize()
-        _release_host_memory()          # the host copies, handed back to the system
-
     def release():
         # the pass's peak, then the cache back to the card's other tenants
         peak = None
@@ -265,7 +209,7 @@ def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
             torch.xpu.reset_peak_memory_stats()
         return peak
 
-    return count, generate, known, languages, release, park, unpark
+    return count, generate, known, languages, release
 
 
 def _release_host_memory() -> None:
@@ -311,93 +255,3 @@ def _drop_file_cache(model_id: str) -> int:
             finally:
                 os.close(fd)
     return advised
-
-
-class Handler(BaseHTTPRequestHandler):
-    translator: Translator
-    model = ""
-    languages: list[str] = []
-    max_items = 512
-
-    def do_GET(self):
-        if self.path.rstrip("/") == "/languages":
-            return self._send(200, {"languages": self.languages})
-        self._send(200, {"status": "ok", "model": self.model})
-
-    def do_POST(self):
-        if self.path.rstrip("/") in ("/park", "/unpark"):
-            park = self.path.rstrip("/") == "/park"
-            try:
-                ms = self.translator.move(park)
-            except NotImplementedError as e:
-                return self._send(501, {"error": str(e)})
-            except Exception as e:                      # noqa: BLE001
-                return self._send(500, {"error": f"{type(e).__name__}: {e}"})
-            print(f"{'parked in host RAM' if park else 'back on the device'} in {ms} ms",
-                  file=sys.stderr, flush=True)
-            return self._send(200, {"parked": park, "ms": ms})
-        if self.path.rstrip("/") != "/translate":
-            return self._send(404, {"error": "POST /translate"})
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n) or b"null")
-        except (ValueError, OSError):
-            return self._send(400, {"error": "the body is not JSON"})
-        t0 = time.monotonic()
-        try:
-            status, payload = handle(self.translator, body, self.max_items)
-        except Exception as e:                          # noqa: BLE001
-            status, payload = 500, {"error": f"{type(e).__name__}: {e}"}
-        items = body.get("items") if isinstance(body, dict) else None
-        chars = sum(len(it.get("text", "")) for it in items if isinstance(it, dict)) \
-            if isinstance(items, list) else 0
-        print(f"translate {len(items) if isinstance(items, list) else '?'} items, {chars} chars "
-              f"-> {status} in {1000 * (time.monotonic() - t0):.0f} ms, "
-              f"GPU peak {getattr(self.translator, 'peak_mb', None)} MB",
-              file=sys.stderr, flush=True)
-        self._send(status, payload)
-
-    def _send(self, status: int, payload) -> None:
-        data = json.dumps(payload, ensure_ascii=False).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *args):                       # one line per request, above
-        pass
-
-
-def main() -> None:
-    model_id = os.getenv("MODEL_ID", "google/madlad400-3b-mt")
-    device = os.getenv("DEVICE", "xpu")
-    t0 = time.monotonic()
-    count, generate, known, languages, release, park, unpark = load(
-        model_id, device, os.getenv("DTYPE", "bfloat16"))
-    Handler.translator = Translator(count, generate, known,
-                                    batch=int(os.getenv("BATCH", "32")),
-                                    max_seg_tokens=int(os.getenv("MAX_SEG_TOKENS", "96")),
-                                    release=release, park=park, unpark=unpark)
-    Handler.model = f"{model_id} on {device}"
-    Handler.languages = languages
-    Handler.max_items = int(os.getenv("MAX_ITEMS", "512"))
-    print(f"{Handler.model}: loaded in {time.monotonic() - t0:.1f}s, "
-          f"{len(languages)} target languages", file=sys.stderr, flush=True)
-    t0 = time.monotonic()
-    Handler.translator.translate([("the first pass compiles its kernels", "de")])
-    print(f"warm in {time.monotonic() - t0:.1f}s", file=sys.stderr, flush=True)
-    _release_host_memory()
-    print(f"page cache dropped for {_drop_file_cache(model_id)} model files",
-          file=sys.stderr, flush=True)
-    # PID 1 in its container: without a handler every `docker stop` sat out
-    # the grace period and ended in SIGKILL (medcpt-rerank, 2026-09-16).
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    # HOST: every interface as an app of its own; 127.0.0.1 under RAGE, whose
-    # front is the only thing that reaches a model (deploy/rage/servers/launch.py).
-    ThreadingHTTPServer((os.getenv("HOST", "0.0.0.0"), int(os.getenv("PORT", "8080"))),
-                        Handler).serve_forever()
-
-
-if __name__ == "__main__":
-    main()

@@ -1,12 +1,12 @@
 # RAGE over LocalAI — TrueNAS SCALE custom app "louise-rage", migration step 15
-# (docs/notes/rage-over-localai.md). REPLACES deploy/truenas-rage.yaml at 15f's
-# cut-over; NOT YET DEPLOYED. The same app, the same folder, the same port: the
+# (docs/notes/rage-over-localai.md). DEPLOYED 2026-10-05 (15f), in place of the
+# llama-swap app file, which was retired at 15g. The same app, the same folder, the same port: the
 # image changes, and with it who launches the models (LocalAI) and what RAGE
 # does (the run of every answer, the clock, the door to LocalAI, the panel).
 #
-# THE IMAGE, by digest: deploy/rage/Dockerfile.localai, published like the
-# llama-swap one (deploy/truenas-rage.yaml's header says where and how), and
-# the same digest in RAGE_IMAGE. A tag refuses to start (09 §9.12).
+# THE IMAGE, by digest: deploy/rage/Dockerfile.localai, built on the node and
+# pushed to ghcr.io/sourstar/rage with the registry login in
+# /mnt/ssd5/apps/louise-rage/secrets/docker, and the same digest in RAGE_IMAGE. A tag refuses to start (09 §9.12).
 #
 # THE MODELS' YAML IS LocalAI'S, under RAGE's state, WRITABLE:
 #   /mnt/ssd5/apps/louise-rage/state/localai-models/    (LOCALAI_MODELS_DIR)
@@ -17,7 +17,7 @@
 # loads only from inside its models directory (`VerifyPath`), so the weights
 # cannot live beside it. A model YAML names its file `weights/<what>/<file>`.
 #
-# THE CUT-OVER (15f), as deploy/truenas-rage.yaml's, with the steps that change:
+# THE CUT-OVER (15f, done 2026-10-05; deploy/rage/15f/ is what ran), for the record:
 #   0. Record today's vectors from each endpoint first (rage.md §14).
 #   1. mkdir -p /mnt/ssd5/apps/louise-rage/state/localai-models
 #      cp deploy/rage/localai-models/*.yaml /mnt/ssd5/apps/louise-rage/state/localai-models/
@@ -39,8 +39,8 @@
 #        translator is LocalAI's /v1/completions, the batch in one prompt.
 #   6. Every space is re-gated by itself (a new engine, 03 §3.3), then
 #      `node resume`.
-#   BACK OUT: the previous image by its digest, and deploy/truenas-rage.yaml's
-#   volumes. Nothing of the llama-swap folder layout is removed by this one.
+#   BACK OUT: deploy/rage/15f/backout.sh, from the backups phase1.sh took;
+#   the llama-swap image is kept on the node as rage:pre-15f.
 
 services:
   rage:
@@ -51,7 +51,7 @@ services:
       - /dev/dri
     cap_add:
       - PERFMON                             # the card's real memory (rage.md §19), as before
-    mem_limit: 28g                          # as deploy/truenas-rage.yaml, for the same reasons
+    mem_limit: 28g                          # as the llama-swap app had, for the same reasons
     environment:
       RAGE_IMAGE: 'sha256:<digest>'
       RAGE_FREQ_DIR: /gpufreq
@@ -85,6 +85,6 @@ services:
       # deploy/rage/localai-models/suspended/ and no collection uses it. To
       # serve it: copy that YAML in and bind its snapshot directory here, at
       #   /state/localai-models/weights/dar-legal-it:ro
-      # the clock: the colon-free symlink of deploy/truenas-rage.yaml
+      # the clock: a colon-free symlink to the card's frequency directory (DEPLOYMENT.md)
       - /mnt/ssd5/apps/louise-rage/gpufreq:/gpufreq
       - /mnt/ssd5/apps/louise-rage/secrets/admin.token:/run/rage/admin.token:ro

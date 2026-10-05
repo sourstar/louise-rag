@@ -8,35 +8,23 @@ graph uses token-type row 0 for every token, and OpenVINO Model Server's
 Here Hugging Face's own pair tokenizer (the model's tokenizer.json, the
 model card's encoding) builds all three inputs and OpenVINO runs the model.
 
-The API is TEI's /rerank, which the platform already speaks (`api = "tei"`
-in a collection's [reranker]):
+SERVED BY LocalAI since migration step 15f: deploy/localai/backends/louise-medcpt-rerank
+imports this module and answers `Rerank` (LocalAI's /v1/rerank, read as
+`api = "jina"`), with scores the sigmoid of the logit as TEI's were. Pairs
+longer than the load call's context (the model card's 512) are cut
+longest-first, as the card's `tokenizer(..., truncation=True, max_length=512)`.
+Its TEI /rerank server went with llama-swap at 15g (docs/notes/legacy-to-delete.md
+§8).
 
-    POST /rerank {"query": str, "texts": [str], "raw_scores"?: bool}
-      -> [{"index": int, "score": float}, ...] best first
-
-Scores are the sigmoid of the logit unless `raw_scores`, as TEI's. Pairs
-longer than 512 tokens are cut longest-first, as the model card's
-`tokenizer(..., truncation=True, max_length=512)` — TEI's `truncate` is
-accepted and always on. Any GET answers the health ping.
-
-Environment: MODEL_DIR (openvino_model.xml + tokenizer.json), DEVICE (GPU),
-PORT (8080), BATCH (pairs per inference, 16), MAX_TEXTS (256), OV_CACHE_DIR
-(unset: none).
-
-OV_CACHE_DIR is OpenVINO's model cache (its `CACHE_DIR`): compiling the model
-for the card is the slow part of a start, and with a cache the next start
-reads the compiled model back instead (docs/notes/rage.md §20). Under RAGE it
-is declared in rage.toml, so it is part of the run (operator, 2026-10-01).
+OpenVINO's model cache (its `CACHE_DIR`, `make_infer`'s `cache_dir`): compiling
+the model for the card is the slow part of a start, and with a cache the next
+start reads the compiled model back instead (docs/notes/rage.md §20). The
+backend passes OV_CACHE_DIR, set in the model's YAML and so part of its run
+(operator, 2026-10-01).
 """
 from __future__ import annotations
 
-import json
 import math
-import os
-import signal
-import sys
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_TOKENS = 512
 INPUTS = ("input_ids", "attention_mask", "token_type_ids")
@@ -70,26 +58,6 @@ class Reranker:
         return out
 
 
-def handle(reranker: Reranker, body, max_texts: int = 256) -> tuple[int, object]:
-    """One /rerank request -> (HTTP status, JSON payload)."""
-    if not isinstance(body, dict):
-        return 422, {"error": "expected a JSON object", "error_type": "Validation"}
-    query, texts = body.get("query"), body.get("texts")
-    if not isinstance(query, str) or not isinstance(texts, list) \
-            or not all(isinstance(t, str) for t in texts):
-        return 422, {"error": 'expected {"query": str, "texts": [str, ...]}',
-                     "error_type": "Validation"}
-    if len(texts) > max_texts:
-        return 413, {"error": f"{len(texts)} texts; at most {max_texts} per request",
-                     "error_type": "Validation"}
-    if not texts:
-        return 200, []
-    raw = reranker.logits(query, texts)
-    scores = raw if body.get("raw_scores") else [sigmoid(x) for x in raw]
-    ranked = sorted(range(len(texts)), key=lambda i: -scores[i])
-    return 200, [{"index": i, "score": scores[i]} for i in ranked]
-
-
 def make_encoder(tokenizer_json: str, max_tokens: int = MAX_TOKENS):
     import numpy as np
     from tokenizers import Tokenizer
@@ -120,68 +88,3 @@ def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
         # one request per call: concurrent calls do not share one
         return next(iter(compiled.infer_new_request(inputs).values())).reshape(-1).tolist()
     return infer
-
-
-class Handler(BaseHTTPRequestHandler):
-    reranker: Reranker
-    model = ""
-    max_texts = 256
-
-    def do_GET(self):
-        self._send(200, {"status": "ok", "model": self.model})
-
-    def do_POST(self):
-        if self.path.rstrip("/") != "/rerank":
-            return self._send(404, {"error": "POST /rerank"})
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n) or b"null")
-        except (ValueError, OSError):
-            return self._send(400, {"error": "the body is not JSON"})
-        t0 = time.monotonic()
-        try:
-            status, payload = handle(self.reranker, body, self.max_texts)
-        except Exception as e:                          # noqa: BLE001
-            status, payload = 500, {"error": f"{type(e).__name__}: {e}"}
-        texts = body.get("texts") if isinstance(body, dict) else None
-        print(f"rerank {len(texts) if isinstance(texts, list) else '?'} texts -> {status} "
-              f"in {1000 * (time.monotonic() - t0):.0f} ms", file=sys.stderr, flush=True)
-        self._send(status, payload)
-
-    def _send(self, status: int, payload) -> None:
-        data = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *args):                       # one line per request, above
-        pass
-
-
-def main() -> None:
-    model_dir = os.getenv("MODEL_DIR", "/models/medcpt-cross-ov")
-    device = os.getenv("DEVICE", "GPU")
-    Handler.reranker = Reranker(make_encoder(f"{model_dir}/tokenizer.json"),
-                                make_infer(f"{model_dir}/openvino_model.xml", device,
-                                           os.getenv("OV_CACHE_DIR") or None),
-                                batch=int(os.getenv("BATCH", "16")))
-    Handler.model = f"{os.path.basename(model_dir.rstrip('/'))} on {device}"
-    Handler.max_texts = int(os.getenv("MAX_TEXTS", "256"))
-    t0 = time.monotonic()
-    Handler.reranker.logits("warm-up", ["the first inference compiles its kernels"])
-    print(f"{Handler.model}: warm in {time.monotonic() - t0:.1f}s", file=sys.stderr, flush=True)
-    # PID 1 in its container, where the kernel gives SIGTERM no default
-    # action: without a handler every `docker stop` sat out the 10 s grace
-    # and ended in SIGKILL (each NAS poweroff, 2026-09-16 and -17). Nothing
-    # here holds state, so it stops at once.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    # HOST: every interface as an app of its own; 127.0.0.1 under RAGE, whose
-    # front is the only thing that reaches a model (deploy/rage/servers/launch.py).
-    ThreadingHTTPServer((os.getenv("HOST", "0.0.0.0"), int(os.getenv("PORT", "8080"))),
-                        Handler).serve_forever()
-
-
-if __name__ == "__main__":
-    main()
