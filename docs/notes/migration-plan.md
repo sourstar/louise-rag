@@ -1515,8 +1515,9 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
 
   each the lowest of 512 cosines; every median is 1.0. Found:
   - LocalAI's 500 "exceeds the available context size" was not shrunk on.
-    Fixed in 1609aa9, which is not yet deployed: until it is, a chunk over
-    the model's context becomes an error on its document. None has; no
+    Fixed in 1609aa9, deployed by the operator at 06:12 UTC. Until then a
+    chunk over the model's context would have become an error on its
+    document. None did; no
     document carries an embedding error since the swap.
 
   The plan as written before the run:
