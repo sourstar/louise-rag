@@ -1504,7 +1504,22 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
   → `Rerank`, MADLAD → `Predict`. The app's translator client moves to
   the completion shape. `tests/rage/test_deploy_files.py` holds them to
   the code, as in 13d.
-- **15f — The cut-over. READY, NOT RUN (2026-10-04): the operator runs it.**
+- **15f — The cut-over. DONE 2026-10-05**, run by the operator (phase 1
+  05:31–05:37 UTC, phase 2 to 05:44). Every model answered with a run.
+  The suite passed on the node (3533). Louise resumed (`running`), and
+  gutenberg's backend gate reproduced its baseline on the new engine.
+  Calibration answers before the swap and after, per collection and side:
+  - gutenberg document 0.999999, query 0.999999;
+  - pubmed document 1.000000, query 0.999833;
+  - wikipedia 0.999993;
+
+  each the lowest of 512 cosines; every median is 1.0. Found:
+  - LocalAI's 500 "exceeds the available context size" was not shrunk on.
+    Fixed in 1609aa9, which is not yet deployed: until it is, a chunk over
+    the model's context becomes an error on its document. None has; no
+    document carries an embedding error since the swap.
+
+  The plan as written before the run:
   Operator, 2026-10-04: "suspend dar-legal for now, go on with the rest",
   "run unattended". The permission classifier refused the deploy from the
   agent's session, so it is two scripts for the operator. They were placed

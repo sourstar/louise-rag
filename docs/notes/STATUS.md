@@ -123,6 +123,15 @@ LocalAI beside the live one, which found and fixed chat's template. The
 swap itself was refused to the agent as a production deploy, so it is two
 scripts on the node for the operator, with a backout (migration-plan 15f).
 
+**15f DONE, 2026-10-05: RAGE runs over LocalAI on the node.** The operator
+ran both phases. Every model states a run, and every collection's
+calibration answers match the old engine's (lowest cosine 0.999833).
+Louise runs the merged main with `TRANSLATE_API=completion`. Open:
+- deploy 1609aa9, which makes LocalAI's "exceeds the available context
+  size" shrink the cut;
+- the old engine's backups stay in `/mnt/ssd5/apps/louise-rage-15c/cutover/backup`
+  until 15g.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was
