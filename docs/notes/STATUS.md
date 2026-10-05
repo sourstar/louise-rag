@@ -132,6 +132,12 @@ the cut. The operator deployed it, and web and worker run one image. The
 old engine's backups stay in `/mnt/ssd5/apps/louise-rage-15c/cutover/backup`
 until 15g.
 
+**15g, the same day: the llama-swap RAGE retired from the repository**
+(legacy-to-delete §8; suite 3378 on the node). It is commit 8390155, which
+went in under the previous commit's message by mistake. Its description is
+in the commit after it. The node keeps `rage:pre-15f`, `louise-rag:pre-15f`
+and the backups until the operator removes them.
+
 ### 2026-09-22: one branch
 
 The operator: "I want to keep only the main branch." Done, and nothing was
