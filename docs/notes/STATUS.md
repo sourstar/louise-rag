@@ -147,6 +147,21 @@ and the backups until the operator removes them.
   deletion, and a new image is a new run for every model and a re-gate of
   every space. `e64893cf…` stays, reproducible from 6246334, and the next
   real RAGE change carries 15g.
+- **Leftovers removed, the same day** (operator: "remove every leftover"),
+  so there is NO WAY BACK to the llama-swap engine on the node any more:
+  - its images (`b10630-1`…`-8`; they stay published on ghcr.io) and the
+    first LocalAI build;
+  - the rollback tags `louise-rag:pre-15f` and `pre-736fc52`, and the old
+    MADLAD app images;
+  - `/mnt/ssd5/apps/louise-rage-15c/` (backups, `backout.sh`, the before and
+    after vectors), `src.old`, and the scratch trees in `/tmp`;
+  - the llama-swap-era copies in RAGE's `config/` and `state/`;
+  - dangling images and the build cache, about 85 GB;
+  - `TRANSLATE_API` in Louise's app config.
+
+  Kept: the running images, every `louise-rag:codex-*`, the llama.cpp base
+  images, and other apps' images, including an `ix-localai` app that is not
+  RAGE's.
 
 ### 2026-09-22: one branch
 
