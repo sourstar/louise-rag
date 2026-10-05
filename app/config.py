@@ -137,6 +137,11 @@ REFS_SRC_DIR = Path(_refs_src_dir) if _refs_src_dir else None
 # Unset = this node cannot export bundles (import needs only public keys).
 _node_key_path = os.getenv("NODE_KEY_PATH")
 NODE_KEY_PATH = Path(_node_key_path) if _node_key_path else None
+# The PUBLIC half, for a process that recognises this node's signatures and
+# makes none — the web (app/identity.py; operator, 2026-09-29). Trusted, so
+# kept beside the private key, read-only; never in state/ or CONFIG_DIR.
+_node_public_key_path = os.getenv("NODE_PUBLIC_KEY_PATH")
+NODE_PUBLIC_KEY_PATH = Path(_node_public_key_path) if _node_public_key_path else None
 
 # Single admin token gating librarian (/admin) routes (architecture-v2.md
 # §14: "authenticated /admin API, strictly separate from the OpenAI-
@@ -163,6 +168,29 @@ def _resolve_admin_token(env) -> str:
 
 
 ADMIN_TOKEN = _resolve_admin_token(os.environ)
+
+
+# The token LocalAGI's routes require (07 §7.4) — its own, never the admin
+# token's power: an agent that can write its memory cannot pause the node.
+# A PATH only (invariant 8): unlike ADMIN_TOKEN there is no deployment that
+# predates it, so no value-in-the-environment form is accepted. Unset, the
+# routes answer 401.
+def _resolve_deposit_token(env) -> str:
+    path = env.get("DEPOSIT_TOKEN_FILE")
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError as e:
+        raise RuntimeError(f"DEPOSIT_TOKEN_FILE is set but unreadable: {path} "
+                           f"({type(e).__name__})") from None
+
+
+DEPOSIT_TOKEN = _resolve_deposit_token(os.environ)
+
+# The SSH key a deposit collection's `.git` sources are cloned with (06
+# §6.7): a PATH (invariant 8), handed to ssh as `-i`, never read here.
+GIT_PRIVATE_KEY_FILE = os.environ.get("GIT_PRIVATE_KEY_FILE") or None
 
 PORT = int(os.getenv("PORT", "8742"))
 WORKER_IDLE_SLEEP = float(os.getenv("WORKER_IDLE_SLEEP", "5"))

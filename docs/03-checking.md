@@ -81,6 +81,14 @@ create` and at `hold check` alike.
 | `origin-seal` | the origin's own seal on the source file validates, and the record was parsed from that file (§3.7) | the copy, or the origin | exact |
 | `evaluation` | the score in `space.evaluation` (02 §2.4) reproduces on this copy's chunks when its suite is public, and every target the suite names resolves to a chunk in the copy | the copy, the suite | statistical |
 
+**A never-share collection** proves nothing to anyone, because nobody
+else holds it, and needs only the checks that keep its own vectors
+consistent: `calibration` — the gate of §3.3 on the run, and the check
+of every answer's run before its vectors are written — and
+`vectors-sample`, which it runs locally on a timer over its own stored
+vectors (02 §2.9). The rest of its plan is not required; a deposit
+collection runs none of it, having no drag for it to run on.
+
 **The seeded sample.** Every sampled check draws its sample by one
 rule, `sample(seed, n, universe)`: sort the universe by id in UTF-8
 byte order, score each id by HMAC-SHA256(seed, id) read as an unsigned

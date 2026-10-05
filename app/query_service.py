@@ -44,7 +44,8 @@ def withheld_reason(collection) -> str | None:
             f"({type(e).__name__}: {e})")
 
 
-def resolve_collections(names: list[str] | None) -> list[collections_mod.Collection]:
+def resolve_collections(names: list[str] | None, *,
+                        private: bool = False) -> list[collections_mod.Collection]:
     """None = all enabled (collections.load_all()) — P0.5's federation
     default. An explicit list is resolved by name; unknown names 400.
 
@@ -54,12 +55,19 @@ def resolve_collections(names: list[str] | None) -> list[collections_mod.Collect
     is "did work is not progress" one layer up. The caller learns which
     were dropped from `withheld_from(...)`.
     """
+    # A deposit collection is invisible to an open route (07 §7.4): left out
+    # of "all" without being named as withheld, and, when named, unknown —
+    # the same answer as a name nothing holds, so the route does not even
+    # say that it exists.
+    visible = (lambda c: True) if private else \
+        (lambda c: not collections_mod.is_private(c))
     if names is None:
         return [c for c in collections_mod.load_all()
-                if withheld_reason(c) is None]
+                if visible(c) and withheld_reason(c) is None]
     resolved, missing = [], []
     for n in names:
         c = collections_mod.by_name(n)
+        c = c if c is not None and visible(c) else None
         (resolved if c else missing).append(c or n)
     if missing:
         raise HTTPException(400, f"unknown collection(s): {missing}")
@@ -72,13 +80,15 @@ def resolve_collections(names: list[str] | None) -> list[collections_mod.Collect
     return resolved
 
 
-def withheld_from(names: list[str] | None) -> list[dict]:
+def withheld_from(names: list[str] | None, *, private: bool = False) -> list[dict]:
     """The collections a federate-all search left out, so the answer can
     say it is incomplete rather than quietly being so."""
     if names is not None:
         return []
     out = []
     for c in collections_mod.load_all():
+        if collections_mod.is_private(c) and not private:
+            continue
         reason = withheld_reason(c)
         if reason:
             entry = {"collection": c.name, "reason": reason}
@@ -94,18 +104,21 @@ def withheld_from(names: list[str] | None) -> list[dict]:
 def run_search(collection_names: list[str] | None, query: str, k: int, mode: str,
                translate: bool, verify: bool = False,
                rerank_depth: int = retrieval.RERANK_TOP_N,
-               all_languages: bool = False) -> dict:
+               all_languages: bool = False, private: bool = False) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per
     unverified chunk, and verified state is permanent, so the hot set settles
     quickly and cold chunks never cost anything."""
-    participants = resolve_collections(collection_names)
-    withheld = withheld_from(collection_names)
+    participants = resolve_collections(collection_names, private=private)
+    withheld = withheld_from(collection_names, private=private)
     if not participants:
         # Everything was withheld. Saying so beats an empty result set that
-        # reads as "nothing matched your query".
-        return {"hits": [], "withheld": withheld}
+        # reads as "nothing matched your query". `timings` like every other
+        # answer: every caller logs them, and this one raised KeyError in
+        # /api/search — reached whenever everything was withheld, and on a
+        # node whose only collections are deposit collections (07 §7.4).
+        return {"hits": [], "withheld": withheld, "timings": {"total": 0}}
     if len(participants) == 1:
         # interrupted if the caller goes (app/cancel.py): a statement running
         # on it ends then, not at its next row

@@ -34,7 +34,8 @@ ORIGIN = {
 
 
 def collection_by_name(name: str):
-    for c in collections_mod.load_all():
+    """An open route's lookup: a deposit collection is not found (07 §7.4)."""
+    for c in collections_mod.load_public():
         if c.name == name:
             return c
     return None

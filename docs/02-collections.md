@@ -155,7 +155,8 @@ leaves without a recorded tombstone), `retractable` (PubMed: the
 publisher may withdraw a record, and the tombstone says so), `erasable`
 (removal may be mandatory and must leave no trace, which no shared copy
 can honour — so `erasable` requires `privacy: never-share`, and a drag
-build refuses the pair otherwise). `validation` is the plan of 03 §3.2,
+build refuses the pair otherwise; what "no trace" means in bytes is
+§2.9). `validation` is the plan of 03 §3.2,
 inside the hash so nothing outside the Codex decides how much is
 sampled. `license` and `privacy` are 04 §4.4's; the Codex's
 `license.class` is authoritative, and the plugin's declared class is
@@ -1106,3 +1107,100 @@ a private collection. Access restriction in a peer-to-peer system means
 encryption, membership and a second authority; Louise does not do it.
 Sources that must not be redistributed are handled by the licence
 classes (§4.4), which is the actual need.
+
+## 2.9 Deposit collections: written by a client, never shared
+
+*Operator, 2026-09-29; the design and its reasons are
+`notes/deposit-collections.md`.*
+
+A **deposit collection** is the collection a client of this node writes
+over HTTP (07 §7.4): an agent's memory, the files a person uploads, the
+text of a URL they subscribe it to. Its plugin is `deposit` (06 §6.7);
+it is `privacy: never-share` and `erasure: erasable`, and neither may
+be changed.
+
+**Consistency, not proof.** A collection that is never shared has
+nobody to prove its vectors to, but its holder must still be able to
+trust that they keep coming from the same function. So a
+`never-share` collection needs only what keeps its **own** vectors
+consistent:
+
+| required | not required |
+|---|---|
+| the Codex, pinning the space; a mismatch refuses that collection at start (§2.4) | snapshots, record shards, the drag (§2.2–2.6) |
+| the calibration gate on the run, and the check of every answer's run before its vectors are written (03 §3.3) | signatures, attestations, bundles (03 §3.5–3.6) |
+| deterministic cleaning and chunking, so a re-embed cuts the same chunks (06 §6.3) | `records-vs-origin` and the rest of the published plan (03 §3.2) |
+| `vectors-sample`, run locally on a timer: a few stored chunks re-embedded through today's validated run and compared with their stored vectors at `tolerance` — what catches an engine that changed after passing the gate (03 §3.2) | |
+
+A never-share collection built from a plugin's corpus MAY keep the rest
+— its records are built the same way either way — but a deposit
+collection has none of it: no snapshot, no shard, no signature. Its
+`drag/` holds exactly `codex.json` and the calibration member (09
+§9.12) — the Codex, and the reference the gate compares a run against —
+and nothing serves it.
+
+**Its Codex.** Every field is present, as for any collection
+(09 §9.3). What differs:
+
+- `origin.spec` is `{source_id: "deposit", nonce: "<32 hex digits>"}`
+  (09 §9.17): 128 random bits chosen at `create`. **The nonce is
+  load-bearing.** `collection_id` hashes the Codex without
+  `descriptive`, and a deposit collection's name lives in
+  `descriptive.title`; without the nonce, two agents' collections made
+  from the same defaults would be one collection — one id, one
+  directory. A deposit is reproducible from no public origin, so no two
+  deposit collections are ever the same one, and the identity says so.
+  `origin.form` is `"deposit: the bytes as the client sent them"`,
+  `unit` `"file"`, `clock` `"UTC"`, `cutoff_rule` `"record-date"` (a
+  deposit's date is when it was deposited), `jurisdiction` null.
+- `space`: the encoder is the node's deposit default,
+  `granite-embedding-107m-multilingual` unless `platform.toml` names
+  another (07 §7.8), or the one `create` is given. The first deposit
+  collection on an encoder is given its space block once — a file, or a
+  Codex to copy it from. The first deposit
+  collection on an encoder runs `create`'s calibration; every later one
+  copies that space block whole — encoder, engine, calibration,
+  envelope, tolerance — because the calibration set does not depend on
+  the corpus (03 §3.3) and the bytes would be identical. The encoder is
+  fixed at creation like any Codex field; changing it is a sister with
+  a new space (§2.7), re-embedded from the kept deposits. It must be
+  `modality: text`.
+- `layers`: one layer, the `fixed` chunker, its window sized to the
+  encoder's context. Deposit collections on one encoder are therefore
+  one space and one ranked list (05 §5.1).
+- `update`, `validation`, `work`: written, because the schema requires
+  them, and not run.
+
+**Identity of a deposit.** `native_id` is a node-wide, monotonic
+deposit number: unique within the plugin (§2.3), and later deposits
+sort after earlier ones. The client names a deposit by its **key** —
+the filename it sent — kept as `extra.key` and unique within the
+collection: 1–255 bytes of UTF-8, no `/`, no NUL, no leading dot.
+Depositing a key that exists erases the old deposit and stores a new
+one; a deposit is replaced whole, never edited.
+
+**No trace.** Erasing a deposit removes every byte derived from it, on
+this node, before the erase reports success:
+
+1. the deposited bytes in the collection's `origin/`;
+2. its record, its manifest rows and its chunks;
+3. its entries in the text index and the catalog index — which mark a
+   deleted document and keep it in any segment that still holds a live
+   one, so both are rewritten from their live documents;
+4. its vectors, including in the vector table's deletion files and older
+   versions — so the table's deletions are materialised, its old
+   versions dropped, and a trained vector index trained again;
+5. the manifest's freed pages, which are zeroed (`secure_delete`, on for
+   every deposit manifest), and its write-ahead log, which holds the
+   pages as they were and is checkpointed and truncated.
+
+The erase is marked pending in the manifest before it touches anything
+and unmarked by the purge that completes it, so a crash in between is
+finished by the next write to that collection, and by the worker when it
+starts.
+
+There are no shards or snapshots to purge, and no tombstone: a
+never-share collection publishes nothing, so promise 7 has nothing to
+preserve here and §2.2's `delta.tombstoned` never arises. Emptying the
+collection is erasing every deposit, and `hold collection forget` is
+that followed by removing the collection's directory.

@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-09-12.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-05.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **The specification moved.** `docs/README.md` and the nine numbered
@@ -46,6 +46,48 @@ Everything except two items travels through this repository.
 | **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+
+### 2026-10-05: the side branches merged into main
+
+Three branches existed beside `main`. `ccr-b147bbfc-9ktipo` was already
+in main (step 15c). `claude/rage-backends-louise-mnih8a` (2026-09-27/29)
+and `ccr-d5be5f2c-fdn6fl` (2026-09-29/30, a superset of it) were merged
+on 2026-10-05, taking main's later decisions wherever the two sides had
+decided the same question:
+- **Dropped: the load amendment** (branch, 2026-09-28: an engine's
+  `load` field, Codex 4 "exactly when" an engine carries it, statement 3
+  likewise). Main decided it again on 2026-10-03 as `options` (09 §9.3,
+  step 15a) and deployed it on 2026-10-05, so the branch's code, spec
+  rows and tests went; `rage.md` §13 records it as superseded.
+- **Kept as history**: `rage.md` §22–§23 (LocalAI's rerankers backend
+  checked; RAGE spawning LocalAI's backend binaries) — superseded by
+  [`rage-over-localai.md`](rage-over-localai.md), kept with a preface.
+- **Carried**: a validation counts only when THIS node signed it and is
+  re-checked once per process (`app/hold/runs.py`, `app/run_check.py`;
+  `rage.md` §13); the web process holds no private key — a public key
+  file, signing work queued for the worker (`app/identity.py`,
+  `app/jobs.py`; `deploy/truenas-app.yaml` mounts the node key read-only
+  in its own dataset, NOT yet applied on the node);
+  [`weights-fetch.md`](weights-fetch.md), a design note.
+- **Carried and renumbered: deposit collections, step 16** (was 15 on
+  the branch): the spec (01, 02 §2.9, 03 §3.2, 04 §4.4, 06 §6.7, 07,
+  09 §9.13, §9.17), [`deposit-collections.md`](deposit-collections.md),
+  `app/hold/deposit.py`, `app/hold/sources.py`, `app/localagi.py`,
+  `app/plugins/deposit/`, `tests/deposit/`; `pypdfium2` in
+  `requirements.txt`; **git in the image** (`Dockerfile`, base stage): the
+  `.git` source clone needs it, and the merged suite found it missing on
+  2026-10-05 (`tests/deposit/test_deposit_sources.py`); **the manifest
+  created at `create`** (`deposit._init_manifest`): a fresh manifest opened
+  by two threads at once failed its first connect with "database is
+  locked" — the rollback-to-WAL conversion of a new file takes a lock
+  SQLite does not wait for — and a deposit collection has three writers
+  from birth. 16a–16e were built and run against LocalAGI's own
+  client on the branch; 16f, the operator's stop, is open. **Not
+  deployed**: the node runs 736fc52 + 5429c2b's notes.
+
+Whole suite in Docker on the merged tree, after both fixes: 3514 passed
+(tests/deposit three times over, 100 each — the race showed in 1–3 of
+99 before). The first run, before them: 3512 passed, 1 failed.
 
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 

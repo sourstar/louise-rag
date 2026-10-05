@@ -482,13 +482,27 @@ async function createCollection(){
   const box=document.getElementById('nc_result');
   if(!recipe.trim()){toast('paste the recipe');return}
   if(!encoder){toast('name the encoder: a collection names its own');return}
-  box.innerHTML='<div class="note">creating — the calibration set is embedded first…</div>';
+  box.innerHTML='<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
   try{
-    const d=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder});
+    const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder});
+    const j=await waitForJob(q.id,s=>{box.innerHTML='<div class="note">'+esc(s)+'</div>'});
+    const d=j.result;
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
       file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+// What needs the node's private key runs in the worker (app/jobs.py): the
+// page queues it and follows it here until it is done or failed.
+async function waitForJob(id,onState){
+  for(;;){
+    const j=await getJSON('/api/jobs/'+id);
+    if(j.state==='done')return j;
+    if(j.state==='failed')throw (j.error||'failed');
+    if(j.state==='expired')throw 'expired';
+    onState(j.state==='running'?'running in the worker…':(j.waiting||'queued'));
+    await new Promise(r=>setTimeout(r,2000));
+  }
 }
 async function removeCollection(name){
   showModal(`<h2>Remove ${esc(name)}?</h2>
@@ -508,16 +522,15 @@ async function doRemove(name){
   }catch(e){toast('remove failed: '+e)}
 }
 async function exportBundle(name){
-  toast('building bundle for '+name+'…');
-  const r=await fetch('/admin/library/'+name+'/bundle/export',
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:100})});
-  if(!r.ok){const d=await r.json().catch(()=>({}));toast('export failed: '+(d.detail||r.statusText));return}
-  const blob=await r.blob();
-  const cd=r.headers.get('Content-Disposition')||'';
-  const m=cd.match(/filename="?([^\";]+)/);
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download=(m&&m[1])||('bundle-'+name+'.tar.gz');
-  a.click();URL.revokeObjectURL(a.href);
+  toast('bundle for '+name+' queued — the worker builds and signs it…');
+  let q;
+  try{
+    q=await postJSON('/admin/library/'+name+'/bundle/export',{limit:100});
+    let last='';
+    await waitForJob(q.id,s=>{if(s!==last){last=s;toast(name+': '+s)}});
+  }catch(e){toast('export failed: '+e);return}
+  // the file is served once and removed (app/jobs.py)
+  location.href='/admin/library/'+name+'/bundle/export/'+q.id;
 }
 function importBundle(name){
   const input=document.getElementById('bundle-file');

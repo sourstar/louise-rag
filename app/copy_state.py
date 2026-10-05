@@ -171,20 +171,28 @@ def in_use_before(codex: Codex | None) -> bool:
 
 # ---- this peer's key, as its attestations spell it -----------------------------
 
-_own: list[str | None] = []
+_own: list[str] = []
 
 
 def own_key() -> str | None:
     """The public half, as an envelope's `key` spells it; None on a peer with
     no key (07 §7.8: it cannot sign, and checks and searches all the same).
-    Only the public text is kept."""
-    if not _own:
-        try:
-            from .bundles import keys as node_keys
-            _own.append(env.key_text(node_keys.load_signing_key().verify_key))
-        except Exception:                               # noqa: BLE001
-            _own.append(None)
-    return _own[0]
+    From THE resolution (app/identity.py), so the web process, which holds
+    only the public file, never reads the seed.
+
+    ONLY A KEY FOUND IS REMEMBERED (as `run_check.signer`): remembering "no
+    key" outlived the key being put in place, and every statement this node
+    signed after that was ignored until a restart."""
+    if _own:
+        return _own[0]
+    try:
+        from . import identity
+        text = identity.own()
+    except Exception:                                   # noqa: BLE001
+        return None
+    if text is not None:
+        _own.append(text)
+    return text
 
 
 def reset_cache() -> None:
@@ -380,7 +388,7 @@ def _statement_v2_shape(root: Path, name: str, codex: Codex) -> dict[str, Any] |
 
 def space_statements(root: Path, name: str, codex: Codex, role: str) -> dict[str, dict]:
     """run id -> statement, for this SPACE (`runs.statements_for_space`)."""
-    return runs_mod.statements_for_space(root, name, codex, role)
+    return runs_mod.statements_for_space(root, name, codex, role, signer=own_key())
 
 
 def _gate(root: Path, name: str, codex: Codex,
@@ -400,7 +408,7 @@ def _gate(root: Path, name: str, codex: Codex,
         run_id = answering.get(role)
         # this collection's own statements first — one directory; the other
         # collections of the space are asked only when these do not settle it
-        known = runs_mod.statements(root, name, codex, role)
+        known = runs_mod.statements(root, name, codex, role, signer=own_key())
         if not known or (run_id is not None and run_id not in known):
             known = space_statements(root, name, codex, role)
         clears = ("the gate, which runs by itself the moment the encoder answers; or "

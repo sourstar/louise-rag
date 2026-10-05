@@ -397,6 +397,11 @@ def _origin_from_recipe(block: dict[str, Any]) -> Origin:
     if b.get("jurisdiction") == "":
         b["jurisdiction"] = None
     spec = dict(b.get("spec") or {})
+    if spec.get("source_id") == "deposit":
+        # 09 §9.17: a deposit collection's spec is exactly {source_id,
+        # nonce} — it has no acquisition spec, so no `files` either
+        b["spec"] = spec
+        return Origin(**b)
     spec.setdefault("files", None)
     if spec.get("files") in ([], {}):
         spec["files"] = None
@@ -481,6 +486,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
     work = dict(recipe["work"])
     work.setdefault("per", default_per(update.cadence))
 
+    space = _space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped)
     codex = Codex(
         descriptive=Descriptive(**recipe["descriptive"]),
         plugin=plugin,
@@ -495,7 +501,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "layers" in recipe else default_layers(source)),
         slicing=(_check_slicing(dict(recipe["slicing"])) if "slicing" in recipe
                  else default_slicing(source)),
-        space=_space_from_recipe(recipe["space"], calibration, image_shaped=image_shaped),
+        space=space,
         work=Work(**work),
         modality=recipe.get("modality", source.modality.value),
         erasure=recipe.get("erasure", source.erasure.value),

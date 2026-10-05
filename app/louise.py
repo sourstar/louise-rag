@@ -81,6 +81,11 @@ def _recipe(path: str) -> dict:
 
 
 def cmd_create(a) -> int:
+    if a.plugin == "deposit":
+        return cmd_create_deposit(a)
+    if not a.recipe:
+        raise CodexError("--recipe is required: a collection is a plugin and a "
+                         "recipe (06 §6.6); only `create deposit` needs none")
     if a.plugin is None:
         # the pre-template form: the file IS a Codex
         spec = _json(a.recipe)
@@ -99,6 +104,141 @@ def cmd_create(a) -> int:
     return 0
 
 
+def create_deposit(root, name: str, *, platform_image: str | None = None,
+                   encoder: str | None = None, space_from: str | None = None,
+                   space: str | None = None):
+    """`hold collection create deposit --name N` (07 §7.3; 02 §2.9) — for the
+    command line and for the LocalAGI route alike. Whatever the creator does
+    not name comes from `platform.toml`'s `[deposit]`. Returns the Codex and
+    the collection file it wrote."""
+    from app import platform_config
+    from app.hold import deposit
+    from app.bundles import keys as node_keys
+
+    cfg = platform_config.load().deposit
+    encoder = encoder or cfg.encoder
+    space_from = space_from or cfg.by_name.get(name) or cfg.space_from
+    source = col.read(root, space_from) if space_from else None
+    block = None
+    if source is None and deposit.space_source(root, encoder) is None:
+        path = space or (str(cfg.space) if cfg.space else None)
+        block = _recipe(path) if path else None
+        if block is not None and "space" in block:
+            block = block["space"]
+    codex = deposit.create(
+        root, name, platform_image=preflight_create({}, platform_image),
+        encoder_url=encoder, space_from=source, space=block,
+        embed=(_embed_for_recipe(block, encoder) if block is not None else None),
+        # the key signs the calibration member, which only the first
+        # deposit collection on an encoder writes; the others copy it
+        key=node_keys.load_signing_key() if block is not None else None,
+        now=_utc_now())
+    return codex, deposit.write_held_file(root, codex, encoder)
+
+
+def cmd_create_deposit(a) -> int:
+    if not a.name:
+        raise CodexError("create deposit takes --name: a deposit collection is "
+                         "named by whoever creates it (07 §7.3)")
+    codex, held = create_deposit(a.root, a.name, platform_image=a.platform_image,
+                                 encoder=a.encoder, space_from=a.space_from,
+                                 space=a.space)
+    print(f"held: {held}", file=sys.stderr)
+    print(codex.collection_id)
+    return 0
+
+
+def cmd_deposit_add(a) -> int:
+    """Queued for the node's worker unless `--here` (app/jobs.py DEPOSIT):
+    on a running node only the worker writes a collection's indexes."""
+    from app.hold import deposit
+    path = Path(a.file)
+    key, data = a.key or path.name, path.read_bytes()
+    if a.here:
+        _print(deposit.add(a.collection, key, data))
+        return 0
+    from app.plugins.deposit import source as src
+    try:
+        src.check_content(key, data)          # refused before anything is queued
+    except src.DepositError as e:
+        raise CodexError(str(e)) from e
+    _print(deposit.via_worker("add", a.collection, key=key,
+                              staged=deposit.stage(a.collection, data)))
+    return 0
+
+
+def cmd_deposit_erase(a) -> int:
+    from app.hold import deposit
+    if not a.yes:
+        raise CodexError("erase removes a deposit leaving no trace (02 §2.9): "
+                         "pass --yes")
+    _print({"remaining": deposit.erase(a.collection, a.key) if a.here
+            else deposit.via_worker("erase", a.collection, key=a.key)["remaining"]})
+    return 0
+
+
+def cmd_source_add(a) -> int:
+    from app.hold import deposit, sources
+    _print(sources.add(a.collection, a.url, a.interval) if a.here else
+           deposit.via_worker("source-add", a.collection, url=a.url, interval=a.interval))
+    return 0
+
+
+def cmd_source_erase(a) -> int:
+    from app.hold import deposit, sources
+    if not a.yes:
+        raise CodexError("erase removes the source's deposit leaving no trace "
+                         "(02 §2.9): pass --yes")
+    _print(sources.erase(a.collection, a.url) if a.here else
+           deposit.via_worker("source-erase", a.collection, url=a.url))
+    return 0
+
+
+def cmd_source_list(a) -> int:
+    from app.hold import sources
+    rows = sources.listing(a.collection)
+    if a.json:
+        _print(rows)
+    else:
+        for r in rows:
+            print(f"{r['url']}\tevery {r['update_interval']} min\t{r['last_update'] or 'not yet'}")
+    return 0
+
+
+def cmd_deposit_list(a) -> int:
+    from app.hold import deposit
+    keys = deposit.keys(a.collection)
+    if a.json:
+        _print(keys)
+    else:
+        for k in keys:
+            print(k)
+    return 0
+
+
+def cmd_deposit_show(a) -> int:
+    from app.hold import deposit
+    _print(deposit.show(a.collection, a.key))
+    return 0
+
+
+def preflight_create(recipe: dict, platform_image: str | None) -> str:
+    """The platform image `create` pins, or its refusal — made before any
+    work. The web asks it at once, with `NO_ENCODER`, before it queues the
+    create for the worker (app/jobs.py); `create_from` asks it again."""
+    stated = (recipe.get("toolchain") or {}).get("platform_image")
+    platform_image = (stated or platform_image
+                      or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
+    if not platform_image or platform_image == cx.digest(b""):
+        raise CodexError(
+            "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
+            "the digest of the platform the command runs in unless the recipe "
+            "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
+            "--platform-image. The SHA-256 of empty bytes is a placeholder "
+            "that names no build, and a Codex is never edited")
+    return platform_image
+
+
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
                 space_from: str | None = None, encoder: str | None = None,
                 query_encoder: str | None = None):
@@ -114,16 +254,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     # its own image id). The flag used to default to digest(b""), the
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
-    stated = (recipe.get("toolchain") or {}).get("platform_image")
-    platform_image = (stated or platform_image
-                      or os.environ.get("LOUISE_PLATFORM_IMAGE") or None)
-    if not platform_image or platform_image == cx.digest(b""):
-        raise CodexError(
-            "no platform image to pin: 07 §7.3 makes `toolchain.platform_image` "
-            "the digest of the platform the command runs in unless the recipe "
-            "states it — the deploy sets it as LOUISE_PLATFORM_IMAGE, or give "
-            "--platform-image. The SHA-256 of empty bytes is a placeholder "
-            "that names no build, and a Codex is never edited")
+    platform_image = preflight_create(recipe, platform_image)
     if space_from:
         source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
@@ -235,6 +366,17 @@ def _utc_now() -> str:
         microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+NO_ENCODER = (
+    "name the encoder: --encoder URL. There is no default encoder "
+    "(operator, 2026-09-18), and the new collection's file names the one "
+    "it was created with. `hold collection create` embeds the "
+    "512-text calibration set with the encoder the recipe names "
+    "and writes the reference vectors' hash into the Codex "
+    "(06 Â§6.6); there is no offline path that produces a valid "
+    "Codex, because a placeholder there is a collection no peer "
+    "can ever join")
+
+
 def _embed_for_recipe(space: dict, url: str | None):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
@@ -249,15 +391,7 @@ def _embed_for_recipe(space: dict, url: str | None):
     from app import collections as collections_mod, embeddings
 
     if not url:
-        raise CodexError(
-            "name the encoder: --encoder URL. There is no default encoder "
-            "(operator, 2026-09-18), and the new collection's file names the one "
-            "it was created with. `hold collection create` embeds the "
-            "512-text calibration set with the encoder the recipe names "
-            "and writes the reference vectors' hash into the Codex "
-            "(06 Â§6.6); there is no offline path that produces a valid "
-            "Codex, because a placeholder there is a collection no peer "
-            "can ever join")
+        raise CodexError(NO_ENCODER)
     enc = space.get("encoder") or {}
     recipe = collections_mod.EmbedRecipe(
         url=url, api="openai", model=enc.get("label") or "",
@@ -603,6 +737,18 @@ def _ack_origin_unchecked(a, name, codex) -> int:
     return 0
 
 
+def _ack_web_sources(a) -> int:
+    """`hold collection ack --web-sources`: the node's one acceptance of the
+    web-sources disclaimer (04 §4.4, 09 §9.13). Printed unless `--yes`, like
+    every acknowledgement: one nobody read is a checkbox."""
+    from app import licensing
+    if not a.yes:
+        print(licensing.WEB_DISCLAIMER.read_text(encoding="utf-8"))
+    ack = licensing.accept_web_sources(_utc_now())
+    print(f"accepted: {ack['terms_sha256']} at {ack['time']}", file=sys.stderr)
+    return 0
+
+
 def cmd_collection_ack(a) -> int:
     """`hold collection ack <collection>` — record 09 §9.13's acknowledgement.
 
@@ -622,6 +768,10 @@ def cmd_collection_ack(a) -> int:
 
     from app.hold import collection as col, drag as drag_mod
 
+    if getattr(a, "web_sources", False):
+        return _ack_web_sources(a)
+    if not a.collection:
+        raise CodexError("ack names a collection, or takes --web-sources (04 §4.4)")
     name, codex = col.resolve(a.root, a.collection)
     if getattr(a, "origin_unchecked", False):
         return _ack_origin_unchecked(a, name, codex)
@@ -1590,8 +1740,14 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p)
     p.add_argument("plugin", nargs="?", default=None,
                    help="the plugin the collection is of; omit when the file is a whole Codex")
-    p.add_argument("--recipe", required=True,
-                   help="TOML with every Codex field the plugin does not default (06 Â§6.6)")
+    p.add_argument("--recipe", default=None,
+                   help="TOML with every Codex field the plugin does not default (06 Â§6.6); "
+                        "`create deposit` takes none")
+    p.add_argument("--name", default=None,
+                   help="the collection's name; `create deposit` requires it (02 §2.9)")
+    p.add_argument("--space", default=None, metavar="FILE",
+                   help="create deposit: the space block, for the first deposit "
+                        "collection on an encoder (later ones copy its space)")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--platform-image", default=None,
                    help="the digest of the platform image this command runs in "
@@ -1658,16 +1814,57 @@ def build_parser() -> argparse.ArgumentParser:
     p = verbs.add_parser("ack",
                          help="record the licence acknowledgement a yellow- "
                               "or red-class collection needs (09 §9.13)")
-    root_arg(p); p.add_argument("collection")
+    root_arg(p); p.add_argument("collection", nargs="?", default=None)
     p.add_argument("--yes", action="store_true",
                    help="record WITHOUT printing the terms (07 §7.7). For a "
                         "script; a person should read them")
+    p.add_argument("--web-sources", action="store_true", dest="web_sources",
+                   help="accept the web-sources disclaimer, once for the node (04 §4.4)")
     p.add_argument("--origin-unchecked", action="store_true", dest="origin_unchecked",
                    help="record the decision to use a copy whose origin could not "
                         "be checked, every other test having passed (03 §3.6)")
     p.set_defaults(fn=cmd_collection_ack)
 
+    src_ = nouns.add_parser("source", help="a deposit collection's URL sources (06 §6.7)")
+    sverbs_ = src_.add_subparsers(dest="verb", required=True)
+    p = sverbs_.add_parser("add", help="subscribe a deposit collection to a URL")
+    p.add_argument("collection"); p.add_argument("url")
+    p.add_argument("--interval", type=int, default=60, help="minutes between fetches")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_source_add)
+    p = sverbs_.add_parser("erase", help="end a subscription and erase its deposit")
+    p.add_argument("collection"); p.add_argument("url")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_source_erase)
+    p = sverbs_.add_parser("list", help="the subscriptions, each with its last fetch")
+    p.add_argument("collection"); p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_source_list)
+
     # ---- hold records ---------------------------------------------------
+    dep = nouns.add_parser("deposit", help="a deposit collection's documents (02 §2.9)")
+    dverbs = dep.add_subparsers(dest="verb", required=True)
+    p = dverbs.add_parser("add", help="store a file as a deposit; an existing key is replaced whole")
+    p.add_argument("collection"); p.add_argument("file")
+    p.add_argument("--key", default=None, help="the deposit's key (default: the file's name)")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_deposit_add)
+    p = dverbs.add_parser("erase", help="remove a deposit, leaving no trace (02 §2.9)")
+    p.add_argument("collection"); p.add_argument("key")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--here", action="store_true",
+                   help="write in this process — only where no worker is running")
+    p.set_defaults(fn=cmd_deposit_erase)
+    p = dverbs.add_parser("list", help="the collection's deposit keys")
+    p.add_argument("collection"); p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_deposit_list)
+    p = dverbs.add_parser("show", help="a deposit's text and its chunk count")
+    p.add_argument("collection"); p.add_argument("key")
+    p.set_defaults(fn=cmd_deposit_show)
+
     recs = nouns.add_parser("records", help="the parsed text of documents")
     rverbs = recs.add_subparsers(dest="verb", required=True)
 

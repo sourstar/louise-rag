@@ -210,3 +210,73 @@ def require_ack_or_exit(collection, *, use: str = "use") -> None:
         require_ack(collection, use=use)
     except LicenseAckRequiredError as e:
         raise SystemExit(f"REFUSED: {e}") from None
+
+
+# --------------------------------------------------------------------------
+# the web sources of a deposit collection (04 §4.4, 06 §6.7, 09 §9.13)
+
+#: The disclaimer the platform ships, byte-exact: what the operator accepts
+#: once for the node before any URL but a keyed git clone is fetched.
+WEB_DISCLAIMER = Path(__file__).parent / "plugins" / "deposit" / "WEB-DISCLAIMER.txt"
+WEB_ACK_KIND = "louise-web-sources-ack"
+
+
+def web_ack_path() -> Path:
+    """`state/web-sources-ack.json` under LOUISE_ROOT (07 §7.8)."""
+    from . import collections as collections_mod
+    return collections_mod.louise_root() / "state" / "web-sources-ack.json"
+
+
+def web_disclaimer_sha256() -> str:
+    return "sha256:" + hashlib.sha256(WEB_DISCLAIMER.read_bytes()).hexdigest()
+
+
+def web_sources_accepted() -> bool:
+    """The node's acceptance, compared with the text the RUNNING platform
+    ships — never a remembered hash, so a changed disclaimer asks again
+    (09 §9.13)."""
+    import json
+    try:
+        ack = json.loads(web_ack_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(ack, dict) and ack.get("kind") == WEB_ACK_KIND
+            and ack.get("terms_sha256") == web_disclaimer_sha256())
+
+
+def accept_web_sources(now: str | None = None) -> dict:
+    """`hold collection ack --web-sources`: the time and the hash of the
+    text, written atomically (09 §9.13)."""
+    import json
+    ack = {"kind": WEB_ACK_KIND, "version": 1,
+           "terms_sha256": web_disclaimer_sha256(),
+           "time": now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    p = web_ack_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(ack, sort_keys=True), encoding="utf-8")
+    tmp.replace(p)
+    return ack
+
+
+def is_keyed_git(url: str) -> bool:
+    """A git repository over SSH — `git@host:path.git` or `ssh://…/x.git`
+    — which this node clones with its own key."""
+    u = url.strip()
+    return u.lower().endswith(".git") and (u.startswith("ssh://")
+                                           or ("@" in u.split(":", 1)[0] and ":" in u
+                                               and "://" not in u))
+
+
+def web_source_refusal(url: str) -> str | None:
+    """Why `url` may not be fetched now, or None (04 §4.4). A git
+    repository over SSH with this node's key needs nothing more; every
+    other URL needs the node's acceptance of the web-sources disclaimer."""
+    from . import config
+    if is_keyed_git(url) and config.GIT_PRIVATE_KEY_FILE:
+        return None
+    if web_sources_accepted():
+        return None
+    return ("accept the web-sources disclaimer in Louise first: "
+            "`louise hold collection ack --web-sources` (04 §4.4)")
+

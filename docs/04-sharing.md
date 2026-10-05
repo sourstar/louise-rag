@@ -373,6 +373,28 @@ who hold it. So `erasure: erasable` requires `privacy: never-share`, and
 a drag build refuses the pair otherwise; every collection that travels
 is append-only or retractable, and a tombstoned record stays in its
 closed shard, excluded from search and embedding (01, promise 7).
+What "no trace" means in bytes is 02 §2.9.
+
+**The web sources of a deposit collection.** A deposit collection may
+subscribe to URLs (06 §6.7), and their text is not the depositor's.
+Two rules cover them, in place of a per-source acknowledgement:
+
+- a **git repository cloned over SSH with this node's key** needs
+  nothing more: the key is the operator's, so is the authorisation to
+  read what it opens;
+- **every other URL** needs the **web-sources disclaimer**, accepted
+  once per node (`hold collection ack --web-sources`): all fetched
+  content is the property of its owners, its licences must be
+  respected, the collection is never shared, and the operator who
+  subscribes a collection to a URL is liable for any infringement. The
+  text ships with the platform, byte-exact; the acceptance is recorded
+  as any acknowledgement is — the time and the hash of the text
+  (09 §9.13) — and resolved by the same function. Until it exists, no
+  such source is fetched and a request to add one is refused.
+
+The collection itself stays green and never-share: nothing it holds
+ever leaves the node, which is why one standing acceptance is the
+right size for it.
 
 ## 4.5 Sharing the work
 

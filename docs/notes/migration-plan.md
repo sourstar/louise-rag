@@ -1587,6 +1587,99 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
 
 **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream; run 15c
 on the node.
+### Step 16 — Deposit collections and the LocalAGI routes — **specified 2026-09-29; 16a–16e DONE on a side branch, merged into main 2026-10-05; 16f open**
+*01 (vocabulary), 02 §2.9, 03 §3.2, 04 §4.4, 06 §6.7, 07 §7.2–7.4,
+§7.6–7.8, 09 §9.13, §9.17. Design and reasons:
+[`deposit-collections.md`](deposit-collections.md). Wraps
+`app/hold/codex.py`, `app/hold/collection.py`, `app/layers.py`,
+`app/retrieval.py`, `app/licensing.py`, `app/auth.py`, `app/api.py`,
+the transfer manager and the worker's stage selection.*
+
+- **16a — the plugin and the Codex. DONE 2026-09-29**
+  (`tests/deposit/test_deposit_identity.py`, 21; `test_deposit_config.py`, 5).
+  `app/plugins/deposit/`, `app/hold/deposit.py`; `hold
+  collection create deposit --name`, with the nonce in `origin.spec`,
+  the node's `[deposit] encoder` or `--encoder`/`--space-from`, and the
+  space block copied whole — no calibration run — when a deposit
+  collection on that encoder already exists. `hold deposit
+  add|erase|list|show`. Proven by `tests/deposit/test_deposit_identity.py`: two
+  collections from one set of defaults have two ids; a re-added key
+  replaces; `native_id`s ascend node-wide.
+- **16b — parse. DONE 2026-09-30** (`tests/deposit/test_deposit_parse.py`,
+  14). The PDF extraction runs in a child process under a 60 s deadline.
+  `.txt`, `.md`, `.pdf` through `pypdfium2`, pinned
+  in `requirements.txt` (operator's yes, 2026-09-29); every chunk cut
+  through `layers.chunks_for_document`. Proven by golden files: the
+  same bytes give the same record and the same chunks, PDF metadata
+  kept, a scan and non-UTF-8 text refused.
+- **16c — no trace. DONE 2026-09-30** (`tests/deposit/test_deposit_erasure.py`,
+  10). Measured here (1 KB deposits, vectors written): one purge 122 ms at
+  100 deposits, 130 ms at 500, 240 ms at 1,000 — the rewrite is whole, so
+  it grows with the collection; `reset` pays it once. Measured to need it:
+  without the purge, an erased deposit's text stays in the vector table's
+  data file; and two documents in one text-index segment keep the deleted
+  one counted there, its terms in the dictionary, until the rewrite.
+  Erase removes the origin bytes, the rows, the
+  text-index postings (segments merged), the vectors including old
+  table versions (cleaned up), with `SECURE_DELETE` never turned off.
+  Proven by `tests/deposit/test_erasure.py`: deposit, embed, erase, and
+  the deposit's bytes appear in no file under the collection.
+- **16d — the LocalAGI routes. DONE 2026-09-30**
+  (`tests/deposit/test_deposit_localagi.py`, 17; `app/localagi.py`).
+  AND RUN FOR REAL: LocalAGI's own `pkg/localrag` client, built from its
+  checkout at `7e0947d`, against a live node — create, store, count,
+  search, list, read, delete, sources, reset, create again — exit 0
+  (`tools/localagi_check/`, which 16f re-runs). Found on the way: the
+  client names an upload with its temp PATH (the key is the base name);
+  multipart parsed with the standard library, not `python-multipart`;
+  and `run_search`'s all-withheld answer had no `timings`, a KeyError in
+  `/api/search` that predates this step (fixed at the source). Sources
+  answer 501 until 16e.
+  **A defect in 16a/16d, found at the start of 16e and fixed before it
+  (2026-09-30):** `hold deposit add` ran the fts and rdf stages in the
+  CALLING process — the web's, for a LocalAGI upload — and tantivy allows
+  one writer per index while the worker keeps its own open (its catalog
+  backfill alone holds one for every collection). Reproduced with the real
+  worker running: a second process's add failed `CatalogUnavailable …
+  LockBusy`. Single-process tests could not show it. Now every deposit
+  write is a job (`app/jobs.py` DEPOSIT) on its own worker thread
+  (`serve_deposits`), the web and the CLI queue and wait, reads stay in the
+  web, and a job's row is forgotten once read (it names a key). Proven the
+  same way: `tools/localagi_check` against uvicorn AND `python -m
+  app.worker` as two processes — exit 0, no error in the worker log.
+  07 §7.4's table on `app/api.py`,
+  `DEPOSIT_TOKEN_FILE`, deposit collections withheld from every open
+  `ask` route and the Ask page. The upload commits record, chunks and
+  text index in its request and never calls the encoder; vectors are
+  the worker's next round. Proven by
+  `tests/deposit/test_localagi_contract.py` — every request LocalAGI's
+  `pkg/localrag/client.go` (at `7e0947d`) sends, decoded the way it
+  decodes the answer — and `tests/deposit/test_auth.py`.
+- **16e — URL sources. DONE 2026-09-30**
+  (`tests/deposit/test_deposit_sources.py`, 29, and the LocalAGI route
+  test). `sanitize_url` checked against the OUTPUT OF LOCALRECALL'S OWN
+  FUNCTION, run with Go on eight URLs. And run for real: LocalAGI's client
+  (`tools/localagi_check … <source-url>`) against uvicorn and `python -m
+  app.worker` — AddSource, the worker's sources thread fetching within
+  two seconds, ListSources with its last fetch, the entry under
+  LocalRecall's key, RemoveSource. Settled while building: sources are
+  fetched only where the mode runs FETCH and PARSE; one write lock per
+  deposit collection (the deposit and sources threads both write, and a
+  purge rewrites whole indexes); `create` writes the empty `origin/`
+  (the worker's discovery reported it missing every round — seen in the
+  two-process run). `hold source add|erase|list`, `[[sources]]` in
+  the collection's file, `hold collection ack --web-sources`,
+  `GIT_PRIVATE_KEY_FILE`; every fetch through the transfer manager.
+  Proven by `tests/deposit/test_sources.py`: keys equal LocalRecall's
+  `sanitizeURL` on its own cases; nothing is requested before the
+  disclaimer; one deposit per source, replaced whole, kept on a failed
+  refresh.
+- **The worker.** Embedding deposits and refreshing sources change what
+  runs when: [`scheduling.md`](scheduling.md) §6's checklist and `dev
+  schedule-report` numbers before 16d and 16e are deployed.
+- **16f — the operator's stop,** like 6: one LocalAGI agent with
+  `local_rag_url` on the node — memory stored, found, compacted; a file
+  uploaded from its UI; one URL source.
 
 ## 4. Dependencies between steps
 
@@ -1629,6 +1722,10 @@ on the node.
   13a (the Codex it extends). 15d needs 15a, because a LocalAI run's
   engine carries `options`. 15c is the operator's stop, and nothing past
   it starts until it passes.
+- **16 (added 2026-09-29 as step 15; renumbered 2026-10-05 when main's step 15 became RAGE over LocalAI)** needs 3 and 4 (the gate and `vectors
+  build`) and 13e (validated runs), and nothing of 2, 5 or 8–12: a
+  deposit collection has no drag, no snapshot and no published checks
+  (02 §2.9). Its sub-steps run in order, 16a first.
 
 ## 5. Kick-off prompt for Claude Code
 

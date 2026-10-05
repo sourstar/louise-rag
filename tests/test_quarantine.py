@@ -32,6 +32,9 @@ from app.hold import collection as col, drag as drag_mod, envelope as env, runs 
 from app.hold.codex import canonical_json
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM
+
+#: this node's public key, as a statement names it: the only signer counted
+ME = env.key_text(KEY.verify_key)
 from tests.hold.test_template import SPACE, recipe as a_recipe
 from tests.test_run_check import (DOC_URL, QUERY_URL, R1, R2, RAGE,  # noqa: F401
                                   chunks, node, opening, opening_query, rage, stored)
@@ -106,7 +109,7 @@ def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, r
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     s = state_of(collection)
     assert s.test("gate").status == "passed" and s.state == "quarantine"
-    assert len(hold_runs.statements(root, "gutenberg", codex, "query")) == 1, \
+    assert len(hold_runs.statements(root, "gutenberg", codex, "query", signer=ME)) == 1, \
         "an asymmetric space's query run is gated too, at once and by itself"
 
     attest(root, codex, "records-vs-origin")
@@ -259,7 +262,7 @@ def test_a_changed_run_requarantines_every_collection_of_that_encoder_and_only_t
     # the gate runs AT ONCE, with nothing to embed and nobody asking
     con = db.connect(loaded["sister"])
     worker._settle_the_run(con, loaded["sister"])
-    assert R2 in hold_runs.statements(root, "sister", made["sister"])
+    assert R2 in hold_runs.statements(root, "sister", made["sister"], signer=ME)
     for name in ("gutenberg", "sister"):
         assert state_of(loaded[name]).state == "in-use", \
             "a pass validates the run for the SPACE: it counts for both"
@@ -286,7 +289,7 @@ def test_the_gate_comes_before_quarantine_at_the_embed_stage(node, rage, tmp_pat
     enforce(tmp_path)
     con = db.connect(collection)
     assert worker._embedding_allowed(con, collection) is False, "still in quarantine"
-    assert R1 in hold_runs.statements(root, "gutenberg", codex), "and the gate has run"
+    assert R1 in hold_runs.statements(root, "gutenberg", codex, signer=ME), "and the gate has run"
 
 
 # ---- a run that failed -------------------------------------------------------------------------
@@ -783,3 +786,62 @@ def test_under_an_image_that_is_not_the_reference_the_origin_check_cannot_run(
     # under the reference itself the check CAN run: open, not a decision
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", codex.toolchain.platform_image)
     assert state_of(collection).test("origin").status == "open"
+
+
+# ---- the worker's re-check record, for the web process (operator, 2026-09-28) ------------
+
+def _as_the_web(collection) -> None:
+    """A process that has re-checked nothing itself: the web process."""
+    run_check._rechecked.clear()
+
+
+def test_the_web_relies_only_on_a_statement_the_worker_re_checked_since_it_started(
+        node, rage, tmp_path):
+    root, collection, codex = node
+    enforce(tmp_path)
+    recipe = collections_mod.recipe_for(collection)
+    run_check.publish_rechecks()                       # the worker starts
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    record = json.loads(run_check.record_path().read_text(encoding="utf-8"))
+    assert {(e[1], e[2]) for e in record["checked"]} >= {("document", R1)}
+
+    _as_the_web(collection)
+    run_check.check_query(collection, recipe, {R1})    # the worker re-checked it
+
+    run_check.publish_rechecks()                       # the worker restarts
+    with pytest.raises(hold_runs.RunUnvalidated) as e:
+        run_check.check_query(collection, recipe, {R1})
+    assert e.value.failed is False and "has not re-checked" in str(e.value)
+
+
+def test_a_statement_changed_after_the_worker_re_checked_it_is_not_relied_on(
+        node, rage, tmp_path):
+    """Re-signed with the node's own key — layer 1 passes it — but it is not
+    the statement the worker re-checked: the record names its digest."""
+    root, collection, codex = node
+    enforce(tmp_path)
+    recipe = collections_mod.recipe_for(collection)
+    run_check.publish_rechecks()
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    _as_the_web(collection)
+    run_check.check_query(collection, recipe, {R1})
+
+    path = hold_runs.path_for(root, "gutenberg", R1, "query")
+    if not path.exists():
+        path = hold_runs.path_for(root, "gutenberg", R1)
+    body = dict(json.loads(path.read_bytes())["body"], time="2026-09-28T00:00:00Z")
+    path.write_bytes(canonical_json(env.sign(env.CALIBRATION, body, KEY)))
+    with pytest.raises(hold_runs.RunUnvalidated, match="has not re-checked"):
+        run_check.check_query(collection, recipe, {R1})
+
+
+def test_a_command_line_process_does_not_replace_the_workers_record(node, rage, tmp_path):
+    root, collection, codex = node
+    run_check.publish_rechecks()
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    before = run_check.record_path().read_bytes()
+    run_check._publishing.clear()                      # another process: not the worker
+    run_check.reset_cache()
+    run_check.validate(root, "gutenberg", codex, collections_mod.recipe_for(collection),
+                       key=KEY, now=NOW)
+    assert run_check.record_path().read_bytes() == before

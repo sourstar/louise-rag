@@ -38,6 +38,7 @@ cannot finish cannot honour SIGTERM).
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -188,19 +189,202 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
             from .bundles import keys as node_keys
             key = node_keys.load_signing_key()
         kw = {"query": query, "stop": stop, "name": name}
-        return runs_mod.validate(
+        body = runs_mod.validate(
             root, name, codex, role=role,
             reference=reference_vectors,
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
             stated=stated, key=key, now=now or _now())
+        _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
+        return body
     except (runs_mod.RunRefused, emb.GateError):
         raise
     except Exception as e:                              # noqa: BLE001
         raise emb.GateDeferred(
             f"{name}: the encoder was unreachable or failed during the gate: "
             f"{type(e).__name__}: {e}") from e
+
+
+def signer(key=None) -> str | None:
+    """The key a statement must be signed by to count here (runs.statements):
+    `key`'s public half when the caller signs with one, else this node's
+    own — the key `validate` signs with. None on a peer with no key, which
+    holds no statements of its own.
+
+    ONLY A KEY FOUND IS REMEMBERED. Remembering "no key" would outlive the
+    key being put in place, and every statement this node then signs would
+    be ignored and gated again, for ever."""
+    from .hold import envelope as env
+    if key is not None:
+        return env.key_text(key.verify_key)
+    if _me:
+        return _me[0]
+    try:
+        from . import identity
+        text = identity.own()       # the web reads the public file only
+    except Exception:                                   # noqa: BLE001
+        return None
+    if text is None:
+        return None
+    _me.append(text)
+    return text
+
+
+_me: list[str] = []
+
+
+#: (space, role, run) re-checked, or freshly gated, since THIS process
+#: started. A kept statement is relied on only once it is here (`recheck`).
+_rechecked: set[tuple[str, str, str]] = set()
+
+
+def _mark(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> None:
+    _rechecked.add((codex.space_id, role, run_id))
+    if _publishing:
+        _publish((codex.space_id, role, run_id, _statement_digest(body)))
+
+
+# ---- the worker's re-check record, for the web process (operator, 2026-09-28) ----
+#
+# The web process never re-checks: a search must not wait for sixteen
+# embeddings. It relies on a kept statement only when THE WORKER, in its
+# current start, has re-checked that very statement (its body's digest) or
+# gated the run itself. The worker empties the record when it starts, so a
+# restart puts every statement back behind the worker's re-check.
+
+RECORD_KIND = "louise-rechecked"
+_publishing: list[bool] = []
+_record_lock = threading.Lock()
+_record_read: dict[str, tuple[tuple[int, int], frozenset]] = {}
+
+
+def record_path() -> Path:
+    return collections_mod.louise_root() / "state" / "rechecked.json"
+
+
+def _statement_digest(body: dict[str, Any]) -> str:
+    from .hold.codex import canonical_json, digest
+    return digest(canonical_json(body))
+
+
+def _write_record(checked: list) -> None:
+    path = record_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"kind": RECORD_KIND, "pid": os.getpid(),
+                               "started": _started[0], "checked": checked},
+                              sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+_started: list[str] = [""]
+_entries: list[list[str]] = []
+
+
+def publish_rechecks() -> None:
+    """THE WORKER, at start: begin a record of its own, empty. Only the
+    worker publishes — a command-line process re-checks for itself and
+    must not replace the record the web process reads."""
+    with _record_lock:
+        _publishing[:] = [True]
+        _started[0] = _now()
+        _entries.clear()
+        _write_record([])
+
+
+def _publish(entry: tuple[str, str, str, str]) -> None:
+    with _record_lock:
+        if list(entry) not in _entries:
+            _entries.append(list(entry))
+            _write_record(sorted(_entries))
+
+
+def worker_rechecked(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> bool:
+    """THE WEB PROCESS: has the worker, in its current start, re-checked
+    exactly this statement (or gated the run itself)? Read from the record,
+    and read again whenever the file changes (keyed on its path, CLAUDE.md).
+    No record — no worker has started — is no."""
+    path = record_path()
+    try:
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return False
+    cached = _record_read.get(str(path))
+    if cached is None or cached[0] != stamp:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            rows = frozenset(tuple(e) for e in doc.get("checked", [])
+                             if doc.get("kind") == RECORD_KIND and len(e) == 4)
+        except (OSError, ValueError, TypeError):
+            rows = frozenset()
+        cached = _record_read[str(path)] = (stamp, rows)
+    return (codex.space_id, role, run_id, _statement_digest(body)) in cached[1]
+
+
+def rechecked(codex: Codex, role: str, run_id: str) -> bool:
+    return (codex.space_id, role, run_id) in _rechecked
+
+
+def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
+            role: str = "document", key=None,
+            stop: Callable[[], bool] | None = None,
+            log: Callable[[str], None] | None = None) -> bool:
+    """THE FIRST TIME A KEPT STATEMENT IS RELIED ON IN THIS PROCESS: its own
+    sixteen sampled texts, embedded again by the run it names, compared with
+    the reference (runs.recheck). True: it holds, and is not asked again
+    until the process restarts. False: it did not; every statement of this
+    peer for that run and space is set aside, and the caller gates the run
+    from scratch. An answer from another run, or the encoder away:
+    `GateDeferred` — nothing is decided, and it is asked again."""
+    if rechecked(codex, role, run_id):
+        return True
+    body = runs_mod.statements_for_space(root, name, codex, role,
+                                         signer=signer(key)).get(run_id)
+    if body is None or not runs_mod.passing(body, codex):
+        return True            # nothing kept to re-check; `check` decides
+    reference_vectors = reference(root, name, codex, role)
+    embed = answers(recipe, query=role == "query", stop=stop, name=name)
+    try:
+        ok, passed, median = runs_mod.recheck(codex, body, reference=reference_vectors,
+                                              embed=embed, role=role)
+    except (runs_mod.RunRefused, emb.GateError):
+        raise
+    except Exception as e:                              # noqa: BLE001
+        raise emb.GateDeferred(
+            f"{name}: the encoder was unreachable or failed during the re-check: "
+            f"{type(e).__name__}: {e}") from e
+    if embed.runs != {run_id}:
+        raise emb.GateDeferred(
+            f"{name}: the re-check of run {run_id[:23]}… was answered by "
+            f"{sorted(str(r)[:23] for r in embed.runs if r != run_id) or 'none'}; "
+            f"it is inconclusive and asked again")
+    if ok:
+        _mark(codex, role, run_id, body)
+        if log is not None:
+            log(f"{role} run {run_id[:23]}…: its kept statement re-checked on start "
+                f"({passed} of the sample, median {median:.6f})")
+        return True
+    moved = runs_mod.set_aside(root, name, codex, run_id, role)
+    if log is not None:
+        log(f"{role} run {run_id[:23]}…: its kept statement did NOT hold on re-check "
+            f"({passed} of the sample, median {median:.6f}); set aside "
+            f"{[p.name for p in moved]}, and the run is gated from scratch")
+    return False
+
+
+def _foreign(root: Path, name: str, role: str, log: Callable[[str], None] | None) -> None:
+    """Report, once per file per process, a statement ignored because another
+    key signed it (runs.statements)."""
+    for fname in runs_mod.foreign(root, name, role):
+        if log is not None and (name, fname) not in _told_foreign:
+            _told_foreign.add((name, fname))
+            log(f"ignored {fname}: signed by a key that is not this node's; a "
+                f"validation counts only when this node made it")
+
+
+_told_foreign: set[tuple[str, str]] = set()
 
 
 def _told(body: dict[str, Any]) -> str:
@@ -221,18 +405,26 @@ def guard(root: Path, name: str, codex: Codex, recipe, answered: set, *,
     if not runs_mod.applies(codex):
         return
     together = batched(recipe)
+    who = signer(key)
     try:
-        runs_mod.check(root, name, codex, answered, role=role, batched=together)
-        return
+        runs_mod.check(root, name, codex, answered, signer=who, role=role,
+                       batched=together)
+        _foreign(root, name, role, log)
+        stale = [r for r in sorted(r for r in answered if r)
+                 if not recheck(root, name, codex, recipe, r, role=role, key=key,
+                                stop=stop, log=log)]
+        if not stale:
+            return
     except runs_mod.RunUnvalidated as e:
         if e.failed:
             raise
+        _foreign(root, name, role, log)
         if log is not None:
             log(f"{name}: run {e.run_id[:23]}… is new to this peer; running the gate")
     body = validate(root, name, codex, recipe, role=role, key=key, stop=stop)
     if log is not None:
         log(f"{name}: {_told(body)}")
-    runs_mod.check(root, name, codex, answered, role=role, batched=together)
+    runs_mod.check(root, name, codex, answered, signer=who, role=role, batched=together)
 
 
 def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
@@ -331,6 +523,12 @@ def _flight(collection) -> str:
 def reset_cache() -> None:
     _verdicts.clear()
     _answering.clear()
+    _rechecked.clear()
+    _told_foreign.clear()
+    _me.clear()
+    _publishing.clear()
+    _entries.clear()
+    _record_read.clear()
 
 
 def check_write(collection, recipe, answered: set) -> None:
@@ -345,9 +543,18 @@ def check_write(collection, recipe, answered: set) -> None:
     if not applies(collection):
         return
     heard(recipe, answered)
+    codex = collection.codex
     try:
-        runs_mod.check(_root(), collection.name, collection.codex, answered,
+        runs_mod.check(_root(), collection.name, codex, answered, signer=signer(),
                        role="document", batched=batched(recipe))
+        # A KEPT STATEMENT NOT YET RE-CHECKED IN THIS PROCESS is not relied
+        # on: a deferral, and the stage's next `embed_allowed` re-checks it
+        for run_id in sorted(r for r in answered if r):
+            if not rechecked(codex, "document", run_id):
+                raise runs_mod.RunUnvalidated(
+                    f"{collection.name}: run {run_id[:23]}… has a kept statement not "
+                    f"yet re-checked since this process started; nothing is written "
+                    f"until it is", run_id)
     except (runs_mod.RunUnvalidated, runs_mod.RunRefused):
         _verdicts.pop(_where(collection), None)
         raise
@@ -371,7 +578,7 @@ def check_query(collection, recipe, answered: set) -> None:
     from . import copy_state
     if not copy_state.enforced():
         return
-    known = copy_state.space_statements(_root(), collection.name, codex, role)
+    known = copy_state.space_statements(_root(), collection.name, codex, role)   # this node's key only
     for run_id in sorted(r for r in answered if r):
         body = known.get(run_id)
         if body is None:
@@ -385,6 +592,12 @@ def check_query(collection, recipe, answered: set) -> None:
                 f"{collection.name}: the {role} encoder's run {run_id[:23]}… FAILED the "
                 f"gate for this space: the vector leg is withheld and the text leg goes "
                 f"on (03 §3.3)", run_id, failed=True)
+        if not (rechecked(codex, role, run_id)
+                or worker_rechecked(codex, role, run_id, body)):
+            raise runs_mod.RunUnvalidated(
+                f"{collection.name}: the {role} encoder's run {run_id[:23]}… has a kept "
+                f"statement the worker has not re-checked since it started: the vector "
+                f"leg waits for that re-check, and the text leg goes on", run_id)
 
 
 def _look(collection, stop: Callable[[], bool] | None,
@@ -397,14 +610,23 @@ def _look(collection, stop: Callable[[], bool] | None,
         recipe = collections_mod.recipe_for(collection)
         run_id = answering_run(recipe)
         heard(recipe, {run_id})
+        who = signer()
         try:
-            runs_mod.check(_root(), name, codex, {run_id}, batched=batched(recipe))
+            runs_mod.check(_root(), name, codex, {run_id}, signer=who,
+                           batched=batched(recipe))
+            _foreign(_root(), name, "document", log)
+            if not recheck(_root(), name, codex, recipe, run_id, stop=stop, log=log):
+                log(_told(validate(_root(), name, codex, recipe, stop=stop)))
+                runs_mod.check(_root(), name, codex, {run_id}, signer=who,
+                               batched=batched(recipe))
         except runs_mod.RunUnvalidated as e:
             if e.failed:
                 raise
+            _foreign(_root(), name, "document", log)
             log(f"run {run_id[:23]}… is new to this peer; running the gate against it")
             log(_told(validate(_root(), name, codex, recipe, stop=stop)))
-            runs_mod.check(_root(), name, codex, {run_id}, batched=batched(recipe))
+            runs_mod.check(_root(), name, codex, {run_id}, signer=who,
+                           batched=batched(recipe))
         return True, f"run {run_id[:23]}… is validated for this space", run_id
     except (runs_mod.RunRefused, runs_mod.RunUnvalidated, emb.GateError) as e:
         return False, str(e), run_id
@@ -427,8 +649,11 @@ def _look_at_the_query_side(collection, stop: Callable[[], bool] | None,
         recipe = collections_mod.recipe_for(collection)
         run_id = answering_run(recipe, query=True)
         heard(recipe, {run_id}, role="query")
-        if run_id in runs_mod.statements(_root(), name, codex, "query"):
-            return
+        if run_id in runs_mod.statements_for_space(_root(), name, codex, "query",
+                                                   signer=signer()):
+            if recheck(_root(), name, codex, recipe, run_id, role="query", stop=stop,
+                       log=log):
+                return
         log(f"query run {run_id[:23]}… is new to this peer; running the gate against it")
         log("query " + _told(validate(_root(), name, codex, recipe, role="query",
                                       stop=stop)))

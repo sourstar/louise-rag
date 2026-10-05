@@ -53,6 +53,13 @@ that never connects to anyone can still create, maintain and search a
 compliant collection on its own — and can rejoin the network later
 holding exactly what everyone else holds.
 
+One kind of collection never enters Share at all: a **deposit
+collection** (02 §2.9), which a client of the node — an agent keeping
+its memory, a person uploading a file — writes over HTTP. It is held
+and asked like any other, it is `never-share` and `erasable` by
+construction, and it keeps only the checks that keep its own vectors
+consistent, because there is nobody to prove them to.
+
 ## What Louise promises
 
 1. **Only useful data travels.** Parsed text, figures, vectors, derived
@@ -205,5 +212,7 @@ they are needed.
 | share / hold | instead of seed / replicate |
 | certified collection | a collection whose records only a named, anchored key may publish |
 | open collection | every other collection |
+| deposit | a document a client hands to the node over HTTP — an agent's memory, an uploaded file, the text of a subscribed URL — kept byte-exact as its own origin (06 §6.7) |
+| deposit collection | a collection whose plugin is `deposit`: created and written by a client of this node, `never-share` and `erasable` by construction, held and asked and never shared (02 §2.9) |
 
 Louise is software and is referred to as *it*.

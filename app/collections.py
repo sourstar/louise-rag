@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import embedded, gutenberg, normattiva, pubmed, wikipedia
+from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikipedia
 from .plugins.base import CorpusSource
 
 # `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
 # reference until converted to the final format or dropped.
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
+    "deposit": deposit.SOURCE,
     "embedded": embedded.SOURCE,
     "gutenberg": gutenberg.SOURCE,
     "normattiva": normattiva.SOURCE,
@@ -784,6 +785,20 @@ def load_all(*, skip_unreadable: bool = False):
     global _REFUSALS
     _REFUSALS = tuple(refused)
     return (served, unreadable) if skip_unreadable else served
+
+
+def is_private(collection) -> bool:
+    """A deposit collection (02 §2.9): never returned by an open route —
+    never-share is not only about peers, and a guest on the LAN is not the
+    depositor. Searched only with the deposit token or the admin token
+    (07 §7.4)."""
+    codex = getattr(collection, "codex", None)
+    return codex is not None and codex.plugin == "deposit"
+
+
+def load_public() -> list:
+    """Every collection an open route may name, list or search."""
+    return [c for c in load_all() if not is_private(c)]
 
 
 def is_synthesized(collection) -> bool:

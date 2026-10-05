@@ -1,5 +1,8 @@
 FROM python:3.12-slim AS base
-RUN apt-get update && apt-get install -y --no-install-recommends curl rsync \
+# git: a deposit collection's `.git` source is shallow-cloned by the worker
+# (06 §6.7, app/hold/sources.py; step 16e). Found missing when the merged
+# suite ran in this image on 2026-10-05: the branch's sandbox had git.
+RUN apt-get update && apt-get install -y --no-install-recommends curl git rsync \
     && rm -rf /var/lib/apt/lists/*
 # The GPU's name on the System page (app/gpu_probe.py): pci.ids, pinned by
 # commit and checksum. A distribution's copy lags the cards — the node's own

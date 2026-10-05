@@ -134,7 +134,10 @@ hexadecimal digits with an optional trailing newline; nothing else — no
 PEM, no passphrase, no algorithm field. On a POSIX filesystem the file
 is refused when group- or world-accessible. The key material never
 appears in a log, an error message, a config value or any object below;
-the public key appears everywhere a producer or verifier is named.
+the public key appears everywhere a producer or verifier is named. A
+process that only recognises this peer's signatures reads the public key
+alone, from the path `NODE_PUBLIC_KEY_PATH` names (07 §7.8): the textual
+form above and a newline, nothing else.
 Ordinary keys do not rotate: a lost key is a new key, and the bundles
 and attestations the old key signed stay valid under the old key. A
 certifier's key rotates at its anchor (§9.11), and only there.
@@ -1581,6 +1584,21 @@ collection ack wikipedia-de`, `state/ack.json` reads `{"kind":
 Wikipedia collection, whose Codex names the same hash, is acknowledged
 by it.
 
+**The web-sources acceptance.** `state/web-sources-ack.json` under
+`LOUISE_ROOT` (07 §7.8), local, never a member: one per node, recorded
+by `hold collection ack --web-sources` (04 §4.4).
+
+| field | type | required | meaning |
+|---|---|---|---|
+| `kind` | `"louise-web-sources-ack"` | yes | |
+| `version` | `1` | yes | |
+| `terms_sha256` | id | yes | `H` of the disclaimer text the platform ships, byte-exact |
+| `time` | time | yes | when |
+
+It is resolved by the same function as every acknowledgement: it
+counts while its `terms_sha256` equals the hash of the text the running
+platform ships, so a changed disclaimer asks again.
+
 ## 9.14 Relations
 
 **Path.** `relations/<slice>/<NNNNN>.jsonl.zst`, one shard beside each
@@ -1754,6 +1772,13 @@ half never leaves the plugin and the peer.
 | `probe_file` | | no | the mirror structure probe |
 | `extras` | | no | formats the origin offers that Louise does not exchange |
 | `terms_text_path`, `ssh_key_path`, `auth_token_path` | paths | no | never in any shared object |
+
+**The deposit plugin's spec.** A deposit collection (02 §2.9) has no
+acquisition spec: its origin is the client. Its `origin.spec` is exactly
+`{"nonce":"<32 lowercase hex digits>","source_id":"deposit"}` — 128
+random bits chosen at `create` — and none of the fields above. The
+nonce is what gives two deposit collections created from the same
+defaults two identities.
 
 **Plugin types** (06 §6.1).
 

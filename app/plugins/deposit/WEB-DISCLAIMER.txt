@@ -1,0 +1,18 @@
+Web sources of a deposit collection — the operator's acceptance
+
+A deposit collection may be subscribed to URLs: a web page, a sitemap, a
+git repository. Louise fetches each on its interval and keeps the text
+beside the depositor's own documents, on this node.
+
+By accepting, the operator of this node states that:
+
+1. All content fetched from a URL is the property of its owners.
+2. Its licences and terms of use must be respected, and the operator is
+   the one who must respect them.
+3. The collection is never shared: nothing fetched leaves this node.
+4. The operator who subscribes a collection to a URL is liable for any
+   infringement that fetching, keeping or using that content causes.
+
+A git repository cloned over SSH with this node's own key needs no
+acceptance: the key is the operator's, and so is the authorisation to
+read what it opens.

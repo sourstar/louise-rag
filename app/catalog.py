@@ -221,6 +221,24 @@ _WINDOW_SQL = ("SELECT rowid, title, authors, subjects, lang FROM documents "
                "WHERE rowid > ? AND rowid <= ? AND rdf_done = 1")
 
 
+def rewrite(collection, rows) -> int:
+    """The catalog rewritten from `rows` — every live document's (rowid,
+    title, authors, subjects, lang) — and nothing else, so an erased
+    document's title leaves the disk and not only the results. The catalog
+    stores none of its text fields, so it cannot be rebuilt from itself:
+    the caller reads the rows from the manifest. Why a rewrite and not a
+    delete is `fts.rewrite_without`'s docstring. For an erasable collection
+    only (02 §2.9). Returns the documents written."""
+    rows = list(rows)
+    with _write_lock(collection):
+        writer = _writer(collection)
+        writer.delete_all_documents()
+        n = _put(writer, rows)
+        writer.commit()
+        writer.garbage_collect_files()
+    return n
+
+
 def _fresh_start(collection) -> dict:
     """An index of this version from nothing: the old files go, under the
     write lock, and a new GENERATION tells readers to reopen."""
