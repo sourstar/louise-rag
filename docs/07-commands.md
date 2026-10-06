@@ -293,6 +293,17 @@ reader needs at the command line:
 - **`vectors check`.** Is `hold check --checks vectors-sample` over this
   peer's own vectors; `--drop` turns a failing row into an empty one
   (02 §2.4) so the coverage map stops claiming it.
+- **`vectors show`.** Prints the coverage map (09 §9.10): per shard of
+  the current snapshot the chunks accepted here, whether it is open, and
+  — among the live peers whose digests carry a benchmark for the space,
+  this peer included — its leader and the end of the leader's grace
+  window (04 §4.5); the producers with the signed work of each in the
+  trailing work period; the collection's vitality (04 §4.7). An
+  inspection: it reads the manifest and the attestations held, and no
+  acknowledgement gates it. Rows are written by `vectors import` (a
+  bundle accepted, `fetched`), by `vectors export` (this peer's own,
+  `local`, accepted once its own ladder has run over it) and by the
+  claims in neighbours' digests, which count for nothing (02 §2.5).
 - **`index build`.** `--text` builds the text index of every held shard
   that lacks one. `--vector` trains the centres when the space has none
   and ships them as a member (02 §2.4); when it has, it labels every

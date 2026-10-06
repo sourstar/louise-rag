@@ -237,6 +237,14 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~22:30Z: 9e, first brick — the coverage map.**
+`app/share/coverage.py`: 09 §9.10's rows in the manifest, written by
+`vectors import` (accepted, fetched) and `vectors export` (local, not yet
+accepted), claims from digests beside them counting for nothing; the
+per-shard view with the leader and the grace window among the live peers;
+producers; 04 §4.7's vitality from signed work. `hold vectors show`
+prints it. tests/share: 80. Not deployed.
+
 **2026-10-06, 16:03Z (UTC): 9c + 9d DEPLOYED as b1c8a29.** Web and
 worker on image `5866b43a…`; `src/.deployed-commit` = b1c8a29. The runbook
 stopped once between the promote and the build — the tarball was a

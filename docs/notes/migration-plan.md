@@ -1031,7 +1031,29 @@ node is one peer until 9d's two-peer test):
   adoption count for the leading daughter (9e, with the coverage map);
   the web's pull answers under a budget.
 - **9e — `share contribute` and `share attest`**, the coverage map, the
-  single-survivor test.
+  single-survivor test. **First brick DONE 2026-10-06 — the coverage
+  map** (`app/share/coverage.py`; `tests/share/test_coverage.py`, 7):
+  09 §9.10's rows in the manifest (`coverage`: one per bundle, with
+  tiers, `accepted_at`, `source`, `verified_on_use`, `claimed_by`;
+  `coverage_shards`: when a shard was first seen open), written by
+  `hold vectors import` after the ladder (`fetched`) and by `hold
+  vectors export` (`local`, not accepted until this peer's own ladder
+  runs over it); claims from neighbours' digests folded beside the rows
+  (`fold_claims`) and counting for nothing; the derived view per shard —
+  covered, open, the leader among the live peers (rendezvous over the
+  digests' benchmarks, this peer's own from its statements) and the
+  window from the later of the shard's first opening and the leader's
+  last bundle plus `grace_days`; producers with their signed work; 04
+  §4.7's vitality from bundles and attestations in the trailing
+  `work.per` (a deterministic check counts the snapshot's tokens of the
+  shards it names, `work.tokens` when it names none; a statistical one
+  its chunks × ctx); `hold vectors show`. **Owed in 9e**: `share attest`
+  (hold check → attestations as events, never twice); `share contribute
+  --once` (the preconditions of 04 §4.5, `rendezvous.mine` over the open
+  shards, `hold vectors build` and `export` for them, the bundles as
+  members under `state/bundles/` served by the seeder, the `bundle`
+  event, `coverage` in the digest); `fold_claims` wired into the
+  worker's beat; the loop form; the single-survivor test.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,

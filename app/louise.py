@@ -987,6 +987,13 @@ def cmd_vectors_export(a) -> int:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
 
+    # 09 §9.10: a `local` row per bundle, accepted once this peer's own ladder
+    # has run over it (`share contribute`), not before
+    from app import db as _db
+    from app.share import coverage as cov
+    with _closing(_db.connect(local)) as mcon:
+        cov.record_exported(mcon, codex, out, producer=env_key_text(load_signing_key()),
+                            now=_utc_now())
     for b in out["bundles"]:
         print(f"{b['bundle_id']}")
         print(f"  {b['path']}  —  {b['chunks']} chunks over {b['uids']} records")
@@ -1350,11 +1357,58 @@ def cmd_vectors_import(a) -> int:
     # "unverified" and so never queued.
     adms.record_reproduced(node, report.producer, ref=report.bundle_id,
                            chunks=out["written"])
+    # 09 §9.10: the coverage map's row — this bundle, accepted here, now
+    from app import db as _db
+    from app.share import coverage as cov
+    with _closing(_db.connect(local)) as mcon:
+        cov.record_from_report(mcon, codex, report, header, source=cov.FETCHED, now=_utc_now())
     for cid, why in out["unplaceable"]:
         print(f"  unplaceable {cid}: {why}", file=sys.stderr)
     print(f"  seed        {seed.hex()}")
     print(f"  landed      {out['written']} chunks over {len(mine)} records"
           f"{f', {report.padded} row(s) dropped before the tiers' if report.padded else ''}")
+    return 0
+
+
+def _closing(con):
+    from contextlib import closing
+    return closing(con)
+
+
+def env_key_text(key) -> str:
+    from app.hold import envelope as env
+    return env.key_text(key.verify_key)
+
+
+def cmd_vectors_show(a) -> int:
+    """`hold vectors show` (07 §7.3; 09 §9.10): the coverage map — per
+    shard the chunks covered here, the leader and its window among the
+    live peers, the producers and their signed work, and the collection's
+    vitality (04 §4.7). Inspection, not use: it reads what is held."""
+    import time as _time
+    from app import copy_state, identity
+    from app.share import coverage as cov, peers
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = None
+    try:
+        snapshot = _latest_snapshot(a.root, name, None)
+    except CodexError:
+        pass
+    now = _time.time()
+    try:
+        own_key = identity.own()
+    except Exception:   # noqa: BLE001 — a peer with no key leads nothing
+        own_key = None
+    with _closing(peers.connect()) as node_con:
+        live = cov.live_peers(codex, node_con, now=now, own_key=own_key,
+                              own_benchmarks=cov.own_benchmarks(a.root, name, codex, own_key))
+    # the manifest opened for READING what the map says, ack or no ack: an
+    # inspection, not a use (invariant 9 gates the stages, not `show`)
+    with _closing(cov.manifest(a.root, name)) as mcon:
+        out = cov.show(codex, snapshot, mcon,
+                       attestations=copy_state.attestations(a.root, name, codex),
+                       peers=live, now=now)
+    _print(out)
     return 0
 
 
@@ -2351,6 +2405,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "path is not material arriving from a stranger")
     p.set_defaults(fn=cmd_vectors_import)
 
+    p = vverbs.add_parser("show", help="the coverage map: covered chunks per shard, leaders, "
+                                       "producers, vitality (09 §9.10)")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_vectors_show)
     p = vverbs.add_parser("check",
                           help="03 §3.2's `vectors-sample` over this peer's "
                                "own vectors")
