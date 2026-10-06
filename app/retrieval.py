@@ -86,9 +86,13 @@ def _merge_rrf(lists: list[list[dict]]) -> list[dict]:
     for hits in lists:
         for rank, h in enumerate(hits):
             key = h["chunk_id"]
-            entry = scored.setdefault(key, {**h, "rrf": 0.0, "sources": set()})
+            entry = scored.setdefault(key, {**h, "rrf": 0.0, "sources": set(), "leg_ranks": {}})
             entry["rrf"] += 1.0 / (RRF_K + rank + 1)
             entry["sources"].add(h["source"])
+            # 05 §5.3 `legs`: the rank in each leg that ranked it, counted from
+            # 1 — the text leg's best across its language groups
+            leg = "vector" if h["source"] == "dense" else "text"
+            entry["leg_ranks"][leg] = min(entry["leg_ranks"].get(leg, rank + 1), rank + 1)
     merged = sorted(scored.values(), key=lambda x: -x["rrf"])
     for m in merged:
         m["sources"] = sorted(m["sources"])

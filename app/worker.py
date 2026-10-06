@@ -1742,6 +1742,45 @@ def _maintenance_allowed() -> bool:
             and node_state.runs(node_state.worker_state(), node_state.INDEX))
 
 
+_ask_indexed: dict[str, tuple] = {}
+
+
+def _maintain_ask_indexes(con, collection) -> bool:
+    """05 §5.7's facet values and §5.5's edges, derived and local, rebuilt
+    when the collection's current snapshot changes (app/ask/facets.py,
+    app/ask/traverse.py). One pass per snapshot: the facets' pass over the
+    manifest's columns and the edges' over the relation shards held."""
+    codex = getattr(collection, "codex", None)
+    if codex is None:
+        return False
+    from .ask import facets as ask_facets, traverse as ask_traverse
+    from .hold import collection as col
+    from .share import seeder
+    root = collections_mod.louise_root() / "collections"
+    drag = col.drag_of(root, collection.name)
+    snap = seeder.current_snapshot(drag)
+    if snap is None:
+        return False
+    key = (snap.snapshot_id, snap.hash)
+    if _ask_indexed.get(collection.name) == key:
+        return False
+    did = False
+    try:
+        got = ask_traverse.index_edges(con, drag, snap)
+        did = did or bool(got["shards"])
+    except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+        db.log_event(con, "warn", "ask", f"edges: {type(e).__name__}: {e}"[:300])
+    try:
+        built = ask_facets.build(con, codex, root / collection.name / "index", snapshot_id=snap.snapshot_id)
+        did = did or bool(built)
+        if built:
+            db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)}")
+    except Exception as e:   # noqa: BLE001
+        db.log_event(con, "warn", "ask", f"facets: {type(e).__name__}: {e}"[:300])
+    _ask_indexed[collection.name] = key
+    return did
+
+
 def _index_maintainer() -> None:
     """One low-priority thread for every collection's vector index. Its
     own connections (SQLite is thread-affine); stands down while the node
@@ -1786,6 +1825,7 @@ def _index_maintainer() -> None:
                 t0 = time.monotonic()
                 did = _maintain_vector_index(cons[key], c)
                 did = _maintain_catalog(cons[key], c) or did
+                did = _maintain_ask_indexes(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work

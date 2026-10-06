@@ -925,6 +925,51 @@ def cmd_share_contribute(a) -> int:
         return 3
 
 
+# ---- ask (07 §7.3; 05) ----------------------------------------------------------------
+
+def cmd_ask_search(a) -> int:
+    """`ask search <query>`: 05 §5.4's `louise_search`, printed."""
+    from app.ask import results
+    filters = None
+    if a.filter:
+        filters = {}
+        for item in a.filter:
+            field, _, value = item.partition("=")
+            if not field or not value:
+                raise CodexError(f"--filter takes <facet>=<value>, got {item!r}")
+            filters[field] = {"not": value[1:]} if value.startswith("!") else value
+    out = results.search(" ".join(a.query), collections=a.collections or None, space=a.space, filters=filters,
+                         limit=a.limit, rerank_depth=a.rerank_depth, as_of=a.as_of, freshness=a.freshness,
+                         translate=a.translate, all_languages=a.all_languages, root=getattr(a, "root", None))
+    _print(out)
+    return 0
+
+
+def cmd_ask_facets(a) -> int:
+    from app.ask import facets
+    _print(facets.listing(a.collection, a.field, a.under, root=a.root))
+    return 0
+
+
+def cmd_ask_lookup(a) -> int:
+    from app.ask import lookup
+    _print(lookup.lookup(a.id))
+    return 0
+
+
+def cmd_ask_traverse(a) -> int:
+    from app.ask import traverse
+    _print(traverse.traverse(a.id, relation=a.relation, depth=a.depth, collection=a.collection, root=a.root))
+    return 0
+
+
+def cmd_ask_serve(a) -> int:
+    """`ask serve`: the three tools of 05 §5.4 over MCP on stdio; needs
+    nothing but what is held (07 §7.3)."""
+    from app.ask import mcp
+    return mcp.serve_stdio()
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -2679,6 +2724,36 @@ def build_parser() -> argparse.ArgumentParser:
     q.set_defaults(fn=cmd_share_peers)
     q = pverbs.add_parser("show", help="the peer list, every peer heard from, what each holds")
     q.set_defaults(fn=cmd_share_peers)
+
+    ask = surfaces.add_parser("ask", help="search, facets, a fact by key, a traversal; the three tools over MCP (05)")
+    akverbs = ask.add_subparsers(dest="verb", required=True)
+    p = akverbs.add_parser("search", help="the fused list of 05 §5.1 per space, each result as §5.3 says")
+    root_arg(p); p.add_argument("query", nargs="+")
+    p.add_argument("--collections", nargs="*", help="ids, prefixes or local names; default: every usable one")
+    p.add_argument("--space", help="a space_id: only the collections in it")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--rerank-depth", type=int, default=50)
+    p.add_argument("--as-of", help="YYYY-MM-DD: the snapshot current at that date (not built yet)")
+    p.add_argument("--freshness", action="store_true", help="ask the origin for the current version (not built yet)")
+    p.add_argument("--translate", action="store_true")
+    p.add_argument("--all-languages", action="store_true")
+    p.add_argument("--filter", action="append", metavar="FACET=VALUE",
+                   help="restrict the legs to a facet value; FACET=!VALUE excludes (not built yet)")
+    p.set_defaults(fn=cmd_ask_search)
+    p = akverbs.add_parser("facets", help="the fields a collection can be filtered on, or one field's values (05 §5.7)")
+    root_arg(p); p.add_argument("collection"); p.add_argument("field", nargs="?", default=None)
+    p.add_argument("--under", default=None, help="one subtree of a tree facet")
+    p.set_defaults(fn=cmd_ask_facets)
+    p = akverbs.add_parser("lookup", help="a fact by key, from the reference source that owns the namespace")
+    p.add_argument("id", help="<namespace>:<id>")
+    p.set_defaults(fn=cmd_ask_lookup)
+    p = akverbs.add_parser("traverse", help="the records reached along declared relations (05 §5.5)")
+    root_arg(p); p.add_argument("id", help="a record's uid or a canonical id")
+    p.add_argument("--relation", default=None); p.add_argument("--depth", type=int, default=1)
+    p.add_argument("--collection", default=None, help="the collection whose edges to follow")
+    p.set_defaults(fn=cmd_ask_traverse)
+    p = akverbs.add_parser("serve", help="the three tools of 05 §5.4 over MCP, on stdio")
+    p.set_defaults(fn=cmd_ask_serve)
 
     add_deprecated(surfaces, {
         "records_build": args_records_build,

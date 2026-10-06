@@ -1214,6 +1214,37 @@ control, marked `is_origin: false`.
 ### Step 11 — `ask serve`, facets, relations
 *05. Wraps `app/query_service.py`, `app/retrieval.py`, `app/refs`.*
 
+**STARTED 2026-10-07. First brick DONE** (`app/ask/`; `tests/ask/`, 23):
+`results.search` gives `query_service.run_search`'s answer 05 §5.4's
+shape — one list per `space_id` (a Codex-less collection is its own,
+`legacy:<plugin>`), `question: "relevance"`, each result with §5.3's
+fields: collection and lineage, the snapshot read, uid, chunk and layer,
+rank, the legs that ranked it (`_merge_rrf` now keeps each leg's rank,
+the text leg's best across its language groups), the trust level
+(`app/share/levels.py`), certification (null until step 10), the
+verification state and producer key, the text or — red — the origin's
+page, figures (null), `reranked`; `facts`, `unresolved`, `withheld`,
+`legs_withheld`, `translations` beside. `lookup.lookup`: a fact by key
+from the source that owns the namespace, every column, `ref_version`.
+`traverse`: 09 §9.14's edge shards indexed into the manifest once per
+root (`relations`, both directions), walked `depth` hops, unresolved
+edges naming the shard where the uid is ours; `pack.records.write_lines`
+writes §9.5's framing over edge lines (no plugin emits relations yet).
+`facets`: the Codex's facets, counted from the manifest's columns (lang,
+authors, subjects — flat, tree with every prefix path, `--under`), cached
+under `index/facets/` per snapshot; a collection over 500k documents is
+counted by the index maintainer only. The maintainer counts facets and
+indexes edges once per snapshot (`worker._maintain_ask_indexes`). `mcp`:
+the three tools over JSON-RPC, stdio (`ask serve`) and `POST /api/ask/mcp`,
+no library. `/api/ask/{search,lookup,traverse,facets}` as 07 §7.4 says.
+CLI `ask search|facets|lookup|traverse|serve`. **Owed in step 11**:
+`filters` restricting the legs (a `book_ids` prefilter into both legs),
+`as_of` (reading the snapshot current at a date), `freshness`, figures
+on results and `GET /api/ask/figure`, T4 on the chunks a search cites,
+`ask chat` with the three tools, the `needs` of an edge into another
+collection (its plugin's id→shard mapping), results carrying
+`certification` (step 10).
+
 - MCP server exposing `louise_search`, `louise_lookup`, `louise_traverse`.
   Results carry snapshot, trust level, certification.
 - `louise_search(query, collections?, space?, filters?, limit?, as_of?,

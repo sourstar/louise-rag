@@ -146,5 +146,9 @@ class RefStore:
     def pk_of(self, table: str) -> str:
         return self._pk[table]
 
+    def tables(self) -> list[str]:
+        """Every table the store knows, in declaration order."""
+        return list(self._pk)
+
     def owner_of(self, table: str) -> str:
         return self._owner[table]

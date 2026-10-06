@@ -219,6 +219,64 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                      first_uid=first_uid, last_uid=last_uid, id_min=id_min, id_max=id_max)
 
 
+def write_lines(path: Path, lines: Iterable[bytes], *, key_of, level: int = ZSTD_LEVEL,
+                frame_records: int = FRAME_RECORDS) -> ShardInfo:
+    """§9.5's framing over lines that are not records — 09 §9.14's edge
+    lines — with the index's `uids` map keyed by `key_of(line)` (the frame
+    and line of the first line of each key). The same frames, index and
+    footer as `write_shard`, so `read_index`, `read_frame` and
+    `iter_records` read the file; `chunks` is 0."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    codec = _codec(level)
+    frames: list[list] = []
+    uids: dict[str, list[int]] = {}
+    n = 0
+    first = last = None
+    sha = hashlib.sha256()
+    try:
+        with open(tmp, "wb") as f:
+            buf: list[bytes] = []
+            first_in_frame = [None]
+
+            def flush() -> None:
+                if not buf:
+                    return
+                raw = b"".join(buf)
+                comp = bytes(codec.compress(raw))
+                frames.append([f.tell(), len(comp), len(raw), len(buf), first_in_frame[0]])
+                f.write(comp)
+                sha.update(comp)
+                buf.clear()
+            for line in lines:
+                key = key_of(line)
+                if not buf:
+                    first_in_frame[0] = key
+                uids.setdefault(key, [len(frames), len(buf)])
+                buf.append(line if line.endswith(b"\n") else line + b"\n")
+                n += 1
+                first = first or key
+                last = key
+                if len(buf) >= frame_records:
+                    flush()
+            flush()
+            index = {"records": n, "chunks": 0, "frames": frames, "uids": uids}
+            raw_index = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            comp_index = bytes(codec.compress(raw_index))
+            body = TAG + struct.pack("<I", len(raw_index)) + comp_index
+            payload = body + struct.pack("<I", len(body) + 16) + FOOTER
+            frame = struct.pack("<II", SKIPPABLE_MAGIC, len(payload)) + payload
+            f.write(frame)
+            sha.update(frame)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return ShardInfo(path=path, records=n, chunks=0, bytes=path.stat().st_size, sha256=sha.hexdigest(),
+                     first_uid=first, last_uid=last, id_min=None, id_max=None)
+
+
 @dataclass
 class ShardIndex:
     path: Path

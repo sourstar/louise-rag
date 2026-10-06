@@ -237,6 +237,21 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, 19:07Z (UTC): 9e DEPLOYED whole as d596355.** Web and worker
+on image `a1bdc868…`; `src/.deployed-commit` = d596355; the staged image
+passed tests/deposit (111), tests/hold (715), tests/share (105). First
+minutes quiet: every thread up, no share, error or warning line, only
+Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
+complete on the node; it waits for a second peer to be exercised live.
+
+**2026-10-07, ~09:00Z: step 11 started — `ask`'s first brick.** `app/ask/`:
+`louise_search`'s shape over the existing retrieval (lists per space,
+§5.3's fields, legs' ranks, trust level), `louise_lookup`, `louise_traverse`
+over an edge index, facets counted per snapshot by the index maintainer,
+the three tools over MCP (stdio and `/api/ask/mcp`, no library), the
+`/api/ask/*` routes and the `ask` CLI surface. tests/ask: 23. Owed:
+filters, as_of, freshness, figures, T4 on use, `ask chat`.
+
 **2026-10-07, ~07:00Z: 9e, fifth brick — codex and flag events, duplicates
 as checks.** The catalogue of announced Codexes (node.sqlite, `share peers
 show`); a flag's attestations pulled and kept, a stranger's lone failure a

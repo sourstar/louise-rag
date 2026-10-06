@@ -91,6 +91,8 @@ from . import localagi  # noqa: E402
 app.include_router(localagi.router)
 from .share import api as share_api  # noqa: E402
 app.include_router(share_api.router)      # the peer messages of 09 §9.9
+from .ask import api as ask_api  # noqa: E402
+app.include_router(ask_api.router)        # `ask` over HTTP and the MCP server (07 §7.4; 05 §5.4)
 # index.html was fully self-contained (inline CSS/JS, no asset requests) so
 # no static mount existed before P0.6 — the new pages need admin.css and the
 # vendored htmx.min.js served for real.
