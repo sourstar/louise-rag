@@ -203,6 +203,20 @@ throwaway collections left, forgotten (dry run first; a second forget
 says "gone", nothing to do). Held now: deposit-granite, louise-stop and
 the three of September.
 
+**2026-10-06, ~12:30Z: LocalAGI closed with a key, compaction seen for real,
+housekeeping.** `LOCALAGI_API_KEYS` set (its file
+`/mnt/tank/apps/localagi/localagi.apikey`): every route answers 401 without
+`Authorization: Bearer <key>` (the `x-api-key` form did not pass at
+sha-7e0947d). The health check had to change: static assets are behind the
+key too, and TrueNAS interpolated `$code` out of the compose test — `$$`
+is the escape; the app sat "unhealthy" until then. The agent's restart
+ran COMPACTION on today's group: Louise now holds `summary-2026-10-06.txt`
+in place of the two dated memories, beside the file and the source — the
+last LocalAGI path exercised against Louise. Removed: the two older
+backup images (`pre-122c674` and `src.old` stay), `/tmp/louise-src.tgz`.
+The node-side DEPLOYMENT.md paragraph is drafted in the local copy for
+the operator to drop in.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

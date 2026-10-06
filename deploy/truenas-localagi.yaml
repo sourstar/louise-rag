@@ -43,8 +43,18 @@ services:
       LOCALAGI_LLM_API_KEY: <token>                          # = the deposit token (see above)
       LOCALAGI_TIMEOUT: 5m
       LOCALAGI_ENABLE_CONVERSATIONS_LOGGING: "false"
+      # The UI and every /api route (static assets included) need this key
+      # (operator, 2026-10-06): without it anyone on the LAN or the tailnet
+      # could create agents that write into Louise with the deposit token.
+      # Its content lives in /mnt/tank/apps/localagi/localagi.apikey (0600);
+      # a client sends `Authorization: Bearer <key>` (x-api-key did not work
+      # at sha-7e0947d), the browser UI asks for it once (cookie `token`).
+      LOCALAGI_API_KEYS: <api-key>
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      # 401 is the server up; `$$` is compose's escape for a literal `$` —
+      # TrueNAS renders the compose and interpolated `$code` away (found
+      # 2026-10-06: the app sat "unhealthy" on `case "" in …`).
+      test: ["CMD-SHELL", "code=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:3000/api/agents); case \"$$code\" in 200|401) exit 0;; *) exit 1;; esac"]
       interval: 30s
       timeout: 10s
       retries: 5
