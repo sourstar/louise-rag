@@ -143,6 +143,24 @@ keeps an empty `data/collections/smoke-agent/` (its held file removed).
 `local_rag_api_key`, memory stored, found, compacted; a file from its UI;
 one URL source after `hold collection ack --web-sources`.
 
+**2026-10-06, ~11:00Z: LocalAGI on the node** (operator: "do not touch
+localai; create an app for LocalAGI via custom app yaml, a localagi
+dataset in tank, wire it to Louise"). Dataset `tank/apps/localagi/pool`;
+TrueNAS custom app `localagi` from
+[`deploy/truenas-localagi.yaml`](../../deploy/truenas-localagi.yaml):
+quay.io/mudler/localagi pinned by digest at sha-7e0947d — the commit the
+deposit routes were proven against (quay has no semver tags) — UI on
+:30050, LLM the node's own `localai` app (:30286, `qwen3.8-2b-q4`,
+light because the card is RAGE's), knowledge base Louise
+(`LOCALAGI_LOCALRAG_URL` :30042) with the deposit token as
+`LOCALAGI_LLM_API_KEY` — LocalAGI's pool-level RAG client reuses the
+LLM key (`cmd/agent_run.go`), so the token also travels to the LLM
+endpoint as a bearer; per agent `local_rag_api_key` can replace it.
+Proven with a throwaway agent (kb and long-term memory on): on its
+first message LocalAGI created `wire-test` on Louise (201) and searched
+it (200); the agent was deleted, the collection reset, its held file
+removed. The operator's 16f stop can now run from LocalAGI's UI.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

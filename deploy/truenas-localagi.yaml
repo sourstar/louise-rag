@@ -1,0 +1,51 @@
+# LocalAGI on the node, as a TrueNAS CUSTOM APP (operator, 2026-10-06; step 16f):
+# the agents' knowledge base is Louise (02 §2.9, 07 §7.4 — the deposit routes),
+# their LLM the node's own `localai` app (TrueNAS app, port 30286, untouched).
+#
+# This file documents the app definition; the app itself was created through
+# the middleware (`app.create`, custom_app, custom_compose_config = the
+# `services` below) by deploy/16f/localagi-app.sh-style steps recorded in
+# docs/notes/STATUS.md, with the two values below filled in on the node:
+#   <digest>  quay.io/mudler/localagi at sha-7e0947d-20260928001100, the commit
+#             the deposit routes were proven against (tools/localagi_check);
+#             no semver tag exists on quay.io, only main-/sha- tags.
+#   <token>   the content of /mnt/ssd4/apps/louise-rag/config/deposit.token.
+#             LocalAGI's pool-level knowledge-base client authenticates with
+#             its LLM API key (cmd/agent_run.go: NewHTTPRAGProvider(url,
+#             env.LLMAPIKey)), so the deposit token IS LOCALAGI_LLM_API_KEY and
+#             is also sent as a bearer to the LLM endpoint (`localai`, which
+#             requires none). Per agent, `local_rag_url` / `local_rag_api_key`
+#             in its config override this.
+#
+# State: /mnt/tank/apps/localagi/pool (dataset tank/apps/localagi/pool), the
+# image's /pool — agents, their configs, conversations. The built-in knowledge
+# base (postgres/LocalRecall of the upstream compose) is NOT run: with
+# LOCALAGI_LOCALRAG_URL set, LocalAGI writes every agent's memory to Louise,
+# one deposit collection per agent, named after it, lower-cased.
+# No sshbox, no docker-in-docker: the agents' shell tools are off.
+#
+# The UI: http://192.168.178.10:30050 (3000 inside). Host ports in use on the
+# node when this was chosen: 6881, 30042 (Louise), 30286 (localai), 30437 (RAGE).
+services:
+  localagi:
+    image: quay.io/mudler/localagi@sha256:<digest>
+    init: true
+    restart: unless-stopped
+    ports:
+      - 30050:3000
+    volumes:
+      - /mnt/tank/apps/localagi/pool:/pool
+    environment:
+      LOCALAGI_STATE_DIR: /pool
+      LOCALAGI_LLM_API_URL: http://192.168.178.10:30286     # the `localai` app
+      LOCALAGI_MODEL: qwen3.8-2b-q4                          # light; the card is RAGE's
+      LOCALAGI_LOCALRAG_URL: http://192.168.178.10:30042     # Louise's web: /api/collections/…
+      LOCALAGI_LLM_API_KEY: <token>                          # = the deposit token (see above)
+      LOCALAGI_TIMEOUT: 5m
+      LOCALAGI_ENABLE_CONVERSATIONS_LOGGING: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
