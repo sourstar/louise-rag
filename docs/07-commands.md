@@ -76,7 +76,7 @@ louise hold
               ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
               ack --web-sources [--yes]                                print the web-sources disclaimer; record this node's acceptance, once (04 §4.4)
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
-              forget <collection> [--kinds …] [--yes]                  stop holding: remove this peer's copy and its state
+              forget <collection> [--kinds …] [--yes] [--dry-run] [--here]  stop holding: remove this peer's copy and its state; --here when no worker runs
               list [--all]                                             collections held, by lineage; --all includes the dormant
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   deposit     add <collection> FILE [--key K] [--here]                 store a file as a deposit; an existing key is replaced whole
@@ -677,8 +677,10 @@ writes takes the lock or exits 3 naming the holder; `show`, `list` and
 because it writes a statement. Four commands exit 2, not 3, while
 the node holds the collection, because retrying them later is not the
 answer: `collection forget`, `vectors check --drop`, `dev migrate schema`
-and `dev adopt`. `node pause <collection>` releases the lock at the end
-of the current unit, and those four then run. A reader never blocks a
+and `dev adopt` — and `collection migrate --apply`, the Codex-field
+migration of 2026-09, the same way. `node pause <collection>` releases
+the lock at the end of the current unit, and those then run (built
+2026-10-06; `dev migrate schema` and `dev adopt` are not built yet). A reader never blocks a
 writer or is blocked by one: the state database runs in write-ahead
 mode, and a writer that reads first begins immediately, never deferred.
 Two nodes on one machine are two roots (§7.8) and share nothing.
@@ -774,7 +776,7 @@ variable, a file, a log line or a message.
 [deposit]    encoder = "http://nas:30450/upstream/granite-embedding-107m-multilingual"
              # the encoder a deposit collection is created with when none is named (02 §2.9);
              # granite-embedding-107m-multilingual, LocalAGI's own default, unless changed here
-             space = "deposit-space.toml"       # its space block, beside this file: read once, by the
+             space = "deposit-space.toml"       # its space block (a TOML, or a JSON file by its `.json` name), beside this file: read once, by the
                                                 # first deposit collection on it; later ones copy its space
              # or: space_from = "sha256:…"      # a Codex to copy the space from instead
 [deposit.collections.alice]  space_from = "sha256:…"    # one name's encoder, for a collection a client creates

@@ -237,6 +237,16 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~13:20Z: aligned** (operator: "delete backup images, align the
+specs and the deployed image"). No backup image is left (`local` and
+`staged` are one image); `src.old` (13 MB) stays as the tree before
+865ccbe. 07 §7.3's `forget` line carries `--dry-run` and `--here`; §7.7's
+exit-2 list names `collection migrate --apply` beside the two `dev`
+commands that are not built; §7.8's `[deposit] space` may be a JSON file.
+The node's DEPLOYMENT.md got today's section appended (its copy had
+diverged from the local one before today: 686 vs 713 lines; neither was
+overwritten). The node runs 865ccbe; main is the same code plus notes.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
