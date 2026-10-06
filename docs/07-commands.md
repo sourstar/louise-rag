@@ -406,7 +406,17 @@ reader needs at the command line:
   confirm), its vectors merged, its coverage row accepted as `fetched`,
   and the bundle kept under `state/bundles/` where the seeder serves it
   — every completed fetch makes the fetcher a sharer (04 §4.3). One the
-  ladder refuses is set aside and said. *(2026-10-06/07, migration step
+  ladder refuses is set aside and said. Duplicates are checks (04
+  §4.5): a second compliant bundle over chunks this peer already holds
+  vectors for is compared against them — cosine per chunk against the
+  space's tolerance — and the comparison is published as a
+  `vectors-sample` attestation naming both producers; the first accepted
+  vector stays what is stored and searched, the rest of the second
+  bundle lands. A `flag` event has the attestations it names pulled
+  from the announcer and kept, where the trust level reads them: a
+  stranger's failure is a claim until this peer reproduces it or a
+  second key says the same (03 §3.6); a `codex` event's chain enters
+  the catalogue (`share peers show`). *(2026-10-06/07, migration step
   9e.)*
 - **`share attest`.** Runs `hold check` with the named checks and a
   fresh seed and publishes the resulting attestations as events (04
@@ -430,7 +440,10 @@ reader needs at the command line:
   list. *(Amended 2026-10-06; it read "a neighbour until three digest
   intervals pass without a digest from it", which named a neighbour with
   no key.)* `show` lists the peer list and every peer heard from — whether
-  it is a neighbour now, its ban, and what its last digest says it holds.
+  it is a neighbour now, its ban, and what its last digest says it holds;
+  and the catalogue — every Codex announced by a `codex` event, held
+  here or not, by id and lineage with its title for display (08 §8.2:
+  a name decides nothing).
 - **`ask`.** `search` returns the result of 05 §5.3; `lookup` and
   `traverse` are the MCP tools `louise_lookup` and `louise_traverse` of
   05 §5.4, one to one, and `search` is `louise_search`. `chat` needs

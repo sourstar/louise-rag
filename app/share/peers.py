@@ -300,7 +300,9 @@ def show(con, *, now: float, cfg=None) -> dict[str, Any]:
                 for c in (digest or {}).get("collections", []) if isinstance(c, dict)],
         })
     n_events = con.execute("SELECT COUNT(*) FROM events_seen").fetchone()[0]
-    return {"peer_list": peer_list(cfg), "peers": out_peers, "events_seen": n_events}
+    from app.share import catalogue
+    return {"peer_list": peer_list(cfg), "peers": out_peers, "events_seen": n_events,
+            "catalogue": catalogue.entries(con)}
 
 
 def recipients(con, *, now: float) -> list[str]:

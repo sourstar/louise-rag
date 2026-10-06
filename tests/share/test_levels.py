@@ -97,19 +97,31 @@ def test_unverified_then_checked_then_verified_by_the_thresholds():
     assert out["why"] == []
 
 
-def test_flagged_by_one_deterministic_failure_under_an_image_that_counts():
+def test_a_deterministic_failure_flags_when_ours_or_seconded_and_is_a_claim_otherwise():
     codex = pubmed()
     snap = a_snapshot(codex)
     ids = shard_ids(codex, snap)
     bodies = [att(codex, snap, "roots", k=k) for k in (1, 2, 3)]
     other_image = att(codex, snap, "chunks", k=4, result="fail", shards=ids[:1], image="sha256:" + "ee" * 32)
     out = levels.level(codex, snap, bodies + [other_image], now=NOW)
-    assert out["level"] != levels.FLAGGED, "a failure under an image that does not count flags nothing (03 §3.4)"
+    assert out["level"] != levels.FLAGGED and out["claims"] == [], \
+        "a failure under an image that does not count is nothing (03 §3.4)"
     out = levels.level(codex, snap, bodies + [other_image], now=NOW,
                        reference_images={IMG, "sha256:" + "ee" * 32})
-    assert out["level"] == levels.FLAGGED and "chunks failed" in out["why"][0] and ids[0] in out["why"][0]
+    assert out["level"] == levels.UNVERIFIED and out["claims"] == [
+        {"check": "chunks", "shard": ids[0], "key": key(4), "time": other_image["time"]}], \
+        "a stranger's lone failure is a claim until reproduced here or seconded"
+    seconded = att(codex, snap, "chunks", k=6, result="fail", shards=ids[:1])
+    out = levels.level(codex, snap, bodies + [other_image, seconded], now=NOW,
+                       reference_images={IMG, "sha256:" + "ee" * 32})
+    assert out["level"] == levels.FLAGGED and "two keys on the same shard" in out["why"][0]
+    elsewhere = att(codex, snap, "chunks", k=7, result="fail", shards=ids[1:2])
+    assert levels.level(codex, snap, bodies + [seconded, elsewhere], now=NOW)["level"] == levels.UNVERIFIED, \
+        "two strangers on two shards: two claims"
     ours = att(codex, snap, "records-vs-origin", k=5, result="fail", shards=ids[1:2])
-    assert levels.level(codex, snap, bodies + [ours], now=NOW)["level"] == levels.FLAGGED
+    out = levels.level(codex, snap, bodies + [ours], now=NOW, own_key=key(5))
+    assert out["level"] == levels.FLAGGED and out["why"][0].startswith("this peer's own records-vs-origin failed")
+    assert levels.level(codex, snap, bodies + [ours], now=NOW, own_key=key(1))["level"] == levels.UNVERIFIED
 
 
 def test_flagged_by_two_statistical_failures_on_the_same_chunks_from_independent_verifiers():

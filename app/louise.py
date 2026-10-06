@@ -1003,7 +1003,7 @@ def _trust_level(root, name: str, current) -> dict:
     if (Path(root) / name / "state" / "manifest.sqlite").is_file():
         with _closing(cov.manifest(root, name)) as mcon:
             rows = cov.rows(mcon)
-    out = levels.level(codex, current, bodies, rows,
+    out = levels.level(codex, current, bodies, rows, own_key=own,
                        reference_images=equivalence.reference_images(bodies, own, codex))
     return {"trust_level": out["level"], "trust_detail": out}
 

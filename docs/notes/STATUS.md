@@ -237,6 +237,15 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-07, ~07:00Z: 9e, fifth brick — codex and flag events, duplicates
+as checks.** The catalogue of announced Codexes (node.sqlite, `share peers
+show`); a flag's attestations pulled and kept, a stranger's lone failure a
+claim until reproduced or seconded; a second bundle over held chunks
+compared and attested as `vectors-sample` naming both producers, not
+stored. tests/share: 106. Not deployed (node: 6ae33fe). 9e's remaining
+item, local reproduction of a received flag, waits on a targeted `hold
+check`; T4 goes with step 11.
+
 **2026-10-07, ~05:00Z: the trust level, and `snapshot` events.**
 `app/share/levels.py` computes 03 §3.6's level from the attestations held
 and the bundles accepted — independent keys and seeds, the thresholds, the

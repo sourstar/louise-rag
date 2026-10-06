@@ -87,14 +87,45 @@ def independent(bodies: Iterable[dict[str, Any]], check: str, result: str = "pas
     return out
 
 
-def flag(codex, bodies: list[dict[str, Any]], *, reference_images: set[str]) -> str | None:
-    """Why the snapshot is flagged, or None (03 §3.6)."""
+def claims(codex, bodies: list[dict[str, Any]], *, reference_images: set[str],
+           own_key: str | None = None) -> list[dict[str, Any]]:
+    """Another key's deterministic failures under an image whose verdicts
+    count — each a CLAIM (03 §3.6: acted on after local reproduction, shown
+    as a claim meanwhile) — one per (check, shard, key)."""
+    out: dict[tuple, dict[str, Any]] = {}
+    for b in bodies:
+        if b.get("check") not in cov.DETERMINISTIC or b.get("result") != "fail":
+            continue
+        if str(b.get("platform_image") or "") not in reference_images or b.get("key") == own_key:
+            continue
+        for shard in (b.get("shards") or [None]):
+            out.setdefault((b["check"], shard, b.get("key")), {
+                "check": b["check"], "shard": shard, "key": b.get("key"), "time": b.get("time")})
+    return [out[k] for k in sorted(out, key=lambda k: (k[0], str(k[1]), str(k[2])))]
+
+
+def flag(codex, bodies: list[dict[str, Any]], *, reference_images: set[str],
+         own_key: str | None = None) -> str | None:
+    """Why the snapshot is flagged, or None (03 §3.6): this peer's own
+    deterministic failure under an image whose verdicts count — one
+    reproduction is enough; two distinct keys failing the same shard with
+    a deterministic check; or two independent verifiers failing a
+    statistical check on the same chunks. A stranger's lone deterministic
+    failure is a claim (`claims`), not a flag."""
     for b in bodies:
         if b.get("check") in cov.DETERMINISTIC and b.get("result") == "fail" \
-                and str(b.get("platform_image") or "") in reference_images:
+                and str(b.get("platform_image") or "") in reference_images \
+                and own_key is not None and b.get("key") == own_key:
             shards = b.get("shards") or []
-            return (f"{b['check']} failed under an image whose verdicts count, by "
-                    f"{str(b.get('key'))[:23]}…" + (f" on {shards[0]}" if shards else ""))
+            return (f"this peer's own {b['check']} failed under an image whose verdicts count"
+                    + (f" on {shards[0]}" if shards else ""))
+    by_shard: dict[tuple, set[str]] = {}
+    for c in claims(codex, bodies, reference_images=reference_images, own_key=own_key):
+        by_shard.setdefault((c["check"], c["shard"]), set()).add(str(c["key"]))
+    for (check, shard), keys in sorted(by_shard.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+        if len(keys) >= 2:
+            return (f"{check} failed for two keys on the same shard"
+                    + (f" ({shard})" if shard else "") + f": {', '.join(k[:23] + '…' for k in sorted(keys))}")
     fails = [b for b in bodies if b.get("check") in cov.STATISTICAL and b.get("result") == "fail"]
     for first in fails:
         named = set((first.get("detail") or {}).get("failed") or [])
@@ -122,8 +153,10 @@ def _shard_share(bodies: list[dict[str, Any]], check: str, total: int) -> float:
 def level(codex, snapshot: sn.Snapshot | None, attestations: Iterable[dict[str, Any]],
           rows: Iterable[dict[str, Any]] = (), *, now: float | None = None,
           trust: dict[str, set[str]] | None = None,
-          reference_images: set[str] | None = None) -> dict[str, Any]:
-    """`{level, why, keys, passed: {check: n}, coverage: {check: share}}`."""
+          reference_images: set[str] | None = None, own_key: str | None = None) -> dict[str, Any]:
+    """`{level, why, keys, passed: {check: n}, coverage: {check: share},
+    claims: [...]}` — the claims being strangers' deterministic failures
+    not yet reproduced here nor seconded."""
     now = time.time() if now is None else now
     bodies = counting(codex, snapshot, attestations, now=now, trust=trust)
     images = set(reference_images) if reference_images is not None else {codex.toolchain.platform_image}
@@ -134,8 +167,9 @@ def level(codex, snapshot: sn.Snapshot | None, attestations: Iterable[dict[str, 
     coverage = {"records-vs-origin": _shard_share(bodies, "records-vs-origin", total),
                 "vectors-sample": _shard_share(bodies, "vectors-sample", total)}
     out: dict[str, Any] = {"keys": len(keys), "passed": {c: len(v) for c, v in passed.items()},
-                           "coverage": coverage, "why": []}
-    flagged = flag(codex, bodies, reference_images=images)
+                           "coverage": coverage, "why": [],
+                           "claims": claims(codex, bodies, reference_images=images, own_key=own_key)}
+    flagged = flag(codex, bodies, reference_images=images, own_key=own_key)
     if flagged:
         out.update(level=FLAGGED, why=[flagged])
         return out

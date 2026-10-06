@@ -1135,9 +1135,19 @@ node is one peer until 9d's two-peer test):
   `trust_detail` — keys, passes per check, sample coverage, and what
   holds the level where it is. Not yet counted: an older snapshot's
   attestations for shards the newer one lists unchanged (03 §3.6).
-  **Still owed in 9e**: `codex` and `flag` events; duplicates as checks
-  (the second compliant bundle compared and attested, 04 §4.5); T4 on
-  use.
+  **Fifth brick DONE 2026-10-07 — the rest of the events, duplicates as
+  checks**: `codex` events read as chains (`app/share/catalogue.py`,
+  node.sqlite `catalogue`, listed by `share peers show`); `flag` events
+  have their attestations pulled from the announcer and kept, and the
+  level now tells a stranger's lone deterministic failure (a CLAIM,
+  `trust_detail.claims`) from this peer's own or a seconded one (a
+  flag), as 03 §3.6 says; a second compliant bundle over chunks held
+  here is compared cosine by cosine against the tolerance and published
+  as a `vectors-sample` attestation naming both producers, only its
+  fresh chunks landing (`accept.compare_duplicate`). **Still owed in
+  9e**: local reproduction of a received flag (the named check on the
+  named shards, which `hold check` runs by sample today); T4 on use
+  (step 11, with the search).
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,

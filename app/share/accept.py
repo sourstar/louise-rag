@@ -27,8 +27,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from app.hold import collection as col, drag as drag_mod
-from app.hold.codex import CodexError
+from app.hold import collection as col, drag as drag_mod, envelope as env
+from app.hold.codex import CodexError, canonical_json
 from app.hold.drag import MemberFile
 from app.share import attest, contribute, coverage as cov, holdings, members as mem, messages, \
     transport
@@ -123,8 +123,9 @@ def member_of(payload: dict[str, Any], space: str) -> mem.Member | None:
 
 
 def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con, node_con,
-         hints=(), write: Callable[[list[dict]], Any] | None = None, stop=None,
-         log: Callable[[str], None] | None = None, now: float | None = None) -> dict[str, Any]:
+         hints=(), write: Callable[[list[dict]], Any] | None = None, vectors_for=None, stop=None,
+         log: Callable[[str], None] | None = None, now: float | None = None, key=None,
+         own_key: str | None = None) -> dict[str, Any]:
     """One announced bundle, fetched, judged, landed or set aside."""
     from app import embeddings
     from app.hold import admission as adms, admit as adm, land as landing, records as rec, vectors as vec
@@ -178,13 +179,32 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
         say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… refused at "
             f"{failed}; set aside")
         return {"outcome": "refused", "bundle_id": bundle_id, "why": f"refused at {failed}"}
-    if write is None:
+    local = None
+    if write is None or vectors_for is None:
         local = rec.local_collection(root, name, codex)
+    if write is None:
         write = lambda r: embeddings.upsert_chunks(r, collection=local, dtype=codex.space.dtype)  # noqa: E731
-    landed = landing.land(codex, report, records=records, write=write)
+    if vectors_for is None:
+        vectors_for = lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local)  # noqa: E731
+    # 04 §4.5, duplicates are checks: chunks this peer already holds vectors
+    # for are COMPARED, attested and not stored; the first accepted vector
+    # stays what is searched
+    duplicate = compare_duplicate(root, name, codex, snapshot, report, header, con=con, node_con=node_con,
+                                  vectors_for=vectors_for, key=key, own_key=own_key, now=now, log=log)
+    if duplicate is not None:
+        written = 0
+        fresh = [(cid, vec_) for cid, vec_ in report.admitted if cid not in duplicate["compared"]]
+        if fresh:
+            import dataclasses
+            landed = landing.land(codex, dataclasses.replace(report, admitted=tuple(fresh)),
+                                  records=records, write=write)
+            written = landed["written"]
+    else:
+        landed = landing.land(codex, report, records=records, write=write)
+        written = landed["written"]
     node = adms.connect(root)
     try:
-        adms.record_reproduced(node, report.producer, ref=bundle_id, chunks=landed["written"])
+        adms.record_reproduced(node, report.producer, ref=bundle_id, chunks=written)
     finally:
         node.close()
     final.parent.mkdir(parents=True, exist_ok=True)
@@ -193,26 +213,207 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     else:
         staged_dir.replace(final)
     say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… accepted — "
-        f"{landed['written']} chunks landed; served from here now")
-    return {"outcome": "accepted", "bundle_id": bundle_id, "written": landed["written"],
-            "producer": report.producer, "dir": str(final)}
+        f"{written} chunks landed"
+        + (f", {len(duplicate['compared'])} compared with what was held: {duplicate['result']}"
+           if duplicate else "") + "; served from here now")
+    return {"outcome": "accepted", "bundle_id": bundle_id, "written": written,
+            "producer": report.producer, "dir": str(final), "duplicate": duplicate}
+
+
+def compare_duplicate(root: Path, name: str, codex, snapshot, report, header: dict[str, Any], *, con,
+                      node_con, vectors_for, key=None, own_key=None, now: float | None = None,
+                      log: Callable[[str], None] | None = None) -> dict[str, Any] | None:
+    """04 §4.5: a second compliant bundle for chunks already covered here is
+    compared against the vectors held — cosine per chunk against the
+    space's tolerance — and the comparison published as a `vectors-sample`
+    attestation naming both producers (09 §9.8). None when nothing of it
+    was held before; otherwise `{compared, passed, median, failed, result,
+    attestation}`."""
+    import numpy as np
+    from app.hold import check as chk, equivalence
+    now = time.time() if now is None else now
+    ids = [cid for cid, _ in report.admitted]
+    held = vectors_for(ids) if ids else {}
+    compared = [cid for cid in ids if cid in held]
+    if not compared:
+        return None
+    tol = float(codex.space.tolerance)
+    cosines = []
+    failed = []
+    for cid, vec_ in report.admitted:
+        if cid not in held:
+            continue
+        a = np.asarray(vec_, dtype=np.float64)
+        b = np.asarray(held[cid], dtype=np.float64)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b)) or 1.0
+        c = float(np.dot(a, b) / denom)
+        cosines.append(c)
+        if c < tol:
+            failed.append(cid)
+    passed = len(compared) - len(failed)
+    quorum = codex.space.calibration
+    ok = passed * quorum.n >= quorum.min_pass * len(compared)
+    producers = sorted({report.producer} | {r["producer"] for r in cov.rows(con, cov.shard_id(codex, header["shard"]))
+                                             if r["accepted_at"] and r["producer"]})
+    detail = {"chunks": len(compared), "passed": passed,
+              "median": f"{sorted(cosines)[len(cosines) // 2]:.6f}", "failed": sorted(failed),
+              "producers": producers}
+    out: dict[str, Any] = {"compared": compared, "passed": passed, "median": detail["median"],
+                           "failed": sorted(failed), "result": chk.PASS if ok else chk.FAIL, "attestation": None}
+    image = equivalence.running_image()
+    if key is None or own_key is None:
+        try:
+            from app import identity
+            from app.bundles import keys as node_keys
+            key = node_keys.load_signing_key()
+            own_key = identity.own()
+        except Exception:   # noqa: BLE001 — no key: compared, not attested
+            key = None
+    if key is not None and image is not None:
+        outcome = chk.Outcome("vectors-sample", out["result"], detail, None,
+                              (cov.shard_id(codex, header["shard"]),))
+        doc = chk.attestation(outcome, codex, snapshot, key, platform_image=image,
+                              now=messages.time_text(now))
+        aid = env.body_id(doc["body"])
+        p = attest.attestation_path(root, name, codex, aid)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(canonical_json(doc))
+        attest.publish(root, name, codex, [aid], key=key, own_key=own_key, con=node_con, now=now, log=log)
+        out["attestation"] = aid
+    elif log:
+        log(f"[{name}] share: duplicate bundle compared ({out['result']}) and not attested: "
+            + ("no key" if key is None else "this process does not know its image (LOUISE_PLATFORM_IMAGE)"))
+    return out
+
+
+def codexes(node_con, *, log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """`codex` events (09 §9.9): the chain read as Codexes and recorded in
+    the catalogue once; a chain that does not read is dropped and said."""
+    from app.share import catalogue
+    out = {"recorded": 0, "known": 0, "dropped": 0}
+    for ev in pending(node_con, "codex"):
+        body = ev["envelope"]["body"]
+        try:
+            chain = catalogue.read_chain(body.get("payload") or {})
+        except (CodexError, KeyError, TypeError, ValueError) as e:
+            out["dropped"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            if log:
+                log(f"share: codex event {ev['id'][:23]}… from {str(body.get('key'))[:23]}… dropped: "
+                    f"{e}"[:400])
+            continue
+        n = catalogue.record(node_con, chain, announced_by=str(body.get("key") or "") or None)
+        out["recorded" if n else "known"] += 1
+        attest.mark_acted(node_con, ev["id"])
+        if log and n:
+            log(f"share: {chain[0].relation} {chain[0].collection_id[:23]}… ({chain[0].descriptive.title!r}) "
+                f"announced by {str(body.get('key'))[:23]}…: in the catalogue")
+    return out
+
+
+def flags(root: Path, collections, node_con, *, client=None, key=None, own_key=None, stop=None,
+          now: float | None = None, log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """`flag` events (09 §9.9; 03 §3.6): for a collection held here, the
+    attestations the flag names are pulled from the announcer — a peer
+    whose digest gave its address — and kept beside the catalogue, where
+    the trust level reads them: a stranger's failure is a CLAIM until this
+    peer reproduces it or a second key says the same (app/share/levels.py).
+    An announcer with no address yet leaves the event waiting."""
+    from app.share import fetch as fetch_mod, peers
+    now = time.time() if now is None else now
+    out = {"kept": 0, "ignored": 0, "waiting": 0, "failed": 0}
+    by_id = {}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is not None:
+            by_id[codex.collection_id] = c
+    if key is None or own_key is None:
+        try:
+            from app import identity
+            from app.bundles import keys as node_keys
+            key = node_keys.load_signing_key()
+            own_key = identity.own()
+        except Exception:   # noqa: BLE001 — no key: pulls cannot be signed
+            key = own_key = None
+    for ev in pending(node_con, "flag"):
+        if stop is not None and stop.is_set():
+            break
+        body = ev["envelope"]["body"]
+        payload = body.get("payload") or {}
+        cid = str(payload.get("collection_id") or "")
+        wanted = {a for a in (payload.get("attestations") or []) if isinstance(a, str)}
+        c = by_id.get(cid)
+        if c is None or not wanted:
+            out["ignored"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            continue
+        if key is None:
+            out["waiting"] += 1
+            continue
+        digest = peers.digest_of(node_con, str(body.get("key") or "")) or {}
+        address = digest.get("address")
+        if not address or peers.is_banned(node_con, str(body.get("key")), now=now):
+            out["waiting"] += 1
+            continue
+        puller = fetch_mod.Puller(key=key, own_key=own_key, client=client, stop=stop, con=node_con,
+                                  log=log, now=now)
+        try:
+            items = puller.pull(fetch_mod.Source(address, str(body.get("key"))), "attestations", cid)
+        except fetch_mod.Unreachable as e:
+            out["failed"] += 1
+            if log:
+                log(f"[{c.name}] share: flag received; {e}; retried next beat"[:400])
+            continue
+        except CodexError as e:
+            out["failed"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            if log:
+                log(f"[{c.name}] share: flag's attestations from {address}: {e}"[:400])
+            continue
+        kept = 0
+        for path, data in items:
+            try:
+                envelope = json.loads(data)
+                att = env.verify(env.ATTESTATION, envelope)
+            except (ValueError, env.SignatureError, CodexError, TypeError):
+                continue
+            aid = env.body_id(att)
+            if aid not in wanted or att.get("collection_id") != cid:
+                continue
+            p = attest.attestation_path(root, c.name, c.codex, aid)
+            if not p.is_file():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                tmp = p.with_name(f".{p.name}.flag")
+                tmp.write_bytes(canonical_json(envelope))
+                tmp.replace(p)
+                kept += 1
+        out["kept"] += 1
+        attest.mark_acted(node_con, ev["id"])
+        if log:
+            log(f"[{c.name}] share: flag on {payload.get('check')} received from {str(body.get('key'))[:23]}…: "
+                f"{kept} attestation(s) kept — a claim until reproduced here or seconded (03 §3.6)")
+    return out
 
 
 def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
          now: float | None = None, log: Callable[[str], None] | None = None, client=None,
          key=None, own_key=None) -> dict[str, Any]:
-    """Every pending `snapshot` event, then every pending `bundle` event,
-    acted on once: taken in for a collection held here and in use, left
-    where it is not."""
+    """Every pending `codex`, `flag` and `snapshot` event, then every
+    pending `bundle` event, acted on once: taken in for a collection held
+    here and in use, left where it is not."""
     from app import copy_state, licensing
     now = time.time() if now is None else now
     out: dict[str, Any] = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0}
-    try:
-        out["snapshots"] = newer_snapshots(root, collections, node_con, client=client, key=key,
-                                           own_key=own_key, stop=stop, now=now, log=log)
-    except Exception as e:   # noqa: BLE001 — the bundles still get their turn
-        if log:
-            log(f"[warn:share] snapshot events: {type(e).__name__}: {e}"[:400])
+    for name, fn in (("codexes", lambda: codexes(node_con, log=log)),
+                     ("flags", lambda: flags(root, collections, node_con, client=client, key=key,
+                                             own_key=own_key, stop=stop, now=now, log=log)),
+                     ("snapshots", lambda: newer_snapshots(root, collections, node_con, client=client, key=key,
+                                                           own_key=own_key, stop=stop, now=now, log=log))):
+        try:
+            out[name] = fn()
+        except Exception as e:   # noqa: BLE001 — the other kinds still get their turn
+            if log:
+                log(f"[warn:share] {name} events: {type(e).__name__}: {e}"[:400])
     by_id = {}
     for c in collections:
         codex = getattr(c, "codex", None)
@@ -238,7 +439,7 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
         hints = transport.hints_for(node_con, c.codex.collection_id, now=now)
         try:
             got = take(root, c.name, c.codex, payload, session=session_factory(), con=cons[c.name],
-                       node_con=node_con, hints=hints, stop=stop, log=log, now=now)
+                       node_con=node_con, hints=hints, stop=stop, log=log, now=now, key=key, own_key=own_key)
         except (transport.TransferAborted, transport.AcquireAborted):
             break                                   # the next beat resumes from staging
         except (transport.TransportError, CodexError, OSError, KeyError, ValueError) as e:

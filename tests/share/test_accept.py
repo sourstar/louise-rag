@@ -4,6 +4,7 @@ contributes and serves; the fetcher holds the collection and its records,
 hears the `bundle` events, fetches the four files by the torrents the
 event's file list gives, judges the bundle, lands the vectors, records
 the coverage and serves the bundle itself — the survivor of 04 §4.1."""
+import json
 import shutil
 import time
 
@@ -173,6 +174,128 @@ def test_a_newer_snapshot_announced_is_pulled_from_its_announcer(node, fetcher, 
     out = accept.beat([fc], {fc.name: None}, node_con, **kw)
     assert out["snapshots"]["known"] == 2 and out["snapshots"]["pulled"] == 0
     node_con.close()
+
+
+def test_a_codex_announced_enters_the_catalogue_once_and_a_chain_that_does_not_read_is_dropped(node):  # noqa: F811
+    from app.hold import envelope as env
+    from app.share import catalogue, messages
+    from tests.hold.conftest import pubmed
+    codex = pubmed()
+    now = time.time()
+    node_con = peers.connect()
+
+    def event(payload, when=now):
+        body = messages.event_body(key=PEER_KEY, type_="codex", payload=payload, now=when)
+        peers.mark_seen(node_con, messages.event_id(body), now=now, time_text=body["time"], type_="codex",
+                        hops=7, envelope=env.sign(env.EVENT, body, PEER))
+        return body
+    event({"collection_id": codex.collection_id, "chain": [codex.to_dict()]})
+    said: list[str] = []
+    assert accept.codexes(node_con, log=said.append) == {"recorded": 1, "known": 0, "dropped": 0}
+    (entry,) = catalogue.entries(node_con)
+    assert (entry["collection_id"], entry["lineage_id"], entry["relation"], entry["title"], entry["announced_by"]) == \
+        (codex.collection_id, codex.collection_id, "root", "PubMed", PEER_KEY)
+    assert catalogue.codex_of(node_con, codex.collection_id).collection_id == codex.collection_id
+    assert any("in the catalogue" in s for s in said)
+    event({"collection_id": codex.collection_id, "chain": [codex.to_dict()]}, when=now + 60)   # announced again later
+    assert accept.codexes(node_con)["known"] == 1 and len(catalogue.entries(node_con)) == 1
+    event({"collection_id": "sha256:" + "f" * 64, "chain": [codex.to_dict()]})     # names another id
+    event({"collection_id": codex.collection_id, "chain": [{"x": 1}]})
+    assert accept.codexes(node_con, log=said.append)["dropped"] == 2
+    assert accept.pending(node_con, "codex") == []
+    assert peers.show(node_con, now=now)["catalogue"][0]["collection_id"] == codex.collection_id
+    node_con.close()
+
+
+def test_a_flag_received_has_its_attestations_pulled_and_is_a_claim_until_seconded(node, fetcher, monkeypatch):  # noqa: F811
+    from fastapi.testclient import TestClient
+    from app import api, copy_state
+    from app.hold import envelope as env
+    from app.share import fetch, levels, messages
+    from tests.hold.conftest import PLATFORM
+    from tests.share.test_fetch import SHARER
+    from tests.share.test_messages import a_drag
+    codex, name, d, snap = a_drag(node)
+    client = TestClient(api.app)
+    got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
+    now = time.time()
+    shard = f"{codex.collection_id}/year=2023/00001"
+    failing = {"kind": "louise-attestation", "version": 3, "collection_id": codex.collection_id,
+               "snapshot_id": snap.snapshot_id, "snapshot_hash": snap.hash, "check": "chunks", "seed": None,
+               "shards": [shard], "result": "fail", "detail": {"records": 2, "failed": ["x"]},
+               "platform_image": PLATFORM, "encoder_engine": None, "encoder_weights": None,
+               "key": PEER_KEY, "time": messages.time_text(now - 60)}
+    envelope = env.sign(env.ATTESTATION, failing, PEER)
+    aid = env.body_id(failing)
+    attest.attestation_path(node, name, codex, aid).write_bytes(json.dumps(envelope).encode())   # on the sharer
+    node_con = peers.connect()
+    flag = messages.event_body(key=PEER_KEY, type_="flag", payload={
+        "collection_id": codex.collection_id, "snapshot_hash": snap.hash, "check": "chunks",
+        "attestations": [aid]}, now=now)
+    peers.mark_seen(node_con, messages.event_id(flag), now=now, time_text=flag["time"], type_="flag", hops=7,
+                    envelope=env.sign(env.EVENT, flag, PEER))
+    fc = C(got["name"], codex)
+    kw = dict(client=client, key=OURS, own_key=OUR_KEY, now=now)
+    assert accept.flags(fetcher, [fc], node_con, **kw) == {"kept": 0, "ignored": 0, "waiting": 1, "failed": 0}
+    peers.record_digest(node_con, messages.digest_body(key=PEER_KEY, address=SHARER, neighbours=[], benchmarks=[],
+                                                       collections=[], now=now), now=now)
+    said: list[str] = []
+    assert accept.flags(fetcher, [fc], node_con, log=said.append, **kw)["kept"] == 1
+    assert attest.attestation_path(fetcher, fc.name, codex, aid).is_file()
+    assert accept.pending(node_con, "flag") == [] and any("a claim until" in s for s in said)
+    bodies = copy_state.attestations(fetcher, fc.name, codex)
+    out = levels.level(codex, snap, bodies, now=now, own_key=OUR_KEY, reference_images={PLATFORM})
+    assert out["level"] == levels.UNVERIFIED and out["claims"] == [
+        {"check": "chunks", "shard": shard, "key": PEER_KEY, "time": failing["time"]}]
+    second = {**failing, "key": OTHER_KEY_FLAG, "time": messages.time_text(now - 30)}
+    out = levels.level(codex, snap, list(bodies) + [second], now=now, own_key=OUR_KEY, reference_images={PLATFORM})
+    assert out["level"] == levels.FLAGGED
+    node_con.close()
+
+
+OTHER_KEY_FLAG = "ed25519:" + "7" * 64
+
+
+def test_a_second_bundle_over_held_chunks_is_compared_attested_and_not_stored(ready, monkeypatch):
+    from app.hold import export as exp
+    from tests.share.test_messages import PEER
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "1f" * 32)
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
+    first = out["bundles"][0]
+    sid = first["shard"]
+    # another producer's bundle over the same chunks, from the same honest vectors
+    second = exp.export(root, "gutenberg", shard=sid, dest=root.parent / "second", vectors_for=kw["vectors_for"],
+                        embed=kw["embed"], key=PEER, snapshot_id=snapshot.snapshot_id)
+    b2 = second["bundles"][0]
+    named = root.parent / drag_mod._hex(b2["bundle_id"])          # 09 §9.7: the directory is the id
+    shutil.move(b2["path"], named)
+    member = mem.bundle_member(codex.space_segment, named)
+    staged = root / "gutenberg" / "state" / holdings.STAGING / member.name
+    shutil.copytree(named, staged)                                  # as a fetch would have left it
+    payload = {"collection": codex.collection_id, "space_id": codex.space_id, "snapshot_id": snapshot.snapshot_id,
+               "shard": sid, "uids": [], "bundle_id": b2["bundle_id"], "root": member.root, "bytes": member.bytes,
+               "files": member.to_dict()["files"]}
+    events_before = len(peers.to_forward(kw["node_con"]))
+    said: list[str] = []
+    taken = accept.take(root, "gutenberg", codex, payload, session=None, con=kw["con"], node_con=kw["node_con"],
+                        vectors_for=kw["vectors_for"], write=kw["write"], key=OURS, own_key=OUR_KEY,
+                        log=said.append)
+    assert taken["outcome"] == "accepted" and taken["written"] == 0, "compared, not stored"
+    dup = taken["duplicate"]
+    assert dup["result"] == "pass" and dup["failed"] == [] and len(dup["compared"]) == b2["chunks"]
+    assert dup["attestation"] is not None
+    doc = json.loads(attest.attestation_path(root, "gutenberg", codex, dup["attestation"]).read_bytes())
+    body = doc["body"]
+    assert body["check"] == "vectors-sample" and body["result"] == "pass" and body["seed"] is None
+    assert sorted(body["detail"]["producers"]) == sorted([OUR_KEY, PEER_KEY]), "both producers named (04 §4.5)"
+    assert body["shards"] == [cov.shard_id(codex, sid)] and body["detail"]["chunks"] == b2["chunks"]
+    assert len(peers.to_forward(kw["node_con"])) == events_before + 1, "published as an event"
+    row = cov.row(kw["con"], b2["bundle_id"])
+    assert row["accepted_at"] and row["producer"] == PEER_KEY and row["source"] == "fetched"
+    assert any("compared with what was held: pass" in s for s in said)
 
 
 def test_an_event_about_a_collection_not_held_is_left_alone_and_a_gated_one_waits(ready, monkeypatch):
