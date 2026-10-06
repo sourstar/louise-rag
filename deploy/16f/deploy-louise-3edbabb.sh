@@ -21,7 +21,7 @@
 # Anything wrong after phase 4: see BACKOUT at the end.
 set -euo pipefail
 
-COMMIT=d8b1e81                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=28dfff7                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"
@@ -68,7 +68,9 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv $LIVE_MOUNTS 
 from app import collections as c
 names = sorted(x.name for x in c.load_all())
 print('load_all:', names)
-assert names == ['gutenberg', 'pubmed', 'wikipedia'], names
+# the three the node has held since September, at least — a deposit
+# collection (16f) is a fourth, and LocalAGI's agents will add more
+assert {'gutenberg', 'pubmed', 'wikipedia'} <= set(names), names
 "
 
 say "3b. tests/deposit in the staged image"

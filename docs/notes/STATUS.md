@@ -126,6 +126,23 @@ which a never-share collection never runs — fixed in `copy_state`
 the runbook (gzip body; `show` without `--json`, which the CLI refused
 and now accepts). Deployed next.
 
+**2026-10-06, ~10:40Z: 28dfff7 DEPLOYED** (the copy-state fix; suite 3516 on
+the workstation, tests/deposit 102 and tests/hold 704 in the staged image).
+`deposit-granite` is **in use**, `origin_check: not-planned`. Then
+`deploy/16f/localagi-smoke.sh` ran LocalAGI's own request sequence against
+the node with the deposit token: no token 401; create 201; list; store
+(multipart, the client's temp path, the key its base name); entries; read;
+search found the memory; the open `/api/search` never named the
+collection; delete; store again and reset erased it with no trace of the
+text under `data/collections/`; the worker embedded the deposit through
+granite within the second. **Gap found:** no `hold collection forget`
+exists (07 §7.3 and 03 §3.6 name it), so the throwaway `smoke-agent`
+keeps an empty `data/collections/smoke-agent/` (its held file removed).
+**16f's stop proper remains the operator's:** one LocalAGI agent at
+`http://192.168.178.10:30042` with the token file's content as
+`local_rag_api_key`, memory stored, found, compacted; a file from its UI;
+one URL source after `hold collection ack --web-sources`.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
