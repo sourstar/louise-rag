@@ -196,6 +196,12 @@ other write of a collection from outside the worker. 07 §7.3 amended: it
 said "exits 2 while the node holds the collection", a lock no command
 takes yet (§7.7's one-writer lock is still unbuilt). Tests:
 `tests/deposit/test_deposit_forget.py` (9).
+**Deployed as 122c674 (~11:45Z)** — suite 3525 on the workstation, 704 and
+111 in the staged image — and used for real through the worker's job
+thread: `smoke-agent` and `wire-test`, the two directories today's
+throwaway collections left, forgotten (dry run first; a second forget
+says "gone", nothing to do). Held now: deposit-granite, louise-stop and
+the three of September.
 
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
