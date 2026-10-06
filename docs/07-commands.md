@@ -120,6 +120,7 @@ louise hold
 louise share
   <collection> [--slices …] [--kinds …] [--stop]                       serve what you hold — and announce it
   fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a part
+        [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
   contribute [<collection>] [--once]                                   vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
@@ -333,7 +334,22 @@ reader needs at the command line:
   `LICENSE-TERMS` first — the members a peer may hold before an
   acknowledgement — then the members named; pieces are checked against
   roots and shards promoted from staging as 04 §4.3 says. What arrived
-  is what `hold collection show` then lists as held.
+  is what `hold collection show` then lists as held. `<collection>` is a
+  collection id or a lineage id (§7.6); who is asked, in order: `--from
+  ADDRESS`, a peer given by hand; the neighbours whose digest lists it;
+  the `[peers]` list, blind; and with `--dht` the DHT under the
+  collection and lineage keys of the current snapshot id and the eleven
+  before it (04 §4.2). The Codex comes with its chain and the snapshot
+  with its chain, each link checked by hash (09 §9.4, §9.9); a peer
+  whose bytes hash otherwise than its digest advertised is a liar and
+  banned for a day (04 §4.2), and the next peer is asked. A snapshot
+  with no verified signature waits in `state/staging/` and is not
+  promoted (09 §9.4). `--encoder URL` goes into the collection's file
+  as `hold collection create`'s does; without it the file names no
+  encoder, and the copy is held and shared but not embedded or searched
+  until the operator adds one (§7.8). `--name` is the local name. No
+  peer known is exit 2; every peer down is exit 3. *(Flags added
+  2026-10-06 with the first brick of migration step 9d.)*
 - **`share contribute`.** Chooses shards by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the shards this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold

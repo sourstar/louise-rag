@@ -676,6 +676,30 @@ def cmd_share(a) -> int:
     return 0
 
 
+def cmd_share_fetch(a) -> int:
+    """`share fetch <collection>` (07 §7.3; 04 §4.2, §4.3), first brick: the
+    peers that hold it found, its Codex chain and snapshot chain pulled and
+    verified, the collection held — codex.json and snapshots/*, the
+    pre-acknowledgement set. The members come with the second brick."""
+    from app.share import fetch as fetch_mod
+    if a.slice or a.kinds:
+        raise CodexError("share fetch --slice / --kinds: not yet — this brick holds the Codex "
+                         "and the snapshot chain; the members are step 9d's second brick")
+    try:                                   # held here already: a name or a prefix resolves (07 §7.6)
+        ref = col.resolve(a.root, a.collection)[1].collection_id
+    except (CodexError, FileNotFoundError, OSError):
+        ref = a.collection if a.collection.startswith("sha256:") else "sha256:" + a.collection
+    session = None
+    if getattr(a, "dht", False):
+        from app.acquire import transport_torrent as _tt
+        session = _tt.get_session()
+    out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
+                          encoder=a.encoder, name=a.name, session=session,
+                          log=lambda m: print(m, file=sys.stderr))
+    _print(out)
+    return 0
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -2263,6 +2287,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kinds", default=None)
     p.add_argument("--stop", action="store_true")
     p.set_defaults(fn=cmd_share)
+    p = shverbs.add_parser("fetch", help="take a part: find who holds it, pull and verify, hold it (04 §4.3)")
+    root_arg(p); p.add_argument("collection", help="a collection id or a lineage id")
+    p.add_argument("--slice", default=None)
+    p.add_argument("--kinds", default=None)
+    p.add_argument("--snapshot", default=None, metavar="ID",
+                   help="this snapshot and its chain; default: the latest the peer holds")
+    p.add_argument("--from", dest="from_", default=None, metavar="ADDRESS",
+                   help="a peer given by hand, http(s)://host[:port]; asked first")
+    p.add_argument("--dht", action="store_true",
+                   help="probe the DHT under the collection and lineage keys when no peer is known")
+    p.add_argument("--encoder", default=None, metavar="URL",
+                   help="where this node reaches the Codex's encoder, into the collection's file")
+    p.add_argument("--name", default=None, help="the local name; default: the plugin's")
+    p.set_defaults(fn=cmd_share_fetch)
     p = shverbs.add_parser("peers", help="who this peer knows; a peer given by hand")
     pverbs = p.add_subparsers(dest="peers_verb", required=True)
     q = pverbs.add_parser("add", help="a peer given by hand: into platform.toml [peers] (07 §7.8)")

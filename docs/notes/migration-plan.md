@@ -980,6 +980,30 @@ node is one peer until 9d's two-peer test):
 - **9d — `share fetch`**: find (DHT key, peers list), pull codex and
   snapshot, fetch members, verify roots, stage, promote; the
   pre-acknowledgement set. The two-peer test on localhost.
+  **First brick DONE 2026-10-06** (`app/share/fetch.py`;
+  `tests/share/test_fetch.py`, 11): who is asked and in what order
+  (`--from`, the neighbours whose digests list the collection or its
+  lineage, the `[peers]` list blind, the DHT under 24 probed keys with
+  `--dht`); a lineage id resolves to the entry with the newest snapshot
+  — the leading daughter by snapshot, not yet by 04 §4.6's adoption
+  count (9e, with the coverage map); the Codex chain pulled, each
+  canonical and under its own id, the head hashed against the digest's
+  `codex_hash`; the snapshot chain pulled newest first and linked by
+  hash back to the root's first, to the mother's `continues_through`,
+  or to one held here, hashed against the digest's `snapshot_hash`; a
+  lie bans the sender (04 §4.2) and the next peer is asked; signed
+  snapshots into the drag with sidecars merged by union, an unsigned one
+  into `state/staging/`; the chain's other Codexes under
+  `state/chain/`; the collection's file written, `[encoder]` from
+  `--encoder`. Pulled bytes are accounted to the calling process's DOWN
+  bucket (kilobytes). **Owed — second brick**: the members by torrent
+  through the worker's session and budget (`LICENSE-TERMS` first, then
+  `records`, `validation`, `calibration`, `seals`, and `relations` /
+  `figures` when asked), with the sharer's swarm reached through the
+  DHT or a peer hint; pieces against roots, `state/staging/`, promotion
+  with the holdings mark; the ack gate (`licensing.require_ack`) between
+  the pre-ack set and the rest; `--slice`/`--kinds`; the two-peer test
+  on localhost; `hold collection show`'s `snapshots` and `holdings`.
 - **9e — `share contribute` and `share attest`**, the coverage map, the
   single-survivor test.
 

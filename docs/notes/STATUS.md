@@ -237,6 +237,15 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~19:30Z: 9d, first brick.** `share fetch <collection>
+[--from ADDRESS] [--dht] [--encoder URL] [--name N] [--snapshot ID]`
+(`app/share/fetch.py`): finds who holds a collection — by hand, by the
+neighbours' digests, by the `[peers]` list, by the DHT — pulls its Codex
+chain and its snapshot chain, verifies every link and every advertised
+hash, bans a liar and asks the next peer, and holds the collection with
+its signed snapshots (an unsigned one staged). The members are the second
+brick. tests/share: 61. Not deployed (node: 6c06b4a).
+
 **2026-10-06, ~18:00Z: 9c done.** `share peers add <address> [--key]`
 writes platform.toml's `[peers]` list and `[peers.pins]` — desired state
 in the file, the rest of it kept byte for byte; `share peers show`; a
