@@ -21,6 +21,7 @@
 # Anything wrong after phase 4: see BACKOUT at the end.
 set -euo pipefail
 
+COMMIT=d8b1e81                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"
@@ -84,7 +85,7 @@ rm -rf "$ROOT/src.new/tests/fixtures/pubmed-mini/.pack"
 
 # ------------------------------------------------------------- 4. promote
 say "4. promote (src -> src.old, src.new -> src; deploy/ overlaid, never swapped)"
-docker tag louise-rag:local louise-rag:pre-cb419e7      # the way back (the tree before 3edbabb)
+docker tag louise-rag:local "louise-rag:pre-$COMMIT"      # the way back
 cd "$ROOT"
 rm -rf src.old && mkdir -p src.old
 for d in $TREE; do
@@ -102,7 +103,7 @@ rm -rf src.new/deploy && rmdir src.new
 
 say "4b. build louise-rag:local from the promoted tree"
 docker build -t louise-rag:local "$ROOT/src"
-echo 3edbabb > "$ROOT/src/.deployed-commit"     # what 15f's script wrote; DEPLOYMENT.md reads it
+echo "$COMMIT" > "$ROOT/src/.deployed-commit"   # what 15f's script wrote; DEPLOYMENT.md reads it
 NEW_ID=$(docker inspect louise-rag:local --format '{{.Id}}')
 echo "louise-rag:local = $NEW_ID"
 
@@ -129,7 +130,7 @@ WRK=$(docker inspect ix-louise-rag-worker-1 --format '{{.Image}}')
 echo "web    $WEB"; echo "worker $WRK"
 [ "$WEB" = "$WRK" ] && [ "$WEB" = "$NEW_ID" ]
 echo
-echo "DEPLOYED 3edbabb. src.old/ and louise-rag:pre-cb419e7 are the way back;"
+echo "DEPLOYED $COMMIT. src.old/ and louise-rag:pre-$COMMIT are the way back;"
 echo "remove them when satisfied. Watch the worker's first minutes:"
 echo "  docker logs --since 5m ix-louise-rag-worker-1 | grep -i -E 'calibration|validation|re-check|error' | head"
 echo "(each kept validation is re-embedded once at start — a few seconds per run)."
@@ -141,6 +142,6 @@ echo "(each kept validation is re-embedded once at start — a few seconds per r
 #   for d in app tests tools docs calibration; do rm -rf src/$d; mv src.old/$d src/; done
 #   for f in requirements.txt Dockerfile platform.toml.example; do rm -f src/$f; mv src.old/$f src/; done
 #   rm -rf src/deploy && mv src.old/deploy src/deploy
-#   docker tag louise-rag:pre-cb419e7 louise-rag:local
+#   docker tag louise-rag:pre-<COMMIT> louise-rag:local
 #   midclt call app.start louise-rag         # poll app.query for RUNNING
 # The app definition (env, volumes) was not touched by this deploy.
