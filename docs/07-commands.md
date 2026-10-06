@@ -219,9 +219,16 @@ reader needs at the command line:
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
   and the local state that goes with them; the Codex, this peer's
   attestations and anything another peer holds are untouched (01,
-  promise 7 is about the network; a peer may stop holding). Withdraws
-  the announcement first. Exits 2 while the node holds the collection
-  (§7.7).
+  promise 7 is about the network; a peer may stop holding). On a
+  running node it runs in the worker, the one writer of a collection's
+  indexes (§7.4's deposit writes go the same way), which retires the
+  collection's threads first; `--here` runs it in this process when no
+  worker runs; `--dry-run` names what would go. A never-share
+  collection's deposits are erased first (02 §2.9). `--kinds` takes
+  `vectors` today. Nothing is announced yet, so nothing is withdrawn
+  (operator, 2026-10-06; before, this said "exits 2 while the node holds
+  the collection", a lock no command takes yet — §7.7's one-writer lock
+  is still to build).
 - **`records fetch`.** Runs the acquisition spec (06 §6.2) for the
   named slices — by default the slices of the collection's file (§7.8),
   `all` for everything — drawing from the peer's one budget (04 §4.3).

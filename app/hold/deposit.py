@@ -448,6 +448,23 @@ def _reset(name: str) -> int:
         return len(keys)
 
 
+def erase_all(root: Path, name: str, codex: Codex) -> int:
+    """`reset` for `hold collection forget` (02 §2.9: every deposit erased
+    leaving no trace, THEN the directory): the collection is no longer held
+    by then, so its local side is built the one way every stage builds it
+    (records.local_collection) rather than looked up by name. Under the
+    collection's write lock, like `reset`. Returns how many were erased."""
+    from .records import local_collection
+    collection = local_collection(root, name, codex)
+    with _writing(name):
+        with closing(_connect(collection)) as con:
+            keys = _keys(con)
+            for key in keys:
+                _erase(collection, con, key)
+            purge(collection, con)
+            return len(keys)
+
+
 def _erase(collection, con, key: str) -> None:
     """The deposit out of search, the manifest and the origin. What makes
     that physical is `purge`, which every caller runs after it.

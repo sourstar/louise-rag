@@ -545,6 +545,36 @@ def _copy_state(root, name, codex):
     return copy_state.held(root, name, codex, local, refusal=_refusal_for(name))
 
 
+def cmd_collection_forget(a) -> int:
+    """`hold collection forget` (07 §7.3, §7.7): queued for the node's worker
+    — the one writer of a collection's indexes, which retires the
+    collection's threads first — unless `--here`, for a node whose worker is
+    not running. `--dry-run` only names what would go."""
+    from app.hold import deposit, forget as forget_mod
+    try:
+        name = col.name_of(a.root, a.collection)
+    except (CodexError, FileNotFoundError):
+        name = a.collection                 # not held: forget says so
+    kinds = tuple(k for k in (a.kinds or "").split(",") if k)
+    if not a.dry_run and not a.yes:
+        if sys.stdin.isatty():
+            answer = input(f"forget {name!r}: remove this peer's copy and its state? [y/N] ")
+            if answer.strip().lower() != "y":
+                print("nothing removed", file=sys.stderr)
+                return 0
+        else:
+            raise CodexError("--yes is required when stdin is not a terminal (07 §7.7)")
+    if a.here or a.dry_run:
+        out = forget_mod.forget(a.root, name, kinds=kinds, dry_run=a.dry_run)
+    else:
+        try:
+            out = deposit.via_worker("forget", name, kinds=list(kinds))
+        except deposit.DepositError as e:
+            raise CodexError(str(e)) from e
+    _print(out)
+    return 0
+
+
 def cmd_show(a) -> int:
     out = col.show(a.root, a.codex_id)
     name, codex = col.resolve(a.root, a.codex_id)
@@ -1813,6 +1843,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--apply", action="store_true",
                    help="write it; without this the change is only printed")
     p.set_defaults(fn=cmd_collection_migrate)
+
+    p = verbs.add_parser("forget",
+                         help="stop holding: remove this peer's copy and its state (07 §7.3)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--kinds", default=None,
+                   help="only these members, comma-separated: `vectors`")
+    p.add_argument("--yes", action="store_true",
+                   help="required when stdin is not a terminal (07 §7.7)")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="name what would go; remove nothing")
+    p.add_argument("--here", action="store_true",
+                   help="in this process, for a node whose worker is not running; "
+                        "otherwise queued for the worker, the one writer")
+    p.set_defaults(fn=cmd_collection_forget)
 
     p = verbs.add_parser("ack",
                          help="record the licence acknowledgement a yellow- "

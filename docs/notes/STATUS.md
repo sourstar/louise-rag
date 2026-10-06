@@ -182,6 +182,21 @@ through granite. The agent stays for the operator. **Step 16 is done**
 but for `hold collection forget` (07 §7.3), which the smoke test found
 missing.
 
+**2026-10-06, ~11:30Z: `hold collection forget` built** (operator: "go").
+`app/hold/forget.py`: the held file goes first (the node stops serving it
+at its next round), then — on a running node, in the worker, the one
+writer — the collection's threads are retired (`worker.retire_collection`:
+pipeline, embed producer, scan and fetch told to stop and waited for,
+bounded), then a never-share collection's deposits are erased leaving no
+trace (`deposit.erase_all`, 02 §2.9), then the directory whole. `--kinds
+vectors` takes the vector-side members and the vector table only;
+`--dry-run`; `--here` for a node whose worker is not running; `--yes` off a
+terminal. Queued through the DEPOSIT job kind (op "forget") like every
+other write of a collection from outside the worker. 07 §7.3 amended: it
+said "exits 2 while the node holds the collection", a lock no command
+takes yet (§7.7's one-writer lock is still unbuilt). Tests:
+`tests/deposit/test_deposit_forget.py` (9).
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

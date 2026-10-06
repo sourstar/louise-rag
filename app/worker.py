@@ -3899,3 +3899,33 @@ def main() -> int:
 if __name__ == "__main__":
     from . import process_exit
     process_exit.run(main)
+
+
+# ---- forget (07 §7.3) -----------------------------------------------------
+def retire_collection(name: str, timeout: float = 60.0) -> None:
+    """`hold collection forget`, run by this worker's job thread (app/jobs.py,
+    the DEPOSIT kind's op "forget"): the collection's threads told to stop
+    and waited for, bounded — a pipeline thread finishes its document first
+    (invariant 2) — so nothing of this process writes under a directory
+    about to go. The held file is already gone, so no round starts them
+    again. Nothing to do for a collection this worker never ran."""
+    deadline = time.time() + timeout
+    threads: list[threading.Thread] = []
+    pipe = _pipeline_threads.pop(name, None)
+    if pipe is not None:
+        pipe[1].set()
+        threads.append(pipe[0])
+    producer = _embed_producers.pop(name, None)
+    if producer is not None:
+        producer[1].set()
+        threads.append(producer[0])
+    _gone_event(name).set()             # scans and fetches stop at their next unit
+    with _scan_lock:
+        scan = _scan_threads.get(name)
+    with _acquire_lock:
+        fetch = _acquire_threads.get(name)
+    threads += [t for t in (scan, fetch) if t is not None]
+    for thread in threads:
+        if thread is not threading.current_thread():
+            thread.join(timeout=max(0.0, deadline - time.time()))
+    _gone.pop(name, None)

@@ -343,6 +343,14 @@ def _deposit(args: dict[str, Any]) -> dict[str, Any]:
     if op == "source-add":
         from .hold import sources
         return sources.add(name, args["url"], int(args.get("interval") or 60))
+    if op == "forget":
+        # 07 §7.3: the worker is the one writer, and it retires the
+        # collection's threads before a byte under its directory goes
+        from . import worker
+        from .hold import forget as forget_mod
+        return forget_mod.forget(louise._default_root(), name,
+                                 kinds=tuple(args.get("kinds") or ()),
+                                 retire=worker.retire_collection)
     if op == "source-erase":
         from .hold import sources
         return sources.erase(name, args["url"])

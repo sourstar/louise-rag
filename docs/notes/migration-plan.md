@@ -1587,7 +1587,7 @@ amended the same day: 03 §3.3, 09 §9.3 (`options`), §9.12, §9.18 (Codex
 
 **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream; run 15c
 on the node.
-### Step 16 — Deposit collections and the LocalAGI routes — **specified 2026-09-29; 16a–16e DONE on a side branch, merged into main 2026-10-05; 16f DONE 2026-10-06 (STATUS.md); open: `hold collection forget`**
+### Step 16 — Deposit collections and the LocalAGI routes — **specified 2026-09-29; 16a–16e DONE on a side branch, merged into main 2026-10-05; 16f DONE 2026-10-06; `hold collection forget` DONE 2026-10-06 — STEP 16 DONE**
 *01 (vocabulary), 02 §2.9, 03 §3.2, 04 §4.4, 06 §6.7, 07 §7.2–7.4,
 §7.6–7.8, 09 §9.13, §9.17. Design and reasons:
 [`deposit-collections.md`](deposit-collections.md). Wraps
