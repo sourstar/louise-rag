@@ -787,7 +787,12 @@ needing nobody's word. They are possible because a copy carries what
 they need — the Codex with its calibration member, the signed snapshot
 with every shard's roots, the terms — which is also why a collection
 without them cannot be created (06 §6.6) and what makes one shareable:
-any peer that downloads it can test it.
+any peer that downloads it can test it. Tests 1 and 5 have nothing to
+run on for a never-share collection (02 §2.9): a deposit collection
+holds no shard, and its origin is the client that wrote it, so it waits
+for the gate and the licence alone and its `origin_check` reads
+`not-planned` (09 §9.3; operator, 2026-10-06). Every other collection
+is judged by all five, whatever samples its plan sets.
 
 When the fifth CANNOT RUN — the origin is unreachable or past its
 bounded wait, or this peer's platform image is neither the Codex's nor

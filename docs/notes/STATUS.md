@@ -111,6 +111,21 @@ and the node rebooted — it was the cause, not the router. Still waiting:
 the granite weights on the node (the agent's scp is refused), then
 `deploy/16f/deposit-16f.sh`.
 
+**2026-10-06, ~10:05Z: the deposit runbook ran** (the weights copy went
+through on the operator's order). Granite is served by RAGE beside the
+eight; its run `5b6dea5d…` was stated on the first answer and the same
+run after a reload; the space file was written from `GET /louise/runs`
+(engine `localai/llama-cpp 58830f7+patches…` on the Arc, 384 wide, CLS,
+512 tokens; tolerance 0.995 by decision); `[deposit]` and the token are
+in place; `deposit-granite` was created (space `1900d348…`, the same id
+the dry run computed) and its run passed the gate: 16 of 16, median
+1.000000, batch-invariant. **The guinea pig found the tooling missing:**
+the copy stayed in quarantine for roots/chunks and records-vs-origin,
+which a never-share collection never runs — fixed in `copy_state`
+(tests 1 and 5 follow the plan; `origin_check: not-planned`), and in
+the runbook (gzip body; `show` without `--json`, which the CLI refused
+and now accepts). Deployed next.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

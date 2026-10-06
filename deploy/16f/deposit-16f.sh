@@ -127,7 +127,8 @@ assert any('$MODEL' in str(r) for r in rows), 'granite is not listed by RAGE'
 # ------------------------------------------------------------ 3. the space file, from the run RAGE states
 say "3. one embedding through RAGE; its run becomes the space file's encoder block"
 HDR=$(mktemp)
-curl -sS -D "$HDR" -o /tmp/granite-first.json --max-time 300 \
+# --compressed: RAGE hands LocalAI's gzip body through (found 2026-10-06)
+curl -sS --compressed -D "$HDR" -o /tmp/granite-first.json --max-time 300 \
   -H 'Content-Type: application/json' \
   -d "{\"model\":\"$MODEL\",\"input\":[\"Il deposito è la memoria di un agente.\"]}" \
   "$RAGE_URL/upstream/$MODEL/v1/embeddings"
@@ -135,10 +136,13 @@ RUN=$(grep -i '^Louise-Run:' "$HDR" | tr -d '\r' | awk '{print $2}')
 [ -n "$RUN" ] || { echo "no Louise-Run header: RAGE stated no run"; cat "$HDR"; head -c 600 /tmp/granite-first.json; exit 1; }
 echo "run: $RUN"
 python3 -c "
-import json; d = json.load(open('/tmp/granite-first.json'))
+import json, gzip
+raw = open('/tmp/granite-first.json', 'rb').read()
+if raw[:2] == b'\x1f\x8b': raw = gzip.decompress(raw)
+d = json.loads(raw)
 v = d['data'][0]['embedding']; print('vector dim:', len(v)); assert len(v) == 384
 "
-curl -sf "$RAGE_URL/louise/runs/$RUN" > /tmp/granite-run.json
+curl -sf --compressed "$RAGE_URL/louise/runs/$RUN" > /tmp/granite-run.json
 python3 - "$FILE_SHA" "$LOUISE/config/deposit-space.json" <<'P'
 import json, sys
 file_sha, out = sys.argv[1], sys.argv[2]
@@ -224,7 +228,7 @@ fi
 echo "--- its file:"; cat "$LOUISE/config/collections/$FIRST.toml"
 echo "--- its state (the worker gates the run on its next round; quarantine until then):"
 for i in $(seq 1 30); do
-  STATE=$(docker exec ix-louise-rag-worker-1 python -m app.louise hold collection show "$FIRST" --json 2>/dev/null \
+  STATE=$(docker exec ix-louise-rag-worker-1 python -m app.louise hold collection show "$FIRST" 2>/dev/null \
           | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['state'], '|', '; '.join(d.get('reasons') or []))" || echo "unknown")
   echo "  $STATE"
   case "$STATE" in in-use*) break;; esac

@@ -312,3 +312,25 @@ def test_a_space_whose_engine_is_a_localai_run_makes_a_version_4_codex_the_other
     second = make(node, "alice")                   # no space given: copies the first's
     assert second.space_id == first.space_id and second.collection_id != first.collection_id
     assert second.space.encoder.engine.options == engine["options"] and second.version == 4
+
+
+# ---- the copy state follows the plan (03 §3.6 on a never-share collection) --
+
+def test_a_deposit_collection_waits_for_its_gate_and_for_no_shard_or_origin_check(node):
+    """03 §3.6's tests 1 and 5 have nothing to run on for a never-share
+    collection (02 §2.9): a deposit collection plans calibration and
+    vectors-sample and nothing else, holds no shard for roots and chunks,
+    and its origin is the client — so neither keeps it in quarantine.
+    Found live on 2026-10-06: the first deposit collection was held for
+    `hold check --checks roots,chunks` and `records-vs-origin`, which it
+    can never run."""
+    from app import copy_state
+    codex = make(node, "alice")
+    assert "records-vs-origin" not in codex.validation.checks
+    s = copy_state.evaluate(node, "alice", codex, licence="not_required", key=None,
+                            answering={})
+    assert s.test("roots-and-chunks").status == copy_state.PASSED
+    assert s.test("origin").status == copy_state.PASSED
+    assert s.origin_check == copy_state.ORIGIN_NOT_PLANNED == "not-planned"
+    assert s.state == "quarantine" and len(s.reasons) == 1, s.reasons    # the gate alone
+    assert s.test("gate").status != copy_state.PASSED

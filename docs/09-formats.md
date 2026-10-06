@@ -446,12 +446,15 @@ kinds: [...], members: integer}, license: {class, acknowledged: boolean,
 time}, trust_level, certification: {certified_by, anchor_state} or null,
 vitality: "actively-held" · "dormant", state: "refused" · "quarantine" ·
 "in-use", reasons: [string…], origin_check: "passed" · "pending" ·
-"acknowledged-unchecked" · "failed"}`. `state` is the copy's state on
+"acknowledged-unchecked" · "failed" · "not-planned"}`. `state` is the copy's state on
 this peer (03 §3.6), derived when the command runs and stored nowhere;
 `reasons` is empty exactly when `state` is `"in-use"`, and otherwise
 names each test or acknowledgement the copy waits for, or why it is
-refused (07 §7.8). Until 2026-09-19 this object carried `refused:
-string or null` in their place.
+refused (07 §7.8). `origin_check` is `"not-planned"` for a never-share
+collection — a deposit collection (02 §2.9), whose origin is the client
+that wrote it, so no `records-vs-origin` can run (operator, 2026-10-06).
+Until 2026-09-19 this object carried `refused: string or null` in their
+place.
 
 **Worked example.** The PubMed collection's Codex, abbreviated to the
 fields that carry its choices (every other field is present in the file):

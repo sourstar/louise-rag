@@ -1800,6 +1800,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     def args_show(p):
         root_arg(p); p.add_argument("codex_id")
+        # 07 §7.3 names `--json` on every show; this one prints 09 §9.3's object
+        # in any case, so the flag is accepted and changes nothing (2026-10-06)
+        p.add_argument("--json", action="store_true")
 
     p = verbs.add_parser("show", help="a Codex and the ids derived from it")
     args_show(p); p.set_defaults(fn=cmd_show)

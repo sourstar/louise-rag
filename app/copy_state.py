@@ -87,6 +87,7 @@ IN_USE_BEFORE = "in-use-before"      # the operator's decision stands in (see th
 # 09 §9.3's `origin_check`
 ORIGIN_PASSED, ORIGIN_PENDING = "passed", "pending"
 ORIGIN_ACKED, ORIGIN_FAILED = "acknowledged-unchecked", "failed"
+ORIGIN_NOT_PLANNED = "not-planned"   # a never-share collection: no origin to re-fetch (02 §2.9)
 
 ORIGIN_ACK = "origin-ack.json"
 ORIGIN_TRIED = "origin-check.json"
@@ -338,6 +339,15 @@ def origin_ack(root: Path, name: str, codex: Codex) -> dict[str, Any] | None:
 
 # ---- the five tests -------------------------------------------------------------------
 
+def _unplanned(test: str, checks: str) -> Test:
+    """A test with nothing to run on: a never-share collection holds no shard
+    and its origin is the client that wrote it (02 §2.9), so roots, chunks
+    and records-vs-origin have nothing to check, and nothing to wait for."""
+    return Test(test, PASSED, f"a never-share collection has nothing for {checks} to "
+                              f"check: no shard, and its origin is the client that "
+                              f"wrote it (02 §2.9)")
+
+
 def _roots_and_chunks(bodies, key: str | None, name: str) -> Test:
     clears = f"`louise hold check {name} --checks roots,chunks`"
     if key is None:
@@ -561,9 +571,22 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
         return ALWAYS_IN_USE
     bodies = attestations(root, name, codex)
     gate, leg, why = _gate(root, name, codex, answering or {})
-    origin, origin_check = _origin(root, name, codex, bodies, key)
-    tests = (_roots_and_chunks(bodies, key, name), _bundles(), gate,
-             _licence(licence, name), origin)
+    # 03 §3.6's tests 1 and 5 have nothing to run on for a NEVER-SHARE
+    # collection (02 §2.9): a deposit collection holds no shard for roots and
+    # chunks, and its origin is the client that wrote it, so no records-vs-
+    # origin can re-fetch anything — its plan runs calibration and
+    # vectors-sample "and nothing else". It is not kept in quarantine for a
+    # check it will never run. Every other collection is judged by all five,
+    # whatever its plan lists (the plan sets the samples, not the tests).
+    # Found by the first deposit collection on the node (2026-10-06, 16f).
+    from .hold import deposit as deposit_mod
+    if deposit_mod.is_deposit(codex):
+        origin, origin_check = _unplanned("origin", "records-vs-origin"), ORIGIN_NOT_PLANNED
+        roots = _unplanned("roots-and-chunks", "roots or chunks")
+    else:
+        origin, origin_check = _origin(root, name, codex, bodies, key)
+        roots = _roots_and_chunks(bodies, key, name)
+    tests = (roots, _bundles(), gate, _licence(licence, name), origin)
     if before:
         tests = tuple(_decided(t) for t in tests)
     waiting = [t for t in tests if t.status in (OPEN, FAILED, CANNOT_RUN)]
