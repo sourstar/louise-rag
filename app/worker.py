@@ -3726,6 +3726,10 @@ def run_forever():
         try:
             all_collections = _sync_collections(all_collections, cons, last_discover,
                                                  pipeline=pipeline)
+            # 07 §7.7: the lock of every collection the node runs; one the operator
+            # paused or another writer holds is not run this round
+            active = _hold_locks(all_collections,
+                                 node_state.paused_collections(node_con), cons)
             _finish_completed_acquires(cons, all_collections, last_discover,
                                         pipeline=pipeline)
             if not all_collections:
@@ -3764,7 +3768,7 @@ def run_forever():
             _paused.clear()
             # Re-arm the fetches a pause stopped, BEFORE the interval check
             # below — without pipeline threads, that check is what runs them.
-            _rearm_paused_aborts(all_collections, last_discover, pipeline, cons=cons)
+            _rearm_paused_aborts(active, last_discover, pipeline, cons=cons)
             # download/seeding only: fetching continues — the pipeline
             # threads still drain discovery requests, which is what starts a
             # fetch — and NOTHING reads what lands: the scan is owed
@@ -3774,7 +3778,7 @@ def run_forever():
                 _acquire_only.clear()
                 # what landed, or was cut short, while nothing was parsed
                 owed = _take_owed_scans()
-                for collection in all_collections:
+                for collection in active:
                     if collection.name not in owed:
                         continue
                     if pipeline:
@@ -3790,9 +3794,9 @@ def run_forever():
             if pipeline:
                 # after the pause gate: a paused worker starts no threads,
                 # and running ones idle on _paused
-                _sync_pipeline_threads(all_collections)
+                _sync_pipeline_threads(active)
             any_work = False
-            for collection in all_collections:
+            for collection in active:
                 if _stop.is_set():
                     break
                 con = cons[collection.name]
@@ -3822,11 +3826,11 @@ def run_forever():
                 # (docs/notes/scheduling.md §12); this loop only keeps them
                 # matched to the collection set. They stand down on their
                 # own in acquire-only and while paused.
-                _sync_embed_producers(all_collections)
+                _sync_embed_producers(active)
                 time.sleep(config.WORKER_IDLE_SLEEP)
                 continue
             if node_state.runs(state, node_state.INDEX):
-                servable = servable_collections(all_collections, pipeline)
+                servable = servable_collections(active, pipeline)
                 serve = (_serve_rotation if config.SCHED_FAIR_SHARE
                          else _serve_in_order)
                 any_work = serve(cons, servable, last_idle_log, pipeline)
@@ -3858,6 +3862,7 @@ def run_forever():
         print("[info:jobs] node: the job in hand did not finish before the stop; "
               "it is queued again at the next start", flush=True)
     _join_pipeline_threads()
+    _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
@@ -3896,10 +3901,6 @@ def main() -> int:
     return 130 if _stop.is_set() else 0
 
 
-if __name__ == "__main__":
-    from . import process_exit
-    process_exit.run(main)
-
 
 # ---- forget (07 §7.3) -----------------------------------------------------
 def retire_collection(name: str, timeout: float = 60.0) -> None:
@@ -3929,3 +3930,51 @@ def retire_collection(name: str, timeout: float = 60.0) -> None:
         if thread is not threading.current_thread():
             thread.join(timeout=max(0.0, deadline - time.time()))
     _gone.pop(name, None)
+    lock = _locks.pop(name, None)       # the node holds it only while it runs it
+    if lock is not None:
+        lock.release()
+
+
+# ---- the one writer per collection (07 §7.7) -------------------------------
+#: the write lock of every collection this worker runs, by name
+_locks: dict[str, object] = {}
+_lock_nagged: dict[str, str] = {}
+
+
+def _hold_locks(collections, paused: set[str], cons=None) -> list:
+    """Each round: the lock of every collection the node runs, taken once
+    and held for as long as it runs it (07 §7.7); released — after the
+    collection's threads have finished their unit — for one the operator
+    paused (`node pause <collection>`) or one no longer held. A collection
+    another writer holds (a `hold` command) is left to it: not run this
+    round, said once. Returns the collections this round runs."""
+    from app.hold import lock as lock_mod
+    live = {c.name: c for c in collections}
+    for name in list(_locks):
+        if name not in live or name in paused:
+            retire_collection(name)          # the end of its current unit first
+            lock = _locks.pop(name, None)
+            if lock is not None:
+                lock.release()
+    for name, c in live.items():
+        if name in paused or name in _locks:
+            continue
+        try:
+            _locks[name] = lock_mod.take(Path(c.manifest_path).parent, name,
+                                         "the node (worker)")
+            _lock_nagged.pop(name, None)
+        except lock_mod.Held as e:
+            if _lock_nagged.get(name) != str(e) and cons and name in cons:
+                _lock_nagged[name] = str(e)
+                db.log_event(cons[name], "info", "worker",
+                             f"collection {name!r} not run this round: {e}"[:500])
+    return [c for c in collections if c.name in _locks]
+
+
+def _release_locks() -> None:
+    for name in list(_locks):
+        _locks.pop(name).release()
+
+if __name__ == "__main__":
+    from . import process_exit
+    process_exit.run(main)

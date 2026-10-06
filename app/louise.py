@@ -155,6 +155,7 @@ def cmd_deposit_add(a) -> int:
     path = Path(a.file)
     key, data = a.key or path.name, path.read_bytes()
     if a.here:
+        _take_write_lock(None, a.collection, "hold deposit add --here")
         _print(deposit.add(a.collection, key, data))
         return 0
     from app.plugins.deposit import source as src
@@ -172,6 +173,8 @@ def cmd_deposit_erase(a) -> int:
     if not a.yes:
         raise CodexError("erase removes a deposit leaving no trace (02 §2.9): "
                          "pass --yes")
+    if a.here:
+        _take_write_lock(None, a.collection, "hold deposit erase --here")
     _print({"remaining": deposit.erase(a.collection, a.key) if a.here
             else deposit.via_worker("erase", a.collection, key=a.key)["remaining"]})
     return 0
@@ -179,6 +182,8 @@ def cmd_deposit_erase(a) -> int:
 
 def cmd_source_add(a) -> int:
     from app.hold import deposit, sources
+    if a.here:
+        _take_write_lock(None, a.collection, "hold source add --here")
     _print(sources.add(a.collection, a.url, a.interval) if a.here else
            deposit.via_worker("source-add", a.collection, url=a.url, interval=a.interval))
     return 0
@@ -189,6 +194,8 @@ def cmd_source_erase(a) -> int:
     if not a.yes:
         raise CodexError("erase removes the source's deposit leaving no trace "
                          "(02 §2.9): pass --yes")
+    if a.here:
+        _take_write_lock(None, a.collection, "hold source erase --here")
     _print(sources.erase(a.collection, a.url) if a.here else
            deposit.via_worker("source-erase", a.collection, url=a.url))
     return 0
@@ -565,6 +572,8 @@ def cmd_collection_forget(a) -> int:
         else:
             raise CodexError("--yes is required when stdin is not a terminal (07 §7.7)")
     if a.here or a.dry_run:
+        if not a.dry_run:
+            _take_write_lock(a.root, name, "hold collection forget", exit_code=2)
         out = forget_mod.forget(a.root, name, kinds=kinds, dry_run=a.dry_run)
     else:
         try:
@@ -572,6 +581,59 @@ def cmd_collection_forget(a) -> int:
         except deposit.DepositError as e:
             raise CodexError(str(e)) from e
     _print(out)
+    return 0
+
+
+# ---- the one writer per collection (07 §7.7) ---------------------------------
+_cli_locks: list = []
+
+
+def _take_write_lock(root, name: str, what: str, *, exit_code: int = 3):
+    """A `hold` command that writes takes the collection's lock or exits 3
+    naming the holder — 2 for the four whose later retry is not the answer
+    (07 §7.7). Held until the command ends: `main` releases."""
+    from app.hold import lock as lock_mod
+    root = Path(root) if root else _default_root()
+    lock = lock_mod.take(lock_mod.state_dir(root, name), name, what, exit_code=exit_code)
+    _cli_locks.append(lock)
+    return lock
+
+
+def _release_cli_locks() -> None:
+    while _cli_locks:
+        _cli_locks.pop().release()
+
+
+def _run_releasing(a) -> int:
+    try:
+        return a.fn(a)
+    finally:
+        _release_cli_locks()
+
+
+def cmd_node_pause(a) -> int:
+    """`node pause [<collection>] [--acquire-only | --seed-only]` (07 §7.3):
+    the node's mode, or one collection — whose write lock the worker releases
+    at the end of its current unit and runs nothing for until `resume`."""
+    from app import node_state
+    if a.collection:
+        names = node_state.set_paused(a.collection, True)
+        _print({"paused": sorted(names)})
+        return 0
+    state = "acquire-only" if a.acquire_only else "seed-only" if a.seed_only else "paused"
+    node_state.set_worker_state(state)
+    _print({"node": state})
+    return 0
+
+
+def cmd_node_resume(a) -> int:
+    from app import node_state
+    if a.collection:
+        names = node_state.set_paused(a.collection, False)
+        _print({"paused": sorted(names)})
+        return 0
+    node_state.set_worker_state("running")
+    _print({"node": "running"})
     return 0
 
 
@@ -587,6 +649,8 @@ def cmd_show(a) -> int:
 
 
 def cmd_collection_migrate(a) -> int:
+    if a.apply:
+        _take_write_lock(a.root, a.name, "hold collection migrate --apply", exit_code=2)
     got = col.migrate(a.root, a.name, apply=a.apply)
     if not got["added"]:
         print(f"{got['name']}: already carries every §9.3 field")
@@ -611,6 +675,7 @@ def cmd_collection_migrate(a) -> int:
 def cmd_records_build(a) -> int:
     from app.hold import equivalence, records as rec
     name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold records build")
     # 03 §3.4: records are built by the Codex's image or an equivalent one
     equivalence.require_reference(a.root, name, codex, use="build its records")
     # 07 §7.3's `build <collection> [--snapshot ID]`: the origin is the
@@ -642,6 +707,7 @@ def cmd_records_validation(a) -> int:
 def cmd_snapshot_create(a) -> int:
     from app.hold import collection as c, equivalence, snapshot as sn
     ref_name, ref_codex = c.resolve(a.root, a.collection)
+    _take_write_lock(a.root, ref_name, "hold snapshot create")
     equivalence.require_reference(a.root, ref_name, ref_codex,
                                   use="create its snapshots")
     snap = sn.create(a.root, a.collection, snapshot_id=a.snapshot_id)
@@ -972,6 +1038,7 @@ def cmd_vectors_import(a) -> int:
         return cmd_vectors_archive_import(a)
 
     name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold vectors import")
     local = rec.local_collection(a.root, name, codex)
     # Invariant 9, the IMPORTER half (migration plan step 4f). However the
     # bundle arrived — a peer copy, a hand-populated folder — a yellow- or
@@ -1107,6 +1174,7 @@ def cmd_vectors_build(a) -> int:
         records as rec, vectors_build as vb
 
     name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold vectors build")
     local = rec.local_collection(a.root, name, codex)
     # Embedding is a USE of the text (invariant 9): a corpus that may not
     # be read may not be embedded either.
@@ -1235,6 +1303,8 @@ def cmd_vectors_check(a) -> int:
         records as rec, vectors_check as vck
 
     name, codex = col.resolve(a.root, a.collection)
+    if getattr(a, "drop", False):          # a Namespace built by hand may lack it
+        _take_write_lock(a.root, name, "hold vectors check --drop", exit_code=2)
     local = rec.local_collection(a.root, name, codex)
     # Invariant 9: the sample's text is embedded (and --drop deletes
     # vectors) — use of the corpus, as `bundle resweep` is
@@ -1542,6 +1612,7 @@ def cmd_embedder_check(a) -> int:
     """
     from app.hold import collection as col, embedder as emb, runs as hold_runs
     name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold embedder check")     # it writes a statement (07 §7.7)
     if hold_runs.applies(codex):
         return _embedder_check_runs(a, name, codex)
     try:
@@ -1755,7 +1826,19 @@ def cmd_snapshot_list(a) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
-    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|ask")
+    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|ask|node")
+    node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
+    nverbs = node.add_subparsers(dest="verb", required=True)
+    p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
+                                       "until resume; or ONE collection: its write lock released at "
+                                       "the end of the current unit, nothing run for it until resume")
+    p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--acquire-only", action="store_true", dest="acquire_only")
+    p.add_argument("--seed-only", action="store_true", dest="seed_only")
+    p.set_defaults(fn=cmd_node_pause)
+    p = nverbs.add_parser("resume", help="the node, or one collection")
+    p.add_argument("collection", nargs="?", default=None)
+    p.set_defaults(fn=cmd_node_resume)
 
     hold = surfaces.add_parser("hold", help="your own copy: complete, current, checked")
     nouns = hold.add_subparsers(dest="noun", required=True)
@@ -2204,7 +2287,7 @@ def main(argv=None) -> int:
               f"<LOUISE_ROOT>/collections (07 §7.8)", file=sys.stderr)
         return 2
     try:
-        return a.fn(a)
+        return _run_releasing(a)
     except CodexError as e:
         from app.hold.embedder import GateDeferred
         if isinstance(e, GateDeferred):
@@ -2214,7 +2297,7 @@ def main(argv=None) -> int:
             print(f"louise: deferred: {e}", file=sys.stderr)
             return 3
         print(f"louise: {e}", file=sys.stderr)
-        return 2
+        return getattr(e, "exit_code", 2)
     except FileNotFoundError as e:
         print(f"louise: {e}", file=sys.stderr)
         return 2

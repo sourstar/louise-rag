@@ -256,3 +256,37 @@ def adopt_legacy(node_con: sqlite3.Connection, legacy_cons: list) -> Move:
         except sqlite3.Error:
             pass    # an inert copy: nothing reads it, and the next boot retries
     return Move(adopted)
+
+
+# ---- one collection paused (07 §7.3 `node pause <collection>`, §7.7) --------
+#: control key: the collections the operator paused one by one — the worker
+#: releases each one's write lock at the end of its current unit and runs
+#: nothing for it until `node resume <collection>`. Runtime state like the
+#: mode; it survives a restart for the same reason (the mode's exception).
+PAUSED_KEY = "paused_collections"
+
+
+def paused_collections(con: sqlite3.Connection | None = None) -> set[str]:
+    import json
+
+    def read(c) -> set[str]:
+        raw = db.get_control(c, PAUSED_KEY, "[]")
+        try:
+            names = json.loads(raw)
+        except (TypeError, ValueError):
+            return set()
+        return {n for n in names if isinstance(n, str)} if isinstance(names, list) else set()
+    if con is not None:
+        return read(con)
+    with closing(connect()) as c:
+        return read(c)
+
+
+def set_paused(name: str, paused: bool) -> set[str]:
+    """Pause or resume one collection; the set as it is after."""
+    import json
+    with closing(connect()) as c:
+        names = paused_collections(c)
+        (names.add if paused else names.discard)(name)
+        db.set_control(c, PAUSED_KEY, json.dumps(sorted(names)))
+        return names

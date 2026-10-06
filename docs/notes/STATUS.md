@@ -217,6 +217,20 @@ backup images (`pre-122c674` and `src.old` stay), `/tmp/louise-src.tgz`.
 The node-side DEPLOYMENT.md paragraph is drafted in the local copy for
 the operator to drop in.
 
+**2026-10-06, ~13:00Z: the one writer per collection (07 §7.7) built.**
+`app/hold/lock.py`: an advisory flock on `<collection>/state/lock` with the
+holder's words inside; a crash leaves no stale lock. The worker takes the
+lock of every collection it runs, each round, and runs only those it
+holds: one paused by `node pause <collection>` (new CLI surface `node`;
+the set is runtime state that survives a restart, like the mode) or no
+longer held is retired first — its threads finish their unit — then
+released; one another writer holds is left alone and the round says so
+once. The writing commands take it or exit 3 naming the holder; `forget
+--here`, `vectors check --drop` and `collection migrate --apply` exit 2;
+`show`, `list`, `check`, `ask` take nothing. `dev migrate schema` and
+`dev adopt` of §7.7 do not exist as commands. Tests:
+`tests/hold/test_write_lock.py` (11).
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
