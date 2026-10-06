@@ -928,6 +928,31 @@ them.
 outcome in `docs/notes/STATUS.md`.
 
 ### Step 9 — `share`: serve, fetch, contribute, attest
+**STARTED 2026-10-06.** Sub-steps, in order (each with its tests; the
+node is one peer until 9d's two-peer test):
+- **9a — members and keys. DONE 2026-10-06** (`app/share/members.py`;
+  `tests/share/test_members.py`, 23): bencoding; 09 §9.16's info
+  dictionary from (path, length, pieces root) alone and its infohash —
+  PROVEN equal, byte for byte and hash for hash, to what libtorrent 2.1
+  builds from the file, so two honest publishers land in one swarm; the
+  collection, lineage, weights and image keys of 04 §4.2; the members a
+  snapshot implies (records, relations, figures, validation, terms,
+  calibration, seals) and, from the drag on disk, the text-index members.
+- **9b — the seeder.** In the WORKER (a `hold` command never opens a port,
+  07 §7.4): every in-use public collection whose file does not say
+  `share = false` has its current snapshot's members served from the
+  drag and announced under both keys; `share <collection> [--slices …]
+  [--kinds …] [--stop]` writes the desired state the worker serves. Tests:
+  two sessions on localhost, the leecher adding by the infohash it
+  computed itself.
+- **9c — the peer messages** (09 §9.9): digest, event, the three pulls,
+  signed envelopes, neighbours, forwarding once, the hourly digest.
+- **9d — `share fetch`**: find (DHT key, peers list), pull codex and
+  snapshot, fetch members, verify roots, stage, promote; the
+  pre-acknowledgement set. The two-peer test on localhost.
+- **9e — `share contribute` and `share attest`**, the coverage map, the
+  single-survivor test.
+
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,
 `app/share/rendezvous.py`. Makes the coordinator optional.*

@@ -237,6 +237,14 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~14:00Z: step 9 started — 9a done.** `app/share/members.py`:
+bencoding, the exact info dictionary of 09 §9.16 and its infohash, the
+four DHT keys, the members a snapshot implies. The test that matters:
+libtorrent 2.1, building the torrent from the file, produces the same
+bencoded info and the same v2 infohash as our pure computation from
+(path, length, root) — 04 §4.3's "two honest publishers land in one
+swarm" holds. Next: 9b, the seeder in the worker.
+
 **2026-10-06, ~13:20Z: aligned** (operator: "delete backup images, align the
 specs and the deployed image"). No backup image is left (`local` and
 `staged` are one image); `src.old` (13 MB) stays as the tree before
