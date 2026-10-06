@@ -272,3 +272,43 @@ def test_create_leaves_the_manifest_in_wal_mode_before_the_held_file(node):
         assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     finally:
         con.close()
+
+
+# ---- the space file the deposit runbook writes (deploy/16f/deposit-16f.sh) --
+
+def test_a_space_whose_engine_is_a_localai_run_makes_a_version_4_codex_the_others_copy(node):
+    """deploy/16f: the first deposit collection's space file is written from
+    the run RAGE over LocalAI states (09 §9.12: name localai/<backend>,
+    variant null, `options` the load call). Such an engine needs Codex 4
+    (09 §9.3); the next collection on the encoder copies the space whole,
+    options and all (02 §2.9). Granite's shape: 384 wide, 512 tokens, CLS."""
+    import numpy as np
+    from app.hold import calibration as cal, codex as cx
+
+    def embed384(texts):
+        v = np.asarray(fake_embed(texts), dtype=np.float32)[:, :384]
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+
+    engine = {
+        "name": "localai/llama-cpp", "build": "58830f7+patches.17b54353635e", "variant": None,
+        "image": "sha256:" + "b" * 64,
+        "args": ["/backends/llama-cpp/llama-cpp-grpc", "--addr", "127.0.0.1:${PORT}"],
+        "env": {"NEO_CACHE_DIR": "/state/neo-cache"}, "device": "Intel(R) Arc(TM) Pro B70 Graphics",
+        "options": {"Model": "${WEIGHTS}", "ModelFile": "${WEIGHTS}", "ContextSize": 512,
+                    "NBatch": 512, "Seed": 0, "Options": ["parallel:1", "pooling:cls"],
+                    "ModelPath": "${MODELS}"},
+    }
+    space = {
+        "encoder": {"weights": "sha256:" + "3" * 64, "label": "granite f16", "engine": engine},
+        "dim": 384, "dtype": "f16", "ctx": 512, "pooling": "cls", "normalise": True,
+        "query": {"encoder": None, "instruction": None}, "tolerance": "0.995",
+        "calibration": {"set": cal.load("text")[0], "quorum": {"n": 16, "min_pass": 12}},
+        "epoch": "0", "evaluation": None,
+    }
+    first = make(node, "deposit-granite", embed=embed384, space=space)
+    cx.validate(first)
+    assert first.version == 4 and first.space.encoder.engine.options["ContextSize"] == 512
+    assert first.space.dim == 384 and first.space.ctx == 512 and first.space.query.encoder is None
+    second = make(node, "alice")                   # no space given: copies the first's
+    assert second.space_id == first.space_id and second.collection_id != first.collection_id
+    assert second.space.encoder.engine.options == engine["options"] and second.version == 4
