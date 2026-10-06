@@ -1047,12 +1047,23 @@ node is one peer until 9d's two-peer test):
   §4.7's vitality from bundles and attestations in the trailing
   `work.per` (a deterministic check counts the snapshot's tokens of the
   shards it names, `work.tokens` when it names none; a statistical one
-  its chunks × ctx); `hold vectors show`. **Owed in 9e**: `share attest`
-  (hold check → attestations as events, never twice); `share contribute
-  --once` (the preconditions of 04 §4.5, `rendezvous.mine` over the open
-  shards, `hold vectors build` and `export` for them, the bundles as
-  members under `state/bundles/` served by the seeder, the `bundle`
-  event, `coverage` in the digest); `fold_claims` wired into the
+  its chunks × ctx); `hold vectors show`. **Second brick DONE 2026-10-06
+  — `share attest`** (`app/share/attest.py`; `tests/share/test_attest.py`,
+  4): `hold check`'s work factored into `louise.run_check` and shared;
+  every attestation the run wrote becomes one `attestation` event signed
+  with the node key and kept as seen (hops 8) for the beat to forward;
+  the attestation ids published are recorded (`attestations_published`
+  in node.sqlite) so none is published twice, while a new run's new
+  attestation is. The receiving side: the beat's `store_received` keeps
+  an attestation event's payload — verified, for a collection held here
+  — at 09 §9.8's path before forwarding; a foreign or forged one is
+  dropped; events of the other types are marked acted and left to the
+  bricks that act on them (`events_seen.acted`). **Owed in 9e**: `share
+  contribute --once` (the preconditions of 04 §4.5, `rendezvous.mine`
+  over the open shards, `hold vectors build` and `export` for them, the
+  bundles as members under `state/bundles/` served by the seeder, the
+  `bundle` event, `coverage` in the digest); acting on `snapshot`,
+  `codex`, `bundle` and `flag` events; `fold_claims` wired into the
   worker's beat; the loop form; the single-survivor test.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,

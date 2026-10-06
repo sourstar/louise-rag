@@ -379,7 +379,16 @@ reader needs at the command line:
   of looping until stopped.
 - **`share attest`.** Runs `hold check` with the named checks and a
   fresh seed and publishes the resulting attestations as events (04
-  §4.2). It never republishes an old one.
+  §4.2). It never republishes an old one: the attestation ids published
+  are recorded in the node's state database, and the events wait there
+  for the worker's beat to forward to every neighbour. The receiving
+  side is the worker's too: an `attestation` event that arrives for a
+  collection held here, whose payload verifies as an attestation of it
+  (09 §9.8), is kept at the attestation's path beside the catalogue,
+  where the copy's state, the trust level and vitality read it (03
+  §3.6; 04 §4.7); one for a collection not held here is not kept. Takes
+  `hold check`'s flags (`--checks`, `--seed`, `--sample`, `--snapshot`,
+  `--origin`). *(2026-10-06, migration step 9e.)*
 - **`share peers`.** `add` is one of the two bootstraps, beside
   `platform.toml [peers]` (§7.8) — it writes that list, each address
   once, and with `--key` pins the address to a key (04 §4.2: a digest

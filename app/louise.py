@@ -787,6 +787,31 @@ def peers_connection():
     return closing(peers.connect())
 
 
+def cmd_share_attest(a) -> int:
+    """`share attest <collection> [--checks …]` (07 §7.3; 04 §4.2): `hold
+    check` with the named checks and a fresh seed, then every attestation
+    it wrote published as an `attestation` event for the worker's beat to
+    forward — once each; an attestation published before is never
+    republished. Exit 0 when nothing failed, 1 when a check did."""
+    from app import identity
+    from app.bundles import keys as node_keys
+    from app.share import attest as attest_mod, peers
+    name, codex, snapshot, seed, report = run_check(a)
+    try:
+        key = node_keys.load_signing_key()
+        own_key = identity.own()
+    except Exception as e:   # noqa: BLE001 — a peer with no key attests nothing (07 §7.8)
+        raise CodexError(f"share attest publishes signed events and this peer has no key: "
+                         f"{e}") from None
+    with _closing(peers.connect()) as con:
+        out = attest_mod.publish(a.root, name, codex, list(report.attestations.values()),
+                                 key=key, own_key=own_key, con=con,
+                                 log=lambda m: print(m, file=sys.stderr))
+    _print({"check": report.to_json(), "seed": seed.hex(), **out,
+            "note": "the worker forwards the events to every neighbour at its next beat"})
+    return 0 if report.ok else 1
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -1641,13 +1666,10 @@ def _latest_snapshot(root, name, snapshot_id=None):
     return snap.load(d / f"{ids[-1]}.json")
 
 
-def cmd_check(a) -> int:
-    """`hold check` — run the plan (03 §3.2) and attest what completed.
-
-    Exit 0 when nothing failed, 1 when a check did. An INCONCLUSIVE check
-    is neither (03 §3.1) and does not fail the run: it produces no
-    attestation, is reported with its reason, and is retried.
-    """
+def run_check(a):
+    """`hold check`'s work (03 §3.2), shared with `share attest`: the plan
+    run and every completed check attested. Returns (name, codex, snapshot,
+    seed, report) with the attestation ids on the report."""
     import os
 
     from app import embeddings
@@ -1711,6 +1733,19 @@ def cmd_check(a) -> int:
                 a.root, name, report, codex, snapshot, key,
                 platform_image=ran_in, now=_utc_now())
     report = dataclasses.replace(report, attestations=written)
+    return name, codex, snapshot, seed, report
+
+
+def cmd_check(a) -> int:
+    """`hold check` — run the plan (03 §3.2) and attest what completed.
+
+    Exit 0 when nothing failed, 1 when a check did. An INCONCLUSIVE check
+    is neither (03 §3.1) and does not fail the run: it produces no
+    attestation, is reported with its reason, and is retried.
+    """
+    from app.hold import check as chk
+    name, codex, snapshot, seed, report = run_check(a)
+    written = report.attestations
 
     # 03 §3.6: an origin check that COULD NOT RUN yields no attestation, and
     # the operator who is asked to decide is shown "when it was last tried" —
@@ -2481,6 +2516,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="where this node reaches the Codex's encoder, into the collection's file")
     p.add_argument("--name", default=None, help="the local name; default: the plugin's")
     p.set_defaults(fn=cmd_share_fetch)
+    p = shverbs.add_parser("attest", help="hold check, then the attestations as events — once each (04 §4.2)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--checks", help="comma-separated; default: the collection's plan")
+    p.add_argument("--seed", help="32 bytes as hex; default: fresh")
+    p.add_argument("--sample", help="raise the plan's shard fraction for this run")
+    p.add_argument("--snapshot", help="which snapshot (default: the latest)")
+    p.add_argument("--origin", dest="origin_dir", metavar="DIR",
+                   help="an origin base to re-fetch and re-parse from (records-vs-origin)")
+    p.add_argument("--origin-mib", type=int, metavar="N")
+    p.set_defaults(fn=cmd_share_attest)
     p = shverbs.add_parser("peers", help="who this peer knows; a peer given by hand")
     pverbs = p.add_subparsers(dest="peers_verb", required=True)
     q = pverbs.add_parser("add", help="a peer given by hand: into platform.toml [peers] (07 §7.8)")

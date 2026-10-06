@@ -237,8 +237,15 @@ def beat(collections, *, now: float | None = None, client=None,
     global _last_digest_at
     from app import collections as collections_mod, identity
     from app.bundles import keys as node_keys
+    from app.share import attest as attest_mod
     now = peers.now() if now is None else now
-    out: dict[str, Any] = {"forwarded": forward_events(client=client, now=now, stop=stop, log=log),
+    root = collections_mod.louise_root() / "collections"
+    # what arrived is acted on before it is forwarded: an attestation for a
+    # collection held here is kept beside its catalogue (03 §3.6; 09 §9.8)
+    with closing(peers.connect()) as con:
+        acted = attest_mod.store_received(root, con, log=log)
+    out: dict[str, Any] = {"acted": acted,
+                           "forwarded": forward_events(client=client, now=now, stop=stop, log=log),
                            "digest": None}
     if not force and now - _last_digest_at < peers.INTERVAL_S:
         return out
@@ -250,7 +257,6 @@ def beat(collections, *, now: float | None = None, client=None,
         if log:
             log(f"no digest: this node has no key to sign one ({type(e).__name__})")
         return out
-    root = collections_mod.louise_root() / "collections"
     with closing(peers.connect()) as con:
         recipients = peers.recipients(con, now=now)
     if not recipients:
