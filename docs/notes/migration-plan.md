@@ -247,7 +247,7 @@ in `tests/hold` in 3.8 s; **1445 passed, 1 failed** over the whole suite
 in 211 s — the one failure is §1's pre-existing `st_mtime_ns` proxy,
 unchanged. Baseline before step 0 was 1362 passed, 1 failed.
 
-### Step 2 — `hold records build` and `hold snapshot create`
+### Step 2 — `hold records build` and `hold snapshot create` — **DONE 2026-09-08**
 **DONE 2026-09-08**, in four parts: 2a the snapshot at 09 §9.4, 2b the
 roots and the refusals, 2c wiring them into `app/pack/build.py`, 2d the
 build driver, `hold snapshot create` and the CLI verbs.
@@ -323,7 +323,7 @@ weeks and `verify_chain` accepts consecutive ones; a plugin with
 
 **Operator**: nothing.
 
-### Step 3 — `hold embedder check|benchmark|calibrate`
+### Step 3 — `hold embedder check|benchmark|calibrate` — **check and benchmark DONE (13e, 15); `calibrate` still a stub: it wants two builds of one model to compare**
 *03 §3.3, 02 §2.4. Wraps `backend check/rebaseline`,
 `tools/profile_embed.py`, `app/bundles/keys.py`.*
 
@@ -383,7 +383,7 @@ entry per space.
 
 **Operator**: nothing.
 
-### Step 4 — `hold vectors build|import|export|check`
+### Step 4 — `hold vectors build|import|export|check` — **ALL DONE 2026-09-10**
 *02 §2.4, 03 §3.5, 09 §9.7. **This step does NOT wrap `app/bundles` and
 `app/verify`.** See [`step4-vectors-study.md`](step4-vectors-study.md) —
 eight agents against the documents and the code.*
@@ -574,7 +574,7 @@ choice a floor with a reason**: under 32 chunks T0's envelope is not
 applied at all, so a bundle sized in the tens buys a weaker admission
 than one sized in the hundreds, whatever else is said for it.
 
-### Step 5 — `hold check`, `validation.json`, attestations
+### Step 5 — `hold check`, `validation.json`, attestations — **DONE (app/hold/check.py, tests/hold/test_check.py: 53); attestations not yet shared (step 9)**
 *03 §3.1–3.6, 09 §9.8. Wraps `app/verify`, `pack verify`.*
 
 - `app/hold/check.py`: reads the collection's plan, runs the named
