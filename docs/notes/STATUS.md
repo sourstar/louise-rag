@@ -161,6 +161,27 @@ first message LocalAGI created `wire-test` on Louise (201) and searched
 it (200); the agent was deleted, the collection reset, its held file
 removed. The operator's 16f stop can now run from LocalAGI's UI.
 
+**2026-10-06, ~11:05Z: 16f's STOP RUN** (operator: "do it"), by
+[`deploy/16f/localagi-stop.sh`](../../deploy/16f/localagi-stop.sh) through
+LocalAGI alone (:30050), which proxies its collection routes to Louise:
+- memory STORED: the agent `louise-stop` (kb, long-term memory, daily
+  compaction with summary; `qwen3.8-2b-q4` on the `localai` app) took one
+  fact and LocalAGI wrote it to Louise within seconds (one entry);
+- memory FOUND: the next turn's knowledge-base lookup against Louise
+  returned it ("Found similar strings in KB") and the reply used it;
+- a FILE through LocalAGI's page route landed as an entry and was searchable;
+- the web-sources disclaimer accepted for the node
+  (`hold collection ack --web-sources`, sha256:7b7c3a22… at 11:05:17Z), one
+  URL source (example.com, daily) registered through LocalAGI, fetched by
+  Louise's worker within the second, its entry under LocalRecall's key;
+- COMPACTION ran at the agent's start and found "no groups to compact":
+  it closes past days, and today is open — it will compact tomorrow;
+  the list/read/store/delete it uses are 16d's contract, proven twice.
+Louise: `louise-stop` in use, `not-planned`, three documents embedded
+through granite. The agent stays for the operator. **Step 16 is done**
+but for `hold collection forget` (07 §7.3), which the smoke test found
+missing.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
