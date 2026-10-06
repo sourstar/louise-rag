@@ -89,6 +89,15 @@ Whole suite in Docker on the merged tree, after both fixes: 3514 passed
 (tests/deposit three times over, 100 each — the race showed in 1–3 of
 99 before). The first run, before them: 3512 passed, 1 failed.
 
+**2026-10-06, the deposit encoder decided**: granite-embedding-107m-multilingual
+(the spec's default, LocalAGI's own; operator), over bge-m3 and
+qwen3-embedding-4b. In the repository: its LocalAI YAML, pinned like the
+eight; its weights mount; the `[deposit]` example in `platform.toml.example`.
+On the node: nothing yet — the merge of 2026-10-05 is not deployed either,
+because the node lost its internet egress during the image build (DNS and
+HTTPS by IP both fail; the gateway answers at 0.03 ms). Both wait for the
+operator: the deploy runbook, then the deposit runbook (step 16f).
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

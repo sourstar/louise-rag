@@ -92,3 +92,15 @@ segments_per_file = 1
 # dim = 768
 # concurrency = 2
 # device = "cpu"
+
+# [deposit] — what a deposit collection is created with when the creator names
+# nothing (02 §2.9, 07 §7.8): LocalAGI's routes create collections and carry no
+# model. `encoder` is the endpoint; the first deposit collection on it is given
+# its space block once (`space`, a file beside this one, or `space_from`, a Codex
+# to copy it from); every later one copies that collection's space.
+# The reference node (operator, 2026-10-06): granite-embedding-107m-multilingual
+# on RAGE, LocalAGI's own default, and the space file the deposit runbook wrote
+# from the run RAGE stated.
+# [deposit]
+# encoder = "http://192.168.178.10:30437/upstream/granite-embedding-107m-multilingual"
+# space = "deposit-space.toml"

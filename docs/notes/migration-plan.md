@@ -1680,6 +1680,12 @@ the transfer manager and the worker's stage selection.*
 - **16f — the operator's stop,** like 6: one LocalAGI agent with
   `local_rag_url` on the node — memory stored, found, compacted; a file
   uploaded from its UI; one URL source.
+  - **The encoder (operator, 2026-10-06): granite-embedding-107m-multilingual,**
+    the spec's default, chosen over bge-m3 and qwen3-embedding-4b; its LocalAI
+    YAML is in `deploy/rage/localai-models/`, its weights mount in
+    `deploy/truenas-rage-localai.yaml`, and the node steps — weights placed,
+    RAGE updated, the space file written from the run RAGE states, the token
+    file, `platform.toml`, the first collection — are the deposit runbook.
 
 ## 4. Dependencies between steps
 

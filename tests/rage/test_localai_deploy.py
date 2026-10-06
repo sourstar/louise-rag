@@ -173,10 +173,13 @@ def test_the_example_rage_toml_is_the_cards_the_front_accepts():
 
 def test_the_yamls_are_the_models_the_node_served_before_the_cut_over():
     """Every model llama-swap served at 15f has its YAML (rage.example.toml
-    listed them until 15g); DAR-legal-it's is kept, suspended."""
+    listed them until 15g); DAR-legal-it's is kept, suspended. Added since:
+    granite-embedding-107m-multilingual, the deposit collections' encoder
+    (02 §2.9; the operator's word, 2026-10-06, step 16f)."""
     assert {p.stem for p in ALL} == {"bge-m3", "bge-reranker", "chat", "madlad",
                                      "medcpt-article", "medcpt-query", "medcpt-rerank",
-                                     "qwen3-embedding-4b", "dar-legal-it"}
+                                     "qwen3-embedding-4b", "dar-legal-it",
+                                     "granite-embedding-107m-multilingual"}
     assert {p.stem for p in SUSPENDED} == {"dar-legal-it"}, "suspended: the operator's word"
 
 

@@ -81,6 +81,9 @@ services:
       - /mnt/ssd5/apps/madlad-models:/state/localai-models/weights/madlad:ro
       - /mnt/ssd5/apps/llama-embed:/state/localai-models/weights/llama-embed:ro
       - /mnt/ssd5/apps/louise-rage/models/chat:/state/localai-models/weights/chat:ro
+      # granite-embedding-107m-multilingual, the deposit collections' encoder
+      # (operator, 2026-10-06; step 16f): the f16 GGUF placed by the operator
+      - /mnt/ssd5/apps/granite-models:/state/localai-models/weights/granite:ro
       # DAR-legal-it is SUSPENDED (operator, 2026-10-04): its YAML is in
       # deploy/rage/localai-models/suspended/ and no collection uses it. To
       # serve it: copy that YAML in and bind its snapshot directory here, at
