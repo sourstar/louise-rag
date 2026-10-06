@@ -237,6 +237,19 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~15:00Z: 9b, the seeder, done.** `app/share/seeder.py` in
+the worker's seeding beat: for every public collection in use whose file
+says `share = true`, one torrent per member file of the current snapshot
+— hard links under `state/share/<snapshot>/<member>/`, built by
+libtorrent, refused when the infohash is not the snapshot's — published
+to the existing seeder (which gained a per-torrent `drop`), the collection
+and lineage keys announced through the DHT every fifteen minutes while
+the mode seeds. `share <collection> [--stop]`, in the spec's bare form,
+writes the desired state. PROVEN on localhost: a leecher that knew only
+the infohash it computed from the snapshot fetched the member from our
+seeder, metadata and piece layers over the wire. tests/share: 30. Owed:
+`--slices`/`--kinds` (9d); the reachable announce port (9c).
+
 **2026-10-06, ~14:00Z: step 9 started — 9a done.** `app/share/members.py`:
 bencoding, the exact info dictionary of 09 §9.16 and its infohash, the
 four DHT keys, the members a snapshot implies. The test that matters:

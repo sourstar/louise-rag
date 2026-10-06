@@ -637,6 +637,45 @@ def cmd_node_resume(a) -> int:
     return 0
 
 
+#: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
+_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help")
+
+
+def cmd_share(a) -> int:
+    """`share <collection> [--stop]` (07 §7.3; 04 §4.3): the desired state —
+    `share = true` (or false) in the collection's file — which the worker
+    serves at its next beat (app/share/seeder.py). A `hold` command never
+    opens a port (07 §7.4), and neither does this one. `--slices` and
+    `--kinds` narrow what is served: not yet (step 9d)."""
+    import re
+    from app.hold import deposit
+    name, codex = col.resolve(a.root, a.collection)
+    if a.slices or a.kinds:
+        raise CodexError("share --slices / --kinds: not yet — the worker serves every "
+                         "member of the current snapshot this copy holds (step 9d "
+                         "narrows it)")
+    if codex.privacy != "public":
+        raise CodexError(f"{name!r} is {codex.privacy}: only a public collection is "
+                         f"shared (04 §4.4)")
+    path = deposit.held_file(a.root, name)
+    if not path.is_file():
+        raise CodexError(f"{name!r} is not held: no {path}")
+    text = path.read_text(encoding="utf-8")
+    want = "share = false" if a.stop else "share = true"
+    if re.search(r"^share\s*=", text, flags=re.M):
+        text = re.sub(r"^share\s*=.*$", want, text, count=1, flags=re.M)
+    else:
+        head, sep, tail = text.partition("\n[")
+        text = head.rstrip("\n") + "\n" + want + "\n" + (sep + tail if sep else "")
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    _print({"collection": name, "share": not a.stop, "file": str(path),
+            "note": "the worker serves and announces it at its next beat; "
+                    "`hold collection show` names the state it publishes"})
+    return 0
+
+
 def cmd_show(a) -> int:
     out = col.show(a.root, a.codex_id)
     name, codex = col.resolve(a.root, a.codex_id)
@@ -1826,7 +1865,7 @@ def cmd_snapshot_list(a) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
-    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|ask|node")
+    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node")
     node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
     nverbs = node.add_subparsers(dest="verb", required=True)
     p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
@@ -2198,6 +2237,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
 
+    share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
+    shverbs = share.add_subparsers(dest="verb", required=True)
+    p = shverbs.add_parser("collection", help="serve what you hold — and announce it; --stop to stop")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--slices", default=None)
+    p.add_argument("--kinds", default=None)
+    p.add_argument("--stop", action="store_true")
+    p.set_defaults(fn=cmd_share)
+
     add_deprecated(surfaces, {
         "records_build": args_records_build,
         "snapshot_create": args_snapshot_create,
@@ -2274,6 +2322,10 @@ def main(argv=None) -> int:
 
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) >= 2 and argv[0] == "share" and argv[1] not in _SHARE_VERBS:
+        argv.insert(1, "collection")              # `share <collection>` (07 §7.3)
+
     a = build_parser().parse_args(argv)
     if getattr(a, "root", None) is None and hasattr(a, "root"):
         a.root = _default_root()

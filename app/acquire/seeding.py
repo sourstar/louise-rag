@@ -144,6 +144,26 @@ class Seeder:
             dropped.append(key)
         return dropped
 
+    def drop(self, info_hashes) -> int:
+        """Stop serving these torrents, whatever their collection — `share
+        <collection> --stop` and a snapshot superseded (app/share/seeder.py).
+        Removing, for the reason `retain` gives. How many were dropped."""
+        from .transport_torrent import get_session
+        n = 0
+        with self._lock:
+            for key in list(info_hashes):
+                handle = self._handles.pop(key, None)
+                if handle is None:
+                    continue
+                self._meta.pop(key, None)
+                self._uploaded.pop(key, None)
+                try:
+                    get_session().remove_torrent(handle)
+                except Exception:   # noqa: BLE001 — a dead handle is dropped all the same
+                    pass
+                n += 1
+        return n
+
     def set_paused(self, paused: bool) -> None:
         with self._lock:
             if paused == self._paused:

@@ -3507,6 +3507,18 @@ def _stats_publisher() -> None:
             beat_state = _control_state_for_beat(node_con)
             if beat_state is not None:
                 _note_pause_from_state(beat_state)
+            try:
+                # 04 §4.3: the members of every shared collection's current
+                # snapshot, published to the seeder below and announced (9b)
+                from app.acquire import transport_torrent as _tt
+                from app.share import seeder as share_seeder
+                share_seeder.sync(collections, seed_cons, con,
+                                  node_state.worker_state(node_con),
+                                  session=_tt.get_session() if _tt._session is not None else None,
+                                  port=int(os.getenv("SHARE_ANNOUNCE_PORT", config.PORT)),
+                                  log=lambda m: db.log_event(con, "info", "share", m[:500]))
+            except Exception:   # noqa: BLE001 — telemetry must never kill the worker
+                pass
             seeding.tick(collections, seed_cons, con,
                          node_state.worker_state(node_con))
             db.publish_worker_rates(con, get_manager().rates())

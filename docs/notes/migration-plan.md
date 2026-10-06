@@ -938,13 +938,23 @@ node is one peer until 9d's two-peer test):
   collection, lineage, weights and image keys of 04 §4.2; the members a
   snapshot implies (records, relations, figures, validation, terms,
   calibration, seals) and, from the drag on disk, the text-index members.
-- **9b — the seeder.** In the WORKER (a `hold` command never opens a port,
-  07 §7.4): every in-use public collection whose file does not say
-  `share = false` has its current snapshot's members served from the
-  drag and announced under both keys; `share <collection> [--slices …]
-  [--kinds …] [--stop]` writes the desired state the worker serves. Tests:
-  two sessions on localhost, the leecher adding by the infohash it
-  computed itself.
+- **9b — the seeder. DONE 2026-10-06** (`app/share/seeder.py`;
+  `tests/share/test_seeder.py`, 8). In the WORKER's seeding beat (a `hold`
+  command never opens a port, 07 §7.4), wrapping app/acquire/seeding.py:
+  every public collection in use whose file says `share = true` has its
+  current snapshot's members served — one torrent per member file, laid
+  out as hard links under `state/share/<snapshot>/<member>/`, built by
+  libtorrent and REFUSED when its infohash is not the snapshot's (a
+  changed, grown or cut file is not served) — and its collection and
+  lineage keys announced through the DHT every fifteen minutes while the
+  mode seeds. `share <collection> [--stop]` writes `share = true` or
+  `false` into the collection's file; the worker does the rest at its next
+  beat. PROVEN on localhost: a leecher knowing only the infohash it
+  computed from the snapshot fetched the member's bytes from our seeder.
+  Still owed: `--slices`/`--kinds` narrowing (9d), and the announced port
+  must be the node's reachable one (`SHARE_ANNOUNCE_PORT`, set at 9c when
+  the peer messages give the announcement an audience). A copy in
+  quarantine, or never-share, is not served (03 §3.6).
 - **9c — the peer messages** (09 §9.9): digest, event, the three pulls,
   signed envelopes, neighbours, forwarding once, the hourly digest.
 - **9d — `share fetch`**: find (DHT key, peers list), pull codex and
