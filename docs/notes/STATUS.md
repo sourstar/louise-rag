@@ -230,6 +230,12 @@ once. The writing commands take it or exit 3 naming the holder; `forget
 `show`, `list`, `check`, `ask` take nothing. `dev migrate schema` and
 `dev adopt` of §7.7 do not exist as commands. Tests:
 `tests/hold/test_write_lock.py` (11).
+**Deployed as 865ccbe (~13:07Z; suite 3536)** and seen live: the worker holds
+`state/lock` for all five collections ("the node (worker)", its pid, since);
+`hold records build deposit-granite` from the worker container exits 3
+naming it; `node pause deposit-granite` had the lock released within a
+round and the command ran; `node resume` had it taken again within a
+round. No worker error. Backup images: `pre-865ccbe` alone now.
 
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
