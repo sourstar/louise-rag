@@ -248,6 +248,30 @@ class ManifestConnection(sqlite3.Connection):
     collection_name: str = ""
 
 
+def wal(con, *, tries: int = 50, pause_s: float = 0.1) -> str:
+    """`PRAGMA journal_mode=WAL`, waiting out a lock (invariant 6).
+
+    Converting a FRESH database to WAL needs the file to itself for an
+    instant, and the busy handler does not cover that step: two connections
+    opening one new file at once — the web and the deposit thread on
+    node.sqlite, two threads on a deposit manifest — made the loser raise
+    "database is locked" at once (2026-10-05 on a deposit manifest,
+    2026-10-07 on node.sqlite in the full suite). Retried for about five
+    seconds; any other error, or a lock that never lifts, is raised."""
+    last: sqlite3.OperationalError | None = None
+    for i in range(max(1, tries)):
+        try:
+            return con.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) and "busy" not in str(e):
+                raise
+            last = e
+            if i + 1 < tries:
+                time.sleep(pause_s)
+    assert last is not None
+    raise last
+
+
 def connect(collection=None) -> sqlite3.Connection:
     if collection is None:
         collection = collections_mod.default_collection()
@@ -258,7 +282,7 @@ def connect(collection=None) -> sqlite3.Connection:
                           factory=ManifestConnection)
     con.collection_name = collection.name
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    wal(con)
     con.execute("PRAGMA synchronous=NORMAL")
     # 60s, not 15: per-collection pipeline threads mean several writers now
     # contend for one manifest, and a discovery pass streaming millions of

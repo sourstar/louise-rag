@@ -117,7 +117,8 @@ def connect(root) -> sqlite3.Connection:
     d.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(d / "node.sqlite"))
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    from app import db as _db
+    _db.wal(con)                       # the same file node_state opens: the loser waits
     con.executescript(_SCHEMA)
     con.commit()
     return con

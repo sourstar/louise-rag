@@ -114,7 +114,7 @@ def connect() -> sqlite3.Connection:
     p.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(p, timeout=60, isolation_level=None)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    db.wal(con)                        # two openers of a fresh file: the loser waits
     con.execute("PRAGMA busy_timeout=60000")
     con.execute(_SCHEMA)
     return con

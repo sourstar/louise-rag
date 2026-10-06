@@ -237,6 +237,14 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-07, ~01:00Z: a race fixed — the WAL conversion.** The full suite
+failed once in 3615 (`test_deposit_localagi`, "database is locked" at
+`PRAGMA journal_mode=WAL` in `node_state.connect`): two connections opening
+a FRESH node.sqlite at once, the loser with no busy handler for that step —
+the same race the deposit manifest had on 2026-10-05. `db.wal(con)` now
+waits out a lock for about five seconds, and the manifests, node.sqlite
+and admission's store convert through it. tests/test_db_wal.py: 4.
+
 **2026-10-07, ~00:30Z: 9e, third brick — `share contribute`.** The
 preconditions of 04 §4.5, rendezvous over the open shards with the
 cascade's windows, build + export + own ladder + `bundle` event per shard
