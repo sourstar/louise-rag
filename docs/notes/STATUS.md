@@ -237,6 +237,24 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-07, ~05:00Z: the trust level, and `snapshot` events.**
+`app/share/levels.py` computes 03 §3.6's level from the attestations held
+and the bundles accepted — independent keys and seeds, the thresholds, the
+flag rules under the images that count; `hold collection show` prints
+`trust_level` and `trust_detail`. The worker pulls a newer snapshot a peer
+announces (`accept.newer_snapshots`). tests/share: 102. Not deployed
+(node: 6ae33fe).
+
+**2026-10-06, 18:12Z (UTC): 9e DEPLOYED as 6ae33fe.** Web and worker on
+image `cb0667a9…`; `src/.deployed-commit` = 6ae33fe. The runbook ran whole
+this time (the tarball was the restricted path list; the staged image
+passed tests/deposit, tests/hold and tests/share — 96). First minutes:
+every collection's threads up, no share, error or warning line, the only
+listening socket Docker's DNS (nothing shares, nothing is announced, no
+peer is known). Backup image `pre-6ae33fe` alone. Also on this deploy, in
+the same tree but committed after it: `snapshot` events acted on by the
+worker (a newer snapshot announced is pulled from its announcer).
+
 **2026-10-07, ~03:00Z: 9e, fourth brick — the import side, and 04 §4.1's
 survivor on localhost.** `app/share/accept.py`: a `bundle` event's four
 files fetched by their torrents, judged by this peer's ladder, landed,

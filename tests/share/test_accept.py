@@ -16,7 +16,9 @@ from app.acquire import seeding, transport_torrent as tt  # noqa: E402
 from app.hold import collection as col, drag as drag_mod, records as rec  # noqa: E402
 from app.share import accept, attest, contribute, coverage as cov, holdings, members as mem, peers, \
     rendezvous, seeder, transport  # noqa: E402
+from tests.deposit.test_deposit_identity import node  # noqa: F401, E402
 from tests.share.test_contribute import attested, ready  # noqa: F401, E402
+from tests.share.test_fetch import fetcher  # noqa: F401, E402
 from tests.share.test_messages import PEER, PEER_KEY  # noqa: E402
 from tests.share.test_seeder import quiet_sessions  # noqa: E402
 from tests.share.test_share_api import OURS, OUR_KEY  # noqa: E402
@@ -126,6 +128,51 @@ def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_pat
     again = accept.beat([fc], {"gutenberg": fcon}, node_con, session_factory=lambda: leech, root=fetcher)
     assert again["held"] == len(ids) and again["accepted"] == 0
     fcon.close()
+
+
+def test_a_newer_snapshot_announced_is_pulled_from_its_announcer(node, fetcher, monkeypatch):  # noqa: F811
+    from fastapi.testclient import TestClient
+    from app import api
+    from app.hold import envelope as env, snapshot as sn
+    from app.hold.codex import canonical_json
+    from app.share import fetch, messages
+    from tests.hold.conftest import KEY, NOW
+    from tests.share.test_fetch import SHARER, second_snapshot
+    from tests.share.test_messages import a_drag
+    codex, name, d, first = a_drag(node)
+    client = TestClient(api.app)
+    got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
+    assert got["snapshots"]["promoted"] == ["2026-08"]
+    second = second_snapshot(d, first, signed=True)
+    now = time.time()
+    node_con = peers.connect()
+    announce = messages.event_body(key=PEER_KEY, type_="snapshot", payload={
+        "collection_id": codex.collection_id, "snapshot_id": "2026-09", "snapshot_hash": second.hash,
+        "sig": {"key": env.key_text(KEY.verify_key), "time": NOW, "sig": "…"}}, now=now)
+    peers.mark_seen(node_con, messages.event_id(announce), now=now, time_text=announce["time"], type_="snapshot",
+                    hops=7, envelope=env.sign(env.EVENT, announce, PEER))
+    fc = C(got["name"], codex)
+    kw = dict(session_factory=lambda: None, root=fetcher, client=client, key=OURS, own_key=OUR_KEY)
+    out = accept.beat([fc], {fc.name: None}, node_con, **kw)
+    assert out["snapshots"] == {"pulled": 0, "known": 0, "ignored": 0, "waiting": 1, "failed": 0}, \
+        "the announcer's address is unknown until its digest arrives"
+    peers.record_digest(node_con, messages.digest_body(key=PEER_KEY, address=SHARER, neighbours=[], benchmarks=[],
+                                                       collections=[], now=now), now=now)
+    said: list[str] = []
+    out = accept.beat([fc], {fc.name: None}, node_con, log=said.append, **kw)
+    assert out["snapshots"]["pulled"] == 1 and accept.pending(node_con, "snapshot") == []
+    fdrag = col.drag_of(fetcher, fc.name)
+    assert (fdrag / "snapshots/2026-09.json").read_bytes() == second.canonical()
+    assert any("snapshot 2026-09 pulled" in s for s in said)
+    # announced again, or an older one: known, nothing pulled
+    for sid, h in (("2026-09", second.hash), ("2026-08", first.hash)):
+        body = messages.event_body(key=PEER_KEY, type_="snapshot", payload={
+            "collection_id": codex.collection_id, "snapshot_id": sid, "snapshot_hash": h, "sig": {}}, now=now + 1)
+        peers.mark_seen(node_con, messages.event_id(body), now=now, time_text=body["time"], type_="snapshot",
+                        hops=7, envelope=env.sign(env.EVENT, body, PEER))
+    out = accept.beat([fc], {fc.name: None}, node_con, **kw)
+    assert out["snapshots"]["known"] == 2 and out["snapshots"]["pulled"] == 0
+    node_con.close()
 
 
 def test_an_event_about_a_collection_not_held_is_left_alone_and_a_gated_one_waits(ready, monkeypatch):

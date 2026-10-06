@@ -34,10 +34,71 @@ from app.share import attest, contribute, coverage as cov, holdings, members as 
     transport
 
 
-def pending(node_con) -> list[dict[str, Any]]:
-    """The `bundle` events received and not yet acted on."""
+def pending(node_con, type_: str = "bundle") -> list[dict[str, Any]]:
+    """The events of one type received and not yet acted on."""
     return [ev for ev in attest.unacted(node_con)
-            if ev["type"] == "bundle" and ((ev["envelope"] or {}).get("body") or {}).get("type") == "bundle"]
+            if ev["type"] == type_ and ((ev["envelope"] or {}).get("body") or {}).get("type") == type_]
+
+
+def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None, own_key=None,
+                    stop=None, now: float | None = None,
+                    log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """`snapshot` events (09 §9.9): a snapshot newer than the one held here,
+    announced by a peer whose address a digest gave, is pulled from that
+    peer with its chain and promoted when signed (app/share/fetch.py); the
+    members then follow at the next beat. An announcer with no known
+    address leaves the event waiting for its digest; a snapshot held
+    already, or older, is acted on by being noted."""
+    from app.share import fetch as fetch_mod, peers, seeder
+    now = time.time() if now is None else now
+    out = {"pulled": 0, "known": 0, "ignored": 0, "waiting": 0, "failed": 0}
+    by_id = {}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is not None:
+            by_id[codex.collection_id] = c
+    for ev in pending(node_con, "snapshot"):
+        if stop is not None and stop.is_set():
+            break
+        body = ev["envelope"]["body"]
+        payload = body.get("payload") or {}
+        cid, sid = str(payload.get("collection_id") or ""), str(payload.get("snapshot_id") or "")
+        c = by_id.get(cid)
+        if c is None or not sid:
+            out["ignored"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            continue
+        current = seeder.current_snapshot(col.drag_of(Path(root), c.name))
+        if current is not None and (sid <= current.snapshot_id or sid in fetch_mod.held_snapshots(Path(root), cid)):
+            out["known"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            continue
+        digest = peers.digest_of(node_con, str(body.get("key") or "")) or {}
+        address = digest.get("address")
+        if not address or peers.is_banned(node_con, str(body.get("key")), now=now):
+            out["waiting"] += 1                     # no digest yet: its address is unknown
+            continue
+        try:
+            got = fetch_mod.fetch(Path(root), cid, snapshot_id=sid, from_address=address, client=client,
+                                  stop=stop, now=now, log=log, key=key, own_key=own_key)
+        except fetch_mod.Unreachable as e:
+            out["failed"] += 1
+            if log:
+                log(f"[{c.name}] share: snapshot {sid} announced; {e}; retried next beat"[:400])
+            continue
+        except CodexError as e:
+            out["failed"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            if log:
+                log(f"[{c.name}] share: snapshot {sid} announced by {str(body.get('key'))[:23]}…: "
+                    f"{e}"[:400])
+            continue
+        out["pulled"] += 1
+        attest.mark_acted(node_con, ev["id"])
+        if log:
+            log(f"[{c.name}] share: snapshot {sid} pulled from {address}: "
+                f"{got['snapshots']}; the members follow")
+    return out
 
 
 def member_of(payload: dict[str, Any], space: str) -> mem.Member | None:
@@ -138,12 +199,20 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
 
 
 def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
-         now: float | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """Every pending `bundle` event, acted on once: taken in for a
-    collection held here and in use, left where it is not."""
+         now: float | None = None, log: Callable[[str], None] | None = None, client=None,
+         key=None, own_key=None) -> dict[str, Any]:
+    """Every pending `snapshot` event, then every pending `bundle` event,
+    acted on once: taken in for a collection held here and in use, left
+    where it is not."""
     from app import copy_state, licensing
     now = time.time() if now is None else now
     out: dict[str, Any] = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0}
+    try:
+        out["snapshots"] = newer_snapshots(root, collections, node_con, client=client, key=key,
+                                           own_key=own_key, stop=stop, now=now, log=log)
+    except Exception as e:   # noqa: BLE001 — the bundles still get their turn
+        if log:
+            log(f"[warn:share] snapshot events: {type(e).__name__}: {e}"[:400])
     by_id = {}
     for c in collections:
         codex = getattr(c, "codex", None)

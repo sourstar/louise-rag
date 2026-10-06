@@ -370,7 +370,12 @@ reader needs at the command line:
   snapshot's, then one rename into the drag and the holdings mark
   (04 §4.3). `--here` fetches the members in this process instead, for
   a node whose worker is not running; it takes the collection's lock
-  (§7.7). *(Flags added 2026-10-06 with migration step 9d.)*
+  (§7.7). The worker fetches without being asked, too: a `snapshot`
+  event (09 §9.9) announcing a snapshot newer than the one held here is
+  answered by pulling it, with its chain, from the announcer — a peer
+  whose digest gave its address — and the members follow at the next
+  beat. *(Flags added 2026-10-06 with migration step 9d; the worker's
+  pull 2026-10-07.)*
 - **`share contribute`.** Chooses shards by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the shards this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold

@@ -982,7 +982,30 @@ def _show_drag(root, name: str) -> dict:
         records = [m for m in mem.members_of(snap) if holdings.kind_of(m.name) == "records"]
         snaps.append({"snapshot_id": snap.snapshot_id, "hash": snap.hash, "signatures": n,
                       "held": bool(records) and all(holdings.held(drag_dir, m) for m in records)})
-    return {"snapshots": snaps, "holdings": holdings.summary(drag_dir, seeder.current_snapshot(drag_dir))}
+    current = seeder.current_snapshot(drag_dir)
+    return {"snapshots": snaps, "holdings": holdings.summary(drag_dir, current),
+            **_trust_level(root, name, current)}
+
+
+def _trust_level(root, name: str, current) -> dict:
+    """09 §9.3's `trust_level` (03 §3.6), from the attestations held and the
+    bundles accepted here; `trust_detail` says what holds it where it is."""
+    from app import copy_state, identity
+    from app.hold import equivalence
+    from app.share import coverage as cov, levels
+    codex = col.read(Path(root), name)
+    bodies = copy_state.attestations(Path(root), name, codex)
+    try:
+        own = identity.own()
+    except Exception:   # noqa: BLE001 — no key: the Codex's image alone counts
+        own = None
+    rows = []
+    if (Path(root) / name / "state" / "manifest.sqlite").is_file():
+        with _closing(cov.manifest(root, name)) as mcon:
+            rows = cov.rows(mcon)
+    out = levels.level(codex, current, bodies, rows,
+                       reference_images=equivalence.reference_images(bodies, own, codex))
+    return {"trust_level": out["level"], "trust_detail": out}
 
 
 def cmd_collection_migrate(a) -> int:

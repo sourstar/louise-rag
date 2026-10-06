@@ -1114,9 +1114,28 @@ node is one peer until 9d's two-peer test):
   `validation.json` got the metadata and no piece, ever. Fixed by giving
   a flat file's torrent its own save path (its member directory), and
   on the fetching side by finding the file under either spelling. 9b's
-  localhost proof had only record shards and could not see it. **Still
-  owed in 9e**:
-  acting on `snapshot`, `codex` and `flag` events; duplicates as checks
+  localhost proof had only record shards and could not see it. **Also
+  2026-10-07: `snapshot` events acted on** (`accept.newer_snapshots`, in
+  the same beat before the bundles): a snapshot newer than the one held
+  here, announced by a peer whose digest gave its address, is pulled from
+  that peer with its chain (`fetch.fetch`), promoted when signed; the
+  members follow at the next beat. An announcer with no digest yet
+  leaves the event waiting; a snapshot held already, or older, is noted.
+  **Also 2026-10-07: the trust level** (`app/share/levels.py`;
+  `tests/share/test_levels.py`, 5): 03 §3.6 computed locally — the
+  attestations counting for the snapshot named within two cadences,
+  from keys the trust list does not shut out (the list itself is step
+  10's `hold key trust`; empty today, so everyone counts); independence
+  by distinct keys and, for a sampled check, distinct seeds; `checked`
+  and `verified` by the thresholds, with the producer rule read off the
+  coverage map; `flagged` by one deterministic failure under an image
+  whose verdicts count (`equivalence.reference_images`) or two
+  statistical failures from independent verifiers on the same chunks.
+  `hold collection show` prints `trust_level` and, beside it,
+  `trust_detail` — keys, passes per check, sample coverage, and what
+  holds the level where it is. Not yet counted: an older snapshot's
+  attestations for shards the newer one lists unchanged (03 §3.6).
+  **Still owed in 9e**: `codex` and `flag` events; duplicates as checks
   (the second compliant bundle compared and attested, 04 §4.5); T4 on
   use.
 
