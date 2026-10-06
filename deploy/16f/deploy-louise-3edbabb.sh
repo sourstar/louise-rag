@@ -18,10 +18,13 @@
 #
 # It stops at the first failure. Phases 1–3 touch nothing live: they stage
 # beside src/, build louise-rag:staged, and prove it. Phase 4 is the swap.
-# Anything wrong after phase 4: see BACKOUT at the end.
+# Anything wrong after phase 4: see BACKOUT at the end. A stop BETWEEN the
+# promote and 4b (seen 2026-10-06: a whole-tree tarball left extras in
+# src.new and the old `rmdir` failed) leaves the new src/ with the old image
+# running — consistent; finish with phases 4b–6 alone, nothing else.
 set -euo pipefail
 
-COMMIT=6c06b4a                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=b1c8a29                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"
@@ -105,7 +108,10 @@ for f in $FILES; do
 done
 cp -a src/deploy src.old/deploy
 cp -a src.new/deploy/. src/deploy/     # adds and replaces; this merge deletes nothing under deploy/
-rm -rf src.new/deploy && rmdir src.new
+# whatever is left is the tarball's extras (a whole-tree `git archive` carries CLAUDE.md,
+# .gitignore, …): never promoted, gone with the staging dir. 2026-10-06: `rmdir` here
+# killed the run between promote and build — the node sat with new src/ and the old image.
+rm -rf src.new
 
 say "4b. build louise-rag:local from the promoted tree"
 docker build -t louise-rag:local "$ROOT/src"

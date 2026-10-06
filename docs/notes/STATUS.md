@@ -237,6 +237,22 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, 16:03Z (UTC): 9c + 9d DEPLOYED as b1c8a29.** Web and
+worker on image `5866b43a…`; `src/.deployed-commit` = b1c8a29. The runbook
+stopped once between the promote and the build — the tarball was a
+whole-tree `git archive`, its extras (CLAUDE.md, .gitignore, …) stayed in
+`src.new` and `rmdir` failed under `set -e` — and phases 4b–6 were run
+alone (scratchpad `finish-b1c8a29.sh`); the runbook now removes the staging
+dir whole. Seen live in the first six minutes: every collection's threads
+started, no share, error or warning line; the worker's only listening
+socket is Docker's DNS — the new `share-fetch` thread found nothing
+missing for the five collections (all `slices = "all"`, every member in
+its drag) and opened no session; nothing shares (`share = false`
+everywhere), so no digest goes out. Backup images: `pre-b1c8a29` alone.
+`[node] address` / `peer_port` are not set in the node's platform.toml:
+irrelevant until a peer exists — set them with the first `share peers
+add`.
+
 **2026-10-06, ~21:30Z: 9d done — the members move.** `app/share/holdings.py`
 and `transport.py`: what a collection's file asks for (`slices` may now be
 a list: part of a collection), what the drag holds, the mark after the
