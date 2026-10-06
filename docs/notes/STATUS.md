@@ -244,6 +244,27 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~13:00Z: step 11, third brick — T4 on the chunks a search
+cites.** Every search queues the imported chunks it returns
+(`verify_queue`); the worker re-embeds them in passes of 32 from the
+index-maintainer turn, asynchronously, only in a mode that embeds; a
+miss must reproduce on a second recompute to be a failure; a reproduced
+miss writes and publishes a `forgery` attestation (09 §9.8 amended: the
+proof names the encoder) and burns the key in `state/trust.json`, which
+the trust level now reads. tests: bundles/test_verify_on_use +7,
+hold/test_forgery 3. Not deployed (node: d596355). Unmeasured live: no
+imported chunk has been cited on the node yet (its bundles are its own).
+
+**2026-10-07, ~11:00Z: step 11, second brick — facet filters.** 05 §5.2
+as a prefilter on both legs: the maintainer's facet pass also writes
+postings (`index/facets/postings.sqlite`, per snapshot);
+`app/ask/filters.py` resolves a filter to the records it admits, refusing
+what it cannot answer (undeclared, range, not indexed yet, over 20 000
+records); `query_service.run_search(filters=)` → `retrieval` `book_ids`
+on catalog, FTS and dense. The response carries `filters` and
+`filtered` (records admitted per collection). tests/ask: 29. Not deployed
+(node: d596355).
+
 **2026-10-07, ~09:00Z: step 11 started — `ask`'s first brick.** `app/ask/`:
 `louise_search`'s shape over the existing retrieval (lists per space,
 §5.3's fields, legs' ranks, trust level), `louise_lookup`, `louise_traverse`

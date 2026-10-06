@@ -1106,7 +1106,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `result` | `"pass"` · `"fail"` · `"forgery"` · `"withdraw"` · `"supersedes"` | yes | |
 | `detail` | object | yes | per check, below; `{}` when the check has none |
 | `platform_image` | id | yes | the image the verifier ran; when it differs from the Codex's and `check` is `records-vs-origin` with `result: "pass"`, the attestation is the equivalence proof of 03 §3.4 |
-| `encoder_engine`, `encoder_weights` | id or null | yes | the engine (`engine_id`, §9.3) and weights used, for a statistical check; `null` otherwise |
+| `encoder_engine`, `encoder_weights` | id or null | yes | the engine (`engine_id`, §9.3) and weights used, for a statistical check and for a `forgery` proof (03 §3.5 has the proof carry the encoder: the recomputed hash means nothing without the encoder that made it; *amended 2026-10-07*); `null` otherwise |
 | `key` | key | yes | the verifier |
 | `time` | time | yes | |
 

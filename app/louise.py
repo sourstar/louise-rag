@@ -1036,7 +1036,7 @@ def _trust_level(root, name: str, current) -> dict:
     """09 §9.3's `trust_level` (03 §3.6), from the attestations held and the
     bundles accepted here; `trust_detail` says what holds it where it is."""
     from app import copy_state, identity
-    from app.hold import equivalence
+    from app.hold import equivalence, trust_file
     from app.share import coverage as cov, levels
     codex = col.read(Path(root), name)
     bodies = copy_state.attestations(Path(root), name, codex)
@@ -1049,6 +1049,7 @@ def _trust_level(root, name: str, current) -> dict:
         with _closing(cov.manifest(root, name)) as mcon:
             rows = cov.rows(mcon)
     out = levels.level(codex, current, bodies, rows, own_key=own,
+                       trust=trust_file.as_filter(Path(root).parent),
                        reference_images=equivalence.reference_images(bodies, own, codex))
     return {"trust_level": out["level"], "trust_detail": out}
 

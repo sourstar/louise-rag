@@ -58,10 +58,12 @@ def _split(raw: str | None, join: str | None) -> list[str]:
     return [v.strip() for v in raw.split(join) if v.strip()]
 
 
-def count(con, codex, field: str, *, where_in_scope: bool = True) -> dict[str, Any]:
+def count(con, codex, field: str, *, where_in_scope: bool = True, postings=None) -> dict[str, Any]:
     """One pass over the manifest's column: `{field, kind, documents,
     values: {value: count}}` for flat and tree facets (a tree counts every
-    prefix path), `{bounds: [min, max]}` for a range."""
+    prefix path), `{bounds: [min, max]}` for a range. `postings`, when
+    given, receives every (value, native_id) of the pass — the filter
+    index (app/ask/filters.py) built in the same pass as the counts."""
     f = facet_of(codex, field)
     column, join = COLUMNS.get(field, (None, None))
     if column is None:
@@ -72,9 +74,14 @@ def count(con, codex, field: str, *, where_in_scope: bool = True) -> dict[str, A
     counts: dict[str, int] = {}
     lo = hi = None
     n = 0
-    for (raw,) in con.execute(f"SELECT {column} FROM documents{scope}"):
+    for native_id, raw in con.execute(f"SELECT native_id, {column} FROM documents{scope}"):
         n += 1
         for value in _split(raw, join):
+            if postings is not None and kind != "range":
+                try:
+                    postings.append((value, int(native_id)))
+                except (TypeError, ValueError):
+                    pass
             if kind == "range":
                 lo = value if lo is None or value < lo else lo
                 hi = value if hi is None or value > hi else hi
@@ -123,12 +130,21 @@ def _cache_path(index_dir: Path, field: str) -> Path:
 def build(con, codex, index_dir: Path, *, snapshot_id: str | None, fields=None, now: float | None = None) -> list[str]:
     """Count every declared facet (or `fields`) and write the cache; the
     fields written. What a maintainer calls at each snapshot."""
+    from app.ask import filters as filters_mod
     wanted = [f["field"] for f in declared(codex)] if fields is None else list(fields)
     written = []
     for field in wanted:
         if field not in COLUMNS:
             continue
-        got = count(con, codex, field)
+        postings: list = []
+        got = count(con, codex, field, postings=postings)
+        if got["kind"] != "range":
+            pcon = filters_mod.connect(Path(index_dir))
+            try:
+                filters_mod.write_postings(pcon, field, postings, snapshot_id=snapshot_id,
+                                           documents=got["documents"])
+            finally:
+                pcon.close()
         got.update({"snapshot_id": snapshot_id, "built_at": time.time() if now is None else now})
         p = _cache_path(index_dir, field)
         p.parent.mkdir(parents=True, exist_ok=True)

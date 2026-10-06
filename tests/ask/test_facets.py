@@ -14,14 +14,14 @@ from tests.hold.conftest import pubmed
 
 def manifest(tmp_path):
     con = sqlite3.connect(tmp_path / "manifest.sqlite")
-    con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY, lang TEXT, authors TEXT, subjects TEXT, "
-                "in_scope INTEGER DEFAULT 1)")
-    rows = [("p:1", "en", "Smith, A; Doe, B", "Neoplasms/genetics|Humans"),
-            ("p:2", "en", "Doe, B", "Neoplasms/therapy|Humans"),
-            ("p:3", "de", None, "Neoplasms/genetics"),
-            ("p:4", "en", "Smith, A", None),
-            ("p:5", "fr", "Out, O", "Gone")]
-    con.executemany("INSERT INTO documents(uid, lang, authors, subjects) VALUES(?,?,?,?)", rows)
+    con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY, native_id TEXT NOT NULL, lang TEXT, authors TEXT, "
+                "subjects TEXT, in_scope INTEGER DEFAULT 1)")
+    rows = [("p:1", "1", "en", "Smith, A; Doe, B", "Neoplasms/genetics|Humans"),
+            ("p:2", "2", "en", "Doe, B", "Neoplasms/therapy|Humans"),
+            ("p:3", "3", "de", None, "Neoplasms/genetics"),
+            ("p:4", "4", "en", "Smith, A", None),
+            ("p:5", "5", "fr", "Out, O", "Gone")]
+    con.executemany("INSERT INTO documents(uid, native_id, lang, authors, subjects) VALUES(?,?,?,?,?)", rows)
     con.execute("UPDATE documents SET in_scope=0 WHERE uid='p:5'")
     con.commit()
     return con

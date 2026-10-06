@@ -1781,6 +1781,82 @@ def _maintain_ask_indexes(con, collection) -> bool:
     return did
 
 
+T4_BATCH = 32          # cited chunks re-embedded per maintainer turn: a few seconds of encoder
+
+
+def _verify_cited(con, collection) -> bool:
+    """03 §3.5 T4, 05 §5.3: the imported chunks searches cited, re-embedded
+    once with this peer's encoder and marked — one bounded pass per
+    maintainer turn, asynchronous to every search. The encoder's work, so
+    only in a mode that embeds (app/node_state.py). A reproduced miss is a
+    proof of forgery: written, published, and the key burned
+    (`_forgery_found`). Whether anything was checked."""
+    if not node_state.runs(node_state.worker_state(), node_state.EMBED):
+        return False
+    from .bundles import verify_on_use
+    try:
+        if not verify_on_use.queued(con, 1):
+            return False
+        out = verify_on_use.drain(con, collection, limit=T4_BATCH,
+                                  on_forgery=lambda f: _forgery_found(con, collection, f))
+    except Exception as e:   # noqa: BLE001 — one pass, not the maintainer
+        db.log_event(con, "warn", "verify", f"T4: {type(e).__name__}: {e}"[:300])
+        return False
+    if out.get("unavailable"):
+        return False                      # the encoder did not answer: deferral, not failure
+    if out["checked"]:
+        db.log_event(con, "info", "verify",
+                     f"T4: {out['checked']} cited chunks re-embedded — {out['verified']} verified, "
+                     f"{out['failed']} failed, {out.get('inconclusive', 0)} inconclusive; "
+                     f"{out['queued']} still queued")
+    return bool(out["checked"])
+
+
+def _forgery_found(con, collection, f) -> None:
+    """A T4 miss that reproduced (03 §3.5): the proof written at 09 §9.8's
+    path and published when this peer can sign and knows its image, and
+    the producer's key burned in the trust file either way."""
+    from contextlib import closing
+    from .hold import collection as col, equivalence, forgery, trust_file
+    from .share import attest, seeder
+    root = collections_mod.louise_root()
+    producer = f.producer or "unknown"
+    aid = None
+    why = ""
+    codex = getattr(collection, "codex", None)
+    if codex is None:
+        why = "a collection without a Codex attests nothing"
+    else:
+        try:
+            from . import identity
+            from .bundles import keys as node_keys
+            snap = seeder.current_snapshot(col.drag_of(root / "collections", collection.name))
+            image = equivalence.running_image()
+            key = node_keys.load_signing_key()
+            own = identity.own()
+            if snap is None:
+                why = "no current snapshot"
+            elif image is None:
+                why = "this process does not know its image (LOUISE_PLATFORM_IMAGE)"
+            else:
+                row = con.execute("SELECT content_hash FROM documents WHERE uid=?", (f.uid,)).fetchone()
+                now = time.time()
+                aid, _ = forgery.prove(root / "collections", collection.name, codex, snap, key,
+                                       platform_image=image, now=now, chunk_id=f.chunk_id,
+                                       producer=producer, bundle=f.bundle_id, text=f.text,
+                                       claimed=f.claimed, recomputed=f.recomputed,
+                                       content_hash=row["content_hash"] if row else None)
+                with closing(node_state.connect()) as node_con:
+                    attest.publish(root / "collections", collection.name, codex, [aid], key=key,
+                                   own_key=own, con=node_con, now=now)
+        except Exception as e:   # noqa: BLE001 — the burn below stands whether or not the proof travels
+            why = f"{type(e).__name__}: {e}"[:200]
+    trust_file.burn(producer, aid, root=root)
+    db.log_event(con, "error", "verify",
+                 f"T4: chunk {f.chunk_id} re-embedded twice at cosine {f.cosine:.4f}: forgery by {producer}; "
+                 f"key burned" + (f", proof {aid}" if aid else f", not attested ({why})"))
+
+
 def _index_maintainer() -> None:
     """One low-priority thread for every collection's vector index. Its
     own connections (SQLite is thread-affine); stands down while the node
@@ -1826,6 +1902,7 @@ def _index_maintainer() -> None:
                 did = _maintain_vector_index(cons[key], c)
                 did = _maintain_catalog(cons[key], c) or did
                 did = _maintain_ask_indexes(cons[key], c) or did
+                did = _verify_cited(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work

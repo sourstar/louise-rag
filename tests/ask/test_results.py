@@ -30,7 +30,7 @@ def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkey
     monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [red, legacy])
     monkeypatch.setattr(results, "_layer", lambda c, h: "abstract" if c.plugin == "pubmed" else "verbatim")
 
-    def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False):
+    def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False, filters=None):
         assert names == [name, "gutenberg"] and k == 3 and mode == "hybrid" and translate is False
         return {"hits": [
             {"chunk_id": "pubmed:37000021:0:1", "book_id": 37000021, "source_collection": name, "text": "SECRET",
@@ -65,9 +65,19 @@ def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkey
 
 def test_the_flags_this_brick_does_not_build_are_refused_not_ignored(node, monkeypatch):  # noqa: F811
     monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [])
-    for kw in ({"filters": {"subjects": "x"}}, {"as_of": "2026-01-01"}, {"freshness": True}):
+    for kw in ({"as_of": "2026-01-01"}, {"freshness": True}):
         with pytest.raises(results.NotYet):
             results.search("q", **kw, run=lambda *a, **k: {"hits": []})
+    seen = {}
+
+    def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False, filters=None):
+        seen["filters"] = filters
+        return {"hits": [], "filtered": {"x": 3}}
+    out = results.search("q", filters={"subjects": "Humans"}, run=run)
+    assert seen["filters"] == {"subjects": "Humans"} and out["filters"] == {"subjects": "Humans"}
+    assert out["filtered"] == {"x": 3}, "how many records each collection's filter admitted"
+    with pytest.raises(results.AskError, match="filters is an object"):
+        results.search("q", filters=["x"], run=run)
     with pytest.raises(results.AskError):
         results.search("   ", run=lambda *a, **k: {"hits": []})
     with pytest.raises(results.AskError, match="no collection held here is in space"):

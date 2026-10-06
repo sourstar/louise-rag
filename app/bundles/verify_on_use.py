@@ -19,13 +19,44 @@ hot set verifies within days and cold chunks never cost anything — which is wh
 A FAILURE IS PROOF OF FORGERY, not an error: the text, the claimed vector and
 the recomputed one are all recorded, and the producer key is quarantined so its
 other bundles can be rolled back.
+
+THE THIRD TRIGGER, 05 §5.3 / 03 §3.5 (migration step 11): every chunk a
+search returns to its caller is CITED — queued in the manifest's
+`verify_queue` by the search itself (`cite`) — and the worker re-embeds the
+queue in bounded passes (`drain`), asynchronously, so a search never waits
+on the encoder. A miss is a proof only when it REPRODUCES on a second
+recompute (03 §3.5); one that does not is left unverified, not condemned.
+A reproduced miss is handed to `on_forgery` — the worker writes the proof
+and burns the key there (app/hold/forgery.py, app/hold/trust_file.py).
 """
 import time
+from dataclasses import dataclass
 
 import numpy as np
 
 from .. import embeddings
 from . import ledger, trust
+
+DRAIN_BATCH = 32                 # chunks per worker pass: a few seconds of encoder
+_QUEUE_SCHEMA = ("CREATE TABLE IF NOT EXISTS verify_queue (chunk_id TEXT PRIMARY KEY, ts INTEGER NOT NULL)",)
+
+
+@dataclass(frozen=True)
+class Forgery:
+    """A T4 miss that reproduced: what a proof (09 §9.8 `forgery`) needs."""
+    chunk_id: str
+    uid: str | None
+    producer: str | None
+    bundle_id: str | None
+    text: str
+    claimed: np.ndarray
+    recomputed: np.ndarray
+    cosine: float
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return 0.0 if denominator == 0 else float(np.dot(a, b) / denominator)
 
 # The fallback when no space artifact is available: coarse, same as import-time
 # sample re-embed — it separates "same model on different hardware" (>=0.999)
@@ -84,18 +115,66 @@ def pending(con, chunk_ids: list[str]) -> list[str]:
             if cid in states and states[cid]["state"] == "imported"]
 
 
-def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
-                  quarantine_on_failure: bool = True) -> dict:
-    """Re-embed and check the given chunks. Never raises: a verification pass
-    must not be able to break the query that triggered it."""
+def ensure_queue(con) -> None:
+    for stmt in _QUEUE_SCHEMA:
+        con.execute(stmt)
+
+
+def cite(con, chunk_ids: list[str]) -> int:
+    """05 §5.3: the chunks a search returns are queued for the worker to
+    re-embed once. Only imported, unverified ones — a local chunk has
+    nothing to verify and a verified one is verified forever. How many
+    were queued."""
     targets = pending(con, chunk_ids)
     if not targets:
-        return {"checked": 0, "verified": 0, "failed": 0, "quarantined": []}
+        return 0
+    ensure_queue(con)
+    now = int(time.time())
+    con.executemany("INSERT OR IGNORE INTO verify_queue(chunk_id, ts) VALUES(?,?)",
+                    [(cid, now) for cid in targets])
+    return len(targets)
+
+
+def queued(con, limit: int) -> list[str]:
+    """The oldest citations, up to `limit`."""
+    ensure_queue(con)
+    return [r[0] for r in con.execute(
+        "SELECT chunk_id FROM verify_queue ORDER BY ts, chunk_id LIMIT ?", (int(limit),))]
+
+
+def drain(con, collection, *, limit: int = DRAIN_BATCH, embed_fn=None, on_forgery=None) -> dict:
+    """One bounded pass of T4 for the worker: the oldest `limit` citations
+    re-embedded and marked, then taken off the queue — verified, failed,
+    inconclusive or no longer imported alike (a chunk cited again is
+    queued again). An encoder that could not answer leaves the queue as it
+    was: deferral is not failure. `queued` in the answer is what remains."""
+    targets = queued(con, limit)
+    if not targets:
+        return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": 0, "quarantined": [], "queued": 0}
+    out = verify_chunks(con, collection, targets, embed_fn=embed_fn, on_forgery=on_forgery)
+    if not out.get("unavailable"):
+        marks = ",".join("?" for _ in targets)
+        con.execute(f"DELETE FROM verify_queue WHERE chunk_id IN ({marks})", targets)
+    out["queued"] = con.execute("SELECT COUNT(*) FROM verify_queue").fetchone()[0]
+    return out
+
+
+def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
+                  quarantine_on_failure: bool = True, recheck: bool = True,
+                  on_forgery=None) -> dict:
+    """Re-embed and check the given chunks. Never raises: a verification pass
+    must not be able to break the query that triggered it. `recheck`: a
+    miss is recomputed once more and is a failure only when it reproduces
+    (03 §3.5) — otherwise it is left unverified and counted `inconclusive`.
+    `on_forgery(Forgery)` is called for each reproduced miss."""
+    targets = pending(con, chunk_ids)
+    if not targets:
+        return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": 0, "quarantined": []}
 
     stored = _texts_and_vectors(collection, targets)
     targets = [cid for cid in targets if cid in stored and stored[cid][0]]
     if not targets:
-        return {"checked": 0, "verified": 0, "failed": 0, "quarantined": []}
+        return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": 0, "quarantined": []}
 
     if embed_fn is not None:
         embed = embed_fn
@@ -108,27 +187,55 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
     except Exception:
         # Transient: the endpoint is down. Leave the chunks unverified rather
         # than marking them failed — an outage is not evidence of forgery.
-        return {"checked": 0, "verified": 0, "failed": 0, "quarantined": [],
+        return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": 0, "quarantined": [],
                 "unavailable": True}
 
     floor, floor_source = _verify_floor(con)
     states = ledger.verification_states(con, targets)
-    verified = failed = 0
+    verified = failed = inconclusive = 0
     culprits: set[str] = set()
+    misses: list[tuple[str, np.ndarray, float]] = []
     for cid, fresh_raw in zip(targets, recomputed):
         fresh = np.asarray(fresh_raw, dtype=np.float32)
-        claimed = stored[cid][1]
-        denominator = float(np.linalg.norm(fresh) * np.linalg.norm(claimed))
-        cosine = 0.0 if denominator == 0 else float(np.dot(fresh, claimed) / denominator)
-        passed = cosine >= floor
-        ledger.set_verified(con, cid, cosine, passed)
-        if passed:
+        cosine = _cosine(fresh, stored[cid][1])
+        if cosine >= floor:
+            ledger.set_verified(con, cid, cosine, True)
             verified += 1
         else:
-            failed += 1
-            producer = states.get(cid, {}).get("producer")
-            if producer:
-                culprits.add(producer)
+            misses.append((cid, fresh, cosine))
+    if misses and recheck:
+        # 03 §3.5: "a T4 miss that reproduces on a second recompute" is the
+        # proof; a miss that does not is nobody's forgery — the chunk stays
+        # imported and is cited again by the next search that returns it
+        try:
+            again = embed([stored[cid][0] for cid, _, _ in misses])
+        except Exception:   # noqa: BLE001 — the encoder went away between the two: not evidence
+            inconclusive += len(misses)
+            misses = []
+        else:
+            kept = []
+            for (cid, fresh, cosine), raw in zip(misses, again):
+                second = np.asarray(raw, dtype=np.float32)
+                c2 = _cosine(second, stored[cid][1])
+                if c2 >= floor:
+                    inconclusive += 1
+                else:
+                    kept.append((cid, second, min(cosine, c2)))
+            misses = kept
+    for cid, fresh, cosine in misses:
+        ledger.set_verified(con, cid, cosine, False)
+        failed += 1
+        row = states.get(cid, {})
+        producer = row.get("producer")
+        if producer:
+            culprits.add(producer)
+        if on_forgery is not None:
+            try:
+                on_forgery(Forgery(chunk_id=cid, uid=row.get("uid"), producer=producer,
+                                   bundle_id=row.get("bundle_id"), text=stored[cid][0],
+                                   claimed=stored[cid][1], recomputed=fresh, cosine=cosine))
+            except Exception:   # noqa: BLE001 — a proof that cannot be written never breaks the pass
+                pass
 
     quarantined = []
     requeued: set[str] = set()
@@ -149,6 +256,7 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
             # deliberately against making those documents unsearchable now.
             requeued.update(_requeue_for_local_embed(con, affected))
     return {"checked": len(targets), "verified": verified, "failed": failed,
+            "inconclusive": inconclusive,
             "quarantined": quarantined, "requeued": sorted(requeued),
             "floor": floor, "floor_source": floor_source}
 

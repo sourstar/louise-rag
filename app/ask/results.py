@@ -14,9 +14,10 @@ verification state and producer, the text or — for a red collection —
 the origin's page, the figures (null: no collection carries plates yet),
 and whether the list is the reranker's order.
 
-Not in this brick, refused rather than ignored: `filters` (a facet value
-restricting the legs), `as_of` (the snapshot current at a date) and
-`freshness` (the origin asked for the current version).
+`filters` restricts both legs to the records the collections' facets admit
+(05 §5.2; app/ask/filters.py), through `query_service.run_search`. Not in
+this brick, refused rather than ignored: `as_of` (the snapshot current at
+a date) and `freshness` (the origin asked for the current version).
 """
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
                 "space_id": f"{LEGACY_SPACE}:{collection.plugin}", "trust_level": "unverified",
                 "certification": None, "red": False, "figures": None, "codex": None}
     from app import copy_state
-    from app.hold import collection as col, equivalence
+    from app.hold import collection as col, equivalence, trust_file
     from app.hold.codex import lineage_id
     from app.share import coverage as cov, levels, seeder
     root = Path(root) if root is not None else _root()
@@ -79,6 +80,7 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
         except Exception:   # noqa: BLE001
             rows = []
     level = levels.level(codex, snap, bodies, rows, now=now, own_key=own_key,
+                         trust=trust_file.as_filter(root.parent),
                          reference_images=equivalence.reference_images(bodies, own_key, codex))
     return {"collection_id": codex.collection_id, "lineage_id": lid,
             "snapshot_id": snap.snapshot_id if snap else None, "space_id": codex.space_id,
@@ -148,8 +150,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     legs_withheld, translations}`. `run` is query_service.run_search unless
     a test gives another."""
     from app import collections as collections_mod, identity, query_service
-    if filters:
-        raise NotYet("filters: a facet value restricting the legs is not built yet (05 §5.2, §5.7)")
+    if filters is not None and not isinstance(filters, dict):
+        raise AskError("filters is an object {facet field: value | {not: value}} (05 §5.4)")
     if as_of:
         raise NotYet("as_of: searching the snapshot current at a date is not built yet (05 §5.1)")
     if freshness:
@@ -171,7 +173,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
             raise AskError(f"no collection held here is in space {space}")
     names = [c.name for c in named]
     result = run(names, query, limit, "hybrid", translate, rerank_depth=rerank_depth,
-                 all_languages=all_languages)
+                 all_languages=all_languages, filters=filters or None)
     by_name = {c.name: c for c in named}
     contexts = {n: context_for(c, root=root, now=now, own_key=own_key) for n, c in by_name.items()}
     reranked = bool(result.get("reranked"))
@@ -204,5 +206,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "legs_withheld": result.get("legs_withheld", []),
         "translations": result.get("translations", {}),
         "facts_withheld": result.get("facts_withheld", []),
+        "filters": filters or {},
+        "filtered": result.get("filtered"),
         "timings": result.get("timings", {}),
     }

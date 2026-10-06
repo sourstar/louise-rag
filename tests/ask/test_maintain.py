@@ -25,11 +25,11 @@ def test_the_maintainer_builds_once_per_snapshot_and_facets_read_the_cache(node,
     state.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(state / "manifest.sqlite", isolation_level=None)
     con.row_factory = sqlite3.Row
-    con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY, lang TEXT, authors TEXT, subjects TEXT, "
+    con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY, native_id TEXT NOT NULL, lang TEXT, authors TEXT, subjects TEXT, "
                 "in_scope INTEGER DEFAULT 1)")
     con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, ts INTEGER, level TEXT, stage TEXT, message TEXT, doc_uid TEXT)")
-    con.executemany("INSERT INTO documents(uid, lang, authors, subjects) VALUES(?,?,?,?)",
-                    [("pubmed:1", "en", "A", "Neoplasms/genetics"), ("pubmed:2", "en", "B", "Humans")])
+    con.executemany("INSERT INTO documents(uid, native_id, lang, authors, subjects) VALUES(?,?,?,?,?)",
+                    [("pubmed:1", "1", "en", "A", "Neoplasms/genetics"), ("pubmed:2", "2", "en", "B", "Humans")])
     monkeypatch.setattr(worker.db, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(worker, "_ask_indexed", {})
     c = SimpleNamespace(name=name, codex=codex, manifest_path=state / "manifest.sqlite")

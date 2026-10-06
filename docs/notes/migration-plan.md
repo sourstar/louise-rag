@@ -1237,13 +1237,43 @@ counted by the index maintainer only. The maintainer counts facets and
 indexes edges once per snapshot (`worker._maintain_ask_indexes`). `mcp`:
 the three tools over JSON-RPC, stdio (`ask serve`) and `POST /api/ask/mcp`,
 no library. `/api/ask/{search,lookup,traverse,facets}` as 07 §7.4 says.
-CLI `ask search|facets|lookup|traverse|serve`. **Owed in step 11**:
-`filters` restricting the legs (a `book_ids` prefilter into both legs),
-`as_of` (reading the snapshot current at a date), `freshness`, figures
-on results and `GET /api/ask/figure`, T4 on the chunks a search cites,
-`ask chat` with the three tools, the `needs` of an edge into another
-collection (its plugin's id→shard mapping), results carrying
-`certification` (step 10).
+CLI `ask search|facets|lookup|traverse|serve`. Second brick: `filters`
+(05 §5.2) — the facet pass writes postings beside the counts
+(`index/facets/postings.sqlite`, per snapshot, by the maintainer);
+`app/ask/filters.book_ids_for` resolves `{field: value | {not: value}}`
+to the records admitted (a tree value with its subtree; facets
+intersected; exclusions subtracted), refused when the facet is not
+declared, is a range, is not indexed for the current snapshot, or admits
+more than 20 000 records; `query_service.run_search(filters=)` hands the
+set to both legs as `book_ids` (catalog, FTS and dense — `retrieval`
+takes it; a Codex-less collection admits nothing under a filter); an
+empty set returns nothing before any leg runs. Third brick: T4 on the
+chunks a search cites (05 §5.3, 03 §3.5) — every search queues the
+imported, unverified chunks it returns (`verify_on_use.cite`, from
+`retrieval._attach_metadata_and_enqueue`, so the web's Ask and
+`/api/search` cite too) in the manifest's `verify_queue`; the worker's
+index-maintainer turn drains it in bounded passes of 32
+(`worker._verify_cited`, only in a mode that embeds), re-embedding with
+the collection's own encoder and marking `verified`; a miss is
+recomputed a second time and is a failure only when it reproduces
+(`inconclusive` otherwise: left imported, cited again later); a
+reproduced miss writes a `forgery` attestation (`app/hold/forgery.py`:
+both vectors by `H` over big-endian `space.dtype` bytes, the text or —
+red — the record's `content_hash`, the encoder named: 09 §9.8 amended)
+at §9.8's path, publishes it, and burns the producer's key in
+`state/trust.json` (`app/hold/trust_file.py`; `levels.counting` now
+takes the file's `deny` and `burn`); the legacy providers-table
+quarantine and the local re-embed of the producer's documents stay as
+they were. An encoder that does not answer leaves the queue as it was.
+**Owed in step 11**: `as_of` (reading the snapshot current at a date),
+`freshness`, figures on results and `GET /api/ask/figure`, `ask chat`
+with the three tools, the `needs` of an edge into another collection
+(its plugin's id→shard mapping), results carrying `certification` (step
+10); `hold key trust <key> --restore|--deny` over the trust file goes
+with step 10's `hold key`. Known trade-off kept from before: a burned
+producer's vectors are re-embedded locally rather than dropped from
+search at once (03 §3.5 says dropped) — they serve until the worker's
+delete-then-insert replaces them.
 
 - MCP server exposing `louise_search`, `louise_lookup`, `louise_traverse`.
   Results carry snapshot, trust level, certification.

@@ -85,6 +85,14 @@ CREATE TABLE IF NOT EXISTS embed_queue (
   ts INTEGER
 );
 
+-- 05 §5.3 / 03 §3.5 T4: the imported chunks a search cited, for the worker
+-- to re-embed once (app/bundles/verify_on_use.py); proportional to what is
+-- cited and still unverified, emptied as the worker drains it.
+CREATE TABLE IF NOT EXISTS verify_queue (
+  chunk_id TEXT PRIMARY KEY,
+  ts INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS summaries (
   uid TEXT PRIMARY KEY,
   model TEXT,

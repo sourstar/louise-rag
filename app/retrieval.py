@@ -285,7 +285,7 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 
 def _search_one_collection(con, collection, query: str, k: int, mode: str, translate: bool,
                             entity_ids: list[str], plan: LanguagePlan | None = None,
-                            depth: int = 0) -> dict:
+                            depth: int = 0, book_ids: set[int] | None = None) -> dict:
     """catalog + fts fan-out + dense + intra-collection RRF + entity boost —
     the per-collection core, extracted so search() (one collection) and
     federated_search() (N collections) share identical logic. `plan` is the
@@ -300,11 +300,23 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         plan = language_plan.plan(query, [collection], translate)
     core = plan.core
 
+    # 05 §5.2: a facet filter RESTRICTS every leg to the records it admits —
+    # a prefilter on both legs, never a boost; one admitting nothing returns
+    # nothing, which is an answer
+    if book_ids is not None and not book_ids:
+        return {"catalog": [], "merged": [], "translations": plan.translations,
+                "timings": timings, "scope": scope, "vector_leg": vector_leg, "filtered": 0}
+    # the restriction reaches a leg only when there is one: an unfiltered
+    # search calls the legs exactly as before
+    restrict = {"book_ids": sorted(book_ids)} if book_ids else {}
+
     # A leg starts only while the caller is still there (app/cancel.py).
     cancel.checkpoint()
     t0 = time.time()
     catalog_hits = (catalog_search(con, core, langs=plan.only, collection=collection)
                     if mode in ("hybrid", "catalog") else [])
+    if book_ids:
+        catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
     timings["catalog"] = round((time.time() - t0) * 1000, 1)
 
     lists: list[list[dict]] = []
@@ -317,7 +329,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             cancel.checkpoint()            # one group per language: a query can fan out wide
             held = fts.group_languages(group, collection)
             hits = _best_rank([fts.search(group, q, limit=limit, collection=collection,
-                                          langs=plan.lang_filter(group))
+                                          langs=plan.lang_filter(group), **restrict)
                                for q in plan.variants(group, held)], limit)
             if hits:
                 lists.append(hits)
@@ -350,7 +362,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 # empty leg whenever the top k were in other languages
                 if vector_leg is None:
                     lists.append(embeddings.search(core, k=limit, collection=collection,
-                                                   langs=list(plan.only) or None))
+                                                   langs=list(plan.only) or None, **restrict))
         except hold_runs.RunUnvalidated as e:
             # the answer named a run not yet tested, or one that failed: its
             # vector is discarded, and the response says so (05 §5.3: never
@@ -369,7 +381,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         merged.sort(key=lambda x: -x["rrf"])
 
     return {"catalog": catalog_hits, "merged": merged, "translations": plan.translations,
-            "timings": timings, "scope": scope, "vector_leg": vector_leg}
+            "timings": timings, "scope": scope, "vector_leg": vector_leg,
+            "filtered": len(book_ids) if book_ids is not None else None}
 
 
 def _leg_withheld(collection, reason: str) -> dict:
@@ -404,6 +417,13 @@ def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
     # and possibly verified (architecture-v2.md §6 T4). Replaces P0.6's
     # hardcoded 'local ✓' placeholder in the Ask provenance drawer.
     verify_on_use.annotate(con, hits)
+    # 05 §5.3 / 03 §3.5 T4: the chunks this search cites are queued for the
+    # worker to re-embed once, asynchronously — a search never waits on the
+    # encoder, and a queue that cannot be written never costs the answer
+    try:
+        verify_on_use.cite(con, [h["chunk_id"] for h in hits if h.get("chunk_id")])
+    except Exception:   # noqa: BLE001
+        pass
     scope = db.get_scope(con)
     if scope["embed_mode"] == "lazy":
         _enqueue_lazy_embed(con, ids[:10], collection)
@@ -460,7 +480,8 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
 
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None,
-           rerank_depth: int = RERANK_TOP_N, all_languages: bool = False) -> dict:
+           rerank_depth: int = RERANK_TOP_N, all_languages: bool = False,
+           book_ids: set[int] | None = None) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
     behavior/signature from pre-P0.5. See federated_search() for N&gt;1.
     `k` results after the reranker, which orders the top `rerank_depth`."""
@@ -479,7 +500,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     plan = language_plan.plan(query, [collection], translate, every=all_languages)
     plan_ms = round((time.time() - t0) * 1000, 1)
     partial = _search_one_collection(con, collection, query, k, mode, translate,
-                                     [e.entity_id for e in resolved], plan, rerank_depth)
+                                     [e.entity_id for e in resolved], plan, rerank_depth,
+                                     **({"book_ids": book_ids} if book_ids is not None else {}))
     timings = {"languages": plan_ms, **partial["timings"]}
 
     cancel.checkpoint()
@@ -505,6 +527,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
               "timings": timings, "reranked": reranked}
     if partial.get("vector_leg"):
         result["legs_withheld"] = [_leg_withheld(collection, partial["vector_leg"])]
+    if partial.get("filtered") is not None:
+        result["filtered"] = {collection.name: partial["filtered"]}
     return result
 
 
@@ -532,7 +556,7 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
 
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
-                      all_languages: bool = False) -> dict:
+                      all_languages: bool = False, book_ids_for=None) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -566,8 +590,10 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         except Exception as e:
             return collection, None, e
         try:
+            admitted = book_ids_for(collection) if book_ids_for else None
             partial = _search_one_collection(con, collection, query, k, mode, translate,
-                                              entity_ids, plan, rerank_depth)
+                                              entity_ids, plan, rerank_depth,
+                                              **({"book_ids": admitted} if admitted is not None else {}))
             for h in partial["merged"]:
                 h["source_collection"] = collection.name
             return collection, partial, None
@@ -596,9 +622,12 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     timings_per_collection: dict[str, dict] = {}
     legs_withheld: list[dict] = []
     catalog: list[dict] = []
+    filtered: dict[str, int] = {}         # 05 §5.2: records a filter admitted, per collection
     for collection, partial, err in outcomes:
         if partial is None:
             continue
+        if partial.get("filtered") is not None:
+            filtered[collection.name] = partial["filtered"]
         merged = partial["merged"]
         if len(collections) > 1:
             # never below the depth the request asked the reranker for: a
@@ -673,6 +702,8 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
               "timings": timings, "reranked": reranked}
     if legs_withheld:
         result["legs_withheld"] = legs_withheld
+    if filtered:
+        result["filtered"] = filtered
     return result
 
 ANSWER_SYSTEM = (

@@ -101,17 +101,55 @@ def withheld_from(names: list[str] | None, *, private: bool = False) -> list[dic
     return out
 
 
+def book_ids_for(filters: dict | None):
+    """05 §5.2's restriction per collection, as a callable the legs take:
+    None for no filter; for a collection with a Codex, the records its
+    facets admit (app/ask/filters.py); a collection without a Codex has no
+    facets and admits nothing under a filter."""
+    if not filters:
+        return None
+    from contextlib import closing
+    from .ask import filters as filters_mod
+    from .hold import collection as col
+    from .share import seeder
+
+    def resolve(collection) -> set[int] | None:
+        codex = getattr(collection, "codex", None)
+        if codex is None:
+            return set()
+        root = collections_mod.louise_root() / "collections"
+        try:
+            snap = seeder.current_snapshot(col.drag_of(root, collection.name))
+        except Exception:   # noqa: BLE001 — a drag that cannot be read names no snapshot
+            snap = None
+
+        def all_ids() -> list[int]:
+            with closing(db.connect(collection)) as con:
+                return [int(r[0]) for r in con.execute(
+                    "SELECT native_id FROM documents WHERE in_scope=1") if str(r[0]).isdigit()]
+        return filters_mod.book_ids_for(codex, root / collection.name / "index", filters,
+                                        snapshot_id=snap.snapshot_id if snap else None, all_ids=all_ids)
+    return resolve
+
+
 def run_search(collection_names: list[str] | None, query: str, k: int, mode: str,
                translate: bool, verify: bool = False,
                rerank_depth: int = retrieval.RERANK_TOP_N,
-               all_languages: bool = False, private: bool = False) -> dict:
+               all_languages: bool = False, private: bool = False,
+               filters: dict | None = None) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per
     unverified chunk, and verified state is permanent, so the hot set settles
-    quickly and cold chunks never cost anything."""
+    quickly and cold chunks never cost anything. `filters` restricts the legs
+    to the records the collections' facets admit (05 §5.2)."""
     participants = resolve_collections(collection_names, private=private)
     withheld = withheld_from(collection_names, private=private)
+    # resolved here, before any leg runs: a filter the collection cannot
+    # answer is refused to the caller, never swallowed by the federation
+    # pool as one collection's failed search
+    restrict = book_ids_for(filters)
+    admitted = {c.name: restrict(c) for c in participants} if restrict else {}
     if not participants:
         # Everything was withheld. Saying so beats an empty result set that
         # reads as "nothing matched your query". `timings` like every other
@@ -125,7 +163,8 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
         con = cancel.watch(db.connect(participants[0]))
         result = retrieval.search(con, query, k=k, mode=mode, translate=translate,
                                    collection=participants[0], rerank_depth=rerank_depth,
-                                   all_languages=all_languages)
+                                   all_languages=all_languages,
+                                   book_ids=admitted.get(participants[0].name))
         if verify:
             cancel.checkpoint()            # an embed call per unverified chunk
             result["verification"] = _verify_hits(con, participants[0], result["hits"])
@@ -134,7 +173,8 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
         return result
     result = retrieval.federated_search(participants, query, k=k, mode=mode,
                                          translate=translate, rerank_depth=rerank_depth,
-                                         all_languages=all_languages)
+                                         all_languages=all_languages,
+                                         book_ids_for=(lambda c: admitted.get(c.name)) if restrict else None)
     if withheld:
         result["withheld"] = withheld
     if verify:

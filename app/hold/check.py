@@ -787,8 +787,11 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
 def attestation(outcome: Outcome, codex, snapshot: snap.Snapshot, key, *,
                 platform_image: str, now: str) -> dict[str, Any]:
     """09 §9.8's body, signed under `louise/attestation/v1`."""
+    # ... and a `forgery` proof names the encoder that recomputed (09 §9.8,
+    # amended 2026-10-07 with 03 §3.5: the recomputed hash means nothing
+    # without the encoder that made it)
     statistical = outcome.check in ("vectors-sample", "calibration",
-                                    "centres", "evaluation")
+                                    "centres", "evaluation", "forgery")
     # 09 §9.8: from the engine amendment the body names the ENGINE used, by
     # its id, and is version 3 — "version 2 is this body with
     # `encoder_image`". A version-2 collection's attestations keep the shape

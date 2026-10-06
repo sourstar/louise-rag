@@ -158,3 +158,113 @@ def test_annotate_reflects_a_verified_chunk(imported, con, collection):
     verify_on_use.annotate(con, hits)
     assert hits[0]["verification"] == "verified"
     assert hits[0]["verification_cosine"] > verify_on_use.VERIFY_FLOOR
+
+
+# ─────────────────── cited: the worker's queue (05 §5.3, 03 §3.5; step 11) ───────────────────
+
+def test_a_search_cites_its_imported_chunks_for_the_worker(imported, con, collection):
+    """Every chunk a search returns is queued — the imported ones: a local
+    chunk has nothing to verify."""
+    from app import retrieval
+    rows, _ = imported
+    local = seed_document(con, collection, "gutenberg:9", 9, n_chunks=2, seed=2)
+    hits = [{"chunk_id": r["id"], "book_id": 1} for r in rows[:2]] + [{"chunk_id": local[0]["id"], "book_id": 9}]
+    retrieval._attach_metadata_and_enqueue(con, collection, hits)
+    assert set(verify_on_use.queued(con, 10)) == {rows[0]["id"], rows[1]["id"]}
+    retrieval._attach_metadata_and_enqueue(con, collection, hits)
+    assert len(verify_on_use.queued(con, 10)) == 2, "cited twice is queued once"
+
+
+def test_the_worker_drains_the_queue_once_and_marks_what_it_verified(imported, con, collection):
+    rows, by_text = imported
+    honest = lambda batch: [by_text[t] for t in batch]  # noqa: E731
+    assert verify_on_use.cite(con, _chunk_ids(rows)) == len(rows)
+    out = verify_on_use.drain(con, collection, embed_fn=honest)
+    assert (out["checked"], out["verified"], out["failed"], out["inconclusive"], out["queued"]) == \
+        (len(rows), len(rows), 0, 0, 0)
+    states = ledger.verification_states(con, _chunk_ids(rows))
+    assert all(s["state"] == "verified" for s in states.values())
+    assert verify_on_use.cite(con, _chunk_ids(rows)) == 0, "verified forever: a later search queues nothing"
+    assert verify_on_use.drain(con, collection, embed_fn=honest)["checked"] == 0
+
+
+def test_a_pass_is_bounded_and_the_rest_waits_its_turn(imported, con, collection):
+    rows, by_text = imported
+    verify_on_use.cite(con, _chunk_ids(rows))
+    out = verify_on_use.drain(con, collection, limit=1, embed_fn=lambda batch: [by_text[t] for t in batch])
+    assert out["checked"] == 1 and out["queued"] == len(rows) - 1
+
+
+def test_a_miss_is_a_forgery_only_when_it_reproduces(imported, con, collection, producer_key):
+    """03 §3.5: 'a T4 miss that reproduces on a second recompute'. One that
+    does not is left unverified, not condemned, and burns nobody."""
+    rows, by_text = imported
+    bad = unit_vectors(1, seed=4242)[0]
+    calls = []
+
+    def flaky(batch):                                   # wrong once, right on the second recompute
+        calls.append(list(batch))
+        return [bad if (t == rows[1]["text"] and len(calls) == 1) else by_text[t] for t in batch]
+    verify_on_use.cite(con, _chunk_ids(rows))
+    out = verify_on_use.drain(con, collection, embed_fn=flaky)
+    assert (out["verified"], out["failed"], out["inconclusive"]) == (len(rows) - 1, 0, 1)
+    assert calls[1] == [rows[1]["text"]], "only the missed chunk is recomputed again"
+    assert ledger.verification_states(con, [rows[1]["id"]])[rows[1]["id"]]["state"] == "imported"
+    assert out["quarantined"] == [] and out["queued"] == 0
+
+    proofs = []
+    assert verify_on_use.cite(con, _chunk_ids(rows)) == 1, "the inconclusive chunk alone is still imported"
+    out = verify_on_use.drain(con, collection, on_forgery=proofs.append,
+                              embed_fn=lambda batch: [bad if t == rows[1]["text"] else by_text[t] for t in batch])
+    assert out["failed"] == 1 and [p.chunk_id for p in proofs] == [rows[1]["id"]]
+    p = proofs[0]
+    producer = bytes(producer_key.verify_key).hex()
+    assert (p.producer, p.uid, p.text) == (producer, UID, rows[1]["text"]) and p.bundle_id
+    assert np.allclose(p.recomputed, bad) and np.allclose(p.claimed, by_text[rows[1]["text"]])
+    assert p.cosine < verify_on_use.VERIFY_FLOOR
+    assert out["quarantined"] == [producer]
+    assert ledger.verification_states(con, [rows[1]["id"]])[rows[1]["id"]]["state"] == "failed"
+
+
+def test_an_outage_keeps_the_cited_chunks_queued(imported, con, collection):
+    rows, _ = imported
+    verify_on_use.cite(con, _chunk_ids(rows))
+
+    def down(_batch):
+        raise ConnectionError("encoder down")
+    out = verify_on_use.drain(con, collection, embed_fn=down)
+    assert out.get("unavailable") and len(verify_on_use.queued(con, 10)) == len(rows), "deferral, not failure"
+    assert all(s["state"] == "imported" for s in ledger.verification_states(con, _chunk_ids(rows)).values())
+
+
+def test_the_worker_verifies_cited_chunks_only_in_a_mode_that_embeds(imported, con, collection, monkeypatch):
+    rows, by_text = imported
+    verify_on_use.cite(con, _chunk_ids(rows))
+    monkeypatch.setattr(worker.node_state, "worker_state", lambda: "acquire-only")
+    assert worker._verify_cited(con, collection) is False and len(verify_on_use.queued(con, 10)) == len(rows)
+    monkeypatch.setattr(worker.node_state, "worker_state", lambda: "running")
+    monkeypatch.setattr(embeddings, "embed_texts", lambda batch, **kw: [by_text[t] for t in batch])
+    assert worker._verify_cited(con, collection) is True
+    assert verify_on_use.queued(con, 10) == []
+    assert worker._verify_cited(con, collection) is False, "nothing queued: nothing done"
+
+
+def test_a_reproduced_miss_burns_the_key_in_the_trust_file(imported, con, collection, producer_key, monkeypatch,
+                                                            tmp_path):
+    from app import collections as collections_mod
+    from app.hold import trust_file
+    rows, by_text = imported
+    bad = unit_vectors(1, seed=99)[0]
+    root = tmp_path / "louise"
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: root)
+    monkeypatch.setattr(worker.node_state, "worker_state", lambda: "running")
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda batch, **kw: [bad if t == rows[0]["text"] else by_text[t] for t in batch])
+    verify_on_use.cite(con, _chunk_ids(rows))
+    assert worker._verify_cited(con, collection) is True
+    producer = bytes(producer_key.verify_key).hex()
+    entry, = trust_file.read(root)["quarantined"]
+    assert entry["key"] == producer and entry["attestation"] is None, \
+        "a collection without a Codex attests nothing; the burn stands"
+    events = [r["message"] for r in con.execute("SELECT message FROM events WHERE stage='verify' AND level='error'")]
+    assert events and "forgery" in events[0] and "key burned" in events[0]
