@@ -237,6 +237,16 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-07, ~00:30Z: 9e, third brick — `share contribute`.** The
+preconditions of 04 §4.5, rendezvous over the open shards with the
+cascade's windows, build + export + own ladder + `bundle` event per shard
+led; bundles served as members and offered in the digest, whose
+`coverage` lists the accepted ids per shard; neighbours' claims folded
+into the map. `share contribute [<collection>] [--once] [--interval S]`.
+tests/share: 88. Not deployed. Next: acting on `bundle` events (the
+import side), duplicates as checks, the single-survivor test; then step
+10 (`certified`).
+
 **2026-10-06, ~23:30Z: 9e, second brick — `share attest`.** `hold check`
 then every attestation written published as an `attestation` event, once
 each (the ids published are recorded); the worker's beat keeps a received

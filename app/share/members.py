@@ -151,9 +151,12 @@ class Torrent:
 class Member:
     """One unit a peer fetches or shares (02 §2.6): a name of 09 §9.16's
     table and the files it is made of. Its root is the file's pieces root,
-    or `H` over `[[path, root, bytes], …]` for several (drag.member_root)."""
+    or `H` over `[[path, root, bytes], …]` for several (drag.member_root).
+    `base` is the directory the files' paths are relative to when it is not
+    the drag: a bundle's own directory (09 §9.7, §9.16)."""
     name: str
     files: tuple[MemberFile, ...]
+    base: Path | None = None
 
     @property
     def root(self) -> str:
@@ -215,6 +218,33 @@ def _index_members(drag_dir: Path) -> list[Member]:
                       for f in sorted(slice_dir.rglob("*")) if f.is_file())
         if files:
             out.append(Member(drag.index_member(slice_dir.name), files))
+    return out
+
+
+BUNDLE_FILES = ("MANIFEST.sig", "header.json", "possession.json", "vectors.parquet")
+
+
+def bundle_member(space: str, bundle_dir: Path) -> Member:
+    """`bundle-<space>-<bundle_id hex>` (09 §9.16): the four files, their
+    paths relative to the bundle directory, so the member root is a function
+    of the bundle alone."""
+    bundle_dir = Path(bundle_dir)
+    files = tuple(MemberFile(f, drag.pieces_root_of(bundle_dir / f), (bundle_dir / f).stat().st_size)
+                  for f in BUNDLE_FILES)
+    return Member(f"bundle-{drag.check_space(space)}-{bundle_dir.name}", files, base=bundle_dir)
+
+
+def bundle_members(state_dir: Path, space: str) -> list[Member]:
+    """Every bundle this peer holds for the space under
+    `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/` (09 §9.7),
+    whole — a directory missing one of the four files is no bundle."""
+    base = Path(state_dir) / "bundles" / space
+    out: list[Member] = []
+    if not base.is_dir():
+        return out
+    for d in sorted(p for p in base.glob("*/*/*") if p.is_dir()):
+        if all((d / f).is_file() for f in BUNDLE_FILES):
+            out.append(bundle_member(space, d))
     return out
 
 

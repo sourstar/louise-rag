@@ -1058,13 +1058,42 @@ node is one peer until 9d's two-peer test):
   an attestation event's payload — verified, for a collection held here
   — at 09 §9.8's path before forwarding; a foreign or forged one is
   dropped; events of the other types are marked acted and left to the
-  bricks that act on them (`events_seen.acted`). **Owed in 9e**: `share
-  contribute --once` (the preconditions of 04 §4.5, `rendezvous.mine`
-  over the open shards, `hold vectors build` and `export` for them, the
-  bundles as members under `state/bundles/` served by the seeder, the
-  `bundle` event, `coverage` in the digest); acting on `snapshot`,
-  `codex`, `bundle` and `flag` events; `fold_claims` wired into the
-  worker's beat; the loop form; the single-survivor test.
+  bricks that act on them (`events_seen.acted`). **Third brick DONE
+  2026-10-06 — `share contribute`** (`app/share/contribute.py`;
+  `tests/share/test_contribute.py`, 4): the preconditions of 04 §4.5
+  (own roots and chunks passed, a records-vs-origin attestation for the
+  snapshot by any key, the calibration gate where the collection is not
+  gated per answer) refuse before any GPU is spent; the open shards off
+  the coverage map, the live peers off the digests, the cascade with its
+  windows (the shard's first opening noted when first seen open; a
+  successor's window starts where the leader's ended; every window run
+  out, the top again); each shard led built with `vectors_build.build`,
+  exported with `export.export` into `state/bundles/…/<id>/`, judged by
+  this peer's own ladder (T0–T2), accepted as `local`, announced with a
+  `bundle` event. `Member.base` lets a member's paths be relative to its
+  bundle directory; the seeder serves bundle members beside the
+  snapshot's; the digest offers them in `members` and lists the accepted
+  bundle ids per shard in `coverage`; the beat folds neighbours' claims
+  into the map (`fold_claims`). CLI: `share contribute [<collection>]
+  [--once] [--interval S]`, locking each collection. PROVEN in tests:
+  alone, a peer builds, bundles, accepts and announces every open shard
+  of a built collection, and a second pass finds nothing open; a
+  neighbour of equal weight leads the shards the hash gives it until its
+  window runs out. **Owed in 9e**: acting on `snapshot`, `codex`,
+  `bundle` and `flag` events (fetching a bundle another peer announced,
+  through the ladder — the import side of contribute); duplicates as
+  checks (the second compliant bundle compared and attested, 04 §4.5);
+  the single-survivor test. **A gap found here, for the operator**: a
+  bundle member is FOUR torrents (09 §9.16), one per file, and a fetcher
+  computes an infohash from a file's (path, length, pieces root) — but
+  the `bundle` event and the digest's `members` entry carry only the
+  MEMBER root (`H` over the file list) and the total bytes, from which
+  the four infohashes do not follow. Either the event and the entry
+  carry `files: [[path, root, bytes], …]` for a member of several files
+  (09 §9.9 amendment; the members entry already says "the digest lists
+  the files"), or a bundle becomes one torrent of a four-file tree
+  (09 §9.16 amendment). The first keeps §9.16 as it stands and is what
+  the next brick will do unless told otherwise.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,

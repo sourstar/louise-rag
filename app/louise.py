@@ -812,6 +812,119 @@ def cmd_share_attest(a) -> int:
     return 0 if report.ok else 1
 
 
+def _embedding_callables(root, name: str, codex, *, stop):
+    """What `vectors build` embeds with (03 §3.3): the collection's own
+    encoder through its recipe and, for a collection gated per answer, the
+    guard that stands between a batch's answers and its write. Raises
+    `embedder.GateDeferred` when the encoder is not there to ask."""
+    from app import embeddings
+    from app.hold import embedder as emb, runs as hold_runs
+    by_run = hold_runs.applies(codex)
+    recipe = _recipe_for(codex, name)
+    seen: set = set()
+
+    def embed(texts):
+        seen.clear()
+        try:
+            if by_run:
+                return embeddings.embed_texts(texts, recipe=recipe, runs=seen)
+            return embeddings.embed_texts(texts, recipe=recipe)
+        except Exception as e:                   # noqa: BLE001
+            raise emb.GateDeferred(f"the encoder at {recipe.url} could not embed: {e}") from e
+
+    before_write = None
+    if by_run:
+        from app import run_check
+
+        def before_write():
+            run_check.guard(root, name, codex, recipe, set(seen), stop=stop.is_set,
+                            log=lambda m: print(m, file=sys.stderr))
+    return embed, before_write
+
+
+def cmd_share_contribute(a) -> int:
+    """`share contribute [<collection>] [--once] [--interval S]` (07 §7.3;
+    04 §4.5): for the collection named, or every public one held here, the
+    shards this peer leads — built, bundled, passed through its own ladder
+    and announced (app/share/contribute.py). `--once` runs one pass and
+    exits; otherwise the pass repeats every interval until a signal, which
+    finishes the batch in flight and exits 130 (07 §7.7). Exit 2 when a
+    precondition stands in the way, 3 when the encoder is not there."""
+    import json
+    import threading
+    from app import collections as collections_mod, config, copy_state, embeddings, identity
+    from app.bundles import keys as node_keys
+    from app.hold import embedder as emb, records as rec
+    from app.share import contribute as contrib, coverage as cov, peers
+    if a.collection:
+        refs = [a.collection]
+    else:
+        node_root = (collections_mod.louise_root() / "collections").resolve()
+        if Path(a.root).resolve() != node_root:
+            raise CodexError("share contribute without a collection takes the node's own root; "
+                             "name a collection here")
+        refs = [c.name for c in collections_mod.load_all()
+                if getattr(c, "codex", None) is not None and c.codex.privacy == "public"]
+    try:
+        key = node_keys.load_signing_key()
+        own_key = identity.own()
+    except Exception as e:   # noqa: BLE001
+        raise CodexError(f"share contribute signs bundles and this peer has no key: {e}") from None
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):                # not the main thread
+            pass
+    locked: set[str] = set()
+
+    def one_pass() -> dict:
+        results: dict[str, object] = {}
+        for ref in refs:
+            name, codex = col.resolve(a.root, ref)
+            if codex.privacy != "public":
+                results[name] = {"skipped": f"{codex.privacy}: bundles of it leave for nobody (04 §4.4)"}
+                continue
+            if name not in locked:
+                _take_write_lock(a.root, name, "share contribute")
+                locked.add(name)
+            local = rec.local_collection(a.root, name, codex)      # invariant 9: embedding is a use
+            copy_state.require_in_use(a.root, name, codex, local, use="contributing vectors for it")
+            embed, before_write = _embedding_callables(a.root, name, codex, stop=stop)
+            now = __import__("time").time()
+            with _closing(peers.connect()) as node_con:
+                live = cov.live_peers(codex, node_con, now=now, own_key=own_key,
+                                      own_benchmarks=cov.own_benchmarks(a.root, name, codex, own_key))
+                from app import db as _db
+                with _closing(_db.connect(local)) as mcon:
+                    results[name] = contrib.once(
+                        a.root, name, codex, key=key, own_key=own_key, embed=embed,
+                        vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
+                        write=lambda rows: embeddings.upsert_chunks(rows, collection=local,
+                                                                    dtype=codex.space.dtype),
+                        live=live, con=mcon, node_con=node_con, now=now, stop=stop,
+                        log=lambda m: print(m, file=sys.stderr), batch=config.EMBED_SLICE_CHUNKS,
+                        before_write=before_write)
+            if stop.is_set():
+                break
+        return results
+
+    try:
+        if a.once:
+            _print(one_pass())
+            return 0
+        while not stop.is_set():
+            out = one_pass()
+            print(json.dumps(out, sort_keys=True), file=sys.stderr)
+            if stop.is_set():
+                break
+            stop.wait(max(1.0, float(a.interval)))
+        return 130
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -2516,6 +2629,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="where this node reaches the Codex's encoder, into the collection's file")
     p.add_argument("--name", default=None, help="the local name; default: the plugin's")
     p.set_defaults(fn=cmd_share_fetch)
+    p = shverbs.add_parser("contribute", help="the shards this peer leads: vectors build under rendezvous, "
+                                              "bundled, announced (04 §4.5)")
+    root_arg(p); p.add_argument("collection", nargs="?", default=None,
+                                help="one collection; default: every public collection held")
+    p.add_argument("--once", action="store_true", help="one pass, then exit")
+    p.add_argument("--interval", default=str(int(900)), metavar="S",
+                   help="seconds between passes when looping (default 900)")
+    p.set_defaults(fn=cmd_share_contribute)
     p = shverbs.add_parser("attest", help="hold check, then the attestations as events — once each (04 §4.2)")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--checks", help="comma-separated; default: the collection's plan")

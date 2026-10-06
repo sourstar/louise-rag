@@ -121,7 +121,7 @@ louise share
   <collection> [--slices …] [--kinds …] [--stop]                       serve what you hold — and announce it
   fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a part
         [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
-  contribute [<collection>] [--once]                                   vectors build, under rendezvous, shared
+  contribute [<collection>] [--once] [--interval S]                    vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
   peers add <address> [--key <key>]                                    a peer given by hand; --key pins its key
@@ -376,7 +376,23 @@ reader needs at the command line:
   whose snapshot a `records-vs-origin` attestation exists; then `hold
   vectors build`, then `share` of the bundles. `--once` takes the shards
   this peer currently leads, builds and shares them, and exits instead
-  of looping until stopped.
+  of looping until stopped. Exactly: the open shards of the current
+  snapshot are read off the coverage map (09 §9.10), the live peers off
+  the digests (a benchmark for the space, this peer's own from its
+  statements); the top of the ordering leads, its window running from
+  the later of the shard's first opening here and its last accepted
+  bundle, the next in line taking over when it runs out with no bundle,
+  its own window starting there, and the top again when every window
+  has run out. Each shard led is built, exported into
+  `state/bundles/<space>/<slice>/<n>/<id>/`, passed through this peer's
+  own ladder (T0–T2; T3 is for another key's encoder), accepted in the
+  map as `local`, and announced with a `bundle` event; one refused by its
+  own ladder is kept and not announced. Without `--once` the pass repeats
+  every `--interval` seconds (default 900) until a signal, which finishes
+  the batch in flight and exits 130 (§7.7). It takes the collection's
+  lock (§7.7), so on a node whose worker runs it the collection is paused
+  first. A restricted or never-share collection is skipped: its bundles
+  would leave for nobody. *(2026-10-06, migration step 9e.)*
 - **`share attest`.** Runs `hold check` with the named checks and a
   fresh seed and publishes the resulting attestations as events (04
   §4.2). It never republishes an old one: the attestation ids published

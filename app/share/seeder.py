@@ -106,12 +106,19 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
     torrents_dir = share_root / TORRENTS_DIR
     entries: list[dict[str, Any]] = []
     refused: list[str] = []
-    for member in mem.members_of(snapshot, drag_dir=drag_dir):
-        if not all((Path(drag_dir) / f.path).is_file() for f in member.files):
+    members = list(mem.members_of(snapshot, drag_dir=drag_dir))
+    codex = getattr(collection, "codex", None)
+    if codex is not None:
+        # the bundles this peer holds for the space (09 §9.7, §9.16): served
+        # from state/bundles/, never from the drag
+        members += mem.bundle_members(Path(state_dir), codex.space_segment)
+    for member in members:
+        base = Path(member.base) if member.base is not None else Path(drag_dir)
+        if not all((base / f.path).is_file() for f in member.files):
             continue                                     # a slice this copy does not hold
         for t in member.torrents():
             member_dir = _place(share_root, snapshot.snapshot_id, member.name, t.path,
-                                Path(drag_dir) / t.path)
+                                base / t.path)
             torrent_path = build_torrent(member_dir, t, torrents_dir)
             if torrent_path is None:
                 refused.append(f"{member.name}: {t.path}")

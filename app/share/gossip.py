@@ -102,15 +102,61 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
             continue
         snap = seeder.current_snapshot(drag)
         shared = seeder.wants_serving(c) and snap is not None
-        members = mem.members_of(snap, drag_dir=drag) if shared else ()
+        members = list(mem.members_of(snap, drag_dir=drag)) if shared else []
         members = [m for m in members if all((drag / f.path).is_file() for f in m.files)]
+        if shared:
+            # the bundles this peer holds for the space, served from state/
+            # (09 §9.7, §9.16): offered beside the snapshot's members
+            members += mem.bundle_members(root / c.name / "state", codex.space_segment)
         try:
             lid = lineage_id(codex, resolve)
         except Exception:   # noqa: BLE001 — a chain this node cannot follow: the root is itself
             lid = codex.collection_id
         out.append(messages.collection_entry(codex, snap, members, codex_bytes=codex_bytes,
-                                             lineage_id=lid))
+                                             lineage_id=lid, coverage=coverage_of(root, c.name)))
     return out
+
+
+def coverage_of(root: Path, name: str) -> list[dict[str, Any]]:
+    """09 §9.9's `coverage`: per shard, the bundle ids this peer has accepted
+    (02 §2.5) — from the coverage map, when the collection has a manifest."""
+    from app.share import coverage as cov
+    if not (Path(root) / name / "state" / "manifest.sqlite").is_file():
+        return []
+    by_shard: dict[str, list[str]] = {}
+    try:
+        with closing(cov.manifest(root, name)) as mcon:
+            for r in cov.rows(mcon):
+                if r["accepted_at"]:
+                    by_shard.setdefault(r["shard"], []).append(r["bundle_id"])
+    except Exception:   # noqa: BLE001 — a manifest that cannot be read claims nothing
+        return []
+    return [{"shard": s, "bundles": sorted(ids)} for s, ids in sorted(by_shard.items())]
+
+
+def fold_claims(root: Path, collections, *, now: float) -> int:
+    """The coverage claims in the neighbours' digests, recorded beside this
+    peer's map for every collection held (09 §9.10); how many were recorded."""
+    from app.share import coverage as cov
+    with closing(peers.connect()) as con:
+        digests = [d for d in (peers.digest_of(con, n["key"]) for n in peers.neighbours(con, now=now))
+                   if d]
+    if not digests:
+        return 0
+    n = 0
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None or not (Path(root) / c.name / "state" / "manifest.sqlite").is_file():
+            continue
+        if not any(e.get("collection_id") == codex.collection_id
+                   for d in digests for e in d.get("collections", []) if isinstance(e, dict)):
+            continue
+        try:
+            with closing(cov.manifest(root, c.name)) as mcon:
+                n += cov.fold_claims(mcon, codex, digests)
+        except Exception:   # noqa: BLE001 — one manifest, not the beat
+            continue
+    return n
 
 
 def peer_port(cfg=None) -> int | None:
@@ -244,7 +290,11 @@ def beat(collections, *, now: float | None = None, client=None,
     # collection held here is kept beside its catalogue (03 §3.6; 09 §9.8)
     with closing(peers.connect()) as con:
         acted = attest_mod.store_received(root, con, log=log)
-    out: dict[str, Any] = {"acted": acted,
+    try:
+        claims = fold_claims(root, collections, now=now)
+    except Exception:   # noqa: BLE001 — claims are hints; the beat goes on
+        claims = 0
+    out: dict[str, Any] = {"acted": acted, "claims": claims,
                            "forwarded": forward_events(client=client, now=now, stop=stop, log=log),
                            "digest": None}
     if not force and now - _last_digest_at < peers.INTERVAL_S:
