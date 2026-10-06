@@ -98,6 +98,19 @@ because the node lost its internet egress during the image build (DNS and
 HTTPS by IP both fail; the gateway answers at 0.03 ms). Both wait for the
 operator: the deploy runbook, then the deposit runbook (step 16f).
 
+**2026-10-06, ~09:45Z: 3edbabb DEPLOYED** by `deploy/16f/deploy-louise-3edbabb.sh`,
+run from the agent's session after the operator's "try again": staged, the
+live config loaded all three collections (the proof had to borrow the web
+container's mounts — the drag is on tank), tests/deposit 100 and tests/hold
+704 in the staged image, promoted, restarted; web and worker on
+`beafb0603389…`. The worker came up clean (no validation set aside, no
+error). `src.old/` and `louise-rag:pre-cb419e7` are the way back. The
+node's egress had returned after the operator had the TrueNAS Container
+`claude-code` (libvirt-lxc, its own LAN address) force-stopped, deleted,
+and the node rebooted — it was the cause, not the router. Still waiting:
+the granite weights on the node (the agent's scp is refused), then
+`deploy/16f/deposit-16f.sh`.
+
 ### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
 
 The operator accepted [`rage-over-localai.md`](rage-over-localai.md):

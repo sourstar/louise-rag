@@ -53,8 +53,15 @@ docker run --rm louise-rag:staged python -c "import pypdfium2; print('pypdfium2 
 # config must load every collection, and the two directories the merge
 # touched most run in the staged image — one directory per invocation.
 say "3a. the live config loads every collection"
-docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
-  -v "$ROOT/config:/config:ro" -v "$ROOT/data:/data" \
+# The live web container's mounts, as it has them (the drag lives on tank since
+# 2026-09-21, so $ROOT/data alone holds no codex.json — found 2026-10-06), with
+# /config read-only. Mounts only: the container's env carries the admin token
+# and is never dumped.
+LIVE_MOUNTS=$(docker inspect ix-louise-rag-web-1 \
+  --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if eq .Destination "/config"}}:ro{{else if not .RW}}:ro{{end}} {{end}}')
+echo "live mounts: $LIVE_MOUNTS"
+# shellcheck disable=SC2086
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv $LIVE_MOUNTS \
   -e CONFIG_DIR=/config -e DATA_DIR=/data \
   louise-rag:staged python -c "
 from app import collections as c
@@ -95,6 +102,7 @@ rm -rf src.new/deploy && rmdir src.new
 
 say "4b. build louise-rag:local from the promoted tree"
 docker build -t louise-rag:local "$ROOT/src"
+echo 3edbabb > "$ROOT/src/.deployed-commit"     # what 15f's script wrote; DEPLOYMENT.md reads it
 NEW_ID=$(docker inspect louise-rag:local --format '{{.Id}}')
 echo "louise-rag:local = $NEW_ID"
 
