@@ -4,13 +4,18 @@ neighbour and every address in the peer list once an hour; the events it
 received, forwarded once to its neighbours with one hop fewer; the ids
 seen, swept after seven days. Migration step 9c.
 
-The web process only receives (app/share/api.py). Bytes sent here are
-few — a digest is kilobytes — and are not yet metered against the budget
-(04 §4.3 says they must be); that is owed with the fetch of 9d.
+The web process only receives (app/share/api.py). Every byte sent here
+draws from the node's UP bucket first (04 §4.3: digests and events are
+in the budget; CLAUDE.md invariant 5), in the DELTA class — they carry
+the current state of the catalogue and are kilobytes an hour. What the
+web ANSWERS to a pull (a Codex, a snapshot, attestations — kilobytes too)
+leaves through the web process, which has no bucket of the worker's; it
+is unmetered, said in the plan, and 9d revisits it when pulls grow.
 """
 from __future__ import annotations
 
 import json
+import threading
 import time
 from contextlib import closing
 from pathlib import Path
@@ -18,8 +23,10 @@ from typing import Any, Callable
 
 from app.hold import collection as col, envelope as env
 from app.share import members as mem, messages, peers, seeder
+from app.transfer.bucket import Priority, TransferAborted
 
 TIMEOUT_S = 10.0
+PRIORITY = Priority.DELTA
 _last_digest_at = 0.0
 
 
@@ -32,6 +39,22 @@ def own_address(cfg=None) -> str:
     if cfg.peers.address:
         return cfg.peers.address
     return f"http://{cfg.peers.name or socket.gethostname()}:{config.PORT}"
+
+
+def own_port(cfg=None) -> int:
+    """The port a DHT announcement names (04 §4.2: what is found under a key
+    is a peer address whose port speaks the peer messages): the port of
+    `[node] address` when it is set — the reachable one — else the
+    process's own."""
+    from urllib.parse import urlsplit
+    from app import config, platform_config
+    cfg = cfg or platform_config.load()
+    if cfg.peers.address:
+        parts = urlsplit(cfg.peers.address)
+        if parts.port:
+            return parts.port
+        return 443 if parts.scheme == "https" else 80
+    return int(config.PORT)
 
 
 def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, Any]]:
@@ -101,11 +124,23 @@ def build_digest(root: Path, collections, *, key, own_key: str, address: str,
     return env.sign(env.DIGEST, body, key)
 
 
-def _post(url: str, payload: dict[str, Any], *, client=None) -> tuple[int, Any]:
+def _draw(n: int, *, stop: threading.Event | None) -> None:
+    """`n` bytes from the UP bucket at PRIORITY, before they leave. Blocks
+    while the budget is spent; raises TransferAborted when `stop` is set."""
+    from app.transfer.manager import Direction, get_manager
+    manager = get_manager()
+    manager.maybe_refresh()
+    manager.bucket(Direction.UP).acquire(n, PRIORITY, stop=stop)
+
+
+def _post(url: str, payload: dict[str, Any], *, client=None,
+          stop: threading.Event | None = None) -> tuple[int, Any]:
     import httpx
+    data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    _draw(len(data), stop=stop)
     c = client or httpx.Client(timeout=TIMEOUT_S)
     try:
-        r = c.post(url, json=payload)
+        r = c.post(url, content=data, headers={"content-type": "application/json"})
         try:
             return r.status_code, r.json()
         except ValueError:
@@ -116,20 +151,25 @@ def _post(url: str, payload: dict[str, Any], *, client=None) -> tuple[int, Any]:
 
 
 def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
+                stop: threading.Event | None = None,
                 log: Callable[[str], None] | None = None) -> dict[str, int]:
     """To every address, each once; a failure is logged and the address is
-    tried again at the next interval (04 §4.2: deferred and retried)."""
+    tried again at the next interval (04 §4.2: deferred and retried). A
+    stop ends the round where it stands."""
     sent, failed = 0, 0
     for address in recipients:
         try:
             code, _ = _post(f"{address.rstrip('/')}/api/share/digest/share", envelope,
-                            client=client)
+                            client=client, stop=stop)
             if 200 <= code < 300:
                 sent += 1
             else:
                 failed += 1
                 if log:
                     log(f"digest to {address}: HTTP {code}")
+        except TransferAborted:
+            failed += len(recipients) - sent - failed
+            break
         except Exception as e:   # noqa: BLE001 — one peer away is not the round's failure
             failed += 1
             if log:
@@ -137,11 +177,11 @@ def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
     return {"sent": sent, "failed": failed}
 
 
-def forward_events(*, client=None, now: float | None = None,
+def forward_events(*, client=None, now: float | None = None, stop: threading.Event | None = None,
                    log: Callable[[str], None] | None = None) -> int:
     """Every event received and not yet forwarded goes to every neighbour
     with its hops as kept (already one fewer); forwarded once, whatever the
-    outcome at each neighbour."""
+    outcome at each neighbour. A stop leaves the rest for the next beat."""
     now = peers.now() if now is None else now
     n = 0
     with closing(peers.connect()) as con:
@@ -149,15 +189,20 @@ def forward_events(*, client=None, now: float | None = None,
         neigh = peers.neighbours(con, now=now)
         for ev in pending:
             message = {**ev["envelope"], "hops": ev["hops"]}
-            for peer in neigh:
-                if peer["key"] == ev["envelope"]["body"].get("key"):
-                    continue                        # not back to its originator
-                try:
-                    _post(f"{peer['address'].rstrip('/')}/api/share/event/share", message,
-                          client=client)
-                except Exception as e:   # noqa: BLE001
-                    if log:
-                        log(f"event to {peer['address']}: {type(e).__name__}: {e}"[:200])
+            try:
+                for peer in neigh:
+                    if peer["key"] == ev["envelope"]["body"].get("key"):
+                        continue                        # not back to its originator
+                    try:
+                        _post(f"{peer['address'].rstrip('/')}/api/share/event/share", message,
+                              client=client, stop=stop)
+                    except TransferAborted:
+                        raise
+                    except Exception as e:   # noqa: BLE001
+                        if log:
+                            log(f"event to {peer['address']}: {type(e).__name__}: {e}"[:200])
+            except TransferAborted:
+                break
             peers.mark_forwarded(con, ev["id"])
             n += 1
         peers.sweep(con, now=now)
@@ -165,6 +210,7 @@ def forward_events(*, client=None, now: float | None = None,
 
 
 def beat(collections, *, now: float | None = None, client=None,
+         stop: threading.Event | None = None,
          log: Callable[[str], None] | None = None, force: bool = False) -> dict[str, Any]:
     """The worker's beat: forward what arrived; once an interval, send this
     node's digest. Nothing without a key (a node that cannot sign says
@@ -173,7 +219,7 @@ def beat(collections, *, now: float | None = None, client=None,
     from app import collections as collections_mod, identity
     from app.bundles import keys as node_keys
     now = peers.now() if now is None else now
-    out: dict[str, Any] = {"forwarded": forward_events(client=client, now=now, log=log),
+    out: dict[str, Any] = {"forwarded": forward_events(client=client, now=now, stop=stop, log=log),
                            "digest": None}
     if not force and now - _last_digest_at < peers.INTERVAL_S:
         return out
@@ -193,7 +239,7 @@ def beat(collections, *, now: float | None = None, client=None,
         return out
     envelope = build_digest(root, collections, key=key, own_key=own_key,
                             address=own_address(), now=now)
-    out["digest"] = send_digest(envelope, recipients, client=client, log=log)
+    out["digest"] = send_digest(envelope, recipients, client=client, stop=stop, log=log)
     out["digest"]["recipients"] = recipients
     _last_digest_at = now
     return out

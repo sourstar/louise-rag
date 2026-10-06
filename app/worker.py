@@ -3511,19 +3511,20 @@ def _stats_publisher() -> None:
                 # 04 §4.3: the members of every shared collection's current
                 # snapshot, published to the seeder below and announced (9b)
                 from app.acquire import transport_torrent as _tt
-                from app.share import seeder as share_seeder
+                from app.share import gossip as share_gossip, seeder as share_seeder
                 share_seeder.sync(collections, seed_cons, con,
                                   node_state.worker_state(node_con),
                                   session=_tt.get_session() if _tt._session is not None else None,
-                                  port=int(os.getenv("SHARE_ANNOUNCE_PORT", config.PORT)),
+                                  port=share_gossip.own_port(),     # [node] address's, as peers reach it
                                   log=lambda m: db.log_event(con, "info", "share", m[:500]))
             except Exception:   # noqa: BLE001 — telemetry must never kill the worker
                 pass
             try:
                 # 04 §4.2: this node's digest once an hour to its neighbours and
-                # the peer list; events received forwarded once (9c)
+                # the peer list; events received forwarded once (9c); every
+                # byte drawn from the UP bucket first, and a stop ends the round
                 from app.share import gossip as share_gossip
-                share_gossip.beat(collections,
+                share_gossip.beat(collections, stop=_stop,
                                   log=lambda m: db.log_event(con, "info", "share", m[:500]))
             except Exception:   # noqa: BLE001 — telemetry must never kill the worker
                 pass

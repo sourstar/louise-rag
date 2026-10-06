@@ -52,6 +52,13 @@ async def digest_share(request: Request) -> JSONResponse:
         body = messages.open_digest(envelope, now=now)
     except (SignatureError, messages.MessageError, TypeError, KeyError) as e:
         raise HTTPException(400, str(e))
+    pinned = peers.pinned_key(body["address"])
+    if pinned is not None and pinned != body["key"]:
+        # 04 §4.2: an address added by hand may pin a key; a digest from
+        # that address under another key is discarded and logged
+        _log("warning", f"share: digest claiming {body['address']} under {body['key']}: that "
+                        f"address is pinned to {pinned}; discarded (04 §4.2)")
+        raise HTTPException(400, "that address is pinned to another key (04 §4.2)")
     with closing(peers.connect()) as con:
         if peers.is_banned(con, body["key"], now=now):
             return JSONResponse({"accepted": False, "why": "not a neighbour today (04 §4.2)"},

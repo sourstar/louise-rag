@@ -237,6 +237,16 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~18:00Z: 9c done.** `share peers add <address> [--key]`
+writes platform.toml's `[peers]` list and `[peers.pins]` — desired state
+in the file, the rest of it kept byte for byte; `share peers show`; a
+digest claiming a pinned address under another key is refused and logged;
+every byte the worker sends (digests, events) draws from the UP bucket
+first, DELTA class; the DHT announcement names `[node] address`'s port
+(the env var is gone). 07 §7.3's "neighbour for three intervals on faith"
+amended: a neighbour is a key at an address. tests/share: 50. Not yet
+deployed: the node runs 6c06b4a (9b).
+
 **2026-10-06, ~16:30Z: 9c, first brick.** The peer messages of 09 §9.9 in
 code: `/api/share/{digest,event,codex,snapshot,attestations}/…` in the web,
 verifying with the sender's key; peers seen, neighbours, bans and event

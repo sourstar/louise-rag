@@ -151,10 +151,156 @@ def sweep(con, *, now: float) -> int:
 
 
 # ---- the bootstrap list (platform.toml [peers]) --------------------------------------
+#
+# Desired state lives in the TOML (CLAUDE.md invariant 10), so `share peers
+# add` writes platform.toml and nothing here; the worker re-reads it at
+# every beat (platform_config.load caches nothing). A peer given by hand
+# receives this node's digests from the next beat and becomes a neighbour
+# when its own digest arrives — a neighbour is a key at an address (09
+# §9.9), and an address alone has no key to list.
 
 def bootstrap_addresses() -> tuple[str, ...]:
     from app import platform_config
     return tuple(platform_config.load().peers.addresses)
+
+
+def pinned_key(address: Any, cfg=None) -> str | None:
+    """The key `[peers.pins]` binds to this address, if any (04 §4.2: a digest
+    from that address under another key is discarded and logged)."""
+    from app import platform_config
+    cfg = cfg or platform_config.load()
+    try:
+        return cfg.peers.pins.get(platform_config.normalise_address(address))
+    except Exception:   # noqa: BLE001 — an address that is not one pins nothing
+        return None
+
+
+def peer_list(cfg=None) -> list[dict[str, Any]]:
+    """`[{address, key}]` — the hand-given bootstrap of 04 §4.2, pins included."""
+    from app import platform_config
+    cfg = cfg or platform_config.load()
+    out = [{"address": a, "key": cfg.peers.pins.get(a)} for a in cfg.peers.addresses]
+    for a, k in cfg.peers.pins.items():
+        if a not in cfg.peers.addresses:
+            out.append({"address": a, "key": k})
+    return out
+
+
+_SECTION_HEAD = r"^\[(peers|peers\.pins)\]\s*(#.*)?$"
+
+
+def _render_peers(addresses: list[str], pins: dict[str, str]) -> list[str]:
+    lines = ["[peers]\n",
+             "addresses = [" + ", ".join(json.dumps(a) for a in addresses) + "]"
+             "      # the bootstrap of 04 §4.2; `share peers add` writes here\n"]
+    if pins:
+        lines += ["\n", "[peers.pins]      # a digest from this address under another key is discarded\n"]
+        lines += [f"{json.dumps(a)} = {json.dumps(k)}\n" for a, k in sorted(pins.items())]
+    return lines
+
+
+def rewrite_peer_list(text: str, addresses: list[str], pins: dict[str, str]) -> str:
+    """platform.toml's text with its `[peers]` and `[peers.pins]` sections
+    replaced — where `[peers]` stood, or at the end — and every other line
+    kept byte for byte. Comments inside the two sections do not survive."""
+    import re
+    lines = text.splitlines(keepends=True)
+    kept: list[str] = []
+    at: int | None = None
+    i = 0
+    while i < len(lines):
+        if re.match(_SECTION_HEAD, lines[i].rstrip("\r\n")):
+            if at is None:
+                at = len(kept)
+            i += 1
+            while i < len(lines) and not lines[i].startswith("["):
+                i += 1
+            continue
+        kept.append(lines[i])
+        i += 1
+    fresh = _render_peers(addresses, pins)
+    if at is None:
+        if kept and not kept[-1].endswith("\n"):
+            kept[-1] += "\n"
+        if kept and kept[-1].strip():
+            kept.append("\n")
+        return "".join(kept + fresh)
+    while at < len(kept) and not kept[at].strip():
+        del kept[at]
+    tail = kept[at:]
+    if tail and tail[0].strip():
+        fresh = fresh + ["\n"]
+    return "".join(kept[:at] + fresh + tail)
+
+
+def add_to_peer_list(path, address: str, key: str | None = None) -> dict[str, Any]:
+    """`share peers add <address> [--key]` (07 §7.3): the address into
+    `[peers] addresses`, each once; with a key, the pin into `[peers.pins]`.
+    The file is read as the node reads it and written whole, through a
+    temporary file. Returns what the file now says for this address."""
+    from pathlib import Path
+    from app import platform_config
+    from app.hold.codex import CodexError
+    from app.hold.envelope import SignatureError, key_bytes
+    path = Path(path)
+    try:
+        address = platform_config.normalise_address(address)
+        if key is not None:
+            key_bytes(key)
+    except (platform_config.schedule_mod.ScheduleError, SignatureError) as e:
+        raise CodexError(str(e)) from None
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    try:
+        cfg = platform_config._load_one(path) if path.is_file() else platform_config.PlatformConfig()
+    except platform_config.schedule_mod.ScheduleError as e:
+        raise CodexError(f"{path}: {e}") from None
+    addresses = list(cfg.peers.addresses)
+    pins = dict(cfg.peers.pins)
+    added = address not in addresses
+    if added:
+        addresses.append(address)
+    pinned = key is not None and pins.get(address) != key
+    if key is not None:
+        pins[address] = key
+    if added or pinned:
+        tmp = path.with_suffix(".toml.tmp")
+        tmp.write_text(rewrite_peer_list(text, addresses, pins), encoding="utf-8")
+        tmp.replace(path)
+    return {"address": address, "key": pins.get(address), "added": added, "pinned": pinned,
+            "file": str(path), "peers": len(addresses)}
+
+
+def show(con, *, now: float, cfg=None) -> dict[str, Any]:
+    """`share peers show` (07 §7.3): the peer list, and every peer heard
+    from — whether it is a neighbour now, its ban, and what its last digest
+    says it holds."""
+    from app.share import messages
+    out_peers = []
+    for row in all_peers(con):
+        digest = None
+        if row.get("digest"):
+            try:
+                digest = json.loads(row["digest"])
+            except (TypeError, ValueError):
+                digest = None
+        banned = bool(row.get("banned_until") and row["banned_until"] > now)
+        out_peers.append({
+            "key": row["key"],
+            "address": row.get("address"),
+            "last_digest": messages.time_text(row["last_digest"]) if row.get("last_digest") else None,
+            "neighbour": bool(row.get("last_digest") and row["last_digest"] >= now - NEIGHBOUR_WINDOW_S
+                              and row.get("address") and not banned),
+            "banned_until": messages.time_text(row["banned_until"]) if banned else None,
+            "ban_why": row.get("ban_why") if banned else None,
+            "pinned": pinned_key(row.get("address"), cfg) == row["key"] if row.get("address") else False,
+            "collections": [
+                {"collection_id": c.get("collection_id"), "title": c.get("title"),
+                 "snapshot_id": c.get("snapshot_id"), "license": c.get("license"),
+                 "privacy": c.get("privacy"), "members": len(c.get("members") or [])}
+                for c in (digest or {}).get("collections", []) if isinstance(c, dict)],
+        })
+    n_events = con.execute("SELECT COUNT(*) FROM events_seen").fetchone()[0]
+    return {"peer_list": peer_list(cfg), "peers": out_peers, "events_seen": n_events}
 
 
 def recipients(con, *, now: float) -> list[str]:

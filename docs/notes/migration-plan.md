@@ -951,21 +951,32 @@ node is one peer until 9d's two-peer test):
   `false` into the collection's file; the worker does the rest at its next
   beat. PROVEN on localhost: a leecher knowing only the infohash it
   computed from the snapshot fetched the member's bytes from our seeder.
-  Still owed: `--slices`/`--kinds` narrowing (9d), and the announced port
-  must be the node's reachable one (`SHARE_ANNOUNCE_PORT`, set at 9c when
-  the peer messages give the announcement an audience). A copy in
+  Still owed: `--slices`/`--kinds` narrowing (9d). The announced port is
+  `[node] address`'s since 9c (`gossip.own_port`) — the one peers reach,
+  never an env var: desired state lives in the TOML. A copy in
   quarantine, or never-share, is not served (03 §3.6).
-- **9c — the peer messages** (09 §9.9). **First brick DONE 2026-10-06**
-  (`app/share/peers.py`, `messages.py`, `api.py`, `gossip.py`;
-  `tests/share/test_messages.py`, `test_share_api.py`): the five routes in
-  the web process, verifying with the SENDER's key; peers, neighbours,
-  bans and seen ids in `state/node.sqlite`; this node's digest signed and
-  sent once an hour by the worker to every neighbour and every `[peers]`
-  address; events forwarded once with one hop fewer; pulls answered with
-  the exact stored bytes. `[peers] addresses`, `[dht] enabled` and the
-  new `[node] address` in platform.toml. Owed: `share peers add|show`;
-  acting on what digests and events say (9d); the budget for the bytes
-  sent; the reachable announce port.
+- **9c — the peer messages** (09 §9.9). **DONE 2026-10-06**, in two
+  bricks (`app/share/peers.py`, `messages.py`, `api.py`, `gossip.py`;
+  `tests/share/test_messages.py`, `test_share_api.py`, `test_peers.py`).
+  First: the five routes in the web process, verifying with the SENDER's
+  key; peers, neighbours, bans and seen ids in `state/node.sqlite`; this
+  node's digest signed and sent once an hour by the worker to every
+  neighbour and every `[peers]` address; events forwarded once with one
+  hop fewer; pulls answered with the exact stored bytes. `[peers]
+  addresses`, `[dht] enabled` and the new `[node] address` in
+  platform.toml. Second: `share peers add <address> [--key]` writes the
+  `[peers]` list (each address once, the rest of the file byte for byte)
+  and `[peers.pins]`; a digest claiming a pinned address under another
+  key is discarded and logged at the door; `share peers show`; every byte
+  the worker sends draws from the UP bucket first, DELTA class, and a
+  stop ends the round where it stands (what is left is forwarded at the
+  next beat); the DHT announcement names `[node] address`'s port. 07 §7.3
+  amended: a hand-given peer is a neighbour from its first digest, not
+  for three intervals on faith — a neighbour is a key at an address.
+  Owed to 9d: acting on what digests and events say (the fetch); the
+  bytes the WEB answers to a pull — a Codex, a snapshot, attestations,
+  kilobytes — leave through a process with no bucket of the worker's and
+  are unmetered until pulls grow with the fetch.
 - **9d — `share fetch`**: find (DHT key, peers list), pull codex and
   snapshot, fetch members, verify roots, stage, promote; the
   pre-acknowledgement set. The two-peer test on localhost.

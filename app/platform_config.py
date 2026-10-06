@@ -115,14 +115,43 @@ class DepositConfig:
 @dataclass(frozen=True)
 class PeersConfig:
     """`[peers]`, `[dht]` and the node's own address (07 §7.8; 04 §4.2):
-    the bootstrap addresses `share peers add` writes, whether the DHT is on,
-    and where THIS node answers pulls — `[node] address`, the reachable one
+    the bootstrap addresses `share peers add` writes, the keys it pins to
+    an address (`[peers.pins]`: a digest from that address under another
+    key is discarded), whether the DHT is on, and where THIS node answers
+    pulls — `[node] address`, the reachable one
     (`http://192.168.178.10:30042` on the reference node), not the
     container's port; `[node] name` labels it."""
     addresses: tuple[str, ...] = ()
     dht: bool = True
     address: str | None = None
     name: str | None = None
+    pins: dict[str, str] = field(default_factory=dict)
+
+
+_KEY_TEXT = re.compile(r"ed25519:[0-9a-f]{64}")
+
+
+def normalise_address(text: Any) -> str:
+    """A peer address as the messages carry it (09 §9.9): `http(s)://host[:port]`,
+    no path, no trailing slash. A bare `host:port` is http. Refused when it
+    names no host or carries a path — one spelling per peer, so the list and
+    the pins hold each address once."""
+    from urllib.parse import urlsplit
+    if not isinstance(text, str) or not text.strip():
+        raise schedule_mod.ScheduleError(f"a peer address is http(s)://host[:port], got {text!r}")
+    s = text.strip()
+    if "://" not in s:
+        s = "http://" + s
+    parts = urlsplit(s)
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if parts.scheme not in ("http", "https") or parts.path.strip("/") or parts.query \
+            or parts.fragment or port == -1 \
+            or not re.fullmatch(r"([A-Za-z0-9.\-]+|\[[0-9A-Fa-f:.]+\])(:\d{1,5})?", parts.netloc):
+        raise schedule_mod.ScheduleError(f"a peer address is http(s)://host[:port], got {text!r}")
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 @dataclass(frozen=True)
@@ -383,6 +412,18 @@ def _load_one(path: Path) -> PlatformConfig:
     addresses_raw = peers_raw.get("addresses", []) if isinstance(peers_raw, dict) else None
     if not isinstance(addresses_raw, list) or not all(isinstance(a, str) and a for a in addresses_raw):
         raise schedule_mod.ScheduleError("[peers] addresses is a list of strings (07 §7.8)")
+    addresses: list[str] = []
+    for a in addresses_raw:
+        a = normalise_address(a)
+        if a not in addresses:
+            addresses.append(a)
+    pins_raw = peers_raw.get("pins", {}) if isinstance(peers_raw, dict) else {}
+    if not isinstance(pins_raw, dict) or not all(
+            isinstance(k, str) and _KEY_TEXT.fullmatch(k) for k in pins_raw.values()):
+        raise schedule_mod.ScheduleError(
+            "[peers.pins] maps an address to the key it is pinned to, \"ed25519:\" and 64 hex "
+            "(07 §7.8; 04 §4.2)")
+    pins = {normalise_address(a): k for a, k in pins_raw.items()}
     dht_raw = raw.get("dht") or {}
     dht_enabled = dht_raw.get("enabled", True) if isinstance(dht_raw, dict) else True
     if not isinstance(dht_enabled, bool):
@@ -390,8 +431,9 @@ def _load_one(path: Path) -> PlatformConfig:
     node_address = node_raw.get("address")
     if node_address is not None and not (isinstance(node_address, str) and node_address.startswith("http")):
         raise schedule_mod.ScheduleError("[node] address is this node's reachable URL, http(s)://host:port")
-    peers = PeersConfig(addresses=tuple(addresses_raw), dht=dht_enabled, address=node_address,
-                        name=node_raw.get("name") if isinstance(node_raw.get("name"), str) else None)
+    peers = PeersConfig(addresses=tuple(addresses), dht=dht_enabled, address=node_address,
+                        name=node_raw.get("name") if isinstance(node_raw.get("name"), str) else None,
+                        pins=pins)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           deposit=deposit,
                           peers=peers,

@@ -123,7 +123,7 @@ louise share
   contribute [<collection>] [--once]                                   vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
-  peers add <address>                                                  a peer given by hand
+  peers add <address> [--key <key>]                                    a peer given by hand; --key pins its key
 
 louise ask
   search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--<facet> VALUE | --not-<facet> VALUE …]
@@ -344,8 +344,16 @@ reader needs at the command line:
   fresh seed and publishes the resulting attestations as events (04
   §4.2). It never republishes an old one.
 - **`share peers`.** `add` is one of the two bootstraps, beside
-  `platform.toml [peers]` (§7.8); a peer given by hand is a neighbour
-  until three digest intervals pass without a digest from it.
+  `platform.toml [peers]` (§7.8) — it writes that list, each address
+  once, and with `--key` pins the address to a key (04 §4.2: a digest
+  from that address under another key is discarded and logged). A peer
+  given by hand receives this peer's digests from the worker's next beat
+  and is a neighbour from the moment its own digest arrives: a neighbour
+  is a key at an address (09 §9.9), and an address alone has no key to
+  list. *(Amended 2026-10-06; it read "a neighbour until three digest
+  intervals pass without a digest from it", which named a neighbour with
+  no key.)* `show` lists the peer list and every peer heard from — whether
+  it is a neighbour now, its ban, and what its last digest says it holds.
 - **`ask`.** `search` returns the result of 05 §5.3; `lookup` and
   `traverse` are the MCP tools `louise_lookup` and `louise_traverse` of
   05 §5.4, one to one, and `search` is `louise_search`. `chat` needs
@@ -766,7 +774,9 @@ variable, a file, a log line or a message.
 ```toml
 [node]       http_port = 8742   peer_port = 6881   name = "nas"   address = "http://nas:8742"   # address: where THIS node answers pulls, as peers reach it (09 §9.9; added 2026-10-06)
 [budget]     down_max = "400Mbit"   up_max = "40Mbit"   schedule = "01:00-07:00 full; else 30%"
-[peers]      addresses = ["peer.example.org:6881"]      # the bootstrap of 04 §4.2, beside `share peers add`
+[peers]      addresses = ["http://peer.example.org:8742"]   # the bootstrap of 04 §4.2, where the peer answers the
+             # messages of 09 §9.9 (a bare host:port is http); `share peers add` writes here, each address once
+[peers.pins] "http://peer.example.org:8742" = "ed25519:…"   # a digest from that address under another key is discarded
 [dht]        enabled = true
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen

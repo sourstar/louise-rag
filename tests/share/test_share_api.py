@@ -103,9 +103,12 @@ class FakeClient:
 
     def __init__(self):
         self.posts: list[tuple[str, dict]] = []
+        self.bytes = 0
 
-    def post(self, url, json):
-        self.posts.append((url, json))
+    def post(self, url, content=None, headers=None):
+        assert headers == {"content-type": "application/json"}
+        self.bytes += len(content)
+        self.posts.append((url, json.loads(content)))
 
         class R:
             status_code = 200

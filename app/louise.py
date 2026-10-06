@@ -676,6 +676,24 @@ def cmd_share(a) -> int:
     return 0
 
 
+def cmd_share_peers(a) -> int:
+    """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
+    into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
+    the worker sends its next digest there. `share peers show` lists the
+    peer list and every peer heard from, with what its last digest says it
+    holds."""
+    from app import platform_config
+    from app.share import peers
+    if a.peers_verb == "add":
+        out = peers.add_to_peer_list(platform_config.platform_path(), a.address, key=a.key)
+        out["note"] = ("the worker sends its digest there at its next beat; the peer is a "
+                       "neighbour once its own digest arrives")
+        _print(out)
+        return 0
+    _print(peers.with_connection(peers.show, now=peers.now()))
+    return 0
+
+
 def cmd_show(a) -> int:
     out = col.show(a.root, a.codex_id)
     name, codex = col.resolve(a.root, a.codex_id)
@@ -2245,6 +2263,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kinds", default=None)
     p.add_argument("--stop", action="store_true")
     p.set_defaults(fn=cmd_share)
+    p = shverbs.add_parser("peers", help="who this peer knows; a peer given by hand")
+    pverbs = p.add_subparsers(dest="peers_verb", required=True)
+    q = pverbs.add_parser("add", help="a peer given by hand: into platform.toml [peers] (07 §7.8)")
+    q.add_argument("address", help="http(s)://host[:port]; a bare host:port is http")
+    q.add_argument("--key", default=None,
+                   help="pin the address to this key: a digest from it under another key is discarded")
+    q.set_defaults(fn=cmd_share_peers)
+    q = pverbs.add_parser("show", help="the peer list, every peer heard from, what each holds")
+    q.set_defaults(fn=cmd_share_peers)
 
     add_deprecated(surfaces, {
         "records_build": args_records_build,
