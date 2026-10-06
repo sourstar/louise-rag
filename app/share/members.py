@@ -174,9 +174,20 @@ class Member:
             out.append(Torrent(f.path, f.bytes, f.root, info, infohash(info)))
         return tuple(out)
 
+    @property
+    def listed_by_a_snapshot(self) -> bool:
+        """Record, relations, figures and whole-collection members are found
+        in the snapshot, file by file; a bundle or a text index is not."""
+        return not self.name.startswith(("bundle-", "index-"))
+
     def to_dict(self) -> dict[str, Any]:
-        """The digest's `members` entry (09 §9.9): name, root, bytes."""
-        return {"name": self.name, "root": self.root, "bytes": self.bytes}
+        """The digest's `members` entry (09 §9.9): name, root, bytes — and,
+        for a member no snapshot lists, its files as `[path, root, bytes]` in
+        path order, from which a fetcher computes each torrent (§9.16)."""
+        out = {"name": self.name, "root": self.root, "bytes": self.bytes}
+        if not self.listed_by_a_snapshot:
+            out["files"] = [f.to_list() for f in sorted(self.files, key=lambda f: f.path.encode("utf-8"))]
+        return out
 
 
 def _whole_collection_members(files: dict[str, Any]) -> list[Member]:

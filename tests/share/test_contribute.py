@@ -15,7 +15,6 @@ from app.share import attest, contribute, coverage as cov, members as mem, peers
 from tests.hold.conftest import KEY
 from tests.hold.test_admit import reference_and_envelope, space_embed
 from tests.hold.test_vectors_build import _statement
-from tests.hold.test_vectors_export import build_drag
 from tests.hold.test_vectors_import import _member
 from tests.share.test_messages import PEER, PEER_KEY
 from tests.share.test_share_api import OURS, OUR_KEY
@@ -41,11 +40,22 @@ def ready(isolated_config, tmp_path, corpus_dir, monkeypatch):
     chunks passed, another key's records-vs-origin exists, the calibration
     statement is there, and the calibration member is this encoder's."""
     monkeypatch.delenv("EMBED_URL", raising=False)
-    root, snapshot = build_drag(tmp_path, corpus_dir, records_per_shard=2)
+    # build_drag's three commands, with this encoder's calibration member
+    # written BEFORE the snapshot lists it — so the member the sharer serves
+    # is the one the snapshot names, and the one a fetcher judges with
+    from app.hold import snapshot as sn
+    from tests.hold.conftest import KEY as CREATOR, NOW, PLATFORM, fake_embed, fake_query_embed
+    from tests.hold.test_template import recipe
+    root = tmp_path / "collections"
+    col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM, embed=fake_embed,
+                           embed_query=fake_query_embed, name="gutenberg", key=CREATOR, now=NOW)
     codex = col.read(root, "gutenberg")
-    _statement(root, codex)
     ref, envp = reference_and_envelope(codex)
     _member(root, codex, ref, envp)
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=2)
+    rec.write_validation(root, "gutenberg")
+    snapshot = sn.create(root, "gutenberg", log=lambda *_: None)
+    _statement(root, codex)
     local = rec.local_collection(root, "gutenberg", codex)
     con = db.connect(local)
     node_con = peers.connect()
@@ -109,8 +119,10 @@ def test_alone_a_peer_takes_every_open_shard_builds_bundles_accepts_and_announce
     pending = peers.to_forward(kw["node_con"])
     assert len(pending) == len(shards) and all(p["hops"] == peers.HOPS for p in pending)
     payload = pending[0]["envelope"]["body"]["payload"]
-    assert set(payload) == {"collection", "space_id", "snapshot_id", "shard", "uids", "bundle_id", "root", "bytes"}
+    assert set(payload) == {"collection", "space_id", "snapshot_id", "shard", "uids", "bundle_id", "root",
+                            "bytes", "files"}
     assert payload["collection"] == codex.collection_id and payload["bundle_id"] in out["accepted"]
+    assert [f[0] for f in payload["files"]] == sorted(mem.BUNDLE_FILES), "the four files, in path order (09 §9.16)"
     assert any("accepted and announced" in s for s in said)
     # nothing left open: a second pass builds nothing and announces nothing
     again = contribute.once(root, "gutenberg", codex, live=me, **kw)

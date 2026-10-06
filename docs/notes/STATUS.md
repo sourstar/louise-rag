@@ -237,6 +237,20 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-07, ~03:00Z: 9e, fourth brick — the import side, and 04 §4.1's
+survivor on localhost.** `app/share/accept.py`: a `bundle` event's four
+files fetched by their torrents, judged by this peer's ladder, landed,
+covered, served from here. The `bundle` event and the digest's `members`
+entry now carry `files` for a member no snapshot lists (09 §9.9
+amendment — the operator's to veto). Two faults of 9b's seeder found on
+the way, invisible with record shards alone: a one-file tree at its root
+is a single-file torrent to libtorrent (served from `<save path>/<file>`),
+and a received piece is not yet a written one (flush and wait before
+promoting). tests/share: 96. Not deployed: the node runs b1c8a29 (9c +
+9d), so the validation/terms members it would serve are unaffected until
+`share = true` somewhere. Next: deploy 9e; then `snapshot`/`codex`/`flag`
+events, duplicates as checks, T4 on use; step 10 (`certified`).
+
 **2026-10-07, ~01:00Z: a race fixed — the WAL conversion.** The full suite
 failed once in 3615 (`test_deposit_localagi`, "database is locked" at
 `PRAGMA journal_mode=WAL` in `node_state.connect`): two connections opening

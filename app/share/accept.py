@@ -1,0 +1,185 @@
+"""A bundle another peer announced, taken in (04 §4.5 "how a bundle
+travels"; 03 §3.5; 09 §9.7, §9.9, §9.16) — migration step 9e, fourth
+brick, the import side of `share contribute`.
+
+A `bundle` event names the collection, the shard, the bundle id, its
+member root and its four files. For a collection held here, public,
+acknowledged and in use, whose coverage map does not hold the bundle:
+the four files are fetched by their torrents (app/share/transport.py)
+into `state/staging/`, each checked against the root the event gave,
+and the bundle goes through this peer's ladder — T0, T1, T2, and T3
+skipped (no encoder is asked in the worker's thread: the chunks land
+*unverified here*, which 03 §3.5 allows and `vectors check` repairs).
+Passing, its vectors are merged into this peer's table, the producer is
+recorded as reproduced (08 §8.2), the coverage row is accepted
+(`fetched`), and the bundle rests under `state/bundles/` where the seeder
+serves it: every completed fetch makes the fetcher a sharer (04 §4.3).
+Refused, the row says so and the files are set aside. An event about a
+collection not held here, or one without a file list (an older announcer),
+is acted on by being left alone.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+from app.hold import collection as col, drag as drag_mod
+from app.hold.codex import CodexError
+from app.hold.drag import MemberFile
+from app.share import attest, contribute, coverage as cov, holdings, members as mem, messages, \
+    transport
+
+
+def pending(node_con) -> list[dict[str, Any]]:
+    """The `bundle` events received and not yet acted on."""
+    return [ev for ev in attest.unacted(node_con)
+            if ev["type"] == "bundle" and ((ev["envelope"] or {}).get("body") or {}).get("type") == "bundle"]
+
+
+def member_of(payload: dict[str, Any], space: str) -> mem.Member | None:
+    """The bundle member the event describes, from its file list; None when
+    the list is missing or not what 09 §9.16 shapes."""
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        return None
+    try:
+        mfs = tuple(MemberFile(str(p), str(r), int(b)) for p, r, b in files)
+    except (TypeError, ValueError):
+        return None
+    if sorted(f.path for f in mfs) != sorted(mem.BUNDLE_FILES):
+        return None
+    bundle_id = str(payload.get("bundle_id") or "")
+    if not bundle_id.startswith("sha256:"):
+        return None
+    member = mem.Member(f"bundle-{space}-{drag_mod._hex(bundle_id)}", mfs)
+    if payload.get("root") != member.root:
+        return None                                 # the list does not hash to the root claimed
+    return member
+
+
+def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con, node_con,
+         hints=(), write: Callable[[list[dict]], Any] | None = None, stop=None,
+         log: Callable[[str], None] | None = None, now: float | None = None) -> dict[str, Any]:
+    """One announced bundle, fetched, judged, landed or set aside."""
+    from app import embeddings
+    from app.hold import admission as adms, admit as adm, land as landing, records as rec, vectors as vec
+    root = Path(root)
+    now = time.time() if now is None else now
+    say = log or (lambda *_a: None)
+    member = member_of(payload, codex.space_segment)
+    if member is None:
+        return {"outcome": "ignored", "why": "no file list the event's root agrees with"}
+    bundle_id = str(payload["bundle_id"])
+    known = cov.row(con, bundle_id)
+    if known and known["accepted_at"]:
+        return {"outcome": "held", "bundle_id": bundle_id}
+    final = contribute.bundle_dir(root, name, codex, str(payload.get("shard") or "x/00000"), bundle_id)
+    staging = root / name / "state" / holdings.STAGING
+    staged_dir = staging / member.name
+    for t in member.torrents():
+        if (staged_dir / t.path).is_file() and (staged_dir / t.path).stat().st_size == t.length:
+            continue
+        landed_at = transport.fetch_file(session, torrent=t, member=member.name, staging=staging,
+                                         hints=hints, stop=stop, log=log)
+        if landed_at != staged_dir / t.path:            # libtorrent's layout differed: ours
+            (staged_dir / t.path).parent.mkdir(parents=True, exist_ok=True)
+            landed_at.replace(staged_dir / t.path)
+    for f in member.files:
+        got = drag_mod.pieces_root_of(staged_dir / f.path)
+        if got != f.root:
+            holdings._set_aside(staged_dir / f.path)
+            return {"outcome": "refused", "bundle_id": bundle_id,
+                    "why": f"{f.path} hashes {got[:23]}…, the event said {f.root[:23]}… — set aside"}
+    reference, envelope = contribute.calibration_tensors(root, name, codex)
+    header, rows, possession, read_id = vec.read(staged_dir)
+    if read_id != bundle_id:
+        shutil.rmtree(staged_dir, ignore_errors=True)
+        return {"outcome": "refused", "bundle_id": bundle_id,
+                "why": f"the bundle reads as {read_id[:23]}…: not the one announced"}
+    snapshot = landing.snapshot_named(root, name, header["snapshot_id"])
+    records = landing.records_for(root, name, snapshot, header["shard"], header["uids"])
+    mine = {r["uid"]: r["content_hash"] for r in records}
+    cut = landing.cut(codex, records)
+    report = adm.judge(codex, header, rows, possession, bundle_id, envelope=envelope,
+                       reference=reference, mine=mine,
+                       text_of=lambda cid: (cut.get(cid) or {}).get("text"), embed=None,
+                       seed=os.urandom(32))
+    cov.record_from_report(con, codex, report, header, source=cov.FETCHED,
+                           now=messages.time_text(now))
+    if not report.ok:
+        failed = [t.tier for t in report.tiers if t.failed]
+        for f in member.files:
+            holdings._set_aside(staged_dir / f.path)
+        say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… refused at "
+            f"{failed}; set aside")
+        return {"outcome": "refused", "bundle_id": bundle_id, "why": f"refused at {failed}"}
+    if write is None:
+        local = rec.local_collection(root, name, codex)
+        write = lambda r: embeddings.upsert_chunks(r, collection=local, dtype=codex.space.dtype)  # noqa: E731
+    landed = landing.land(codex, report, records=records, write=write)
+    node = adms.connect(root)
+    try:
+        adms.record_reproduced(node, report.producer, ref=bundle_id, chunks=landed["written"])
+    finally:
+        node.close()
+    final.parent.mkdir(parents=True, exist_ok=True)
+    if final.is_dir():
+        shutil.rmtree(staged_dir, ignore_errors=True)
+    else:
+        staged_dir.replace(final)
+    say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… accepted — "
+        f"{landed['written']} chunks landed; served from here now")
+    return {"outcome": "accepted", "bundle_id": bundle_id, "written": landed["written"],
+            "producer": report.producer, "dir": str(final)}
+
+
+def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
+         now: float | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
+    """Every pending `bundle` event, acted on once: taken in for a
+    collection held here and in use, left where it is not."""
+    from app import copy_state, licensing
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0}
+    by_id = {}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is not None:
+            by_id[codex.collection_id] = c
+    for ev in pending(node_con):
+        if stop is not None and stop.is_set():
+            break
+        payload = (ev["envelope"]["body"].get("payload") or {})
+        c = by_id.get(str(payload.get("collection") or ""))
+        if c is None or cons.get(c.name) is None:
+            out["ignored"] += 1
+            attest.mark_acted(node_con, ev["id"])
+            continue
+        try:
+            usable = licensing.state_for(c) != licensing.MISSING and copy_state.of(c).in_use \
+                and c.codex.privacy == "public"
+        except Exception:   # noqa: BLE001 — a gate error withholds
+            usable = False
+        if not usable:
+            out["deferred"] += 1                    # left unacted: the gate may clear
+            continue
+        hints = transport.hints_for(node_con, c.codex.collection_id, now=now)
+        try:
+            got = take(root, c.name, c.codex, payload, session=session_factory(), con=cons[c.name],
+                       node_con=node_con, hints=hints, stop=stop, log=log, now=now)
+        except (transport.TransferAborted, transport.AcquireAborted):
+            break                                   # the next beat resumes from staging
+        except (transport.TransportError, CodexError, OSError, KeyError, ValueError) as e:
+            out["deferred"] += 1
+            if log:
+                log(f"[{c.name}] share: bundle {str(payload.get('bundle_id'))[:23]}…: "
+                    f"{type(e).__name__}: {e}"[:400])
+            if isinstance(e, transport.TransportError) and "no metadata" in str(e):
+                break                               # nobody serves it now: the rest can wait
+            continue
+        out[got["outcome"]] += 1
+        attest.mark_acted(node_con, ev["id"])
+    return out

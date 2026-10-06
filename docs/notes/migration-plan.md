@@ -1083,17 +1083,42 @@ node is one peer until 9d's two-peer test):
   `bundle` and `flag` events (fetching a bundle another peer announced,
   through the ladder — the import side of contribute); duplicates as
   checks (the second compliant bundle compared and attested, 04 §4.5);
-  the single-survivor test. **A gap found here, for the operator**: a
-  bundle member is FOUR torrents (09 §9.16), one per file, and a fetcher
-  computes an infohash from a file's (path, length, pieces root) — but
-  the `bundle` event and the digest's `members` entry carry only the
-  MEMBER root (`H` over the file list) and the total bytes, from which
-  the four infohashes do not follow. Either the event and the entry
-  carry `files: [[path, root, bytes], …]` for a member of several files
-  (09 §9.9 amendment; the members entry already says "the digest lists
-  the files"), or a bundle becomes one torrent of a four-file tree
-  (09 §9.16 amendment). The first keeps §9.16 as it stands and is what
-  the next brick will do unless told otherwise.
+  the single-survivor test. **Fourth brick DONE 2026-10-07 — the import
+  side** (`app/share/accept.py`; `tests/share/test_accept.py`, 3): a
+  `bundle` event for a collection held here, acknowledged and in use,
+  has its four files fetched by their torrents into staging, each
+  checked against the root the event gave, the bundle judged by this
+  peer's ladder (T0–T2, T3 skipped in the worker's thread: the chunks
+  land *unverified here*), its vectors merged under the writer lock, the
+  producer recorded as reproduced (08 §8.2), the coverage row accepted
+  as `fetched`, the bundle kept under `state/bundles/` for the seeder;
+  refused, set aside and said; an event for a collection not held is
+  acted on by being left alone, one for a gated collection waits. Runs
+  in the worker's `share-fetch` thread after the members (`accept.beat`).
+  **The wire amendment this needed (09 §9.9, for the operator)**: a
+  bundle member is FOUR torrents (§9.16) and a fetcher computes each
+  infohash from a file's (path, length, pieces root), which neither the
+  `bundle` event nor the digest's `members` entry carried — so both now
+  carry `files: [[path, root, bytes], …]` for a member no snapshot lists
+  (a bundle, a text index), the member root being `H` over that list as
+  §9.16 already said. A receiver leaves an event without it alone.
+  PROVEN on localhost (`test_accept`): the sharer contributes and serves;
+  the fetcher, holding the collection and its records, takes the
+  announced bundles in — the vectors land, its map is covered, and it
+  serves the bundles itself: 04 §4.1's survivor. **Found on the way, in
+  the seeder of 9b**: libtorrent reads a one-file tree at its root —
+  `validation`, `terms`, each file of a bundle — as a SINGLE-FILE torrent
+  named after the file and serves it from `<save path>/<file>`, while a
+  nested path (every record shard) stays `<save path>/<member>/<path>`;
+  the seeder had laid every file out the nested way, so a fetcher of
+  `validation.json` got the metadata and no piece, ever. Fixed by giving
+  a flat file's torrent its own save path (its member directory), and
+  on the fetching side by finding the file under either spelling. 9b's
+  localhost proof had only record shards and could not see it. **Still
+  owed in 9e**:
+  acting on `snapshot`, `codex` and `flag` events; duplicates as checks
+  (the second compliant bundle compared and attested, 04 §4.5); T4 on
+  use.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,

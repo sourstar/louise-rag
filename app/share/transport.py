@@ -60,6 +60,18 @@ def hints_for(node_con, collection_id: str, *, now: float) -> list[tuple[str, in
     return out
 
 
+def _locate(info, member: str, path: str) -> tuple[int, str]:
+    """`(torrent index, the path libtorrent stores the file under)` for the
+    member's file `path` — `<member>/<path>`, or `<member>` alone when the
+    tree held one file at its root (libtorrent's single-file layout)."""
+    from app.acquire import transport_torrent as tt
+    want = (f"{member}/{path}", member, path)
+    for index, name, _ in tt.content_files(info):
+        if name in want or name.endswith("/" + path):
+            return index, name
+    raise TransportError(f"{member}/{path}: no such file in the torrent")
+
+
 def _connect(handle, hints) -> None:
     for h in hints:
         try:
@@ -107,7 +119,12 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
                 _connect(handle, hints)
             time.sleep(poll_s)
         info = handle.torrent_file()
-        index = tt._index_of(info, rel)
+        # libtorrent lays a file tree of ONE file at the tree's root out as a
+        # single-file torrent named after the file — `validation.json` alone,
+        # not `validation/validation.json` — while a nested path keeps
+        # `<name>/<path>`; the file is found by either spelling and staged
+        # where libtorrent puts it (the caller takes the path returned)
+        index, rel = _locate(info, member, torrent.path)
         fs = info.files()
         total = fs.file_size(index)
         priorities = [0] * fs.num_files()
@@ -136,7 +153,26 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
                     tt._apply_rate(handle, leased_bps)
                     last_refresh = now
                 time.sleep(poll_s)
-        return staging / rel
+        # `file_progress` counts pieces received, not pieces WRITTEN: the disk
+        # thread is behind it, and a small file's one piece was not on disk
+        # when the first promotion looked (2026-10-07). Flush, then wait for
+        # the bytes to be there at the size the torrent says.
+        landed = staging / rel
+        try:
+            handle.flush_cache()
+        except Exception:   # noqa: BLE001 — older bindings; the wait below still holds
+            pass
+        deadline = time.monotonic() + 60.0
+        while True:
+            try:
+                if landed.stat().st_size == total:
+                    break
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise TransportError(f"{rel}: received whole and not on disk after 60s")
+            time.sleep(poll_s)
+        return landed
     finally:
         try:
             session.remove_torrent(handle)
@@ -297,6 +333,17 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         out[c.name] = got
         if stop is not None and stop.is_set():
             break
+    # the bundles other peers announced (04 §4.5), taken in through the ladder
+    if node_con is not None and not (stop is not None and stop.is_set()):
+        from app.share import accept
+        try:
+            taken = accept.beat(collections, cons, node_con, session_factory=session_factory,
+                                root=root, stop=stop, now=now, log=log)
+            if any(taken.get(k) for k in ("accepted", "refused", "ignored", "held")):
+                out["bundles"] = taken
+        except Exception as e:   # noqa: BLE001 — one beat, not the thread
+            if log:
+                log(f"[warn:share] bundles: {type(e).__name__}: {e}"[:400])
     return out
 
 

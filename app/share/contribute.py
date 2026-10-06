@@ -130,14 +130,20 @@ def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path
             / drag_mod._hex(bundle_id))
 
 
+def calibration_tensors(root: Path, name: str, codex):
+    """`(reference, envelope)` — 09 §9.12's two tensors of the calibration
+    member this peer holds, what T0 and T2 are judged against."""
+    from safetensors.numpy import load_file
+    member = Path(root) / name / "drag" / drag_mod.calibration_paths(codex.space.calibration.set)[0]
+    tensors = load_file(str(member))
+    return tensors["vectors"].tolist(), tensors["envelope"]
+
+
 def _own_ladder(root: Path, name: str, codex, snapshot: sn.Snapshot, where: Path):
     """This peer's own bundle through T0–T2 (03 §3.5); T3 would re-embed
     with the encoder that produced it and prove nothing."""
     from app.hold import admit as adm, vectors as vec
-    member = Path(root) / name / "drag" / drag_mod.calibration_paths(codex.space.calibration.set)[0]
-    from safetensors.numpy import load_file
-    tensors = load_file(str(member))
-    reference, envelope = tensors["vectors"].tolist(), tensors["envelope"]
+    reference, envelope = calibration_tensors(root, name, codex)
     header, rows, possession, bundle_id = vec.read(where)
     records = landing.records_for(root, name, snapshot, header["shard"], header["uids"])
     mine = {r["uid"]: r["content_hash"] for r in records}
@@ -152,16 +158,18 @@ def announce(con, codex, snapshot: sn.Snapshot, header: dict[str, Any], member: 
     payload = {"collection": codex.collection_id, "space_id": codex.space_id,
                "snapshot_id": snapshot.snapshot_id, "shard": header["shard"],
                "uids": [uids[0], uids[-1]] if uids else [], "bundle_id": header["bundle_id"],
-               "root": member.root, "bytes": member.bytes}
+               "root": member.root, "bytes": member.bytes,
+               # the four files, from which a fetcher computes the four torrents
+               # (09 §9.16; §9.9 amendment of 2026-10-07)
+               "files": member.to_dict()["files"]}
     body = messages.event_body(key=own_key, type_="bundle", payload=payload, now=now)
     eid = messages.event_id(body)
+    from app.share import attest
+    attest.ensure_schema(con)
     if not peers.seen(con, eid):
         peers.mark_seen(con, eid, now=now, time_text=body["time"], type_="bundle", hops=peers.HOPS,
                         envelope=env.sign(env.EVENT, body, key))
-        try:
-            con.execute("UPDATE events_seen SET acted=1 WHERE id=?", (eid,))
-        except Exception:   # noqa: BLE001 — the column arrives with attest.ensure_schema
-            pass
+        attest.mark_acted(con, eid)                 # ours: nothing to take in here
     return eid
 
 

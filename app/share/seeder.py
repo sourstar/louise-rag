@@ -123,9 +123,17 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
             if torrent_path is None:
                 refused.append(f"{member.name}: {t.path}")
                 continue
+            # libtorrent reads a one-file tree at its root — `validation`,
+            # `terms`, each file of a bundle — as a SINGLE-FILE torrent named
+            # after the file, and a seed serves it from `<save path>/<file>`;
+            # a nested path stays `<save path>/<member>/<path>`. The seeder
+            # takes the save path as the parent of `root`, so a flat file's
+            # root is the file itself and a nested one's the member directory
+            # (found 2026-10-07: a fetcher got the metadata and no piece ever)
+            root = member_dir / t.path if "/" not in t.path else member_dir
             entries.append({
                 "name": member.name, "torrent_path": str(torrent_path),
-                "root": str(member_dir), "info_hash": t.infohash[7:],
+                "root": str(root), "info_hash": t.infohash[7:],
                 "magnet": f"magnet:?xt=urn:btmh:1220{t.infohash[7:]}",
                 "files": 1, "bytes": t.length, "member": member.name, "path": t.path,
                 "member_root": member.root, "snapshot_id": snapshot.snapshot_id,

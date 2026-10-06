@@ -392,7 +392,17 @@ reader needs at the command line:
   the batch in flight and exits 130 (§7.7). It takes the collection's
   lock (§7.7), so on a node whose worker runs it the collection is paused
   first. A restricted or never-share collection is skipped: its bundles
-  would leave for nobody. *(2026-10-06, migration step 9e.)*
+  would leave for nobody. The receiving side is the worker's: a `bundle`
+  event for a collection held here, acknowledged and in use, has its
+  four files fetched by the torrents the event's file list gives
+  (09 §9.9), each checked against its root, the bundle judged by this
+  peer's ladder with T3 skipped (no encoder is asked in that thread; the
+  chunks land *unverified here*, 03 §3.5, for `vectors check` to
+  confirm), its vectors merged, its coverage row accepted as `fetched`,
+  and the bundle kept under `state/bundles/` where the seeder serves it
+  — every completed fetch makes the fetcher a sharer (04 §4.3). One the
+  ladder refuses is set aside and said. *(2026-10-06/07, migration step
+  9e.)*
 - **`share attest`.** Runs `hold check` with the named checks and a
   fresh seed and publishes the resulting attestations as events (04
   §4.2). It never republishes an old one: the attestation ids published

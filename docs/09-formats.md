@@ -1197,7 +1197,7 @@ A collection entry:
 | `snapshot_id`, `snapshot_hash` | | yes | the latest snapshot held, and its hash |
 | `codex_hash` | id | yes | `H` of the bytes of the `codex.json` THIS peer holds (§9.3). A `codex.json` pulled from this peer whose bytes hash otherwise is dropped: the pull path answers with stored bytes and no signature (below), so this is what makes it self-verifying. It is per-peer and not an identity — two honest peers may hold the same `collection_id` under different titles, hence different `codex_hash` (02 §2.1) — so it is compared only against the digest that advertised it |
 | `license`, `privacy` | string | yes | the Codex's classes, so a receiver can skip what it may not take |
-| `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record shard's root is the snapshot's, a bundle's root is its member root |
+| `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record shard's root is the snapshot's, a bundle's root is its member root. A member no snapshot lists — a bundle, a text index — carries `files: [[path, root, bytes], …]` in path byte order as well, from which a fetcher computes each file's torrent (§9.16); the member root is `H` over that list. *Added 2026-10-07, migration step 9e: without it a bundle's four infohashes do not follow from the event or the entry* |
 | `coverage` | list of `{shard, bundles: [id…]}` | yes | per shard `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted |
 
 A `restricted` collection appears only in digests sent to keys on the
@@ -1225,7 +1225,7 @@ body:
 | `codex` | `{collection_id, chain: [<Codex object>…]}` — the new Codex first, then the Codexes it comes from along `continues`, `derived_from` and `replaces` back to the root: a daughter, a sister or a corrective sister announced |
 | `attestation` | the attestation envelope (§9.8) |
 | `flag` | `{collection_id, snapshot_hash, check, attestations: [id…]}` — the failing attestations that together flag it (03 §3.6) |
-| `bundle` | `{collection, space_id, snapshot_id, shard, uids: [first, last], bundle_id, root, bytes}` |
+| `bundle` | `{collection, space_id, snapshot_id, shard, uids: [first, last], bundle_id, root, bytes, files}` — `files` the four files as `[path, root, bytes]` in path order (§9.16), `root` the member root over them. *`files` added 2026-10-07, migration step 9e; a receiver leaves an event without it alone* |
 
 The event id is `H(canonical JSON of body)`, computed by the receiver;
 an event carries no id field, so none can be forged. The receiver keeps
