@@ -1,0 +1,199 @@
+"""This node's side of the peer messages (04 §4.2; 09 §9.9), run by the
+WORKER, which holds the key: its digest, signed and sent to every
+neighbour and every address in the peer list once an hour; the events it
+received, forwarded once to its neighbours with one hop fewer; the ids
+seen, swept after seven days. Migration step 9c.
+
+The web process only receives (app/share/api.py). Bytes sent here are
+few — a digest is kilobytes — and are not yet metered against the budget
+(04 §4.3 says they must be); that is owed with the fetch of 9d.
+"""
+from __future__ import annotations
+
+import json
+import time
+from contextlib import closing
+from pathlib import Path
+from typing import Any, Callable
+
+from app.hold import collection as col, envelope as env
+from app.share import members as mem, messages, peers, seeder
+
+TIMEOUT_S = 10.0
+_last_digest_at = 0.0
+
+
+def own_address(cfg=None) -> str:
+    """`[node] address` (07 §7.8), else this host and port as the node sees
+    them — reachable only on the LAN the container is on."""
+    import socket
+    from app import config, platform_config
+    cfg = cfg or platform_config.load()
+    if cfg.peers.address:
+        return cfg.peers.address
+    return f"http://{cfg.peers.name or socket.gethostname()}:{config.PORT}"
+
+
+def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, Any]]:
+    """One entry per space, from the statements this node signed (03 §3.3;
+    09 §9.9) — the latest run per space."""
+    from app.hold import embedder as emb, runs
+    out: dict[str, dict[str, Any]] = {}
+    if own_key is None:
+        return []
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None:
+            continue
+        try:
+            stated = runs.statements(root, c.name, codex, "document", signer=own_key)
+        except Exception:   # noqa: BLE001 — a collection whose statements cannot be read lists none
+            continue
+        for body in stated.values():
+            try:
+                entry = emb.benchmarks_entry(body)
+            except (KeyError, TypeError):
+                continue
+            prev = out.get(entry["space_id"])
+            if prev is None or str(body.get("time", "")) > str(prev.get("_time", "")):
+                out[entry["space_id"]] = {**entry, "_time": body.get("time", "")}
+    return [{k: v for k, v in e.items() if k != "_time"} for e in sorted(out.values(),
+                                                                          key=lambda e: e["space_id"])]
+
+
+def entries(root: Path, collections) -> list[dict[str, Any]]:
+    """The digest's collection entries: every Codex collection held, with
+    its members listed when this node shares it (04 §4.3) and empty
+    otherwise; a never-share collection appears in no digest (09 §9.9)."""
+    from app.hold.codex import lineage_id
+    out = []
+    resolve = col.resolver(root)
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None or codex.privacy != "public":
+            continue
+        drag = col.drag_of(root, c.name)
+        try:
+            codex_bytes = (drag / "codex.json").read_bytes()
+        except OSError:
+            continue
+        snap = seeder.current_snapshot(drag)
+        shared = seeder.wants_serving(c) and snap is not None
+        members = mem.members_of(snap, drag_dir=drag) if shared else ()
+        members = [m for m in members if all((drag / f.path).is_file() for f in m.files)]
+        try:
+            lid = lineage_id(codex, resolve)
+        except Exception:   # noqa: BLE001 — a chain this node cannot follow: the root is itself
+            lid = codex.collection_id
+        out.append(messages.collection_entry(codex, snap, members, codex_bytes=codex_bytes,
+                                             lineage_id=lid))
+    return out
+
+
+def build_digest(root: Path, collections, *, key, own_key: str, address: str,
+                 now: float | None = None) -> dict[str, Any]:
+    """This node's digest, signed with its key."""
+    with closing(peers.connect()) as con:
+        neigh = peers.neighbours(con, now=now if now is not None else peers.now())
+    body = messages.digest_body(key=own_key, address=address, neighbours=neigh,
+                                benchmarks=benchmarks(root, collections, own_key),
+                                collections=entries(root, collections), now=now)
+    return env.sign(env.DIGEST, body, key)
+
+
+def _post(url: str, payload: dict[str, Any], *, client=None) -> tuple[int, Any]:
+    import httpx
+    c = client or httpx.Client(timeout=TIMEOUT_S)
+    try:
+        r = c.post(url, json=payload)
+        try:
+            return r.status_code, r.json()
+        except ValueError:
+            return r.status_code, None
+    finally:
+        if client is None:
+            c.close()
+
+
+def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
+                log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """To every address, each once; a failure is logged and the address is
+    tried again at the next interval (04 §4.2: deferred and retried)."""
+    sent, failed = 0, 0
+    for address in recipients:
+        try:
+            code, _ = _post(f"{address.rstrip('/')}/api/share/digest/share", envelope,
+                            client=client)
+            if 200 <= code < 300:
+                sent += 1
+            else:
+                failed += 1
+                if log:
+                    log(f"digest to {address}: HTTP {code}")
+        except Exception as e:   # noqa: BLE001 — one peer away is not the round's failure
+            failed += 1
+            if log:
+                log(f"digest to {address}: {type(e).__name__}: {e}"[:200])
+    return {"sent": sent, "failed": failed}
+
+
+def forward_events(*, client=None, now: float | None = None,
+                   log: Callable[[str], None] | None = None) -> int:
+    """Every event received and not yet forwarded goes to every neighbour
+    with its hops as kept (already one fewer); forwarded once, whatever the
+    outcome at each neighbour."""
+    now = peers.now() if now is None else now
+    n = 0
+    with closing(peers.connect()) as con:
+        pending = peers.to_forward(con)
+        neigh = peers.neighbours(con, now=now)
+        for ev in pending:
+            message = {**ev["envelope"], "hops": ev["hops"]}
+            for peer in neigh:
+                if peer["key"] == ev["envelope"]["body"].get("key"):
+                    continue                        # not back to its originator
+                try:
+                    _post(f"{peer['address'].rstrip('/')}/api/share/event/share", message,
+                          client=client)
+                except Exception as e:   # noqa: BLE001
+                    if log:
+                        log(f"event to {peer['address']}: {type(e).__name__}: {e}"[:200])
+            peers.mark_forwarded(con, ev["id"])
+            n += 1
+        peers.sweep(con, now=now)
+    return n
+
+
+def beat(collections, *, now: float | None = None, client=None,
+         log: Callable[[str], None] | None = None, force: bool = False) -> dict[str, Any]:
+    """The worker's beat: forward what arrived; once an interval, send this
+    node's digest. Nothing without a key (a node that cannot sign says
+    nothing), nothing without recipients."""
+    global _last_digest_at
+    from app import collections as collections_mod, identity
+    from app.bundles import keys as node_keys
+    now = peers.now() if now is None else now
+    out: dict[str, Any] = {"forwarded": forward_events(client=client, now=now, log=log),
+                           "digest": None}
+    if not force and now - _last_digest_at < peers.INTERVAL_S:
+        return out
+    try:
+        key = node_keys.load_signing_key()
+        own_key = identity.own()
+    except Exception as e:   # noqa: BLE001 — no key: no digest, said once per interval
+        _last_digest_at = now
+        if log:
+            log(f"no digest: this node has no key to sign one ({type(e).__name__})")
+        return out
+    root = collections_mod.louise_root() / "collections"
+    with closing(peers.connect()) as con:
+        recipients = peers.recipients(con, now=now)
+    if not recipients:
+        _last_digest_at = now
+        return out
+    envelope = build_digest(root, collections, key=key, own_key=own_key,
+                            address=own_address(), now=now)
+    out["digest"] = send_digest(envelope, recipients, client=client, log=log)
+    out["digest"]["recipients"] = recipients
+    _last_digest_at = now
+    return out

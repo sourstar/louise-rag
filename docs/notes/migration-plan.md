@@ -955,8 +955,17 @@ node is one peer until 9d's two-peer test):
   must be the node's reachable one (`SHARE_ANNOUNCE_PORT`, set at 9c when
   the peer messages give the announcement an audience). A copy in
   quarantine, or never-share, is not served (03 §3.6).
-- **9c — the peer messages** (09 §9.9): digest, event, the three pulls,
-  signed envelopes, neighbours, forwarding once, the hourly digest.
+- **9c — the peer messages** (09 §9.9). **First brick DONE 2026-10-06**
+  (`app/share/peers.py`, `messages.py`, `api.py`, `gossip.py`;
+  `tests/share/test_messages.py`, `test_share_api.py`): the five routes in
+  the web process, verifying with the SENDER's key; peers, neighbours,
+  bans and seen ids in `state/node.sqlite`; this node's digest signed and
+  sent once an hour by the worker to every neighbour and every `[peers]`
+  address; events forwarded once with one hop fewer; pulls answered with
+  the exact stored bytes. `[peers] addresses`, `[dht] enabled` and the
+  new `[node] address` in platform.toml. Owed: `share peers add|show`;
+  acting on what digests and events say (9d); the budget for the bytes
+  sent; the reachable announce port.
 - **9d — `share fetch`**: find (DHT key, peers list), pull codex and
   snapshot, fetch members, verify roots, stage, promote; the
   pre-acknowledgement set. The two-peer test on localhost.

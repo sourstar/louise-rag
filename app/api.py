@@ -89,6 +89,8 @@ app.include_router(web.admin_router)
 # 07 §7.4: LocalAGI's knowledge-base routes, the second protocol alias
 from . import localagi  # noqa: E402
 app.include_router(localagi.router)
+from .share import api as share_api  # noqa: E402
+app.include_router(share_api.router)      # the peer messages of 09 §9.9
 # index.html was fully self-contained (inline CSS/JS, no asset requests) so
 # no static mount existed before P0.6 — the new pages need admin.css and the
 # vendored htmx.min.js served for real.

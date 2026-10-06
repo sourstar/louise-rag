@@ -21,7 +21,7 @@
 # Anything wrong after phase 4: see BACKOUT at the end.
 set -euo pipefail
 
-COMMIT=865ccbe                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=6c06b4a                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"

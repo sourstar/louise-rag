@@ -113,6 +113,19 @@ class DepositConfig:
 
 
 @dataclass(frozen=True)
+class PeersConfig:
+    """`[peers]`, `[dht]` and the node's own address (07 §7.8; 04 §4.2):
+    the bootstrap addresses `share peers add` writes, whether the DHT is on,
+    and where THIS node answers pulls — `[node] address`, the reachable one
+    (`http://192.168.178.10:30042` on the reference node), not the
+    container's port; `[node] name` labels it."""
+    addresses: tuple[str, ...] = ()
+    dht: bool = True
+    address: str | None = None
+    name: str | None = None
+
+
+@dataclass(frozen=True)
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
@@ -120,6 +133,7 @@ class PlatformConfig:
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
     deposit: DepositConfig = DepositConfig()
+    peers: PeersConfig = PeersConfig()
     # [encoder_defaults.<plugin>] -> the raw [encoder]-shaped table. Kept
     # RAW here on purpose: app/collections.py owns EmbedRecipe and parses
     # it, and importing that module from this one would close an import
@@ -365,8 +379,22 @@ def _load_one(path: Path) -> PlatformConfig:
             f"\"sha256:\" and 64 hex digits (`louise hold collection show`), got {before_raw!r}")
 
     deposit = _deposit(raw.get("deposit") or {}, path)
+    peers_raw = raw.get("peers") or {}
+    addresses_raw = peers_raw.get("addresses", []) if isinstance(peers_raw, dict) else None
+    if not isinstance(addresses_raw, list) or not all(isinstance(a, str) and a for a in addresses_raw):
+        raise schedule_mod.ScheduleError("[peers] addresses is a list of strings (07 §7.8)")
+    dht_raw = raw.get("dht") or {}
+    dht_enabled = dht_raw.get("enabled", True) if isinstance(dht_raw, dict) else True
+    if not isinstance(dht_enabled, bool):
+        raise schedule_mod.ScheduleError("[dht] enabled is true or false (07 §7.8)")
+    node_address = node_raw.get("address")
+    if node_address is not None and not (isinstance(node_address, str) and node_address.startswith("http")):
+        raise schedule_mod.ScheduleError("[node] address is this node's reachable URL, http(s)://host:port")
+    peers = PeersConfig(addresses=tuple(addresses_raw), dht=dht_enabled, address=node_address,
+                        name=node_raw.get("name") if isinstance(node_raw.get("name"), str) else None)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           deposit=deposit,
+                          peers=peers,
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
                           ask=ask,

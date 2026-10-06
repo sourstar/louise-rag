@@ -237,6 +237,15 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~16:30Z: 9c, first brick.** The peer messages of 09 §9.9 in
+code: `/api/share/{digest,event,codex,snapshot,attestations}/…` in the web,
+verifying with the sender's key; peers seen, neighbours, bans and event
+ids in the node's state database; the worker sends this node's signed
+digest hourly to neighbours and the `[peers]` list and forwards events
+once. `[node] address` added to 07 §7.8: where this node answers pulls as
+peers reach it. tests/share: 42. 9b deployed earlier as 6c06b4a: the
+worker quiet, nothing shares yet (every file says `share = false`).
+
 **2026-10-06, ~15:00Z: 9b, the seeder, done.** `app/share/seeder.py` in
 the worker's seeding beat: for every public collection in use whose file
 says `share = true`, one torrent per member file of the current snapshot

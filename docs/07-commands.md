@@ -764,7 +764,7 @@ variable, a file, a log line or a message.
 **`platform.toml`** — the node:
 
 ```toml
-[node]       http_port = 8742   peer_port = 6881   name = "nas"
+[node]       http_port = 8742   peer_port = 6881   name = "nas"   address = "http://nas:8742"   # address: where THIS node answers pulls, as peers reach it (09 §9.9; added 2026-10-06)
 [budget]     down_max = "400Mbit"   up_max = "40Mbit"   schedule = "01:00-07:00 full; else 30%"
 [peers]      addresses = ["peer.example.org:6881"]      # the bootstrap of 04 §4.2, beside `share peers add`
 [dht]        enabled = true

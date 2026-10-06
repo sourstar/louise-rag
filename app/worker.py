@@ -3519,6 +3519,14 @@ def _stats_publisher() -> None:
                                   log=lambda m: db.log_event(con, "info", "share", m[:500]))
             except Exception:   # noqa: BLE001 — telemetry must never kill the worker
                 pass
+            try:
+                # 04 §4.2: this node's digest once an hour to its neighbours and
+                # the peer list; events received forwarded once (9c)
+                from app.share import gossip as share_gossip
+                share_gossip.beat(collections,
+                                  log=lambda m: db.log_event(con, "info", "share", m[:500]))
+            except Exception:   # noqa: BLE001 — telemetry must never kill the worker
+                pass
             seeding.tick(collections, seed_cons, con,
                          node_state.worker_state(node_con))
             db.publish_worker_rates(con, get_manager().rates())
