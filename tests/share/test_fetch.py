@@ -258,7 +258,7 @@ def test_no_peer_known_exits_2_and_every_peer_down_exits_3(node, fetcher):  # no
     assert e.value.exit_code == 2
 
 
-def test_the_command_defers_on_a_peer_that_is_down_and_refuses_the_members_flags(node, fetcher, monkeypatch, capsys):  # noqa: F811
+def test_the_command_defers_on_a_peer_that_is_down_and_writes_nothing(node, fetcher, monkeypatch, capsys):  # noqa: F811
     from app import identity, louise
     from app.bundles import keys as node_keys
     monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
@@ -266,9 +266,50 @@ def test_the_command_defers_on_a_peer_that_is_down_and_refuses_the_members_flags
     assert louise.main(["share", "fetch", CID_A[7:], "--root", str(fetcher),
                         "--from", "http://127.0.0.1:9"]) == 3, "deferred: the peer is down (07 §7.7)"
     assert "no peer answered" in capsys.readouterr().err
-    assert louise.main(["share", "fetch", CID_A, "--root", str(fetcher), "--slice", "year=2023"]) == 2
     assert louise.main(["share", "fetch", CID_A, "--root", str(fetcher)]) == 2, "no peer known"
     assert list(fetcher.iterdir()) == []
+
+
+def test_the_command_writes_the_slices_and_kinds_asked_for_into_the_file(node, fetcher, monkeypatch, capsys):  # noqa: F811
+    import tomllib
+    from app import louise
+    from tests.hold.conftest import a_root, pubmed
+    codex = a_root(fetcher, pubmed())
+    held = louise._write_held_file(fetcher, codex, None)
+    monkeypatch.setattr(fetch, "fetch", lambda root, ref, **kw: {"file": str(held), "name": "pubmed",
+                                                                 "collection_id": ref})
+    cid = codex.collection_id
+    assert louise.main(["share", "fetch", cid, "--root", str(fetcher), "--from", SHARER,
+                        "--slice", "year=2023", "year=2024", "--kinds", "records,relations"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["selection"] == {"slices": ["year=2023", "year=2024"],
+                                "kinds": ["records", "vectors", "relations"]}
+    with open(held, "rb") as f:
+        raw = tomllib.load(f)
+    assert raw["slices"] == ["year=2023", "year=2024"] and raw["kinds"] == ["records", "vectors", "relations"]
+    assert louise.main(["share", "fetch", cid, "--root", str(fetcher), "--from", SHARER,
+                        "--slice", "year=2025"]) == 0
+    assert json.loads(capsys.readouterr().out)["selection"]["slices"] == ["year=2023", "year=2024", "year=2025"], \
+        "joined with what the file said"
+    assert louise.main(["share", "fetch", cid, "--root", str(fetcher), "--from", SHARER]) == 0
+    assert json.loads(capsys.readouterr().out)["selection"]["slices"] == "all", "no --slice: every slice"
+    with open(held, "rb") as f:
+        assert tomllib.load(f)["slices"] == "all"
+
+
+def test_show_lists_the_snapshots_and_the_holdings(node, fetcher, capsys):  # noqa: F811
+    from app import louise
+    codex, name, d, snap = a_drag(node)
+    out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=TestClient(api.app),
+                      key=OURS, own_key=OUR_KEY)
+    assert louise.main(["hold", "collection", "show", out["name"], "--root", str(fetcher)]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["snapshots"] == [{"snapshot_id": "2026-08", "hash": snap.hash, "signatures": 1,
+                                   "held": False}], "the snapshot is held, its record members are not yet"
+    assert shown["holdings"] == {"slices": [], "kinds": [], "members": 0}
+    assert louise.main(["hold", "collection", "show", name, "--root", str(node)]) == 0
+    sharer = json.loads(capsys.readouterr().out)
+    assert sharer["snapshots"][0]["held"] is True and sharer["holdings"]["slices"] == ["year=2023"]
 
 
 def test_sidecars_merge_by_union_and_a_bad_signature_is_dropped():

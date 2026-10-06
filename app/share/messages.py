@@ -77,11 +77,15 @@ def collection_entry(codex, snapshot: sn.Snapshot | None, members, *, codex_byte
 
 def digest_body(*, key: str, address: str, neighbours: list[dict[str, str]],
                 benchmarks: list[dict[str, Any]], collections: list[dict[str, Any]],
-                now: float | None = None) -> dict[str, Any]:
-    """09 §9.9's digest body: who, where, how fast per space, what is held."""
-    return {"kind": DIGEST_KIND, "version": DIGEST_VERSION, "key": key, "time": time_text(now),
+                now: float | None = None, peer_port: int | None = None) -> dict[str, Any]:
+    """09 §9.9's digest body: who, where, how fast per space, what is held —
+    and, when the sender shares, the port its swarm listens on."""
+    body = {"kind": DIGEST_KIND, "version": DIGEST_VERSION, "key": key, "time": time_text(now),
             "address": address, "neighbours": neighbours[:peers.MAX_NEIGHBOURS_LISTED],
             "benchmarks": benchmarks, "collections": collections}
+    if peer_port is not None:
+        body["peer_port"] = int(peer_port)
+    return body
 
 
 def event_body(*, key: str, type_: str, payload: dict[str, Any],

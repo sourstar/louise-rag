@@ -108,10 +108,14 @@ def test_a_collection_holding_nothing_has_no_origin_to_miss(node):
     con.close()
 
 
-def test_part_of_a_collection_waits_for_records_fetch(node):
+def test_part_of_a_collection_is_a_list_of_slices(node):
+    """`share fetch --slice` holds part (07 §7.3, step 9d): the file lists
+    the slices, each once, and nothing is fetched from an origin for it."""
     _, make, load = node
-    with pytest.raises(ValueError, match="records fetch"):
-        load(f'codex = "{make().collection_id}"\nslices = ["lang=en"]\n')
+    _, c = load(f'codex = "{make().collection_id}"\nslices = ["lang=en", "lang=de", "lang=en"]\n')
+    assert (c.slices, c.profile, c.acquire_enabled) == (("lang=en", "lang=de"), None, False)
+    with pytest.raises(ValueError, match="slices"):
+        load(f'codex = "{make().collection_id}"\nslices = ["lang=en", "not a slice!"]\n')
 
 
 def test_kinds_are_02s_closed_list(node):

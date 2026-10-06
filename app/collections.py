@@ -538,12 +538,18 @@ def _parse_slices(value: Any, where: str):
     if value == "all":
         return "all"
     if isinstance(value, list) and all(isinstance(v, str) and v for v in value):
-        if value:
-            raise ValueError(
-                f"{where}: slices = {value!r}. Holding PART of a collection is "
-                f"`hold records fetch --slice` (07 §7.3), which is not built "
-                f'yet: a node holds "all" or, with [], nothing')
-        return ()
+        # a list is PART of the collection, held by `share fetch --slice`
+        # (07 §7.3, migration step 9d); each value a slice name of 09 §9.3
+        from .hold import drag as drag_mod
+        out: list[str] = []
+        for v in value:
+            try:
+                drag_mod.check_slice(v)
+            except Exception as e:   # noqa: BLE001 — the loader's errors are ValueErrors
+                raise ValueError(f"{where}: slices = {value!r}: {e}") from None
+            if v not in out:
+                out.append(v)
+        return tuple(out)
     raise ValueError(f'{where}: slices is "all" or a list of slice values '
                      f"(07 §7.8), got {value!r}")
 

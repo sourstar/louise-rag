@@ -237,6 +237,19 @@ naming it; `node pause deposit-granite` had the lock released within a
 round and the command ran; `node resume` had it taken again within a
 round. No worker error. Backup images: `pre-865ccbe` alone now.
 
+**2026-10-06, ~21:30Z: 9d done — the members move.** `app/share/holdings.py`
+and `transport.py`: what a collection's file asks for (`slices` may now be
+a list: part of a collection), what the drag holds, the mark after the
+rename; each missing file by the torrent the snapshot's infohash names,
+into `state/staging/`, root computed, promoted; the ack gate (terms first,
+nothing else before `hold collection ack`); the free-space check; a
+15-minute backoff when nobody serves. The worker's new `share-fetch`
+thread does it every 15 s when the mode fetches; `share fetch --here` does
+it in-process. Digests name `peer_port` (09 §9.9, optional). Two peers on
+localhost proven in `tests/share/test_transport.py`. tests/share: 73. Not
+deployed (node: 6c06b4a). Next: deploy 9c+9d, then 9e (contribute, attest,
+the coverage map).
+
 **2026-10-06, ~19:30Z: 9d, first brick.** `share fetch <collection>
 [--from ADDRESS] [--dht] [--encoder URL] [--name N] [--snapshot ID]`
 (`app/share/fetch.py`): finds who holds a collection — by hand, by the

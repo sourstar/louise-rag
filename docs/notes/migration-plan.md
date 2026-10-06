@@ -996,14 +996,40 @@ node is one peer until 9d's two-peer test):
   into `state/staging/`; the chain's other Codexes under
   `state/chain/`; the collection's file written, `[encoder]` from
   `--encoder`. Pulled bytes are accounted to the calling process's DOWN
-  bucket (kilobytes). **Owed — second brick**: the members by torrent
-  through the worker's session and budget (`LICENSE-TERMS` first, then
-  `records`, `validation`, `calibration`, `seals`, and `relations` /
-  `figures` when asked), with the sharer's swarm reached through the
-  DHT or a peer hint; pieces against roots, `state/staging/`, promotion
-  with the holdings mark; the ack gate (`licensing.require_ack`) between
-  the pre-ack set and the rest; `--slice`/`--kinds`; the two-peer test
-  on localhost; `hold collection show`'s `snapshots` and `holdings`.
+  bucket (kilobytes). **Second brick DONE 2026-10-06**
+  (`app/share/holdings.py`, `transport.py`; `tests/share/test_holdings.py`
+  4, `test_transport.py` 4, and 3 more in `test_fetch.py`): the members
+  by torrent. `holdings`: what the file asks for — every member of a
+  kind it names in a slice it names, `"all"` or a list (the loader now
+  accepts a list: part of a collection), the whole-collection members
+  always, `terms` first — what the drag holds (presence at the
+  snapshot's size), the `held_members` mark in the manifest written
+  AFTER the rename, promotion that computes the pieces root in staging
+  and sets a wrong file aside under `state/staging/refused/`.
+  `transport`: each missing file by the magnet of the infohash the
+  snapshot gives, metadata from the swarm, the one file on, paced by a
+  rate lease from the DOWN bucket in the DELTA class and credited as it
+  lands, stopped between polls with staging kept, the handle removed
+  afterwards; the ack gate — nothing but `terms` of a yellow or red
+  collection until `hold collection ack`; the free-space check before
+  the first byte; a collection nobody serves backs off fifteen minutes
+  after one bounded metadata wait. The worker runs it in its own thread
+  (`share-fetch`, every 15 s, gated on the mode's fetch activity);
+  `share fetch --here` runs it in-process under the lock. The sharer's
+  swarm is reached through the DHT and through the `peer_port` its
+  digest names — the one wire amendment, 09 §9.9, optional field. 04
+  §4.3 amended: a file present without its mark is held and marked, not
+  moved back — its root was computed before the rename, or it was built
+  here. `hold collection show` lists `snapshots` (verified signatures,
+  held) and `holdings`. PROVEN on localhost: two roots in one process,
+  the sharer's seeder and the fetcher's session; the fetcher pulled the
+  Codex and the signed snapshot over HTTP, then the two record shards by
+  the infohashes it computed, verified and promoted them, and a second
+  beat had nothing to do. **Owed**: `share <collection> --slices/--kinds`
+  narrowing of what is SERVED (the fetch side is done); the DHT probe
+  live, with a real swarm (the unit test has a fake session); 04 §4.6's
+  adoption count for the leading daughter (9e, with the coverage map);
+  the web's pull answers under a budget.
 - **9e — `share contribute` and `share attest`**, the coverage map, the
   single-survivor test.
 

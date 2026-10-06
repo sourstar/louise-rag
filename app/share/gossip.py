@@ -113,14 +113,33 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
     return out
 
 
+def peer_port(cfg=None) -> int | None:
+    """The port this node's swarm listens on, as peers reach it: `[node]
+    peer_port` (07 §7.8), else the session's own when one runs — reachable
+    on the LAN the container is on — else none (a node that does not share
+    names no swarm)."""
+    from app import platform_config
+    cfg = cfg or platform_config.load()
+    if cfg.peers.peer_port:
+        return cfg.peers.peer_port
+    try:
+        from app.acquire import transport_torrent as tt
+        if tt._session is not None:
+            return int(tt._session.listen_port()) or None
+    except Exception:   # noqa: BLE001 — no libtorrent, no port
+        pass
+    return None
+
+
 def build_digest(root: Path, collections, *, key, own_key: str, address: str,
-                 now: float | None = None) -> dict[str, Any]:
+                 now: float | None = None, port: int | None = None) -> dict[str, Any]:
     """This node's digest, signed with its key."""
     with closing(peers.connect()) as con:
         neigh = peers.neighbours(con, now=now if now is not None else peers.now())
     body = messages.digest_body(key=own_key, address=address, neighbours=neigh,
                                 benchmarks=benchmarks(root, collections, own_key),
-                                collections=entries(root, collections), now=now)
+                                collections=entries(root, collections), now=now,
+                                peer_port=port)
     return env.sign(env.DIGEST, body, key)
 
 
@@ -238,7 +257,7 @@ def beat(collections, *, now: float | None = None, client=None,
         _last_digest_at = now
         return out
     envelope = build_digest(root, collections, key=key, own_key=own_key,
-                            address=own_address(), now=now)
+                            address=own_address(), now=now, port=peer_port())
     out["digest"] = send_digest(envelope, recipients, client=client, stop=stop, log=log)
     out["digest"]["recipients"] = recipients
     _last_digest_at = now

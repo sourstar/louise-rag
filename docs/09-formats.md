@@ -1186,6 +1186,7 @@ the peer list (04 §4.2).
 | `neighbours` | list of `{key, address}` | yes | up to sixteen live neighbours |
 | `benchmarks` | list | yes | `{space_id, encoder_engine, encoder_weights, tokens_per_s: integer}`, one per space, for the validated run this peer contributes with (03 §3.3, §9.12). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection |
 | `collections` | list | yes | one entry per collection held, below |
+| `peer_port` | integer | no | the port the sender's swarm listens on, as peers reach it (07 §7.8 `[node] peer_port`), so a fetcher with the DHT off reaches the members' swarms from the address alone (04 §4.3); absent when the sender names none. *Added 2026-10-06, migration step 9d; a version-2 digest without it is read as before* |
 
 A collection entry:
 

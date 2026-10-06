@@ -3720,6 +3720,13 @@ def run_forever():
     threading.Thread(target=sources_mod.serve, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="sources", daemon=True).start()
+    # the members a collection's file asks for and the drag lacks, by
+    # torrent from the peers that serve them (04 §4.3; app/share/transport.py):
+    # its own thread, since a metadata wait is bounded by minutes
+    from .share import transport as share_transport
+    threading.Thread(target=share_transport.loop, args=(_stop,),
+                     kwargs={"log": lambda m: print(m, flush=True)},
+                     name="share-fetch", daemon=True).start()
     job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
     job_thread.start()
     pipeline = bool(config.WORKER_PIPELINE_THREADS)

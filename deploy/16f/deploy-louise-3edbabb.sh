@@ -81,6 +81,10 @@ say "3c. tests/hold in the staged image"
 docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
   louise-rag:staged timeout -s KILL 900 python -m pytest tests/hold -q -p no:cacheprovider
 
+say "3d. tests/share in the staged image (step 9: members, seeder, peer messages, fetch)"
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
+  louise-rag:staged timeout -s KILL 900 python -m pytest tests/share -q -p no:cacheprovider
+
 # the suite writes beside itself: clean the staging tree before promoting it
 find "$ROOT/src.new" -name '__pycache__' -type d -prune -exec rm -rf {} +
 rm -rf "$ROOT/src.new/tests/fixtures/pubmed-mini/.pack"

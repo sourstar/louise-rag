@@ -126,6 +126,7 @@ class PeersConfig:
     address: str | None = None
     name: str | None = None
     pins: dict[str, str] = field(default_factory=dict)
+    peer_port: int | None = None      # `[node] peer_port`: the swarm's port, as peers reach it
 
 
 _KEY_TEXT = re.compile(r"ed25519:[0-9a-f]{64}")
@@ -431,9 +432,14 @@ def _load_one(path: Path) -> PlatformConfig:
     node_address = node_raw.get("address")
     if node_address is not None and not (isinstance(node_address, str) and node_address.startswith("http")):
         raise schedule_mod.ScheduleError("[node] address is this node's reachable URL, http(s)://host:port")
+    peer_port = node_raw.get("peer_port")
+    if peer_port is not None and (not isinstance(peer_port, int) or isinstance(peer_port, bool)
+                                  or not 1 <= peer_port <= 65535):
+        raise schedule_mod.ScheduleError("[node] peer_port is the port this node's swarm listens "
+                                         "on as peers reach it, 1-65535 (07 §7.8)")
     peers = PeersConfig(addresses=tuple(addresses), dht=dht_enabled, address=node_address,
                         name=node_raw.get("name") if isinstance(node_raw.get("name"), str) else None,
-                        pins=pins)
+                        pins=pins, peer_port=peer_port)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           deposit=deposit,
                           peers=peers,

@@ -200,8 +200,12 @@ certified collection the current snapshot signed by the anchored
 certifier (§3.8). Promotion is one rename into the drag path and, in the
 same transaction of the state database, the holdings mark: the durable
 marker is the snapshot's row in the manifest naming that member as held.
-At start, a member present in the copy without its mark goes back to
-staging. A record shard, a relations shard, a figures container or a
+The root is computed in staging, before the rename, so a file in the drag
+has already been verified; a member present in the copy without its mark
+is held — built here, or renamed before its mark was written — and is
+marked, never moved back. *(Amended 2026-10-06, migration step 9d: this
+read "goes back to staging", which would have moved every shard a peer
+built itself.)* A record shard, a relations shard, a figures container or a
 `files` member whose root is in no snapshot the peer holds stays in
 staging until a snapshot naming it arrives, and is
 discarded after `grace_days`. The members no snapshot lists are

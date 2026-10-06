@@ -212,6 +212,21 @@ def test_every_byte_sent_is_drawn_from_the_up_bucket_first_and_a_stop_ends_the_r
 
 # ---- the announced port -------------------------------------------------------------------
 
+def test_the_digest_names_the_swarm_port_the_file_gives_and_none_otherwise(node, monkeypatch):  # noqa: F811
+    from app.acquire import transport_torrent as tt
+    monkeypatch.setattr(tt, "_session", None)
+    p = platform_config.platform_path()
+    assert gossip.peer_port() is None, "no session, no [node] peer_port: no swarm to name"
+    p.write_text('[node]\npeer_port = 6881\n', encoding="utf-8")
+    assert gossip.peer_port() == 6881
+    body = messages.digest_body(key=PEER_KEY, address="http://a", neighbours=[], benchmarks=[],
+                                collections=[], peer_port=gossip.peer_port())
+    assert body["peer_port"] == 6881 and "peer_port" not in digest(PEER_KEY, "http://a")
+    p.write_text('[node]\npeer_port = 0\n', encoding="utf-8")
+    with pytest.raises(schedule.ScheduleError, match="peer_port"):
+        platform_config.load()
+
+
 def test_the_announced_port_is_the_one_peers_reach(node, monkeypatch):  # noqa: F811
     from app import config
     monkeypatch.setattr(config, "PORT", 8742)

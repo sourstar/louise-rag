@@ -348,8 +348,18 @@ reader needs at the command line:
   as `hold collection create`'s does; without it the file names no
   encoder, and the copy is held and shared but not embedded or searched
   until the operator adds one (§7.8). `--name` is the local name. No
-  peer known is exit 2; every peer down is exit 3. *(Flags added
-  2026-10-06 with the first brick of migration step 9d.)*
+  peer known is exit 2; every peer down is exit 3. `--slice` and
+  `--kinds` are written into the collection's file (§7.8), joined with
+  what it already says — no `--slice` means every slice, `"all"` — and
+  the node's worker fetches what the drag lacks of them at its next
+  beat, member by member: `LICENSE-TERMS` first and, for a yellow or red
+  collection, nothing else until the acknowledgement is recorded
+  (04 §4.4); each file by the torrent whose infohash the snapshot gives,
+  into `state/staging/`, its pieces root computed and compared to the
+  snapshot's, then one rename into the drag and the holdings mark
+  (04 §4.3). `--here` fetches the members in this process instead, for
+  a node whose worker is not running; it takes the collection's lock
+  (§7.7). *(Flags added 2026-10-06 with migration step 9d.)*
 - **`share contribute`.** Chooses shards by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the shards this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold
@@ -789,6 +799,8 @@ variable, a file, a log line or a message.
 
 ```toml
 [node]       http_port = 8742   peer_port = 6881   name = "nas"   address = "http://nas:8742"   # address: where THIS node answers pulls, as peers reach it (09 §9.9; added 2026-10-06)
+             # peer_port: where this node's swarm listens, as peers reach it; named in its digest (09 §9.9) so a
+             # fetcher with the DHT off still finds the swarm; absent, the session's own port is named when one runs
 [budget]     down_max = "400Mbit"   up_max = "40Mbit"   schedule = "01:00-07:00 full; else 30%"
 [peers]      addresses = ["http://peer.example.org:8742"]   # the bootstrap of 04 §4.2, where the peer answers the
              # messages of 09 §9.9 (a bare host:port is http); `share peers add` writes here, each address once
@@ -814,7 +826,7 @@ is the collection being held:
 ```toml
 codex  = "sha256:…"                            # the collection_id this name holds; drag/codex.json's inner hash must equal it (09 §9.3)
 title  = "PubMed"                              # optional: overrides descriptive.title for this peer's own listing; never published
-slices = ["year=1975-1979", "year=1980-1984"]  # or "all"
+slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the collection, held by `share fetch --slice` (§7.3)
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
 share  = true

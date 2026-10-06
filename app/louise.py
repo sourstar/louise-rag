@@ -676,28 +676,115 @@ def cmd_share(a) -> int:
     return 0
 
 
+def _set_held_selection(path, slices, kinds) -> dict:
+    """07 §7.8: the file's `slices` and `kinds` — what `share fetch` was asked
+    for, joined with what the file already said (`"all"` wins); the worker
+    fetches what the drag lacks of it. Returns what the file says now."""
+    import json
+    import re
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+    had_slices = raw.get("slices")
+    if slices == "all" or had_slices == "all":
+        now_slices = "all"
+    else:
+        now_slices = list(had_slices or [])
+        now_slices += [s for s in slices if s not in now_slices]
+    now_kinds = list(raw.get("kinds") or ["records", "vectors"])
+    now_kinds += [k for k in (kinds or ()) if k not in now_kinds]
+
+    def put(key, value_text):
+        nonlocal text
+        line = f"{key} = {value_text}"
+        if re.search(rf"^{key}\s*=", text, flags=re.M):
+            text = re.sub(rf"^{key}\s*=.*$", line, text, count=1, flags=re.M)
+        else:
+            head, sep, tail = text.partition("\n[")
+            text = head.rstrip("\n") + "\n" + line + "\n" + (sep + tail if sep else "")
+    put("slices", '"all"' if now_slices == "all" else "[" + ", ".join(json.dumps(s) for s in now_slices) + "]")
+    put("kinds", "[" + ", ".join(json.dumps(k) for k in now_kinds) + "]")
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    return {"slices": now_slices, "kinds": now_kinds}
+
+
 def cmd_share_fetch(a) -> int:
-    """`share fetch <collection>` (07 §7.3; 04 §4.2, §4.3), first brick: the
-    peers that hold it found, its Codex chain and snapshot chain pulled and
-    verified, the collection held — codex.json and snapshots/*, the
-    pre-acknowledgement set. The members come with the second brick."""
+    """`share fetch <collection>` (07 §7.3; 04 §4.2, §4.3): the peers that
+    hold it found, its Codex chain and snapshot chain pulled and verified,
+    the collection held — codex.json and snapshots/*, the
+    pre-acknowledgement set — and the slices and kinds asked for written
+    into its file; the worker fetches the members at its next beat, or
+    `--here` does, in this process, for a node whose worker is not
+    running."""
     from app.share import fetch as fetch_mod
-    if a.slice or a.kinds:
-        raise CodexError("share fetch --slice / --kinds: not yet — this brick holds the Codex "
-                         "and the snapshot chain; the members are step 9d's second brick")
+    locked = False
     try:                                   # held here already: a name or a prefix resolves (07 §7.6)
-        ref = col.resolve(a.root, a.collection)[1].collection_id
+        name, codex = col.resolve(a.root, a.collection)
+        ref = codex.collection_id
+        _take_write_lock(a.root, name, "share fetch")
+        locked = True
     except (CodexError, FileNotFoundError, OSError):
         ref = a.collection if a.collection.startswith("sha256:") else "sha256:" + a.collection
     session = None
     if getattr(a, "dht", False):
         from app.acquire import transport_torrent as _tt
         session = _tt.get_session()
+    slices = "all" if a.slice is None else tuple(a.slice)
+    kinds = tuple(k for k in (a.kinds or "records").split(",") if k)
     out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
                           encoder=a.encoder, name=a.name, session=session,
                           log=lambda m: print(m, file=sys.stderr))
+    out["selection"] = _set_held_selection(out["file"], slices, kinds)
+    if a.here:
+        if not locked:
+            _take_write_lock(a.root, out["name"], "share fetch --here")
+        out["members"] = _fetch_members_here(a.root, out["name"], slices=out["selection"]["slices"],
+                                             kinds=out["selection"]["kinds"], session=session)
+        out["note"] = "the members fetched here; `hold collection show` lists the holdings"
+    else:
+        out["note"] = ("the worker fetches the members the file asks for at its next beat; "
+                       "`hold collection show` lists the holdings")
     _print(out)
     return 0
+
+
+def _fetch_members_here(root, name: str, *, slices, kinds, session=None) -> dict:
+    """`share fetch --here`: the members in this process, on this process's
+    session and budget (07 §7.7: the one writer — the caller holds the lock)."""
+    import sqlite3
+    import time
+    from app import collections as collections_mod, licensing
+    from app.acquire import transport_torrent as _tt
+    from app.share import transport
+    root = Path(root)
+    codex = col.read(root, name)
+    c = collections_mod.by_name(name) if root.resolve() == (collections_mod.louise_root() / "collections").resolve() else None
+    if c is not None:
+        ack_missing = licensing.state_for(c) == licensing.MISSING
+    else:
+        state = root / name / "state"
+        ack_missing = codex.license.cls != "green" and collections_mod._codex_ack(codex, state) is None
+    manifest = root / name / "state" / "manifest.sqlite"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(manifest, isolation_level=None)
+    con.row_factory = sqlite3.Row
+    try:
+        with peers_connection() as node_con:
+            hints = transport.hints_for(node_con, codex.collection_id, now=time.time())
+        return transport.fetch_members(root, name, codex, slices=slices, kinds=tuple(kinds),
+                                       ack_missing=ack_missing, session=session or _tt.get_session(),
+                                       con=con, hints=hints, log=lambda m: print(m, file=sys.stderr))
+    finally:
+        con.close()
+
+
+def peers_connection():
+    from contextlib import closing
+    from app.share import peers
+    return closing(peers.connect())
 
 
 def cmd_share_peers(a) -> int:
@@ -725,8 +812,39 @@ def cmd_show(a) -> int:
     # carried `refused: string or null` until 2026-09-19
     out.pop("refused", None)
     out.update(_copy_state(a.root, name, codex).to_json())
+    out.update(_show_drag(a.root, name))
     _print(out)
     return 0
+
+
+def _show_drag(root, name: str) -> dict:
+    """09 §9.3's `snapshots` and `holdings`, read off the drag: every
+    snapshot in the chain with its verified signatures and whether its
+    record members are all held; what the drag holds of the current one."""
+    import json
+    from app.hold import snapshot as sn
+    from app.share import holdings, members as mem, seeder
+    drag_dir = col.drag_of(Path(root), name)
+    sdir = drag_dir / "snapshots"
+    snaps = []
+    for p in sorted(sdir.glob("*.json")) if sdir.is_dir() else []:
+        if p.name.endswith(".sig.json"):
+            continue
+        try:
+            snap = sn.load(p)
+        except Exception:   # noqa: BLE001 — a file that is no snapshot is not listed
+            continue
+        n = 0
+        sig = sdir / f"{snap.snapshot_id}.sig.json"
+        if sig.is_file():
+            try:
+                n = len(sn.sidecar_keys(json.loads(sig.read_bytes()), snap.hash)[0])
+            except Exception:   # noqa: BLE001
+                n = 0
+        records = [m for m in mem.members_of(snap) if holdings.kind_of(m.name) == "records"]
+        snaps.append({"snapshot_id": snap.snapshot_id, "hash": snap.hash, "signatures": n,
+                      "held": bool(records) and all(holdings.held(drag_dir, m) for m in records)})
+    return {"snapshots": snaps, "holdings": holdings.summary(drag_dir, seeder.current_snapshot(drag_dir))}
 
 
 def cmd_collection_migrate(a) -> int:
@@ -2289,8 +2407,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_share)
     p = shverbs.add_parser("fetch", help="take a part: find who holds it, pull and verify, hold it (04 §4.3)")
     root_arg(p); p.add_argument("collection", help="a collection id or a lineage id")
-    p.add_argument("--slice", default=None)
-    p.add_argument("--kinds", default=None)
+    p.add_argument("--slice", nargs="*", default=None,
+                   help="the slices to hold, by value; absent: every slice")
+    p.add_argument("--kinds", default=None,
+                   help="comma-separated member kinds to hold; default records")
+    p.add_argument("--here", action="store_true",
+                   help="fetch the members in this process, for a node whose worker is not running")
     p.add_argument("--snapshot", default=None, metavar="ID",
                    help="this snapshot and its chain; default: the latest the peer holds")
     p.add_argument("--from", dest="from_", default=None, metavar="ADDRESS",

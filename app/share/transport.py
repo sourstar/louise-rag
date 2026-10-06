@@ -1,0 +1,335 @@
+"""Members over the wire (04 §4.3; 02 §2.6; 09 §9.16), migration step 9d,
+second brick: every file of every wanted member this peer lacks, fetched
+by its torrent — the infohash computed from the snapshot alone, so no one
+is asked what to fetch — into `state/staging/`, verified against its root
+and promoted into the drag (app/share/holdings.py).
+
+Run by the WORKER in a thread of its own (`loop`), on the session it
+already runs for seeding, under the budget: the DOWN bucket, DELTA class
+for the current snapshot's members (04 §4.3's classes), a rate lease
+handed to libtorrent as its ceiling and the bytes that landed credited
+after the fact, as for every transport that cannot be metered per byte
+(invariant 5). A stop turns the file off and leaves staging as it is: the
+next beat resumes from the pieces staging holds (07 §7.7). The ack gate
+(04 §4.4): until this peer's acknowledgement exists, the only member
+fetched of a yellow or red collection is `terms`. The swarm is reached
+through the DHT when the session has it, and through the peers whose
+digests name a `peer_port` for the collection.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+from app.acquire.spec import TransferAborted as AcquireAborted, TransportError
+from app.hold import collection as col
+from app.share import holdings, members as mem, peers, seeder
+from app.transfer.bucket import Priority, TransferAborted
+
+POLL_S = 0.5
+METADATA_TIMEOUT_S = 120.0       # as the acquisition transport's: no peer holding it answered
+RATE_REFRESH_S = 5.0
+RECONNECT_EVERY = 20             # polls between peer-hint connects while waiting for metadata
+BACKOFF_S = 15 * 60.0            # a collection nobody served waits this long before the next try
+CONTROL_KEY = "share_fetch"      # per collection: the last beat's account
+BEAT_S = 15.0
+
+
+def magnet(torrent: mem.Torrent) -> str:
+    return f"magnet:?xt=urn:btmh:1220{torrent.infohash[7:]}"
+
+
+def hints_for(node_con, collection_id: str, *, now: float) -> list[tuple[str, int]]:
+    """`(host, peer_port)` of every neighbour whose digest lists the collection
+    and names the port its swarm listens on."""
+    from urllib.parse import urlsplit
+    out: list[tuple[str, int]] = []
+    for n in peers.neighbours(node_con, now=now):
+        d = peers.digest_of(node_con, n["key"]) or {}
+        port = d.get("peer_port")
+        if not isinstance(port, int) or isinstance(port, bool):
+            continue
+        if any(isinstance(e, dict) and e.get("collection_id") == collection_id
+               for e in d.get("collections", [])):
+            host = urlsplit(n["address"]).hostname
+            if host and (host, port) not in out:
+                out.append((host, port))
+    return out
+
+
+def _connect(handle, hints) -> None:
+    for h in hints:
+        try:
+            handle.connect_peer(h)
+        except Exception:   # noqa: BLE001 — a hint that cannot be dialled is no hint
+            continue
+
+
+def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hints=(),
+               stop=None, log: Callable[[str], None] | None = None, poll_s: float = POLL_S,
+               metadata_timeout_s: float | None = None) -> Path:
+    """One member file into `staging/<member>/<path>`, whole: the metadata
+    from the swarm, this one file on, paced by the lease, credited as it
+    lands, stopped on `stop` with staging left for the next beat. The
+    download handle leaves the session afterwards; serving is the seeder's,
+    from the drag, when the collection's file says so."""
+    from app.acquire import transport_torrent as tt
+    from app.transfer.manager import get_manager
+    lt = seeder._lt()
+    if metadata_timeout_s is None:
+        metadata_timeout_s = METADATA_TIMEOUT_S
+    rel = f"{member}/{torrent.path}"
+    key = f"share:{torrent.infohash}"
+    staging = Path(staging)
+    staging.mkdir(parents=True, exist_ok=True)
+    params = lt.parse_magnet_uri(magnet(torrent))
+    params.save_path = str(staging)
+    try:
+        params.flags |= lt.torrent_flags.paused
+    except Exception:   # noqa: BLE001 — older bindings name flags differently
+        pass
+    handle = session.add_torrent(params)
+    try:
+        _connect(handle, hints)
+        deadline = time.monotonic() + metadata_timeout_s
+        polls = 0
+        while not handle.status().has_metadata:
+            if stop is not None and stop.is_set():
+                raise TransferAborted(f"stopped waiting for the metadata of {rel}")
+            if time.monotonic() > deadline:
+                raise TransportError(f"{rel}: no metadata after {metadata_timeout_s:.0f}s — no "
+                                     f"peer holding it answered")
+            polls += 1
+            if polls % RECONNECT_EVERY == 0:
+                _connect(handle, hints)
+            time.sleep(poll_s)
+        info = handle.torrent_file()
+        index = tt._index_of(info, rel)
+        fs = info.files()
+        total = fs.file_size(index)
+        priorities = [0] * fs.num_files()
+        priorities[index] = 4
+        handle.prioritize_files(priorities)
+        handle.resume()
+        _connect(handle, hints)
+        last_refresh = 0.0
+        with get_manager().rsync_lease(None) as leased_bps:
+            while True:
+                done = handle.file_progress()[index]
+                tt._credit_download(key, handle)
+                if done >= total:
+                    break
+                if stop is not None and stop.is_set():
+                    # the file off before leaving, so nothing lands outside the lease
+                    priorities[index] = 0
+                    handle.prioritize_files(priorities)
+                    tt._credit_download(key, handle)
+                    raise TransferAborted(f"stopped with {done}/{total} bytes of {rel}")
+                error = getattr(handle.status(), "errc", None)
+                if error is not None and getattr(error, "value", lambda: 0)():
+                    raise TransportError(f"{rel}: {error.message()}")
+                now = time.monotonic()
+                if now - last_refresh > RATE_REFRESH_S:
+                    tt._apply_rate(handle, leased_bps)
+                    last_refresh = now
+                time.sleep(poll_s)
+        return staging / rel
+    finally:
+        try:
+            session.remove_torrent(handle)
+        except Exception:   # noqa: BLE001 — a handle already gone
+            pass
+
+
+def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: bool, session,
+                  con, hints=(), stop=None, log: Callable[[str], None] | None = None,
+                  now: float | None = None, max_files: int | None = None) -> dict[str, Any]:
+    """One beat for one collection: every missing file of every wanted
+    member of the current snapshot, terms first; with no acknowledgement,
+    terms alone (04 §4.4). What moved, and why nothing did."""
+    root = Path(root)
+    drag_dir = col.drag_of(root, name)
+    state = root / name / "state"
+    staging = state / holdings.STAGING
+    out: dict[str, Any] = {"snapshot_id": None, "promoted": [], "refused": [], "errors": [],
+                           "waiting": None, "stopped": False, "wanted": 0, "missing": 0}
+    snap = seeder.current_snapshot(drag_dir)
+    if snap is None:
+        return out
+    out["snapshot_id"] = snap.snapshot_id
+    want = holdings.wanted(snap, slices=slices, kinds=kinds)
+    out["wanted"] = len(want)
+    if ack_missing and any(m.name != "terms" for m in want):
+        want = [m for m in want if m.name == "terms"]
+        out["waiting"] = "acknowledgement: `hold collection ack` first (04 §4.4)"
+    holdings.sweep_marks(con, drag_dir)
+    todo = holdings.missing(drag_dir, want)
+    out["missing"] = len(todo)
+    if not todo:
+        return out
+    need = sum(f.bytes for _, f in todo)
+    staging.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(staging).free
+    if need > free:                       # 04 §4.3: sizes are known before the first byte
+        out["waiting"] = f"space: {need} bytes wanted, {free} free"
+        if log:
+            log(f"[{name}] share fetch: waiting for space — {need} bytes wanted, {free} free")
+        return out
+    from app.transfer.manager import Direction, get_manager
+    with get_manager().bind(Priority.DELTA, Direction.DOWN, stop=stop):
+        for m, f in (todo if max_files is None else todo[:max_files]):
+            t = next(t for t in m.torrents() if t.path == f.path)
+            try:
+                staged = fetch_file(session, torrent=t, member=m.name, staging=staging,
+                                    hints=hints, stop=stop, log=log)
+                holdings.promote(con, staged, drag_dir, snapshot_id=snap.snapshot_id,
+                                 member=m.name, f=f, now=now)
+                out["promoted"].append(f.path)
+                if log:
+                    log(f"[{name}] share fetch: {f.path} ({f.bytes} bytes) promoted")
+            except holdings.Refused as e:
+                out["refused"].append(str(e))
+                if log:
+                    log(f"[{name}] share fetch: refused — {e}")
+            except (TransferAborted, AcquireAborted):
+                out["stopped"] = True
+                break
+            except (TransportError, OSError) as e:
+                out["errors"].append(f"{f.path}: {e}"[:300])
+                if log:
+                    log(f"[{name}] share fetch: {f.path}: {e}"[:400])
+                if "no metadata" in str(e):
+                    break                 # nobody serves this collection now: the rest can wait
+    return out
+
+
+# ---- the worker's thread -----------------------------------------------------------------
+
+_next_try: dict[str, float] = {}
+#: per collection: the (snapshot file, selection) found complete, and when —
+#: a beat costs one directory listing per collection, never one stat per
+#: shard of a corpus that has nothing to fetch (CLAUDE.md: a per-round cost
+#: scales with the work available, never with the size of the corpus)
+_complete: dict[str, tuple[tuple, float]] = {}
+RECHECK_S = 3600.0
+
+
+def _snapshot_key(drag_dir: Path) -> tuple | None:
+    """The newest snapshot file's identity — (id, mtime, size) — without
+    reading it; None when the drag has none."""
+    d = Path(drag_dir) / "snapshots"
+    if not d.is_dir():
+        return None
+    ids = sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
+    if not ids:
+        return None
+    try:
+        st = (d / f"{ids[-1]}.json").stat()
+    except OSError:
+        return None
+    return (ids[-1], st.st_mtime_ns, st.st_size)
+
+
+def wants_fetching(collection) -> bool:
+    """A Codex collection whose file asks for slices — `"all"` or a list —
+    and is not a deposit collection (never-share: nothing to fetch)."""
+    codex = getattr(collection, "codex", None)
+    if codex is None or getattr(collection, "slices", None) in (None, ()):
+        return False
+    from app.hold import deposit
+    return not deposit.is_deposit(codex)
+
+
+def beat(collections, cons: dict, node_con, *, worker_state: str, session_factory,
+         root: Path | None = None, stop=None, now: float | None = None,
+         log: Callable[[str], None] | None = None) -> dict[str, Any]:
+    """One beat over every collection that wants members: skipped when the
+    mode does not fetch, when the collection is in its backoff after a
+    beat nobody served, or when nothing is missing."""
+    from app import collections as collections_mod, db, licensing, node_state
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {}
+    if not node_state.runs(worker_state, node_state.FETCH):
+        return out
+    root = Path(root) if root is not None else collections_mod.louise_root() / "collections"
+    for c in collections:
+        if not wants_fetching(c) or _next_try.get(c.name, 0.0) > now:
+            continue
+        con = cons.get(c.name)
+        if con is None:
+            continue
+        try:
+            ack_missing = licensing.state_for(c) == licensing.MISSING
+        except Exception:   # noqa: BLE001 — a gate error withholds, never fetches
+            ack_missing = True
+        drag_dir = col.drag_of(root, c.name)
+        skey = _snapshot_key(drag_dir)
+        if skey is None:
+            continue
+        selection = (skey, c.slices if c.slices == "all" else tuple(c.slices or ()),
+                     tuple(c.kinds or ()), ack_missing)
+        done = _complete.get(c.name)
+        if done is not None and done[0] == selection and now - done[1] < RECHECK_S:
+            continue                      # complete at this snapshot and selection: nothing to stat
+        snap = seeder.current_snapshot(drag_dir)
+        if snap is None:
+            continue
+        want = holdings.wanted(snap, slices=c.slices, kinds=c.kinds)
+        if ack_missing:
+            want = [m for m in want if m.name == "terms"]
+        if not holdings.missing(drag_dir, want):
+            _complete[c.name] = (selection, now)
+            continue                      # the session is opened only for a byte to fetch
+        _complete.pop(c.name, None)
+        hints = hints_for(node_con, c.codex.collection_id, now=now) if node_con is not None else []
+        got = fetch_members(root, c.name, c.codex, slices=c.slices, kinds=c.kinds,
+                            ack_missing=ack_missing, session=session_factory(), con=con,
+                            hints=hints, stop=stop, log=log, now=now)
+        if any("no metadata" in e for e in got["errors"]):
+            _next_try[c.name] = now + BACKOFF_S
+        try:
+            db.set_control(con, CONTROL_KEY, json.dumps({"at": now, **got}))
+        except Exception:   # noqa: BLE001 — the account is a courtesy
+            pass
+        out[c.name] = got
+        if stop is not None and stop.is_set():
+            break
+    return out
+
+
+def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print) -> None:
+    """The worker's fetch thread (07 §7.7: resumable per file, stoppable
+    between polls). Per-collection connections are this thread's own."""
+    from app import collections as collections_mod, db, node_state
+    from app.acquire import transport_torrent as tt
+    cons: dict[str, Any] = {}
+    node_con = None
+    while not stop.wait(beat_s):
+        try:
+            collections = [c for c in collections_mod.load_all() if getattr(c, "codex", None) is not None]
+            live = {c.name for c in collections}
+            for stale in [n for n in cons if n not in live]:
+                try:
+                    cons.pop(stale).close()
+                except Exception:   # noqa: BLE001
+                    cons.pop(stale, None)
+            for c in collections:
+                if c.name not in cons:
+                    cons[c.name] = db.connect(c)
+            if node_con is None:
+                node_con = node_state.connect()
+            beat(collections, cons, node_con, worker_state=node_state.worker_state(node_con),
+                 session_factory=tt.get_session, stop=stop, log=log)
+        except Exception as e:   # noqa: BLE001 — the thread outlives any one beat
+            try:
+                log(f"[warn:share] fetch beat: {type(e).__name__}: {e}"[:400])
+            except Exception:   # noqa: BLE001
+                pass
+    for c_con in cons.values():
+        try:
+            c_con.close()
+        except Exception:   # noqa: BLE001
+            pass
