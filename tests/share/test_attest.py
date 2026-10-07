@@ -86,7 +86,11 @@ def test_a_received_attestation_event_is_kept_beside_a_held_collection_and_dropp
         said: list[str] = []
         out = attest.store_received(node, con, log=said.append)
         assert out == {"stored": 1, "held_elsewhere": 1, "dropped": 1, "other": 1}
-        assert attest.unacted(con) == [], "every event acted on once"
+        left = attest.unacted(con)
+        assert [ev["type"] for ev in left] == ["snapshot"], \
+            "the attestations acted on; the snapshot event left for its handler (2026-10-07: marked here, it never reached accept)"
+        from app.share import accept
+        assert [ev["id"] for ev in accept.pending(con, "snapshot")] == [left[0]["id"]]
         assert peers.to_forward(con) and len(peers.to_forward(con)) == 4, "acting is not forwarding"
     p = attest.attestation_path(node, name, codex, good_id)
     assert json.loads(p.read_bytes()) == good

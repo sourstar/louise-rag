@@ -120,15 +120,22 @@ def mark_acted(con, event_id: str) -> None:
 
 def store_received(root: Path, con, *, log: Callable[[str], None] | None = None) -> dict[str, int]:
     """Every unacted event: an `attestation` whose payload verifies and names
-    a collection held here is written at 09 §9.8's path (if absent); the
-    rest are marked acted and left to later bricks. Counts."""
+    a collection held here is written at 09 §9.8's path (if absent). Events
+    of the other types are left UNACTED for their handlers (app/share/accept.py:
+    snapshot, codex, flag, bundle) — marking them here, as the first brick
+    did when no handler existed, raced the import thread and won: the node
+    never took in the second peer's bundles (2026-10-07). Counts.
+    """
     root = Path(root)
     out = {"stored": 0, "held_elsewhere": 0, "dropped": 0, "other": 0}
     resolve_cache: dict[str, str | None] = {}
     for ev in unacted(con):
         body = (ev["envelope"] or {}).get("body") or {}
-        if ev["type"] != "attestation" or body.get("type") != "attestation":
-            out["other"] += 1
+        if ev["type"] != "attestation":
+            out["other"] += 1                       # another handler's
+            continue
+        if body.get("type") != "attestation":
+            out["dropped"] += 1                     # an envelope that is not what its row says
             mark_acted(con, ev["id"])
             continue
         payload = body.get("payload")
