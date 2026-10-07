@@ -1250,9 +1250,16 @@ corpus readers (gutenberg's `read_text` wrote "not indexable" on every
 fetched document), a drag source never acquires from the origin, and
 promoted record shards ask for a scan at once instead of waiting for
 the six-hour interval. Fetched, scanned, indexed and searched in under
-a minute. **Owed**: the
-`index-<slice>` member as a cache (import when the pin matches, else
-rebuild).
+a minute. **The `index-<slice>` member as a cache: LEFT OUT (2026-10-07),
+on evidence.** The text index this node builds is ONE tantivy index per
+collection and language group, not per-slice segments, so there is no
+per-slice unit to publish; tantivy-py has no segment import, so a peer
+could not take one in without rebuilding anyway; and a fetching peer
+rebuilds at ~1,200 chunks/s (measured on the second peer) — about 3 h for
+gutenberg, 11 h for pubmed — once per snapshot, on its own CPU, with
+nothing to verify. Proposed for the operator: 09 §9.16 drops
+`index-<slice>` (and 02 §2.6's `--kinds index`), a member kind no
+producer can write — a wire-format change, so asked first.
 
 ### Step 10 — Certified collections and the Gazzetta plugin
 *02 §2.8, 03 §3.7, 03 §3.8, 06 §6.4, 09 §9.15. New code; one dependency
