@@ -244,6 +244,34 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~20:50Z (UTC): steps 10, 11, 14 and the additive half of 12
+built and committed; NOT deployed — the node is unreachable.** Since at
+least 19:51Z (found when the rebuild was next checked) the node answers
+nothing on any path (LAN ping, SSH, the TrueNAS UI,
+Tailscale); the router does. The gutenberg rebuild container
+(`louise-gutenberg-rebuild`, gutenberg paused in the worker) was running
+when it went; its outcome, the node's state and the cause are unknown until
+someone is at the machine. Built meanwhile, each with tests, full suite
+run before any deploy:
+- step 10: the *integrity violated* halt (c731cce); XAdES, the trusted
+  lists' own signatures checked against the EU list of trusted lists,
+  revocation captured (embedded, given, fetched on the budget), live
+  `origin-seal` (b6fefa2) — the XML verifier proven against the published
+  EU LOTL and the IS, IT, MT, LI lists;
+- step 11: figures on results and `GET /api/ask/figure`; `resolve_in` for
+  edges into other collections (ae944b9); and a defect fixed first:
+  `Snapshot.shard_of` compared ids as text and ignored slices;
+- step 14: `node show` (ecfd959);
+- step 12: `louise dev` (b2f3d29); the retirement blocked, reasons in the
+  plan.
+Decisions waiting for the operator: the trusted lists travelling in the
+seals member (a wire-format change); dropping `index-<slice>` (9f) and
+`dev migrate pack|adopt`; what becomes of the legacy shape that still
+loads the frozen genome collections. Owed on the node: re-run the two
+equivalence checks after the next deploy; resume gutenberg; remove the
+rebuild container and its `louise-rag:build-gutenberg` tag; scheduled
+checks (step 14) measured there first.
+
 **2026-10-07, ~18:50Z (UTC): `image-equivalence`; gutenberg and pubmed
 both buildable under the running image; 62eb017 DEPLOYED (`1156f11f…`).**
 On the operator's rule — "the source compliancy is after the parsing of
