@@ -60,7 +60,7 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
                 "space_id": f"{LEGACY_SPACE}:{collection.plugin}", "trust_level": "unverified",
                 "certification": None, "red": False, "figures": None, "codex": None}
     from app import copy_state
-    from app.hold import collection as col, equivalence, trust_file
+    from app.hold import anchor as anchor_mod, collection as col, equivalence, trust_file
     from app.hold.codex import lineage_id
     from app.share import coverage as cov, levels, seeder
     root = Path(root) if root is not None else _root()
@@ -88,7 +88,9 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
                          reference_images=equivalence.reference_images(bodies, own_key, codex))
     return {"collection_id": codex.collection_id, "lineage_id": lid,
             "snapshot_id": snap.snapshot_id if snap else None, "space_id": codex.space_id,
-            "trust_level": level["level"], "certification": None,
+            "trust_level": level["level"],
+            # 05 §5.3: certification beside the trust level — two axes, never one
+            "certification": anchor_mod.certification(root, name, codex, snap, now=now),
             "red": codex.license.cls == "red",
             "figures": None if getattr(codex, "record_line", 1) == 1 else [], "codex": codex}
 

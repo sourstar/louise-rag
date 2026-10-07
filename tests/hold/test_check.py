@@ -820,3 +820,28 @@ def test_an_origin_file_is_weighed_once_however_many_records_point_into_it(
     file_part = record["origin"].partition("#")[0]
     answers = {unit_of(f"{file_part}#{member}") for member in range(500)}
     assert len(weighed) == 1 and len(answers) == 1, "500 records of one file: one stat"
+
+
+# ---- anchor (03 §3.7; step 10) ---------------------------------------------
+
+def test_anchor_is_judged_from_the_document_last_fetched(checkable):
+    """An open collection has none; a certified one is inconclusive until
+    `hold key anchor` fetched, then anchored or stale pass and a mismatch
+    fails — the check itself fetches nothing."""
+    from app.hold import anchor
+    from app.hold.codex import Certifier
+    root, snapshot, codex = checkable
+    o = _run(root, codex, snapshot, ["anchor"]).outcome("anchor")
+    assert o.result == chk.INCONCLUSIVE and "open collection" in o.why
+    certified = replace(codex, publication="certified", content="manifest-only",
+                        certifier=Certifier(env.key_text(KEY.verify_key), "https://x.example/.well-known/louise-certifier.json"))
+    o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
+    assert o.result == chk.INCONCLUSIVE and "hold key anchor" in o.why
+    doc = {"kind": "louise-certifier", "version": 1, "collections": [certified.collection_id],
+           "keys": [{"key": env.key_text(KEY.verify_key), "valid_from": "2026-01-01T00:00:00Z", "revoked_at": None}]}
+    anchor.record(root, "gutenberg", certified, document=anchor.parse(doc), now=1_790_000_000.0)
+    o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
+    assert o.result == chk.PASS and o.detail == {"state": "anchored"}, o.why
+    anchor.record(root, "gutenberg", certified, document=anchor.parse({**doc, "collections": []}), now=1_790_000_000.0)
+    o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
+    assert o.result == chk.FAIL and o.detail == {"state": "mismatch"} and "this collection" in o.why

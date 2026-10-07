@@ -1183,6 +1183,57 @@ pull path. The rendezvous tests already cover the partitioning.
 *02 §2.8, 03 §3.7, 03 §3.8, 06 §6.4, 09 §9.15. New code; one dependency
 decision.*
 
+**STARTED 2026-10-07. First brick DONE — everything that needs no new
+dependency.** `app/hold/anchor.py`: the anchor document of 09 §9.11
+fetched over TLS without redirects (a redirect would move the anchor off
+the domain), drawn from the budget, kept under `state/anchor/`, refetched
+by the worker's maintainer turn every 24 h plus a per-collection jitter
+of up to 4 h and an hour after a failure (`worker._refresh_anchor`, in
+a mode that fetches); `anchored` · `stale` (30 days) · `mismatch` (key
+or collection not listed) · `unknown` (never fetched); `hold key anchor
+<collection>` fetches now (exit 0 anchored/stale, 2 mismatch, 3 nothing
+held). `check_anchor` judges from the document held and fetches nothing.
+A key certifies the sidecar signatures made within its `valid_from`
+and `revoked_at`; with no document yet the Codex's `certifier.key`
+alone counts. `certification` (05 §5.3's `{certified_by,
+anchor_state}`) on every `ask search` result and in `hold collection
+show`, null for an open collection. The manifest-only gate (03 §3.8):
+`holdings.promote(allowed_roots=)` sets aside a file whose root no
+certifier-signed snapshot of the chain lists; `transport.fetch_members`
+computes the roots once per beat and fetches nothing for a certified
+collection until one held snapshot carries the certifier's signature.
+`hold collection certify <collection> <snapshot>`
+(`app/hold/certify.py`): the certifier's signature into the sidecar and
+the signed pointer of 09 §9.11 under `state/pointer/`, `seq` strictly
+increasing; served at `/.well-known/louise-pointer/<hex>.json` by the
+web for whoever fronts the node with the certifier's domain. `hold key
+create | trust <key> [--deny|--remove|--restore] | show`
+(`app/hold/node_key.py`) over NODE_KEY_PATH and `state/trust.json`.
+**Owed in step 10**: the pointer's BEP 44 publication by `share` and a
+fetcher that reads it (the well-known fallback is what exists); the
+*integrity violated* halt when a shard outside a signed snapshot is
+found already in the copy (the gate refuses it at promotion; a
+hand-populated folder is not yet detected — `roots` would have to be
+run over the copy's files against the signed chain); the seals and
+`origin-seal`; the Gazzetta plugin.
+**Dependency decision, proposed (not taken: a new dependency is asked
+first).** For 09 §9.15's seals: CAdES envelopes (the Gazzetta's `.p7m`)
+through `asn1crypto` (CMS parsing, signed attributes, the
+`content_sha256` digest) with `cryptography` for the RSA/ECDSA
+verification and the certificate path, both pure-Python or already
+present through pynacl's tree; PAdES (the OJEU's sealed PDFs) through
+`pyhanko` (`pyhanko[pkcs11]` not needed; `pyhanko` depends on
+`asn1crypto`, `cryptography`, `pyhanko-certvalidator`, which also gives
+the OCSP/CRL path validation archival mode replays against the
+captured responses and the hashed trusted list). The Commission's DSS
+is Java and would be a second runtime in the image; the Python stack
+covers both envelopes and validates offline from captured evidence,
+which is the mode that matters in thirty years. Trust-list parsing
+(the LOTL/TL XML) is ours to write — it is signed XML, ~400 lines
+with `lxml` or the stdlib. **Operator**: a yes on `asn1crypto`,
+`cryptography`, `pyhanko` (and `pyhanko-certvalidator`) before any
+seal code is written.
+
 - `hold key anchor`: fetch the well-known URL, compare the fingerprint,
   record rotation and revocation.
 - Manifest-only gate at promotion for `publication: certified`; the

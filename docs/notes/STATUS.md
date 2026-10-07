@@ -244,6 +244,25 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~17:00Z: step 10 started — certified collections, the
+dependency-free half.** The anchor (03 §3.7; 09 §9.11) fetched, kept,
+refreshed daily with jitter by the worker, judged by `check_anchor` and
+`hold key anchor`; `certification` beside the trust level on results
+and in `hold collection show`; the manifest-only gate at promotion (03
+§3.8) — a root no certifier-signed snapshot lists is set aside; `hold
+collection certify` signing the sidecar and writing the pointer, served
+at `/.well-known/louise-pointer/<hex>.json`; `hold key create | trust |
+show`. tests: hold/test_anchor 4, test_certify 4, test_node_key 3,
+test_check +1. Owed: BEP 44 publication of the pointer, the
+integrity-violated halt for a shard found already in the copy, the
+seals (blocked on the dependency decision proposed in the plan: asn1crypto,
+cryptography, pyhanko), the Gazzetta plugin. Not deployed (node:
+d596355). Flake seen once, not reproduced: the full suite before 2ae8662
+failed `tests/share/test_accept.py::test_the_survivor_takes_the_
+announced_bundle_in_and_serves_it` (real libtorrent sessions on
+localhost, a 30 s metadata wait); it passed alone and in the two suites
+before. A second occurrence is to be investigated, not retried.
+
 **2026-10-07, ~15:00Z: step 11, fourth and fifth bricks — `as_of` and
 `ask chat`.** `--as-of DATE` answers from the newest held snapshot whose
 cutoff is at or before the date (origin clock, `update.day`): records

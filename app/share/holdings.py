@@ -150,9 +150,13 @@ class Refused(drag_mod.DragError):
 
 
 def promote(con, staged: Path, drag_dir: Path, *, snapshot_id: str, member: str,
-            f: MemberFile, now: float | None = None) -> Path:
+            f: MemberFile, now: float | None = None, allowed_roots: set[str] | None = None) -> Path:
     """Verify, rename, mark (04 §4.3). The staged file's pieces root must be
-    the snapshot's; then one rename into the drag, then the mark."""
+    the snapshot's; then one rename into the drag, then the mark.
+    `allowed_roots` is 03 §3.8's manifest-only gate for a certified
+    collection: the roots listed by a held snapshot a certifier key signed
+    (app/hold/anchor.py `signed_roots`); a file whose root is not among
+    them is set aside, whatever snapshot names it."""
     staged, drag_dir = Path(staged), Path(drag_dir)
     got_size = staged.stat().st_size
     if got_size != f.bytes:
@@ -163,6 +167,10 @@ def promote(con, staged: Path, drag_dir: Path, *, snapshot_id: str, member: str,
         _set_aside(staged)
         raise Refused(f"{f.path}: pieces root {got[:23]}…, the snapshot says {f.root[:23]}…; "
                       f"set aside, not promoted (04 §4.3)")
+    if allowed_roots is not None and got not in allowed_roots:
+        _set_aside(staged)
+        raise Refused(f"{f.path}: root {got[:23]}… is not listed by any snapshot of the chain a certifier "
+                      f"key signed; set aside, not promoted — manifest-only (03 §3.8)")
     target = drag_dir / f.path
     target.parent.mkdir(parents=True, exist_ok=True)
     drag_mod.promote(staged, target)

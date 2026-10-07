@@ -990,6 +990,68 @@ def cmd_ask_chat(a) -> int:
     return 0
 
 
+def _collections_root(a) -> Path:
+    from app import collections as collections_mod
+    root = getattr(a, "root", None)
+    return Path(root) if root else collections_mod.louise_root() / "collections"
+
+
+def cmd_collection_certify(a) -> int:
+    """`hold collection certify <collection> <snapshot>` (07 §7.3): the
+    certifier's signature into the sidecar and the pointer of 09 §9.11
+    written for `share` to publish; refused when this peer's key is not
+    the Codex's `certifier.key`."""
+    import time
+    from app.bundles import keys as node_keys
+    from app.hold import certify
+    root = _collections_root(a)
+    name, codex = col.resolve(root, a.collection)
+    out = certify.certify(root, name, codex, a.snapshot, node_keys.load_signing_key(), now=time.time())
+    _print(out)
+    return 0
+
+
+def cmd_key_create(a) -> int:
+    """`hold key create`: this peer's key at NODE_KEY_PATH, once (07 §7.3)."""
+    from app.hold import node_key
+    _print({"key": node_key.create()})
+    return 0
+
+
+def cmd_key_trust(a) -> int:
+    """`hold key trust <key> [--deny | --remove | --restore]` over
+    `state/trust.json` (09 §9.8)."""
+    from app.hold import node_key
+    _print(node_key.trust(a.key, deny=a.deny, remove=a.remove, restore=a.restore,
+                          root=_collections_root(a).parent))
+    return 0
+
+
+def cmd_key_show(a) -> int:
+    """`hold key show`: this peer's public key and the trust list with each
+    key's state."""
+    from app.hold import node_key
+    _print(node_key.show(_collections_root(a).parent))
+    return 0
+
+
+def cmd_key_anchor(a) -> int:
+    """`hold key anchor <collection>`: fetch the certifier's anchor document
+    now and judge the key against it (03 §3.7; 09 §9.11). Exit 0 anchored
+    or stale, 2 mismatch, 3 when nothing could be fetched and nothing is
+    held."""
+    import time
+    from app.hold import anchor
+    root = _collections_root(a)
+    name, codex = col.resolve(root, a.collection)
+    if codex.publication != "certified" or codex.certifier is None:
+        raise CodexError(f"{name}: an open collection has no anchor (02 §2.8)")
+    st = anchor.refresh(root, name, codex, now=time.time(), log=lambda m: print(m, file=sys.stderr))
+    _print({"collection_id": codex.collection_id, "certifier": codex.certifier.key,
+            "anchor": codex.certifier.anchor, **st})
+    return {"anchored": 0, "stale": 0, "mismatch": 2}.get(st["state"], 3)
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -1048,8 +1110,13 @@ def _show_drag(root, name: str) -> dict:
         snaps.append({"snapshot_id": snap.snapshot_id, "hash": snap.hash, "signatures": n,
                       "held": bool(records) and all(holdings.held(drag_dir, m) for m in records)})
     current = seeder.current_snapshot(drag_dir)
+    from app.hold import anchor
+    codex = col.read(Path(root), name)
     return {"snapshots": snaps, "holdings": holdings.summary(drag_dir, current),
-            **_trust_level(root, name, current)}
+            **_trust_level(root, name, current),
+            # 05 §5.3, 03 §3.8: certification beside the trust level — two axes
+            "certification": anchor.certification(Path(root), name, codex, current),
+            "anchor": anchor.status(Path(root), name, codex)}
 
 
 def _trust_level(root, name: str, current) -> dict:
@@ -2339,6 +2406,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--root", type=Path, default=None,
                        help="where collections live (default: ./collections or $LOUISE_ROOT)")
 
+    p = verbs.add_parser("certify", help="sign a snapshot as this collection's certifier and write the "
+                                         "pointer (03 §3.7; 09 §9.11)")
+    root_arg(p); p.add_argument("collection"); p.add_argument("snapshot")
+    p.set_defaults(fn=cmd_collection_certify)
     p = verbs.add_parser("create", help="write a Codex from a plugin and a recipe; print its id")
     root_arg(p)
     p.add_argument("plugin", nargs="?", default=None,
@@ -2664,6 +2735,24 @@ def build_parser() -> argparse.ArgumentParser:
                         "the coverage map stops claiming it. Off by default: "
                         "deleting vectors on a cosine is an operator's call")
     p.set_defaults(fn=cmd_vectors_check)
+
+    key = nouns.add_parser("key", help="this peer's key, the trust list, a certifier's anchor")
+    kverbs = key.add_subparsers(dest="verb", required=True)
+    p = kverbs.add_parser("create", help="this peer's key, at NODE_KEY_PATH, once")
+    p.set_defaults(fn=cmd_key_create)
+    p = kverbs.add_parser("trust", help="the trust list: allow, deny, forget, lift a burn (09 §9.8)")
+    root_arg(p); p.add_argument("key")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--deny", action="store_true", help="ignore this key's attestations, digests and bundles")
+    g.add_argument("--remove", action="store_true", help="forget this key: neither allowed nor denied")
+    g.add_argument("--restore", action="store_true", help="lift a burn by a proof of forgery (03 §3.5)")
+    p.set_defaults(fn=cmd_key_trust)
+    p = kverbs.add_parser("anchor", help="check a certifier's key against its anchor now (03 §3.7)")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_key_anchor)
+    p = kverbs.add_parser("show", help="this peer's public key; the trust list with each key's state")
+    root_arg(p)
+    p.set_defaults(fn=cmd_key_show)
 
     p = nouns.add_parser("check",
                          help="run the collection's validation plan (03 §3.2) "

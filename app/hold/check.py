@@ -383,6 +383,23 @@ def check_signature(ctx: Ctx) -> Outcome:
                        f"{len(keys)} signature(s) over this snapshot's hash")
 
 
+def check_anchor(ctx: Ctx) -> Outcome:
+    """"a certifier's key against its anchor" (03 §3.7; 09 §9.11's
+    `{state}`): judged from the document this peer last fetched
+    (app/hold/anchor.py) — the check itself fetches nothing; `hold key
+    anchor` and the worker's daily refresh do. `mismatch` fails;
+    `anchored` and `stale` pass, stale being age and never a mismatch; no
+    document yet is inconclusive."""
+    from . import anchor as anchor_mod
+    if ctx.codex.publication != "certified" or ctx.codex.certifier is None:
+        return Outcome("anchor", INCONCLUSIVE, why="an open collection has no anchor to check (02 §2.8)")
+    st = anchor_mod.status(ctx.root, ctx.name, ctx.codex)
+    if st["state"] == anchor_mod.UNKNOWN:
+        return Outcome("anchor", INCONCLUSIVE, why=f"{st['why']}; `hold key anchor` fetches it")
+    return Outcome("anchor", FAIL if st["state"] == anchor_mod.MISMATCH else PASS,
+                   {"state": st["state"]}, why=st["why"])
+
+
 def check_calibration(ctx: Ctx) -> Outcome:
     """The gate of 03 §3.3, run for this collection's space."""
     from . import embedder as emb
@@ -714,8 +731,7 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
         "labels", "needs the published centres this collection has none of "
                   "(02 §2.4); not built"),
     "figures": check_figures,
-    "anchor": _not_yet("anchor", "a certifier's external anchor (03 §3.7) — "
-                                 "migration plan step 10"),
+    "anchor": lambda ctx: check_anchor(ctx),
     "origin-seal": _not_yet("origin-seal", "the origin's own seal (03 §3.7) — "
                                            "migration plan step 10"),
     "evaluation": _not_yet(

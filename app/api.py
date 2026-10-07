@@ -93,6 +93,26 @@ from .share import api as share_api  # noqa: E402
 app.include_router(share_api.router)      # the peer messages of 09 §9.9
 from .ask import api as ask_api  # noqa: E402
 app.include_router(ask_api.router)        # `ask` over HTTP and the MCP server (07 §7.4; 05 §5.4)
+
+
+@app.get("/.well-known/louise-pointer/{collection_hex}.json")
+def certifier_pointer(collection_hex: str):
+    """09 §9.11: the certifier's signed pointer to its current certified
+    snapshot, served where a certifier's domain publishes it — this node
+    is that domain's origin when the operator fronts it with one. Open,
+    like every `ask` route: it carries nothing secret (07 §7.4)."""
+    from .hold import certify, drag as drag_mod
+    if not collection_hex.isalnum() or len(collection_hex) != 64:
+        raise HTTPException(404, "no pointer")
+    root = collections_mod.louise_root() / "collections"
+    for c in collections_mod.load_all(skip_unreadable=True):
+        codex = getattr(c, "codex", None)
+        if codex is None or drag_mod._hex(codex.collection_id) != collection_hex:
+            continue
+        p = certify.pointer_path(root, c.name, codex)
+        if p.is_file():
+            return Response(p.read_bytes(), media_type="application/json")
+    raise HTTPException(404, "no pointer")
 # index.html was fully self-contained (inline CSS/JS, no asset requests) so
 # no static mount existed before P0.6 — the new pages need admin.css and the
 # vendored htmx.min.js served for real.

@@ -1781,6 +1781,34 @@ def _maintain_ask_indexes(con, collection) -> bool:
     return did
 
 
+def _refresh_anchor(con, collection) -> bool:
+    """03 §3.7: a certified collection's anchor document fetched every 24
+    hours with jitter (app/hold/anchor.py `due`), from the maintainer's
+    turn, in a mode that fetches. Unreachable changes nothing but the
+    note. Whether a fetch was made."""
+    codex = getattr(collection, "codex", None)
+    if codex is None or getattr(codex, "publication", "open") != "certified":
+        return False
+    if not node_state.runs(node_state.worker_state(), node_state.FETCH):
+        return False
+    from .hold import anchor as anchor_mod
+    root = collections_mod.louise_root() / "collections"
+    now = time.time()
+    try:
+        if not anchor_mod.due(root, collection.name, codex, now=now):
+            return False
+        before = anchor_mod.status(root, collection.name, codex, now=now)["state"]
+        st = anchor_mod.refresh(root, collection.name, codex, now=now, stop=_stop,
+                                log=lambda m: db.log_event(con, "warn", "anchor", m[:300]))
+    except Exception as e:   # noqa: BLE001 — one fetch, not the maintainer
+        db.log_event(con, "warn", "anchor", f"{type(e).__name__}: {e}"[:300])
+        return False
+    if st["state"] != before:
+        db.log_event(con, "error" if st["state"] == anchor_mod.MISMATCH else "info", "anchor",
+                     f"anchor {st['state']}: {st['why']}")
+    return True
+
+
 T4_BATCH = 32          # cited chunks re-embedded per maintainer turn: a few seconds of encoder
 
 
@@ -1903,6 +1931,7 @@ def _index_maintainer() -> None:
                 did = _maintain_catalog(cons[key], c) or did
                 did = _maintain_ask_indexes(cons[key], c) or did
                 did = _verify_cited(cons[key], c) or did
+                did = _refresh_anchor(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work

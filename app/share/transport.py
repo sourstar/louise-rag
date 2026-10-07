@@ -214,6 +214,18 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
         if log:
             log(f"[{name}] share fetch: waiting for space — {need} bytes wanted, {free} free")
         return out
+    # 03 §3.8: in a certified collection a file enters the copy only if its
+    # root is listed by a snapshot a certifier key signed — computed once
+    # per beat from the chain held, before anything is fetched
+    allowed = None
+    if getattr(codex, "publication", "open") == "certified":
+        from app.hold import anchor as anchor_mod
+        allowed = anchor_mod.signed_roots(root, name, codex)
+        if not allowed:
+            out["waiting"] = "manifest-only: no held snapshot of the chain carries a certifier's signature (03 §3.8)"
+            if log:
+                log(f"[{name}] share fetch: {out['waiting']}")
+            return out
     from app.transfer.manager import Direction, get_manager
     with get_manager().bind(Priority.DELTA, Direction.DOWN, stop=stop):
         for m, f in (todo if max_files is None else todo[:max_files]):
@@ -222,7 +234,7 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
                 staged = fetch_file(session, torrent=t, member=m.name, staging=staging,
                                     hints=hints, stop=stop, log=log)
                 holdings.promote(con, staged, drag_dir, snapshot_id=snap.snapshot_id,
-                                 member=m.name, f=f, now=now)
+                                 member=m.name, f=f, now=now, allowed_roots=allowed)
                 out["promoted"].append(f.path)
                 if log:
                     log(f"[{name}] share fetch: {f.path} ({f.bytes} bytes) promoted")
