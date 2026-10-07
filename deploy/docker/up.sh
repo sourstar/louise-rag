@@ -21,7 +21,19 @@ image=${image:-louise-rag:local}
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   docker build -t "$image" "$repo"
 fi
-LOUISE_PLATFORM_IMAGE=$(docker image inspect -f '{{.Id}}' "$image")
+# The image's CONFIG digest — Docker's classic store calls it the image id,
+# and the node's Codexes name images by it. Under the containerd image store
+# (Docker Desktop's default) `.Id` is the manifest or index digest instead,
+# so the same image would carry another name on another host: the second
+# peer named its build by an index digest no Codex could ever match
+# (2026-10-07). `docker save` writes the classic manifest.json either way.
+desc=$(docker image inspect -f '{{json .Descriptor}}' "$image" 2>/dev/null || true)
+if [ -n "$desc" ] && [ "$desc" != "null" ] && [ "$desc" != "<no value>" ]; then
+  cfg=$(docker save "$image" | tar -xOf - manifest.json | grep -o '"Config":"blobs/sha256/[0-9a-f]*"' | grep -oE '[0-9a-f]{64}')
+  LOUISE_PLATFORM_IMAGE="sha256:$cfg"
+else
+  LOUISE_PLATFORM_IMAGE=$(docker image inspect -f '{{.Id}}' "$image")
+fi
 export LOUISE_PLATFORM_IMAGE
 echo "platform image: $LOUISE_PLATFORM_IMAGE"
 docker compose -f "$here/compose.yaml" --env-file "$env_file" up -d

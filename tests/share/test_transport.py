@@ -190,24 +190,33 @@ def test_a_swarm_hint_not_yet_tried_ends_the_backoff(node, monkeypatch):  # noqa
 
     def fake_fetch(root, name, codex_, *, hints=(), **kw):
         calls.append(list(hints))
-        return {"errors": [] if hints else ["records: no metadata after 120s — no peer holding it answered"],
+        return {"errors": ["records: no metadata after 120s — no peer holding it answered"],
                 "promoted": [], "missing": 1}
     monkeypatch.setattr(transport, "fetch_members", fake_fetch)
     monkeypatch.setattr("app.share.accept.beat", lambda *a, **k: {})
     con = db.connect(c)
     kw = dict(worker_state="running", session_factory=lambda: None, root=node)
-    with peers.connect() as ncon:
-        transport.beat([c], {c.name: con}, ncon, now=1000.0, **kw)
-        transport.beat([c], {c.name: con}, ncon, now=1060.0, **kw)
-        assert calls == [[]], "nobody answered and nothing new is known: the backoff holds"
-        entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "t",
-                 "snapshot_id": snap.snapshot_id, "snapshot_hash": snap.hash, "codex_hash": "sha256:" + "2" * 64,
-                 "license": "green", "privacy": "public", "members": [], "coverage": []}
+    t = time.time()
+    entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "t",
+             "snapshot_id": snap.snapshot_id, "snapshot_hash": snap.hash, "codex_hash": "sha256:" + "2" * 64,
+             "license": "green", "privacy": "public", "members": [], "coverage": []}
+
+    def heard_at(when):
         body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
-                                    benchmarks=[], collections=[entry], now=time.time())
-        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=time.time())
-        transport.beat([c], {c.name: con}, ncon, now=1120.0, **kw)
+                                    benchmarks=[], collections=[entry], now=when)
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=when)
+    with peers.connect() as ncon:
+        transport.beat([c], {c.name: con}, ncon, now=t, **kw)
+        transport.beat([c], {c.name: con}, ncon, now=t + 60, **kw)
+        assert calls == [[]], "nobody answered and nothing new is known: the backoff holds"
+        heard_at(t + 90)
+        transport.beat([c], {c.name: con}, ncon, now=t + 120, **kw)
         assert calls == [[], [("10.0.0.7", 6881)]], "a digest naming the swarm ends the backoff at once"
+        transport.beat([c], {c.name: con}, ncon, now=t + 180, **kw)
+        assert len(calls) == 2, "the same swarm, nothing heard since: the backoff holds"
+        heard_at(t + 200)                       # the peer restarted, and says so
+        transport.beat([c], {c.name: con}, ncon, now=t + 240, **kw)
+        assert len(calls) == 3, "a digest after the failed attempt is news, even from the same peer"
 
 
 def test_record_shards_promoted_ask_for_a_scan_at_once(node, monkeypatch):  # noqa: F811

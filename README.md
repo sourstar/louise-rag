@@ -165,6 +165,22 @@ come from per-space artifacts (`tools/build_space_artifact.py`,
 The coordinator is optional and standalone:
 `python -m app.coordinator.service` (its own SQLite, holds no bulk data).
 
+## Run a node on any Docker host
+
+Linux, or Docker Desktop on Windows and macOS: [`deploy/docker/`](deploy/docker/compose.yaml).
+
+```sh
+cp deploy/docker/louise.env.example deploy/docker/.env   # ports, this node's address, model endpoints
+sh deploy/docker/up.sh                                   # build, first boot, start
+```
+
+The one-shot `init` service makes the node key, its public half and the
+admin token once, each in a volume of its own, and seeds `platform.toml`.
+Data lives in named volumes by default, because SQLite WAL and LanceDB need
+a local Linux filesystem. A second node on the same host is a second env
+file with another `LOUISE_PROJECT` and other ports. The header of
+`compose.yaml` explains storage, keys and endpoints.
+
 ## Deploy on TrueNAS SCALE
 
 1. Datasets: state on SSD (e.g. `ssdpool/ssd5/louise-rag`); corpus on the pool.

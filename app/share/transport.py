@@ -60,6 +60,23 @@ def hints_for(node_con, collection_id: str, *, now: float) -> list[tuple[str, in
     return out
 
 
+def newest_hint_digest(node_con, collection_id: str, *, now: float) -> float:
+    """When the newest digest naming a swarm for the collection arrived (0.0
+    when none did): a digest after a failed attempt is news even from the
+    same peer — it restarted, it now serves (2026-10-07: the node restarted
+    with the fix and the second peer's backoff held for its address)."""
+    newest = 0.0
+    for n in peers.neighbours(node_con, now=now):
+        d = peers.digest_of(node_con, n["key"]) or {}
+        if not isinstance(d.get("peer_port"), int):
+            continue
+        if any(isinstance(e, dict) and e.get("collection_id") == collection_id for e in d.get("collections", [])):
+            row = node_con.execute("SELECT last_digest FROM peers WHERE key=?", (n["key"],)).fetchone()
+            if row and row[0]:
+                newest = max(newest, float(row[0]))
+    return newest
+
+
 def _locate(info, member: str, path: str) -> tuple[int, str]:
     """`(torrent index, the path libtorrent stores the file under)` for the
     member's file `path` — `<member>/<path>`, or `<member>` alone when the
@@ -262,7 +279,7 @@ _next_try: dict[str, float] = {}
 #: the backoff: the second peer's first attempt ran before the node's digest
 #: and then waited fifteen minutes beside a swarm that answered in one
 #: second (2026-10-07)
-_tried_hints: dict[str, frozenset] = {}
+_tried_hints: dict[str, tuple[frozenset, float]] = {}
 #: per collection: the (snapshot file, selection) found complete, and when —
 #: a beat costs one directory listing per collection, never one stat per
 #: shard of a corpus that has nothing to fetch (CLAUDE.md: a per-round cost
@@ -314,8 +331,10 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         if not wants_fetching(c):
             continue
         if _next_try.get(c.name, 0.0) > now:
+            tried, tried_at = _tried_hints.get(c.name, (frozenset(), now))
             fresh = set(hints_for(node_con, c.codex.collection_id, now=now)) if node_con is not None else set()
-            if not fresh - _tried_hints.get(c.name, frozenset()):
+            heard = newest_hint_digest(node_con, c.codex.collection_id, now=now) if node_con is not None else 0.0
+            if not fresh - tried and heard <= tried_at:
                 continue
         con = cons.get(c.name)
         if con is None:
@@ -349,7 +368,7 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
                             hints=hints, stop=stop, log=log, now=now)
         if any("no metadata" in e for e in got["errors"]):
             _next_try[c.name] = now + BACKOFF_S
-            _tried_hints[c.name] = frozenset(hints)
+            _tried_hints[c.name] = (frozenset(hints), now)
         else:
             _next_try.pop(c.name, None)
             _tried_hints.pop(c.name, None)
