@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-10-05.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-07.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **The specification moved.** `docs/README.md` and the nine numbered
@@ -244,20 +244,58 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
-**2026-10-07, ~08:50Z (UTC): the certifier decided; the specs reviewed.**
+**2026-10-07, ~08:00Z (UTC): the first certified collection LIVE; c019243
+then bb39573 DEPLOYED.** `gutenberg-744ba8430fed` (id `sha256:744ba8430fed…`)
+is held on the node: created in gutenberg's space (`--space-from`,
+`cleaning_version = 2`), three fixture books, records built, validation
+written, snapshot `2026-09` signed and certified by this node's key,
+pointer seq 1. The anchor document at the Tailscale domain lists it (over
+the Funnel too); `hold key anchor` → anchored; `hold check` roots,
+records, chunks, license, signature, anchor all PASS; `collection show`
+carries `certification` (anchored, certified_by this node's key); the
+pointer is served at `/.well-known/louise-pointer/<hex>.json`. As the
+quarantine guinea pig it cleared its own quarantine through the tooling
+alone: the calibration gate (`hold embedder check --accept`, 16/16 at
+median 1.0000, after `node pause <it>` — the worker's lock) and
+records-vs-origin against the kept origin (2 of 2, 0 differing); state
+in-use; `ask search village` returns its two hits. What it found, each
+fixed before proceeding: (1) `hold collection create --name` was parsed
+and never passed, so the collection keeps 07 §7.8's default name for its
+life — the recipe is `config/recipes/gutenberg-mini-certified.toml`, the
+origin folder `data/collections/gutenberg-744ba8430fed/origin`; fixed on
+the command line, the job and the route (`HoldCreateBody.name`) in
+c019243; (2) the two well-known routes iterated
+`load_all(skip_unreadable=True)`'s pair, so the anchor listed no
+collection — c019243; (3) `ask search` naming a withheld collection ended
+in a traceback: the service's HTTP refusals are exit 2 under the CLI —
+bb39573. Staged proofs on the node per deploy: tests/deposit 111,
+tests/hold 740, tests/share 110, tests/ask 48 + 18; the whole suite on
+the workstation at c019243, 3724. Seen live on bb39573: `ask search
+--collections nope` answers `louise: unknown collection(s)` and exit 2;
+the certified hits carry `certification` (anchored, certified_by this
+node's key); the worker's first minutes carry no error or warning line.
+Backups `pre-c019243`, `pre-bb39573`; the seven older `pre-*` images of
+the last two days removed (the runbook tags one per deploy).
+Noted, not changed: `records-vs-origin` is not in the collection's own
+plan (`validation.checks`) — the peer gate asked for it, with `--origin`.
+The genome collections stay frozen. Another model continues from here:
+[`spec-review-2026-10-07.md`](spec-review-2026-10-07.md) first.
+
+
+**2026-10-07, ~06:55Z (UTC): the certifier decided; the specs reviewed.**
 On the operator's "do it yourself": the certifier key is this node's
 own, the anchor the node's Tailscale domain
 (`https://mynass-de.tail559dc2.ts.net/.well-known/louise-certifier.json`,
 TLS from Tailscale, the Funnel carrying the `.well-known` paths), the
 node serving the anchor document from `[certifier]` and the Codexes it
 holds; a recipe's `certifier` now reaches the Codex (it was hard-wired
-None); the first certified collection, `gutenberg-mini-certified`, goes
-up on the node after the deploy that carries the route (the next entry
-reports it). [`spec-review-2026-10-07.md`](spec-review-2026-10-07.md)
+None); the first certified collection goes up on the node after the deploy
+that carries the route — as `gutenberg-744ba8430fed`, the `--name` given
+having been dropped (the next entry reports it). [`spec-review-2026-10-07.md`](spec-review-2026-10-07.md)
 indexes every amendment made today and every place the code still
 stands apart from a document. The genome collections stay frozen.
 
-**2026-10-07, ~07:10Z (UTC): the seals DEPLOYED as 55d0970.** The
+**2026-10-07, ~06:00Z (UTC): the seals DEPLOYED as 55d0970.** The
 node's image rebuilt with the four libraries; `tests/hold` (736, the
 seal tests among them) passed in the staged image; the restart waited
 on its stop job (SUCCESS). Web healthy, the libraries import in the
@@ -266,7 +304,7 @@ is no certified collection to seal or check live: the first live
 `records seal` waits on a certifier (the operator's key and anchor).
 PAdES (next entry's addendum) is committed after it, not deployed.
 
-**2026-10-07, ~06:30Z (UTC): step 10, third brick — the seals, on the
+**2026-10-07, ~05:55Z (UTC): step 10, third brick — the seals, on the
 operator's yes to asn1crypto, cryptography, pyhanko and
 pyhanko-certvalidator.** A CAdES `.p7m` read, captured detached into
 09 §9.15's member (`hold records seal`, each seal validated first), the
@@ -345,7 +383,7 @@ mode. Web down 03:31Z–03:57Z. Pending: the node unpaused once this fix
 is deployed, and the first maintainer pass over pubmed watched (RSS)
 after it.
 
-**2026-10-07, ~04:30Z (UTC): step 10, second brick — the pointer on
+**2026-10-07, ~03:25Z (UTC): step 10, second brick — the pointer on
 the wire; 9e's leftover; a T4 defect fixed.** The seeder puts this
 peer's own certified pointer into the DHT (salt = the collection's raw
 id, once per announcement interval); `share fetch` of a certified
@@ -363,7 +401,7 @@ torrent exchange, test_worker_rotation's fixture setup) passed alone
 and in the runs before and after; from now the full suite's whole log
 is kept, so a third has its traceback.
 
-**2026-10-07, ~03:30Z (UTC): step 11, sixth brick — `freshness`.** The
+**2026-10-07, ~03:05Z (UTC): step 11, sixth brick — `freshness`.** The
 top five of each list asked of their origins now (a plugin `current()`
 per origin: Gutenberg's cache, E-utilities, the export API; the archive
 layer refused as `unavailable`, a fourth state 05 §5.3 now names), the
@@ -389,7 +427,7 @@ Moby-Dick first; `as_of 2026-09-02` answered from 2026-08 and `as_of
 Backup image `pre-684931d` beside `pre-d596355`; `src.old/` is 684931d's
 predecessor. Nothing cited an imported chunk yet (T4 unmeasured live).
 
-**2026-10-07, ~17:00Z: step 10 started — certified collections, the
+**2026-10-07, ~02:35Z (UTC): step 10 started — certified collections, the
 dependency-free half.** The anchor (03 §3.7; 09 §9.11) fetched, kept,
 refreshed daily with jitter by the worker, judged by `check_anchor` and
 `hold key anchor`; `certification` beside the trust level on results
@@ -408,7 +446,7 @@ announced_bundle_in_and_serves_it` (real libtorrent sessions on
 localhost, a 30 s metadata wait); it passed alone and in the two suites
 before. A second occurrence is to be investigated, not retried.
 
-**2026-10-07, ~15:00Z: step 11, fourth and fifth bricks — `as_of` and
+**2026-10-07, ~02:15Z (UTC): step 11, fourth and fifth bricks — `as_of` and
 `ask chat`.** `--as-of DATE` answers from the newest held snapshot whose
 cutoff is at or before the date (origin clock, `update.day`): records
 changed since are dropped and their shards named, every result says
@@ -421,7 +459,7 @@ unchanged. Not deployed (node: d596355). Not tried against the live
 chat model yet: the first live `ask chat` goes into STATUS after the
 deploy.
 
-**2026-10-07, ~13:00Z: step 11, third brick — T4 on the chunks a search
+**2026-10-06, ~20:00Z (UTC): step 11, third brick — T4 on the chunks a search
 cites.** Every search queues the imported chunks it returns
 (`verify_queue`); the worker re-embeds them in passes of 32 from the
 index-maintainer turn, asynchronously, only in a mode that embeds; a
@@ -432,7 +470,7 @@ the trust level now reads. tests: bundles/test_verify_on_use +7,
 hold/test_forgery 3. Not deployed (node: d596355). Unmeasured live: no
 imported chunk has been cited on the node yet (its bundles are its own).
 
-**2026-10-07, ~11:00Z: step 11, second brick — facet filters.** 05 §5.2
+**2026-10-06, ~19:30Z (UTC): step 11, second brick — facet filters.** 05 §5.2
 as a prefilter on both legs: the maintainer's facet pass also writes
 postings (`index/facets/postings.sqlite`, per snapshot);
 `app/ask/filters.py` resolves a filter to the records it admits, refusing
@@ -442,7 +480,7 @@ on catalog, FTS and dense. The response carries `filters` and
 `filtered` (records admitted per collection). tests/ask: 29. Not deployed
 (node: d596355).
 
-**2026-10-07, ~09:00Z: step 11 started — `ask`'s first brick.** `app/ask/`:
+**2026-10-06, ~19:15Z (UTC): step 11 started — `ask`'s first brick.** `app/ask/`:
 `louise_search`'s shape over the existing retrieval (lists per space,
 §5.3's fields, legs' ranks, trust level), `louise_lookup`, `louise_traverse`
 over an edge index, facets counted per snapshot by the index maintainer,
@@ -450,7 +488,7 @@ the three tools over MCP (stdio and `/api/ask/mcp`, no library), the
 `/api/ask/*` routes and the `ask` CLI surface. tests/ask: 23. Owed:
 filters, as_of, freshness, figures, T4 on use, `ask chat`.
 
-**2026-10-07, ~07:00Z: 9e, fifth brick — codex and flag events, duplicates
+**2026-10-06, ~19:00Z (UTC): 9e, fifth brick — codex and flag events, duplicates
 as checks.** The catalogue of announced Codexes (node.sqlite, `share peers
 show`); a flag's attestations pulled and kept, a stranger's lone failure a
 claim until reproduced or seconded; a second bundle over held chunks
@@ -459,7 +497,7 @@ stored. tests/share: 106. Not deployed (node: 6ae33fe). 9e's remaining
 item, local reproduction of a received flag, waits on a targeted `hold
 check`; T4 goes with step 11.
 
-**2026-10-07, ~05:00Z: the trust level, and `snapshot` events.**
+**2026-10-06, ~18:35Z (UTC): the trust level, and `snapshot` events.**
 `app/share/levels.py` computes 03 §3.6's level from the attestations held
 and the bundles accepted — independent keys and seeds, the thresholds, the
 flag rules under the images that count; `hold collection show` prints
@@ -477,7 +515,7 @@ peer is known). Backup image `pre-6ae33fe` alone. Also on this deploy, in
 the same tree but committed after it: `snapshot` events acted on by the
 worker (a newer snapshot announced is pulled from its announcer).
 
-**2026-10-07, ~03:00Z: 9e, fourth brick — the import side, and 04 §4.1's
+**2026-10-06, ~18:05Z (UTC): 9e, fourth brick — the import side, and 04 §4.1's
 survivor on localhost.** `app/share/accept.py`: a `bundle` event's four
 files fetched by their torrents, judged by this peer's ladder, landed,
 covered, served from here. The `bundle` event and the digest's `members`
@@ -491,7 +529,7 @@ promoting). tests/share: 96. Not deployed: the node runs b1c8a29 (9c +
 `share = true` somewhere. Next: deploy 9e; then `snapshot`/`codex`/`flag`
 events, duplicates as checks, T4 on use; step 10 (`certified`).
 
-**2026-10-07, ~01:00Z: a race fixed — the WAL conversion.** The full suite
+**2026-10-06, ~17:30Z (UTC): a race fixed — the WAL conversion.** The full suite
 failed once in 3615 (`test_deposit_localagi`, "database is locked" at
 `PRAGMA journal_mode=WAL` in `node_state.connect`): two connections opening
 a FRESH node.sqlite at once, the loser with no busy handler for that step —
@@ -499,7 +537,7 @@ the same race the deposit manifest had on 2026-10-05. `db.wal(con)` now
 waits out a lock for about five seconds, and the manifests, node.sqlite
 and admission's store convert through it. tests/test_db_wal.py: 4.
 
-**2026-10-07, ~00:30Z: 9e, third brick — `share contribute`.** The
+**2026-10-06, ~16:55Z (UTC): 9e, third brick — `share contribute`.** The
 preconditions of 04 §4.5, rendezvous over the open shards with the
 cascade's windows, build + export + own ladder + `bundle` event per shard
 led; bundles served as members and offered in the digest, whose
@@ -509,14 +547,14 @@ tests/share: 88. Not deployed. Next: acting on `bundle` events (the
 import side), duplicates as checks, the single-survivor test; then step
 10 (`certified`).
 
-**2026-10-06, ~23:30Z: 9e, second brick — `share attest`.** `hold check`
+**2026-10-06, ~16:40Z (UTC): 9e, second brick — `share attest`.** `hold check`
 then every attestation written published as an `attestation` event, once
 each (the ids published are recorded); the worker's beat keeps a received
 attestation beside the catalogue when it verifies and the collection is
 held here, before forwarding. `app/share/attest.py`; tests/share: 84. Not
 deployed.
 
-**2026-10-06, ~22:30Z: 9e, first brick — the coverage map.**
+**2026-10-06, ~16:25Z (UTC): 9e, first brick — the coverage map.**
 `app/share/coverage.py`: 09 §9.10's rows in the manifest, written by
 `vectors import` (accepted, fetched) and `vectors export` (local, not yet
 accepted), claims from digests beside them counting for nothing; the
@@ -540,7 +578,7 @@ everywhere), so no digest goes out. Backup images: `pre-b1c8a29` alone.
 irrelevant until a peer exists — set them with the first `share peers
 add`.
 
-**2026-10-06, ~21:30Z: 9d done — the members move.** `app/share/holdings.py`
+**2026-10-06, ~16:00Z (UTC): 9d done — the members move.** `app/share/holdings.py`
 and `transport.py`: what a collection's file asks for (`slices` may now be
 a list: part of a collection), what the drag holds, the mark after the
 rename; each missing file by the torrent the snapshot's infohash names,
@@ -553,7 +591,7 @@ localhost proven in `tests/share/test_transport.py`. tests/share: 73. Not
 deployed (node: 6c06b4a). Next: deploy 9c+9d, then 9e (contribute, attest,
 the coverage map).
 
-**2026-10-06, ~19:30Z: 9d, first brick.** `share fetch <collection>
+**2026-10-06, ~14:50Z (UTC): 9d, first brick.** `share fetch <collection>
 [--from ADDRESS] [--dht] [--encoder URL] [--name N] [--snapshot ID]`
 (`app/share/fetch.py`): finds who holds a collection — by hand, by the
 neighbours' digests, by the `[peers]` list, by the DHT — pulls its Codex
@@ -562,7 +600,7 @@ hash, bans a liar and asks the next peer, and holds the collection with
 its signed snapshots (an unsigned one staged). The members are the second
 brick. tests/share: 61. Not deployed (node: 6c06b4a).
 
-**2026-10-06, ~18:00Z: 9c done.** `share peers add <address> [--key]`
+**2026-10-06, ~14:35Z (UTC): 9c done.** `share peers add <address> [--key]`
 writes platform.toml's `[peers]` list and `[peers.pins]` — desired state
 in the file, the rest of it kept byte for byte; `share peers show`; a
 digest claiming a pinned address under another key is refused and logged;
@@ -572,7 +610,7 @@ first, DELTA class; the DHT announcement names `[node] address`'s port
 amended: a neighbour is a key at an address. tests/share: 50. Not yet
 deployed: the node runs 6c06b4a (9b).
 
-**2026-10-06, ~16:30Z: 9c, first brick.** The peer messages of 09 §9.9 in
+**2026-10-06, ~14:10Z (UTC): 9c, first brick.** The peer messages of 09 §9.9 in
 code: `/api/share/{digest,event,codex,snapshot,attestations}/…` in the web,
 verifying with the sender's key; peers seen, neighbours, bans and event
 ids in the node's state database; the worker sends this node's signed
@@ -581,7 +619,7 @@ once. `[node] address` added to 07 §7.8: where this node answers pulls as
 peers reach it. tests/share: 42. 9b deployed earlier as 6c06b4a: the
 worker quiet, nothing shares yet (every file says `share = false`).
 
-**2026-10-06, ~15:00Z: 9b, the seeder, done.** `app/share/seeder.py` in
+**2026-10-06, ~13:45Z (UTC): 9b, the seeder, done.** `app/share/seeder.py` in
 the worker's seeding beat: for every public collection in use whose file
 says `share = true`, one torrent per member file of the current snapshot
 — hard links under `state/share/<snapshot>/<member>/`, built by
@@ -594,7 +632,7 @@ the infohash it computed from the snapshot fetched the member from our
 seeder, metadata and piece layers over the wire. tests/share: 30. Owed:
 `--slices`/`--kinds` (9d); the reachable announce port (9c).
 
-**2026-10-06, ~14:00Z: step 9 started — 9a done.** `app/share/members.py`:
+**2026-10-06, ~13:25Z (UTC): step 9 started — 9a done.** `app/share/members.py`:
 bencoding, the exact info dictionary of 09 §9.16 and its infohash, the
 four DHT keys, the members a snapshot implies. The test that matters:
 libtorrent 2.1, building the torrent from the file, produces the same
