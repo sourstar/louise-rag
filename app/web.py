@@ -1920,7 +1920,7 @@ def grow_run(name: str, body: GrowBody):
         snapshot=collection.snapshot, extras=extras,
         peer_source=collection.peer_source, title=collection.title,
         slices=slices, kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker)
+        reranker=collection.reranker, source=collection.source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -2074,7 +2074,7 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
                        embed_mode: str | None, snapshot: str | None,
                        extras: tuple[str, ...], title: str | None = None,
                        slices=None, kinds=None, share: bool = False,
-                       reranker=None) -> None:
+                       reranker=None, source: str = "origin") -> None:
     """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
     `share`, `[encoder]` naming where this node reaches the encoder, and
     `[reranker]` where it reaches the collection's reranker (05 §5.6).
@@ -2109,6 +2109,11 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
         slices = "all"
     derived = collections_mod.codex_defaults(cx, name, slices, kinds)
     lines = [f'codex = "{codex}"']
+    if source and source != "origin":
+        # 07 §7.8 `source` (2026-10-07): a fetched collection reads the
+        # shards it holds; a rewrite that dropped this would turn it back
+        # into a collection scanning an origin it does not have
+        lines.append(f'source = "{source}"')
     if title:
         lines.append(f"title = {_toml_scalar(title)}")
     if slices == "all":
@@ -2189,7 +2194,7 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                             peer_source: str | None = None,
                             layers=None, title: str | None = None,
                             slices=None, kinds=None, share: bool = False,
-                            reranker=None) -> None:
+                            reranker=None, source: str = "origin") -> None:
     """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
     purpose: a call site that forgets it must fail loudly here, because
     the failure it would otherwise cause is silent and unrepairable.
@@ -2213,7 +2218,7 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             genesis_archive=genesis_archive, encoder=embed,
             embed_mode=embed_mode, snapshot=snapshot, extras=extras,
             title=title, slices=slices, kinds=kinds, share=share,
-            reranker=reranker)
+            reranker=reranker, source=source)
         return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
@@ -2511,7 +2516,7 @@ def new_collection_create(body: CreateCollectionBody):
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source, title=existing.title,
                 slices=existing.slices, kinds=existing.kinds,
-                share=existing.share, reranker=existing.reranker)
+                share=existing.share, reranker=existing.reranker, source=existing.source)
 
     # A corpus folder is CHOSEN, never defaulted. The old fallback
     # (CORPUS_DIR/<name>) silently invented a path that existed in no
@@ -2734,7 +2739,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                 snapshot=existing.snapshot, extras=existing.extras,
                 peer_source=existing.peer_source, title=existing.title,
                 slices=existing.slices, kinds=existing.kinds,
-                share=existing.share, reranker=existing.reranker)
+                share=existing.share, reranker=existing.reranker, source=existing.source)
     _write_collection_toml(
         toml_path, codex=_codex_id(collection),
         plugin=collection.plugin, profile=collection.profile,
@@ -2749,7 +2754,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         extras=collection.extras, peer_source=collection.peer_source,
         title=collection.title, slices=collection.slices,
         kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker)
+        reranker=collection.reranker, source=collection.source)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -2827,7 +2832,7 @@ def collection_ack(name: str):
         # silently un-declare a collection fed from a peer torrent
         peer_source=collection.peer_source, title=collection.title,
         slices=collection.slices, kinds=collection.kinds,
-        share=collection.share, reranker=collection.reranker)
+        share=collection.share, reranker=collection.reranker, source=collection.source)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

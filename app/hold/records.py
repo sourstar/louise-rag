@@ -277,6 +277,13 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     drag_dir, state_dir, staging = _paths(root, name)
     state_dir.mkdir(parents=True, exist_ok=True)
 
+    held = collections_mod.by_name(name) if Path(root).resolve() == (collections_mod.louise_root()
+                                                                    / "collections").resolve() else None
+    if held is not None and getattr(held, "source", "origin") == "drag":
+        raise RecordsError(
+            f"{name}: its records are HELD, not built — this peer reads them from the shards "
+            f"`share fetch` landed (source = \"drag\", 07 §7.8); the producer builds, a fetcher does not")
+
     if corpus_dir is None:
         raise RecordsError(
             f"{name}: no corpus directory. `records build` parses what is on "

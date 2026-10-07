@@ -244,6 +244,39 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, 03:01Z (UTC): INCIDENT — the worker OOM-killed by the
+facets pass; the node rebooted at 03:37Z; the pass bounded.** What
+happened: 684931d's index maintainer counted pubmed's facets for the
+first time (the first brick of step 11, deployed at 02:45Z). The pass
+kept every (value, id) posting of a field in a Python list and every
+distinct value in a dict — unbounded — and on 33 million records the
+worker reached 34.6 GB anon RSS; the kernel killed it at 05:01:09 local
+(03:01Z). The killed process left one thread spinning in kernel space
+with SIGKILL pending and undelivered, so Docker could not stop the
+container ("did not receive an exit event"); the b4fface deploy's
+`app.stop` therefore FAILED after removing the web and gpu-probe
+containers, and the runbook — polling the app state for 120 s instead
+of waiting for the stop job — called `app.start` on top of it: the web
+was down from 03:31Z. Nothing else was stuck (no D-state processes,
+pools healthy; an earlier "tank hung" reading was a wrong path). The
+node mode was set to `paused` in node.sqlite from the host and the node
+rebooted through the middleware (job 2427) so the worker comes back
+idle. FIXED in the tree: `app/ask/facets.py` streams postings in
+batches, stops counting a field past MAX_DISTINCT (200 000) distinct
+values and says so, writes postings only for values of at most
+`filters.MAX_IDS` records (a broader value is refused by its count
+before any posting is read), and writes none past POSTINGS_ROWS_BOUND
+(20 M) per field, clearing an older snapshot's; the maintainer passes
+the node's stop and logs each field's outcome. The runbook now waits
+for the stop JOB and refuses to start on a failed stop. 03:57Z: the node back (14 min
+to boot); the app was CRASHED with the old worker container left over
+as exited and no web — `app.stop` (now able to remove it) then
+`app.start`, both waited on as jobs: web, worker and gpu-probe up on
+b4fface's image, the web healthy, the worker idle at 140 MB in paused
+mode. Web down 03:31Z–03:57Z. Pending: the node unpaused once this fix
+is deployed, and the first maintainer pass over pubmed watched (RSS)
+after it.
+
 **2026-10-07, ~04:30Z (UTC): step 10, second brick — the pointer on
 the wire; 9e's leftover; a T4 defect fixed.** The seeder puts this
 peer's own certified pointer into the DHT (salt = the collection's raw

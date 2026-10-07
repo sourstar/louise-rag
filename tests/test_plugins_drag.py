@@ -1,0 +1,130 @@
+"""tests/test_plugins_drag.py — the drag as a corpus (step 9f; 07 §7.8
+`source = "drag"`): a peer holding a collection's record shards reads its
+documents from them — discover, fetch, parse — as the producer parsed
+them, so the chunks and their ids are the producer's; superseded shards
+are not read; the scan cursor skips a shard whose rows are committed;
+the collection file's key makes the switch; `records build` refuses."""
+import pickle
+import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from app import collections as collections_mod
+from app.pack import records as pack_records
+from app.plugins import drag
+from app.plugins.base import DiscoverState, DocRef
+
+RECORDS = [
+    {"uid": "pubmed:1", "native_id": "1", "lang": "en", "title": "A title", "creators": ["Doe, J"], "date": "2020",
+     "subjects": ["Neoplasms"], "keys": [], "sections": [["Title", "A title"], ["Abstract", "Body one."]],
+     "extra": {"journal": "J"}, "origin": "pubmed25n0001.xml#0", "content_hash": "aa" * 16, "origin_hash": "11" * 16},
+    {"uid": "pubmed:2", "native_id": "2", "lang": "de", "title": "Zwei", "creators": [], "date": None,
+     "subjects": [], "keys": ["x:1"], "sections": [["Title", "Zwei"]], "extra": {},
+     "origin": "pubmed25n0001.xml#1", "content_hash": "bb" * 16, "origin_hash": "22" * 16},
+]
+
+
+def a_drag(tmp_path):
+    d = tmp_path / "drag"
+    (d / "records" / "year=2020").mkdir(parents=True)
+    pack_records.write_shard(d / "records/year=2020/00001.jsonl.zst", RECORDS)
+    pack_records.write_shard(d / "records/year=2020/00001.2026-07.jsonl.zst", RECORDS[:1])   # superseded
+    (d / "records" / "year=2021").mkdir()
+    pack_records.write_shard(d / "records/year=2021/00001.jsonl.zst", [dict(RECORDS[1], uid="pubmed:3",
+                                                                             native_id="3", title="Drei")])
+    return d
+
+
+def test_the_shards_are_the_corpus_and_a_record_parses_as_the_producer_wrote_it(tmp_path):
+    d = a_drag(tmp_path)
+    assert [p.relative_to(d).as_posix() for p in drag.shard_files(d)] == \
+        ["records/year=2020/00001.jsonl.zst", "records/year=2021/00001.jsonl.zst"], "a superseded version is not read"
+    inner = collections_mod.PLUGIN_REGISTRY["pubmed"]
+    src = drag.DragSource(inner, d)
+    assert src.source_id == "pubmed" and src.license_class is inner.license_class, "the plugin's attributes"
+    (tmp_path / "state").mkdir()
+    state = DiscoverState(corpus_root=d, state_dir=tmp_path / "state")
+    refs = list(src.discover(state))
+    assert [r.native_id for r in refs] == ["1", "2", "3"]
+    assert refs[0].locator == f"{d / 'records/year=2020/00001.jsonl.zst'}#pubmed:1" and refs[0].extra["lang"] == "en"
+    raw = src.fetch(refs[0])
+    assert raw.raw_hash == "11" * 16, "the record's own origin_hash: the unit the producer parsed"
+    doc = src.parse(raw)
+    assert (doc.uid, doc.title, doc.creators, doc.language, doc.date, doc.subjects, doc.extra) == \
+        ("pubmed:1", "A title", ["Doe, J"], "en", "2020", ["Neoplasms"], {"journal": "J"})
+    assert doc.sections == [("Title", "A title"), ("Abstract", "Body one.")]
+    assert pack_records.content_hash(doc.title, [list(s) for s in doc.sections]) == \
+        pack_records.content_hash("A title", RECORDS[0]["sections"]), "same text, same chunks, same ids"
+    assert src.parse(src.fetch(refs[2])).title == "Drei"
+    with pytest.raises(KeyError):
+        src.fetch(DocRef("pubmed", "9", f"{d / 'records/year=2020/00001.jsonl.zst'}#pubmed:9"))
+    with pytest.raises(ValueError):
+        drag.split_locator("no-separator")
+    again = pickle.loads(pickle.dumps(src))
+    assert isinstance(again, drag.DragSource) and again.drag_dir == d, "travels to the parse pool"
+
+
+def test_the_cursor_skips_a_shard_whose_rows_are_committed(tmp_path):
+    d = a_drag(tmp_path)
+    src = drag.DragSource(collections_mod.PLUGIN_REGISTRY["pubmed"], d)
+    (tmp_path / "state").mkdir()
+    state = DiscoverState(corpus_root=d, state_dir=tmp_path / "state")
+    taken = []
+    for ref in src.discover(state):
+        state.received += 1
+        taken.append(ref.native_id)
+        if ref.native_id == "2":
+            state.committed = state.received          # the first shard's rows durable
+    assert taken == ["1", "2", "3"]
+    state2 = DiscoverState(corpus_root=d, state_dir=tmp_path / "state")
+    assert [r.native_id for r in src.discover(state2)] == ["3"], "the committed shard is skipped; the other not"
+
+
+def test_the_collection_file_s_source_key_makes_the_switch(tmp_path, monkeypatch):
+    from tests.hold.conftest import a_root, pubmed
+    from app.hold import collection as col
+    root = tmp_path / "louise" / "collections"
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
+    monkeypatch.setattr(collections_mod, "_config_dir", lambda: tmp_path / "louise")
+    codex = pubmed()
+    a_root(root, codex)
+    name = col.name_of(root, codex.collection_id)
+    toml = tmp_path / "louise" / "collections" / f"{name}.toml"
+    toml.write_text(f'codex = "{codex.collection_id}"\nslices = []\nkinds = ["records"]\nembed = "off"\n'
+                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\n', encoding="utf-8")
+    c = collections_mod._load_one(toml)
+    assert c.source == "drag" and c.corpus_dir == root / name / "drag"
+    assert isinstance(c.plugin_instance(), drag.DragSource) and c.plugin_instance().source_id == "pubmed"
+    toml.write_text(toml.read_text(encoding="utf-8").replace('source = "drag"', 'source = "tape"'), encoding="utf-8")
+    with pytest.raises(ValueError, match="source is"):
+        collections_mod._load_one(toml)
+    toml.write_text(toml.read_text(encoding="utf-8").replace('source = "tape"\n', ""), encoding="utf-8")
+    c = collections_mod._load_one(toml)
+    assert c.source == "origin" and not isinstance(c.plugin_instance(), drag.DragSource)
+
+
+def test_records_build_refuses_a_fetched_collection(tmp_path, monkeypatch):
+    from app.hold import collection as col, records as hold_records
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
+    monkeypatch.setattr(collections_mod, "by_name",
+                        lambda name: SimpleNamespace(name=name, source="drag"))
+    monkeypatch.setattr(col, "resolve", lambda root, ref: ("pubmed", SimpleNamespace()))
+    monkeypatch.setattr(hold_records, "_paths", lambda root, name: (tmp_path / "d", tmp_path / "s", tmp_path / "g"))
+    with pytest.raises(hold_records.RecordsError, match="HELD, not built"):
+        hold_records.build(tmp_path / "louise" / "collections", "pubmed")
+
+
+def test_a_fetched_collection_s_file_says_its_documents_come_from_the_drag(tmp_path, monkeypatch):
+    from app import louise
+    from tests.hold.conftest import a_root, pubmed
+    root = tmp_path / "elsewhere" / "collections"
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
+    codex = pubmed()
+    a_root(root, codex)
+    p = louise._write_held_file(root, codex, "http://e", source="drag")
+    text = p.read_text(encoding="utf-8")
+    assert 'source = "drag"' in text and 'embed = "off"' in text
+    p2 = louise._write_held_file(root, pubmed(), "http://e", source="drag")
+    assert p2 == p, "a name holds one collection for its life: writing it again is nothing to do"

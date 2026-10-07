@@ -310,7 +310,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
 
 
 def _write_held_file(root, codex, encoder: str | None = None,
-                     query_encoder: str | None = None) -> Path:
+                     query_encoder: str | None = None, *, source: str | None = None) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
@@ -351,6 +351,9 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    'kinds = ["records", "vectors"]\n'
                    'embed = "off"\n'
                    "share = false\n"
+                   # 07 §7.8 `source`: a fetched collection reads its documents
+                   # from the shards it holds (app/plugins/drag.py)
+                   + (f'source = "{source}"\n' if source else "")
                    + (f'\n[encoder]\nurl = "{encoder}"\napi = "openai"\n'
                       # a bi-encoder's query side, where the collection has one
                       + (f'query_url = "{query_encoder}"\n' if query_encoder else "")

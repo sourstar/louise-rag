@@ -238,6 +238,11 @@ class Collection:
     # stand in for origin checksums (engine.effective_spec). TOML:
     # peer_source = "magnet:?xt=...&x.pe=host:port".
     peer_source: str | None = None
+    # WHERE THE DOCUMENTS ARE READ FROM (07 §7.8 `source`, amended
+    # 2026-10-07): "origin" — the plugin's corpus, as always; "drag" — the
+    # record shards this peer holds and did not build (`share fetch`), read
+    # by app/plugins/drag.py through the same discover/fetch/parse.
+    source: str = "origin"
     # WHICH dated snapshot of the origin this collection holds, for sources
     # that publish them (Wikipedia dumps, a PubMed baseline year).
     #
@@ -269,7 +274,11 @@ class Collection:
     share: bool = False
 
     def plugin_instance(self) -> CorpusSource:
-        return PLUGIN_REGISTRY[self.plugin]
+        inner = PLUGIN_REGISTRY[self.plugin]
+        if self.source == "drag":
+            from .plugins.drag import DragSource
+            return DragSource(inner, self.corpus_dir)
+        return inner
 
 
 def _default_gutenberg_collection() -> Collection:
@@ -406,7 +415,14 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
                 f"(07 §7.8)")
         snapshot = stated
 
-    if raw.get("corpus_dir"):
+    source = str(raw.get("source") or "origin")
+    if source not in ("origin", "drag"):
+        raise ValueError(f"{where}: source is \"origin\" or \"drag\" (07 §7.8), got {raw.get('source')!r}")
+    if source == "drag":
+        # the documents are the record shards held: the drag is the corpus
+        # (app/plugins/drag.py), and the scan cursor keys on it
+        corpus = d / "drag"
+    elif raw.get("corpus_dir"):
         corpus = Path(raw["corpus_dir"])
     else:
         corpus = defaults["corpus_dir"] if new_shape else config.CORPUS_DIR
@@ -440,6 +456,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         slices=slices,
         kinds=kinds,
         share=share,
+        source=source,
     )
 
 

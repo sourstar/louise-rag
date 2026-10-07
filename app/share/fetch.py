@@ -468,7 +468,7 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         if not sig_target.is_file() or sig_target.read_bytes() != data:
             _write_whole(sig_target, data)
     from app import louise
-    held_file = louise._write_held_file(root, head, encoder)
+    held_file = louise._write_held_file(root, head, encoder, source="drag")
     newest = pulled[0]
     return {
         "collection_id": head.collection_id, "name": cname, "chain": len(chain),

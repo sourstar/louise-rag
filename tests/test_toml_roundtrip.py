@@ -37,7 +37,7 @@ def write(path, c):
         embed=c.embed, embed_mode=c.embed_mode_default, layers=c.layers,
         snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
         title=c.title, slices=c.slices, kinds=c.kinds, share=c.share,
-        reranker=c.reranker)
+        reranker=c.reranker, source=c.source)
 
 
 @pytest.fixture
@@ -165,6 +165,9 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         'embed = "on-demand"\n'
         'acquire_enabled = true\n'
         'corpus_dir = "/corpus"\n'
+        # 07 §7.8 `source` (2026-10-07): away from its default too, so the
+        # guards exercise it — a fetched collection reads its drag
+        'source = "drag"\n'
         '\n[encoder]\n'
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back

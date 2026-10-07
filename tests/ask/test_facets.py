@@ -49,7 +49,7 @@ def test_values_are_counted_from_the_manifest_flat_tree_and_under(tmp_path):
     listing = facets.fields(con, codex, idx, snapshot_id="2026-08")
     by_field = {f["field"]: f for f in listing["fields"]}
     assert by_field["subjects"] == {"field": "subjects", "kind": "tree", "separator": "/", "authority": {"name": "MeSH"},
-                                    "values": 4, "built": True, "in_manifest": True}
+                                    "values": 4, "built": True, "in_manifest": True, "filterable": True}
     assert by_field["lang"]["built"] is False and by_field["date"]["in_manifest"] is False
 
 
@@ -67,3 +67,52 @@ def test_the_cache_is_per_snapshot_and_a_large_collection_waits_for_the_maintain
         facets.values(con, codex, idx, "date", snapshot_id="2026-08")
     with pytest.raises(facets.FacetError, match="not a facet"):
         facets.count(con, codex, "colour")
+
+
+def test_every_cost_is_bounded_a_field_too_wide_is_said_not_counted(tmp_path, monkeypatch):
+    """2026-10-07: the pass over pubmed reached 34 GB. A field with more
+    distinct values than MAX_DISTINCT is not counted and says so; the
+    postings a filter reads are written only for values narrow enough to
+    use, and not at all past POSTINGS_ROWS_BOUND; the listing repeats why."""
+    from app.ask import filters
+    con, codex = manifest(tmp_path), a_codex()
+    idx = tmp_path / "index"
+    monkeypatch.setattr(facets, "MAX_DISTINCT", 2)
+    said = []
+    assert facets.build(con, codex, idx, snapshot_id="2026-08", log=said.append) == ["subjects", "lang", "authors"]
+    subjects = facets.cached(idx, "subjects", snapshot_id="2026-08")
+    assert subjects["values"] is None and "more than 2 distinct values" in subjects["why"]
+    assert subjects["postings"] == {"built": False, "why": subjects["why"]}
+    lang = facets.cached(idx, "lang", snapshot_id="2026-08")
+    assert lang["values"] == {"en": 3, "de": 1} and lang["postings"]["built"] is True
+    assert any("subjects" in m and "not counted" in m for m in said)
+    listing = facets.fields(con, codex, idx, snapshot_id="2026-08")
+    by_field = {f["field"]: f for f in listing["fields"]}
+    assert by_field["subjects"]["values"] is None and "distinct" in by_field["subjects"]["why"]
+    assert by_field["lang"]["filterable"] is True and by_field["subjects"]["filterable"] is False
+    got = facets.values(con, codex, idx, "subjects", snapshot_id="2026-08")
+    assert got["values"] is None and "not counted" in got["why"]
+    with pytest.raises(filters.FilterError, match="distinct values"):
+        filters.book_ids_for(codex, idx, {"subjects": "Humans"}, snapshot_id="2026-08")
+    # only narrow values get postings: with MAX_IDS 2, `en` (3 records) has none and is refused by its count
+    monkeypatch.setattr(facets, "MAX_DISTINCT", 200_000)
+    monkeypatch.setattr(filters, "MAX_IDS", 2)
+    facets.build(con, codex, idx, snapshot_id="2026-08")
+    pcon = filters.connect(idx)
+    assert {r[0] for r in pcon.execute("SELECT DISTINCT value FROM postings WHERE field='lang'")} == {"de"}
+    assert {r[0] for r in pcon.execute("SELECT DISTINCT value FROM postings WHERE field='subjects'")} == \
+        {"Humans", "Neoplasms/genetics", "Neoplasms/therapy"}, "Neoplasms (3) is broader than 2; the rest are not"
+    pcon.close()
+    assert facets.cached(idx, "lang", snapshot_id="2026-08")["postings"] == {"built": True, "rows": 1, "values": 1,
+                                                                             "broad": 1}
+    with pytest.raises(filters.FilterError, match="narrow it"):
+        filters.book_ids_for(codex, idx, {"lang": "en"}, snapshot_id="2026-08")
+    assert filters.book_ids_for(codex, idx, {"lang": "de"}, snapshot_id="2026-08") == {3}
+    # past the rows bound no postings are written for the field, and the cache says why
+    monkeypatch.setattr(filters, "MAX_IDS", 20_000)
+    monkeypatch.setattr(facets, "POSTINGS_ROWS_BOUND", 3)
+    facets.build(con, codex, idx, snapshot_id="2026-08", fields=["lang"])
+    lang = facets.cached(idx, "lang", snapshot_id="2026-08")
+    assert lang["postings"]["built"] is False and "more than the 3" in lang["postings"]["why"]
+    with pytest.raises(filters.FilterError, match="more than the 3"):
+        filters.book_ids_for(codex, idx, {"lang": "de"}, snapshot_id="2026-08")

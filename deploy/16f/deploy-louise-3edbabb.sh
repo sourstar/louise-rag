@@ -24,7 +24,7 @@
 # running — consistent; finish with phases 4b–6 alone, nothing else.
 set -euo pipefail
 
-COMMIT=684931d                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=b4fface                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"
@@ -127,11 +127,22 @@ echo "louise-rag:local = $NEW_ID"
 
 # ------------------------------------------------------------- 5. restart
 say "5. restart the app (stop, then start; both are async jobs)"
-midclt call app.stop louise-rag >/dev/null
-for i in $(seq 1 60); do
-  s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
-  [ "$s" = "STOPPED" ] && break; sleep 2
+# WAIT FOR THE STOP JOB ITSELF, not for a state poll with a short budget.
+# 2026-10-07: the poll gave up after 120 s while the stop was still running
+# (the worker finishes its unit on SIGTERM, and that day it could not be
+# killed at all), `app.start` was called on top of it, and the node was
+# left with the web container removed and the old worker running. A stop
+# that fails is a stop to look at, never one to start over.
+STOP_JOB=$(midclt call app.stop louise-rag)
+echo "stop job $STOP_JOB"
+for i in $(seq 1 180); do
+  js=$(midclt call core.get_jobs "[[\"id\",\"=\",$STOP_JOB]]" | python3 -c "import sys,json; j=json.load(sys.stdin)[0]; print(j['state'], (j.get('error') or '').replace(chr(10),' ')[:300])")
+  case "$js" in SUCCESS*|FAILED*|ABORTED*) break;; esac
+  sleep 5
 done
+echo "stop job: $js"
+case "$js" in SUCCESS*) ;; *) echo "the stop did not succeed; NOT starting on top of it — see /var/log/app_lifecycle.log"; exit 1;; esac
+s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
 echo "state after stop: $s"
 midclt call app.start louise-rag >/dev/null
 for i in $(seq 1 90); do

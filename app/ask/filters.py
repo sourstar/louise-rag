@@ -71,6 +71,19 @@ def write_postings(pcon, field: str, rows, *, snapshot_id: str | None, documents
     return n
 
 
+def clear_postings(pcon, field: str) -> None:
+    """The field's postings and its mark gone — what a build that could not
+    write them leaves, so an older snapshot's rows never answer for it."""
+    pcon.execute("BEGIN IMMEDIATE")
+    try:
+        pcon.execute("DELETE FROM postings WHERE field=?", (field,))
+        pcon.execute("DELETE FROM built WHERE field=?", (field,))
+        pcon.execute("COMMIT")
+    except BaseException:
+        pcon.execute("ROLLBACK")
+        raise
+
+
 def built_for(pcon, field: str) -> str | None:
     r = pcon.execute("SELECT snapshot_id FROM built WHERE field=?", (field,)).fetchone()
     return r["snapshot_id"] if r else None
@@ -90,7 +103,10 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
                  all_ids=None) -> set[int] | None:
     """The records the filters admit — None for no filter, a set (possibly
     empty) otherwise. `all_ids` is a callable giving every record's
-    native_id, needed for a `not` alone."""
+    native_id, needed for a `not` alone. A value's COUNT, from the facet
+    cache, is read before its postings: the postings hold only values of
+    at most MAX_IDS records (app/ask/facets.py), so a broader value is
+    refused here as too broad, and the postings read are complete."""
     if not filters:
         return None
     from app.ask import facets
@@ -106,13 +122,23 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
                                   f"{', '.join(declared) or 'none'}")
             if f["kind"] == "range":
                 raise FilterError(f"{field!r}: a range facet filters by bounds, which is not built yet")
+            cache = facets.cached(index_dir, field, snapshot_id=snapshot_id)
             built = built_for(pcon, field)
-            if built is None or (snapshot_id is not None and built != snapshot_id):
+            if built is None or (snapshot_id is not None and built != snapshot_id) or cache is None:
+                why = ""
+                if cache is not None and cache.get("values") is None:
+                    why = f": {cache.get('why')}"
+                elif cache is not None and (cache.get("postings") or {}).get("why"):
+                    why = f": {cache['postings']['why']}"
                 raise FilterError(f"{field!r}: its values are not indexed on this peer for snapshot "
-                                  f"{snapshot_id} yet; the node's index maintainer builds them")
+                                  f"{snapshot_id}{why or ' yet; the node’s index maintainer builds them'}")
             negate = isinstance(spec, dict) and "not" in spec
             value = str(spec["not"]) if negate else str(spec)
             sep = f.get("separator") if f["kind"] == "tree" else None
+            total = (cache.get("values") or {}).get(value, 0)
+            if total > MAX_IDS:
+                raise FilterError(f"{field!r} = {value!r} admits {total} records, more than the {MAX_IDS} the "
+                                  f"legs take as a prefilter; narrow it (05 §5.2)")
             ids = _ids(pcon, field, value, tree_sep=sep)
             if negate:
                 drop |= ids

@@ -1182,6 +1182,28 @@ pull path. The rendezvous tests already cover the partitioning.
 
 **Operator**: two nodes on the LAN for the first real run.
 
+### Step 9f — what a fetching peer holds becomes searchable
+*07 §7.3 `index build`, §7.8; 02 §2.3. Found 2026-10-07: no stage turned
+fetched record shards into manifest documents, so a peer that only
+fetched could not search.*
+
+**STARTED 2026-10-07. First brick DONE.** `app/plugins/drag.py`
+`DragSource`: the Codex's plugin wrapped, every attribute the pipeline
+reads delegated, and `discover`/`fetch`/`parse` reading the record
+shards held — a record is one 09 §9.5 line, fetched with the record's
+own `origin_hash` and parsed back to the canonical document the
+producer parsed, so the chunks and their ids are the producer's and a
+bundle's vectors land on them; superseded shards are not read; the scan
+is resumable per shard through the plugin cursor. The collection file's
+new key `source = "origin" | "drag"` (07 §7.8 amended) makes the
+switch in `Collection.plugin_instance()`; a drag-sourced collection's
+corpus directory is its drag; `hold records build` refuses it (held,
+not built). tests/test_plugins_drag.py (4). **Owed**: `share fetch`
+writing `source = "drag"` into the file it creates; an end-to-end test
+of the worker's scan, rdf, fts and embed over a fetched collection; the
+`index-<slice>` member as a cache (import when the pin matches, else
+rebuild).
+
 ### Step 10 — Certified collections and the Gazzetta plugin
 *02 §2.8, 03 §3.7, 03 §3.8, 06 §6.4, 09 §9.15. New code; one dependency
 decision.*
@@ -1320,7 +1342,13 @@ declared, is a range, is not indexed for the current snapshot, or admits
 more than 20 000 records; `query_service.run_search(filters=)` hands the
 set to both legs as `book_ids` (catalog, FTS and dense — `retrieval`
 takes it; a Codex-less collection admits nothing under a filter); an
-empty set returns nothing before any leg runs. Third brick: T4 on the
+empty set returns nothing before any leg runs. BOUNDED on 2026-10-07
+after the pass over pubmed OOM-killed the worker (STATUS): a field past
+200 000 distinct values is not counted and says so; postings are
+streamed, written only for values of at most 20 000 records (a broader
+value is refused by its count), and not past 20 M rows per field; so
+on pubmed most filters are refused as too broad or not indexed, and
+`ask facets` says which fields are filterable. Third brick: T4 on the
 chunks a search cites (05 §5.3, 03 §3.5) — every search queues the
 imported, unverified chunks it returns (`verify_on_use.cite`, from
 `retrieval._attach_metadata_and_enqueue`, so the web's Ask and
