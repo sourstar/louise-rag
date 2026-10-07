@@ -244,6 +244,25 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~18:50Z (UTC): `image-equivalence`; gutenberg and pubmed
+both buildable under the running image; 62eb017 DEPLOYED (`1156f11f…`).**
+On the operator's rule — "the source compliancy is after the parsing of
+the useless information, that only matters" — an image is now also
+equivalent when it parses the same origin bytes into the same records as
+the Codex's reference image (03 §3.2 row, 03 §3.4, 09 §9.8): a seeded
+sample re-parsed by `tools/reparse_lines.py` under the reference image,
+then `hold check --checks image-equivalence,chunks --against FILE` under
+the image to be proven. Never planned, never counted toward a trust level.
+gutenberg: its own kept image `b8ea620f…` re-parsed 3,972 records over 82
+shards, the running image re-parsed all 3,972 byte for byte the same,
+chunks passed — equivalent, though its records are out of date against
+the mirror (that is records-vs-origin's finding, and it stands). pubmed:
+records-vs-origin and chunks pass again under the new image (19,723
+re-parsed exactly, 1,983,529 re-cut). Both may be built now; every later
+deploy needs the two runs again (about 25 minutes for gutenberg, 11 for
+pubmed).
+
+
 **2026-10-07, ~14:55Z (UTC): the deposit collections re-made; the moved
 outcome live; 3d9036b DEPLOYED.** The node rebooted at 14:00Z on its own —
 a TrueNAS update (kernel 6.18.42 → 6.18.52) — and was down ~30 minutes;
