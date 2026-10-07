@@ -1057,8 +1057,11 @@ node is one peer until 9d's two-peer test):
   attestation is. The receiving side: the beat's `store_received` keeps
   an attestation event's payload — verified, for a collection held here
   — at 09 §9.8's path before forwarding; a foreign or forged one is
-  dropped; events of the other types are marked acted and left to the
-  bricks that act on them (`events_seen.acted`). **Third brick DONE
+  dropped; events of the other types are left unacted for the bricks
+  that act on them (`events_seen.acted`) — until 2026-10-07 this step
+  marked them acted itself, raced those bricks in another thread and
+  won, so no bundle, snapshot, codex or flag event was ever acted on
+  live (found by the second peer, fixed in 8308cb8). **Third brick DONE
   2026-10-06 — `share contribute`** (`app/share/contribute.py`;
   `tests/share/test_contribute.py`, 4): the preconditions of 04 §4.5
   (own roots and chunks passed, a records-vs-origin attestation for the
@@ -1151,6 +1154,35 @@ node is one peer until 9d's two-peer test):
   reproduction of a received DETERMINISTIC claim — the named check on
   the named shards, which `hold check` runs by sample today and would
   need a shard restriction for.
+- **LIVE 2026-10-07 — two peers on the LAN** (deployed through b741bfb;
+  the account: [`second-peer-2026-10-07.md`](second-peer-2026-10-07.md)).
+  The node and a second peer on the development PC's Docker Desktop,
+  run from `deploy/docker/` (new: Louise on any Docker host, first boot
+  by `app/node_init.py`). Every sub-step ran between them: digests both
+  ways, pinned; `share fetch` of the certified collection and of
+  `gutenberg-mini-open` (open, Codex version 4, made for the test),
+  members by torrent in seconds; quarantine cleared on the second peer by
+  the tooling; `share attest` both ways; `share contribute` on the second
+  peer (two bundles, its own ladder T0–T2); the node taking both bundles
+  in, and searching them with both legs. Thirteen defects found, each
+  fixed with a test — a fetched collection acquiring from the origin,
+  the pointer never put into the DHT, one connection per IP refusing
+  peers behind Docker Desktop, `[dht] enabled` read by nothing, the DHT
+  readers deaf to their alerts, the event race above, the vector leg
+  withheld for a collection that holds vectors and does not embed, the
+  backoffs and hints that kept a fetch waiting an hour beside a swarm
+  that answered in a second, a silent fresh node. **Still owed in 9**:
+  the single-survivor test with a fresh peer C finding A by the DHT key
+  (the DHT readers now hear their alerts; never run against the live
+  DHT); `--slices`/`--kinds` narrowing of what is served; the web's pull
+  answers under a budget; local reproduction of a deterministic claim.
+  **Decisions for the operator**, before contribution can reach the
+  node's main collections: version-2 collections advertise no
+  benchmark, so no peer leads a shard of gutenberg, pubmed or wikipedia
+  (sending the older row form is a 09 §9.9 wire question); and the
+  node's `LOUISE_PLATFORM_IMAGE` still names the 2026-09-21 image, so
+  every Codex created since names an image that did not build it, and a
+  version-4 Codex names one that cannot read it.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,
@@ -1180,7 +1212,9 @@ embeds it, and a fresh peer C finds A by computing the DHT key. A
 `codex.json` with a substituted `descriptive` block is dropped on the
 pull path. The rendezvous tests already cover the partitioning.
 
-**Operator**: two nodes on the LAN for the first real run.
+**Operator**: two nodes on the LAN for the first real run. **DONE
+2026-10-07**: the second node is a Docker Desktop peer on the
+development PC (`deploy/reference/dev-peer.env`, not in git).
 
 ### Step 9f — what a fetching peer holds becomes searchable
 *07 §7.3 `index build`, §7.8; 02 §2.3. Found 2026-10-07: no stage turned
@@ -1203,8 +1237,13 @@ the web's rewrites carry it. tests/test_plugins_drag.py (6): the reader,
 the cursor, the file's key, `records build` refused, and the worker's
 own scan filling the manifest from the shards, with the metadata, the
 sections and the layer's cut coming back through the same plugin calls
-the rdf, fts and embed stages make. **Owed**: the stages themselves run
-over a fetched collection on a second peer (live, when one exists); the
+the rdf, fts and embed stages make. **LIVE 2026-10-07 on the second
+peer**, after three fixes it found: the wrapper hides the inner plugin's
+corpus readers (gutenberg's `read_text` wrote "not indexable" on every
+fetched document), a drag source never acquires from the origin, and
+promoted record shards ask for a scan at once instead of waiting for
+the six-hour interval. Fetched, scanned, indexed and searched in under
+a minute. **Owed**: the
 `index-<slice>` member as a cache (import when the pin matches, else
 rebuild).
 
