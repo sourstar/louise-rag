@@ -44,20 +44,29 @@ def magnet(torrent: mem.Torrent) -> str:
 
 def hints_for(node_con, collection_id: str, *, now: float) -> list[tuple[str, int]]:
     """`(host, peer_port)` of every neighbour whose digest lists the collection
-    and names the port its swarm listens on."""
+    and names the port its swarm listens on — and, when none lists it, of
+    every neighbour that names a port at all. A digest is hourly: a
+    collection shared after the last one is in no digest yet, and the
+    second peer, its DHT off, waited for the next hour beside the node that
+    served it (2026-10-07). Asking a swarm that does not hold the torrent
+    costs one connection, refused."""
     from urllib.parse import urlsplit
-    out: list[tuple[str, int]] = []
+    listing: list[tuple[str, int]] = []
+    naming: list[tuple[str, int]] = []
     for n in peers.neighbours(node_con, now=now):
         d = peers.digest_of(node_con, n["key"]) or {}
         port = d.get("peer_port")
         if not isinstance(port, int) or isinstance(port, bool):
             continue
-        if any(isinstance(e, dict) and e.get("collection_id") == collection_id
-               for e in d.get("collections", [])):
-            host = urlsplit(n["address"]).hostname
-            if host and (host, port) not in out:
+        host = urlsplit(n["address"]).hostname
+        if not host:
+            continue
+        lists = any(isinstance(e, dict) and e.get("collection_id") == collection_id
+                    for e in d.get("collections", []))
+        for out in ((listing, naming) if lists else (naming,)):
+            if (host, port) not in out:
                 out.append((host, port))
-    return out
+    return listing or naming
 
 
 def newest_hint_digest(node_con, collection_id: str, *, now: float) -> float:

@@ -1329,8 +1329,8 @@ def _ack_origin_unchecked(a, name, codex) -> int:
         raise CodexError(f"{name}: not recorded — {why_not}")
     if not a.yes:
         print("-" * 72)
-        reply = input(f"Use {name} although its origin could not be checked? The "
-                      f"check still runs when it can. [y/N] ").strip().lower()
+        reply = _ask(f"Use {name} although its origin could not be checked? The "
+                     f"check still runs when it can. [y/N] ")
         if reply not in ("y", "yes"):
             print("not acknowledged; nothing was written. `louise hold collection "
                   f"forget {name}` rejects the copy", file=sys.stderr)
@@ -1338,6 +1338,16 @@ def _ack_origin_unchecked(a, name, codex) -> int:
     out = copy_state.record_origin_ack(a.root, name, codex, now=_utc_now())
     print(f"acknowledged  origin unchecked  {out}")
     return 0
+
+
+def _ask(question: str) -> str:
+    """A yes/no a person answers — never one read from a pipe: without a
+    terminal it is a refusal naming `--yes` (07 §7.7), as `forget` says it.
+    The acknowledgements read stdin regardless and ended in a traceback
+    (EOFError) when run with `docker exec` (second peer, 2026-10-07)."""
+    if not sys.stdin.isatty():
+        raise CodexError("--yes is required when stdin is not a terminal (07 §7.7)")
+    return input(question).strip().lower()
 
 
 def _ack_web_sources(a) -> int:
@@ -1404,7 +1414,7 @@ def cmd_collection_ack(a) -> int:
     if not a.yes:
         print(terms.read_text(encoding="utf-8", errors="replace"))
         print("-" * 72)
-        reply = input(f"Acknowledge these terms for {name}? [y/N] ").strip().lower()
+        reply = _ask(f"Acknowledge these terms for {name}? [y/N] ")
         if reply not in ("y", "yes"):
             print("not acknowledged; nothing was written", file=sys.stderr)
             return 2

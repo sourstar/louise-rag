@@ -21,7 +21,7 @@ from app.hold.codex import canonical_json  # noqa: E402
 from app.share import fetch, holdings, messages, peers, seeder, transport  # noqa: E402
 from tests.deposit.test_deposit_identity import node  # noqa: F401, E402
 from tests.hold.conftest import KEY, NOW  # noqa: E402
-from tests.share.test_fetch import SHARER, fetcher  # noqa: F401, E402
+from tests.share.test_fetch import OTHER_KEY, SHARER, fetcher  # noqa: F401, E402
 from tests.share.test_messages import PEER_KEY  # noqa: E402
 from tests.share.test_seeder import SLICE, a_shared_collection, quiet_sessions  # noqa: E402
 from tests.share.test_share_api import OURS, OUR_KEY  # noqa: E402
@@ -116,8 +116,16 @@ def test_hints_come_from_the_digests_that_name_a_peer_port(node):  # noqa: F811
                                     benchmarks=[], collections=[entry], now=now)
         peers.record_digest(con, {**body, "peer_port": 6881}, now=now)
         assert transport.hints_for(con, cid, now=now) == [("10.0.0.7", 6881)]
-        assert transport.hints_for(con, "sha256:" + "f" * 64, now=now) == []
+        # a collection in no digest yet (shared after the last one, 2026-10-07):
+        # every neighbour naming a swarm is asked
+        assert transport.hints_for(con, "sha256:" + "f" * 64, now=now) == [("10.0.0.7", 6881)]
+        other = messages.digest_body(key=OTHER_KEY, address="http://10.0.0.8:30042", neighbours=[],
+                                     benchmarks=[], collections=[], now=now)
+        peers.record_digest(con, {**other, "peer_port": 6999}, now=now)
+        assert transport.hints_for(con, cid, now=now) == [("10.0.0.7", 6881)], "a digest that lists it comes first, alone"
+        assert sorted(transport.hints_for(con, "sha256:" + "f" * 64, now=now)) == [("10.0.0.7", 6881), ("10.0.0.8", 6999)]
         peers.record_digest(con, body, now=now)                       # no port named
+        peers.record_digest(con, other, now=now)
         assert transport.hints_for(con, cid, now=now) == []
 
 

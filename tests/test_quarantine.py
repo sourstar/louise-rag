@@ -845,3 +845,18 @@ def test_a_command_line_process_does_not_replace_the_workers_record(node, rage, 
     run_check.validate(root, "gutenberg", codex, collections_mod.recipe_for(collection),
                        key=KEY, now=NOW)
     assert run_check.record_path().read_bytes() == before
+
+
+def test_a_decision_is_never_read_from_a_pipe(node, rage, capsys, monkeypatch):
+    """Live, 2026-10-07: `ack --origin-unchecked` without `--yes`, run with
+    `docker exec`, read stdin regardless and ended in an EOFError traceback.
+    Without a terminal it is a refusal that names `--yes`, and nothing is
+    written."""
+    import io
+    root, collection, codex = node
+    all_but_the_origin(root, collection, codex)
+    copy_state.note_origin_attempt(root, "gutenberg", codex, why="the origin is away", now=NOW)
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert louise.main(["hold", "collection", "ack", "gutenberg", "--root", str(root), "--origin-unchecked"]) == 2
+    assert "--yes is required when stdin is not a terminal" in capsys.readouterr().err
+    assert not (root / "gutenberg" / "state" / copy_state.ORIGIN_ACK).exists()
