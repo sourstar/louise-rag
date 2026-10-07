@@ -186,3 +186,29 @@ def test_closing_every_writer_waits_for_a_commit_in_flight():
     assert order == ["committed", "closed"]
     with catalog._lock:
         catalog._write_locks.pop(path, None)
+
+
+def test_a_forgotten_collection_s_writer_is_let_go_and_a_new_one_at_the_same_path_writes(col, monkeypatch):
+    """Live, 2026-10-07: `louise-stop` was forgotten and made again under
+    its name, and every catalog write failed — the worker still held the
+    old writer, open on files the forget had removed."""
+    import shutil
+    from pathlib import Path
+    c, _con = col
+    catalog.write(c, [(1, "The Whale Road", "Low, Robert", "Vikings", "en")])
+    path = str(catalog.path_for(c))
+    assert path in catalog._writers, "the worker keeps its writer between batches"
+    shutil.rmtree(Path(path))                       # what forget does to the directory
+    assert catalog.release_under(Path(c.fts_dir)) == 1
+    assert path not in catalog._writers and path not in catalog._indexes
+    assert catalog.write(c, [(2, "A Plain Walk", "Fixture, Basil", "Walks", "en")]) == 1, \
+        "the collection made again at that path writes through a writer of its own"
+
+
+def test_the_worker_s_forget_releases_the_collection_s_catalog(monkeypatch, tmp_path):
+    from app import collections as collections_mod, worker
+    released = []
+    monkeypatch.setattr(catalog, "release_under", lambda d: released.append(d) or 1)
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path)
+    worker.retire_collection("louise-stop", timeout=0.1)
+    assert released == [tmp_path / "collections" / "louise-stop"]

@@ -4179,6 +4179,14 @@ def retire_collection(name: str, timeout: float = 60.0) -> None:
     for thread in threads:
         if thread is not threading.current_thread():
             thread.join(timeout=max(0.0, deadline - time.time()))
+    # its catalog writer too, held by path: the directory goes, and a
+    # collection made again under this name would inherit a writer on
+    # deleted files (`catalog.release_under`)
+    try:
+        from . import catalog
+        catalog.release_under(collections_mod.louise_root() / "collections" / name)
+    except Exception:   # noqa: BLE001 — the forget goes on; the next start holds nothing
+        pass
     _gone.pop(name, None)
     lock = _locks.pop(name, None)       # the node holds it only while it runs it
     if lock is not None:

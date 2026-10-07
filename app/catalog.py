@@ -173,6 +173,42 @@ def _drop_writer(collection) -> None:
         writer.wait_merging_threads()        # consumes it: the directory's lock goes
 
 
+def release_under(directory) -> int:
+    """Let go of every handle this process holds under a collection's
+    directory — its writer (each under its write lock, so a commit in flight
+    finishes first), its index and its readers. `hold collection forget`
+    removes the directory; a collection made again under the same name gets
+    the same path, and the worker's cached writer, open on files that no
+    longer exist, refused every write: "Failed to open file for write …
+    index/_catalog/.tmp…" on the re-made `louise-stop` (2026-10-07).
+    Returns how many writers were released."""
+    root = str(Path(directory))
+
+    def under(p: str) -> bool:
+        return p == root or p.startswith(root.rstrip("/") + "/")
+    with _lock:
+        paths = sorted({p for p in list(_writers) + list(_indexes) if under(p)})
+        writers = [(_writers.pop(p, None), _write_locks.get(p)) for p in paths]
+        for p in paths:
+            _indexes.pop(p, None)
+        for k in [k for k in _readers if under(k.split("#", 1)[0])]:
+            del _readers[k]
+    released = 0
+    for writer, lock in writers:
+        if writer is None:
+            continue
+        try:
+            if lock is not None:
+                with lock:
+                    writer.wait_merging_threads()
+            else:
+                writer.wait_merging_threads()
+        except Exception:   # noqa: BLE001 — a writer on deleted files may fail to close; it is let go
+            pass
+        released += 1
+    return released
+
+
 def close_all() -> None:
     """Let go of every writer this process holds — for tests, whose
     collections come and go by the hundred. The worker keeps its writers
