@@ -55,8 +55,9 @@ document says, each with its reason and its plan entry.*
   operator controls, TLS from Tailscale, its Funnel already on, the two
   `.well-known` paths added to it. The node serves the anchor document
   from `[certifier]` and the Codexes it holds.
-- **The first certified collection** is `gutenberg-mini-certified`:
-  three books of Project Gutenberg in gutenberg's space, a proving
+- **The first certified collection** is `gutenberg-744ba8430fed` (recipe
+  `gutenberg-mini-certified.toml`; the `--name` given was dropped until
+  c019243, and a name holds one collection for its life): three books of Project Gutenberg in gutenberg's space, a proving
   instance of the certified machinery end to end on the node,
   `is_origin: false`, never shared. A certified source whose value is
   that this is the text — the Gazzetta, the OJEU — remains the
