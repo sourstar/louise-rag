@@ -135,6 +135,10 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
             negate = isinstance(spec, dict) and "not" in spec
             value = str(spec["not"]) if negate else str(spec)
             sep = f.get("separator") if f["kind"] == "tree" else None
+            depth = cache.get("depth")
+            if depth is not None and sep and len(value.split(sep)) > depth:
+                raise FilterError(f"{field!r}: counted to depth {depth} on this peer ({cache.get('note')}); "
+                                  f"{value!r} is deeper — filter by {sep.join(value.split(sep)[:depth])!r}")
             total = (cache.get("values") or {}).get(value, 0)
             if total > MAX_IDS:
                 raise FilterError(f"{field!r} = {value!r} admits {total} records, more than the {MAX_IDS} the "

@@ -1352,7 +1352,10 @@ after the pass over pubmed OOM-killed the worker (STATUS): a field past
 streamed, written only for values of at most 20 000 records (a broader
 value is refused by its count), and not past 20 M rows per field; so
 on pubmed most filters are refused as too broad or not indexed, and
-`ask facets` says which fields are filterable. Third brick: T4 on the
+`ask facets` says which fields are filterable. A tree facet whose full
+paths pass the bound (MeSH descriptor/qualifier pairs) is counted to
+depth 1 and posted there; a deeper filter is refused naming the
+descriptor to filter by. Third brick: T4 on the
 chunks a search cites (05 §5.3, 03 §3.5) — every search queues the
 imported, unverified chunks it returns (`verify_on_use.cite`, from
 `retrieval._attach_metadata_and_enqueue`, so the web's Ask and

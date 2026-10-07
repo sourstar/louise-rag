@@ -255,9 +255,11 @@ RSS peaked at 5.2 GB (the embed stream running beside it), settling at
 records and `subjects` after 1 572 163 (the MeSH descriptor/qualifier
 paths), both "not counted on this peer" as designed; `lang` counted and
 its narrow values indexed. So on pubmed no facet but `lang` is listed
-or filterable here — owed: for a tree facet whose full paths explode,
-counting the prefixes to a bounded depth (the ~30 000 descriptors)
-instead of nothing. Backup image `pre-c5678a2`.
+or filterable here. Done right after (not yet deployed): a tree facet
+whose full paths explode is counted to depth 1 — the descriptors — and
+posted at that depth, a deeper filter refused by name; pubmed's
+`subjects` will list its ~30 000 MeSH descriptors on the next pass.
+Backup image `pre-c5678a2`.
 
 **2026-10-07, 03:01Z (UTC): INCIDENT — the worker OOM-killed by the
 facets pass; the node rebooted at 03:37Z; the pass bounded.** What

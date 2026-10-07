@@ -85,13 +85,14 @@ def _pass(con, column: str, join: str | None, *, where_in_scope: bool = True) ->
 
 
 def count(con, codex, field: str, *, where_in_scope: bool = True, max_distinct: int | None = None,
-          stop: Callable[[], bool] | None = None) -> dict[str, Any]:
+          stop: Callable[[], bool] | None = None, max_depth: int | None = None) -> dict[str, Any]:
     """One pass over the manifest's column: `{field, kind, documents,
     values: {value: count}}` for flat and tree facets (a tree counts every
-    prefix path), `{bounds: [min, max]}` for a range. A field with more
-    than `max_distinct` distinct values is not counted: `values` is None
-    and `why` says so — bounded memory, never a partial count passed off
-    as the count."""
+    prefix path, or only those up to `max_depth` separators deep when
+    given), `{bounds: [min, max]}` for a range. A field with more than
+    `max_distinct` distinct values is not counted: `values` is None and
+    `why` says so — bounded memory, never a partial count passed off as
+    the count."""
     f = facet_of(codex, field)
     column, join = COLUMNS.get(field, (None, None))
     if column is None:
@@ -114,7 +115,8 @@ def count(con, codex, field: str, *, where_in_scope: bool = True, max_distinct: 
                 continue
             if kind == "tree" and sep:
                 parts = value.split(sep)
-                for i in range(1, len(parts) + 1):
+                deepest = len(parts) if max_depth is None else min(len(parts), max_depth)
+                for i in range(1, deepest + 1):
                     path = sep.join(parts[:i])
                     counts[path] = counts.get(path, 0) + 1
             else:
@@ -133,16 +135,22 @@ def count(con, codex, field: str, *, where_in_scope: bool = True, max_distinct: 
         out["why"] = why
     else:
         out["values"] = counts
+        if max_depth is not None and kind == "tree":
+            out["depth"] = max_depth
     return out
 
 
 def _narrow_postings(con, column: str, join: str | None, kind: str, sep: str | None,
-                     counts: dict[str, int], max_ids: int) -> Iterator[tuple[str, int]]:
+                     counts: dict[str, int], max_ids: int, depth: int | None = None) -> Iterator[tuple[str, int]]:
     """Second pass: `(value, native_id)` for the values a filter can use —
     at most `max_ids` records each. A tree value's postings are its full
     paths; a narrow ancestor's subtree is the union of its (narrower)
-    descendants, so every posting a narrow value needs is written."""
+    descendants, so every posting a narrow value needs is written. A tree
+    counted to `depth` is posted at that depth: the record's paths cut
+    there, each once."""
     for nid, values in _pass(con, column, join):
+        if depth is not None and kind == "tree" and sep:
+            values = list({sep.join(v.split(sep)[:depth]) for v in values})
         for value in values:
             c = counts.get(value)
             if c is not None and c <= max_ids:
@@ -188,6 +196,14 @@ def build(con, codex, index_dir: Path, *, snapshot_id: str | None, fields=None, 
         if field not in COLUMNS:
             continue
         got = count(con, codex, field, stop=stop)
+        if got["kind"] == "tree" and got.get("values") is None:
+            # the full paths explode (pubmed's MeSH descriptor/qualifier pairs,
+            # 2026-10-07): the descriptors alone are a bounded, browsable list
+            shallow = count(con, codex, field, stop=stop, max_depth=1)
+            if shallow.get("values") is not None:
+                shallow["note"] = (f"counted to depth 1 only: {got.get('why')}; a filter names a value at "
+                                   f"that depth")
+                got = shallow
         got["postings"] = None
         if got["kind"] != "range" and got.get("values") is not None:
             column, join = COLUMNS[field]
@@ -204,7 +220,7 @@ def build(con, codex, index_dir: Path, *, snapshot_id: str | None, fields=None, 
                 else:
                     n = filters_mod.write_postings(
                         pcon, field, _narrow_postings(con, column, join, got["kind"], got["separator"], counts,
-                                                      filters_mod.MAX_IDS),
+                                                      filters_mod.MAX_IDS, depth=got.get("depth")),
                         snapshot_id=snapshot_id, documents=got["documents"])
                     got["postings"] = {"built": True, "rows": n, "values": len(narrow),
                                        "broad": len(counts) - len(narrow)}

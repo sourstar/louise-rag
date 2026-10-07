@@ -77,19 +77,18 @@ def test_every_cost_is_bounded_a_field_too_wide_is_said_not_counted(tmp_path, mo
     from app.ask import filters
     con, codex = manifest(tmp_path), a_codex()
     idx = tmp_path / "index"
-    monkeypatch.setattr(facets, "MAX_DISTINCT", 2)
+    monkeypatch.setattr(facets, "MAX_DISTINCT", 1)      # even the tree's two descriptors are too many
     said = []
     assert facets.build(con, codex, idx, snapshot_id="2026-08", log=said.append) == ["subjects", "lang", "authors"]
     subjects = facets.cached(idx, "subjects", snapshot_id="2026-08")
-    assert subjects["values"] is None and "more than 2 distinct values" in subjects["why"]
+    assert subjects["values"] is None and "more than 1 distinct values" in subjects["why"]
     assert subjects["postings"] == {"built": False, "why": subjects["why"]}
-    lang = facets.cached(idx, "lang", snapshot_id="2026-08")
-    assert lang["values"] == {"en": 3, "de": 1} and lang["postings"]["built"] is True
+    assert facets.cached(idx, "authors", snapshot_id="2026-08")["values"] is None, "a flat field too"
     assert any("subjects" in m and "not counted" in m for m in said)
     listing = facets.fields(con, codex, idx, snapshot_id="2026-08")
     by_field = {f["field"]: f for f in listing["fields"]}
     assert by_field["subjects"]["values"] is None and "distinct" in by_field["subjects"]["why"]
-    assert by_field["lang"]["filterable"] is True and by_field["subjects"]["filterable"] is False
+    assert by_field["subjects"]["filterable"] is False
     got = facets.values(con, codex, idx, "subjects", snapshot_id="2026-08")
     assert got["values"] is None and "not counted" in got["why"]
     with pytest.raises(filters.FilterError, match="distinct values"):
@@ -98,6 +97,10 @@ def test_every_cost_is_bounded_a_field_too_wide_is_said_not_counted(tmp_path, mo
     monkeypatch.setattr(facets, "MAX_DISTINCT", 200_000)
     monkeypatch.setattr(filters, "MAX_IDS", 2)
     facets.build(con, codex, idx, snapshot_id="2026-08")
+    lang = facets.cached(idx, "lang", snapshot_id="2026-08")
+    assert lang["values"] == {"en": 3, "de": 1} and lang["postings"]["built"] is True
+    by_field = {f["field"]: f for f in facets.fields(con, codex, idx, snapshot_id="2026-08")["fields"]}
+    assert by_field["lang"]["filterable"] is True
     pcon = filters.connect(idx)
     assert {r[0] for r in pcon.execute("SELECT DISTINCT value FROM postings WHERE field='lang'")} == {"de"}
     assert {r[0] for r in pcon.execute("SELECT DISTINCT value FROM postings WHERE field='subjects'")} == \
@@ -116,3 +119,23 @@ def test_every_cost_is_bounded_a_field_too_wide_is_said_not_counted(tmp_path, mo
     assert lang["postings"]["built"] is False and "more than the 3" in lang["postings"]["why"]
     with pytest.raises(filters.FilterError, match="more than the 3"):
         filters.book_ids_for(codex, idx, {"lang": "de"}, snapshot_id="2026-08")
+
+
+def test_a_tree_whose_full_paths_explode_is_counted_to_depth_one(tmp_path, monkeypatch):
+    """pubmed's MeSH descriptor/qualifier paths passed 200 000 distinct
+    values; the descriptors alone are a bounded list. Counted to depth 1,
+    posted at that depth, and a deeper filter is refused by name."""
+    from app.ask import filters
+    con, codex = manifest(tmp_path), a_codex()
+    idx = tmp_path / "index"
+    monkeypatch.setattr(facets, "MAX_DISTINCT", 3)        # 4 full paths explode; 2 descriptors do not
+    facets.build(con, codex, idx, snapshot_id="2026-08")
+    got = facets.cached(idx, "subjects", snapshot_id="2026-08")
+    assert got["values"] == {"Neoplasms": 3, "Humans": 2} and got["depth"] == 1 and "depth 1" in got["note"]
+    assert got["postings"]["built"] is True and got["postings"]["rows"] == 5, "each record's descriptors, once each"
+    assert filters.book_ids_for(codex, idx, {"subjects": "Neoplasms"}, snapshot_id="2026-08") == {1, 2, 3}
+    assert filters.book_ids_for(codex, idx, {"subjects": "Humans"}, snapshot_id="2026-08") == {1, 2}
+    with pytest.raises(filters.FilterError, match="depth 1.*filter by 'Neoplasms'"):
+        filters.book_ids_for(codex, idx, {"subjects": "Neoplasms/genetics"}, snapshot_id="2026-08")
+    listing = facets.values(con, codex, idx, "subjects", snapshot_id="2026-08")
+    assert list(listing["values"]) == ["Neoplasms", "Humans"] and listing["depth"] == 1
