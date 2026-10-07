@@ -3602,6 +3602,52 @@ def _note_pause_from_state(state: str) -> None:
         _paused.set()
 
 
+#: the manifests whose run this process has settled for search (keyed by path)
+_settled_for_search: set[str] = set()
+SETTLE_BEAT_S = 60.0
+
+
+def holds_vectors(collection) -> bool:
+    lance = getattr(collection, "lance_dir", None)
+    return bool(lance) and (Path(lance) / "chunks.lance").is_dir()
+
+
+def _settle_runs_for_search() -> None:
+    """03 §3.3: a kept statement is re-checked once per process before the
+    vector leg relies on it, and the re-check ran only inside the embed
+    path. A collection that holds vectors and does not embed here — every
+    peer that imports bundles and spends nothing on embedding — never had
+    it, and its vector leg was withheld for the life of the process (the
+    node, after taking in the second peer's bundles, 2026-10-07). This
+    thread settles the run of every version-3 collection holding vectors
+    once, through the same `embed_allowed` the embed path calls (cached,
+    locked, logged; never raises), and retries a deferral at its next beat.
+    Its own thread: a re-check embeds sixteen texts, and a new run the
+    whole set."""
+    from . import run_check
+    while not _stop.wait(SETTLE_BEAT_S):
+        try:
+            collections = collections_mod.load_all()
+        except Exception:   # noqa: BLE001 — the next beat
+            continue
+        for c in collections:
+            if _stop.is_set():
+                return
+            key = str(getattr(c, "manifest_path", c.name))
+            if key in _settled_for_search or not run_check.applies(c) or not holds_vectors(c):
+                continue
+            con = None
+            try:
+                con = db.connect(c)
+                if run_check.embed_allowed(con, c, stop=_stop.is_set):
+                    _settled_for_search.add(key)
+            except Exception:   # noqa: BLE001 — one collection, not the thread
+                pass
+            finally:
+                if con is not None:
+                    con.close()
+
+
 def _gossip_beat(collections, con) -> None:
     """04 §4.2: this node's digest once an hour to its neighbours and the
     peer list — and at once to one not yet sent to; events received
@@ -3893,6 +3939,9 @@ def run_forever():
     # the members a collection's file asks for and the drag lacks, by
     # torrent from the peers that serve them (04 §4.3; app/share/transport.py):
     # its own thread, since a metadata wait is bounded by minutes
+    # the runs of collections that hold vectors and do not embed here,
+    # settled for search (03 §3.3; `_settle_runs_for_search`)
+    threading.Thread(target=_settle_runs_for_search, name="settle-runs", daemon=True).start()
     from .share import transport as share_transport
     threading.Thread(target=share_transport.loop, args=(_stop,),
                      kwargs={"log": lambda m: print(f"{time.strftime('%H:%M:%S')} [node info:share] {m}", flush=True),
