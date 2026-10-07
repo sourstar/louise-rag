@@ -1347,7 +1347,7 @@ it that no other valid key also made.
 | `collection_id` | id | yes | |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | the current certified snapshot |
 | `snapshot_hash` | id | yes | |
-| `seq` | integer | yes | strictly increasing per collection; a peer keeps the highest verified `seq` and discards lower ones |
+| `seq` | integer | yes | strictly increasing per collection; a peer keeps the highest verified `seq` and discards lower ones. The BEP 44 item's own `seq` is the DHT's: the libtorrent binding manages it (*amended 2026-10-07*: `dht_put_mutable_item` takes none and increments the stored one), so a peer judges by this field, which the certifier signed, and the DHT's only keeps the newest put winning |
 | `key` | key | yes | the certifier's key |
 | `time` | time | yes | |
 

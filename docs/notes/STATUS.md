@@ -244,6 +244,24 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~04:30Z (UTC): step 10, second brick — the pointer on
+the wire; 9e's leftover; a T4 defect fixed.** The seeder puts this
+peer's own certified pointer into the DHT (salt = the collection's raw
+id, once per announcement interval); `share fetch` of a certified
+collection follows the pointer — DHT, then the well-known path — and
+refuses a snapshot whose hash differs. Another key's forgery proof is
+reproduced through T4's queue when the chunk is held imported from the
+named producer. FIXED before anything else: the T4 brick deployed as
+684931d burned the producer in the ledger's bare hex, not the
+`ed25519:` form the trust level compares against — a burn would never
+have counted; `verify_on_use.key_text` is the one form now. tests:
+share/test_pointer 4, share/test_reproduce 1, verify-on-use +1. Not
+deployed (node: 684931d) — to deploy next, for the fix. Full-suite
+housekeeping: two once-only setup/timing errors today (test_accept's
+torrent exchange, test_worker_rotation's fixture setup) passed alone
+and in the runs before and after; from now the full suite's whole log
+is kept, so a third has its traceback.
+
 **2026-10-07, ~03:30Z (UTC): step 11, sixth brick — `freshness`.** The
 top five of each list asked of their origins now (a plugin `current()`
 per origin: Gutenberg's cache, E-utilities, the export API; the archive

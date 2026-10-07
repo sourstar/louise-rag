@@ -54,6 +54,18 @@ class Forgery:
     cosine: float
 
 
+def key_text(producer: str | None) -> str | None:
+    """A producer as 09 §9.2 writes a key: the ledger keeps the bundle
+    header's bare hex, a proof and the trust file carry `ed25519:<hex>`."""
+    if not producer:
+        return None
+    if producer.startswith("ed25519:"):
+        return producer
+    if len(producer) == 64 and all(c in "0123456789abcdefABCDEF" for c in producer):
+        return "ed25519:" + producer.lower()
+    return producer
+
+
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
     return 0.0 if denominator == 0 else float(np.dot(a, b) / denominator)

@@ -395,6 +395,60 @@ def flags(root: Path, collections, node_con, *, client=None, key=None, own_key=N
     return out
 
 
+def reproduce_forgeries(root: Path, collections, cons: dict, node_con, *, own_key: str | None = None,
+                        now: float | None = None, log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """03 §3.5: another key's `forgery` proof — held here by a flag or an
+    attestation event — is a CLAIM until reproduced: for a chunk this peer
+    holds IMPORTED from the producer the proof names, the chunk is cited
+    for T4 (app/bundles/verify_on_use.py), whose second recompute burns
+    the key here too and yields this peer's own proof. A chunk not held
+    from that producer cannot be reproduced here, and the claim stays a
+    claim. Each proof is acted on once (node.sqlite `claims_acted`)."""
+    from app import copy_state
+    from app.bundles import ledger, verify_on_use
+    now = time.time() if now is None else now
+    node_con.execute("CREATE TABLE IF NOT EXISTS claims_acted (attestation_id TEXT PRIMARY KEY, acted REAL, "
+                     "outcome TEXT)")
+    if own_key is None:
+        try:
+            from app import identity
+            own_key = identity.own()
+        except Exception:   # noqa: BLE001 — no key: every proof is another's
+            own_key = None
+    out = {"cited": 0, "not_held": 0, "seen": 0}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        con = cons.get(c.name)
+        if codex is None or con is None:
+            continue
+        for body in copy_state.attestations(root, c.name, codex):
+            if body.get("check") != "forgery" or body.get("result") != "forgery" or body.get("key") == own_key:
+                continue
+            aid = env.body_id(body)
+            if node_con.execute("SELECT 1 FROM claims_acted WHERE attestation_id=?", (aid,)).fetchone():
+                continue
+            out["seen"] += 1
+            detail = body.get("detail") or {}
+            chunk_id = detail.get("chunk_id")
+            producer = verify_on_use.key_text(detail.get("producer"))
+            row = ledger.verification_states(con, [chunk_id]).get(chunk_id) if isinstance(chunk_id, str) else None
+            if row is not None and row["state"] == "imported" \
+                    and verify_on_use.key_text(row.get("producer")) == producer:
+                verify_on_use.cite(con, [chunk_id])
+                outcome = "cited"
+                out["cited"] += 1
+                if log:
+                    log(f"[{c.name}] share: forgery claimed by {str(body.get('key'))[:23]}… against "
+                        f"{str(producer)[:23]}… on {chunk_id}: held imported from it — cited for T4, which "
+                        f"reproduces or clears it here (03 §3.5)")
+            else:
+                outcome = "not-held"
+                out["not_held"] += 1
+            node_con.execute("INSERT OR REPLACE INTO claims_acted(attestation_id, acted, outcome) VALUES(?,?,?)",
+                             (aid, now, outcome))
+    return out
+
+
 def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
          now: float | None = None, log: Callable[[str], None] | None = None, client=None,
          key=None, own_key=None) -> dict[str, Any]:
@@ -407,6 +461,8 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
     for name, fn in (("codexes", lambda: codexes(node_con, log=log)),
                      ("flags", lambda: flags(root, collections, node_con, client=client, key=key,
                                              own_key=own_key, stop=stop, now=now, log=log)),
+                     ("forgeries", lambda: reproduce_forgeries(root, collections, cons, node_con, own_key=own_key,
+                                                               now=now, log=log)),
                      ("snapshots", lambda: newer_snapshots(root, collections, node_con, client=client, key=key,
                                                            own_key=own_key, stop=stop, now=now, log=log))):
         try:

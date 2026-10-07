@@ -513,7 +513,21 @@ def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
         for source in found:
             try:
                 chain = pull_codex(p, source, cid)
-                pulled = pull_snapshots(p, source, chain[0][0], snapshot_id=snapshot_id, held=held)
+                # 03 §3.7: for a certified collection the certifier's pointer
+                # says which snapshot is current — the DHT, else the anchor
+                # domain's well-known path; what is pulled must be that one
+                want, pointed = snapshot_id, None
+                if want is None and getattr(chain[0][0], "publication", "open") == "certified":
+                    from app.share import pointer as pointer_mod
+                    pointed = pointer_mod.current(chain[0][0], node_con=con, session=session, client=client,
+                                                  now=now, log=log)
+                    if pointed is not None:
+                        want = pointed["snapshot_id"]
+                pulled = pull_snapshots(p, source, chain[0][0], snapshot_id=want, held=held)
+                if pointed is not None and pulled and pulled[0].snapshot.hash != pointed["snapshot_hash"]:
+                    raise FetchError(f"{source.address}: snapshot {want} hashes {pulled[0].snapshot.hash[:23]}… "
+                                     f"and the certifier's pointer names {pointed['snapshot_hash'][:23]}… "
+                                     f"(09 §9.11)")
             except Unreachable as e:
                 unreachable += 1
                 tried.append(str(e))

@@ -189,6 +189,47 @@ def announce(session, keys: list[bytes], port: int, *, now: float | None = None)
     return n
 
 
+_last_pointer_put: dict[str, float] = {}
+
+
+def publish_pointer(collection, session, *, now: float | None = None, key=None, own_key: str | None = None,
+                    log: Callable[[str], None] | None = None) -> bool:
+    """03 §3.7, 09 §9.11: a certified collection whose certifier is THIS
+    peer has the pointer `hold collection certify` wrote put into the DHT
+    under its key, once per ANNOUNCE_EVERY_S — a mutable item lives about
+    as long as an announcement. Whether a put was made."""
+    from app.hold import certify
+    from app.share import pointer as pointer_mod
+    codex = getattr(collection, "codex", None)
+    if session is None or codex is None or codex.publication != "certified" or codex.certifier is None:
+        return False
+    now = time.time() if now is None else now
+    if _last_pointer_put.get(codex.collection_id, 0.0) + ANNOUNCE_EVERY_S > now:
+        return False
+    if own_key is None:
+        try:
+            from app import identity
+            own_key = identity.own()
+        except Exception:   # noqa: BLE001 — no key: not the certifier
+            return False
+    if own_key != codex.certifier.key:
+        return False
+    from app import collections as collections_mod
+    root = collections_mod.louise_root() / "collections"
+    doc = certify.read_pointer(root, collection.name, codex)
+    if doc is None:
+        return False
+    if key is None:
+        from app.bundles import keys as node_keys
+        key = node_keys.load_signing_key()
+    pointer_mod.put(session, codex, doc, key)
+    _last_pointer_put[codex.collection_id] = now
+    if log:
+        log(f"[{collection.name}] share: pointer seq {doc['body']['seq']} → snapshot "
+            f"{doc['body']['snapshot_id']} put into the DHT under the certifier's key (09 §9.11)")
+    return True
+
+
 def unpublish(collection, state_dir: Path, con, log=None) -> int:
     """Nothing of this collection served: its torrents dropped from the
     seeder, its entries and tree removed. How many torrents were dropped."""
@@ -228,7 +269,7 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
     from app import collections as collections_mod, node_state
     from app.hold import collection as col
     root = collections_mod.louise_root() / "collections"
-    out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0}
+    out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0, "pointers": 0}
     seeds = node_state.runs(worker_state, node_state.SEED)
     for c in collections:
         con = cons.get(c.name)
@@ -251,4 +292,9 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         if seeds and session is not None and port:
             keys = keys_for(c.codex, snap, col.resolver(root))
             out["announced"] += announce(session, keys, port, now=now)
+            try:
+                out["pointers"] += int(publish_pointer(c, session, now=now, log=log))
+            except Exception as e:   # noqa: BLE001 — a put that fails never stops the beat
+                if log:
+                    log(f"[{c.name}] share: pointer not put: {type(e).__name__}: {e}"[:300])
     return out

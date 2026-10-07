@@ -1144,10 +1144,13 @@ node is one peer until 9d's two-peer test):
   flag), as 03 §3.6 says; a second compliant bundle over chunks held
   here is compared cosine by cosine against the tolerance and published
   as a `vectors-sample` attestation naming both producers, only its
-  fresh chunks landing (`accept.compare_duplicate`). **Still owed in
-  9e**: local reproduction of a received flag (the named check on the
-  named shards, which `hold check` runs by sample today); T4 on use
-  (step 11, with the search).
+  fresh chunks landing (`accept.compare_duplicate`). T4 on use landed
+  with step 11 (third brick), and a received `forgery` proof is
+  reproduced through it (step 10, second brick:
+  `accept.reproduce_forgeries`). **Still owed in 9e**: local
+  reproduction of a received DETERMINISTIC claim — the named check on
+  the named shards, which `hold check` runs by sample today and would
+  need a shard restriction for.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,
@@ -1209,12 +1212,31 @@ increasing; served at `/.well-known/louise-pointer/<hex>.json` by the
 web for whoever fronts the node with the certifier's domain. `hold key
 create | trust <key> [--deny|--remove|--restore] | show`
 (`app/hold/node_key.py`) over NODE_KEY_PATH and `state/trust.json`.
-**Owed in step 10**: the pointer's BEP 44 publication by `share` and a
-fetcher that reads it (the well-known fallback is what exists); the
-*integrity violated* halt when a shard outside a signed snapshot is
-found already in the copy (the gate refuses it at promotion; a
-hand-populated folder is not yet detected — `roots` would have to be
-run over the copy's files against the signed chain); the seals and
+Second brick: the pointer on the wire (`app/share/pointer.py`) — the
+seeder puts a certified collection's pointer into the DHT under the
+certifier's key when this peer IS the certifier, salt = the 32 raw
+bytes of `collection_id`, once per announcement interval
+(`seeder.publish_pointer`); `share fetch` of a certified collection
+asks the DHT, then the anchor domain's well-known path, keeps the
+highest verified `seq` in node.sqlite (`pointers_seen`) and pulls the
+snapshot the pointer names, refusing one whose hash differs. 09 §9.11
+amended: the BEP 44 `seq` is the DHT's own (the libtorrent binding
+manages it); a peer judges by the envelope's. Also, from step 9e's
+leftover: another key's `forgery` proof held here is reproduced through
+T4 — the chunk, if held imported from the named producer, is cited
+(`accept.reproduce_forgeries`), and the second recompute burns the key
+here too with this peer's own proof; a chunk not held from that
+producer leaves the claim a claim; acted on once (`claims_acted`).
+Deterministic claims (`roots`, `chunks` on named shards) still wait on
+a targeted `hold check`. And a defect of the T4 brick fixed before
+anything else: the burned key was recorded in the ledger's bare hex,
+not 09 §9.2's `ed25519:` form the trust level compares against
+(`verify_on_use.key_text`), so a burn would never have shut the key out.
+**Owed in step 10**: the *integrity violated* halt when a shard outside
+a signed snapshot is found already in the copy (the gate refuses it at
+promotion; a hand-populated folder is not yet detected — `roots` would
+have to be run over the copy's files against the signed chain, and the
+foreign shard's records excluded from search by uid); the seals and
 `origin-seal`; the Gazzetta plugin.
 **Dependency decision, proposed (not taken: a new dependency is asked
 first).** For 09 §9.15's seals: CAdES envelopes (the Gazzetta's `.p7m`)

@@ -264,7 +264,10 @@ def test_a_reproduced_miss_burns_the_key_in_the_trust_file(imported, con, collec
     assert worker._verify_cited(con, collection) is True
     producer = bytes(producer_key.verify_key).hex()
     entry, = trust_file.read(root)["quarantined"]
-    assert entry["key"] == producer and entry["attestation"] is None, \
-        "a collection without a Codex attests nothing; the burn stands"
+    assert entry["key"] == "ed25519:" + producer and entry["attestation"] is None, \
+        "a collection without a Codex attests nothing; the burn stands, in 09 §9.2's key form"
+    assert verify_on_use.key_text(producer) == "ed25519:" + producer
+    assert verify_on_use.key_text("ed25519:" + producer) == "ed25519:" + producer
+    assert verify_on_use.key_text(None) is None and verify_on_use.key_text("unknown") == "unknown"
     events = [r["message"] for r in con.execute("SELECT message FROM events WHERE stage='verify' AND level='error'")]
     assert events and "forgery" in events[0] and "key burned" in events[0]

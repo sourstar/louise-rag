@@ -1847,8 +1847,12 @@ def _forgery_found(con, collection, f) -> None:
     from contextlib import closing
     from .hold import collection as col, equivalence, forgery, trust_file
     from .share import attest, seeder
+    from .bundles import verify_on_use
     root = collections_mod.louise_root()
-    producer = f.producer or "unknown"
+    # the ledger keeps the bundle header's bare hex; the proof, the burn and
+    # the trust level speak 09 §9.2's `ed25519:<hex>` — one form, or a burn
+    # would never shut the key out of counting
+    producer = verify_on_use.key_text(f.producer) or "unknown"
     aid = None
     why = ""
     codex = getattr(collection, "codex", None)
