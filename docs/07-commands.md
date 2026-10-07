@@ -116,6 +116,8 @@ louise hold
   index       build <collection> [--text | --vector]                   the text index per shard; the centres and labels of the space
               show <collection>
   check       <collection> [--checks …] [--sample F] [--seed HEX]      run the validation plan; print the report
+              [--shards S,…] [--origin DIR] [--against FILE]           --shards: these shards alone, how a received claim is reproduced (03 §3.6);
+                                                                       --against: image-equivalence's reference lines (03 §3.4) (both 2026-10-07)
   key         create                                                   this peer's key, at NODE_KEY_PATH
               trust <key> [--deny | --remove | --restore]              the trust list: allow, deny, forget, lift a burn
               anchor <collection>                                      check a certifier's key against its anchor

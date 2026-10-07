@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from app.hold import collection as col, drag as drag_mod, envelope as env
+from app.hold import collection as col, drag as drag_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
 from app.hold.drag import MemberFile
 from app.share import attest, contribute, coverage as cov, holdings, members as mem, messages, \
@@ -449,6 +449,89 @@ def reproduce_forgeries(root: Path, collections, cons: dict, node_con, *, own_ke
     return out
 
 
+def reproduce_claims(root: Path, collections, node_con, *, own_key: str | None = None,
+                     now: float | None = None, log: Callable[[str], None] | None = None,
+                     run=None) -> dict[str, int]:
+    """03 §3.6: "a flag received from another key is acted on after local
+    reproduction". Another key's deterministic failure under an image whose
+    verdicts count is a CLAIM (app/share/levels.py `claims`); here the named
+    check runs on the named shard alone (`hold check --shards`), once per
+    claim (node.sqlite `claims_acted`). Failing here too, it is this peer's
+    own failure and flags the collection; passing, the claim stays a claim.
+    A claim with no shard, on a shard this copy does not hold, or asking
+    for the origin this copy lacks, cannot be reproduced and is shown as a
+    claim. `run(args)` is `louise.run_check` (injected for tests)."""
+    import argparse
+    from app import collections as collections_mod, copy_state
+    from app.hold import equivalence
+    from app.share import levels
+    now = time.time() if now is None else now
+    node_con.execute("CREATE TABLE IF NOT EXISTS claims_acted (attestation_id TEXT PRIMARY KEY, acted REAL, "
+                     "outcome TEXT)")
+    if own_key is None:
+        try:
+            from app import identity
+            own_key = identity.own()
+        except Exception:   # noqa: BLE001 — no key: nothing of ours can be written
+            return {}
+    if run is None:
+        from app import louise
+        run = louise.run_check
+    out = {"reproduced": 0, "not_reproduced": 0, "cannot": 0}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None or not copy_state.of(c).in_use:
+            continue
+        bodies = copy_state.attestations(root, c.name, codex)
+        images = equivalence.reference_images(bodies, own_key, codex)
+        for claim in levels.claims(codex, bodies, reference_images=images, own_key=own_key):
+            aid = f"claim:{codex.collection_id}:{claim['check']}:{claim['shard']}:{claim['key']}"
+            if node_con.execute("SELECT 1 FROM claims_acted WHERE attestation_id=?", (aid,)).fetchone():
+                continue
+            check = claim["check"]
+            # an attestation names `<collection_id>/slice/NNNNN`; the drag knows `slice/NNNNN`
+            shard = "/".join(str(claim["shard"]).split("/")[-2:]) if claim["shard"] else None
+            origin = None
+            if check == "records-vs-origin":
+                d = getattr(c, "corpus_dir", None)
+                origin = str(d) if d and getattr(c, "source", "origin") != "drag" and Path(d).is_dir() else None
+            held = shard is not None and any(
+                f"{s.slice}/{s.n:05d}" == shard and (Path(root) / c.name / "drag" / s.path).is_file()
+                for s in _current_snapshot_shards(root, c.name))
+            if not held or (check == "records-vs-origin" and origin is None):
+                outcome = "cannot: " + ("no shard named" if shard is None else "shard not held here"
+                                        if not held else "no origin here")
+                out["cannot"] += 1
+            else:
+                args = argparse.Namespace(root=Path(root), collection=c.name, checks=check, sample=None,
+                                          seed=None, snapshot=None, origin_dir=origin, origin_mib=None,
+                                          against=None, shards=shard)
+                try:
+                    _n, _cx, _snap, _seed, report = run(args)
+                    result = report.outcome(check).result
+                except Exception as e:   # noqa: BLE001 — a claim that could not run stays a claim
+                    result = f"error: {type(e).__name__}: {e}"[:200]
+                if result == "fail":
+                    outcome, k = "reproduced", "reproduced"
+                elif result == "pass":
+                    outcome, k = "not reproduced", "not_reproduced"
+                else:
+                    outcome, k = f"cannot: {result}", "cannot"
+                out[k] += 1
+            node_con.execute("INSERT OR REPLACE INTO claims_acted(attestation_id, acted, outcome) VALUES(?,?,?)",
+                             (aid, now, outcome))
+            if log:
+                log(f"[{c.name}] share: claim {check} on {shard} from {str(claim['key'])[:23]}…: {outcome} "
+                    f"(03 §3.6)")
+    return out
+
+
+def _current_snapshot_shards(root: Path, name: str):
+    d = Path(root) / name / "drag" / "snapshots"
+    ids = sorted(p for p in d.glob("*.json") if not p.name.endswith(".sig.json")) if d.is_dir() else []
+    return sn.load(ids[-1]).shards if ids else ()
+
+
 def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop=None,
          now: float | None = None, log: Callable[[str], None] | None = None, client=None,
          key=None, own_key=None) -> dict[str, Any]:
@@ -463,6 +546,8 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
                                              own_key=own_key, stop=stop, now=now, log=log)),
                      ("forgeries", lambda: reproduce_forgeries(root, collections, cons, node_con, own_key=own_key,
                                                                now=now, log=log)),
+                     ("claims", lambda: reproduce_claims(root, collections, node_con, own_key=own_key,
+                                                         now=now, log=log)),
                      ("snapshots", lambda: newer_snapshots(root, collections, node_con, client=client, key=key,
                                                            own_key=own_key, stop=stop, now=now, log=log))):
         try:

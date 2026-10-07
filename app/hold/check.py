@@ -165,6 +165,19 @@ def sampled_shards(codex, snapshot: snap.Snapshot, check: str, *, seed: bytes,
     return [names[k] for k in cx.sample(seed, n, iter(sorted(names)))]
 
 
+def _shards(ctx, check: str, *, every: bool = False) -> list[snap.Shard]:
+    """The shards a check runs on: the named ones when a claim is being
+    reproduced (`only_shards`), else every shard (`roots`) or the seeded
+    sample of the plan."""
+    if ctx.only_shards is not None:
+        # `slice/NNNNN`, or an attestation's full `<collection_id>/slice/NNNNN`
+        want = {"/".join(str(x).split("/")[-2:]) for x in ctx.only_shards}
+        return [s for s in ctx.snapshot.shards if f"{s.slice}/{s.n:05d}" in want]
+    if every:
+        return list(ctx.snapshot.shards)
+    return sampled_shards(ctx.codex, ctx.snapshot, check, seed=ctx.seed, override=ctx.override)
+
+
 # --------------------------------------------------------------------------
 # the context every check gets
 
@@ -195,6 +208,9 @@ class Ctx:
     #: tools/reparse_lines.py wrote it under the Codex's own image —
     #: `{collection_id, snapshot_hash, image, lines: {uid: [origin, sha256]}}`.
     against: dict | None = None
+    #: a received claim reproduced here (03 §3.6): every check runs on these
+    #: shards alone — `slice/NNNNN` — in place of its sample
+    only_shards: tuple[str, ...] | None = None
 
     @property
     def drag(self) -> Path:
@@ -229,7 +245,7 @@ def check_roots(ctx: Ctx) -> Outcome:
     and the check stays honest about what it covered.
     """
     failed, held = [], []
-    for s in ctx.snapshot.shards:
+    for s in _shards(ctx, "roots", every=True):
         p = ctx.drag / s.path
         if not p.is_file():
             continue
@@ -250,8 +266,7 @@ def check_records(ctx: Ctx) -> Outcome:
     and sections and it carries an `origin_hash`; each sampled shard's
     `records_root` recomputes from its records' `content_hash` values in
     order" (03 §3.2)."""
-    shards = sampled_shards(ctx.codex, ctx.snapshot, "records", seed=ctx.seed,
-                            override=ctx.override)
+    shards = _shards(ctx, "records")
     seen, failed, ran = 0, [], []
     for s in shards:
         try:
@@ -293,8 +308,7 @@ def check_chunks(ctx: Ctx) -> Outcome:
     ids, which is exactly the drift nothing else notices.
     """
     from .. import layers as layers_mod
-    shards = sampled_shards(ctx.codex, ctx.snapshot, "chunks", seed=ctx.seed,
-                            override=ctx.override)
+    shards = _shards(ctx, "chunks")
     seen, failed, ran = 0, [], []
     for s in shards:
         try:
@@ -448,7 +462,7 @@ def check_origin_seal(ctx: Ctx) -> Outcome:
             failed.append(fh)
             why.append(f"{fh[:12]}…: {got['why']}")
     # the records parsed from a sealed file name its entry (09 §9.5 extra.seal)
-    shards = sampled_shards(ctx.codex, ctx.snapshot, "origin-seal", seed=ctx.seed, override=ctx.override)
+    shards = _shards(ctx, "origin-seal")
     ran: list[snap.Shard] = []
     unplaced = 0
     for s in shards:
@@ -551,8 +565,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     (`docs/notes/records-origin-gap.md`), and such a record is not a bad
     record — it is one nobody can put a question to.
     """
-    shards = sampled_shards(ctx.codex, ctx.snapshot, "records-vs-origin",
-                            seed=ctx.seed, override=ctx.override)
+    shards = _shards(ctx, "records-vs-origin")
     ran, seen, missing = [], 0, 0
     lines: list[tuple[str, str, bytes]] = []      # (uid, origin, the line)
     for s in shards:
@@ -812,8 +825,7 @@ def check_figures(ctx: Ctx) -> Outcome:
     """
     from . import figures as figures_mod
 
-    shards = sampled_shards(ctx.codex, ctx.snapshot, "figures", seed=ctx.seed,
-                            override=ctx.override)
+    shards = _shards(ctx, "figures")
     if int(getattr(ctx.codex, "record_line", 1) or 1) != 2:
         return Outcome("figures", INCONCLUSIVE, {"shards": 0, "named": 0,
                                                  "held": 0, "failed": []},
@@ -904,6 +916,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         embed=None, vectors_for=None, reference=None, reparse=None,
         origin_unit=None, origin_bytes: int | None = None,
         against: dict | None = None,
+        only_shards: Sequence[str] | None = None,
         log=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that.
 
@@ -929,7 +942,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
 
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
-              max(ORIGIN_BYTES, int(origin_bytes or 0)), against)
+              max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None)
     outcomes = []
     for c in want:
         try:

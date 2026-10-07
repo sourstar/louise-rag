@@ -2009,6 +2009,7 @@ def run_check(a):
         origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
         against=_json(a.against) if getattr(a, "against", None) else None,
+        only_shards=([s for s in a.shards.split(",") if s] if getattr(a, "shards", None) else None),
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
             ids, collection=local),
         log=lambda m: print(m, file=sys.stderr))
@@ -2878,6 +2879,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", metavar="FILE",
                    help="`image-equivalence` (03 §3.4): the reference image's re-parse of a "
                         "sample, written by tools/reparse_lines.py under the Codex's own image")
+    p.add_argument("--shards", metavar="SLICE/NNNNN,…",
+                   help="run every check on these shards alone, in place of its sample — how a "
+                        "received claim is reproduced here (03 §3.6)")
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)

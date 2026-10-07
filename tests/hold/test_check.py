@@ -897,3 +897,17 @@ def _change_the_text(txt):
     data = txt.read_bytes()
     i = data.index(b"*** END OF")
     txt.write_bytes(data[:i] + b"An inserted paragraph, inside the book.\n\n" + data[i:])
+
+
+def test_a_claim_is_reproduced_on_the_named_shard_alone(checkable, corpus_dir):
+    """03 §3.6 / migration step 9: a received deterministic claim names a
+    shard; `--shards` runs the check on it alone, in place of the sample."""
+    from app import louise
+    root, snapshot, codex = checkable
+    names = sorted(f"{s.slice}/{s.n:05d}" for s in snapshot.shards)
+    one = names[0]
+    report = chk.run(root, "gutenberg", codex, snapshot, seed=SEED, checks=["chunks", "records-vs-origin"],
+                     reparse=louise._reparse_from(codex, "gutenberg", corpus_dir), only_shards=[one])
+    for check in ("chunks", "records-vs-origin"):
+        o = report.outcome(check)
+        assert o.result == chk.PASS and [s.split("/", 1)[1] for s in o.shards] == [one], (check, o.shards, o.why)
