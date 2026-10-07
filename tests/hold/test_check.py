@@ -514,7 +514,7 @@ def test_a_record_the_origin_no_longer_reproduces_FAILS(checkable, corpus_dir):
     # the origin's text moved under us
     p = corpus_dir / str(victim["native_id"])
     txt = next(p.glob("*.txt*"))
-    txt.write_bytes(txt.read_bytes() + b"\n\nAn appended paragraph.\n")
+    _change_the_text(txt)
 
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
              reparse=louise._reparse_from(codex, "gutenberg", corpus_dir)
@@ -778,7 +778,7 @@ def test_a_difference_in_a_file_that_is_read_still_fails(checkable, corpus_dir):
     first = cx.sample(SEED, 1, iter(units))[0]
     victim = next(r for r in records if r["origin"].partition("#")[0] == first)
     txt = next((corpus_dir / str(victim["native_id"])).glob("*.txt*"))
-    txt.write_bytes(txt.read_bytes() + b"\n\nAn appended paragraph.\n")
+    _change_the_text(txt)
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
              reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
              origin_unit=_unit_sizes(200 << 20)).outcome("records-vs-origin")
@@ -851,3 +851,49 @@ def test_anchor_is_judged_from_the_document_last_fetched(checkable):
     anchor.record(root, "gutenberg", certified, document=anchor.parse({**doc, "collections": []}), now=1_790_000_000.0)
     o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
     assert o.result == chk.FAIL and o.detail == {"state": "mismatch"} and "this collection" in o.why
+
+
+def test_a_record_whose_origin_unit_moved_and_parses_the_same_is_named_moved_not_failed(checkable, corpus_dir):
+    """03 §3.2, amended 2026-10-07 (operator's yes): the mirror rewrote half
+    of a sample of gutenberg's book folders on 2026-10-05, every parsed
+    record unchanged, and every one of them failed — so the new image could
+    not be proven equivalent, though it reproduced each record's content.
+    A line identical but for `origin_hash` is MOVED: named, not failed. A
+    line that differs anywhere else still fails."""
+    import json as _json
+    from app import louise
+    root, snapshot, codex = checkable
+    real = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    victim = next(iter(_records_of(root, snapshot)))["uid"]
+
+    def rewritten(uid, locator):
+        line = real(uid, locator)
+        if uid != victim:
+            return line
+        r = _json.loads(line)
+        r["origin_hash"] = "ff" * 16
+        return _json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=rewritten).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert o.detail["moved"] == [victim] and o.detail["failed"] == []
+    assert "1 moved" in o.why
+
+    def altered(uid, locator):
+        line = real(uid, locator)
+        if uid != victim:
+            return line
+        r = _json.loads(line)
+        r["origin_hash"], r["title"] = "ff" * 16, (r.get("title") or "") + " (rev.)"
+        return _json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=altered).outcome("records-vs-origin")
+    assert o.result == chk.FAIL and o.detail["failed"] == [victim] and o.detail["moved"] == []
+
+
+def _change_the_text(txt):
+    """A paragraph INSIDE the book. Appended after the end marker, as these
+    tests did until 2026-10-07, it is boilerplate the cleaner drops (invariant
+    11 (b)): the record did not change, and the tests failed it only on
+    `origin_hash` — which is now the MOVED case, not a failure."""
+    data = txt.read_bytes()
+    i = data.index(b"*** END OF")
+    txt.write_bytes(data[:i] + b"An inserted paragraph, inside the book.\n\n" + data[i:])

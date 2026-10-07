@@ -28,6 +28,7 @@ would publish nothing whenever one check was inconclusive.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -615,7 +616,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # and every OSError went onto the `failed` list. An operator reading
     # that had every reason to believe 1.6M records had drifted from
     # PubMed, and the collection's own records were perfect.
-    failed, errored, unreachable = [], [], 0
+    failed, moved, errored, unreachable = [], [], [], 0
     for uid, locator, line in lines:
         try:
             got = ctx.reparse(uid, locator)
@@ -626,6 +627,14 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             errored.append(f"{uid}: {type(e).__name__}: {e}"[:200])
             continue
         if got != line:
+            if _moved_only(line, got):
+                # MOVED, not failed (03 §3.2, amended 2026-10-07): the origin
+                # unit changed since the build and the record re-parsed from
+                # it is otherwise identical. The mirror rewrote half of a
+                # sample of gutenberg's book folders on 2026-10-05 without
+                # changing one parsed record, and every one of them failed.
+                moved.append(uid)
+                continue
             # The FIRST differing record, named — §9.8's detail asks for
             # exactly that, because a list of every difference between two
             # parsers is a diff and not a finding.
@@ -654,17 +663,34 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                 f"the origin ({len(lines)} of {sampled_records} sampled records)")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
                    {"records": seen, "compared": len(lines),
-                    "failed": sorted(failed)[:64],
+                    "failed": sorted(failed)[:64], "moved": sorted(moved)[:64],
                     "errored": len(errored), "origin": "reachable", **bound},
                    ctx.seed, _shard_ids(ctx.codex, ran),
                    why=f"{len(lines) - unreachable - len(errored)} record(s) "
                        f"re-parsed from the origin, {len(failed)} differing"
+                       + (f", {len(moved)} moved (their origin unit changed since the build, "
+                          f"the record re-parsed from it identical but for origin_hash)"
+                          if moved else "")
                        + (f", {unreachable} not there" if unreachable else "")
                        # named, never folded into the count above: a record
                        # that could not be read is not a record that agreed
                        + (f", {len(errored)} unreadable ({errored[0]})"
                           if errored else "")
                        + said)
+
+
+def _moved_only(line: bytes, got: bytes) -> bool:
+    """Every field of the two record lines equal but `origin_hash`: the
+    origin unit was rewritten and parses to the same record (03 §3.2)."""
+    try:
+        a, b = json.loads(line), json.loads(got)
+    except ValueError:
+        return False
+    if not isinstance(a, dict) or not isinstance(b, dict) or a.get("origin_hash") == b.get("origin_hash"):
+        return False
+    a.pop("origin_hash", None)
+    b.pop("origin_hash", None)
+    return a == b
 
 
 def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:
