@@ -244,6 +244,16 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~03:30Z (UTC): step 11, sixth brick — `freshness`.** The
+top five of each list asked of their origins now (a plugin `current()`
+per origin: Gutenberg's cache, E-utilities, the export API; the archive
+layer refused as `unavailable`, a fourth state 05 §5.3 now names), the
+content hash compared, the current text beside the lists as a fact
+where the licence allows. tests/ask +5 (49). Not deployed (node:
+684931d). Not tried against the live origins yet: the first live
+`--freshness` goes here after the deploy. With this, step 11's remaining
+items wait on content that does not exist yet (plates, relations).
+
 **2026-10-07, 02:45Z (UTC): steps 11 (five bricks) and 10 (first brick)
 DEPLOYED as 684931d.** Web and worker on image `497e16a9…`;
 `src/.deployed-commit` = 684931d; the staged image passed tests/deposit,

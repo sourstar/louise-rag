@@ -1335,11 +1335,26 @@ the object itself kept in `turns`), rounds bounded at six then an
 answer without tools; CHAT_URL unset refuses (exit 2);
 `/v1/chat/completions` stays retrieval-then-answer for its clients.
 07 §7.3 amended: `--filter FACET=VALUE` in place of per-facet flags.
-**Owed in step 11**: `freshness`, figures on results and `GET
-/api/ask/figure`, the `needs` of an edge into another collection (its
-plugin's id→shard mapping), results carrying `certification` (step 10);
-`hold key trust <key> --restore|--deny` over the trust file goes with
-step 10's `hold key`. Known trade-off kept from before: a burned
+Sixth brick: `freshness` (05 §5.3; `app/ask/freshness.py`) — the top
+five of each list asked of their origins now through a plugin method
+`current(ref, *, client, workdir) -> RawDoc` and the parser the plugin
+always had, the content hash compared with the copy's: `current`,
+`newer-at-source` (the current text beside the lists as a fact, capped
+at 20 000 characters and said so; a red collection's hash only with the
+origin's page), `unreachable`, and `unavailable` — 05 §5.3 amended with
+that fourth state for a record with no per-record current form (one
+read from a static archive; a copy built before records carried a
+content hash). Gutenberg fetches the form the copy holds from the
+origin's cache beside the catalogue entry and reads it by the same
+rule; PubMed the article E-utilities serves (the same element the
+files carry, `tool=louise`); Wikipedia the page the export API writes
+(the dump's shape once the export namespace is dropped), the archive
+layer refused as unavailable. Each fetch draws from the budget, one at
+a time. Results carry `certification` since step 10's first brick.
+**Owed in step 11**: figures on results and `GET /api/ask/figure` (no
+collection carries plates; built with the first that does), the
+`needs` of an edge into another collection (its plugin's id→shard
+mapping; no plugin emits relations yet). Known trade-off kept from before: a burned
 producer's vectors are re-embedded locally rather than dropped from
 search at once (03 §3.5 says dropped) — they serve until the worker's
 delete-then-insert replaces them.

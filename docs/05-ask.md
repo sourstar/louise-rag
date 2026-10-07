@@ -198,7 +198,7 @@ The fields, with their values:
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
 | `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
-| `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` |
+| `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
 
 **Figures are placed, never ranked.** Nothing embeds a picture, so a

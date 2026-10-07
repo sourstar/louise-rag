@@ -66,8 +66,6 @@ def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkey
 def test_the_flags_this_brick_does_not_build_are_refused_not_ignored(node, monkeypatch):  # noqa: F811
     monkeypatch.setattr(query_service, "resolve_collections",
                         lambda names, **kw: [SimpleNamespace(name="g", plugin="gutenberg", codex=None)])
-    with pytest.raises(results.NotYet):
-        results.search("q", freshness=True, run=lambda *a, **k: {"hits": []})
     seen = {}
 
     def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False, filters=None):

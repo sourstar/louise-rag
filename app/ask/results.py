@@ -160,8 +160,6 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     if filters is not None and not isinstance(filters, dict):
         raise AskError("filters is an object {facet field: value | {not: value}} (05 §5.4)")
     day = asof_mod.parse_date(as_of) if as_of else None
-    if freshness:
-        raise NotYet("freshness: asking the origin for the current version is not built yet (05 §5.3)")
     if not isinstance(query, str) or not query.strip():
         raise AskError("a query is a non-empty string")
     limit = max(1, min(int(limit), MAX_LIMIT))
@@ -241,6 +239,30 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
             h["rank"] = i
         lists.append({"space_id": sid, "question": "relevance", "hits": hits})
     facts = [_plain(f) for f in result.get("facts", [])]
+    fresh_summary: dict[str, Any] | None = None
+    if freshness:
+        # 05 §5.3: the top five of each list asked of their origins now,
+        # one collection's results at a time; what is newer at the source
+        # comes beside the lists as a fact, never into them
+        from contextlib import closing
+        from app import db
+        from app.ask import freshness as fresh_mod
+        fresh_summary = {"checked": 0, "states": {}}
+        for lst in lists:
+            top = lst["hits"][:fresh_mod.TOP]
+            by_coll: dict[str, list[dict[str, Any]]] = {}
+            for h in top:
+                by_coll.setdefault(h["uid"].split(":", 1)[0], []).append(h)
+            for plugin_name, hs in by_coll.items():
+                c = next((cc for cc in named if cc.plugin == plugin_name), None)
+                if c is None:
+                    continue
+                with closing(db.connect(c)) as fcon:
+                    got = fresh_mod.check(c, hs, con=fcon, red=contexts[c.name]["red"])
+                facts.extend(got["facts"])
+                fresh_summary["checked"] += got["checked"]
+                for k, v in got["states"].items():
+                    fresh_summary["states"][k] = fresh_summary["states"].get(k, 0) + v
     return {
         "lists": lists,
         "facts": facts,
@@ -253,5 +275,6 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "filtered": result.get("filtered"),
         "as_of": ({"date": day.isoformat(), "snapshots": {n: r.snapshot.snapshot_id for n, r in dated.items()},
                    "excluded": excluded} if day is not None else None),
+        "freshness": fresh_summary,
         "timings": result.get("timings", {}),
     }

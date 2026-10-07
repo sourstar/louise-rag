@@ -214,6 +214,23 @@ class PubmedSource:
         h = hashlib.blake2b(data, digest_size=16)
         return RawDoc(ref=ref, raw_hash=h.hexdigest(), data=data)
 
+    EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+    def current(self, ref: DocRef, *, client, workdir) -> RawDoc:
+        """05 §5.3's freshness: the article as E-utilities serves it now —
+        the same PubmedArticle element the baseline and update files
+        carry, so `parse` reads it unchanged. One article per request,
+        the `tool` named as NCBI's etiquette asks."""
+        r = client.get(self.EFETCH_URL, params={"db": "pubmed", "id": str(ref.native_id), "retmode": "xml",
+                                                "tool": "louise"})
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        article = root.find("PubmedArticle")
+        if article is None:
+            raise RuntimeError(f"PMID {ref.native_id}: the origin serves no article for it now")
+        data = ET.tostring(article)
+        return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(), data=data)
+
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         elem = ET.fromstring(raw.data.decode("utf-8"))
         meta = medline.parse_full(elem)

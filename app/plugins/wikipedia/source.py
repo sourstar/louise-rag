@@ -522,6 +522,33 @@ class WikipediaSource:
         digest = hashlib.blake2b(data, digest_size=16).hexdigest()
         return RawDoc(ref=ref, raw_hash=digest, data=data)
 
+    API_URL = "https://{lang}.wikipedia.org/w/api.php"
+
+    def current(self, ref: DocRef, *, client, workdir) -> RawDoc:
+        """05 §5.3's freshness: the page as the origin exports it now — the
+        export API writes the same `<page>` element the dumps do, so
+        `parse` reads it unchanged once the export namespace is dropped.
+        A record read from the archive (layer 1) has no live form: its
+        origin is the archive, and the live page is another form."""
+        from app.plugins.base import NoCurrentForm
+        lang, page_id, from_archive = decode_native_id(int(ref.native_id))
+        if from_archive:
+            raise NoCurrentForm("the record's origin is a static archive (wikivec); its current version is "
+                                "the archive's, and the live page is another form")
+        r = client.get(self.API_URL.format(lang=lang), params={"action": "query", "pageids": str(page_id),
+                                                               "export": "1", "exportnowrap": "1",
+                                                               "format": "xml"})
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        for el in root.iter():
+            if isinstance(el.tag, str) and "}" in el.tag:
+                el.tag = el.tag.split("}", 1)[1]
+        page = root.find("page")
+        if page is None:
+            raise RuntimeError(f"page {page_id} ({lang}): the origin serves no page for it now")
+        data = page_bytes(page)
+        return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(), data=data)
+
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         lang_of_id, page_of_id, from_archive = decode_native_id(int(raw.ref.native_id))
         if from_archive:

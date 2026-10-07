@@ -2844,7 +2844,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--rerank-depth", type=int, default=50)
     p.add_argument("--as-of", help="YYYY-MM-DD: answer from the held snapshot current at that date (05 §5.1)")
-    p.add_argument("--freshness", action="store_true", help="ask the origin for the current version (not built yet)")
+    p.add_argument("--freshness", action="store_true", help="ask the origin for the current version of the top five of each list (05 §5.3)")
     p.add_argument("--translate", action="store_true")
     p.add_argument("--all-languages", action="store_true")
     p.add_argument("--filter", action="append", metavar="FACET=VALUE",

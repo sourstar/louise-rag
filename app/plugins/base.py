@@ -142,6 +142,13 @@ class DocRef:
     scope: Literal["document", "container"] = "document"
 
 
+class NoCurrentForm(Exception):
+    """A plugin's `current()` saying there is no per-record current version
+    of this record at the origin to ask for (05 §5.3's `unavailable`): a
+    record read from a static archive, a form the origin does not serve
+    one record at a time."""
+
+
 @dataclass(frozen=True)
 class RawDoc:
     """Result of fetch(): bytes are available locally and hashed."""

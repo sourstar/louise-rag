@@ -282,6 +282,44 @@ class GutenbergSource:
                 h.update(block)
         return RawDoc(ref=ref, raw_hash=h.hexdigest(), path=path)
 
+    CURRENT_URL = "https://www.gutenberg.org/cache/epub/{id}/{name}"
+
+    def current(self, ref: DocRef, *, client, workdir: Path) -> RawDoc:
+        """05 §5.3's freshness: the form this copy holds for the book — the
+        same rule, `pick_form`, on the same directory — as the origin serves
+        it now, into `workdir` beside the origin's catalogue entry, read
+        back by the same rule. The origin's cache names every form
+        `pg<id>…`; the file is kept under the local name so the rule
+        chooses it as it chose the copy's."""
+        book_id = int(ref.native_id)
+        form, path, _ = pick_form(Path(ref.locator), book_id)
+        if form is None or path is None:
+            raise UnindexableDocument(f"no epub, txt or rdf for book {book_id}")
+        suffix = path.suffix.lower()
+        if suffix == ".epub":
+            origin_name = f"pg{book_id}-images.epub" if "-images" in path.name else f"pg{book_id}.epub"
+        elif suffix == ".txt":
+            origin_name = f"pg{book_id}.txt"
+        else:
+            origin_name = f"pg{book_id}.rdf"
+        book_dir = workdir / str(book_id)
+        book_dir.mkdir(parents=True, exist_ok=True)
+        wanted = {path.name: origin_name, f"pg{book_id}.rdf": f"pg{book_id}.rdf"}
+        for local_name, name in wanted.items():
+            r = client.get(self.CURRENT_URL.format(id=book_id, name=name))
+            r.raise_for_status()
+            (book_dir / local_name).write_bytes(r.content)
+        form_now, path_now, _ = pick_form(book_dir, book_id)
+        if path_now is None or path_now.name != path.name:
+            raise RuntimeError(f"the origin no longer serves book {book_id} in the form this copy holds "
+                               f"({path.name}; the rule now reads {path_now.name if path_now else 'nothing'})")
+        h = hashlib.blake2b(digest_size=16)
+        with open(path_now, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        return RawDoc(ref=DocRef(ref.source_id, ref.native_id, str(book_dir), extra=dict(ref.extra)),
+                      raw_hash=h.hexdigest(), path=path_now)
+
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         native_id = int(raw.ref.native_id)
         book_dir = Path(raw.ref.locator)
