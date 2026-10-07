@@ -569,6 +569,16 @@ peer answers 404 for a hash it does not hold and for one the record
 marks `carried: false` — the result object already told the caller
 which of those it was, before the request was made.
 
+**Two routes are not under `/api` at all** (*added 2026-10-07*): the
+documents 09 §9.11 fixes at a certifier's domain, served by the node for
+whatever domain fronts it —
+`GET /.well-known/louise-certifier.json`, this node's anchor document
+(its key from `[certifier]`, §7.8, and the held collections whose Codex
+names that key), and
+`GET /.well-known/louise-pointer/<collection_id hex>.json`, the pointer
+`hold collection certify` wrote. Both open; both nothing but what the
+node would gossip.
+
 Who may call what:
 
 - `hold` and `node` routes require the token read from
@@ -880,6 +890,10 @@ variable, a file, a log line or a message.
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
+[certifier]  valid_from = "2026-10-07T00:00:00Z"        # this node as a certifier (09 §9.11): from when its own key certifies, and
+             # revoked_at = "…"                          # when it was revoked — the anchor document it serves at
+                                                        # /.well-known/louise-certifier.json says so; the collections listed there are
+                                                        # the held ones whose Codex names this key (added 2026-10-07)
              # of 50; a deeper list gets it in proportion (05 §5.6)
 [deposit]    encoder = "http://nas:30450/upstream/granite-embedding-107m-multilingual"
              # the encoder a deposit collection is created with when none is named (02 §2.9);

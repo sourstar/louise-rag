@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import codex as codex_mod
-from .codex import (Chunker, Codex, CodexError, Credit, Descriptive, Facet,
+from .codex import (Certifier, Chunker, Codex, CodexError, Credit, Descriptive, Facet,
                     Layer, License, Origin, Parser, Toolchain, Update,
                     Validation, Work, default_per, space_from_dict)
 from .drag import check_slice
@@ -510,7 +510,13 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
         privacy=recipe.get("privacy", source.privacy_class.value),
         update=update,
         publication=recipe.get("publication", "open"),
-        certifier=None, embedding=_embedding,
+        # 02 §2.8: a certified recipe names its certifier — the key, the anchor,
+        # whether it is the origin; `validate` refuses a certified Codex
+        # without one (this was hard-wired None until 2026-10-07)
+        certifier=(Certifier(**{k: recipe["certifier"][k] for k in ("key", "anchor", "is_origin")
+                                if k in recipe["certifier"]})
+                   if isinstance(recipe.get("certifier"), dict) else None),
+        embedding=_embedding,
         succession=recipe.get("succession", "frozen"),
         content=recipe.get("content"),
         facets=(tuple(sorted((_facet(d) for d in recipe["facets"]),

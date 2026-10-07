@@ -444,6 +444,19 @@ that slice's counts, because that is what it can search. Two peers with
 different holdings report different numbers for one collection, and
 neither is wrong.
 
+**Every cost of the listing is bounded, and a bound reached is said,
+never a partial count passed off as the count** (*amended 2026-10-07*,
+after the first pass over 33 million records took the worker down). A
+field with more than 200 000 distinct values is not counted on that
+peer and the listing says why; a tree whose full paths pass that bound
+is counted to depth 1 — PubMed's descriptors without their qualifiers —
+and the listing says `depth: 1`. The index a filter reads (§5.2) holds
+only values narrow enough for a filter to use, at most 20 000 records
+each, and no more than 20 million rows per field; a broader value is
+refused by its count, a deeper one than the depth counted is refused
+naming the value to filter by, and the listing says per field whether
+it is `filterable` here.
+
 **A new category needs no new Codex.** When an origin adds a subject —
 PubMed coining one next year — it arrives in the records of the next
 snapshot like any other content, and the tree gains a node when the

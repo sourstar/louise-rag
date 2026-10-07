@@ -244,6 +244,19 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~08:50Z (UTC): the certifier decided; the specs reviewed.**
+On the operator's "do it yourself": the certifier key is this node's
+own, the anchor the node's Tailscale domain
+(`https://mynass-de.tail559dc2.ts.net/.well-known/louise-certifier.json`,
+TLS from Tailscale, the Funnel carrying the `.well-known` paths), the
+node serving the anchor document from `[certifier]` and the Codexes it
+holds; a recipe's `certifier` now reaches the Codex (it was hard-wired
+None); the first certified collection, `gutenberg-mini-certified`, goes
+up on the node after the deploy that carries the route (the next entry
+reports it). [`spec-review-2026-10-07.md`](spec-review-2026-10-07.md)
+indexes every amendment made today and every place the code still
+stands apart from a document. The genome collections stay frozen.
+
 **2026-10-07, ~07:10Z (UTC): the seals DEPLOYED as 55d0970.** The
 node's image rebuilt with the four libraries; `tests/hold` (736, the
 seal tests among them) passed in the staged image; the restart waited

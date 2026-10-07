@@ -95,6 +95,36 @@ from .ask import api as ask_api  # noqa: E402
 app.include_router(ask_api.router)        # `ask` over HTTP and the MCP server (07 §7.4; 05 §5.4)
 
 
+@app.get("/.well-known/louise-certifier.json")
+def certifier_anchor():
+    """09 §9.11's anchor document for THIS node as a certifier: its key,
+    valid from `[certifier] valid_from` (07 §7.8), never revoked here —
+    a revocation is the operator's act, written into the platform file —
+    and the collections held whose Codex names this key as certifier.
+    Served where a domain the operator controls fronts the node with TLS
+    (the domain's chain is the anchor; 03 §3.7); open, nothing secret."""
+    from . import identity, platform_config
+    try:
+        own = identity.own()
+    except Exception:   # noqa: BLE001 — a node without a key certifies nothing
+        own = None
+    if not own:
+        raise HTTPException(404, "this node has no key, so it is nobody's certifier")
+    cfg = getattr(platform_config.load(), "certifier", None)
+    valid_from = getattr(cfg, "valid_from", None) or "1970-01-01T00:00:00Z"
+    revoked_at = getattr(cfg, "revoked_at", None)
+    certified = []
+    for c in collections_mod.load_all(skip_unreadable=True):
+        codex = getattr(c, "codex", None)
+        cert = getattr(codex, "certifier", None) if codex is not None else None
+        if cert is not None and getattr(codex, "publication", "open") == "certified" and cert.key == own:
+            certified.append(codex.collection_id)
+    doc = {"kind": "louise-certifier", "version": 1,
+           "keys": [{"key": own, "valid_from": valid_from, "revoked_at": revoked_at}],
+           "collections": sorted(certified)}
+    return Response(json.dumps(doc, sort_keys=True, separators=(",", ":")), media_type="application/json")
+
+
 @app.get("/.well-known/louise-pointer/{collection_hex}.json")
 def certifier_pointer(collection_hex: str):
     """09 §9.11: the certifier's signed pointer to its current certified

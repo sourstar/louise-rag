@@ -494,3 +494,20 @@ def test_a_well_formed_layer_still_works():
         platform_image=PLATFORM)
     assert [(l.chunker.id, l.chunker.version, l.rule) for l in c.layers] == \
         [("abstract", 1, "default")]
+
+
+def test_a_certified_recipe_names_its_certifier_in_the_codex():
+    """02 §2.8: `publication: certified` with `certifier {key, anchor,
+    is_origin}` and `content: manifest-only`. `from_recipe` hard-wired
+    the certifier to None until 2026-10-07, so no certified collection
+    could be created from a recipe."""
+    from app.hold import codex as cx
+    r = recipe(publication="certified", content="manifest-only",
+               certifier={"key": "ed25519:" + "5c" * 32,
+                          "anchor": "https://mynass-de.tail559dc2.ts.net/.well-known/louise-certifier.json",
+                          "is_origin": False})
+    codex = from_recipe("gutenberg", r, platform_image=PLATFORM)
+    assert codex.publication == "certified" and codex.certifier.key == "ed25519:" + "5c" * 32
+    assert codex.certifier.anchor.endswith("/louise-certifier.json") and codex.certifier.is_origin is False
+    cx.validate(codex)
+    assert from_recipe("gutenberg", recipe(), platform_image=PLATFORM).certifier is None

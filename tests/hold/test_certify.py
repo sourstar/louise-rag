@@ -9,9 +9,10 @@ import pytest
 from nacl import signing
 
 from app.hold import anchor, certify, envelope as env, snapshot as sn
+from app.hold.codex import Certifier
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY, a_root, pubmed
-from tests.hold.test_anchor import T0, a_signed_drag, certified
+from tests.hold.test_anchor import CERT_KEY, T0, a_signed_drag, certified
 
 OTHER = signing.SigningKey(b"\x09" * 32)
 
@@ -102,3 +103,38 @@ def test_the_worker_refreshes_a_certified_collection_s_anchor_when_due(node, mon
     monkeypatch.setattr(worker.node_state, "worker_state", lambda: "acquire-only")
     assert worker._refresh_anchor(con, c) is True and calls == [name]
     assert worker._refresh_anchor(con, SimpleNamespace(name="g", codex=pubmed())) is False, "open: no anchor"
+
+
+def test_the_anchor_document_is_served_for_this_node_as_certifier(node, monkeypatch):  # noqa: F811
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from app import api, collections as collections_mod, identity, platform_config
+    from app.hold import anchor
+    from tests.hold.conftest import pubmed
+    codex = certified()                                   # certifier = KEY
+    a_root(node, codex)
+    name, d, snap, _ = a_signed_drag(node, codex)
+    other = pubmed(publication="certified", content="manifest-only",
+                   certifier=Certifier("ed25519:" + "ab" * 32, "https://else.example/.well-known/louise-certifier.json"),
+                   descriptive=pubmed().descriptive)
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
+    monkeypatch.setattr(collections_mod, "load_all",
+                        lambda **kw: [SimpleNamespace(name=name, codex=codex),
+                                      SimpleNamespace(name="other", codex=other),
+                                      SimpleNamespace(name="open", codex=pubmed()),
+                                      SimpleNamespace(name="legacy", codex=None)])
+    monkeypatch.setattr(identity, "own", lambda: CERT_KEY)
+    monkeypatch.setattr(platform_config, "load",
+                        lambda: SimpleNamespace(certifier=SimpleNamespace(valid_from="2026-01-01T00:00:00Z",
+                                                                          revoked_at=None)))
+    client = TestClient(api.app)
+    r = client.get("/.well-known/louise-certifier.json")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/json")
+    doc = anchor.parse(r.json())
+    assert doc["keys"] == [{"key": CERT_KEY, "valid_from": "2026-01-01T00:00:00Z", "revoked_at": None}]
+    assert doc["collections"] == [codex.collection_id], "only the collections this key certifies"
+    anchor.record(node, name, codex, document=doc, now=T0)
+    assert anchor.status(node, name, codex, now=T0)["state"] == "anchored", "the node anchors its own collection"
+    monkeypatch.setattr(identity, "own", lambda: (_ for _ in ()).throw(RuntimeError("no key")))
+    assert client.get("/.well-known/louise-certifier.json").status_code == 404

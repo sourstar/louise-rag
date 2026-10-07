@@ -1339,7 +1339,19 @@ not the sharer.
 
 **Operator**: the certifier key and anchor for the first certified
 collection — this node's own key and a well-known URL on a domain you
-control, marked `is_origin: false`.
+control, marked `is_origin: false`. **DECIDED by the operator's "do it
+yourself" (2026-10-07):** the key is the node's own
+(`ed25519:ba2168c0…99b1`), the anchor
+`https://mynass-de.tail559dc2.ts.net/.well-known/louise-certifier.json`
+— the node's Tailscale domain, TLS from Tailscale, its Funnel carrying
+the two `.well-known` paths to the web — and the node serves the
+document itself (`GET /.well-known/louise-certifier.json`, from
+`[certifier]` in the platform file and the Codexes held). The first
+certified collection is `gutenberg-mini-certified`: three books of
+Project Gutenberg in gutenberg's space (`--space-from`), a proving
+instance of the machinery, `is_origin: false`, `share = false`. A
+certified source whose value is that this is the text (the Gazzetta,
+the OJEU) remains the certifier body's to run.
 
 ### Step 11 — `ask serve`, facets, relations
 *05. Wraps `app/query_service.py`, `app/retrieval.py`, `app/refs`.*

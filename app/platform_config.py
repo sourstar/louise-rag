@@ -88,6 +88,18 @@ class AdmissionConfig:
 
 
 @dataclass(frozen=True)
+class CertifierConfig:
+    """`[certifier]` (07 §7.8; 09 §9.11): what this node says of ITS OWN
+    key when it serves the anchor document at
+    `/.well-known/louise-certifier.json` — from when the key certifies,
+    and when it was revoked, if ever. Both 09 §9.1 times. Only a node
+    that fronts itself with TLS on a domain the operator controls is an
+    anchor (03 §3.7); the document is served regardless."""
+    valid_from: str | None = None
+    revoked_at: str | None = None
+
+
+@dataclass(frozen=True)
 class AskConfig:
     """`[ask]` (07 §7.8): the reranker's latency bound (05 §5.6). A list
     the reranker cannot order inside it keeps its fused order and says
@@ -162,6 +174,7 @@ class PlatformConfig:
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
+    certifier: CertifierConfig = CertifierConfig()
     deposit: DepositConfig = DepositConfig()
     peers: PeersConfig = PeersConfig()
     # [encoder_defaults.<plugin>] -> the raw [encoder]-shaped table. Kept
@@ -385,6 +398,15 @@ def _load_one(path: Path) -> PlatformConfig:
     ask = AskConfig(latency_budget_ms=_positive_int(
         ask_raw, "latency_budget_ms", AskConfig().latency_budget_ms))
 
+    cert_raw = raw.get("certifier", {}) or {}
+    if not isinstance(cert_raw, dict):
+        raise schedule_mod.ScheduleError("certifier must be a table (07 §7.8)")
+    for key in ("valid_from", "revoked_at"):
+        v = cert_raw.get(key)
+        if v is not None and not (isinstance(v, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", v)):
+            raise schedule_mod.ScheduleError(f"[certifier] {key} is a time YYYY-MM-DDTHH:MM:SSZ (09 §9.1)")
+    certifier = CertifierConfig(valid_from=cert_raw.get("valid_from"), revoked_at=cert_raw.get("revoked_at"))
+
     node_raw = raw.get("node", {}) or {}
     codex_only_raw = node_raw.get("codex_only", False)
     if not isinstance(codex_only_raw, bool):
@@ -446,6 +468,7 @@ def _load_one(path: Path) -> PlatformConfig:
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
                           ask=ask,
+                          certifier=certifier,
                           embed_defaults=embed_raw,
                           codex_only=codex_only_raw,
                           quarantine=quarantine_raw,

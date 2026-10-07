@@ -104,3 +104,11 @@ segments_per_file = 1
 # [deposit]
 # encoder = "http://192.168.178.10:30437/upstream/granite-embedding-107m-multilingual"
 # space = "deposit-space.toml"
+
+[certifier]
+# 07 §7.8; 09 §9.11: what this node says of ITS OWN key in the anchor document
+# it serves at /.well-known/louise-certifier.json — a certified collection
+# whose Codex names this node's key as certifier is anchored only where a
+# domain the operator controls fronts the node with TLS (03 §3.7).
+# valid_from = "2026-10-07T00:00:00Z"   # from when the key certifies
+# revoked_at = "2027-01-01T00:00:00Z"   # the operator's act, if ever
