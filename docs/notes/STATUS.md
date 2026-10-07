@@ -244,6 +244,30 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~14:55Z (UTC): the deposit collections re-made; the moved
+outcome live; 3d9036b DEPLOYED.** The node rebooted at 14:00Z on its own —
+a TrueNAS update (kernel 6.18.42 → 6.18.52) — and was down ~30 minutes;
+the new GPU driver gave RAGE new run ids, which the worker gated by itself
+(16/16). LocalAGI's two test collections were re-made under their names on
+the operator's word: `deposit-granite` (`sha256:163321a3…`, empty) and
+`louise-stop` (`sha256:6e12e447…`). Their carry step failed silently — a
+`docker exec` without `-i` takes no input — and the forget ran anyway;
+`louise-stop`'s three entries were restored byte for byte from the hourly
+ZFS snapshot, its `https://example.com/` subscription registered again;
+LocalAGI's own routes list, search and show the source. Re-making them
+found a defect, fixed in 3d9036b: the worker kept a forgotten collection's
+catalog writer, so the one re-made under its name could not write. 03 §3.2
+amended on the operator's yes: a record identical but for `origin_hash` is
+MOVED, not failed. Equivalence under `4c47498a…` (the image 3d9036b runs):
+**pubmed PASS** again (44,613 re-parsed byte for byte, 1,948,582 re-cut,
+11 min); **gutenberg FAIL, correctly**: 2,091 moved and 30 genuinely
+different — 19 with corrected texts, the rest with changed catalogue
+entries (authors' dates, aliases, web pages) — every one a change Project
+Gutenberg made after the build, which the current parser renders
+faithfully. Gutenberg's records are out of date against the mirror;
+equivalence cannot be shown against a source that moved in content.
+
+
 **2026-10-07, ~13:20Z (UTC): the operator's three decisions, done;
 c332c93 DEPLOYED.** (1) The runbook now tells web and worker the image
 they run (`deploy/16f/set_platform_image.py`, checked in phase 6): first
