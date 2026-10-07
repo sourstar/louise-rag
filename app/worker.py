@@ -3895,7 +3895,10 @@ def run_forever():
     # its own thread, since a metadata wait is bounded by minutes
     from .share import transport as share_transport
     threading.Thread(target=share_transport.loop, args=(_stop,),
-                     kwargs={"log": lambda m: print(m, flush=True)},
+                     kwargs={"log": lambda m: print(f"{time.strftime('%H:%M:%S')} [node info:share] {m}", flush=True),
+                             # record shards promoted: a plain scan, at once (9f)
+                             "on_promoted": lambda name: _request_discovery(name, "members promoted",
+                                                                            acquire=False)},
                      name="share-fetch", daemon=True).start()
     job_thread = threading.Thread(target=_job_runner, name="jobs", daemon=True)
     job_thread.start()

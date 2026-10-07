@@ -380,17 +380,26 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
                 f"§7.8's key and `profile` the older spelling it replaces; "
                 f"keep one")
         slices = _parse_slices(raw["slices"], where)
-    defaults = codex_defaults(codex, name, slices, kinds)
+    source = str(raw.get("source") or "origin")
+    if source not in ("origin", "drag"):
+        raise ValueError(f"{where}: source is \"origin\" or \"drag\" (07 §7.8), got {raw.get('source')!r}")
+    defaults = codex_defaults(codex, name, slices, kinds, source)
     if slices is None and raw.get("profile") and raw["profile"] == defaults["everything"]:
         # the profile that selects every slice IS `slices = "all"`
         slices = "all"
-        defaults = codex_defaults(codex, name, slices, kinds)
+        defaults = codex_defaults(codex, name, slices, kinds, source)
     profile = raw["profile"] if raw.get("profile") else defaults["profile"]
 
     if "acquire_enabled" in raw:
         acquire = bool(raw["acquire_enabled"])
     else:
         acquire = defaults["acquire_enabled"] if new_shape else False
+    if acquire and source == "drag":
+        raise ValueError(
+            f"{where}: acquire_enabled = true with source = \"drag\": the drag IS this "
+            f"collection's corpus, and acquiring from the origin would write the "
+            f"origin's files into it. A fetched collection is held, not acquired "
+            f"(07 §7.8)")
 
     credited = _credited_archives(codex)
     if "genesis_archive" in raw:
@@ -415,9 +424,6 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
                 f"(07 §7.8)")
         snapshot = stated
 
-    source = str(raw.get("source") or "origin")
-    if source not in ("origin", "drag"):
-        raise ValueError(f"{where}: source is \"origin\" or \"drag\" (07 §7.8), got {raw.get('source')!r}")
     if source == "drag":
         # the documents are the record shards held: the drag is the corpus
         # (app/plugins/drag.py), and the scan cursor keys on it
@@ -518,7 +524,7 @@ def _credited_archives(codex) -> list[str]:
     return [c.archive for c in codex.credits if c.kind == "archive" and c.archive]
 
 
-def codex_defaults(codex, name: str, slices, kinds) -> dict[str, Any]:
+def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> dict[str, Any]:
     """What a Codex file's older keys come to when the file does not state
     them — each an answer the Codex or the tree already gives.
 
@@ -530,10 +536,14 @@ def codex_defaults(codex, name: str, slices, kinds) -> dict[str, Any]:
       file names the selection.
     - `acquire_enabled`: the node fetches what the file holds — every
       slice, records among the kinds — from an origin the plugin can fetch.
+      Never when `source = "drag"`: the drag is the corpus, and a fetched
+      collection acquiring from the origin would write the origin's files
+      into it — the second peer's worker started an rsync of the whole
+      Gutenberg mirror for three fetched books (2026-10-07).
     - `genesis_archive`: the archive `credits` names (03 §3.5 admits no
       other), when this peer holds vectors.
     - `snapshot`: the dump the Codex pins in `origin.spec.files`.
-    - `corpus_dir`: `origin_dir(name)`.
+    - `corpus_dir`: `origin_dir(name)`; the drag for `source = "drag"`.
     """
     from .acquire import spec as acquire_spec
     from .acquire.specs import ACQUIRE_REGISTRY
@@ -543,11 +553,11 @@ def codex_defaults(codex, name: str, slices, kinds) -> dict[str, Any]:
     return {
         "everything": everything,
         "profile": everything if slices == "all" else None,
-        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds),
+        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds and source != "drag"),
         "genesis_archive": credited[0] if credited and "vectors" in kinds else None,
         "snapshot": (acquire_spec.pinned_snapshot(spec, codex.origin.spec)
                      if spec is not None else None),
-        "corpus_dir": origin_dir(name),
+        "corpus_dir": origin_dir(name).parent / "drag" if source == "drag" else origin_dir(name),
     }
 
 

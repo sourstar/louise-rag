@@ -222,8 +222,10 @@ def publish_pointer(collection, session, *, now: float | None = None, key=None, 
     if key is None:
         from app.bundles import keys as node_keys
         key = node_keys.load_signing_key()
-    pointer_mod.put(session, codex, doc, key)
+    # the attempt is what waits the interval, not the success: a put that
+    # failed was retried and logged every beat, every 10 s (2026-10-07)
     _last_pointer_put[codex.collection_id] = now
+    pointer_mod.put(session, codex, doc, key)
     if log:
         log(f"[{collection.name}] share: pointer seq {doc['body']['seq']} → snapshot "
             f"{doc['body']['snapshot_id']} put into the DHT under the certifier's key (09 §9.11)")

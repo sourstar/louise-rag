@@ -6,6 +6,8 @@ seq kept; the seeder puts a certified collection's pointer when this peer
 is its certifier, once per announcement interval."""
 import json
 import sqlite3
+
+import pytest
 from types import SimpleNamespace
 
 from nacl import signing
@@ -30,8 +32,15 @@ class FakeSession:
     def __init__(self, answers=()):
         self.puts, self.gets, self.answers = [], [], list(answers)
 
-    def dht_put_mutable_item(self, pk, sk, data, salt):
-        self.puts.append((pk, sk, data, salt))
+    def dht_put_mutable_item(self, private_key, public_key, data, salt):
+        # what libtorrent 2.1's binding checks (its argument order and its
+        # lengths): the fake mirrored the code's wrong order, and passed
+        # while the node refused every put (2026-10-07)
+        if len(private_key) != 64:
+            raise ValueError("private key has wrong length, should be 64")
+        if len(public_key) != 32:
+            raise ValueError("public key has wrong length, should be 32")
+        self.puts.append((public_key, private_key, data, salt))
 
     def dht_get_mutable_item(self, pk, salt):
         self.gets.append((pk, salt))
@@ -63,7 +72,10 @@ def test_put_under_the_key_with_the_raw_id_as_salt(node):  # noqa: F811
     session = FakeSession()
     data = pointer.put(session, codex, doc, KEY)
     (pk, sk, put_data, salt), = session.puts
-    assert pk == bytes(KEY.verify_key) and sk == bytes(KEY) + pk, "the DHT's 64-byte secret: seed then public key"
+    assert pk == bytes(KEY.verify_key) and sk == pointer.dht_secret(KEY) != bytes(KEY) + pk
+    from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
+    assert crypto_scalarmult_ed25519_base_noclamp(sk[:32]) == pk, \
+        "the expanded secret's scalar IS the certifier's key: what the DHT verifies a put against"
     assert put_data == data == canonical_json(doc) and salt == pointer.salt_of(codex) and len(salt) == 32
     assert pointer.well_known_url(codex) == \
         "https://gazzetta.example/.well-known/louise-pointer/" + codex.collection_id.split(":")[1] + ".json"
@@ -127,3 +139,21 @@ def test_the_seeder_puts_this_peer_s_own_certified_pointer_once_per_interval(nod
     assert seeder.publish_pointer(SimpleNamespace(name="p", codex=pubmed()), session, now=T0, key=KEY,
                                   own_key=CERT_KEY) is False
     assert seeder.publish_pointer(c, None, now=T0 + 9 * seeder.ANNOUNCE_EVERY_S, key=KEY, own_key=CERT_KEY) is False
+
+
+def test_a_put_that_fails_waits_the_interval_not_the_next_beat(node, monkeypatch):  # noqa: F811
+    """Live, 2026-10-07: the failing put was retried, and logged, every beat."""
+    codex = certified()
+    name, snap, doc = a_certified_drag(node, codex)
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
+    monkeypatch.setattr(seeder, "_last_pointer_put", {})
+    c = SimpleNamespace(name=name, codex=codex)
+
+    class Refusing(FakeSession):
+        def dht_put_mutable_item(self, *a):
+            raise ValueError("the DHT is down")
+    with pytest.raises(ValueError):
+        seeder.publish_pointer(c, Refusing(), now=T0, key=KEY, own_key=CERT_KEY)
+    assert seeder.publish_pointer(c, Refusing(), now=T0 + 10, key=KEY, own_key=CERT_KEY) is False
+    assert seeder.publish_pointer(c, FakeSession(), now=T0 + seeder.ANNOUNCE_EVERY_S, key=KEY,
+                                  own_key=CERT_KEY) is True

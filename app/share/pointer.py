@@ -16,6 +16,7 @@ DHT's is what keeps the newest put winning in the table. The envelope's
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -41,15 +42,30 @@ def well_known_url(codex) -> str:
                        "", ""))
 
 
+def dht_secret(key) -> bytes:
+    """The 64-byte secret libtorrent's Ed25519 takes: orlp's EXPANDED key —
+    SHA-512 of the seed, the first half clamped as the scalar — not
+    libsodium's seed followed by the public key. Handed seed‖public, the
+    binding signs with the seed itself as the scalar: a signature that no
+    DHT node accepts, under a key that is still the certifier's (found live,
+    2026-10-07, once the argument order below was fixed)."""
+    h = bytearray(hashlib.sha512(bytes(key)).digest())
+    h[0] &= 248
+    h[31] &= 63
+    h[31] |= 64
+    return bytes(h)
+
+
 def put(session, codex, doc: dict[str, Any], key) -> bytes:
-    """The pointer into the DHT under this key; the bytes put. The 64-byte
-    secret the DHT's Ed25519 takes is the seed followed by the public key."""
+    """The pointer into the DHT under this key; the bytes put. The binding
+    is `dht_put_mutable_item(private_key, public_key, data, salt)` —
+    PRIVATE first: the node refused every put with "private key has wrong
+    length, should be 64" while the public key went first (2026-10-07)."""
     from app.hold import certify
     certify.verify_pointer(doc, codex)
     pk = bytes(key.verify_key)
-    sk = bytes(key) + pk
     data = canonical_json(doc)
-    session.dht_put_mutable_item(pk, sk, data, salt_of(codex))
+    session.dht_put_mutable_item(dht_secret(key), pk, data, salt_of(codex))
     return data
 
 

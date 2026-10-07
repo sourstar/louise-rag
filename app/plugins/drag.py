@@ -61,8 +61,21 @@ class DragSource:
         self.drag_dir = Path(drag_dir)
         self.source_id = inner.source_id
 
+    #: The inner plugin's readers of ITS corpus — a book directory, a
+    #: container, the origin's live form — which a peer holding only the
+    #: shards does not have. Hidden, so app/plugin_io.py falls back to the
+    #: protocol (`fetch`/`parse` below, reading the records) and freshness
+    #: answers "unavailable" (05 §5.3). Forwarded, gutenberg's `read_text`
+    #: looked for an epub in a directory that does not exist and wrote "not
+    #: indexable" onto every fetched document, and `read_metadata` gave the
+    #: catalogue empty titles without a word (second peer, 2026-10-07).
+    CORPUS_READERS = frozenset({"read_metadata", "read_text", "read_chapters", "read_figures",
+                                "prepare", "prepare_key", "current"})
+
     def __getattr__(self, name: str):
-        return getattr(self._inner, name)
+        if name in DragSource.CORPUS_READERS:
+            raise AttributeError(f"{name}: a fetched collection reads its records, not the origin's corpus")
+        return getattr(self.__dict__["_inner"], name)
 
     def __reduce__(self):
         # the parse pool rebuilds the plugin in its children from the

@@ -2107,7 +2107,7 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
     if slices is None and profile and \
             profile == collections_mod.codex_defaults(cx, name, None, kinds)["everything"]:
         slices = "all"
-    derived = collections_mod.codex_defaults(cx, name, slices, kinds)
+    derived = collections_mod.codex_defaults(cx, name, slices, kinds, source or "origin")
     lines = [f'codex = "{codex}"']
     if source and source != "origin":
         # 07 §7.8 `source` (2026-10-07): a fetched collection reads the

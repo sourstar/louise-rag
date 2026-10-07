@@ -257,6 +257,12 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
 # ---- the worker's thread -----------------------------------------------------------------
 
 _next_try: dict[str, float] = {}
+#: per collection: the swarm addresses the backed-off attempt was given. A
+#: hint outside them — a digest naming the swarm arrived meanwhile — ends
+#: the backoff: the second peer's first attempt ran before the node's digest
+#: and then waited fifteen minutes beside a swarm that answered in one
+#: second (2026-10-07)
+_tried_hints: dict[str, frozenset] = {}
 #: per collection: the (snapshot file, selection) found complete, and when —
 #: a beat costs one directory listing per collection, never one stat per
 #: shard of a corpus that has nothing to fetch (CLAUDE.md: a per-round cost
@@ -293,7 +299,8 @@ def wants_fetching(collection) -> bool:
 
 def beat(collections, cons: dict, node_con, *, worker_state: str, session_factory,
          root: Path | None = None, stop=None, now: float | None = None,
-         log: Callable[[str], None] | None = None) -> dict[str, Any]:
+         log: Callable[[str], None] | None = None,
+         on_promoted: Callable[[str], None] | None = None) -> dict[str, Any]:
     """One beat over every collection that wants members: skipped when the
     mode does not fetch, when the collection is in its backoff after a
     beat nobody served, or when nothing is missing."""
@@ -304,8 +311,12 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         return out
     root = Path(root) if root is not None else collections_mod.louise_root() / "collections"
     for c in collections:
-        if not wants_fetching(c) or _next_try.get(c.name, 0.0) > now:
+        if not wants_fetching(c):
             continue
+        if _next_try.get(c.name, 0.0) > now:
+            fresh = set(hints_for(node_con, c.codex.collection_id, now=now)) if node_con is not None else set()
+            if not fresh - _tried_hints.get(c.name, frozenset()):
+                continue
         con = cons.get(c.name)
         if con is None:
             continue
@@ -338,11 +349,21 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
                             hints=hints, stop=stop, log=log, now=now)
         if any("no metadata" in e for e in got["errors"]):
             _next_try[c.name] = now + BACKOFF_S
+            _tried_hints[c.name] = frozenset(hints)
+        else:
+            _next_try.pop(c.name, None)
+            _tried_hints.pop(c.name, None)
         try:
             db.set_control(con, CONTROL_KEY, json.dumps({"at": now, **got}))
         except Exception:   # noqa: BLE001 — the account is a courtesy
             pass
         out[c.name] = got
+        if on_promoted is not None and any(str(p).startswith("records/") for p in got.get("promoted", ())):
+            # 9f: a fetched collection reads its shards (app/plugins/drag.py),
+            # and the shards that just landed wait for no six-hour interval
+            # — the second peer held its records with an empty manifest
+            # until a restart (2026-10-07)
+            on_promoted(c.name)
         if stop is not None and stop.is_set():
             break
     # the bundles other peers announced (04 §4.5), taken in through the ladder
@@ -359,7 +380,8 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
     return out
 
 
-def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print) -> None:
+def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print,
+         on_promoted: Callable[[str], None] | None = None) -> None:
     """The worker's fetch thread (07 §7.7: resumable per file, stoppable
     between polls). Per-collection connections are this thread's own."""
     from app import collections as collections_mod, db, node_state
@@ -381,7 +403,7 @@ def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print) ->
             if node_con is None:
                 node_con = node_state.connect()
             beat(collections, cons, node_con, worker_state=node_state.worker_state(node_con),
-                 session_factory=tt.get_session, stop=stop, log=log)
+                 session_factory=tt.get_session, stop=stop, log=log, on_promoted=on_promoted)
         except Exception as e:   # noqa: BLE001 — the thread outlives any one beat
             try:
                 log(f"[warn:share] fetch beat: {type(e).__name__}: {e}"[:400])

@@ -171,3 +171,64 @@ def test_wants_fetching_needs_a_codex_file_that_asks_for_slices():
     assert transport.wants_fetching(C(pubmed(), ())) is False
     assert transport.wants_fetching(C(pubmed(), "all")) is True
     assert transport.wants_fetching(C(pubmed(), ("year=2023",))) is True
+
+
+def test_a_swarm_hint_not_yet_tried_ends_the_backoff(node, monkeypatch):  # noqa: F811
+    """Live, 2026-10-07: the second peer's first attempt ran before the
+    node's digest named its swarm, found nobody, and then waited fifteen
+    minutes beside a swarm that answered in one second."""
+    from app import collections as collections_mod, louise
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    louise._set_held_selection(collections_mod.config_toml_path(c.name), "all", ("records",))
+    c = collections_mod.by_name(c.name)
+    for p in (d / "records").rglob("*.jsonl.zst"):     # the members are missing here
+        p.unlink()
+    monkeypatch.setattr(transport, "_complete", {})
+    monkeypatch.setattr(transport, "_next_try", {})
+    monkeypatch.setattr(transport, "_tried_hints", {})
+    calls = []
+
+    def fake_fetch(root, name, codex_, *, hints=(), **kw):
+        calls.append(list(hints))
+        return {"errors": [] if hints else ["records: no metadata after 120s — no peer holding it answered"],
+                "promoted": [], "missing": 1}
+    monkeypatch.setattr(transport, "fetch_members", fake_fetch)
+    monkeypatch.setattr("app.share.accept.beat", lambda *a, **k: {})
+    con = db.connect(c)
+    kw = dict(worker_state="running", session_factory=lambda: None, root=node)
+    with peers.connect() as ncon:
+        transport.beat([c], {c.name: con}, ncon, now=1000.0, **kw)
+        transport.beat([c], {c.name: con}, ncon, now=1060.0, **kw)
+        assert calls == [[]], "nobody answered and nothing new is known: the backoff holds"
+        entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "t",
+                 "snapshot_id": snap.snapshot_id, "snapshot_hash": snap.hash, "codex_hash": "sha256:" + "2" * 64,
+                 "license": "green", "privacy": "public", "members": [], "coverage": []}
+        body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
+                                    benchmarks=[], collections=[entry], now=time.time())
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=time.time())
+        transport.beat([c], {c.name: con}, ncon, now=1120.0, **kw)
+        assert calls == [[], [("10.0.0.7", 6881)]], "a digest naming the swarm ends the backoff at once"
+
+
+def test_record_shards_promoted_ask_for_a_scan_at_once(node, monkeypatch):  # noqa: F811
+    """9f, live 2026-10-07: the second peer held its records with an empty
+    manifest — discovery runs at start, on add and every six hours."""
+    from app import collections as collections_mod, louise
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    louise._set_held_selection(collections_mod.config_toml_path(c.name), "all", ("records",))
+    c = collections_mod.by_name(c.name)
+    for p in (d / "records").rglob("*.jsonl.zst"):
+        p.unlink()
+    for name in ("_complete", "_next_try", "_tried_hints"):
+        monkeypatch.setattr(transport, name, {})
+    monkeypatch.setattr("app.share.accept.beat", lambda *a, **k: {})
+    landed = [["calibration/x.safetensors"], ["records/lang=en/00001.jsonl.zst"]]
+    monkeypatch.setattr(transport, "fetch_members",
+                        lambda *a, **k: {"errors": [], "promoted": landed.pop(0), "missing": 0})
+    asked = []
+    con = db.connect(c)
+    kw = dict(worker_state="running", session_factory=lambda: None, root=node, on_promoted=asked.append)
+    transport.beat([c], {c.name: con}, None, now=1000.0, **kw)
+    assert asked == [], "no record shard landed: nothing to scan"
+    transport.beat([c], {c.name: con}, None, now=1015.0, **kw)
+    assert asked == [c.name]

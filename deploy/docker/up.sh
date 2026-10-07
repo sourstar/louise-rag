@@ -11,6 +11,8 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
+# Git Bash on Windows: hand docker a Windows path, whatever MSYS_NO_PATHCONV says
+if command -v cygpath >/dev/null 2>&1; then here=$(cygpath -m "$here"); repo=$(cygpath -m "$repo"); fi
 env_file=${1:-$here/.env}
 test -f "$env_file" || { echo "no $env_file: copy $here/louise.env.example there first" >&2; exit 2; }
 

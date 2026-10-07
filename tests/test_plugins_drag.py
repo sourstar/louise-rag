@@ -170,3 +170,63 @@ def test_a_fetched_collection_is_scanned_and_cut_from_its_shards(tmp_path, monke
         assert discovery.sync_collection(con, c)["added"] == 0, "the cursor skips what is committed"
     finally:
         con.close()
+
+
+def test_a_fetched_collection_never_acquires_from_the_origin(tmp_path, monkeypatch):
+    """Found live 2026-10-07: the second peer fetched three certified books
+    and its worker started an rsync of the whole Gutenberg mirror — the file
+    holds every slice and the records kind, which derived acquire_enabled
+    true, and the corpus of a fetched collection is its drag."""
+    from tests.hold.conftest import a_root, pubmed
+    from app.hold import collection as col
+    root = tmp_path / "louise" / "collections"
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
+    monkeypatch.setattr(collections_mod, "_config_dir", lambda: tmp_path / "louise")
+    codex = pubmed()
+    a_root(root, codex)
+    name = col.name_of(root, codex.collection_id)
+    toml = root / f"{name}.toml"
+    base = (f'codex = "{codex.collection_id}"\nslices = "all"\nkinds = ["records", "vectors"]\nembed = "off"\n'
+            f'share = false\n%s[encoder]\nurl = "http://e"\n')
+    toml.write_text(base % "", encoding="utf-8")
+    assert collections_mod._load_one(toml).acquire_enabled, "an origin-sourced file holding everything acquires"
+    toml.write_text(base % 'source = "drag"\n', encoding="utf-8")
+    c = collections_mod._load_one(toml)
+    assert c.acquire_enabled is False and c.corpus_dir == root / name / "drag"
+    d = collections_mod.codex_defaults(codex, name, "all", ("records", "vectors"), "drag")
+    assert d["acquire_enabled"] is False and d["corpus_dir"] == c.corpus_dir, \
+        "one derivation for the loader and the writer: a rewrite adds no acquire_enabled key"
+    toml.write_text(base % 'source = "drag"\nacquire_enabled = true\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="the drag IS this collection's corpus"):
+        collections_mod._load_one(toml)
+
+
+def test_the_inner_plugin_s_corpus_readers_are_never_reached(tmp_path):
+    """Found live 2026-10-07: gutenberg's lazy readers (`read_text`,
+    `read_chapters`, `read_metadata`) were forwarded by the wrapper, looked
+    for an epub in a book directory a fetching peer does not have, and
+    wrote "not indexable" onto every fetched document — the metadata read
+    "succeeded" with empty titles. The stages must read the records."""
+    from app import plugin_io
+
+    class GutenbergShaped:
+        source_id = "gutenberg"
+        license_class = "green"
+
+        def _never(self, *a, **k):
+            raise AssertionError("a corpus reader reached on a fetched collection")
+        read_text = read_chapters = read_metadata = read_figures = prepare = prepare_key = current = _never
+
+    d = tmp_path / "drag"
+    (d / "records" / "year=2020").mkdir(parents=True)
+    pack_records.write_shard(d / "records/year=2020/00001.jsonl.zst", RECORDS)
+    src = drag.DragSource(GutenbergShaped(), d)
+    for name in drag.DragSource.CORPUS_READERS:
+        assert not hasattr(src, name), name
+    assert src.license_class == "green", "everything else is still the plugin's"
+    ref = next(iter(src.discover(DiscoverState(corpus_root=d, state_dir=tmp_path / "state"))))
+    row = {"path": ref.locator, "native_id": ref.native_id, "uid": "pubmed:1"}
+    assert plugin_io.metadata(src, row)["title"] == "A title"
+    assert plugin_io.sections(src, row) == [("Title", "A title"), ("Abstract", "Body one.")]
+    assert plugin_io.full_text(src, row) == "A title\n\nBody one."
+    assert plugin_io.prepare(src, row) is None
