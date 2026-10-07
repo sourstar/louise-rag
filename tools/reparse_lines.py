@@ -13,7 +13,7 @@ It uses nothing the September images lack (`louise._reparse_from`,
 `collection.resolve`, `check.sampled_shards`, `snapshot.load`,
 `records.iter_records`), so it runs mounted into an old image:
 
-  docker run --rm -v <data>:/data -v <origin>:/origin:ro -v <this file>:/tmp/r.py:ro \\
+  docker run --rm --network none -w /srv -e PYTHONPATH=/srv -v <data>:/data -v <origin>:/origin:ro -v <this file>:/tmp/r.py:ro \\
     -e LOUISE_PLATFORM_IMAGE=<the image's own config digest> louise-rag:codex-<name> \\
     python /tmp/r.py <collection> --origin /origin --seed <hex> --out /data/<file>.json
 
