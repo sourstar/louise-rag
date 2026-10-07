@@ -336,6 +336,33 @@ def _time_text(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# ---- PAdES: the envelope inside a signed PDF -----------------------------------------
+
+def pades_envelope(pdf: bytes) -> bytes:
+    """The CMS of a PDF's first signature field (PAdES, ETSI EN 319 142):
+    a detached SignedData over the document's byte range, read with
+    pyhanko's reader. The message digest its signed attributes carry is
+    over that byte range, which is what `content_sha256` then names."""
+    from io import BytesIO
+    try:
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        reader = PdfFileReader(BytesIO(pdf))
+        sigs = list(reader.embedded_signatures)
+    except Exception as e:   # noqa: BLE001 — not a PDF, or one pyhanko cannot read
+        raise SealError(f"not a signed PDF: {type(e).__name__}: {e}") from None
+    if not sigs:
+        raise SealError("the PDF carries no signature")
+    sig = sigs[0]
+    try:
+        return bytes(sig.sig_object["/Contents"]).rstrip(b"\x00")
+    except Exception as e:   # noqa: BLE001
+        raise SealError(f"the PDF's signature has no /Contents: {e}") from None
+
+
+def parse_pades(pdf: bytes) -> dict[str, Any]:
+    return parse_cades(pades_envelope(pdf))
+
+
 # ---- capture ------------------------------------------------------------------------
 
 def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str],
@@ -344,15 +371,15 @@ def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str]
     envelope: nothing is validated here — the certifier validates with
     `validate` before writing, and a verifier validates again."""
     import time as _time
-    if format != "cades":
-        raise SealError(f"{format}: only CAdES envelopes are captured in this build; PAdES and XAdES are owed")
+    if format not in ("cades", "pades"):
+        raise SealError(f"{format}: only CAdES and PAdES envelopes are captured in this build; XAdES is owed")
     data = Path(sealed).read_bytes()
-    parsed = parse_cades(data)
+    parsed = parse_pades(data) if format == "pades" else parse_cades(data)
     cert = parsed["signer_cert"]
     moment = datetime.fromtimestamp(_time.time() if now is None else now, tz=timezone.utc)
     return {
         "file_hash": file_hash(sealed),
-        "format": "cades",
+        "format": format,
         "seal": {"b64": _b64(parsed["detached"])},
         "content_sha256": "sha256:" + parsed["message_digest"].hex(),
         "signer": {"subject": _name(cert.subject), "issuer": _name(cert.issuer),
@@ -376,9 +403,11 @@ def validate(entry: dict[str, Any], *, anchors: Iterable[bytes], moment: datetim
     seal, only on a malformed entry."""
     from asn1crypto import crl as crl_mod, ocsp as ocsp_mod, x509
     validate_entry(entry)
-    if entry["format"] != "cades":
+    if entry["format"] not in ("cades", "pades"):
         return {"ok": False, "why": f"{entry['format']}: validation of this format is owed; archival mode cannot "
                                     f"judge it in this build"}
+    # a PAdES seal is a detached CMS over the PDF's byte range: once captured
+    # it validates exactly as a CAdES one — the envelope over its digest
     try:
         parsed = parse_cades(_unb64(entry["seal"]["b64"], "seal.b64"))
     except SealError as e:

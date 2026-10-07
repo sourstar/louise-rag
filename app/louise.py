@@ -2634,7 +2634,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the national trusted list (ETSI TS 119 612 XML) the chains validate against; kept by its hash")
     p.add_argument("--lotl", metavar="FILE", help="the EU list of trusted lists, for its hash (default: the list's own)")
     p.add_argument("--url", help="where the trusted list is published")
-    p.add_argument("--format", default="cades", choices=["cades"], help="the envelope (PAdES and XAdES are owed)")
+    p.add_argument("--format", default="cades", choices=["cades", "pades"],
+                   help="the envelope: a CMS .p7m, or the signature inside a PDF (XAdES is owed)")
     p.set_defaults(fn=cmd_records_seal)
 
     p = rverbs.add_parser("check",

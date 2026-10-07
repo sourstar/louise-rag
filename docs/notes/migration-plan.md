@@ -1281,10 +1281,13 @@ validates each seal first, refuses the member when one does not, and
 keeps the list; `hold records check --seal` adds the check. tests:
 hold/test_seals.py (6) — a self-signed CA and signer, a CAdES-BES
 `.p7m` signed in the test, a trusted-list fixture, the network
-unplugged throughout. **Owed in step 10**: live mode of `origin-seal`
+unplugged throughout. PAdES too (the OJEU's sealed PDFs): the first
+signature's CMS read out of the PDF with pyhanko's reader — a detached
+SignedData over the byte range, so once captured it validates exactly
+as a CAdES one; `hold records seal --format pades`; a PDF signed in the
+test with pyhanko. **Owed in step 10**: live mode of `origin-seal`
 (the sealed file re-fetched, hashed, validated against the current
-lists); PAdES (the OJEU's sealed PDFs, through pyhanko's reader) and
-XAdES; revocation responses captured by the certifier (the entry
+lists); XAdES; revocation responses captured by the certifier (the entry
 carries them, `--files` captures none yet: validation runs soft-fail
 on revocation, hard-fail once they are there); verifying the trusted
 list's own XAdES signature (the list is pinned by hash today); the

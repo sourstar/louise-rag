@@ -24,7 +24,7 @@
 # running — consistent; finish with phases 4b–6 alone, nothing else.
 set -euo pipefail
 
-COMMIT=7ecac42                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=55d0970                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"

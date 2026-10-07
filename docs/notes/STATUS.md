@@ -244,6 +244,15 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~07:10Z (UTC): the seals DEPLOYED as 55d0970.** The
+node's image rebuilt with the four libraries; `tests/hold` (736, the
+seal tests among them) passed in the staged image; the restart waited
+on its stop job (SUCCESS). Web healthy, the libraries import in the
+running container, no error line in the worker's first minutes. There
+is no certified collection to seal or check live: the first live
+`records seal` waits on a certifier (the operator's key and anchor).
+PAdES (next entry's addendum) is committed after it, not deployed.
+
 **2026-10-07, ~06:30Z (UTC): step 10, third brick — the seals, on the
 operator's yes to asn1crypto, cryptography, pyhanko and
 pyhanko-certvalidator.** A CAdES `.p7m` read, captured detached into
@@ -254,10 +263,11 @@ the captured digest, the certificate path at the captured moment
 against the captured chain and the list's anchors, nothing fetched —
 proven in tests against a CA and a signer made in the test, the
 network unplugged; a foreign list, a tampered digest, a swapped chain,
-a lapsed certificate each refused. Owed: live mode, PAdES/XAdES,
-captured revocation, the list's own signature, the Gazzetta plugin
-(plan). Not deployed (node: 7ecac42); the image rebuilds with the new
-libraries on the next deploy.
+a lapsed certificate each refused. PAdES as well: the signature inside
+a PDF read with pyhanko's reader and validated the same way (a PDF
+signed in the test). Owed: live mode, XAdES, captured revocation, the
+list's own signature, the Gazzetta plugin (plan). Deployed as the next
+entry says; the image rebuilt with the new libraries.
 
 **2026-10-07, 05:00Z (UTC): tree facets to depth 1 DEPLOYED as
 7ecac42.** The restart waited on its stop job again (SUCCESS). The
