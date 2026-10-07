@@ -1347,9 +1347,12 @@ yourself" (2026-10-07):** the key is the node's own
 the two `.well-known` paths to the web — and the node serves the
 document itself (`GET /.well-known/louise-certifier.json`, from
 `[certifier]` in the platform file and the Codexes held). The first
-certified collection is `gutenberg-mini-certified`: three books of
-Project Gutenberg in gutenberg's space (`--space-from`), a proving
-instance of the machinery, `is_origin: false`, `share = false`. A
+certified collection is `gutenberg-744ba8430fed` (the recipe is
+`gutenberg-mini-certified.toml`; `--name` was parsed and never passed
+until 2026-10-07, and a name holds one collection for its life): three
+books of Project Gutenberg in gutenberg's space (`--space-from`), a
+proving instance of the machinery, `is_origin: false`, `share = false`,
+snapshot `2026-09` certified, pointer seq 1. A
 certified source whose value is that this is the text (the Gazzetta,
 the OJEU) remains the certifier body's to run.
 

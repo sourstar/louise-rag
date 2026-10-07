@@ -115,3 +115,17 @@ def test_the_librarys_form_is_this_route(client):
 def test_the_route_needs_the_admin_token(client):
     del client.headers["X-Admin-Token"]
     assert client.post(ROUTE, json={"plugin": "gutenberg", "recipe": {}}).status_code == 401
+
+
+def test_the_name_given_is_the_name_held(client):
+    """`--name` was parsed and never passed until 2026-10-07: the first
+    certified collection came up as `gutenberg-744ba8430fed`. The route's
+    body carries it, its CLI line names it, and the file is the name's."""
+    j = created(client, {"plugin": "gutenberg", "recipe": recipe(),
+                         "encoder": ENC, "query_encoder": QENC, "name": "gutenberg-mini"})
+    assert j["state"] == "done", j["error"]
+    d = j["result"]
+    assert d["name"] == "gutenberg-mini"
+    assert d["held"] == str(collections_mod.config_toml_path("gutenberg-mini"))
+    assert d["cli"].endswith(f"--query-encoder {QENC} --name gutenberg-mini")
+    assert collections_mod.by_name("gutenberg-mini").codex.collection_id == d["collection_id"]

@@ -98,7 +98,7 @@ def cmd_create(a) -> int:
     codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
                               platform_image=a.platform_image,
                               space_from=a.space_from, encoder=a.encoder,
-                              query_encoder=a.query_encoder)
+                              query_encoder=a.query_encoder, name=a.name)
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
@@ -248,7 +248,7 @@ def preflight_create(recipe: dict, platform_image: str | None) -> str:
 
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
                 space_from: str | None = None, encoder: str | None = None,
-                query_encoder: str | None = None):
+                query_encoder: str | None = None, name: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -293,6 +293,9 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     codex = col.create_from_recipe(root, plugin, recipe,
                                    key=node_keys.load_signing_key(), now=_utc_now(),
                                    platform_image=platform_image,
+                                   # `--name` reached this far and stopped here until 2026-10-07:
+                                   # the first certified collection came up as gutenberg-<12 hex>
+                                   name=name,
                                    embed=_embed_for_recipe(recipe["space"], encoder),
                                    embed_query=(_embed_for_recipe(recipe["space"], query_encoder)
                                                 if query_encoder else None),

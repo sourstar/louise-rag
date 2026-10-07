@@ -396,7 +396,8 @@ def _create(args: dict[str, Any]) -> dict[str, Any]:
                                          platform_image=args.get("platform_image"),
                                          space_from=args.get("space_from"),
                                          encoder=args.get("encoder"),
-                                         query_encoder=args.get("query_encoder"))
+                                         query_encoder=args.get("query_encoder"),
+                                         name=args.get("name"))
     return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
             "held": str(held), "cli": args.get("cli", "")}
 

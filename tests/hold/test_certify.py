@@ -70,7 +70,7 @@ def test_the_pointer_is_served_at_the_well_known_path(node, monkeypatch):  # noq
     a_root(node, codex)
     name, d, snap, _ = a_signed_drag(node, codex)
     monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
-    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: [SimpleNamespace(name=name, codex=codex)])
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([SimpleNamespace(name=name, codex=codex)], []))
     client = TestClient(api.app)
     hexid = drag_mod._hex(codex.collection_id)
     assert client.get(f"/.well-known/louise-pointer/{hexid}.json").status_code == 404, "not certified yet"
@@ -119,10 +119,10 @@ def test_the_anchor_document_is_served_for_this_node_as_certifier(node, monkeypa
                    descriptive=pubmed().descriptive)
     monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
     monkeypatch.setattr(collections_mod, "load_all",
-                        lambda **kw: [SimpleNamespace(name=name, codex=codex),
-                                      SimpleNamespace(name="other", codex=other),
-                                      SimpleNamespace(name="open", codex=pubmed()),
-                                      SimpleNamespace(name="legacy", codex=None)])
+                        lambda **kw: ([SimpleNamespace(name=name, codex=codex),
+                                       SimpleNamespace(name="other", codex=other),
+                                       SimpleNamespace(name="open", codex=pubmed()),
+                                       SimpleNamespace(name="legacy", codex=None)], [("broken", "no codex")]))
     monkeypatch.setattr(identity, "own", lambda: CERT_KEY)
     monkeypatch.setattr(platform_config, "load",
                         lambda: SimpleNamespace(certifier=SimpleNamespace(valid_from="2026-01-01T00:00:00Z",

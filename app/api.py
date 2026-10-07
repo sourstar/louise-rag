@@ -114,7 +114,10 @@ def certifier_anchor():
     valid_from = getattr(cfg, "valid_from", None) or "1970-01-01T00:00:00Z"
     revoked_at = getattr(cfg, "revoked_at", None)
     certified = []
-    for c in collections_mod.load_all(skip_unreadable=True):
+    # `skip_unreadable` answers `(served, [(name, reason)…])` — the worker's
+    # shape; iterating the pair listed nothing (found live 2026-10-07)
+    served, _refused = collections_mod.load_all(skip_unreadable=True)
+    for c in served:
         codex = getattr(c, "codex", None)
         cert = getattr(codex, "certifier", None) if codex is not None else None
         if cert is not None and getattr(codex, "publication", "open") == "certified" and cert.key == own:
@@ -135,7 +138,8 @@ def certifier_pointer(collection_hex: str):
     if not collection_hex.isalnum() or len(collection_hex) != 64:
         raise HTTPException(404, "no pointer")
     root = collections_mod.louise_root() / "collections"
-    for c in collections_mod.load_all(skip_unreadable=True):
+    served, _refused = collections_mod.load_all(skip_unreadable=True)
+    for c in served:
         codex = getattr(c, "codex", None)
         if codex is None or drag_mod._hex(codex.collection_id) != collection_hex:
             continue
@@ -268,6 +272,7 @@ class HoldCreateBody(BaseModel):
     # a bi-encoder's query side (MedCPT): its endpoint. The Codex pins its
     # reference vectors too (09 §9.12), so `create` embeds the set with it
     query_encoder: str | None = None
+    name: str | None = None      # the local name; default: the plugin's (07 §7.8)
 
 
 @app.post("/api/hold/collection/create", dependencies=[Depends(auth.require_admin)])
@@ -304,11 +309,13 @@ def hold_collection_create(body: HoldCreateBody):
         cli += f" --query-encoder {body.query_encoder}"
     if body.space_from:
         cli += f" --space-from {body.space_from}"
+    if body.name:
+        cli += f" --name {body.name}"
     job_id = jobs.submit(jobs.CREATE, {
         # the text as sent: a TOML date is not JSON, and the job parses it
         "plugin": body.plugin, "recipe": body.recipe, "space_from": body.space_from,
         "platform_image": body.platform_image, "encoder": body.encoder,
-        "query_encoder": body.query_encoder, "cli": cli})
+        "query_encoder": body.query_encoder, "name": body.name, "cli": cli})
     return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
 
 

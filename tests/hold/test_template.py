@@ -511,3 +511,24 @@ def test_a_certified_recipe_names_its_certifier_in_the_codex():
     assert codex.certifier.anchor.endswith("/louise-certifier.json") and codex.certifier.is_origin is False
     cx.validate(codex)
     assert from_recipe("gutenberg", recipe(), platform_image=PLATFORM).certifier is None
+
+
+def test_create_passes_the_name_given_to_the_collection(tmp_path, monkeypatch):
+    """`hold collection create --name` reached `create_from` and stopped
+    there until 2026-10-07: the first certified collection came up under
+    the default `gutenberg-<12 hex>` name."""
+    from types import SimpleNamespace
+    from app import louise
+    from app.hold import collection as col
+    seen = {}
+
+    def fake_create(root, plugin, recipe, **kw):
+        seen.update(kw)
+        return SimpleNamespace(collection_id="sha256:" + "ab" * 32)
+    monkeypatch.setattr(col, "create_from_recipe", fake_create)
+    monkeypatch.setattr(louise, "_write_held_file", lambda *a, **k: tmp_path / "x.toml")
+    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url: None)
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    louise.create_from(tmp_path, "gutenberg", recipe(), platform_image=PLATFORM, name="mini-certified",
+                       encoder="http://e")
+    assert seen["name"] == "mini-certified"
