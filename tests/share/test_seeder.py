@@ -178,11 +178,9 @@ def test_a_copy_in_quarantine_or_not_wanting_it_is_not_served(node, monkeypatch)
     assert seeder.served(con) is None
 
 
-def test_share_narrowing_is_not_yet_and_a_non_public_codex_is_refused(node, monkeypatch, capsys):  # noqa: F811
-    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
-    assert louise.main(["share", "collection", c.name, "--root", str(node),
-                        "--slices", SLICE]) == 2
-    assert "not yet" in capsys.readouterr().err
+def test_a_never_share_codex_is_refused(node, monkeypatch, capsys):  # noqa: F811
+    """(`--slices`/`--kinds` narrow serving since 2026-10-07: the narrowing test.)"""
+    a_shared_collection(node, monkeypatch)
     from tests.deposit.test_deposit_identity import make
     make(node, "alice")                             # a never-share collection (02 §2.9)
     assert louise.main(["share", "collection", "alice", "--root", str(node)]) == 2
@@ -196,3 +194,28 @@ def test_the_spec_s_bare_form_share_collection_works(node, monkeypatch):  # noqa
     assert collections_mod.by_name(c.name).share is False
     assert louise.main(["share", c.name, "--root", str(node)]) == 0
     assert collections_mod.by_name(c.name).share is True
+
+
+def test_share_narrows_what_is_served_and_a_changed_narrowing_is_served_again(node, monkeypatch):  # noqa: F811
+    """04 §4.3 / 07 §7.8, 2026-10-07: `share --slices … --kinds …` writes
+    `share_slices` / `share_kinds`; the seeder serves only those, and a
+    whole-collection member always."""
+    from app import collections as collections_mod
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    assert seeder.serves(c, f"records-{SLICE}") and seeder.serves(c, "validation")
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "vectors"]) == 0
+    c = collections_mod.by_name(c.name)
+    assert c.share_kinds == ("vectors",) and c.share is True
+    assert not seeder.serves(c, f"records-{SLICE}") and seeder.serves(c, "validation"), \
+        "a narrowed kind is not served; a whole-collection member always is"
+    con = db.connect(c)
+    seeder.sync([c], {c.name: con}, con, "running")
+    assert [e for e in seeding.read_published(con) if e.get("member", "").startswith("records-")] == []
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "all",
+                        "--slices", SLICE]) == 0
+    c = collections_mod.by_name(c.name)
+    assert c.share_kinds is None and c.share_slices == (SLICE,)
+    assert seeder.sync([c], {c.name: con}, con, "running")["published"] == [c.name], \
+        "the snapshot did not change, the narrowing did: served again"
+    assert {e["member"] for e in seeding.read_published(con)} >= {f"records-{SLICE}"}
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "nonsense"]) == 2

@@ -94,6 +94,30 @@ def build_torrent(member_dir: Path, torrent: mem.Torrent, out_dir: Path) -> Path
     return out
 
 
+def selection(collection) -> dict[str, Any]:
+    """What the collection's file narrows serving to (07 §7.8 `share_slices`,
+    `share_kinds`; 04 §4.3): None for each means everything this copy holds."""
+    sl, kd = getattr(collection, "share_slices", None), getattr(collection, "share_kinds", None)
+    return {"slices": sorted(sl) if sl is not None else None, "kinds": sorted(kd) if kd is not None else None}
+
+
+def serves(collection, member_name: str) -> bool:
+    """Whether the narrowing lets this member be served. A whole-collection
+    member — terms, validation, calibration, seals — is always served: it is
+    what any fetcher needs before a slice is of use to it."""
+    from app.share import holdings
+    kind = holdings.kind_of(member_name)
+    if kind in holdings.WHOLE_KINDS:
+        return True
+    want = selection(collection)
+    if want["kinds"] is not None and kind not in want["kinds"]:
+        return False
+    sl = holdings.slice_of(member_name)
+    if want["slices"] is not None and sl is not None and sl not in want["slices"]:
+        return False
+    return True
+
+
 def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, con,
             log: Callable[[str], None] | None = None) -> list[dict[str, Any]]:
     """Every member of `snapshot` whose files the drag holds, as the
@@ -113,6 +137,8 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
         # from state/bundles/, never from the drag
         members += mem.bundle_members(Path(state_dir), codex.space_segment)
     for member in members:
+        if not serves(collection, member.name):
+            continue                                     # narrowed out (`share --slices/--kinds`)
         base = Path(member.base) if member.base is not None else Path(drag_dir)
         if not all((base / f.path).is_file() for f in member.files):
             continue                                     # a slice this copy does not hold
@@ -149,6 +175,7 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
     db.set_control(con, seeding.TORRENT_PUBLISHED_KEY, json.dumps(entries))
     db.set_control(con, CONTROL_KEY, json.dumps({
         "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,
+        "selection": selection(collection),
         "torrents": len(entries), "refused": refused, "at": time.time()}))
     if log is not None:
         log(f"[{collection.name}] share: {len(entries)} torrent(s) of snapshot "
@@ -288,7 +315,9 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         if snap is None:
             continue
         now_served = served(con)
-        if now_served is None or now_served.get("snapshot_id") != snap.snapshot_id:
+        if now_served is None or now_served.get("snapshot_id") != snap.snapshot_id \
+                or now_served.get("selection", selection(c)) != selection(c):
+            # a narrowing changed while the snapshot did not: served again
             publish(c, snap, drag_dir, state_dir, con, log)
             out["published"].append(c.name)
         if seeds and session is not None and port:

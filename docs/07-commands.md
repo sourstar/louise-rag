@@ -914,6 +914,9 @@ slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
 share  = true
+share_slices = ["year=1980-1984"]              # optional: serving narrowed to these slices (`share --slices`); absent = all held
+share_kinds  = ["records"]                     # optional: and these member kinds (`share --kinds`); terms, validation,
+                                               # calibration and seals are served whatever it says (amended 2026-10-07)
 source = "origin"                              # origin | drag: where the documents are read from — the plugin's corpus, or
                                                # the record shards held; `share fetch` writes "drag", and such a collection
                                                # is never `records build`-able here (amended 2026-10-07: the key did not exist)

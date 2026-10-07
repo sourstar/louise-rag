@@ -272,6 +272,10 @@ class Collection:
     slices: Any = None                  # "all" | () | None when the file does not say
     kinds: tuple[str, ...] = ("records", "vectors")   # 07 §7.7's default
     share: bool = False
+    # `share <collection> --slices … --kinds …` (07 §7.8 `share_slices`,
+    # `share_kinds`; 04 §4.3): what serving is narrowed to; None = all held
+    share_slices: tuple[str, ...] | None = None
+    share_kinds: tuple[str, ...] | None = None
 
     def plugin_instance(self) -> CorpusSource:
         inner = PLUGIN_REGISTRY[self.plugin]
@@ -372,6 +376,13 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     share = raw.get("share", False)
     if not isinstance(share, bool):
         raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
+    share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
+    share_kinds = _parse_share_list(raw.get("share_kinds"), "share_kinds", where)
+    if share_kinds is not None:
+        bad = [k for k in share_kinds if k not in SHARE_KINDS]
+        if bad:
+            raise ValueError(f"{where}: share_kinds names {bad}; the member kinds are "
+                             f"{', '.join(SHARE_KINDS)} (02 §2.6)")
     slices = None
     if "slices" in raw:
         if "profile" in raw:
@@ -462,6 +473,8 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         slices=slices,
         kinds=kinds,
         share=share,
+        share_slices=share_slices,
+        share_kinds=share_kinds,
         source=source,
     )
 
@@ -499,6 +512,16 @@ DEPRECATED_CODEX_KEYS = ("profile", "acquire_enabled", "genesis_archive",
 #: The keys only 07 §7.8's shape has: a file with any of them is read by
 #: that shape's rules.
 _SPEC_FILE_ONLY_KEYS = ("slices", "kinds", "share", "title")
+#: the member kinds `share --kinds` may narrow to (02 §2.6; 09 §9.16)
+SHARE_KINDS = ("records", "relations", "figures", "vectors", "bundle", "index")
+
+
+def _parse_share_list(value, key: str, where) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise ValueError(f"{where}: {key} is a list of names (07 §7.8), got {value!r}")
+    return tuple(value)
 _WARNED: set[tuple[str, str]] = set()
 
 

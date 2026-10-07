@@ -1920,7 +1920,8 @@ def grow_run(name: str, body: GrowBody):
         snapshot=collection.snapshot, extras=extras,
         peer_source=collection.peer_source, title=collection.title,
         slices=slices, kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker, source=collection.source)
+        reranker=collection.reranker, source=collection.source,
+        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"profile -> {body.profile!r} via admin UI; the worker "
@@ -2074,7 +2075,8 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
                        embed_mode: str | None, snapshot: str | None,
                        extras: tuple[str, ...], title: str | None = None,
                        slices=None, kinds=None, share: bool = False,
-                       reranker=None, source: str = "origin") -> None:
+                       reranker=None, source: str = "origin",
+                       share_slices=None, share_kinds=None) -> None:
     """07 §7.8's file: `codex`, `title`, `slices`, `kinds`, `embed`,
     `share`, `[encoder]` naming where this node reaches the encoder, and
     `[reranker]` where it reaches the collection's reranker (05 §5.6).
@@ -2128,6 +2130,12 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
     if embed_mode:
         lines.append(f'embed = "{_MODE_ON_DISK.get(embed_mode, embed_mode)}"')
     lines.append(f"share = {'true' if share else 'false'}")
+    # 07 §7.8 `share_slices` / `share_kinds` (2026-10-07): what serving is
+    # narrowed to, carried through every rewrite like `source`
+    if share_slices is not None:
+        lines.append("share_slices = [%s]" % ", ".join(_toml_scalar(s) for s in share_slices))
+    if share_kinds is not None:
+        lines.append("share_kinds = [%s]" % ", ".join(_toml_scalar(k) for k in share_kinds))
     kept = []
     if bool(acquire_enabled) != derived["acquire_enabled"]:
         kept.append(f"acquire_enabled = {'true' if acquire_enabled else 'false'}")
@@ -2194,7 +2202,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
                             peer_source: str | None = None,
                             layers=None, title: str | None = None,
                             slices=None, kinds=None, share: bool = False,
-                            reranker=None, source: str = "origin") -> None:
+                            reranker=None, source: str = "origin",
+                            share_slices=None, share_kinds=None) -> None:
     """Rewrite a collection's Tier-2 file. `codex` has NO DEFAULT on
     purpose: a call site that forgets it must fail loudly here, because
     the failure it would otherwise cause is silent and unrepairable.
@@ -2218,7 +2227,8 @@ def _write_collection_toml(path: Path, *, codex: str | None,
             genesis_archive=genesis_archive, encoder=embed,
             embed_mode=embed_mode, snapshot=snapshot, extras=extras,
             title=title, slices=slices, kinds=kinds, share=share,
-            reranker=reranker, source=source)
+            reranker=reranker, source=source,
+            share_slices=share_slices, share_kinds=share_kinds)
         return
     lines = [f'plugin = "{plugin}"']
     if peer_source:
@@ -2755,7 +2765,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         extras=collection.extras, peer_source=collection.peer_source,
         title=collection.title, slices=collection.slices,
         kinds=collection.kinds, share=collection.share,
-        reranker=collection.reranker, source=collection.source)
+        reranker=collection.reranker, source=collection.source,
+        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
     # persisted desired state: if the manifest is busy right now, the
     # worker still applies the TOML within a round — the setting is never
@@ -2833,7 +2844,8 @@ def collection_ack(name: str):
         # silently un-declare a collection fed from a peer torrent
         peer_source=collection.peer_source, title=collection.title,
         slices=collection.slices, kinds=collection.kinds,
-        share=collection.share, reranker=collection.reranker, source=collection.source)
+        share=collection.share, reranker=collection.reranker, source=collection.source,
+        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
     con = db.connect(collection)
     db.log_event(con, "info", "control",
                  f"license terms acknowledged for {name!r} via admin UI "

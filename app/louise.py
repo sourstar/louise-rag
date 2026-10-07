@@ -653,14 +653,13 @@ def cmd_share(a) -> int:
     `share = true` (or false) in the collection's file — which the worker
     serves at its next beat (app/share/seeder.py). A `hold` command never
     opens a port (07 §7.4), and neither does this one. `--slices` and
-    `--kinds` narrow what is served: not yet (step 9d)."""
+    `--kinds` narrow what is served: `share_slices` and `share_kinds` in the
+    same file (07 §7.8), comma-separated; `all` lifts a narrowing. A
+    whole-collection member — terms, validation, calibration, seals — is
+    always served (app/share/seeder.py `serves`)."""
     import re
     from app.hold import deposit
     name, codex = col.resolve(a.root, a.collection)
-    if a.slices or a.kinds:
-        raise CodexError("share --slices / --kinds: not yet — the worker serves every "
-                         "member of the current snapshot this copy holds (step 9d "
-                         "narrows it)")
     if codex.privacy != "public":
         raise CodexError(f"{name!r} is {codex.privacy}: only a public collection is "
                          f"shared (04 §4.4)")
@@ -674,10 +673,30 @@ def cmd_share(a) -> int:
     else:
         head, sep, tail = text.partition("\n[")
         text = head.rstrip("\n") + "\n" + want + "\n" + (sep + tail if sep else "")
+    from app import collections as collections_mod
+    narrowed = {}
+    for flag, key in ((a.slices, "share_slices"), (a.kinds, "share_kinds")):
+        if flag is None:
+            continue
+        values = [v.strip() for v in flag.split(",") if v.strip()]
+        if key == "share_kinds":
+            bad = [v for v in values if v not in collections_mod.SHARE_KINDS and v != "all"]
+            if bad:
+                raise CodexError(f"--kinds names {bad}; the member kinds are "
+                                 f"{', '.join(collections_mod.SHARE_KINDS)} (02 §2.6)")
+        line = None if values == ["all"] else f"{key} = [" + ", ".join(json.dumps(v) for v in values) + "]"
+        narrowed[key] = None if line is None else values
+        if re.search(rf"^{key}\s*=", text, flags=re.M):
+            text = re.sub(rf"^{key}\s*=.*\n?", "" if line is None else line + "\n", text,
+                          count=1, flags=re.M)
+        elif line is not None:
+            text = re.sub(r"^share\s*=.*$", lambda m: m.group(0) + "\n" + line, text,
+                          count=1, flags=re.M)
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
     _print({"collection": name, "share": not a.stop, "file": str(path),
+            **narrowed,
             "note": "the worker serves and announces it at its next beat; "
                     "`hold collection show` names the state it publishes"})
     return 0
