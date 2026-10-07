@@ -580,7 +580,12 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
     path = manifest_mod.write(pack_dir, m)
     log(f"[pack build] manifest: {len(slices)} slice(s), {len(shards)} shard(s), "
         f"{m['records']} records, {m['chunks']} chunks"
-        + (", signed" if key is not None else ", UNSIGNED (no NODE_KEY_PATH)"))
+        + (", signed" if key is not None
+           # `hold records build` asks for no signature: its manifest is staging,
+           # and the snapshot is what is signed — the old wording named a
+           # missing NODE_KEY_PATH on a worker that had one (2026-10-07)
+           else ", unsigned (the snapshot carries the signature)" if not sign
+           else ", UNSIGNED (no NODE_KEY_PATH)"))
     return path
 
 

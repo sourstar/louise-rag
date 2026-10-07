@@ -416,3 +416,14 @@ def test_the_build_command_exits_130_when_stopped(
     assert louise.main(["hold", "records", "build", "gutenberg", "--root", str(root),
                         "--corpus", str(corpus_dir)]) == 130
     assert seen["stop"] is not None, "the command hands the build a stop to honour"
+
+
+def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tmp_path, corpus_dir):
+    """`hold records build` asks the pack builder for no signature — its
+    manifest is staging, and the snapshot is what is signed. The line said
+    "UNSIGNED (no NODE_KEY_PATH)" on a worker that had one (2026-10-07)."""
+    root = _collection(tmp_path)
+    said = []
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=said.append, records_per_shard=2)
+    line = next(s for s in said if s.startswith("[pack build] manifest:"))
+    assert line.endswith("unsigned (the snapshot carries the signature)") and "NODE_KEY_PATH" not in line
