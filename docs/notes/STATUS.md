@@ -244,6 +244,19 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, 05:00Z (UTC): tree facets to depth 1 DEPLOYED as
+7ecac42.** The restart waited on its stop job again (SUCCESS). The
+maintainer's pubmed pass ran 05:03–05:11 (two streamed passes over 33 M
+rows): `subjects` now lists its 30 768 MeSH descriptors with this peer's
+counts (Humans 23 222 703, Female 10 510 179, Male 10 193 344, …) and is
+browsable through `ask facets pubmed subjects`; its postings were not
+built — 91 683 072 rows for the 27 319 descriptors narrow enough to
+filter by, past the 20 M bound — and the listing says so
+(`filterable: false`); `lang` has 55 values and is filterable;
+`creators` stays uncounted (over 200 000 distinct after 155 185
+records). Worker RSS peaked at 4.3 GB through the pass, beside the
+embed stream. Backup image `pre-7ecac42`.
+
 **2026-10-07, 04:30Z (UTC): the bounded facets pass and step 9f's
 first brick DEPLOYED as c5678a2.** Web and worker on image `f0ad42b9…`;
 the runbook's restart phase waited on the stop job (SUCCESS, STOPPED,
