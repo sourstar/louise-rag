@@ -128,3 +128,45 @@ def test_a_fetched_collection_s_file_says_its_documents_come_from_the_drag(tmp_p
     assert 'source = "drag"' in text and 'embed = "off"' in text
     p2 = louise._write_held_file(root, pubmed(), "http://e", source="drag")
     assert p2 == p, "a name holds one collection for its life: writing it again is nothing to do"
+
+
+def test_a_fetched_collection_is_scanned_and_cut_from_its_shards(tmp_path, monkeypatch):
+    """End to end as the worker runs it: the discovery scan over a
+    drag-sourced collection fills the manifest from the shards, the
+    metadata and the sections come back through the same plugin calls the
+    stages make, and the chunks are cut by the Codex's layer — the same
+    cut the producer made, so a bundle's vectors land on them."""
+    from app import db, discovery, layers, plugin_io
+    from app.hold import collection as col
+    from tests.hold.conftest import a_root, pubmed
+    root = tmp_path / "louise" / "collections"
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
+    monkeypatch.setattr(collections_mod, "_config_dir", lambda: tmp_path / "louise")
+    codex = pubmed()
+    a_root(root, codex)
+    name = col.name_of(root, codex.collection_id)
+    d = col.drag_of(root, name)
+    (d / "records" / "year=2020").mkdir(parents=True, exist_ok=True)
+    pack_records.write_shard(d / "records/year=2020/00001.jsonl.zst", RECORDS)
+    toml = tmp_path / "louise" / "collections" / f"{name}.toml"
+    toml.write_text(f'codex = "{codex.collection_id}"\nslices = "all"\nkinds = ["records"]\nembed = "off"\n'
+                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\n', encoding="utf-8")
+    c = collections_mod._load_one(toml)
+    con = db.connect(c)
+    try:
+        out = discovery.sync_collection(con, c)
+        assert out.get("error") is None and out["added"] == 2, out
+        rows = con.execute("SELECT * FROM documents ORDER BY uid").fetchall()
+        assert [r["uid"] for r in rows] == ["pubmed:1", "pubmed:2"]
+        assert rows[0]["path"].endswith("#pubmed:1") and rows[0]["lang"] == "en"
+        meta = plugin_io.metadata(c.plugin_instance(), rows[0])
+        assert (meta["title"], meta["authors"], meta["lang"], meta["subjects"]) == ("A title", "Doe, J", "en",
+                                                                                      "Neoplasms")
+        sections = plugin_io.sections(c.plugin_instance(), rows[0])
+        assert sections == [("Title", "A title"), ("Abstract", "Body one.")]
+        chunks = layers.chunks_for_document(c, rows[0], sections)
+        assert chunks and all(ch["id"].startswith("pubmed:1:") for ch in chunks)
+        assert chunks == layers.chunks_for_document(c, rows[0], sections), "a pure function of the record"
+        assert discovery.sync_collection(con, c)["added"] == 0, "the cursor skips what is committed"
+    finally:
+        con.close()

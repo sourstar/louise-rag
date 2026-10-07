@@ -1198,9 +1198,13 @@ is resumable per shard through the plugin cursor. The collection file's
 new key `source = "origin" | "drag"` (07 §7.8 amended) makes the
 switch in `Collection.plugin_instance()`; a drag-sourced collection's
 corpus directory is its drag; `hold records build` refuses it (held,
-not built). tests/test_plugins_drag.py (4). **Owed**: `share fetch`
-writing `source = "drag"` into the file it creates; an end-to-end test
-of the worker's scan, rdf, fts and embed over a fetched collection; the
+not built); `share fetch` writes the key into the file it creates and
+the web's rewrites carry it. tests/test_plugins_drag.py (6): the reader,
+the cursor, the file's key, `records build` refused, and the worker's
+own scan filling the manifest from the shards, with the metadata, the
+sections and the layer's cut coming back through the same plugin calls
+the rdf, fts and embed stages make. **Owed**: the stages themselves run
+over a fetched collection on a second peer (live, when one exists); the
 `index-<slice>` member as a cache (import when the pin matches, else
 rebuild).
 
