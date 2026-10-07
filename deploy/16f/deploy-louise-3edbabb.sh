@@ -24,7 +24,7 @@
 # running — consistent; finish with phases 4b–6 alone, nothing else.
 set -euo pipefail
 
-COMMIT=d596355                 # the commit the tarball was made from (git archive <COMMIT> …)
+COMMIT=684931d                 # the commit the tarball was made from (git archive <COMMIT> …)
 ROOT=/mnt/ssd4/apps/louise-rag
 TREE="app tests tools docs calibration"
 FILES="requirements.txt Dockerfile platform.toml.example"
@@ -87,6 +87,12 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
 say "3d. tests/share in the staged image (step 9: members, seeder, peer messages, fetch)"
 docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
   louise-rag:staged timeout -s KILL 900 python -m pytest tests/share -q -p no:cacheprovider
+
+say "3e. tests/ask and the verify-on-use tests in the staged image (step 11: the tools, filters, as_of, chat, T4)"
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
+  louise-rag:staged timeout -s KILL 600 python -m pytest tests/ask -q -p no:cacheprovider
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
+  louise-rag:staged timeout -s KILL 600 python -m pytest tests/bundles/test_verify_on_use.py -q -p no:cacheprovider
 
 # the suite writes beside itself: clean the staging tree before promoting it
 find "$ROOT/src.new" -name '__pycache__' -type d -prune -exec rm -rf {} +

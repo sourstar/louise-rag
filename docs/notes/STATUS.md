@@ -244,6 +244,22 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, 02:45Z (UTC): steps 11 (five bricks) and 10 (first brick)
+DEPLOYED as 684931d.** Web and worker on image `497e16a9…`;
+`src/.deployed-commit` = 684931d; the staged image passed tests/deposit,
+tests/hold, tests/share, tests/ask and the verify-on-use tests on the
+node. First minutes: the maintainer counted gutenberg's facets for
+2026-08 (lang, subjects) within a minute of the start, no error or
+warning line. Live, through `/api/ask/*` on the node: `ask chat` answered
+a question about Gutenberg in two rounds (one `louise_search` call, a
+cited answer) in 2 min 0 s — the chat model's time, through RAGE; a
+`lang=en` filter on gutenberg was refused as 63 124 records against the
+20 000 bound, a `subjects=Whaling -- Fiction` filter admitted 13 and put
+Moby-Dick first; `as_of 2026-09-02` answered from 2026-08 and `as_of
+2026-07-02` withheld gutenberg whole, naming the first held snapshot.
+Backup image `pre-684931d` beside `pre-d596355`; `src.old/` is 684931d's
+predecessor. Nothing cited an imported chunk yet (T4 unmeasured live).
+
 **2026-10-07, ~17:00Z: step 10 started — certified collections, the
 dependency-free half.** The anchor (03 §3.7; 09 §9.11) fetched, kept,
 refreshed daily with jitter by the worker, judged by `check_anchor` and
