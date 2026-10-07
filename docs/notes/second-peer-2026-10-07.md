@@ -99,10 +99,16 @@ here with the fix that landed; the commits carry the detail.
   deleted, and no longer served. On the second peer both replacements
   left quarantine by the book — records-vs-origin run in the Codex's own
   image, loaded from tank — with no decision taken in its place. The two
-  deposit collections also name the stale image, but they are never
-  shared, plan no origin check, and their ingestion never meets the image
-  gate; re-making them would give them new names, which LocalAGI uses. Left
-  as they are, for the operator.
+  deposit collections also named the stale image; the operator, told they
+  were LocalAGI's test collections, said "remake them". Forgotten and
+  created again under their names (LocalAGI addresses a collection by its
+  agent's name): `deposit-granite` (`sha256:163321a3…`, empty) and
+  `louise-stop` (`sha256:6e12e447…`), whose three entries were restored byte
+  for byte from the hourly ZFS snapshot after the carry step failed (a
+  `docker exec` without `-i` took no input) and the forget ran anyway; its
+  `https://example.com/` subscription registered again. Re-making them found
+  a defect: the worker kept the forgotten collection's catalog writer, so
+  the new one's metadata stage could not write (fixed, 3d9036b).
 - **Version-2 benchmarks.** 09 §9.9 amended: a version-2 collection's row
   carries `encoder_image` in place of `encoder_engine`. The node's digest
   now advertises a benchmark for every space it holds; the second peer

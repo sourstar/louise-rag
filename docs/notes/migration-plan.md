@@ -1186,9 +1186,10 @@ node is one peer until 9d's two-peer test):
   the certified and open test collections re-made from the real books
   (`gutenberg-mini-certified`, records-vs-origin in its plan, and
   `gutenberg-mini-open-2`), the old two kept and no longer served. The
-  two deposit collections still name the stale image: never shared, no
-  origin check, and re-making them renames what LocalAGI uses — left for
-  the operator.
+  two deposit collections, LocalAGI's tests, re-made under their names on
+  the operator's word (`louise-stop`'s entries carried byte for byte).
+  And 03 §3.2 amended on the operator's yes: a record whose origin unit was
+  rewritten but parses the same is MOVED, not failed.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,
