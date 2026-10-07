@@ -1605,6 +1605,15 @@ genome collections, and removing it is a decision about them;
 moves before it goes. Each of those is a build or a decision before a
 delete.
 
+**Operator, 2026-10-08: the legacy shape GOES** (the frozen genome
+collections then load only once rebuilt with a Codex). Measured scope:
+131 test files run on the synthesized pre-Codex default (`isolated_config`)
+and 87 build Codex-less `Collection`s by hand — porting them to Codex
+fixtures is the bulk of the work, then `backend_gate` (the worker calls
+`run_check` directly), `codex_only`, the synthesized default and the 25
+`codex is None` branches in app/. Decisions 1–3 of the same day are
+made (08a4c23).
+
 ### Step 13 — The engine in the Codex, the run in the answer, RAGE
 *02 §2.4, 03 §3.3, 07 §7.8, 09 §9.3, 09 §9.12 (0d85f7f, dd9bef4,
 8bbc66a). The design is [`rage.md`](rage.md); the review that shaped it
