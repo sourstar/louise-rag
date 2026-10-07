@@ -633,6 +633,53 @@ def cmd_node_pause(a) -> int:
     return 0
 
 
+#: `louise dev`'s instruments (07 §7.3, §7.6): verb -> the tools module it
+#: runs. Wrapped, not rewritten — the module keeps its own flags, and
+#: `python -m tools.<module>` keeps working until step 12 retires it.
+DEV_TOOLS = {"schedule-report": "sched_report", "embedder-profile": "profile_embed",
+             "load-profile": "load_profile", "refs-sync": "sync_refs"}
+
+
+def cmd_dev_tool(a) -> int:
+    """`louise dev <instrument> [its flags]`: the tools module, given the
+    rest of the line as its own arguments."""
+    import importlib
+    import inspect
+    module = importlib.import_module(f"tools.{DEV_TOOLS[a.verb]}")
+    argv = [x for x in (a.rest or []) if x != "--"]
+    if inspect.signature(module.main).parameters:
+        rc = module.main(argv)
+    else:
+        # a module whose main reads sys.argv: given the line it would have had
+        saved = sys.argv
+        sys.argv = [f"louise dev {a.verb}", *argv]
+        try:
+            rc = module.main()
+        finally:
+            sys.argv = saved
+    return int(rc or 0)
+
+
+def cmd_dev_migrate_schema(a) -> int:
+    """`louise dev migrate schema [<collection>]`: pending schema changes
+    applied to a collection's state database (tools/migrate_manifest.py),
+    every collection's when none is named. Writes; never runs on its own."""
+    from app import collections as collections_mod
+    from tools import migrate_manifest
+    if a.collection:
+        c = collections_mod.by_name(a.collection)
+        if c is None:
+            raise CodexError(f"{a.collection}: no such collection on this node")
+        targets = [c]
+    else:
+        targets = collections_mod.load_all()
+    out = {}
+    for c in targets:
+        out[c.name] = migrate_manifest.run(Path(c.manifest_path), c.plugin, a.dry_run, not a.no_backup)
+    _print(out)
+    return 0
+
+
 def cmd_node_show(a) -> int:
     """`node show` (07 §7.3): state per collection, the current stage, the
     last round's cost, the overrides in force, the verbs running under the
@@ -2950,6 +2997,24 @@ def build_parser() -> argparse.ArgumentParser:
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
 
+    dev = surfaces.add_parser("dev", help="operator instruments; read-only unless the line says otherwise (07 §7.3)")
+    dverbs = dev.add_subparsers(dest="verb", required=True)
+    for verb, what in (("schedule-report", "what the worker spent its rounds on (tools/sched_report.py)"),
+                       ("embedder-profile", "the concurrency an endpoint sustains (tools/profile_embed.py)"),
+                       ("load-profile", "how long each model takes to come back to the card; loads and unloads "
+                                        "models and puts back what it found (tools/load_profile.py)"),
+                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)")):
+        p = dverbs.add_parser(verb, help=what, add_help=False)
+        p.add_argument("rest", nargs=argparse.REMAINDER, help="the instrument's own flags")
+        p.set_defaults(fn=cmd_dev_tool)
+    p = dverbs.add_parser("migrate", help="schema changes to a state database; writes; never runs on its own")
+    mverbs = p.add_subparsers(dest="what", required=True)
+    p = mverbs.add_parser("schema", help="apply pending schema changes to a collection's state database")
+    p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help="report the changes, write nothing")
+    p.add_argument("--no-backup", action="store_true", dest="no_backup", help="no .bak copy of the file first")
+    p.set_defaults(fn=cmd_dev_migrate_schema)
+
     share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
     shverbs = share.add_subparsers(dest="verb", required=True)
     p = shverbs.add_parser("collection", help="serve what you hold — and announce it; --stop to stop")
@@ -3120,6 +3185,10 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) >= 2 and argv[0] == "share" and argv[1] not in _SHARE_VERBS:
         argv.insert(1, "collection")              # `share <collection>` (07 §7.3)
+    if len(argv) >= 2 and argv[0] == "dev" and argv[1] in DEV_TOOLS:
+        # an instrument's flags are its own: handed over whole, never parsed
+        # here (argparse cannot pass `--all` through a positional remainder)
+        return cmd_dev_tool(argparse.Namespace(verb=argv[1], rest=argv[2:]))
 
     a = build_parser().parse_args(argv)
     if getattr(a, "root", None) is None and hasattr(a, "root"):

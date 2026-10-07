@@ -169,6 +169,8 @@ louise dev                                                             operator 
                                                                        and engine, tolerance, work, validation, descriptive — and the calibration set is embedded per space
                                                                        as `create` does; the first space named is the root, the others `derived_from` it
   adopt <pack-dir> <collection>                                        the one-time move of a pre-Codex pack's vectors and index into the collection's drag; writes
+                                                                       (`migrate pack` and `adopt`: NOT BUILT — every pre-Codex pack this node held was migrated in
+                                                                       step 8, so they would serve no remaining case; proposed for removal, 2026-10-07)
   refs-sync            reference tables from their origins; writes
 ```
 

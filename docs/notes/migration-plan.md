@@ -1587,6 +1587,24 @@ no calibration member to gate against, and it keeps this gate until it
 is gone — and `codex_only = false`.
 Delete this file.
 
+**2026-10-07, the additive half DONE, the retirement BLOCKED.** `louise
+dev` built (schedule-report, embedder-profile, load-profile, refs-sync —
+each the tools module given its own flags whole — and `migrate schema
+[<collection>]`; tests/test_louise_dev.py). `migrate pack` and `adopt`
+not built: every pre-Codex pack was migrated in step 8 (07 §7.3 marks
+them, proposed for removal). The deletions wait, for reasons, not taste:
+this step runs after 13 and 14, and 13f (retiring TrueNAS apps) is the
+operator's alone while 14's scheduled checks want the node measured
+first; `app/cli.py` still carries commands with no new home — `health`,
+`genesis recheck|recount|retry`, `pack status|cat|dump`, `index vector
+build|status|prune`, `snapshot delta`, `embed materialize`, `bundle
+public-key` — and DEPLOY-NOW.md's runbooks call some of them; the legacy
+shape (`backend_gate`, `codex_only = false`) still loads the frozen
+genome collections, and removing it is a decision about them;
+`backend_gate.embed_allowed` is the worker's route to `run_check`, so it
+moves before it goes. Each of those is a build or a decision before a
+delete.
+
 ### Step 13 — The engine in the Codex, the run in the answer, RAGE
 *02 §2.4, 03 §3.3, 07 §7.8, 09 §9.3, 09 §9.12 (0d85f7f, dd9bef4,
 8bbc66a). The design is [`rage.md`](rage.md); the review that shaped it
