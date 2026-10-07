@@ -74,23 +74,38 @@ here with the fix that landed; the commits carry the detail.
     dropped by `hold collection create` (found earlier the same day),
     `up.sh` naming images by the containerd store's index digest.
 
-## Open — decisions for the operator
+## The three decisions — taken by the operator, 2026-10-07 ("yes to all")
 
-- **The node's `LOUISE_PLATFORM_IMAGE` is stale.** STATUS 2026-09-14 says
-  each deploy sets it to the image the containers start in; the current
-  runbook never does, and the node still carries `sha256:85fd59f1…`
-  (`louise-rag:codex-pubmed`, 2026-09-21). Every Codex created since names
-  an image that did not build it: the certified collection, the open test
-  collection, the deposit collections. For a version-4 Codex that image
-  cannot even read the Codex, so "records-vs-origin in the Codex's own
-  image" is impossible on another peer. The second peer passed the check
-  in that image for the version-2 certified collection; for the open one
-  it took the documented `ack --origin-unchecked`. Setting the variable
-  honestly changes which image may build pubmed's, gutenberg's and
-  wikipedia's records (03 §3.4), so it is the operator's call.
-- **Version-2 collections advertise no benchmark**, so no peer can lead a
-  shard of gutenberg, pubmed or wikipedia under rendezvous: their
-  statements name an image, and the digest's row (09 §9.9 v2) names a
-  run. Sending the older row form is a wire-format change: ask first.
-- **`records-vs-origin` is missing from the certified collection's own
-  plan**, so only the quarantine gate asks for it.
+- **The node is told the image it runs.** The runbook sets
+  `LOUISE_PLATFORM_IMAGE` for web and worker through TrueNAS's API client
+  (`deploy/16f/set_platform_image.py`, between the stop job and the start)
+  and checks each container's value against the image it runs. First run
+  with c332c93: `85fd59f1…` → `bcdeaa7d…`, the image both containers run.
+  That image is kept on tank and tagged `codex-gutenberg-mini-certified`
+  and `codex-gutenberg-mini-open-2`. Consequence, by design: every deploy
+  now changes the declared image, and a records build or snapshot under a
+  new image needs that image's equivalence for the collection first (its
+  own records-vs-origin AND chunks passing under it, 03 §3.4). The
+  equivalence checks for gutenberg and pubmed under `bcdeaa7d…` were run
+  the same day (STATUS has the outcome).
+- **The collections that named the wrong image, re-made from the real
+  books.** The superseded two were fixture texts under a mirror's origin
+  spec, so a peer re-fetching from the mirror would have found other
+  books. Their replacements are built from the real 10001–10003 the node
+  holds: `gutenberg-mini-certified` (`sha256:5d0bc528…`, Codex version 2,
+  certified, pointer seq 1, records-vs-origin now in its plan) and
+  `gutenberg-mini-open-2` (`sha256:90cfbccd…`, version 4, granite). The
+  old `gutenberg-744ba8430fed` and `gutenberg-mini-open` are kept, never
+  deleted, and no longer served. On the second peer both replacements
+  left quarantine by the book — records-vs-origin run in the Codex's own
+  image, loaded from tank — with no decision taken in its place. The two
+  deposit collections also name the stale image, but they are never
+  shared, plan no origin check, and their ingestion never meets the image
+  gate; re-making them would give them new names, which LocalAGI uses. Left
+  as they are, for the operator.
+- **Version-2 benchmarks.** 09 §9.9 amended: a version-2 collection's row
+  carries `encoder_image` in place of `encoder_engine`. The node's digest
+  now advertises a benchmark for every space it holds; the second peer
+  led the certified collection's one shard among two peers, embedded its
+  239 chunks, and the node took the bundle in (T0–T2, landed, served),
+  searching it with both legs.

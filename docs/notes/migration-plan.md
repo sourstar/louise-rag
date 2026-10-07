@@ -1176,13 +1176,19 @@ node is one peer until 9d's two-peer test):
   (the DHT readers now hear their alerts; never run against the live
   DHT); `--slices`/`--kinds` narrowing of what is served; the web's pull
   answers under a budget; local reproduction of a deterministic claim.
-  **Decisions for the operator**, before contribution can reach the
-  node's main collections: version-2 collections advertise no
-  benchmark, so no peer leads a shard of gutenberg, pubmed or wikipedia
-  (sending the older row form is a 09 §9.9 wire question); and the
-  node's `LOUISE_PLATFORM_IMAGE` still names the 2026-09-21 image, so
-  every Codex created since names an image that did not build it, and a
-  version-4 Codex names one that cannot read it.
+  **The operator's three decisions, taken 2026-10-07 and done the same
+  day** (the second-peer note has the detail): version-2 collections
+  advertise a benchmark (09 §9.9 amended: `encoder_image` in the row) —
+  the second peer led the certified collection's shard and the node took
+  its bundle in; the runbook tells web and worker the image they run
+  (`deploy/16f/set_platform_image.py`), so every deploy now needs a
+  collection's equivalence under the new image before a records build;
+  the certified and open test collections re-made from the real books
+  (`gutenberg-mini-certified`, records-vs-origin in its plan, and
+  `gutenberg-mini-open-2`), the old two kept and no longer served. The
+  two deposit collections still name the stale image: never shared, no
+  origin check, and re-making them renames what LocalAGI uses — left for
+  the operator.
 
 *04. Wraps `app/acquire/transport_torrent.py`, `torrent_publish.py`,
 `app/transfer`, `app/discovery.py`, `app/contribute.py`,
