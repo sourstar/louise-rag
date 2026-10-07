@@ -244,6 +244,33 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~13:20Z (UTC): the operator's three decisions, done;
+c332c93 DEPLOYED.** (1) The runbook now tells web and worker the image
+they run (`deploy/16f/set_platform_image.py`, checked in phase 6): first
+run `85fd59f1…` → `bcdeaa7d…`, kept on tank. The certified and open test
+collections were re-made from the REAL books 10001–10003 (the old ones
+were fixture texts under a mirror's origin spec): `gutenberg-mini-certified`
+(`sha256:5d0bc528…`, certified, records-vs-origin in its plan) and
+`gutenberg-mini-open-2` (`sha256:90cfbccd…`); the old two are kept and no
+longer served. Both left quarantine on the second peer by the book. The
+deposit collections still name the stale image — left for the operator.
+Equivalence of `bcdeaa7d…` under 03 §3.4: **pubmed PASS** (24,241 records
+re-parsed byte for byte, 2,014,540 re-cut, 12 min) — it may be built under
+the current image; **gutenberg FAIL** on records-vs-origin (2,138 of 4,074
+differing, chunks pass) — but every difference sampled (25 of 25) is
+`origin_hash` alone, and every one of those book folders was rewritten on
+2026-10-05, after the snapshot: the mirror moved, the parser did not. Its
+own image would fail the same check, so gutenberg's builds stay with
+`codex-gutenberg` until the check can tell a moved origin from a different
+parser (a proposal, not a change). wikipedia has no snapshot yet; its first
+records build needs its own image or this one's equivalence. (2) 09 §9.9
+amended, version-2 benchmarks live: the node advertises five spaces; the
+second peer led the certified collection's shard and the node took its
+239-chunk bundle in. (3) Done with (1). Since every deploy now changes the
+declared image, HEAD (a log-message fix and notes) was NOT deployed today,
+so the equivalence just proven holds for the image running.
+
+
 **2026-10-07, ~10:15Z (UTC): step 9 LIVE with a second peer; Louise on
 any Docker host; deployed through b741bfb.** Backups removed on the node
 first (operator: the `pre-*` images and `src.old/`). `deploy/docker/`
