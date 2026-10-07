@@ -64,10 +64,10 @@ def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkey
 
 
 def test_the_flags_this_brick_does_not_build_are_refused_not_ignored(node, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [])
-    for kw in ({"as_of": "2026-01-01"}, {"freshness": True}):
-        with pytest.raises(results.NotYet):
-            results.search("q", **kw, run=lambda *a, **k: {"hits": []})
+    monkeypatch.setattr(query_service, "resolve_collections",
+                        lambda names, **kw: [SimpleNamespace(name="g", plugin="gutenberg", codex=None)])
+    with pytest.raises(results.NotYet):
+        results.search("q", freshness=True, run=lambda *a, **k: {"hits": []})
     seen = {}
 
     def run(names, query, k, mode, translate, rerank_depth=50, all_languages=False, filters=None):
@@ -82,3 +82,11 @@ def test_the_flags_this_brick_does_not_build_are_refused_not_ignored(node, monke
         results.search("   ", run=lambda *a, **k: {"hits": []})
     with pytest.raises(results.AskError, match="no collection held here is in space"):
         results.search("q", space="sha256:" + "0" * 64, run=lambda *a, **k: {"hits": []})
+
+
+def test_everything_withheld_is_said_not_asked_of_the_search(node, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [])
+    monkeypatch.setattr(query_service, "withheld_from",
+                        lambda names, **kw: [{"collection": "x", "reason": "quarantine"}])
+    out = results.search("q", run=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no collections to search")))
+    assert out["lists"] == [] and out["withheld"] == [{"collection": "x", "reason": "quarantine"}]

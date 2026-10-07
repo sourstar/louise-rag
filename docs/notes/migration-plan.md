@@ -1265,12 +1265,30 @@ at §9.8's path, publishes it, and burns the producer's key in
 takes the file's `deny` and `burn`); the legacy providers-table
 quarantine and the local re-embed of the producer's documents stay as
 they were. An encoder that does not answer leaves the queue as it was.
-**Owed in step 11**: `as_of` (reading the snapshot current at a date),
-`freshness`, figures on results and `GET /api/ask/figure`, `ask chat`
-with the three tools, the `needs` of an edge into another collection
-(its plugin's id→shard mapping), results carrying `certification` (step
-10); `hold key trust <key> --restore|--deny` over the trust file goes
-with step 10's `hold key`. Known trade-off kept from before: a burned
+Fourth brick: `as_of` (05 §5.1; `app/ask/asof.py`) — the date read at
+00:00 in `origin.clock` against the cutoff rule (`update.day` of the
+period after), the newest HELD snapshot at or before it chosen; what the
+one index can answer for it is exactly the records unchanged since
+(same `content_hash`, same chunks), so hits on records added, changed
+or tombstoned by any later snapshot are dropped (`as_of.excluded`) and
+the chosen snapshot's shards holding them are named under `withheld`
+(held or not — held ones are not indexed for search); every result's
+`snapshot_id` is the snapshot that answered; a chain with a gap, a date
+before the first held snapshot, or a Codex-less collection is withheld
+whole and said; more than 500 000 changed records is refused (exit 3).
+Fifth brick: `ask chat` (05 §5.4; `app/ask/chat.py`, `/api/ask/chat`)
+— the chat model with the three tools declared as functions
+(`llm.chat_tools`, both dialects of CHAT_URL), each call run through
+the MCP dispatcher and handed back compacted (text trimmed, lists cut,
+the object itself kept in `turns`), rounds bounded at six then an
+answer without tools; CHAT_URL unset refuses (exit 2);
+`/v1/chat/completions` stays retrieval-then-answer for its clients.
+07 §7.3 amended: `--filter FACET=VALUE` in place of per-facet flags.
+**Owed in step 11**: `freshness`, figures on results and `GET
+/api/ask/figure`, the `needs` of an edge into another collection (its
+plugin's id→shard mapping), results carrying `certification` (step 10);
+`hold key trust <key> --restore|--deny` over the trust file goes with
+step 10's `hold key`. Known trade-off kept from before: a burned
 producer's vectors are re-embedded locally rather than dropped from
 search at once (03 §3.5 says dropped) — they serve until the worker's
 delete-then-insert replaces them.

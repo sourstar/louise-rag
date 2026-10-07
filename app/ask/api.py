@@ -54,6 +54,29 @@ async def search(body: SearchBody) -> JSONResponse:
     return JSONResponse(out)
 
 
+class ChatBody(BaseModel):
+    question: str
+    collections: list[str] | None = None
+    history: list[dict[str, Any]] | None = None
+
+
+@router.post("/chat")
+async def chat(body: ChatBody) -> JSONResponse:
+    """`ask chat` over HTTP (05 §5.4; 07 §7.4): the answer with every tool
+    call made and what it returned. `/v1/chat/completions` stays what it
+    was — retrieval then an answer, for clients that speak that protocol."""
+    import json
+    from starlette.concurrency import run_in_threadpool
+    from app.ask import chat as chat_mod
+    try:
+        out = await run_in_threadpool(chat_mod.ask, body.question, collections=body.collections,
+                                      history=body.history)
+    except CodexError as e:
+        code = int(getattr(e, "exit_code", 2))
+        return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
+    return JSONResponse(json.loads(json.dumps(out, default=str)))
+
+
 class LookupBody(BaseModel):
     id: str
 

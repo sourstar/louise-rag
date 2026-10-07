@@ -15,9 +15,13 @@ the origin's page, the figures (null: no collection carries plates yet),
 and whether the list is the reranker's order.
 
 `filters` restricts both legs to the records the collections' facets admit
-(05 §5.2; app/ask/filters.py), through `query_service.run_search`. Not in
-this brick, refused rather than ignored: `as_of` (the snapshot current at
-a date) and `freshness` (the origin asked for the current version).
+(05 §5.2; app/ask/filters.py), through `query_service.run_search`. `as_of`
+answers from the held snapshot current at a date (05 §5.1; app/ask/asof.py):
+records changed since are dropped and their shards named under
+`withheld`, every result names the snapshot that answered, and the
+response's `as_of` says which snapshot per collection and how many hits
+were dropped. Not in this brick, refused rather than ignored: `freshness`
+(the origin asked for the current version).
 """
 from __future__ import annotations
 
@@ -150,10 +154,10 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     legs_withheld, translations}`. `run` is query_service.run_search unless
     a test gives another."""
     from app import collections as collections_mod, identity, query_service
+    from app.ask import asof as asof_mod
     if filters is not None and not isinstance(filters, dict):
         raise AskError("filters is an object {facet field: value | {not: value}} (05 §5.4)")
-    if as_of:
-        raise NotYet("as_of: searching the snapshot current at a date is not built yet (05 §5.1)")
+    day = asof_mod.parse_date(as_of) if as_of else None
     if freshness:
         raise NotYet("freshness: asking the origin for the current version is not built yet (05 §5.3)")
     if not isinstance(query, str) or not query.strip():
@@ -171,14 +175,44 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         named = [c for c in named if getattr(c, "codex", None) is not None and c.codex.space_id == space]
         if not named:
             raise AskError(f"no collection held here is in space {space}")
+    # 05 §5.1 `as_of`: per collection, the held snapshot current at the date,
+    # or the collection withheld whole and said so (app/ask/asof.py)
+    dated: dict[str, Any] = {}
+    withheld_as_of: list[dict[str, Any]] = []
+    if day is not None:
+        from app.hold import collection as col
+        root_ = Path(root) if root is not None else _root()
+        kept = []
+        for c in named:
+            codex = getattr(c, "codex", None)
+            if codex is None:
+                withheld_as_of.append({"collection": c.name, "collection_id": None, "shards": "all",
+                                       "reason": f"as of {day.isoformat()}: a collection without a Codex has "
+                                                 f"no dated snapshots"})
+                continue
+            r = asof_mod.resolve(codex, col.drag_of(root_, c.name), day)
+            if r.snapshot is None:
+                withheld_as_of.append(asof_mod.withheld_entry(c, codex, r, day))
+                continue
+            dated[c.name] = r
+            kept.append(c)
+        named = kept
     names = [c.name for c in named]
-    result = run(names, query, limit, "hybrid", translate, rerank_depth=rerank_depth,
-                 all_languages=all_languages, filters=filters or None)
+    if named:
+        result = run(names, query, limit, "hybrid", translate, rerank_depth=rerank_depth,
+                     all_languages=all_languages, filters=filters or None)
+    else:
+        # nothing to search — everything withheld, or no collection dated as
+        # asked: said so, never a request for "no collections" one layer down
+        result = {"hits": [], "withheld": query_service.withheld_from(collections)}
     by_name = {c.name: c for c in named}
     contexts = {n: context_for(c, root=root, now=now, own_key=own_key) for n, c in by_name.items()}
+    for n, r in dated.items():
+        contexts[n]["snapshot_id"] = r.snapshot.snapshot_id       # the snapshot that answered
     reranked = bool(result.get("reranked"))
     per_space: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
+    excluded: dict[str, int] = {}
     for c in named:
         sid = contexts[c.name]["space_id"]
         if sid not in order:
@@ -188,9 +222,16 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         c = by_name.get(cname)
         if c is None:
             continue
+        r = dated.get(c.name)
+        if r is not None and _uid(c, hit) in r.changed:
+            excluded[c.name] = excluded.get(c.name, 0) + 1   # changed since: never answered from a later state
+            continue
         ctx = contexts[c.name]
         per_space.setdefault(ctx["space_id"], []).append(result_of(c, ctx, hit, 0, own_key=own_key,
                                                                     reranked=reranked))
+    for n, r in dated.items():
+        if r.shards or excluded.get(n):
+            withheld_as_of.append(asof_mod.withheld_entry(by_name[n], by_name[n].codex, r, day))
     lists = []
     for sid in order:
         hits = per_space.get(sid, [])[:limit]
@@ -202,11 +243,13 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "lists": lists,
         "facts": facts,
         "unresolved": [str(u) for u in result.get("unresolved", [])],
-        "withheld": result.get("withheld", []),
+        "withheld": list(result.get("withheld", [])) + withheld_as_of,
         "legs_withheld": result.get("legs_withheld", []),
         "translations": result.get("translations", {}),
         "facts_withheld": result.get("facts_withheld", []),
         "filters": filters or {},
         "filtered": result.get("filtered"),
+        "as_of": ({"date": day.isoformat(), "snapshots": {n: r.snapshot.snapshot_id for n, r in dated.items()},
+                   "excluded": excluded} if day is not None else None),
         "timings": result.get("timings", {}),
     }

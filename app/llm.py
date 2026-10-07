@@ -16,6 +16,8 @@ Every request carries `Louise-Level` (docs/09-formats.md §9.12).
 """
 import json
 import re
+from dataclasses import dataclass
+
 import httpx
 from . import config, dispatch
 from .dispatch import Level
@@ -79,6 +81,61 @@ def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
         if config.CHAT_API == "openai":
             return strip_think(got["choices"][0]["message"]["content"] or "")
         return strip_think(got["message"]["content"])
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One call the model asked for: `id` in the OpenAI dialect, None in
+    Ollama's; `arguments` parsed to a dict (an unreadable one is `{}`)."""
+    id: str | None
+    name: str
+    arguments: dict
+
+
+def _arguments(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            got = json.loads(raw)
+            return got if isinstance(got, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: float = 0.2,
+               max_tokens: int = 1500, num_ctx: int = 16384, *,
+               level: Level = Level.CHAT) -> tuple[str, list[ToolCall], dict]:
+    """One round with function tools declared (`ask chat`, 05 §5.4):
+    `(content, calls, assistant_message)` — the assistant message as the
+    protocol wants it appended before the tool messages. `tools` None
+    declares none, and the model must answer."""
+    url, body = _request(messages, stream=False, temperature=temperature,
+                         max_tokens=max_tokens, num_ctx=num_ctx)
+    if tools:
+        body["tools"] = tools
+    with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
+            httpx.Client(timeout=config.LLM_TIMEOUT) as client:
+        r = client.post(url, json=body, headers=dispatch.level_headers())
+        r.raise_for_status()
+        got = r.json()
+    msg = got["choices"][0]["message"] if config.CHAT_API == "openai" else got["message"]
+    raw_calls = msg.get("tool_calls") or []
+    calls = [ToolCall(tc.get("id"), tc["function"]["name"], _arguments(tc["function"].get("arguments")))
+             for tc in raw_calls if isinstance(tc, dict) and isinstance(tc.get("function"), dict)]
+    content = strip_think(msg.get("content") or "")
+    assistant: dict = {"role": "assistant", "content": msg.get("content") or ""}
+    if raw_calls:
+        assistant["tool_calls"] = raw_calls
+    return content, calls, assistant
+
+
+def tool_message(call: ToolCall, content: str) -> dict:
+    """A tool's answer, as the protocol wants it back."""
+    if config.CHAT_API == "openai":
+        return {"role": "tool", "tool_call_id": call.id or call.name, "content": content}
+    return {"role": "tool", "content": content, "tool_name": call.name}
+
 
 def chat_stream(messages: list[dict], temperature: float = 0.3,
                 max_tokens: int | None = None, num_ctx: int = 16384, *,

@@ -42,3 +42,26 @@ def test_lookup_and_traverse_print_their_objects(node, monkeypatch, capsys):  # 
     assert louise.main(["ask", "traverse", "pubmed:1", "--root", str(node), "--depth", "3"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["id"] == "pubmed:1" and out["depth"] == 3 and out["relation"] is None
+
+
+def test_chat_prints_the_answer_and_its_tool_calls(node, monkeypatch, capsys):  # noqa: F811
+    from app.ask import chat
+    p = louise.build_parser()
+    a = p.parse_args(["ask", "chat", "who", "hunts", "the", "whale", "--collections", "gutenberg"])
+    assert a.fn is louise.cmd_ask_chat and a.question == ["who", "hunts", "the", "whale"]
+    seen = {}
+
+    def fake(question, **kw):
+        seen.update(question=question, **kw)
+        return {"answer": "Ahab [gutenberg:2701].", "rounds": 2, "exhausted": False,
+                "turns": [{"tool": "louise_search", "arguments": {"query": "whale"}, "result": {"lists": []},
+                           "error": None},
+                          {"tool": "louise_lookup", "arguments": {"id": "x:1"}, "result": None, "error": "malformed"}]}
+    monkeypatch.setattr(chat, "ask", fake)
+    assert louise.main(["ask", "chat", "who", "hunts", "the", "whale", "--collections", "gutenberg"]) == 0
+    out, err = capsys.readouterr()
+    assert out.strip() == "Ahab [gutenberg:2701]." and seen == {"question": "who hunts the whale",
+                                                                 "collections": ["gutenberg"]}
+    assert '[louise_search {"query": "whale"}]' in err and "refused: malformed" in err
+    assert louise.main(["ask", "chat", "q", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["turns"][0]["tool"] == "louise_search"

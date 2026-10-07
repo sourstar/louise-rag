@@ -970,6 +970,26 @@ def cmd_ask_serve(a) -> int:
     return mcp.serve_stdio()
 
 
+def cmd_ask_chat(a) -> int:
+    """`ask chat <question>`: the chat model with the three tools of 05
+    §5.4; needs CHAT_URL (07 §7.8). The answer, then every tool call made
+    on stderr; `--json` prints the whole object, results included."""
+    from app.ask import chat
+    out = chat.ask(" ".join(a.question), collections=a.collections or None)
+    if a.json:
+        _print(out)
+        return 0
+    print(out["answer"])
+    for t in out["turns"]:
+        line = f"[{t['tool']} {json.dumps(t['arguments'], ensure_ascii=False)}]"
+        if t.get("error"):
+            line += f" refused: {t['error']}"
+        print(line, file=sys.stderr)
+    if out.get("exhausted"):
+        print(f"[{out['rounds']} rounds: the model was asked to answer with what it had]", file=sys.stderr)
+    return 0
+
+
 def cmd_share_peers(a) -> int:
     """`share peers add <address> [--key]` writes the bootstrap of 04 §4.2
     into platform.toml's `[peers]` (07 §7.8) — desired state, in the file;
@@ -2734,13 +2754,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--space", help="a space_id: only the collections in it")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--rerank-depth", type=int, default=50)
-    p.add_argument("--as-of", help="YYYY-MM-DD: the snapshot current at that date (not built yet)")
+    p.add_argument("--as-of", help="YYYY-MM-DD: answer from the held snapshot current at that date (05 §5.1)")
     p.add_argument("--freshness", action="store_true", help="ask the origin for the current version (not built yet)")
     p.add_argument("--translate", action="store_true")
     p.add_argument("--all-languages", action="store_true")
     p.add_argument("--filter", action="append", metavar="FACET=VALUE",
-                   help="restrict the legs to a facet value; FACET=!VALUE excludes (not built yet)")
+                   help="restrict the legs to a facet value (05 §5.2); FACET=!VALUE excludes")
     p.set_defaults(fn=cmd_ask_search)
+    p = akverbs.add_parser("chat", help="the chat model with the three tools of 05 §5.4; needs CHAT_URL")
+    p.add_argument("question", nargs="+")
+    p.add_argument("--collections", nargs="*", help="search only these unless the question says otherwise")
+    p.add_argument("--json", action="store_true", help="the answer with every tool call and its result")
+    p.set_defaults(fn=cmd_ask_chat)
     p = akverbs.add_parser("facets", help="the fields a collection can be filtered on, or one field's values (05 §5.7)")
     root_arg(p); p.add_argument("collection"); p.add_argument("field", nargs="?", default=None)
     p.add_argument("--under", default=None, help="one subtree of a tree facet")

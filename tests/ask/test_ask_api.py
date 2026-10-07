@@ -51,3 +51,21 @@ def test_the_mcp_server_over_http(client):
                                           "params": {"name": "louise_lookup", "arguments": {"id": "nowhere:1"}}})
     assert r.status_code == 200 and r.json()["result"]["structuredContent"] == {"facts": [], "unresolved": ["nowhere:1"]}
     assert client.post("/api/ask/mcp", content=b"nope", headers={"content-type": "application/json"}).status_code == 400
+
+
+def test_chat_route_answers_the_loop_s_object_and_a_refusal_carries_the_exit(client, monkeypatch):
+    from app.ask import chat
+    seen = {}
+
+    def fake(question, **kw):
+        seen.update(question=question, **kw)
+        return {"answer": "Ahab.", "rounds": 1, "exhausted": False, "turns": []}
+    monkeypatch.setattr(chat, "ask", fake)
+    r = client.post("/api/ask/chat", json={"question": "who?", "collections": ["gutenberg"],
+                                           "history": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and r.json()["answer"] == "Ahab."
+    assert seen == {"question": "who?", "collections": ["gutenberg"], "history": [{"role": "user", "content": "hi"}]}
+    monkeypatch.setattr(chat, "ask", lambda *a, **k: (_ for _ in ()).throw(chat.ChatError("CHAT_URL unset")))
+    r = client.post("/api/ask/chat", json={"question": "q"})
+    assert r.status_code == 409 and r.json() == {"exit": 2, "error": "CHAT_URL unset"}
+    assert client.post("/api/ask/chat", json={}).status_code == 422

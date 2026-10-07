@@ -244,6 +244,19 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~15:00Z: step 11, fourth and fifth bricks — `as_of` and
+`ask chat`.** `--as-of DATE` answers from the newest held snapshot whose
+cutoff is at or before the date (origin clock, `update.day`): records
+changed since are dropped and their shards named, every result says
+which snapshot answered, a gap in the chain or a date before the first
+snapshot withholds the collection and says so. `ask chat` /
+`/api/ask/chat`: the chat model with the three tools as functions in
+both of CHAT_URL's dialects, bounded rounds, every call and its result
+returned with the answer. tests/ask: 44 (+11), test_louise_level
+unchanged. Not deployed (node: d596355). Not tried against the live
+chat model yet: the first live `ask chat` goes into STATUS after the
+deploy.
+
 **2026-10-07, ~13:00Z: step 11, third brick — T4 on the chunks a search
 cites.** Every search queues the imported chunks it returns
 (`verify_queue`); the worker re-embeds them in passes of 32 from the
