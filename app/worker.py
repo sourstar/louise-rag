@@ -2283,9 +2283,40 @@ def _embedding_allowed(con, collection) -> bool:
     clear a quarantine (03 §3.6, condition 3), so it must run for a copy
     that is in one; asking in the other order would leave an untested run
     untested for ever."""
+    if _integrity_halts(con, collection):
+        return False
     if not backend_gate.embed_allowed(con, collection, stop=_stop.is_set):
         return False
     return _quarantine_allows(con, collection, "embedding")
+
+
+#: collection path -> the violations last said, so the halt is logged on change
+_integrity_said: dict[str, tuple] = {}
+
+
+def _integrity_halts(con, collection) -> bool:
+    """03 §3.8: a certified manifest-only copy holding a shard no signed
+    snapshot lists stops embedding for the whole collection — vectors for
+    chunks outside the snapshot would poison everyone's coverage map — until
+    the shard is gone or replaced (app/hold/integrity.py)."""
+    from .hold import integrity
+    codex = getattr(collection, "codex", None)
+    if not integrity.applies(codex):
+        return False
+    drag = Path(collection.corpus_dir) if getattr(collection, "source", "origin") == "drag" else \
+        collections_mod.louise_root() / "collections" / collection.name / "drag"
+    found = integrity.violations(drag.parent.parent, drag.parent.name, codex)
+    key = str(collection.manifest_path)
+    if _integrity_said.get(key, ()) != found:          # first sight of a clean copy: nothing to say
+        _integrity_said[key] = found
+        if found:
+            db.log_event(con, "error", "integrity",
+                         f"INTEGRITY VIOLATED: {len(found)} record shard(s) no certifier-signed snapshot "
+                         f"lists ({found[0]}…): embedding stops, no bundle is published, search goes on "
+                         f"over the certified rest (03 §3.8); `share fetch` replaces them"[:500])
+        else:
+            db.log_event(con, "info", "integrity", "integrity restored: every record shard is signed")
+    return bool(found)
 
 
 def _settle_the_run(con, collection) -> None:

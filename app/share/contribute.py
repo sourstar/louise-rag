@@ -64,6 +64,11 @@ def preconditions(root: Path, name: str, codex, snapshot: sn.Snapshot | None, *,
                and b.get("snapshot_hash") == snapshot.hash for b in bodies):
         reasons.append(f"no records-vs-origin attestation for snapshot {snapshot.snapshot_id} — "
                        f"this peer's or another key's (04 §4.5)")
+    from app.hold import integrity
+    bad = integrity.violations(root, name, codex)
+    if bad:
+        reasons.append(f"integrity violated: {len(bad)} record shard(s) no certifier-signed snapshot lists "
+                       f"({bad[0]}…) — no bundle is published until they are replaced (03 §3.8)")
     if not runs.applies(codex):
         try:
             vb.require_statement(root, name, codex)

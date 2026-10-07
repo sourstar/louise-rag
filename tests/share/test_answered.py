@@ -38,3 +38,9 @@ def test_the_pull_route_paces_its_answer_and_the_beat_drains():
     from app.share import api, gossip
     assert "answered.pace" in inspect.getsource(api._pull), "every pull answer goes through the pacing"
     assert "answered.drain" in inspect.getsource(gossip.beat), "and the worker's beat charges it"
+
+
+def test_a_drain_never_creates_the_store(tmp_path, monkeypatch):
+    from app import node_state
+    monkeypatch.setattr(node_state, "path", lambda: tmp_path / "state" / "node.sqlite")
+    assert answered.drain() == 0 and not (tmp_path / "state").exists(), "nothing recorded, nothing owed"

@@ -147,6 +147,25 @@ def _plain(obj: Any) -> Any:
     return obj
 
 
+def _from_shard(c, hit) -> str | None:
+    """The drag-relative shard a hit's record was read from: a fetched
+    collection's locator is `<shard path>#<uid>` (app/plugins/drag.py)."""
+    from contextlib import closing
+    from app import db
+    try:
+        with closing(db.connect(c)) as con:
+            row = con.execute("SELECT path FROM documents WHERE uid=?", (_uid(c, hit),)).fetchone()
+    except Exception:   # noqa: BLE001 — a hit whose source cannot be read stays
+        return None
+    if not row or "#" not in str(row[0]):
+        return None
+    shard = Path(str(row[0]).rpartition("#")[0])
+    try:
+        return shard.relative_to(Path(c.corpus_dir)).as_posix()
+    except ValueError:
+        return None
+
+
 def search(query: str, *, collections: list[str] | None = None, space: str | None = None,
            filters: dict[str, Any] | None = None, limit: int = DEFAULT_LIMIT,
            rerank_depth: int = DEFAULT_DEPTH, as_of: str | None = None, freshness: bool = False,
@@ -213,6 +232,17 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     per_space: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
     excluded: dict[str, int] = {}
+    # 03 §3.8: a certified manifest-only copy holding shards no signed
+    # snapshot lists answers from the certified rest, and says so
+    from app.hold import integrity
+    bad: dict[str, set[str]] = {}
+    for c in named:
+        drag = Path(c.corpus_dir) if getattr(c, "source", "origin") == "drag" else None
+        if drag is not None and integrity.applies(getattr(c, "codex", None)):
+            found = integrity.violations(drag.parent.parent, drag.parent.name, c.codex)
+            if found:
+                bad[c.name] = set(found)
+    dropped: dict[str, int] = {}
     for c in named:
         sid = contexts[c.name]["space_id"]
         if sid not in order:
@@ -221,6 +251,9 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         cname = hit.get("source_collection") or (names[0] if len(names) == 1 else None)
         c = by_name.get(cname)
         if c is None:
+            continue
+        if c.name in bad and _from_shard(c, hit) in bad[c.name]:
+            dropped[c.name] = dropped.get(c.name, 0) + 1
             continue
         r = dated.get(c.name)
         if r is not None and _uid(c, hit) in r.changed:
@@ -232,6 +265,11 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     for n, r in dated.items():
         if r.shards or excluded.get(n):
             withheld_as_of.append(asof_mod.withheld_entry(by_name[n], by_name[n].codex, r, day))
+    # 05 §5.3: named per collection as the shards withheld and why
+    withheld_integrity = [{"collection": n, "collection_id": by_name[n].codex.collection_id, "shards": sorted(bad[n]),
+                           "reason": f"integrity violated (03 §3.8): record shards no certifier-signed snapshot "
+                                     f"lists; {dropped.get(n, 0)} result(s) from them left out, the certified "
+                                     f"rest answered"} for n in sorted(bad)]
     lists = []
     for sid in order:
         hits = per_space.get(sid, [])[:limit]
@@ -267,7 +305,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "lists": lists,
         "facts": facts,
         "unresolved": [str(u) for u in result.get("unresolved", [])],
-        "withheld": list(result.get("withheld", [])) + withheld_as_of,
+        "withheld": list(result.get("withheld", [])) + withheld_as_of + withheld_integrity,
         "legs_withheld": result.get("legs_withheld", []),
         "translations": result.get("translations", {}),
         "facts_withheld": result.get("facts_withheld", []),

@@ -1142,7 +1142,15 @@ def _show_drag(root, name: str) -> dict:
             **_trust_level(root, name, current),
             # 05 §5.3, 03 §3.8: certification beside the trust level — two axes
             "certification": anchor.certification(Path(root), name, codex, current),
-            "anchor": anchor.status(Path(root), name, codex)}
+            "anchor": anchor.status(Path(root), name, codex),
+            # 03 §3.8: the record shards no certifier-signed snapshot lists —
+            # non-empty, the copy is integrity violated on this peer
+            "integrity_violated": list(_integrity_violations(Path(root), name, codex))}
+
+
+def _integrity_violations(root, name, codex):
+    from app.hold import integrity
+    return integrity.violations(root, name, codex)
 
 
 def _trust_level(root, name: str, current) -> dict:

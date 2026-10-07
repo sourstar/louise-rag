@@ -56,10 +56,13 @@ def split_locator(locator: str) -> tuple[Path, str]:
 class DragSource:
     """The Codex's plugin, reading the records this peer holds."""
 
-    def __init__(self, inner, drag_dir: Path) -> None:
+    def __init__(self, inner, drag_dir: Path, skip: frozenset = frozenset()) -> None:
         self._inner = inner
         self.drag_dir = Path(drag_dir)
         self.source_id = inner.source_id
+        #: drag-relative shard paths not to read: 03 §3.8's integrity
+        #: violations of a certified manifest-only copy (app/hold/integrity.py)
+        self.skip = frozenset(skip)
 
     #: The inner plugin's readers of ITS corpus — a book directory, a
     #: container, the origin's live form — which a peer holding only the
@@ -80,13 +83,15 @@ class DragSource:
     def __reduce__(self):
         # the parse pool rebuilds the plugin in its children from the
         # collection; a DragSource travels as what makes it
-        return (DragSource, (self._inner, self.drag_dir))
+        return (DragSource, (self._inner, self.drag_dir, self.skip))
 
     # ---- the three methods --------------------------------------------------
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]:
         progress = cursor.Progress(state, self.source_id + "@drag")
         for shard in shard_files(self.drag_dir):
+            if self.skip and shard.relative_to(self.drag_dir).as_posix() in self.skip:
+                continue                   # listed by no signed snapshot: never read (03 §3.8)
             if progress.unchanged(shard):
                 continue
             st = shard.stat()

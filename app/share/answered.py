@@ -60,9 +60,12 @@ def pace(n: int) -> None:
 
 def drain() -> int:
     """The worker's half: what the web sent since the last beat, charged to
-    the worker's UP bucket. Returns the bytes charged."""
+    the worker's UP bucket. Returns the bytes charged. No store, nothing
+    owed: the web creates it when it records, and a drain never does."""
     from app import db, node_state
     from app.transfer.manager import Direction, get_manager
+    if not node_state.path().is_file():
+        return 0
     with closing(node_state.connect()) as con:
         con.execute("BEGIN IMMEDIATE")
         try:

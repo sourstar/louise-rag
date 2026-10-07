@@ -281,7 +281,10 @@ class Collection:
         inner = PLUGIN_REGISTRY[self.plugin]
         if self.source == "drag":
             from .plugins.drag import DragSource
-            return DragSource(inner, self.corpus_dir)
+            from .hold import integrity
+            drag = Path(self.corpus_dir)
+            skip = integrity.violations(drag.parent.parent, drag.parent.name, self.codex)
+            return DragSource(inner, self.corpus_dir, frozenset(skip))
         return inner
 
 
