@@ -126,7 +126,7 @@ NEW_ID=$(docker inspect louise-rag:local --format '{{.Id}}')
 echo "louise-rag:local = $NEW_ID"
 
 # ------------------------------------------------------------- 5. restart
-say "5. restart the app (stop, then start; both are async jobs)"
+say "5. restart the app (stop; LOUISE_PLATFORM_IMAGE; start — async jobs)"
 # WAIT FOR THE STOP JOB ITSELF, not for a state poll with a short budget.
 # 2026-10-07: the poll gave up after 120 s while the stop was still running
 # (the worker finishes its unit on SIGTERM, and that day it could not be
@@ -144,7 +144,16 @@ echo "stop job: $js"
 case "$js" in SUCCESS*) ;; *) echo "the stop did not succeed; NOT starting on top of it — see /var/log/app_lifecycle.log"; exit 1;; esac
 s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
 echo "state after stop: $s"
-midclt call app.start louise-rag >/dev/null
+# 5b. LOUISE_PLATFORM_IMAGE = the image web and worker will start in (07 §7.3;
+# STATUS 2026-09-14). This runbook did not set it, and from 2026-09-21 to
+# 2026-10-07 the node declared pubmed's Codex image while running every later
+# build. Through TrueNAS's API client: the app config carries the admin token
+# and never reaches a command line or this log. `app.update` may start the
+# app itself, so the start below only runs when it did not.
+python3 "$ROOT/src/deploy/16f/set_platform_image.py" "$NEW_ID"
+s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
+echo "state after the update: $s"
+[ "$s" = "RUNNING" ] || midclt call app.start louise-rag >/dev/null
 for i in $(seq 1 90); do
   s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
   [ "$s" = "RUNNING" ] && break; sleep 2
@@ -158,6 +167,11 @@ WEB=$(docker inspect ix-louise-rag-web-1 --format '{{.Image}}')
 WRK=$(docker inspect ix-louise-rag-worker-1 --format '{{.Image}}')
 echo "web    $WEB"; echo "worker $WRK"
 [ "$WEB" = "$WRK" ] && [ "$WEB" = "$NEW_ID" ]
+for c in ix-louise-rag-web-1 ix-louise-rag-worker-1; do
+  v=$(docker exec "$c" printenv LOUISE_PLATFORM_IMAGE || true)
+  echo "$c LOUISE_PLATFORM_IMAGE $v"
+  [ "$v" = "$NEW_ID" ]                # the image it says it runs is the one it runs
+done
 echo
 echo "DEPLOYED $COMMIT. src.old/ and louise-rag:pre-$COMMIT are the way back;"
 echo "remove them when satisfied. Watch the worker's first minutes:"

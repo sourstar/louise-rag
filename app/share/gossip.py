@@ -75,6 +75,14 @@ def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, A
         codex = getattr(c, "codex", None)
         if codex is None:
             continue
+        if not runs.applies(codex):
+            # a version-2 collection: its one statement, the row in §9.9's
+            # version-1 form (app/share/coverage.py `v2_benchmark`)
+            from app.share import coverage as cov
+            row = cov.v2_benchmark(root, c.name, codex, own_key)
+            if row is not None and row["space_id"] not in out:
+                out[row["space_id"]] = {**row, "_time": ""}
+            continue
         try:
             stated = runs.statements(root, c.name, codex, "document", signer=own_key)
         except Exception:   # noqa: BLE001 — a collection whose statements cannot be read lists none

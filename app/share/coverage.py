@@ -25,6 +25,7 @@ import json
 import re
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from app.hold import snapshot as sn
@@ -378,12 +379,40 @@ def manifest(root, name: str) -> sqlite3.Connection:
     return ensure_schema(con)
 
 
+def v2_benchmark(root, name: str, codex, own_key: str | None) -> dict[str, Any] | None:
+    """A version-2 collection's benchmark row (09 §9.9, amended 2026-10-07):
+    its one statement, `state/calibration.json` (09 §9.12, body version 1),
+    names the encoder's IMAGE, not a run, so its row carries `encoder_image`
+    in place of `encoder_engine`. Without it no version-2 collection — the
+    node's gutenberg, pubmed and wikipedia — ever had a benchmark, and no
+    peer could lead one of its shards under rendezvous (04 §4.5; the second
+    peer's contribute found "0 peers", 2026-10-07). Only a statement this
+    node signed, about this space, that passes (`runs.passing`)."""
+    from app.hold import embedder as emb, runs
+    if own_key is None or runs.applies(codex):
+        return None
+    path = Path(root) / name / "state" / "calibration.json"
+    try:
+        body = emb.read_statement(json.loads(path.read_bytes()))
+    except Exception:   # noqa: BLE001 — absent, unreadable or not verifying: no row
+        return None
+    if body.get("key") != own_key or body.get("space_id") != codex.space_id or not runs.passing(body, codex):
+        return None
+    try:
+        return emb.benchmarks_entry(body)
+    except (KeyError, TypeError):
+        return None
+
+
 def own_benchmarks(root, name: str, codex, own_key: str | None) -> list[dict[str, Any]]:
     """This peer's `benchmarks` entries for the collection (09 §9.9), from
     the statements it signed — what its digest carries (app/share/gossip.py)."""
     if own_key is None:
         return []
     from app.hold import embedder as emb, runs
+    if not runs.applies(codex):
+        row = v2_benchmark(root, name, codex, own_key)
+        return [row] if row else []
     try:
         stated = runs.statements(root, name, codex, "document", signer=own_key)
     except Exception:   # noqa: BLE001 — no statements, no benchmark
