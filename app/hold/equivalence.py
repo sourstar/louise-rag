@@ -62,7 +62,12 @@ def reference_images(bodies, key: str | None, codex: Codex) -> set[str]:
         return images
     origin = bodies.by_image(key, "records-vs-origin")
     chunks = bodies.by_image(key, "chunks")
-    return images | {image for image, (passed, _) in origin.items()
+    # or `image-equivalence` in place of `records-vs-origin` (amended
+    # 2026-10-07): the same lines as the reference image re-parses from the
+    # same origin bytes — what an origin that moved since the build leaves
+    # as the only proof (app/hold/check.py `check_image_equivalence`)
+    same_parse = bodies.by_image(key, "image-equivalence")
+    return images | {image for image, (passed, _) in list(origin.items()) + list(same_parse.items())
                      if passed and chunks.get(image, (False, None))[0]}
 
 
@@ -92,7 +97,10 @@ def require_reference(root, name: str, codex: Codex, *, use: str) -> str:
                    if running_parser is not None and running_parser != codex.parser.version
                    else f" Run `louise hold check {name} --checks "
                         f"records-vs-origin,chunks --origin DIR` under this image; "
-                        f"passing both makes it equivalent for {name}.")
+                        f"passing both makes it equivalent for {name}. Where the origin "
+                        f"moved since the build, `--checks image-equivalence,chunks "
+                        f"--against FILE`, FILE written by tools/reparse_lines.py under "
+                        f"the Codex's own image.")
     raise NotEquivalent(
         f"{name}: this image ({image[:19]}…) is neither the reference its Codex "
         f"names ({codex.toolchain.platform_image[:19]}…) nor proven equivalent "

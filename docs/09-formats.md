@@ -1118,6 +1118,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `records` | exact | `{records: n, failed: [uid…]}` — content and origin hashes present and, where the text is, reproduced |
 | `chunks` | exact | `{records: n, failed: [uid…]}` |
 | `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], moved: [uid…], origin: "reachable"}` — `records` the sampled shards hold, `compared` those of the `k` origin units read out of the `K` the sampled shards reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record; `moved` names records whose line differs in `origin_hash` alone, which do not fail the check (03 §3.2, amended 2026-10-07; a reader of an older detail treats it as absent) |
+| `image-equivalence` | exact | `{against: "reference-image", reference_image: id, records: n, compared: m, failed: [uid…], errored: k, reference_errored: j}` — `records` the reference re-parsed, `compared` those this image re-parsed, `failed` those whose line differs (03 §3.4, added 2026-10-07); never counted toward a trust level |
 | `vectors-sample` | statistical | `{chunks: n, passed: n, median: decimal, failed: [chunk id…], producers: [key…]}` — the producers whose bundles supplied the sampled vectors; two producers when the attestation compares duplicate bundles (04 §4.5) |
 | `calibration` | statistical | `{n: 16, passed: n, median: decimal}` |
 | `centres` | exact | `{index_version: n}` |

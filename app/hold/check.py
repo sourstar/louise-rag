@@ -191,6 +191,10 @@ class Ctx:
     #: is compared, as before 2026-09-20.
     origin_unit: Callable[[str], tuple[str, int | None]] | None = None
     origin_bytes: int = ORIGIN_BYTES
+    #: `image-equivalence`: the reference image's re-parse of a sample, as
+    #: tools/reparse_lines.py wrote it under the Codex's own image —
+    #: `{collection_id, snapshot_hash, image, lines: {uid: [origin, sha256]}}`.
+    against: dict | None = None
 
     @property
     def drag(self) -> Path:
@@ -679,6 +683,66 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        + said)
 
 
+def check_image_equivalence(ctx: Ctx) -> Outcome:
+    """03 §3.4, amended 2026-10-07 (operator: "the source compliancy is
+    after the parsing of the useless information, that only matters").
+    THIS image re-parses the same origin bytes into the same record lines as
+    the Codex's reference image did, record by record — a proof about the
+    IMAGE that holds whatever the origin has become since the build. Where
+    the origin moved in content (gutenberg: texts corrected and catalogue
+    entries changed by Project Gutenberg after the build), `records-vs-origin`
+    rightly fails under every image, the reference included, and so could
+    never show a new one equivalent.
+
+    It is not `records-vs-origin`: it says nothing about whether the records
+    still match their origin, so no trust level counts it
+    (`coverage.DETERMINISTIC` does not name it). Never planned; run on demand
+    with `--against`, beside `chunks`."""
+    ref = ctx.against
+    if ref is None or ctx.reparse is None:
+        return Outcome("image-equivalence", INCONCLUSIVE,
+                       why="needs `--origin DIR` and `--against FILE`: the reference image's "
+                           "re-parse of a sample (tools/reparse_lines.py run under the Codex's image)")
+    if ref.get("collection_id") != ctx.codex.collection_id or ref.get("snapshot_hash") != ctx.snapshot.hash:
+        return Outcome("image-equivalence", INCONCLUSIVE,
+                       why="the reference lines are about another collection or snapshot")
+    reference = ctx.codex.toolchain.platform_image
+    if ref.get("image") != reference:
+        return Outcome("image-equivalence", INCONCLUSIVE,
+                       why=f"the reference lines were made by {str(ref.get('image'))[:19]}…, not by "
+                           f"{reference[:19]}…, the image the Codex names")
+    lines = ref.get("lines") or {}
+    compared, failed, errored = 0, [], []
+    for uid in sorted(lines):
+        origin, digest = lines[uid]
+        try:
+            got = ctx.reparse(uid, origin)
+        except FileNotFoundError:
+            errored.append(f"{uid}: not there")
+            continue
+        except Exception as e:                          # noqa: BLE001
+            errored.append(f"{uid}: {type(e).__name__}: {e}"[:200])
+            continue
+        compared += 1
+        if hashlib.sha256(got).hexdigest() != digest:
+            failed.append(uid)
+    detail = {"against": "reference-image", "reference_image": reference, "records": len(lines),
+              "compared": compared, "failed": sorted(failed)[:64], "errored": len(errored),
+              "reference_errored": len(ref.get("errors") or {})}
+    shards = tuple(ref.get("shards") or ())
+    if failed:
+        return Outcome("image-equivalence", FAIL, detail, ctx.seed, shards,
+                       why=f"{len(failed)} of {compared} record(s) re-parsed otherwise than the reference "
+                           f"image re-parsed them from the same origin bytes; first: {sorted(failed)[0]}")
+    if errored or not compared:
+        return Outcome("image-equivalence", INCONCLUSIVE, detail, ctx.seed, shards,
+                       why=(f"{len(errored)} record(s) could not be re-parsed here — nothing proved either "
+                            f"way. First: {errored[0]}" if errored else "the reference holds no lines"))
+    return Outcome("image-equivalence", PASS, detail, ctx.seed, shards,
+                   why=f"{compared} record(s) re-parsed byte for byte as the reference image "
+                       f"{reference[:19]}… re-parsed them from the same origin bytes")
+
+
 def _moved_only(line: bytes, got: bytes) -> bool:
     """Every field of the two record lines equal but `origin_hash`: the
     origin unit was rewritten and parses to the same record (03 §3.2)."""
@@ -816,6 +880,7 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "calibration": check_calibration,
     "vectors-sample": check_vectors_sample,
     "records-vs-origin": lambda ctx: check_records_vs_origin(ctx),
+    "image-equivalence": lambda ctx: check_image_equivalence(ctx),
     "centres": _not_yet(
         "centres", "needs `hold index build --vector` and the centres member "
                    "of 02 §2.4 (migration plan step 5); not built"),
@@ -838,6 +903,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         checks: Sequence[str] | None = None, sample: str | None = None,
         embed=None, vectors_for=None, reference=None, reparse=None,
         origin_unit=None, origin_bytes: int | None = None,
+        against: dict | None = None,
         log=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that.
 
@@ -863,7 +929,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
 
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
-              max(ORIGIN_BYTES, int(origin_bytes or 0)))
+              max(ORIGIN_BYTES, int(origin_bytes or 0)), against)
     outcomes = []
     for c in want:
         try:

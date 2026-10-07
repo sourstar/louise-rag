@@ -1989,6 +1989,7 @@ def run_check(a):
         reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
         origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
+        against=_json(a.against) if getattr(a, "against", None) else None,
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
             ids, collection=local),
         log=lambda m: print(m, file=sys.stderr))
@@ -2855,6 +2856,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="raise what `records-vs-origin` may read of the origin "
                         "for this run: 256 MiB by default, and never less "
                         "(03 §3.2)")
+    p.add_argument("--against", metavar="FILE",
+                   help="`image-equivalence` (03 §3.4): the reference image's re-parse of a "
+                        "sample, written by tools/reparse_lines.py under the Codex's own image")
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
