@@ -143,6 +143,12 @@ def find_dht(session, ref: str, *, now: datetime | None = None, wait_s: float = 
     """The peers announced under `ref`'s collection and lineage keys for
     the newest probed snapshot id that has any (04 §4.2). What is found is
     an address: the port announced speaks the peer messages."""
+    from app.acquire import transport_torrent as tt
+    with tt.dht_alerts(session):
+        return _find_dht(session, ref, now=now, wait_s=wait_s, sleep=sleep, clock=clock)
+
+
+def _find_dht(session, ref: str, *, now, wait_s, sleep, clock) -> list[Source]:
     from app.share.seeder import _lt
     lt = _lt()
     by_key: dict[bytes, str] = {}

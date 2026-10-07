@@ -45,6 +45,7 @@ libtorrent is an OPTIONAL dependency, imported lazily, so a deployment with
 no torrent-backed collection never loads it.
 """
 import os
+from contextlib import contextmanager
 import threading
 import time
 from pathlib import Path
@@ -101,6 +102,40 @@ _handles: dict[str, object] = {}
 _staged: dict[str, set[int]] = {}
 
 
+def _platform_dht() -> bool:
+    try:
+        from app import platform_config
+        return bool(platform_config.load().peers.dht)
+    except Exception:   # noqa: BLE001 — an unreadable platform file is not a reason to leave the DHT
+        return True
+
+
+
+@contextmanager
+def dht_alerts(session):
+    """The DHT's answers delivered while a reader waits for them. The
+    session's mask carries storage alerts only (the rename confirmations
+    the transfer waits on), so `find_dht` and the pointer's DHT read
+    polled for alerts that could never come (2026-10-07). Widened for the
+    wait, restored after; a session without settings (a test's fake) is
+    left as it is."""
+    try:
+        lt = _lt()
+        before = int(session.get_settings()["alert_mask"])
+        extra = int(lt.alert.category_t.dht_notification) | int(lt.alert.category_t.dht_operation_notification)
+    except Exception:   # noqa: BLE001
+        yield
+        return
+    session.apply_settings({"alert_mask": before | extra})
+    try:
+        yield
+    finally:
+        try:
+            session.apply_settings({"alert_mask": before})
+        except Exception:   # noqa: BLE001 — a session gone
+            pass
+
+
 def session_settings() -> dict:
     return {
         "listen_interfaces": os.getenv("TORRENT_LISTEN", "0.0.0.0:6881,[::]:6881"),
@@ -111,12 +146,24 @@ def session_settings() -> dict:
         # DHT and local discovery are the peer-finding mechanisms; both are
         # switchable because a private swarm wants neither (see
         # docs/notes/p2p-discovery.md).
-        "enable_dht": _flag("TORRENT_DHT", True),
+        # `[dht] enabled` in platform.toml (07 §7.8) — desired state, read
+        # when the session is made; TORRENT_DHT still overrides when set. The
+        # file's key was parsed and read by nothing: a peer that said
+        # `enabled = false` joined the DHT all the same (2026-10-07)
+        "enable_dht": _flag("TORRENT_DHT", _platform_dht()),
         "enable_lsd": _flag("TORRENT_LSD", True),
         # Port mapping stays OFF by default: punching a hole in someone's
         # router is not a thing software should do without being asked.
         "enable_upnp": _flag("TORRENT_UPNP", False),
         "enable_natpmp": _flag("TORRENT_NATPMP", False),
+        # Several peers share one address: every container on a Docker
+        # Desktop host, every node behind one home router. libtorrent's
+        # default of one connection per IP per torrent let a connection the
+        # node still counted from the PC refuse every new one for that
+        # torrent — the second peer's calibration member, closed right after
+        # the handshake while the other members of the same snapshot came
+        # through (2026-10-07).
+        "allow_multiple_connections_per_ip": True,
         # Identify ourselves the way the HTTPS transport does. Some trackers
         # refuse unknown clients; all of them log.
         "user_agent": "louise-rag/0.1 libtorrent",

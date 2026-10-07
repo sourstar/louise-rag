@@ -83,6 +83,12 @@ def get_dht(session, codex, *, wait_s: float = DHT_WAIT_S, sleep: Callable[[floa
             clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
     """The pointer the DHT holds under the certifier's key, verified; None
     when nothing answered in time or what answered was not the pointer."""
+    from app.acquire import transport_torrent as tt
+    with tt.dht_alerts(session):
+        return _get_dht(session, codex, wait_s=wait_s, sleep=sleep, clock=clock)
+
+
+def _get_dht(session, codex, *, wait_s, sleep, clock) -> dict[str, Any] | None:
     from app.hold import certify
     pk = env.key_bytes(codex.certifier.key)
     salt = salt_of(codex)
