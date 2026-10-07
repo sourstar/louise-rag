@@ -1657,21 +1657,27 @@ An entry:
 |---|---|---|---|
 | `file_hash` | BLAKE2b-128 | yes | the sealed file's hash. A record parsed from it carries that hash in `extra.seal` (§9.5), which is how it finds its entry: a record's own `origin_hash` covers the document alone (02 §2.3), so the two are different values and the reference is explicit |
 | `format` | `"cades"` · `"pades"` · `"xades"` | yes | the seal's envelope |
-| `seal` | `{b64: string}` | yes | the signature envelope itself, DER as base64 — the CMS `SignedData` for CAdES and PAdES, the `<ds:Signature>` element for XAdES; DETACHED, its encapsulated content removed (*amended 2026-10-07*: the evidence stays small however large the issue, and archival mode verifies over `content_sha256`, not the bytes) |
-| `content_sha256` | id | yes | the message digest the signature commits to, taken from the envelope's signed attributes. Archival mode verifies the signature over `seal` and checks it commits to this value; it is NOT `file_hash`, which is BLAKE2b-128 of the sealed file (below) and is what live mode re-fetches against |
+| `seal` | `{b64: string}` | yes | the signature envelope itself, DER as base64 — the CMS `SignedData` for CAdES and PAdES, the `<ds:Signature>` element for XAdES; DETACHED, its encapsulated content removed (*amended 2026-10-07*: the evidence stays small however large the issue, and archival mode verifies over `content_sha256`, not the bytes); for XAdES, the element's bytes, every namespace in scope declared on it and every `ds:Object` but the qualifying properties removed (*amended 2026-10-07*) |
+| `content_sha256` | id | yes | the message digest the signature commits to, taken from the envelope's signed attributes. For XAdES, the `DigestValue` of the signature's ONE data reference, which must be SHA-256 (several data references, or another digest, are refused). Archival mode verifies the signature over `seal` and checks it commits to this value; it is NOT `file_hash`, which is BLAKE2b-128 of the sealed file (below) and is what live mode re-fetches against |
 | `signer` | object | yes | `{subject, issuer, serial}` of the signing certificate, as strings |
 | `chain` | list of strings | yes | the certificate chain, DER as base64, leaf first |
-| `revocation` | list of `{kind: "ocsp" · "crl", b64: string, time}` | yes | the responses captured at validation |
+| `revocation` | list of `{kind: "ocsp" · "crl", b64: string, time}` | yes | the responses captured at validation — embedded in the envelope, given, or fetched by the certifier — kept only when they are about this entry's chain (an OCSP response naming one of its serials, a CRL issued by one of its issuers); `time` is the response's producedAt or thisUpdate. An entry that carries any is validated HARD-FAIL on revocation: every certificate of the path that declares a responder must have an answer among them, and a revoked one fails (*amended 2026-10-07*) |
 | `timestamp` | `{b64: string, time}` or null | yes | an RFC 3161 token over the sealed bytes, when one was obtained |
-| `trusted_list` | `{lotl_sha256: id, tl_sha256: id, url: string}` | yes | the List of Trusted Lists and the national list the chain validated against, hashed |
+| `trusted_list` | `{lotl_sha256: id, tl_sha256: id, url: string}` | yes | the List of Trusted Lists and the national list the chain validated against, hashed. A list is trusted for WHO SIGNED IT: at capture the LOTL's XAdES signature is verified with a certificate the Official Journal announced and the national list's with one the LOTL's pointer for its territory names, valid at its signing time; archival mode re-verifies the national list against the LOTL whenever both are held (*amended 2026-10-07*) |
 | `verified_at` | time | yes | when the certifier validated it |
 
 `origin-seal` in archival mode verifies the signature in `seal` over
 the digest in `content_sha256` and validates its certificate path
 against `chain`, `revocation` and `trusted_list`, with no network and
 without the sealed bytes; in live mode it
-re-fetches the sealed file, checks it hashes to `file_hash`, and
-validates against the current lists. The sealed files themselves travel
+re-fetches the sealed file, checks it hashes to `file_hash`, recomputes
+from its bytes the digest the envelope commits to (the attached content of
+a `.p7m`, a PDF's signed byte range, a XAdES document's data reference),
+and validates now against the current lists — the current LOTL trusted
+for a key the LOTL held names for itself, the current national list for
+one the current LOTL's pointer names — and fresh revocation responses,
+hard-fail; a list or a responder that cannot be had makes it
+inconclusive, never a failure. The sealed files themselves travel
 only in the optional member `origin-<slice>` (§9.16), never in the
 records.
 

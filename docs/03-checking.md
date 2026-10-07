@@ -945,7 +945,12 @@ document, not the issue, so the reference is explicit. The file's bytes
 and how the certifier's signature binds them are 09 §9.15. `origin-seal`
 then runs in two modes: *live*, re-fetching the sealed file, checking it
 hashes to `file_hash`, and validating against the current trusted list;
-*archival*, offline, and still working when the origin is gone. Archival
+*archival*, offline, and still working when the origin is gone. A trusted
+list is trusted for who signed it, not for its hash: the LOTL by a key the
+Official Journal announced, a national list by a key the LOTL's pointer for
+its territory names — verified by the certifier at capture, re-verified in
+archival mode wherever both lists are held, and in live mode for the
+current lists (*amended 2026-10-07*). Archival
 mode needs the signature and not only the evidence around it, so the
 entry carries the envelope itself (`seal`, DER) and the digest that
 envelope commits to (`content_sha256`): the signature verifies against

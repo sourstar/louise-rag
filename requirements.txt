@@ -92,3 +92,7 @@ asn1crypto>=1.5.1
 cryptography>=42
 pyhanko-certvalidator>=0.26
 pyhanko>=0.25
+# lxml canonicalises XML signatures (app/hold/xmldsig.py): the XAdES seal
+# and the trusted lists' own signatures. It arrives with pyhanko already;
+# named here because the code imports it directly (2026-10-07).
+lxml>=5

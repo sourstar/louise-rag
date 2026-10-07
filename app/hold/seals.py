@@ -13,8 +13,11 @@ Two modes of `origin-seal` (03 §3.7). ARCHIVAL, offline: the signature in
 the captured moment against the captured `chain`, `revocation` and the
 trusted list whose hash the entry names — a list this peer holds under
 `state/trusted-lists/<sha256>.xml`; nothing fetched, so it still works
-when the origin is gone. LIVE: the sealed file re-fetched, hashed to
-`file_hash`, validated against the current lists — owed. A peer that
+when the origin is gone. LIVE (`validate_live`): the sealed file in hand,
+hashed to `file_hash`, the digest the envelope commits to recomputed from
+its bytes, the path validated now against the current list and fresh
+revocation responses (app/hold/revocation.py). An entry carrying
+revocation responses validates hard-fail on revocation. A peer that
 holds neither the sealed file nor the entry reports inconclusive.
 
 What is captured as `seal` is the DETACHED envelope — the CMS SignedData
@@ -25,7 +28,9 @@ the signed attributes carry the content's digest, and that digest is
 
 Libraries (requirements.txt): asn1crypto parses the CMS, cryptography
 holds the keys, pyhanko verifies the signature's integrity and
-pyhanko-certvalidator the path at a moment. No hand-rolled crypto.
+pyhanko-certvalidator the path at a moment. XAdES (an XML envelope) is
+verified by app/hold/xmldsig.py; its `seal` is the detached `ds:Signature`
+element, its `content_sha256` the one data reference's SHA-256. No hand-rolled crypto.
 """
 from __future__ import annotations
 
@@ -299,7 +304,8 @@ def parse_cades(der: bytes) -> dict[str, Any]:
     detached = _detach(ci)
     return {"signer_info": si, "signer_cert": signer_cert, "chain": chain, "chain_der": [c.dump() for c in chain],
             "message_digest": message_digest, "signing_time": signing_time, "timestamp": timestamp,
-            "detached": detached, "content_type": sd["encap_content_info"]["content_type"].native}
+            "detached": detached, "content_type": sd["encap_content_info"]["content_type"].native,
+            "signed_data": sd}
 
 
 def _order_chain(leaf, certs: list) -> list:
@@ -363,6 +369,52 @@ def parse_pades(pdf: bytes) -> dict[str, Any]:
     return parse_cades(pades_envelope(pdf))
 
 
+# ---- XAdES: an XML envelope ----------------------------------------------------------
+
+def _xades_data_digest(s) -> bytes:
+    """The one data reference's SHA-256: what 09 §9.15's `content_sha256`
+    names. Several data references, or another digest, are refused — the
+    format names one SHA-256, and a guess is not a seal."""
+    refs = s.data_references
+    if len(refs) != 1:
+        raise SealError(f"XAdES: {len(refs)} data references; 09 §9.15 names one content digest")
+    if refs[0].digest_alg != "sha256":
+        raise SealError(f"XAdES: the data reference's digest is {refs[0].digest_alg}; 09 §9.15 names "
+                        f"content_sha256 — another digest needs the format amended, not guessed around")
+    return refs[0].digest
+
+
+def parse_xades(data: bytes) -> dict[str, Any]:
+    """A XAdES-sealed XML document (ETSI EN 319 132) read: its one
+    `ds:Signature`, the signer, the certificates it carries (leaf first),
+    its timestamp, the revocation values it embeds, and the DETACHED
+    signature element. Nothing is verified here."""
+    from asn1crypto import x509
+    from app.hold import revocation as rev, xmldsig
+    try:
+        tree = xmldsig.parse(data)
+        s = xmldsig.read(xmldsig.signature_of(tree))
+    except xmldsig.XmlSigError as e:
+        raise SealError(f"not a XAdES document: {e}") from None
+    if not s.xades:
+        raise SealError("an XML signature without XAdES properties: the signer is not identified")
+    digest = _xades_data_digest(s)
+    certs = [x509.Certificate.load(d) for d in s.certs_der]
+    timestamp = None
+    if s.timestamp_der:
+        try:
+            from asn1crypto import cms
+            tok = cms.ContentInfo.load(s.timestamp_der)
+            gen = tok["content"]["encap_content_info"]["content"].parsed["gen_time"].native
+            timestamp = {"b64": _b64(s.timestamp_der), "time": _time_text(gen)}
+        except Exception:   # noqa: BLE001 — a token that does not read is not evidence
+            timestamp = None
+    chain = _order_chain(certs[0], certs)
+    return {"signer_cert": certs[0], "chain": chain, "chain_der": [c.dump() for c in chain],
+            "message_digest": digest, "timestamp": timestamp, "detached": xmldsig.detached(s.element),
+            "revocation": rev.from_xades(s.ocsp_der, s.crl_der)}
+
+
 # ---- capture ------------------------------------------------------------------------
 
 def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str],
@@ -371,10 +423,16 @@ def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str]
     envelope: nothing is validated here — the certifier validates with
     `validate` before writing, and a verifier validates again."""
     import time as _time
-    if format not in ("cades", "pades"):
-        raise SealError(f"{format}: only CAdES and PAdES envelopes are captured in this build; XAdES is owed")
+    from app.hold import revocation as rev
+    if format not in FORMATS:
+        raise SealError(f"{format}: not a seal envelope (09 §9.15: {', '.join(FORMATS)})")
     data = Path(sealed).read_bytes()
-    parsed = parse_pades(data) if format == "pades" else parse_cades(data)
+    if format == "xades":
+        parsed = parse_xades(data)
+        embedded = parsed["revocation"]
+    else:
+        parsed = parse_pades(data) if format == "pades" else parse_cades(data)
+        embedded = rev.from_cms(parsed["signed_data"]) + (rev.from_pdf(data) if format == "pades" else [])
     cert = parsed["signer_cert"]
     moment = datetime.fromtimestamp(_time.time() if now is None else now, tz=timezone.utc)
     return {
@@ -385,7 +443,7 @@ def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str]
         "signer": {"subject": _name(cert.subject), "issuer": _name(cert.issuer),
                    "serial": str(cert.serial_number)},
         "chain": [_b64(c) for c in parsed["chain_der"]],
-        "revocation": [dict(r) for r in revocation],
+        "revocation": rev.merge(embedded, revocation),
         "timestamp": parsed["timestamp"],
         "trusted_list": dict(trusted_list),
         "verified_at": _time_text(moment),
@@ -394,55 +452,130 @@ def capture(sealed: Path, *, format: str = "cades", trusted_list: dict[str, str]
 
 # ---- validation ---------------------------------------------------------------------
 
+def _envelope(fmt: str, seal: bytes, content_sha256: str) -> tuple[Any, str | None]:
+    """The leaf (asn1crypto) whose key verified the envelope over the
+    digest the entry names, or `(None, why)`. A PAdES seal is a detached
+    CMS over the PDF's byte range: once captured it validates exactly as a
+    CAdES one — the envelope over its digest. A XAdES seal is the detached
+    `ds:Signature`: its SignedProperties recomputed, its SignedInfo
+    verified, its one data reference's digest compared."""
+    from asn1crypto import x509
+    want = content_sha256.split(":", 1)[1]
+    if fmt == "xades":
+        from app.hold import xmldsig
+        try:
+            sig = xmldsig.parse(seal).getroot()
+            if sig.tag != f"{{{xmldsig.DS}}}Signature":
+                return None, "the seal is not a ds:Signature element"
+            s = xmldsig.verify(sig, data=False)
+            digest = _xades_data_digest(s)
+        except (xmldsig.XmlSigError, SealError) as e:
+            return None, f"the XAdES signature does not verify: {e}"
+        if digest.hex() != want:
+            return None, "the signature's data reference is not the entry's content_sha256"
+        return x509.Certificate.load(s.signer_der), None
+    try:
+        parsed = parse_cades(seal)
+    except SealError as e:
+        return None, f"the envelope does not read: {e}"
+    if parsed["message_digest"].hex() != want:
+        return None, "the envelope's message digest is not the entry's content_sha256"
+    intact, valid = _signature(parsed, parsed["signer_cert"])
+    if not (intact and valid):
+        return None, "the signature does not verify over the signed attributes"
+    return parsed["signer_cert"], None
+
+
 def validate(entry: dict[str, Any], *, anchors: Iterable[bytes], moment: datetime | None = None,
-             require_revocation: bool = False) -> dict[str, Any]:
+             require_revocation: bool | None = None, revocation: Iterable[dict[str, Any]] | None = None
+             ) -> dict[str, Any]:
     """Archival mode: the signature in `seal` verified over
     `content_sha256`, the path validated at `moment` — the timestamp's
     time, else `verified_at` — against the captured chain, revocation
-    responses and the anchors given. `{ok, why}`; never raises on a bad
+    responses and the anchors given. Hard-fail on revocation when the
+    entry carries any response (or `require_revocation` says so): every
+    certificate of the path that declares a responder (its AIA, its CRL
+    distribution point — a qualified certificate declares them) must
+    have an answer among the responses, and a revoked one fails; PKIX
+    asks nothing of a certificate that declares none. `revocation` replaces the entry's
+    (live mode's fresh responses). `{ok, why}`; never raises on a bad
     seal, only on a malformed entry."""
-    from asn1crypto import crl as crl_mod, ocsp as ocsp_mod, x509
+    from asn1crypto import x509
+    from app.hold import revocation as rev
     validate_entry(entry)
-    if entry["format"] not in ("cades", "pades"):
-        return {"ok": False, "why": f"{entry['format']}: validation of this format is owed; archival mode cannot "
-                                    f"judge it in this build"}
-    # a PAdES seal is a detached CMS over the PDF's byte range: once captured
-    # it validates exactly as a CAdES one — the envelope over its digest
-    try:
-        parsed = parse_cades(_unb64(entry["seal"]["b64"], "seal.b64"))
-    except SealError as e:
-        return {"ok": False, "why": f"the envelope does not read: {e}"}
-    want = entry["content_sha256"].split(":", 1)[1]
-    if parsed["message_digest"].hex() != want:
-        return {"ok": False, "why": "the envelope's message digest is not the entry's content_sha256"}
+    leaf, why = _envelope(entry["format"], _unb64(entry["seal"]["b64"], "seal.b64"), entry["content_sha256"])
+    if leaf is None:
+        return {"ok": False, "why": why}
     chain = [x509.Certificate.load(_unb64(c, "chain")) for c in entry["chain"]]
-    leaf = chain[0]
-    if leaf.dump() != parsed["signer_cert"].dump():
+    if chain[0].dump() != leaf.dump():
         return {"ok": False, "why": "the entry's chain does not start with the envelope's signer"}
-    intact, valid = _signature(parsed, leaf)
-    if not (intact and valid):
-        return {"ok": False, "why": "the signature does not verify over the signed attributes"}
     when = moment
     if when is None:
         text = (entry.get("timestamp") or {}).get("time") or entry["verified_at"]
         when = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    ocsps, crls = [], []
-    for r in entry["revocation"]:
-        raw = _unb64(r["b64"], "revocation")
-        try:
-            if r["kind"] == "ocsp":
-                ocsps.append(ocsp_mod.OCSPResponse.load(raw))
-            else:
-                crls.append(crl_mod.CertificateList.load(raw))
-        except Exception:   # noqa: BLE001 — a response that does not read is not evidence
-            continue
+    responses = list(entry["revocation"] if revocation is None else revocation)
+    ocsps, crls = rev.parsed(responses)
+    hard = bool(responses) if require_revocation is None else require_revocation
     roots = [x509.Certificate.load(a) for a in anchors]
     if not roots:
         return {"ok": False, "why": "no trust anchor: the trusted list grants no CA this path could end in"}
-    why = _path(leaf, chain[1:], roots, when, ocsps, crls, require_revocation)
+    why = _path(leaf, chain[1:], roots, when, ocsps, crls, hard)
     if why:
         return {"ok": False, "why": why}
-    return {"ok": True, "why": f"signature intact; path valid at {_time_text(when)} against {len(roots)} anchor(s)"}
+    return {"ok": True, "why": f"signature intact; path valid at {_time_text(when)} against {len(roots)} anchor(s)"
+                               f"{'; revocation checked' if hard else '; revocation not evidenced (soft-fail)'}"}
+
+
+def content_digest(fmt: str, data: bytes) -> bytes:
+    """LIVE: the SHA-256 the envelope commits to, recomputed FROM THE
+    SEALED BYTES — the attached content of a `.p7m`, the signed byte range
+    of a PDF, the data reference of a XAdES document. `SealError` when the
+    bytes do not yield it."""
+    import hashlib
+    if fmt == "xades":
+        from app.hold import xmldsig
+        tree = xmldsig.parse(data)
+        try:
+            s = xmldsig.verify(xmldsig.signature_of(tree), data=True)
+        except xmldsig.XmlSigError as e:
+            raise SealError(f"the XAdES document does not verify: {e}") from None
+        return _xades_data_digest(s)
+    if fmt == "pades":
+        from io import BytesIO
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        try:
+            sig = list(PdfFileReader(BytesIO(data)).embedded_signatures)[0]
+            return bytes(sig.compute_digest())
+        except Exception as e:   # noqa: BLE001
+            raise SealError(f"the PDF's signed byte range does not read: {type(e).__name__}: {e}") from None
+    parsed = parse_cades(data)
+    content = parsed["signed_data"]["encap_content_info"]["content"]
+    if content is None or content.native is None:
+        raise SealError("a detached .p7m: the sealed content is not in the file")
+    return hashlib.sha256(content.contents if hasattr(content, "contents") else bytes(content.native)).digest()
+
+
+def validate_live(entry: dict[str, Any], data: bytes, *, anchors: Iterable[bytes],
+                  revocation: Iterable[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
+    """LIVE mode (03 §3.7): the sealed file in hand hashes to `file_hash`;
+    the digest its envelope commits to, recomputed from its bytes, is
+    `content_sha256`; the path validates NOW against the current list's
+    anchors and the fresh responses given — hard-fail on revocation."""
+    import hashlib
+    validate_entry(entry)
+    if hashlib.blake2b(data, digest_size=16).hexdigest() != entry["file_hash"]:
+        return {"ok": False, "why": "the sealed file does not hash to the entry's file_hash"}
+    try:
+        digest = content_digest(entry["format"], data)
+    except SealError as e:
+        return {"ok": False, "why": str(e)}
+    if digest.hex() != entry["content_sha256"].split(":", 1)[1]:
+        return {"ok": False, "why": "the sealed bytes do not hash to the digest the envelope commits to"}
+    fresh = list(revocation)
+    if not fresh:
+        return {"ok": None, "why": "no revocation responder answered: the current status is not evidenced"}
+    return validate(entry, anchors=anchors, moment=now or datetime.now(timezone.utc), require_revocation=True,
+                    revocation=fresh)
 
 
 def _signature(parsed: dict[str, Any], leaf) -> tuple[bool, bool]:
@@ -466,8 +599,12 @@ def _path(leaf, intermediates, roots, when, ocsps, crls, require_revocation: boo
     from pyhanko_certvalidator import CertificateValidator, ValidationContext
     from pyhanko_certvalidator.errors import PathValidationError
     try:
+        # retroactive: a response produced after the moment still proves the
+        # certificate unrevoked AT it — revocation is not undone, and the
+        # certifier captures them after the issuer signed
         ctx = ValidationContext(trust_roots=roots, other_certs=intermediates, moment=when, allow_fetching=False,
-                                ocsps=ocsps or None, crls=crls or None,
+                                retroactive_revinfo=True,
+                                ocsps=list(ocsps), crls=list(crls),
                                 revocation_mode="hard-fail" if require_revocation else "soft-fail")
         validator = CertificateValidator(leaf, intermediate_certs=intermediates, validation_context=ctx)
         asyncio.run(validator.async_validate_usage(set()))

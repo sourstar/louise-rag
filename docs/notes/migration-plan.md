@@ -1331,16 +1331,38 @@ unplugged throughout. PAdES too (the OJEU's sealed PDFs): the first
 signature's CMS read out of the PDF with pyhanko's reader — a detached
 SignedData over the byte range, so once captured it validates exactly
 as a CAdES one; `hold records seal --format pades`; a PDF signed in the
-test with pyhanko. **Owed in step 10**: live mode of `origin-seal`
-(the sealed file re-fetched, hashed, validated against the current
-lists); XAdES; revocation responses captured by the certifier (the entry
-carries them, `--files` captures none yet: validation runs soft-fail
-on revocation, hard-fail once they are there); verifying the trusted
-list's own XAdES signature (the list is pinned by hash today); the
-*integrity violated* halt when a shard outside a signed snapshot is
-found already in the copy (the gate refuses it at promotion; a
-hand-populated folder is not yet detected); the Gazzetta plugin, whose
-records will carry `extra.seal`.
+test with pyhanko. Fourth brick (2026-10-07): **the integrity-violated halt**
+(app/hold/integrity.py) — a record shard in a certified manifest-only copy
+that no certifier-signed snapshot lists at its size is never read
+(`DragSource` skips it), stops embedding (worker `_embedding_allowed`) and
+contribution, and leaves search answering from the certified rest with the
+shards named under `withheld` (05 §5.3); `collection show` carries
+`integrity_violated`. **XML signatures** (app/hold/xmldsig.py, lxml from
+pyhanko's tree): XMLDSig + XAdES verified — references, transforms, the
+signature, the SigningCertificate — proven against the published EU LOTL
+and four national lists. **The trusted lists' own signatures**
+(app/hold/tsl.py): the LOTL by a key the Official Journal announced
+(`--lotl-signers`), a national list by a key the LOTL's pointer names;
+`hold records seal` refuses lists that do not verify, and archival
+`origin-seal` re-verifies the list against the LOTL held. **XAdES seals**
+captured and validated (09 §9.15 `"xades"`). **Revocation** captured
+(app/hold/revocation.py): embedded (CMS `crls`, a PDF's DSS, XAdES
+`RevocationValues`), given (`--revocation`) or fetched on the budget
+(`--fetch-revocation`), kept only for the entry's chain; an entry carrying
+any validates hard-fail. **Live mode** (app/hold/seals_live.py; `hold
+check --live DIR`): the sealed bytes hashed, their digest recomputed, the
+path validated now against the current lists — fetched on the budget and
+trusted for their signers — and fresh responses. tests:
+hold/test_integrity.py (6), hold/test_xmldsig.py (8),
+hold/test_seals_evidence.py (7), hold/test_seals.py updated.
+**Left in step 10**: the Gazzetta plugin, whose records will carry
+`extra.seal` — the certifier body's to run. **Decision for the operator**:
+the trusted lists live under `state/trusted-lists/` and do not travel, so
+a fetching peer's archival `origin-seal` is inconclusive until it holds
+them; proposed: the `seals-<snapshot_id>` member also carries
+`seals/lists/<sha256>.xml` for each list its entries name, each in the
+snapshot's `files` (09 §9.16 amended) — a wire-format change, so asked
+first.
 **Dependency decision, proposed (not taken: a new dependency is asked
 first).** For 09 §9.15's seals: CAdES envelopes (the Gazzetta's `.p7m`)
 through `asn1crypto` (CMS parsing, signed attributes, the

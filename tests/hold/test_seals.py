@@ -131,7 +131,7 @@ def test_the_envelope_is_read_and_captured_detached(pki, tmp_path):
     assert entry["verified_at"] == "2026-02-01T00:00:00Z"
     with pytest.raises(seals.SealError, match="not a CMS"):
         seals.parse_cades(b"%PDF-1.7 not an envelope")
-    with pytest.raises(seals.SealError, match="owed"):
+    with pytest.raises(seals.SealError, match="not a XAdES document"):
         seals.capture(sealed, format="xades", trusted_list=TL)
     with pytest.raises(seals.SealError, match="not a signed PDF"):
         seals.capture(sealed, format="pades", trusted_list=TL)
@@ -215,7 +215,8 @@ def test_origin_seal_through_hold_check(checkable, pki):  # noqa: F811
     seals.keep_trusted_list(root, "gutenberg", xml)
     o = run()
     assert o.result == chk.PASS, o.why
-    assert o.detail == {"mode": "archival", "entries": 1, "failed": []} and o.shards
+    assert (o.detail["mode"], o.detail["entries"], o.detail["failed"]) == ("archival", 1, []) and o.shards
+    assert "LOTL is not held" in o.detail["trusted_list_signature"][tl["tl_sha256"]]
     # a tampered entry fails, naming it
     seals.write(drag, certified, snapshot.snapshot_id, [dict(entry, content_sha256="sha256:" + "ab" * 32)])
     o = run()
@@ -223,6 +224,31 @@ def test_origin_seal_through_hold_check(checkable, pki):  # noqa: F811
     # a member that does not read fails too
     seals.seals_path(drag, snapshot.snapshot_id).write_bytes(b"{")
     assert run().result == chk.FAIL
+
+
+def signed_lists(pki, tmp_path) -> dict:
+    """A national list (IT) granting the test CA, signed by a key the LOTL's
+    pointer names; the LOTL signed by a key "the Official Journal"
+    announces; and the lists a certifier must refuse."""
+    from tests.hold import xades_sign as xs
+    tl_key = rsa.generate_private_key(65537, 2048)
+    tl_cert = _cert("TL Signer", None, tl_key, tl_key, ca=False, serial=11)
+    lotl_key = rsa.generate_private_key(65537, 2048)
+    lotl_cert = _cert("LOTL Signer", None, lotl_key, lotl_key, ca=False, serial=12)
+    rogue_key = rsa.generate_private_key(65537, 2048)
+    rogue_cert = _cert("Rogue", None, rogue_key, rogue_key, ca=False, serial=13)
+    out = {}
+    for name, data in (("tl", xs.a_tl("IT", [pki["ca"]], tl_key, tl_cert)),
+                       ("foreign_tl", xs.a_tl("IT", [pki["other"]], tl_key, tl_cert)),
+                       ("rogue_tl", xs.a_tl("IT", [pki["ca"]], rogue_key, rogue_cert)),
+                       ("lotl", xs.a_lotl([("EU", "https://lotl.test/eu-lotl.xml", [lotl_cert]),
+                                           ("IT", "https://tl.test/TSL-IT.xml", [tl_cert])], lotl_key, lotl_cert)),
+                       ("signers", lotl_cert.public_bytes(serialization.Encoding.PEM)),
+                       ("tl_cert", tl_cert.public_bytes(serialization.Encoding.PEM))):
+        p = tmp_path / f"{name}.xml"
+        p.write_bytes(data)
+        out[name] = p
+    return out
 
 
 def test_records_seal_captures_validates_and_writes_the_member(pki, tmp_path, monkeypatch, capsys):
@@ -239,29 +265,39 @@ def test_records_seal_captures_validates_and_writes_the_member(pki, tmp_path, mo
     files.mkdir()
     (files / "a.p7m").write_bytes(a_p7m(pki))
     (files / "b.p7m").write_bytes(a_p7m(pki, CONTENT + b" second issue"))
-    tl = tmp_path / "TSL-IT.xml"
-    tl.write_bytes(a_trusted_list(pki["ca"]))
+    lists = signed_lists(pki, tmp_path)
+    tl, lotl, signers = lists["tl"], lists["lotl"], lists["signers"]
+    flags = ["--lotl", str(lotl), "--lotl-signers", str(signers)]
     assert louise.main(["hold", "records", "seal", name, "2026-08", "--root", str(root), "--files", str(files),
-                        "--trusted-list", str(tl), "--url", "https://eidas.agid.gov.it/TL/TSL-IT.xml"]) == 0
+                        "--trusted-list", str(tl), "--url", "https://eidas.agid.gov.it/TL/TSL-IT.xml"] + flags) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["entries"] == 2 and out["snapshot_id"] == "2026-08"
+    assert "CN=TL Signer" in out["trusted_list_signed_by"] and "CN=LOTL Signer" in out["lotl_signed_by"]
     doc = seals.read(col.drag_of(root, name), "2026-08")
     assert len(doc["entries"]) == 2 and doc["entries"][0]["trusted_list"]["url"].endswith("TSL-IT.xml")
     tl_digest = doc["entries"][0]["trusted_list"]["tl_sha256"]
-    assert doc["entries"][0]["trusted_list"]["lotl_sha256"] == tl_digest, "no LOTL given: the list's own hash"
+    lotl_digest = doc["entries"][0]["trusted_list"]["lotl_sha256"]
     assert seals.held_trusted_list(root, name, tl_digest) == tl.read_bytes()
+    assert seals.held_trusted_list(root, name, lotl_digest) == lotl.read_bytes(), "both lists kept by their hash"
+    # a list trusted for its signer: the LOTL by the Official Journal's, the national list by its pointer's
+    for bad_flags, why in (([str(lists["tl"]), "--lotl", str(lists["lotl"]), "--lotl-signers", str(lists["tl_cert"])],
+                            "list of trusted lists is signed by a certificate"),
+                           ([str(lists["rogue_tl"])] + flags, "trusted list of IT is signed by a certificate")):
+        assert louise.main(["hold", "records", "seal", name, "2026-10", "--root", str(root), "--files", str(files),
+                            "--trusted-list"] + bad_flags) == 2
+        assert why in capsys.readouterr().err
+    assert seals.read(col.drag_of(root, name), "2026-10") is None
     # a seal the list does not anchor is refused, and nothing is written for that snapshot
-    foreign = tmp_path / "TSL-X.xml"
-    foreign.write_bytes(a_trusted_list(pki["other"]))
+    foreign = lists["foreign_tl"]
     assert louise.main(["hold", "records", "seal", name, "2026-09", "--root", str(root), "--files", str(files),
-                        "--trusted-list", str(foreign)]) == 2
+                        "--trusted-list", str(foreign)] + flags) == 2
     assert "not written" in capsys.readouterr().err
     assert seals.read(col.drag_of(root, name), "2026-09") is None
     # an open collection carries none
     open_codex = pubmed()
     a_root(root, open_codex)
     assert louise.main(["hold", "records", "seal", col.name_of(root, open_codex.collection_id), "2026-08", "--root",
-                        str(root), "--files", str(files), "--trusted-list", str(tl)]) == 2
+                        str(root), "--files", str(files), "--trusted-list", str(tl)] + flags) == 2
     p = louise.build_parser()
     a = p.parse_args(["hold", "records", "check", name, "--seal"])
     assert a.seal is True and a.fn is louise.cmd_records_check

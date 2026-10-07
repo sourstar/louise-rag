@@ -2018,6 +2018,7 @@ def run_check(a):
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
         against=_json(a.against) if getattr(a, "against", None) else None,
         only_shards=([s for s in a.shards.split(",") if s] if getattr(a, "shards", None) else None),
+        live=getattr(a, "live", None),
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(
             ids, collection=local),
         log=lambda m: print(m, file=sys.stderr))
@@ -2180,33 +2181,61 @@ def cmd_records_check(a) -> int:
 
 def cmd_records_seal(a) -> int:
     """`hold records seal <collection> <snapshot> --files DIR --trusted-list
-    FILE` (07 §7.3; 03 §3.7; 09 §9.15): the certifier's capture of the
-    seals' evidence — one entry per sealed file under DIR, each validated
-    in archival mode against the trusted list given BEFORE the member is
-    written: a seal that does not validate is refused, never recorded.
-    The trusted list is kept by its hash, where archival mode reads it."""
-    import hashlib
+    FILE --lotl FILE --lotl-signers FILE` (07 §7.3; 03 §3.7; 09 §9.15): the
+    certifier's capture of the seals' evidence. The lists first: the LOTL
+    verified by a certificate the Official Journal announced, the national
+    list by one the LOTL's pointer for its territory names — a list is
+    trusted for who signed it, not for its hash — both kept by their hash.
+    Then one entry per sealed file under DIR, its revocation responses
+    embedded, given (`--revocation`) or asked of each certificate's
+    responder now (`--fetch-revocation`, on the budget), each entry
+    validated in archival mode BEFORE the member is written — hard-fail on
+    revocation when it carries any: a seal that does not validate is
+    refused, never recorded."""
     import time
-    from app.hold import seals
+    from app.hold import revocation as rev, seals, tsl
     root = _collections_root(a)
     name, codex = col.resolve(root, a.collection)
     if codex.publication != "certified":
         raise CodexError(f"{name}: an open collection carries no seals (09 §9.15)")
     tl_bytes = Path(a.trusted_list).read_bytes()
+    lotl_bytes = Path(a.lotl).read_bytes()
+    try:
+        lotl_said = tsl.verify_lotl(lotl_bytes, tsl.load_certificates(Path(a.lotl_signers).read_bytes()))
+        tl_said = tsl.verify_against_lotl(tl_bytes, lotl_bytes)
+    except tsl.XmlSigError as e:
+        raise CodexError(f"seals not written — {e}") from None
     tl_digest, _ = seals.keep_trusted_list(root, name, tl_bytes)
-    lotl = ("sha256:" + hashlib.sha256(Path(a.lotl).read_bytes()).hexdigest()) if a.lotl else tl_digest
+    lotl_digest, _ = seals.keep_trusted_list(root, name, lotl_bytes)
     anchors = seals.anchors_from_trusted_list(tl_bytes)
     if not anchors:
         raise CodexError(f"{a.trusted_list}: the trusted list grants no CA; nothing could validate against it")
+    given = []
+    for f in a.revocation or []:
+        raw = Path(f).read_bytes()
+        e = rev.entry("ocsp", raw) or rev.entry("crl", raw)
+        if e is None:
+            raise CodexError(f"{f}: neither an OCSP response nor a CRL")
+        given.append(e)
     files = sorted(p for p in Path(a.files).rglob("*") if p.is_file())
     if not files:
         raise CodexError(f"no sealed file under {a.files}")
     entries, refused = [], []
+    fetched: dict[tuple, tuple] = {}
     now = time.time()
     for p in files:
         try:
-            e = seals.capture(p, format=a.format, now=now,
-                              trusted_list={"lotl_sha256": lotl, "tl_sha256": tl_digest, "url": a.url or ""})
+            e = seals.capture(p, format=a.format, now=now, revocation=given,
+                              trusted_list={"lotl_sha256": lotl_digest, "tl_sha256": tl_digest, "url": a.url or ""})
+            if a.fetch_revocation:
+                key = tuple(e["chain"])
+                if key not in fetched:
+                    fetched[key] = rev.fetch([seals._unb64(c, "chain") for c in e["chain"]], anchors)
+                got, unanswered = fetched[key]
+                if unanswered:
+                    raise seals.SealError(f"no revocation responder answered for {', '.join(unanswered)[:300]}")
+                e["revocation"] = rev.merge(e["revocation"], got)
+            e["revocation"] = rev.relevant(e["revocation"], [seals._unb64(c, "chain") for c in e["chain"]])
             got = seals.validate(e, anchors=anchors)
         except seals.SealError as ex:
             refused.append(f"{p.name}: {ex}")
@@ -2219,7 +2248,9 @@ def cmd_records_seal(a) -> int:
         raise CodexError("seals not written — " + "; ".join(refused)[:1500])
     path = seals.write(col.drag_of(root, name), codex, a.snapshot, entries)
     _print({"collection_id": codex.collection_id, "snapshot_id": a.snapshot, "entries": len(entries),
-            "trusted_list": tl_digest, "path": str(path)})
+            "trusted_list": tl_digest, "lotl": lotl_digest, "trusted_list_signed_by": tl_said["signer"],
+            "lotl_signed_by": lotl_said["signer"],
+            "revocation": sum(len(e["revocation"]) for e in entries), "path": str(path)})
     return 0
 
 
@@ -2675,10 +2706,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--files", required=True, metavar="DIR", help="the sealed origin files (.p7m): every file under it")
     p.add_argument("--trusted-list", required=True, dest="trusted_list", metavar="FILE",
                    help="the national trusted list (ETSI TS 119 612 XML) the chains validate against; kept by its hash")
-    p.add_argument("--lotl", metavar="FILE", help="the EU list of trusted lists, for its hash (default: the list's own)")
+    p.add_argument("--lotl", required=True, metavar="FILE",
+                   help="the EU list of trusted lists: the national list must be signed by a key its pointer names")
+    p.add_argument("--lotl-signers", required=True, dest="lotl_signers", metavar="FILE",
+                   help="the certificates the Official Journal announces for signing the LOTL (PEM or DER)")
     p.add_argument("--url", help="where the trusted list is published")
-    p.add_argument("--format", default="cades", choices=["cades", "pades"],
-                   help="the envelope: a CMS .p7m, or the signature inside a PDF (XAdES is owed)")
+    p.add_argument("--format", default="cades", choices=["cades", "pades", "xades"],
+                   help="the envelope: a CMS .p7m, the signature inside a PDF, or an XML signature")
+    p.add_argument("--revocation", action="append", metavar="FILE",
+                   help="an OCSP response or CRL (DER) obtained for the chain; repeatable")
+    p.add_argument("--fetch-revocation", action="store_true", dest="fetch_revocation",
+                   help="ask each certificate's OCSP responder, else its CRL point, now (on the budget)")
     p.set_defaults(fn=cmd_records_seal)
 
     p = rverbs.add_parser("check",
@@ -2698,6 +2736,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="raise the plan's shard fraction for this run")
     p.add_argument("--seed", help="32 bytes as hex")
     p.add_argument("--snapshot", help="which snapshot (default: the latest)")
+    p.add_argument("--live", metavar="DIR",
+                   help="with --seal: live mode — the sealed files under DIR re-validated now (03 §3.7)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_records_check)
 
@@ -2890,6 +2930,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shards", metavar="SLICE/NNNNN,…",
                    help="run every check on these shards alone, in place of its sample — how a "
                         "received claim is reproduced here (03 §3.6)")
+    p.add_argument("--live", metavar="DIR",
+                   help="`origin-seal` in live mode (03 §3.7): the sealed files under DIR re-validated now "
+                        "against the current trusted list and fresh revocation responses")
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)

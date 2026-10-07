@@ -211,6 +211,8 @@ class Ctx:
     #: a received claim reproduced here (03 §3.6): every check runs on these
     #: shards alone — `slice/NNNNN` — in place of its sample
     only_shards: tuple[str, ...] | None = None
+    #: `origin-seal` in live mode: a directory of the sealed files in hand
+    live: Path | None = None
 
     @property
     def drag(self) -> Path:
@@ -421,21 +423,30 @@ def check_anchor(ctx: Ctx) -> Outcome:
 
 def check_origin_seal(ctx: Ctx) -> Outcome:
     """"the origin's own seal on the source file validates, and the record
-    was parsed from that file" (03 §3.2, §3.7; 09 §9.15), ARCHIVAL mode:
-    every entry of the snapshot's seals member — the signature over the
-    digest it commits to, the certificate path at the captured moment
-    against the captured chain, revocation and the trusted list this peer
-    holds by the hash the entry names — and, over the sampled shards,
-    every record's `extra.seal` naming an entry that is there. Live mode
-    (re-fetching the sealed file) is owed. Nothing is fetched; a peer
-    that holds no seals member, or not the trusted list, is inconclusive."""
-    from . import seals as seals_mod
+    was parsed from that file" (03 §3.2, §3.7; 09 §9.15).
+
+    ARCHIVAL (the default): every entry of the snapshot's seals member —
+    the signature over the digest it commits to, the certificate path at
+    the captured moment against the captured chain, revocation (hard-fail
+    when the entry carries any) and the trusted list this peer holds by
+    the hash the entry names, that list's own signature verified against
+    the LOTL held beside it. Nothing is fetched; a peer that holds no seals
+    member, or not the list, is inconclusive.
+
+    LIVE (`ctx.live`, a directory of sealed files in hand): each file the
+    member lists re-validated now against the current lists and fresh
+    revocation responses (app/hold/seals_live.py).
+
+    Either way, over the sampled shards, every record's `extra.seal` names
+    an entry that is there."""
+    from . import seals as seals_mod, tsl
     if ctx.codex.publication != "certified":
         return Outcome("origin-seal", INCONCLUSIVE, why="an open collection carries no seals (09 §9.15)")
+    mode = "live" if ctx.live is not None else "archival"
     try:
         doc = seals_mod.read(ctx.drag, ctx.snapshot.snapshot_id)
     except seals_mod.SealError as e:
-        return Outcome("origin-seal", FAIL, {"mode": "archival", "entries": 0, "failed": []},
+        return Outcome("origin-seal", FAIL, {"mode": mode, "entries": 0, "failed": []},
                        why=f"the seals member does not read: {e}")
     if doc is None:
         return Outcome("origin-seal", INCONCLUSIVE,
@@ -445,22 +456,44 @@ def check_origin_seal(ctx: Ctx) -> Outcome:
     entries = {e["file_hash"]: e for e in doc["entries"]}
     failed: list[str] = []
     why: list[str] = []
-    anchors_by_tl: dict[str, list[bytes] | None] = {}
-    for fh, e in entries.items():
-        tl = e["trusted_list"]["tl_sha256"]
-        if tl not in anchors_by_tl:
-            data = seals_mod.held_trusted_list(ctx.root, ctx.name, tl)
-            anchors_by_tl[tl] = None if data is None else seals_mod.anchors_from_trusted_list(data)
-        anchors = anchors_by_tl[tl]
-        if anchors is None:
-            return Outcome("origin-seal", INCONCLUSIVE, {"mode": "archival", "entries": len(entries), "failed": []},
-                           why=f"the trusted list {tl[:23]}… the entries name is not held under "
-                               f"state/{seals_mod.TRUSTED_LISTS}/; archival mode validates against it and "
-                               f"nothing else (03 §3.7)")
-        got = seals_mod.validate(e, anchors=anchors)
-        if not got["ok"]:
-            failed.append(fh)
-            why.append(f"{fh[:12]}…: {got['why']}")
+    if ctx.live is not None:
+        from . import seals_live
+        status, detail, said = seals_live.check(ctx.root, ctx.name, entries, ctx.live)
+        failed.extend(detail["failed"])
+        if said:
+            why.append(said)
+    else:
+        detail = {"mode": "archival", "entries": len(entries), "failed": [], "trusted_list_signature": {}}
+        status = PASS
+        anchors_by_tl: dict[str, list[bytes] | None] = {}
+        for fh, e in entries.items():
+            tl, lotl = e["trusted_list"]["tl_sha256"], e["trusted_list"]["lotl_sha256"]
+            if tl not in anchors_by_tl:
+                data = seals_mod.held_trusted_list(ctx.root, ctx.name, tl)
+                anchors_by_tl[tl] = None if data is None else seals_mod.anchors_from_trusted_list(data)
+                lotl_data = seals_mod.held_trusted_list(ctx.root, ctx.name, lotl) if lotl != tl else None
+                if data is not None and lotl_data is not None:
+                    try:
+                        said = tsl.verify_against_lotl(data, lotl_data)
+                        detail["trusted_list_signature"][tl] = f"signed by {said['signer']}"
+                    except tsl.XmlSigError as ex:
+                        detail["trusted_list_signature"][tl] = f"FAILED: {ex}"
+                        anchors_by_tl[tl] = []
+                        why.append(f"the trusted list {tl[:23]}…: {ex}")
+                elif data is not None:
+                    detail["trusted_list_signature"][tl] = ("not re-verified: the LOTL is not held; the list is "
+                                                            "pinned by its hash in the certifier-signed member")
+            anchors = anchors_by_tl[tl]
+            if anchors is None:
+                return Outcome("origin-seal", INCONCLUSIVE, {"mode": "archival", "entries": len(entries),
+                                                             "failed": []},
+                               why=f"the trusted list {tl[:23]}… the entries name is not held under "
+                                   f"state/{seals_mod.TRUSTED_LISTS}/; archival mode validates against it and "
+                                   f"nothing else (03 §3.7)")
+            got = seals_mod.validate(e, anchors=anchors)
+            if not got["ok"]:
+                failed.append(fh)
+                why.append(f"{fh[:12]}…: {got['why']}")
     # the records parsed from a sealed file name its entry (09 §9.5 extra.seal)
     shards = _shards(ctx, "origin-seal")
     ran: list[snap.Shard] = []
@@ -479,10 +512,13 @@ def check_origin_seal(ctx: Ctx) -> Outcome:
                     failed.append(named)
     if unplaced:
         why.append(f"{unplaced} sampled record(s) name a seal entry the member does not carry")
-    detail = {"mode": "archival", "entries": len(entries), "failed": sorted(failed)}
-    return Outcome("origin-seal", FAIL if failed else PASS, detail, ctx.seed, _shard_ids(ctx.codex, ran),
-                   why="; ".join(why) if why else f"{len(entries)} seal(s) verified offline against the captured "
-                                                   f"evidence and the trusted list held")
+    detail["failed"] = sorted(failed)
+    if failed:
+        status = FAIL
+    elif mode == "archival" and not why:
+        why.append(f"{len(entries)} seal(s) verified offline against the captured evidence and the trusted "
+                   f"list held")
+    return Outcome("origin-seal", status, detail, ctx.seed, _shard_ids(ctx.codex, ran), why="; ".join(why))
 
 
 def check_calibration(ctx: Ctx) -> Outcome:
@@ -917,6 +953,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         origin_unit=None, origin_bytes: int | None = None,
         against: dict | None = None,
         only_shards: Sequence[str] | None = None,
+        live: Path | None = None,
         log=None) -> Report:
     """Run the plan and report. Writes nothing — `attest` does that.
 
@@ -942,7 +979,8 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
 
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
-              max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None)
+              max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None,
+              Path(live) if live else None)
     outcomes = []
     for c in want:
         try:

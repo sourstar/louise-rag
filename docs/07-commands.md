@@ -91,11 +91,16 @@ louise hold
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
                                                                        run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
               build <collection> [--snapshot ID]                       parse, slice, shard, hash
-              check <collection> [--origin] [--seal] [--sample F]      records against their own hashes and roots, against the origin, against the seal
-              seal <collection> <snapshot> --files DIR --trusted-list FILE [--lotl FILE] [--url URL]
+              check <collection> [--origin] [--seal [--live DIR]] [--sample F]
+                                                                       records against their own hashes and roots, against the origin, against the seal
+              seal <collection> <snapshot> --files DIR --trusted-list FILE --lotl FILE --lotl-signers FILE
+                   [--format cades|pades|xades] [--revocation FILE …] [--fetch-revocation] [--url URL]
                                                                        the certifier captures the seals' evidence (03 §3.7; 09 §9.15) into seals/<snapshot>.json
-                                                                       before `snapshot create` signs it; the trusted list is kept by its hash for archival
-                                                                       mode (added 2026-10-07: 07 named the member and no command to write it)
+                                                                       before `snapshot create` signs it; the LOTL verified by a key the Official Journal
+                                                                       announced (`--lotl-signers`), the national list by a key the LOTL's pointer names,
+                                                                       both kept by their hash for archival mode; revocation responses embedded, given or
+                                                                       fetched now on the budget (added 2026-10-07: 07 named the member and no command to
+                                                                       write it; the lists' signatures, XAdES and revocation the same day)
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole shard as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
@@ -116,6 +121,7 @@ louise hold
   index       build <collection> [--text | --vector]                   the text index per shard; the centres and labels of the space
               show <collection>
   check       <collection> [--checks …] [--sample F] [--seed HEX]      run the validation plan; print the report
+              [--live DIR]                                             `origin-seal` in live mode: the sealed files under DIR re-validated now (03 §3.7)
               [--shards S,…] [--origin DIR] [--against FILE]           --shards: these shards alone, how a received claim is reproduced (03 §3.6);
                                                                        --against: image-equivalence's reference lines (03 §3.4) (both 2026-10-07)
   key         create                                                   this peer's key, at NODE_KEY_PATH
