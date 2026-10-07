@@ -633,6 +633,15 @@ def cmd_node_pause(a) -> int:
     return 0
 
 
+def cmd_node_show(a) -> int:
+    """`node show` (07 §7.3): state per collection, the current stage, the
+    last round's cost, the overrides in force, the verbs running under the
+    node. Read-only; creates nothing."""
+    from app import node_show
+    _print(node_show.show())
+    return 0
+
+
 def cmd_node_resume(a) -> int:
     from app import node_state
     if a.collection:
@@ -2518,6 +2527,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--acquire-only", action="store_true", dest="acquire_only")
     p.add_argument("--seed-only", action="store_true", dest="seed_only")
     p.set_defaults(fn=cmd_node_pause)
+    p = nverbs.add_parser("show", help="state per collection, the current stage, the last round's cost, "
+                                      "the overrides in force, the verbs running under the node")
+    p.set_defaults(fn=cmd_node_show)
     p = nverbs.add_parser("resume", help="the node, or one collection")
     p.add_argument("collection", nargs="?", default=None)
     p.set_defaults(fn=cmd_node_resume)

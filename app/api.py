@@ -319,6 +319,14 @@ def hold_collection_create(body: HoldCreateBody):
     return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
 
 
+@app.get("/api/node/show", dependencies=[Depends(auth.require_admin)])
+def node_show_route():
+    """07 §7.3's `node show` over HTTP (07 §7.4): the mode and overrides in
+    force, each collection's state and stage, the last round, the jobs."""
+    from . import node_show
+    return node_show.show()
+
+
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(auth.require_admin)])
 def job_status(job_id: int):
     """A job the web queued for the worker (app/jobs.py): its state, its

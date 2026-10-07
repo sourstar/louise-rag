@@ -386,7 +386,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
 
 
 def _leg_withheld(collection, reason: str) -> dict:
-    """05 §5.7's `legs_withheld` entry: the copy is SEARCHED — its text leg
+    """05 §5.3, §5.4's `legs_withheld` entry: the copy is SEARCHED — its text leg
     goes on — and one leg of it is not, with the reason (03 §3.3: a run that
     failed the gate, or an answer from a run not yet tested). Beside
     `withheld`, which names copies left out whole."""

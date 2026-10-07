@@ -150,9 +150,16 @@ def peek_worker_state() -> str:
     a file hold's admission ledger made before any worker booted has no
     `control` table yet — it reads 'paused', as the worker would read it,
     not 'unknown'."""
+    return peek(db.worker_state, "paused", error="unknown")
+
+
+def peek(read, absent, *, error=None, table: str = "control"):
+    """`read(con)` over the node's store opened READ-ONLY, creating nothing
+    (see `peek_worker_state`): `absent` when there is no store or no
+    `table` yet, `error` when it cannot be read."""
     p = path()
     if not p.is_file():
-        return "paused"
+        return absent
     # beside the file SQLite actually opens: a symlinked store keeps its
     # sidecars next to the TARGET, and checking beside the link opened a
     # live WAL immutable and read a stale mode (verification pass, reproduced)
@@ -163,11 +170,11 @@ def peek_worker_state() -> str:
         with closing(sqlite3.connect(uri, uri=True)) as c:
             c.row_factory = sqlite3.Row
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                         "AND name='control'").fetchone() is None:
-                return "paused"
-            return db.worker_state(c)
+                         "AND name=?", (table,)).fetchone() is None:
+                return absent
+            return read(c)
     except sqlite3.Error:
-        return "unknown"
+        return error
 
 
 def bandwidth_override(con: sqlite3.Connection | None = None) -> float | None:

@@ -1795,13 +1795,18 @@ hand or cron. A scheduled run changes what runs when and moves origin
 bytes: [`scheduling.md`](scheduling.md) §6 wants it measured on the node
 first. It is the one thing between this and "clears by itself"; until
 then enforcing means running `hold check` per Codex collection first.
-`node show` is not built; `louise health` carries the state. *Settled
+`node show` BUILT 2026-10-07 (app/node_show.py; CLI and `GET /api/node/show`,
+admin): the mode and overrides in force, each collection's state (in-use /
+quarantine / refused, paused, integrity violated), stage and embed setting,
+the newest round's `sched` lines, the jobs; read-only, creating nothing
+(`node_state.peek`). *Settled
 while building:* test 2 (T0–T2 of every bundle held) has no open state,
 because nothing lands without them; a peer with no key is told its checks
 leave no record (no unsigned substitute was invented); `--origin-unchecked`
 also refuses when the origin check was never TRIED, since nothing then
 says it cannot run.
-*An amendment to name on `main`, not yet made:* 03 §3.3 has a failed run
+*An amendment to name on `main` — MADE (05 §5.3, §5.4 carry
+`legs_withheld: [{collection_id, leg, reason}]`):* 03 §3.3 has a failed run
 withhold the vector leg "and the search says so", and 05 §5.7's response
 object has no place to say it — `withheld` names copies left out WHOLE.
 Today's response carries `legs_withheld: [{collection, leg: "vector",
