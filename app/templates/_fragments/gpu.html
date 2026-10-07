@@ -1,5 +1,5 @@
 {% if state == "unset" %}
-<div class="note">GPU_PROBE_URL is unset — there is no probe to ask (the <code>gpu-probe</code> service, deploy/truenas-app.yaml).</div>
+<div class="note">GPU_PROBE_URL is unset — there is no probe to ask (the <code>gpu-probe</code> service: deploy/truenas-app.yaml, or <code>--profile gpu</code> in deploy/docker/compose.yaml).</div>
 {% elif state == "unreachable" %}
 <div><span class="badge err">unreachable</span> <span class="note">{{ url }} — {{ error }}</span></div>
 {% else %}

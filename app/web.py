@@ -2377,18 +2377,19 @@ def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path
             400, f"choose a corpus folder for the {what}: it must point at a "
                  f"real mounted dataset. Free folders under "
                  f"{config.CORPUS_MOUNTS_DIR}: {', '.join(free) or '(none — map one first)'}. "
-                 f"Map a dataset by adding '- /mnt/<pool>/<dataset>:"
-                 f"{config.CORPUS_MOUNTS_DIR}/<name>' to BOTH services in the "
-                 f"app YAML, then re-open this page")
+                 f"Map a folder by adding '- <host folder>:"
+                 f"{config.CORPUS_MOUNTS_DIR}/<name>' to BOTH services, web and worker "
+                 f"(TrueNAS: the app YAML; any Docker host: deploy/docker/compose.yaml, "
+                 f"or LOUISE_CORPORA in its env file), then re-open this page")
     chosen = next((m for m in mounts if m["path"] == raw.strip()), None)
     if chosen is None:
         available = ", ".join(m["path"] for m in mounts) or "(none)"
         raise HTTPException(
             400, f"the {what}'s corpus folder must be one of the mounted "
                  f"entries under {config.CORPUS_MOUNTS_DIR} — available: "
-                 f"{available}. Map your dataset there first (TrueNAS: add "
-                 f"'- /mnt/<pool>/<dataset>:{config.CORPUS_MOUNTS_DIR}/"
-                 f"<name>' to both services in the app YAML)")
+                 f"{available}. Map your folder there first: '- <host folder>:"
+                 f"{config.CORPUS_MOUNTS_DIR}/<name>' on both services (TrueNAS: the "
+                 f"app YAML; any Docker host: deploy/docker/compose.yaml)")
     if chosen["used_by"]:
         raise HTTPException(
             409, f"{chosen['path']} already belongs to collection "

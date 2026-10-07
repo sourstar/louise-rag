@@ -163,7 +163,10 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         'kinds = ["records"]\n'
         'share = true\n'
         'embed = "on-demand"\n'
-        'acquire_enabled = true\n'
+        # no `acquire_enabled = true`: with `source = "drag"` the drag IS the
+        # corpus and the loader refuses acquiring into it (2026-10-07: the
+        # second peer's worker began listing the Gutenberg mirror). The
+        # legacy fixture keeps the key away from its default.
         'corpus_dir = "/corpus"\n'
         # 07 §7.8 `source` (2026-10-07): away from its default too, so the
         # guards exercise it — a fetched collection reads its drag

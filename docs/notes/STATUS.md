@@ -244,6 +244,35 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~10:15Z (UTC): step 9 LIVE with a second peer; Louise on
+any Docker host; deployed through b741bfb.** Backups removed on the node
+first (operator: the `pre-*` images and `src.old/`). `deploy/docker/`
+runs a node on any Docker host (compose, an env example, `up.sh`;
+first boot by `app/node_init.py`), and the second peer runs from it on
+the development PC's Docker Desktop (`louise-peer2`, its env file in the
+gitignored `deploy/reference/`). Every sub-step of step 9 ran between it
+and the node over the LAN — digests both ways, `share fetch` of the
+certified collection and of `gutenberg-mini-open` (open, Codex version
+4, made for the test), members by torrent in seconds, the fetched
+collection scanned from its shards and searched on the second peer with
+its certification on each hit, quarantine cleared there by the tooling
+(records-vs-origin run in the Codex's own image, loaded from tank),
+attestations both ways, `share contribute` on the second peer, and the
+node taking its two bundles in (T0–T2 pass, 5 chunks landed). Thirteen
+defects found and fixed, each with a test, among them: a fetched
+collection acquiring from the origin (an rsync listing of the whole
+Gutenberg mirror was stopped before a byte was written), the pointer
+never put into the DHT, the attestation step marking bundle, snapshot,
+codex and flag events acted before their handlers ran, and the vector
+leg withheld for every collection that holds vectors without embedding.
+The whole account and the three decisions it leaves for the operator —
+the node's stale `LOUISE_PLATFORM_IMAGE` (`85fd59f1…`, so every Codex
+created since 2026-09-21 names an image that did not build it), no
+benchmark for version-2 collections (a wire-format question), and the
+certified plan without records-vs-origin — are in
+[`second-peer-2026-10-07.md`](second-peer-2026-10-07.md).
+
+
 **2026-10-07, ~08:00Z (UTC): the first certified collection LIVE; c019243
 then bb39573 DEPLOYED.** `gutenberg-744ba8430fed` (id `sha256:744ba8430fed…`)
 is held on the node: created in gutenberg's space (`--space-from`,
