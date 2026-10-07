@@ -244,6 +244,21 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, 04:30Z (UTC): the bounded facets pass and step 9f's
+first brick DEPLOYED as c5678a2.** Web and worker on image `f0ad42b9…`;
+the runbook's restart phase waited on the stop job (SUCCESS, STOPPED,
+then RUNNING) — the first restart through the fixed phase. The node was
+then unpaused at 04:19Z and the worker watched for 20 minutes: the
+maintainer's pass over pubmed ran 04:19:44–04:24:43 and the worker's
+RSS peaked at 5.2 GB (the embed stream running beside it), settling at
+1.8 GB; `creators` stopped at 200 000 distinct values after 155 185
+records and `subjects` after 1 572 163 (the MeSH descriptor/qualifier
+paths), both "not counted on this peer" as designed; `lang` counted and
+its narrow values indexed. So on pubmed no facet but `lang` is listed
+or filterable here — owed: for a tree facet whose full paths explode,
+counting the prefixes to a bounded depth (the ~30 000 descriptors)
+instead of nothing. Backup image `pre-c5678a2`.
+
 **2026-10-07, 03:01Z (UTC): INCIDENT — the worker OOM-killed by the
 facets pass; the node rebooted at 03:37Z; the pass bounded.** What
 happened: 684931d's index maintainer counted pubmed's facets for the
