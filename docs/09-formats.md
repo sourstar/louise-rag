@@ -1656,7 +1656,7 @@ An entry:
 |---|---|---|---|
 | `file_hash` | BLAKE2b-128 | yes | the sealed file's hash. A record parsed from it carries that hash in `extra.seal` (§9.5), which is how it finds its entry: a record's own `origin_hash` covers the document alone (02 §2.3), so the two are different values and the reference is explicit |
 | `format` | `"cades"` · `"pades"` · `"xades"` | yes | the seal's envelope |
-| `seal` | `{b64: string}` | yes | the signature envelope itself, DER as base64 — the CMS `SignedData` for CAdES and PAdES, the `<ds:Signature>` element for XAdES |
+| `seal` | `{b64: string}` | yes | the signature envelope itself, DER as base64 — the CMS `SignedData` for CAdES and PAdES, the `<ds:Signature>` element for XAdES; DETACHED, its encapsulated content removed (*amended 2026-10-07*: the evidence stays small however large the issue, and archival mode verifies over `content_sha256`, not the bytes) |
 | `content_sha256` | id | yes | the message digest the signature commits to, taken from the envelope's signed attributes. Archival mode verifies the signature over `seal` and checks it commits to this value; it is NOT `file_hash`, which is BLAKE2b-128 of the sealed file (below) and is what live mode re-fetches against |
 | `signer` | object | yes | `{subject, issuer, serial}` of the signing certificate, as strings |
 | `chain` | list of strings | yes | the certificate chain, DER as base64, leaf first |

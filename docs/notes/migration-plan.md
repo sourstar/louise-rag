@@ -1258,12 +1258,40 @@ a targeted `hold check`. And a defect of the T4 brick fixed before
 anything else: the burned key was recorded in the ledger's bare hex,
 not 09 §9.2's `ed25519:` form the trust level compares against
 (`verify_on_use.key_text`), so a burn would never have shut the key out.
-**Owed in step 10**: the *integrity violated* halt when a shard outside
-a signed snapshot is found already in the copy (the gate refuses it at
-promotion; a hand-populated folder is not yet detected — `roots` would
-have to be run over the copy's files against the signed chain, and the
-foreign shard's records excluded from search by uid); the seals and
-`origin-seal`; the Gazzetta plugin.
+Third brick (operator's yes on the libraries, 2026-10-07): the seals.
+`app/hold/seals.py` — the CAdES envelope (CMS SignedData) read with
+asn1crypto: the signer, the message digest the signed attributes commit
+to (`content_sha256`; a digest other than SHA-256 is refused, not
+guessed around), every certificate carried, leaf first, an embedded
+timestamp token; captured DETACHED (09 §9.15 amended: the evidence
+stays small however large the issue); 09 §9.15's member written,
+read and refused field by field; the trusted list (ETSI TS 119 612)
+parsed for the CA/QC services granted, kept under
+`state/trusted-lists/<sha256>.xml` by the hash the entries name.
+ARCHIVAL validation: pyhanko's integrity check of the signature over
+the signed attributes, pyhanko-certvalidator's path validation at the
+captured moment (the timestamp's, else `verified_at`) against the
+captured chain and revocation responses and the list's anchors, nothing
+fetched. `check_origin_seal`: every entry validated, the sampled
+records' `extra.seal` named entries that are there; inconclusive
+without the member or the list, fail on a tampered entry, pass offline.
+`hold records seal <collection> <snapshot> --files DIR --trusted-list
+FILE` (07 §7.3 amended: it named the member and no command) captures,
+validates each seal first, refuses the member when one does not, and
+keeps the list; `hold records check --seal` adds the check. tests:
+hold/test_seals.py (6) — a self-signed CA and signer, a CAdES-BES
+`.p7m` signed in the test, a trusted-list fixture, the network
+unplugged throughout. **Owed in step 10**: live mode of `origin-seal`
+(the sealed file re-fetched, hashed, validated against the current
+lists); PAdES (the OJEU's sealed PDFs, through pyhanko's reader) and
+XAdES; revocation responses captured by the certifier (the entry
+carries them, `--files` captures none yet: validation runs soft-fail
+on revocation, hard-fail once they are there); verifying the trusted
+list's own XAdES signature (the list is pinned by hash today); the
+*integrity violated* halt when a shard outside a signed snapshot is
+found already in the copy (the gate refuses it at promotion; a
+hand-populated folder is not yet detected); the Gazzetta plugin, whose
+records will carry `extra.seal`.
 **Dependency decision, proposed (not taken: a new dependency is asked
 first).** For 09 §9.15's seals: CAdES envelopes (the Gazzetta's `.p7m`)
 through `asn1crypto` (CMS parsing, signed attributes, the

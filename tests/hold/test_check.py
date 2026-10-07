@@ -569,14 +569,20 @@ def test_records_check_origin_adds_the_two_origin_checks(checkable, monkeypatch,
     root, snapshot, codex = checkable
     monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
     assert louise.main(["hold", "records", "check", "gutenberg", "--root",
-                        str(root), "--json", "--origin", str(corpus_dir),
+                        str(root), "--json", "--origin", str(corpus_dir), "--seal",
                         "--sample", "1", "--seed", SEED.hex()]) == 0
     doc = json.loads(capsys.readouterr().out)
     assert [c["check"] for c in doc["checks"]] == \
-        ["roots", "records", "records-vs-origin", "origin-seal"]
+        ["roots", "records", "records-vs-origin", "origin-seal"], \
+        "--origin adds the re-parse and --seal the seal check, each its own flag (2026-10-07)"
     by = {c["check"]: c for c in doc["checks"]}
     assert by["records-vs-origin"]["result"] == "pass", \
         "the origin was given, so the re-parse ran"
+    assert by["origin-seal"]["result"] == "inconclusive", "an open collection carries no seals"
+    assert louise.main(["hold", "records", "check", "gutenberg", "--root", str(root), "--json",
+                        "--origin", str(corpus_dir), "--sample", "1", "--seed", SEED.hex()]) == 0
+    assert [c["check"] for c in json.loads(capsys.readouterr().out)["checks"]] == \
+        ["roots", "records", "records-vs-origin"]
 
 
 def test_license_passes_when_the_terms_are_the_codexs(checkable):

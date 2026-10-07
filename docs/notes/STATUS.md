@@ -244,6 +244,21 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~06:30Z (UTC): step 10, third brick — the seals, on the
+operator's yes to asn1crypto, cryptography, pyhanko and
+pyhanko-certvalidator.** A CAdES `.p7m` read, captured detached into
+09 §9.15's member (`hold records seal`, each seal validated first), the
+trusted list kept by its hash, and `origin-seal` in ARCHIVAL mode
+through `hold check` / `hold records check --seal`: the signature over
+the captured digest, the certificate path at the captured moment
+against the captured chain and the list's anchors, nothing fetched —
+proven in tests against a CA and a signer made in the test, the
+network unplugged; a foreign list, a tampered digest, a swapped chain,
+a lapsed certificate each refused. Owed: live mode, PAdES/XAdES,
+captured revocation, the list's own signature, the Gazzetta plugin
+(plan). Not deployed (node: 7ecac42); the image rebuilds with the new
+libraries on the next deploy.
+
 **2026-10-07, 05:00Z (UTC): tree facets to depth 1 DEPLOYED as
 7ecac42.** The restart waited on its stop job again (SUCCESS). The
 maintainer's pubmed pass ran 05:03–05:11 (two streamed passes over 33 M

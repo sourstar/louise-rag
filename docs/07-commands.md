@@ -92,6 +92,10 @@ louise hold
                                                                        run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
               build <collection> [--snapshot ID]                       parse, slice, shard, hash
               check <collection> [--origin] [--seal] [--sample F]      records against their own hashes and roots, against the origin, against the seal
+              seal <collection> <snapshot> --files DIR --trusted-list FILE [--lotl FILE] [--url URL]
+                                                                       the certifier captures the seals' evidence (03 §3.7; 09 §9.15) into seals/<snapshot>.json
+                                                                       before `snapshot create` signs it; the trusted list is kept by its hash for archival
+                                                                       mode (added 2026-10-07: 07 named the member and no command to write it)
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole shard as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot

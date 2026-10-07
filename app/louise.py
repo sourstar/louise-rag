@@ -2128,9 +2128,56 @@ def cmd_records_check(a) -> int:
     """
     checks = ["roots", "records"]
     if a.origin_dir:
-        checks += ["records-vs-origin", "origin-seal"]
+        checks.append("records-vs-origin")
+    if getattr(a, "seal", False):
+        checks.append("origin-seal")
     a.checks = ",".join(checks)
     return cmd_check(a)
+
+
+def cmd_records_seal(a) -> int:
+    """`hold records seal <collection> <snapshot> --files DIR --trusted-list
+    FILE` (07 §7.3; 03 §3.7; 09 §9.15): the certifier's capture of the
+    seals' evidence — one entry per sealed file under DIR, each validated
+    in archival mode against the trusted list given BEFORE the member is
+    written: a seal that does not validate is refused, never recorded.
+    The trusted list is kept by its hash, where archival mode reads it."""
+    import hashlib
+    import time
+    from app.hold import seals
+    root = _collections_root(a)
+    name, codex = col.resolve(root, a.collection)
+    if codex.publication != "certified":
+        raise CodexError(f"{name}: an open collection carries no seals (09 §9.15)")
+    tl_bytes = Path(a.trusted_list).read_bytes()
+    tl_digest, _ = seals.keep_trusted_list(root, name, tl_bytes)
+    lotl = ("sha256:" + hashlib.sha256(Path(a.lotl).read_bytes()).hexdigest()) if a.lotl else tl_digest
+    anchors = seals.anchors_from_trusted_list(tl_bytes)
+    if not anchors:
+        raise CodexError(f"{a.trusted_list}: the trusted list grants no CA; nothing could validate against it")
+    files = sorted(p for p in Path(a.files).rglob("*") if p.is_file())
+    if not files:
+        raise CodexError(f"no sealed file under {a.files}")
+    entries, refused = [], []
+    now = time.time()
+    for p in files:
+        try:
+            e = seals.capture(p, format=a.format, now=now,
+                              trusted_list={"lotl_sha256": lotl, "tl_sha256": tl_digest, "url": a.url or ""})
+            got = seals.validate(e, anchors=anchors)
+        except seals.SealError as ex:
+            refused.append(f"{p.name}: {ex}")
+            continue
+        if not got["ok"]:
+            refused.append(f"{p.name}: {got['why']}")
+            continue
+        entries.append(e)
+    if refused:
+        raise CodexError("seals not written — " + "; ".join(refused)[:1500])
+    path = seals.write(col.drag_of(root, name), codex, a.snapshot, entries)
+    _print({"collection_id": codex.collection_id, "snapshot_id": a.snapshot, "entries": len(entries),
+            "trusted_list": tl_digest, "path": str(path)})
+    return 0
 
 
 def _admission_limits():
@@ -2579,10 +2626,23 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_records_validation)
 
+    p = rverbs.add_parser("seal", help="the certifier captures the seals' evidence into seals/<snapshot>.json "
+                                       "(03 §3.7; 09 §9.15), each seal validated offline first")
+    root_arg(p); p.add_argument("collection"); p.add_argument("snapshot")
+    p.add_argument("--files", required=True, metavar="DIR", help="the sealed origin files (.p7m): every file under it")
+    p.add_argument("--trusted-list", required=True, dest="trusted_list", metavar="FILE",
+                   help="the national trusted list (ETSI TS 119 612 XML) the chains validate against; kept by its hash")
+    p.add_argument("--lotl", metavar="FILE", help="the EU list of trusted lists, for its hash (default: the list's own)")
+    p.add_argument("--url", help="where the trusted list is published")
+    p.add_argument("--format", default="cades", choices=["cades"], help="the envelope (PAdES and XAdES are owed)")
+    p.set_defaults(fn=cmd_records_seal)
+
     p = rverbs.add_parser("check",
                           help="`hold check --checks roots,records"
-                               "[,records-vs-origin]` and nothing else")
+                               "[,records-vs-origin][,origin-seal]` and nothing else")
     root_arg(p); p.add_argument("collection")
+    p.add_argument("--seal", action="store_true",
+                   help="adds `origin-seal`: the seals member validated offline against the trusted list held")
     p.add_argument("--origin", dest="origin_dir", metavar="DIR",
                    help="an origin base to re-fetch and re-parse from; "
                         "adds `records-vs-origin`. Without it `--sample` "

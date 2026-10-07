@@ -400,6 +400,72 @@ def check_anchor(ctx: Ctx) -> Outcome:
                    {"state": st["state"]}, why=st["why"])
 
 
+def check_origin_seal(ctx: Ctx) -> Outcome:
+    """"the origin's own seal on the source file validates, and the record
+    was parsed from that file" (03 §3.2, §3.7; 09 §9.15), ARCHIVAL mode:
+    every entry of the snapshot's seals member — the signature over the
+    digest it commits to, the certificate path at the captured moment
+    against the captured chain, revocation and the trusted list this peer
+    holds by the hash the entry names — and, over the sampled shards,
+    every record's `extra.seal` naming an entry that is there. Live mode
+    (re-fetching the sealed file) is owed. Nothing is fetched; a peer
+    that holds no seals member, or not the trusted list, is inconclusive."""
+    from . import seals as seals_mod
+    if ctx.codex.publication != "certified":
+        return Outcome("origin-seal", INCONCLUSIVE, why="an open collection carries no seals (09 §9.15)")
+    try:
+        doc = seals_mod.read(ctx.drag, ctx.snapshot.snapshot_id)
+    except seals_mod.SealError as e:
+        return Outcome("origin-seal", FAIL, {"mode": "archival", "entries": 0, "failed": []},
+                       why=f"the seals member does not read: {e}")
+    if doc is None:
+        return Outcome("origin-seal", INCONCLUSIVE,
+                       why=f"no seals member held for snapshot {ctx.snapshot.snapshot_id}; `share fetch "
+                           f"--kinds seals` brings it, and a peer holding neither the sealed file nor the "
+                           f"entry reports inconclusive (03 §3.7)")
+    entries = {e["file_hash"]: e for e in doc["entries"]}
+    failed: list[str] = []
+    why: list[str] = []
+    anchors_by_tl: dict[str, list[bytes] | None] = {}
+    for fh, e in entries.items():
+        tl = e["trusted_list"]["tl_sha256"]
+        if tl not in anchors_by_tl:
+            data = seals_mod.held_trusted_list(ctx.root, ctx.name, tl)
+            anchors_by_tl[tl] = None if data is None else seals_mod.anchors_from_trusted_list(data)
+        anchors = anchors_by_tl[tl]
+        if anchors is None:
+            return Outcome("origin-seal", INCONCLUSIVE, {"mode": "archival", "entries": len(entries), "failed": []},
+                           why=f"the trusted list {tl[:23]}… the entries name is not held under "
+                               f"state/{seals_mod.TRUSTED_LISTS}/; archival mode validates against it and "
+                               f"nothing else (03 §3.7)")
+        got = seals_mod.validate(e, anchors=anchors)
+        if not got["ok"]:
+            failed.append(fh)
+            why.append(f"{fh[:12]}…: {got['why']}")
+    # the records parsed from a sealed file name its entry (09 §9.5 extra.seal)
+    shards = sampled_shards(ctx.codex, ctx.snapshot, "origin-seal", seed=ctx.seed, override=ctx.override)
+    ran: list[snap.Shard] = []
+    unplaced = 0
+    for s in shards:
+        try:
+            records = ctx.records_of(s)
+        except FileNotFoundError:
+            continue
+        ran.append(s)
+        for r in records:
+            named = (r.get("extra") or {}).get("seal")
+            if isinstance(named, str) and named not in entries:
+                unplaced += 1
+                if named not in failed:
+                    failed.append(named)
+    if unplaced:
+        why.append(f"{unplaced} sampled record(s) name a seal entry the member does not carry")
+    detail = {"mode": "archival", "entries": len(entries), "failed": sorted(failed)}
+    return Outcome("origin-seal", FAIL if failed else PASS, detail, ctx.seed, _shard_ids(ctx.codex, ran),
+                   why="; ".join(why) if why else f"{len(entries)} seal(s) verified offline against the captured "
+                                                   f"evidence and the trusted list held")
+
+
 def check_calibration(ctx: Ctx) -> Outcome:
     """The gate of 03 §3.3, run for this collection's space."""
     from . import embedder as emb
@@ -732,8 +798,7 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
                   "(02 §2.4); not built"),
     "figures": check_figures,
     "anchor": lambda ctx: check_anchor(ctx),
-    "origin-seal": _not_yet("origin-seal", "the origin's own seal (03 §3.7) — "
-                                           "migration plan step 10"),
+    "origin-seal": lambda ctx: check_origin_seal(ctx),
     "evaluation": _not_yet(
         "evaluation", "needs the suite `space.evaluation` names; this "
                       "collection declares none" ),

@@ -78,3 +78,17 @@ safetensors>=0.4
 # would no longer cut the same chunks (invariant 3). A bump is a
 # deliberate act, not a side effect of an unrelated build.
 pypdfium2==5.13.0
+# Seals of certified collections (03 §3.7; 09 §9.15; operator's yes,
+# 2026-10-07). A CAdES envelope — the Gazzetta Ufficiale's `.p7m` — is CMS
+# SignedData: asn1crypto parses it (the signed attributes, the message
+# digest the signature commits to, the certificates it carries) and
+# cryptography verifies the signature and the certificate path;
+# pyhanko-certvalidator validates that path at a captured moment against
+# captured OCSP/CRL responses and a captured trusted list — archival mode,
+# offline, still working when the origin is gone; pyhanko reads the PAdES
+# seal of a signed PDF (the Official Journal's) and builds the fixture
+# seals the tests sign. No hand-rolled crypto anywhere.
+asn1crypto>=1.5.1
+cryptography>=42
+pyhanko-certvalidator>=0.26
+pyhanko>=0.25
