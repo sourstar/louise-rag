@@ -50,7 +50,7 @@ def test_member_names_say_their_kind_and_slice():
     assert holdings.kind_of("calibration-abc") == "calibration" and holdings.slice_of("seals-2026-08") is None
     assert holdings.slice_of("vectors-" + "a" * 16 + "-year=2023") == "year=2023"
     assert holdings.kind_of("index-" + "a" * 16) == "index" and holdings.slice_of("index-" + "a" * 16) is None
-    assert holdings.slice_of("index-year=2023") == "year=2023"
+    assert holdings.slice_of("index-year=2023") is None, "no text-index member since 2026-10-08: index- is the vector index"
     with pytest.raises(mem.MemberError):
         holdings.kind_of("plates-year=2023")
 

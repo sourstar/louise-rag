@@ -50,10 +50,11 @@ def check_slice(name: str) -> str:
     """A slice name is one or more path segments (09 §9.3).
 
     A segment of exactly 16 lowercase hexadecimal characters is refused: it
-    is the shape of a `<space>` segment, and `index-<slice>` would then be a
-    member name `index-<space>` already has (09 §9.16). It is the only
-    collision the member table admits, and it is closed here rather than
-    left to whoever first names a slice after a digest.
+    is the shape of a `<space>` segment. It was the one collision of 09
+    §9.16's table (`index-<slice>` against `index-<space>`) until the text
+    index left the member list (2026-10-08); the refusal stays, since a
+    slice that reads as a digest is ambiguous in every member name and no
+    source needs one.
     """
     if not _SLICE_RE.match(name):
         raise DragError(f"{name!r} is not a slice name (09 §9.3)")
@@ -82,11 +83,6 @@ def relations_member(slice_: str) -> str:
     return f"relations-{check_slice(slice_)}"
 
 
-def index_member(slice_: str) -> str:
-    """The text index of a shard — a cache, and no snapshot lists its root."""
-    return f"index-{check_slice(slice_)}"
-
-
 def vectors_member(space: str, slice_: str) -> str:
     return f"vectors-{check_space(space)}-{check_slice(slice_)}"
 
@@ -104,8 +100,7 @@ def centres_member(space: str, index_version: int) -> str:
 
 
 def vector_index_member(space: str) -> str:
-    """`vectors/<space>/index.json`. Distinct from `index-<slice>` because a
-    slice segment may not be sixteen hex characters (`check_slice`)."""
+    """`vectors/<space>/index.json`: the one `index-` member (09 §9.16)."""
     return f"index-{check_space(space)}"
 
 
@@ -199,6 +194,12 @@ def calibration_paths(set_id: str) -> tuple[str, str]:
 
 def seals_path(snapshot_id: str) -> str:
     return f"seals/{snapshot_id}.json"
+
+
+def trusted_list_path(digest: str) -> str:
+    """`seals/lists/<sha256 hex>.xml`: a trusted list the seals name, by its
+    hash, travelling in the seals member (09 §9.16, amended 2026-10-08)."""
+    return f"seals/lists/{_hex(digest)}.xml"
 
 
 CODEX_PATH = "codex.json"
@@ -322,7 +323,7 @@ def info_dict(member: str, file: MemberFile) -> dict:
 # the tree
 
 #: Every directory the format defines, in the order 02 §2.6 lists them.
-TREE = ("snapshots", "calibration", "seals", "records", "relations", "index",
+TREE = ("snapshots", "calibration", "seals", "records", "relations",
         "vectors")
 
 

@@ -672,6 +672,29 @@ def _names_no_figures(shard_path) -> bool:
     return all(not r.get("figures") for r in pack_records.iter_records(shard_path))
 
 
+def _seal_lists(drag_dir, snapshot_id: str) -> list[str]:
+    """The trusted lists the snapshot's seals name (`seals/lists/<sha256>.xml`):
+    they travel in its seals member, so a peer can judge the seals offline
+    (09 §9.15, §9.16, amended 2026-10-08). Required once the seals file
+    names them — a seals member without its lists is unverifiable."""
+    import json
+    from . import drag as drag_mod
+    p = drag_dir / drag_mod.seals_path(snapshot_id)
+    if not p.is_file():
+        return []
+    try:
+        doc = json.loads(p.read_bytes())
+    except ValueError:
+        return []                       # the seals check reports a member that does not read
+    out = set()
+    for e in doc.get("entries") or []:
+        tl = e.get("trusted_list") or {}
+        for k in ("tl_sha256", "lotl_sha256"):
+            if isinstance(tl.get(k), str) and tl[k].startswith("sha256:"):
+                out.add(drag_mod.trusted_list_path(tl[k]))
+    return sorted(out)
+
+
 def _files(drag_dir, codex, snapshot_id: str | None = None) -> dict:
     """Every whole-collection member with its transport root (09 §9.4).
 
@@ -692,6 +715,7 @@ def _files(drag_dir, codex, snapshot_id: str | None = None) -> dict:
     nullable = [drag_mod.TERMS_PATH]
     if snapshot_id is not None:
         nullable.append(drag_mod.seals_path(snapshot_id))
+        required += _seal_lists(Path(drag_dir), snapshot_id)
 
     hint = {drag_mod.VALIDATION_PATH: " — run `hold records validation`"}
 

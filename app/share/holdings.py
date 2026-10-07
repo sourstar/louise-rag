@@ -64,11 +64,10 @@ def kind_of(member: str) -> str:
 def slice_of(member: str) -> str | None:
     """The slice of a per-slice member; None for a whole-collection one."""
     kind = kind_of(member)
-    if kind in ("records", "relations", "figures", "index", "origin"):
-        rest = member[len(kind) + 1:]
-        if kind == "index" and drag_mod._SPACE_SHAPED.fullmatch(rest):
-            return None                   # `index-<space>`: the vector index, no slice
-        return rest
+    if kind == "index":
+        return None                       # `index-<space>`: the vector index, no slice
+    if kind in ("records", "relations", "figures", "origin"):
+        return member[len(kind) + 1:]
     if kind == "vectors":
         rest = member[len("vectors-"):]
         return rest.split("-", 1)[1] if "-" in rest else None

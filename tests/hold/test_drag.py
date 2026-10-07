@@ -22,7 +22,6 @@ SPACE = "03ae64488c899305"
 def test_every_kind_has_the_name_the_table_gives_it():
     assert drag.records_member("year=1975-1979") == "records-year=1975-1979"
     assert drag.relations_member("year=1980") == "relations-year=1980"
-    assert drag.index_member("lang=de/pages=3M") == "index-lang=de/pages=3M"
     assert drag.vectors_member(SPACE, "year=1980") == f"vectors-{SPACE}-year=1980"
     assert drag.buckets_member(SPACE, 2, 7) == f"buckets-{SPACE}-v2-g07"
     assert drag.centres_member(SPACE, 3) == f"centres-{SPACE}-v3"
@@ -46,9 +45,8 @@ def test_the_kinds_are_closed_and_are_what_kinds_takes():
 
 
 def test_a_slice_may_not_be_shaped_like_a_space():
-    """09 §9.16: `index-<slice>` and `index-<space>` are the same shape, so a
-    slice segment of sixteen lowercase hex would give two members one name."""
-    assert drag.index_member(SPACE.upper()) == f"index-{SPACE.upper()}"   # not lower hex
+    """A slice segment of sixteen lowercase hex reads as a `<space>` in every
+    member name; refused (09 §9.16's old collision, kept closed)."""
     with pytest.raises(DragError, match="collide with a vector index"):
         drag.check_slice(SPACE)
     with pytest.raises(DragError, match="collide with a vector index"):

@@ -182,8 +182,8 @@ order (09 §9.16). The torrent collection of one (collection, snapshot)
 is the set
 of its members; the snapshot is its index for record shards, and a
 digest or a `bundle` event names every other member the same way, by
-name, root and size. Record shards, text-index members and bundles are
-members; vectors reach a peer only as bundles (03 §3.5, 09 §9.7). A
+name, root and size. Record shards and bundles are
+members (the text index never is: each peer builds its own); vectors reach a peer only as bundles (03 §3.5, 09 §9.7). A
 request for a `vectors-<space>-<slice>` member or a bucket group
 resolves to the accepted bundles the sharer holds for those chunks,
 delivered as bundles with their signatures, and the fetcher merges them
@@ -210,8 +210,7 @@ built itself.)* A record shard, a relations shard, a figures container or a
 staging until a snapshot naming it arrives, and is
 discarded after `grace_days`. The members no snapshot lists are
 admitted by their own rule instead, never by this one: a bundle by the
-ladder of 03 §3.5, a text-index member by the pin its header carries
-(02 §2.6), a `centres` or `index-<space>` member by the root
+ladder of 03 §3.5, a `centres` or `index-<space>` member by the root
 `index.json` gives it.
 
 **Two snapshots under one id.** When two different snapshots carry the

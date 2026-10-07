@@ -156,17 +156,12 @@ def test_the_terms_member_exists_for_a_gated_class():
     assert got["terms"].files[0].path == "LICENSE-TERMS" and got["terms"].bytes == 50
 
 
-def test_index_members_come_from_the_drag_on_disk_with_roots_per_file(tmp_path):
+def test_no_text_index_member_comes_from_the_drag(tmp_path):
+    """09 §9.16, amended 2026-10-08: the text index is no member — each peer
+    builds its own — so segments on disk publish nothing."""
     d = tmp_path / "drag"
     seg = d / "index" / "year=2023" / "00001"
     seg.mkdir(parents=True)
-    (seg / "meta.json").write_bytes(b'{"fts_version": 3}')
     (seg / "seg.bin").write_bytes(bytes(40000))
-    (d / "index" / "year=1975-1979").mkdir()            # empty: no member
-    got = {x.name: x for x in m.members_of(a_snapshot(), drag_dir=d)}
-    idx = got["index-year=2023"]
-    assert [f.path for f in idx.files] == ["index/year=2023/00001/meta.json",
-                                           "index/year=2023/00001/seg.bin"]
-    assert idx.files[1].root == drag.pieces_root(bytes(40000)) and idx.bytes == 40000 + 18
-    assert "index-year=1975-1979" not in got
-    assert idx.root == drag.member_root(idx.files)
+    got = {x.name for x in m.members_of(a_snapshot(), drag_dir=d)}
+    assert not any(n.startswith("index-year") for n in got)

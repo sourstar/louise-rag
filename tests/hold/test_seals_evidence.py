@@ -272,3 +272,36 @@ def test_the_commands_take_live_and_fetch_revocation():
                       "--lotl-signers", "S", "--format", "xades", "--revocation", "r1", "--revocation", "r2",
                       "--fetch-revocation"])
     assert (a.format, a.revocation, a.fetch_revocation) == ("xades", ["r1", "r2"], True)
+
+
+def test_the_trusted_lists_travel_with_the_seals(pki, tmp_path):
+    """09 §9.16, amended 2026-10-08: the lists a snapshot's seals name are in
+    its `files` and in its `seals-<id>` member, so the peer that fetches the
+    seals holds what archival mode judges them against."""
+    from app.hold import drag as drag_mod, snapshot as snap_mod
+    from app.share import members
+    from tests.hold.conftest import a_root, pubmed
+    root = tmp_path / "collections"
+    codex = pubmed()
+    a_root(root, codex)
+    from app.hold import collection as col
+    name = col.name_of(root, codex.collection_id)
+    d = col.drag_of(root, name)
+    lists = signed_lists(pki, tmp_path)
+    tl, p_tl = seals.keep_trusted_list(root, name, lists["tl"].read_bytes())
+    lotl, _ = seals.keep_trusted_list(root, name, lists["lotl"].read_bytes())
+    assert p_tl == d / drag_mod.trusted_list_path(tl), "in the drag, by its hash"
+    sealed = tmp_path / "issue.p7m"
+    sealed.write_bytes(a_p7m(pki))
+    e = seals.capture(sealed, trusted_list={"lotl_sha256": lotl, "tl_sha256": tl, "url": ""},
+                      now=CAPTURED.timestamp())
+    seals.write(d, codex, "2026-08", [e])
+    (d / drag_mod.VALIDATION_PATH).write_bytes(b"{}")      # the other required member, as `records validation` writes it
+    files = snap_mod._files(d, codex, "2026-08")
+    assert drag_mod.trusted_list_path(tl) in files and drag_mod.trusted_list_path(lotl) in files
+    (m,) = [m for m in members._whole_collection_members(files) if m.name == "seals-2026-08"]
+    assert [f.path for f in m.files] == sorted([drag_mod.seals_path("2026-08"), drag_mod.trusted_list_path(tl),
+                                                drag_mod.trusted_list_path(lotl)], key=lambda p: p.encode())
+    (d / drag_mod.trusted_list_path(tl)).unlink()
+    with pytest.raises(Exception, match="missing from the drag"):
+        snap_mod._files(d, codex, "2026-08")

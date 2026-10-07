@@ -164,13 +164,6 @@ louise dev                                                             operator 
   load-profile         how long each model takes to come back to the card, from disk and from RAM,
                        idle and beside an embedding; loads and unloads models, and puts back what it found
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
-  migrate pack <name> --recipe FILE [--platform-image D]               give a pre-Codex pack its Codexes and first snapshot (§7.6); writes.
-                                                                       The recipe carries, per space in the pack, what the pack cannot supply — the encoder's weights
-                                                                       and engine, tolerance, work, validation, descriptive — and the calibration set is embedded per space
-                                                                       as `create` does; the first space named is the root, the others `derived_from` it
-  adopt <pack-dir> <collection>                                        the one-time move of a pre-Codex pack's vectors and index into the collection's drag; writes
-                                                                       (`migrate pack` and `adopt`: NOT BUILT — every pre-Codex pack this node held was migrated in
-                                                                       step 8, so they would serve no remaining case; proposed for removal, 2026-10-07)
   refs-sync            reference tables from their origins; writes
 ```
 
@@ -679,8 +672,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `pack build`, `tools/pack_convert` | `hold records build` |
 | `pack verify` | `hold check` |
 | `pack cat` / `dump` | `hold records show` / `hold records show --shard` |
-| `pack adopt` | `dev adopt` (the one-time move of a pre-Codex pack's vectors and index into the collection's drag) |
-| a pack with `manifest.json` and several spaces | `dev migrate pack <name>`: one Codex per space, sisters of one another, and the first snapshot; the old id stays a catalogue alias for one cadence |
+| `pack adopt`, a pack with `manifest.json` and several spaces | none: every pre-Codex pack was migrated in step 8, and `dev adopt` and `dev migrate pack` were dropped unbuilt (*amended 2026-10-08*) |
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
@@ -801,11 +793,11 @@ writes takes the lock or exits 3 naming the holder; `show`, `list` and
 `check` never take it, and neither does `ask` — `embedder check` does,
 because it writes a statement. Four commands exit 2, not 3, while
 the node holds the collection, because retrying them later is not the
-answer: `collection forget`, `vectors check --drop`, `dev migrate schema`
-and `dev adopt` — and `collection migrate --apply`, the Codex-field
+answer: `collection forget`, `vectors check --drop` and `dev migrate schema`
+— and `collection migrate --apply`, the Codex-field
 migration of 2026-09, the same way. `node pause <collection>` releases
 the lock at the end of the current unit, and those then run (built
-2026-10-06; `dev migrate schema` and `dev adopt` are not built yet). A reader never blocks a
+2026-10-06; `dev migrate schema` 2026-10-07). A reader never blocks a
 writer or is blocked by one: the state database runs in write-ahead
 mode, and a writer that reads first begins immediately, never deferred.
 Two nodes on one machine are two roots (§7.8) and share nothing.
@@ -964,7 +956,7 @@ change of run, which the gate tests by itself (03 §3.3): nothing in a
 collection's file has to follow it. Every request the node makes to a
 model endpoint carries the request header `Louise-Level` (09 §9.12).
 
-`hold collection create`, `share fetch` and `dev migrate pack` write the
+`hold collection create` and `share fetch` write the
 file; `hold collection forget` removes it. The name is `--name` when
 given, otherwise the plugin's name, or the plugin's name and the first
 12 hex characters of the id when that is taken. A file's `codex` is

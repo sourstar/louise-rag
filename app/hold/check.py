@@ -488,7 +488,7 @@ def check_origin_seal(ctx: Ctx) -> Outcome:
                 return Outcome("origin-seal", INCONCLUSIVE, {"mode": "archival", "entries": len(entries),
                                                              "failed": []},
                                why=f"the trusted list {tl[:23]}… the entries name is not held under "
-                                   f"state/{seals_mod.TRUSTED_LISTS}/; archival mode validates against it and "
+                                   f"{seals_mod.TRUSTED_LISTS}/ (the seals member carries it); archival mode validates against it and "
                                    f"nothing else (03 §3.7)")
             got = seals_mod.validate(e, anchors=anchors)
             if not got["ok"]:

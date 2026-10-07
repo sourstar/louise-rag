@@ -657,12 +657,8 @@ fixes byte for byte. The drag is the copy:
 `<LOUISE_ROOT>/collections/<name>/drag/`, exactly what a peer shares.
 What never travels — the manifest, cursors, the acknowledgement, the
 trust list, the working text index and the vector table a search reads
-— sits beside it (07 §7.8). A text-index member is
-a cache, and no snapshot lists its root: a peer imports it only when
-the pin in the member's own header — `fts_version`
-and tokenizer, written by the peer that built it (09 §9.6) — matches
-the platform that would read it; otherwise it rebuilds, which is always
-possible and is not a check. Green collections have no `LICENSE-TERMS`
+— sits beside it (07 §7.8). The text index is never a member: each peer
+builds its own from the records (09 §9.6, *amended 2026-10-08*). Green collections have no `LICENSE-TERMS`
 (`license.terms_sha256: null`); for every other class the members
 fetchable before the acknowledgement of §4.4 is recorded are exactly
 `codex.json`, `snapshots/*` and `LICENSE-TERMS` (04 §4.4, 07 §7.3,

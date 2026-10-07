@@ -197,6 +197,8 @@ def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
     out: list[Member] = []
     plain = {drag.VALIDATION_PATH: "validation", drag.TERMS_PATH: "terms"}
     calibration: dict[str, list[MemberFile]] = {}
+    seals: dict[str, list[MemberFile]] = {}
+    lists: list[MemberFile] = []
     for path in sorted(files, key=lambda p: p.encode("utf-8")):
         entry = files[path]
         if entry is None:
@@ -207,28 +209,18 @@ def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
         elif path.startswith("calibration/"):
             stem = Path(path).name.split(".", 1)[0]
             calibration.setdefault(f"calibration-{stem}", []).append(mf)
+        elif path.startswith("seals/lists/") and path.endswith(".xml"):
+            lists.append(mf)                  # the trusted lists travel with the seals (09 §9.16)
         elif path.startswith("seals/") and path.endswith(".json"):
-            out.append(Member(drag.seals_member(Path(path).stem), (mf,)))
+            seals.setdefault(drag.seals_member(Path(path).stem), []).append(mf)
         else:
             raise MemberError(f"{path}: not a whole-collection member 09 §9.16 names")
     for name in sorted(calibration):
         out.append(Member(name, tuple(calibration[name])))
-    return out
-
-
-def _index_members(drag_dir: Path) -> list[Member]:
-    """`index-<slice>`: the text-index segments on disk, roots per file —
-    the digest's, since no snapshot lists them (02 §2.6)."""
-    base = Path(drag_dir) / "index"
-    out: list[Member] = []
-    if not base.is_dir():
-        return out
-    for slice_dir in sorted(p for p in base.iterdir() if p.is_dir()):
-        files = tuple(MemberFile(f.relative_to(drag_dir).as_posix(), drag.pieces_root_of(f),
-                                 f.stat().st_size)
-                      for f in sorted(slice_dir.rglob("*")) if f.is_file())
-        if files:
-            out.append(Member(drag.index_member(slice_dir.name), files))
+    if lists and not seals:
+        raise MemberError("trusted lists in `files` with no seals file to travel with")
+    for name in sorted(seals):
+        out.append(Member(name, tuple(seals[name] + lists)))
     return out
 
 
@@ -283,6 +275,4 @@ def members_of(snapshot, *, drag_dir: Path | None = None) -> tuple[Member, ...]:
     for sl in sorted(fig, key=lambda s: s.encode("utf-8")):
         out.append(Member(f"figures-{drag.check_slice(sl)}", tuple(fig[sl])))
     out += _whole_collection_members(snapshot.files or {})
-    if drag_dir is not None:
-        out += _index_members(Path(drag_dir))
     return tuple(out)

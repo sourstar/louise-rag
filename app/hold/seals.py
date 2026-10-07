@@ -12,7 +12,9 @@ Two modes of `origin-seal` (03 §3.7). ARCHIVAL, offline: the signature in
 `seal` verified over `content_sha256`, the certificate path validated at
 the captured moment against the captured `chain`, `revocation` and the
 trusted list whose hash the entry names — a list this peer holds under
-`state/trusted-lists/<sha256>.xml`; nothing fetched, so it still works
+`seals/lists/<sha256>.xml` in the drag — they travel in the snapshot's
+`seals-<id>` member (09 §9.16, amended 2026-10-08), so a peer that fetched
+the seals can judge them; nothing fetched here, so it still works
 when the origin is gone. LIVE (`validate_live`): the sealed file in hand,
 hashed to `file_hash`, the digest the envelope commits to recomputed from
 its bytes, the path validated now against the current list and fresh
@@ -47,7 +49,7 @@ from app.hold.codex import CodexError, canonical_json
 
 KIND, VERSION = "louise-seals", 1
 FORMATS = ("cades", "pades", "xades")
-TRUSTED_LISTS = "trusted-lists"            # under the collection's state/
+TRUSTED_LISTS = "seals/lists"              # in the drag: they travel with the seals
 TL_NS = "http://uri.etsi.org/02231/v2#"
 TL_GRANTED = ("http://uri.etsi.org/TrstSvc/TrstLSL/Svcstatus/granted",
               "http://uri.etsi.org/TrstSvc/TrstLSL/Svcstatus/recognisedatnationallevel")
@@ -172,7 +174,9 @@ def write(drag_dir: Path, codex, snapshot_id: str, entries: Iterable[dict[str, A
 # ---- the trusted list ----------------------------------------------------------------
 
 def trusted_list_dir(root: Path, name: str) -> Path:
-    return Path(root) / name / "state" / TRUSTED_LISTS
+    """`<drag>/seals/lists/`: the lists the seals were validated against,
+    by their hash, travelling in the `seals-<id>` member (09 §9.16)."""
+    return Path(root) / name / "drag" / TRUSTED_LISTS
 
 
 def keep_trusted_list(root: Path, name: str, data: bytes) -> tuple[str, Path]:

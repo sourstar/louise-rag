@@ -340,8 +340,8 @@ name is `<key>=<value>` for each key in order, joined by `/`:
 matches `^[A-Za-z0-9=_\-][A-Za-z0-9=_.\-]*(/[A-Za-z0-9=_\-][A-Za-z0-9=_.\-]*)*$`;
 it becomes a directory under `records/`. A segment of exactly 16
 lowercase hexadecimal characters is refused, because it is the shape of
-a `<space>` segment and `index-<slice>` would then be a member name
-`index-<space>` already has (§9.16).
+a `<space>` segment and would read as one in a member name (§9.16; until
+2026-10-08 it collided `index-<slice>` with `index-<space>`).
 
 **The space block.**
 
@@ -932,13 +932,12 @@ ids one per line, `\n`-terminated, zstd-compressed with the framing of
 and optional; a request for a bucket group resolves to bundles (04
 §4.3).
 
-**The text index.** `index/<slice>/<NNNNN>/` is one tantivy segment for
-record shard `n`, a directory of files. It is a cache: a member
-(`index-<slice>`) a peer imports only when the pin in the member's own
-header — `fts_version` and `tokenizer`, written by the peer that built
-it — equals what its platform builds, checks by nothing, and rebuilds from
-the records otherwise. Its files are advertised with their roots by the
-peer serving them (§9.9, `members`), not by the snapshot.
+**The text index** is not a member (*amended 2026-10-08*; it was the cache
+`index-<slice>`): each peer builds its own from the records it holds, and
+nothing of it travels. The index is one per collection and language group,
+not per shard, so there was no per-slice unit to publish; the library has
+no way to take in another peer's segments; and a peer rebuilds it at about
+1,200 chunks a second, once per snapshot.
 
 **Worked example.** German Wikipedia, slice `lang=de/pages=3M`, shard
 `00042`, 2,000 pages, 11,806 chunks under a `cdc` layer:
@@ -1642,7 +1641,12 @@ resolve it against.
 **Path.** `seals/<snapshot_id>.json` at the drag root, certified
 collections only (03 §3.7); canonical JSON; its transport root and size
 are in the snapshot's `files`, which the certifier signs, so the
-evidence is bound to the snapshot it was captured for.
+evidence is bound to the snapshot it was captured for. Beside it,
+`seals/lists/<sha256>.xml` holds each trusted list — the national list and
+the LOTL — that its entries name by hash, byte for byte, also in `files`
+and in the same member: a peer that fetches the seals holds what archival
+mode judges them against (*amended 2026-10-08*; the lists had stayed on
+the certifier).
 
 | field | type | required | meaning |
 |---|---|---|---|
@@ -1701,7 +1705,6 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` of the current snapshot | per shard, in the snapshot |
 | `relations-<slice>` | `relations/<slice>/*.jsonl.zst` | per shard, in the snapshot |
 | `figures-<slice>` | `figures/<slice>/*.fig.zst` | per shard, in the snapshot |
-| `index-<slice>` | `index/<slice>/<NNNNN>/*` — the text-index segments | per file, in the digest |
 | `bundle-<space>-<bundle_id hex>` | the four bundle files | member root, in the bundle event and the digest |
 | `vectors-<space>-<slice>`, `buckets-<space>-v<n>-g<k>` | names only: resolve to the bundles covering those chunks (04 §4.3) | — |
 | `centres-<space>-v<n>` | `vectors/<space>/centres/v<n>.safetensors` | in `index.json` |
@@ -1709,13 +1712,12 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `calibration-<set>` | `calibration/<set>.safetensors` and `.sig.json` | in the snapshot's `files` |
 | `validation` | `validation.json` | in the snapshot's `files` |
 | `terms` | `LICENSE-TERMS` | in the snapshot's `files` |
-| `seals-<snapshot_id>` | `seals/<snapshot_id>.json` | in the snapshot's `files` |
+| `seals-<snapshot_id>` | `seals/<snapshot_id>.json`, and `seals/lists/<sha256>.xml` for each trusted list its entries name (*amended 2026-10-08*) | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
 
-`index-<slice>` and `index-<space>` are the same shape, so a slice name
-of exactly 16 lowercase hexadecimal characters — the shape of a
-`<space>` segment (§9.3) — is REFUSED at collection creation, and the
-two names can never collide. No other pair of kinds shares a shape.
+No two kinds share a shape (the text index's `index-<slice>`, which shared
+`index-<space>`'s, left the table on 2026-10-08), and a slice name of 16
+lowercase hexadecimal characters stays refused (§9.3).
 
 A member of one file has that file's pieces root as its `root` (§9.5).
 A member of several files has a root per file, and its member root is
