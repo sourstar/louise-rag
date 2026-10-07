@@ -41,6 +41,7 @@ import dataclasses
 import json
 import os
 import signal
+from starlette.exceptions import HTTPException as _HTTPException
 import sys
 import threading
 import tomllib
@@ -3043,6 +3044,14 @@ def main(argv=None) -> int:
         return getattr(e, "exit_code", 2)
     except FileNotFoundError as e:
         print(f"louise: {e}", file=sys.stderr)
+        return 2
+    except _HTTPException as e:
+        # the ask surface (05) is one service under the CLI and the API, and
+        # its refusals are HTTP ones — a withheld collection named is 403,
+        # an unknown one 400. Found live 2026-10-07: the first certified
+        # collection, still in quarantine, answered `ask search` with a
+        # traceback. A refusal is exit 2 and says why (07 §7.3).
+        print(f"louise: {e.detail}", file=sys.stderr)
         return 2
     except Exception as e:                              # noqa: BLE001
         # Invariant 9's refusal is the one that reaches here today, and it

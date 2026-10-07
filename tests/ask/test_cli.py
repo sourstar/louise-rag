@@ -65,3 +65,18 @@ def test_chat_prints_the_answer_and_its_tool_calls(node, monkeypatch, capsys):  
     assert '[louise_search {"query": "whale"}]' in err and "refused: malformed" in err
     assert louise.main(["ask", "chat", "q", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["turns"][0]["tool"] == "louise_search"
+
+
+def test_a_withheld_collection_named_is_a_refusal_not_a_traceback(node, monkeypatch, capsys):  # noqa: F811
+    """Found live 2026-10-07: the first certified collection, in quarantine,
+    answered `ask search --collections <it>` with a traceback. The service's
+    refusals are HTTP ones (query_service.resolve_collections); under the
+    CLI they are exit 2 and say why."""
+    from fastapi import HTTPException
+
+    def refuse(query, **kw):
+        raise HTTPException(403, "gutenberg-744ba8430fed: quarantine: records-vs-origin could not run")
+    monkeypatch.setattr(results, "search", refuse)
+    assert louise.main(["ask", "search", "night", "--root", str(node), "--collections", "gutenberg-744ba8430fed"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("louise: gutenberg-744ba8430fed: quarantine") and "Traceback" not in err
