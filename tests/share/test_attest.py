@@ -57,6 +57,7 @@ def test_an_attestation_is_published_once_as_an_event_the_beat_forwards(node, mo
                                                       neighbours=[], benchmarks=[], collections=[],
                                                       now=now), now=now)
     monkeypatch.setattr(gossip, "_last_digest_at", now)
+    monkeypatch.setattr(gossip, "_sent_to", frozenset({"http://peer.test", "http://other.test"}))
     fake = FakeClient()
     assert gossip.beat([], now=now, client=fake)["forwarded"] == 1
     assert [u for u, _ in fake.posts] == ["http://peer.test/api/share/event/share"]
@@ -107,6 +108,7 @@ def test_the_beat_keeps_what_arrived_before_forwarding_it(node, monkeypatch):  #
         peers.mark_seen(con, messages.event_id(body), now=now, time_text=body["time"],
                         type_="attestation", hops=7, envelope=env.sign(env.EVENT, body, OTHER))
     monkeypatch.setattr(gossip, "_last_digest_at", now)
+    monkeypatch.setattr(gossip, "_sent_to", frozenset({"http://peer.test", "http://other.test"}))
     out = gossip.beat([], now=now, client=FakeClient())
     assert out["acted"] == {"stored": 1, "held_elsewhere": 0, "dropped": 0, "other": 0}
     assert out["forwarded"] == 1, "no neighbour yet: forwarded to nobody, and done"

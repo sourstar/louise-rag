@@ -142,10 +142,23 @@ def test_the_beat_sends_this_nodes_digest_signed_to_every_recipient(node, monkey
     assert entry["snapshot_id"] == "2026-08" and entry["members"] == [], "not shared: nothing offered"
     assert gossip.beat(collections_mod.load_all(), now=now + 60, client=fake)["digest"] is None, \
         "once an interval"
+    # a peer heard from meanwhile is not kept waiting for the interval: it
+    # gets the digest at the next beat, it alone (2026-10-07: the second
+    # peer waited for the node's first digest, the one naming its swarm)
+    newcomer = env.key_text(signing.SigningKey(bytes([7]) * 32).verify_key)
+    with peers.connect() as con:
+        peers.record_digest(con, messages.digest_body(key=newcomer, address="http://new.test", neighbours=[],
+                                                      benchmarks=[], collections=[], now=now + 90), now=now + 90)
+    fake.posts.clear()
+    out = gossip.beat(collections_mod.load_all(), now=now + 120, client=fake)
+    assert out["digest"]["recipients"] == ["http://new.test"] and len(fake.posts) == 1
+    assert gossip.beat(collections_mod.load_all(), now=now + 180, client=fake)["digest"] is None, \
+        "then it is in the interval's set: once, never every beat"
 
 
 def test_the_beat_forwards_an_event_once_to_the_neighbours_and_never_back(node, monkeypatch):  # noqa: F811
     monkeypatch.setattr(gossip, "_last_digest_at", time.time())     # no digest this beat
+    monkeypatch.setattr(gossip, "_sent_to", frozenset({"http://peer.test", "http://other.test"}))
     now = time.time()
     other = signing.SigningKey(b"\x09" * 32)
     other_key = env.key_text(other.verify_key)

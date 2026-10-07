@@ -188,6 +188,7 @@ def test_every_byte_sent_is_drawn_from_the_up_bucket_first_and_a_stop_ends_the_r
     fake_mgr = FakeManager()
     monkeypatch.setattr(tm, "get_manager", lambda: fake_mgr)
     monkeypatch.setattr(gossip, "_last_digest_at", time.time())     # no digest: forwarding alone
+    monkeypatch.setattr(gossip, "_sent_to", frozenset({"http://peer.test", "http://other.test"}))
     now = time.time()
     with peers.connect() as con:
         for key, address in ((PEER_KEY, "http://peer.test"), (OTHER_KEY, "http://other.test")):

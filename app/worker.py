@@ -3602,6 +3602,24 @@ def _note_pause_from_state(state: str) -> None:
         _paused.set()
 
 
+def _gossip_beat(collections, con) -> None:
+    """04 §4.2: this node's digest once an hour to its neighbours and the
+    peer list — and at once to one not yet sent to; events received
+    forwarded once (9c); every byte drawn from the UP bucket first, and a
+    stop ends the round. `con` is None when the node holds nothing: the
+    line goes to stdout alone (there is no event table to keep it in)."""
+    def log(m: str) -> None:
+        if con is not None:
+            db.log_event(con, "info", "share", m[:500])
+        else:
+            print(f"{time.strftime('%H:%M:%S')} [node info:share] {m[:500]}", flush=True)
+    try:
+        from app.share import gossip as share_gossip
+        share_gossip.beat(collections, stop=_stop, log=log)
+    except Exception:   # noqa: BLE001 — telemetry must never kill the worker
+        pass
+
+
 def _stats_publisher() -> None:
     from .acquire import seeding
     con = None
@@ -3623,6 +3641,11 @@ def _stats_publisher() -> None:
                 except Exception:   # noqa: BLE001 — one bad handle, not the beat
                     seed_cons.pop(stale_name, None)
             if not collections:
+                # A NODE THAT HOLDS NOTHING STILL SPEAKS: its digest is how a
+                # peer learns it exists and where to send its own (04 §4.2).
+                # The second peer, fresh, stayed silent here (2026-10-07):
+                # nobody heard of it, so nobody's digest named it a swarm.
+                _gossip_beat([], None)
                 continue
             control = collections[0]          # node control follows sort order
             if owner != control.name:
@@ -3674,15 +3697,7 @@ def _stats_publisher() -> None:
                                   log=lambda m: db.log_event(con, "info", "share", m[:500]))
             except Exception:   # noqa: BLE001 — telemetry must never kill the worker
                 pass
-            try:
-                # 04 §4.2: this node's digest once an hour to its neighbours and
-                # the peer list; events received forwarded once (9c); every
-                # byte drawn from the UP bucket first, and a stop ends the round
-                from app.share import gossip as share_gossip
-                share_gossip.beat(collections, stop=_stop,
-                                  log=lambda m: db.log_event(con, "info", "share", m[:500]))
-            except Exception:   # noqa: BLE001 — telemetry must never kill the worker
-                pass
+            _gossip_beat(collections, con)
             seeding.tick(collections, seed_cons, con,
                          node_state.worker_state(node_con))
             db.publish_worker_rates(con, get_manager().rates())

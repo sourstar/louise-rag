@@ -28,6 +28,13 @@ from app.transfer.bucket import Priority, TransferAborted
 TIMEOUT_S = 10.0
 PRIORITY = Priority.DELTA
 _last_digest_at = 0.0
+# The addresses this interval's digest went to. A recipient outside it — a
+# peer given by hand, a neighbour newly heard from — gets the digest at the
+# next beat instead of up to an interval later: the second peer waited for
+# the node's first digest, the one that names its swarm, for most of an
+# hour (2026-10-07). It is then in the set, so a failed send is retried at
+# the interval, never every beat.
+_sent_to: frozenset[str] = frozenset()
 
 
 def own_address(cfg=None) -> str:
@@ -280,7 +287,7 @@ def beat(collections, *, now: float | None = None, client=None,
     """The worker's beat: forward what arrived; once an interval, send this
     node's digest. Nothing without a key (a node that cannot sign says
     nothing), nothing without recipients."""
-    global _last_digest_at
+    global _last_digest_at, _sent_to
     from app import collections as collections_mod, identity
     from app.bundles import keys as node_keys
     from app.share import attest as attest_mod
@@ -297,24 +304,37 @@ def beat(collections, *, now: float | None = None, client=None,
     out: dict[str, Any] = {"acted": acted, "claims": claims,
                            "forwarded": forward_events(client=client, now=now, stop=stop, log=log),
                            "digest": None}
-    if not force and now - _last_digest_at < peers.INTERVAL_S:
-        return out
+    due = force or now - _last_digest_at >= peers.INTERVAL_S
+    if not due:
+        with closing(peers.connect()) as con:
+            fresh = [r for r in peers.recipients(con, now=now) if r not in _sent_to]
+        if not fresh:
+            return out
     try:
         key = node_keys.load_signing_key()
         own_key = identity.own()
     except Exception as e:   # noqa: BLE001 — no key: no digest, said once per interval
-        _last_digest_at = now
+        if due:
+            _last_digest_at = now
+        else:
+            _sent_to = _sent_to | frozenset(fresh)     # said once, not every beat
         if log:
             log(f"no digest: this node has no key to sign one ({type(e).__name__})")
         return out
-    with closing(peers.connect()) as con:
-        recipients = peers.recipients(con, now=now)
+    if due:
+        with closing(peers.connect()) as con:
+            recipients = peers.recipients(con, now=now)
+    else:
+        recipients = fresh
     if not recipients:
-        _last_digest_at = now
+        _last_digest_at, _sent_to = now, frozenset()
         return out
     envelope = build_digest(root, collections, key=key, own_key=own_key,
                             address=own_address(), now=now, port=peer_port())
     out["digest"] = send_digest(envelope, recipients, client=client, stop=stop, log=log)
     out["digest"]["recipients"] = recipients
-    _last_digest_at = now
+    if due:
+        _last_digest_at, _sent_to = now, frozenset(recipients)
+    else:
+        _sent_to = _sent_to | frozenset(recipients)
     return out

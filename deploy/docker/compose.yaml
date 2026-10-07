@@ -1,0 +1,151 @@
+# Louise on any Docker host — Linux, Docker Desktop on Windows or macOS
+# (2026-10-07). The TrueNAS app (deploy/truenas-app.yaml) is the same two
+# containers with the NAS's datasets mounted; this file needs no NAS.
+#
+#   cp deploy/docker/louise.env.example deploy/docker/.env    # then edit it
+#   sh deploy/docker/up.sh                                     # build, init, start
+#
+# or by hand:
+#   docker build -t louise-rag:local .
+#   LOUISE_PLATFORM_IMAGE=$(docker image inspect -f '{{.Id}}' louise-rag:local) \
+#     docker compose -f deploy/docker/compose.yaml --env-file deploy/docker/.env up -d
+#
+# A second node on the same host is a second project: another env file with
+# another LOUISE_PROJECT and other ports — its volumes are its own.
+#
+# STORAGE (invariant 6). /data holds SQLite in WAL mode and LanceDB: it must
+# be a local Linux filesystem. The default is a NAMED VOLUME, which is one
+# everywhere — on Docker Desktop it lives in the Linux VM. Set LOUISE_DATA
+# to a host path only on a Linux host with a local disk, never to a Windows
+# or macOS folder (shared into the VM over a network filesystem) nor to
+# SMB/NFS. Origins can be large: point LOUISE_CORPORA at a host folder of
+# your choice (read-write if the node acquires into it).
+#
+# KEYS AND TOKEN (invariant 8). Three volumes of their own, never under
+# /data: the private key (worker only — it signs), the public half (web and
+# worker — the web recognises, never signs) and the admin token (web and
+# worker). The one-shot `init` service makes each once, refuses to replace
+# one, and prints paths, never secrets (app/node_init.py). Read the token:
+#   docker compose ... run --rm --no-deps -v <project>_louise-token:/t init cat /t/admin.token
+# Back the private key up offline: losing it is a new identity.
+#
+# ENDPOINTS. No model runs here (invariant 7): CHAT_URL, TRANSLATE_URL,
+# RERANK_URL and RAGE_URL point at whatever serves the models, and each
+# collection names its own encoder in its file's [encoder].
+
+name: ${LOUISE_PROJECT:-louise}
+
+x-env: &env
+  DATA_DIR: /data
+  CONFIG_DIR: /config
+  CORPUS_DIR: /corpus
+  CORPUS_MOUNTS_DIR: /corpora
+  EXPORT_DIR: /exports
+  NODE_PUBLIC_KEY_PATH: /run/louise/public/node.pub
+  ADMIN_TOKEN_FILE: /run/louise/token/admin.token
+  LOUISE_PLATFORM_IMAGE: ${LOUISE_PLATFORM_IMAGE:-}
+  CHAT_URL: ${CHAT_URL:-}
+  CHAT_API: ${CHAT_API:-ollama}
+  CHAT_MODEL: ${CHAT_MODEL:-}
+  TRANSLATE_URL: ${TRANSLATE_URL:-}
+  RERANK_URL: ${RERANK_URL:-}
+  RAGE_URL: ${RAGE_URL:-}
+  GPU_PROBE_URL: ${GPU_PROBE_URL:-}
+  EMBED_BATCH: ${EMBED_BATCH:-1}
+  EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-2}
+  DISCOVER_INTERVAL_MIN: ${DISCOVER_INTERVAL_MIN:-360}
+
+services:
+  init:
+    image: ${LOUISE_IMAGE:-louise-rag:local}
+    pull_policy: never
+    command: ["python", "-m", "app.node_init"]
+    restart: "no"
+    environment:
+      <<: *env
+      NODE_KEY_PATH: /run/louise/private/node.key
+      LOUISE_NODE_ADDRESS: ${LOUISE_NODE_ADDRESS:-}
+      LOUISE_PEER_PORT: ${LOUISE_PEER_PORT:-6881}
+    volumes:
+      - ${LOUISE_DATA:-louise-data}:/data
+      - ${LOUISE_CONFIG:-louise-config}:/config
+      - louise-key:/run/louise/private
+      - louise-pub:/run/louise/public
+      - louise-token:/run/louise/token
+
+  web:
+    image: ${LOUISE_IMAGE:-louise-rag:local}
+    pull_policy: never
+    restart: unless-stopped
+    init: true                  # reaps rsync's orphaned children (deploy/truenas-app.yaml says why)
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    ports:
+      - "${LOUISE_HTTP_PORT:-8742}:8742"
+    environment: *env
+    volumes:
+      - ${LOUISE_DATA:-louise-data}:/data
+      - ${LOUISE_CONFIG:-louise-config}:/config
+      - ${LOUISE_CORPORA:-louise-corpora}:/corpora
+      - ${LOUISE_EXPORTS:-louise-exports}:/exports
+      - louise-pub:/run/louise/public:ro
+      - louise-token:/run/louise/token:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8742/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: ${LOUISE_IMAGE:-louise-rag:local}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    # the swarm (04 §4.3): members move by torrent. Peers reach this port;
+    # `[node] peer_port` in platform.toml names it in this node's digest
+    ports:
+      - "${LOUISE_PEER_PORT:-6881}:6881/tcp"
+      - "${LOUISE_PEER_PORT:-6881}:6881/udp"
+    environment:
+      <<: *env
+      NODE_KEY_PATH: /run/louise/private/node.key
+    volumes:
+      - ${LOUISE_DATA:-louise-data}:/data
+      - ${LOUISE_CONFIG:-louise-config}:/config
+      - ${LOUISE_CORPORA:-louise-corpora}:/corpora
+      - ${LOUISE_EXPORTS:-louise-exports}:/exports
+      - louise-key:/run/louise/private:ro
+      - louise-pub:/run/louise/public:ro
+      - louise-token:/run/louise/token:ro
+    stop_grace_period: 120s
+
+  # The System page's GPU panel (app/gpu_probe.py). Linux hosts with
+  # /dev/dri only: `docker compose --profile gpu ...` and set GPU_PROBE_URL
+  # to http://gpu-probe:8080 in the env file. It sees the host's processes,
+  # so it gets nothing else: no volumes, no environment, no port.
+  gpu-probe:
+    image: ${LOUISE_IMAGE:-louise-rag:local}
+    pull_policy: never
+    profiles: ["gpu"]
+    restart: unless-stopped
+    command: ["python", "-m", "app.gpu_probe", "--port", "8080"]
+    pid: host
+    devices:
+      - /dev/dri
+    cap_add:
+      - PERFMON
+    read_only: true
+
+volumes:
+  louise-data:
+  louise-config:
+  louise-corpora:
+  louise-exports:
+  louise-key:
+  louise-pub:
+  louise-token:
