@@ -244,6 +244,18 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-07, ~22:00Z (UTC): the node back; gutenberg's snapshot 2026-09;
+408ac93 DEPLOYED (`41e3c9c2…`).** The node's journal stops at 19:47Z (an
+LXC machine terminated, then nothing) and resumes only at the operator's
+power cycle at 21:02Z: a hang, no OOM line. The rebuild had finished
+`records build` (79,562 records, 1,637 shards promoted) and validation; the
+power-off killed `snapshot create`, which was re-run alone in the same
+image: snapshot `2026-09`, 10,474,568 chunks, `sha256:8a06dec6…`, signed.
+gutenberg resumed; the two containers and the `build-gutenberg` tag gone.
+Full suite 3,801 passed, then 408ac93 deployed: no errors, every
+collection in use, none integrity violated, `node show` live. The next
+records build needs the two equivalence runs under `41e3c9c2…` first.
+
 **2026-10-07, ~20:50Z (UTC): steps 10, 11, 14 and the additive half of 12
 built and committed; NOT deployed — the node is unreachable.** Since at
 least 19:51Z (found when the rebuild was next checked) the node answers
