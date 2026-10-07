@@ -249,6 +249,17 @@ class TokenBucket:
         with self._cv:
             self._core.granted[priority] += float(n)
 
+    def charge(self, n: int, priority: Priority) -> None:
+        """Withdraw `n` bytes that moved through ANOTHER process's bucket —
+        the web's answers to peers' pulls (app/share/answered.py) — so this
+        bucket's own consumers yield to them. Tokens may go negative; refill
+        repays the debt, which keeps the node's long-run rate under one
+        ceiling (invariant 5)."""
+        if n <= 0:
+            return
+        with self._cv:
+            self._core.take(n, priority)
+
     # ---------------- rate control ----------------
 
     def set_rate(self, rate_bps: float | None) -> None:

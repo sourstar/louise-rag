@@ -300,6 +300,13 @@ def beat(collections, *, now: float | None = None, client=None,
     from app.bundles import keys as node_keys
     from app.share import attest as attest_mod
     now = peers.now() if now is None else now
+    # what the web sent in answer to pulls since the last beat, charged to
+    # this process's UP bucket: one budget for the node (app/share/answered.py)
+    try:
+        from app.share import answered
+        answered.drain()
+    except Exception:   # noqa: BLE001 — accounting never stops the beat
+        pass
     root = collections_mod.louise_root() / "collections"
     # what arrived is acted on before it is forwarded: an attestation for a
     # collection held here is kept beside its catalogue (03 §3.6; 09 §9.8)

@@ -10,6 +10,7 @@ node's digests, forwards events and acts on what arrived (app/share/gossip.py).
 """
 from __future__ import annotations
 
+import json
 from contextlib import closing
 from typing import Any
 
@@ -102,7 +103,13 @@ async def _pull(request: Request, what: str) -> JSONResponse:
     with closing(peers.connect()) as con:
         if peers.is_banned(con, body["key"], now=now):
             raise HTTPException(403, "not a neighbour today (04 §4.2)")
-    return JSONResponse(messages.answer_pull(_root(), body))
+    payload = messages.answer_pull(_root(), body)
+    # invariant 5: an answer leaves under the node's UP budget — paced here,
+    # charged to the worker's bucket at its next beat (app/share/answered.py)
+    from starlette.concurrency import run_in_threadpool
+    from app.share import answered
+    await run_in_threadpool(answered.pace, len(json.dumps(payload)))
+    return JSONResponse(payload)
 
 
 @router.post("/codex/fetch")
