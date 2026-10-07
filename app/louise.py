@@ -985,7 +985,8 @@ def cmd_ask_lookup(a) -> int:
 
 def cmd_ask_traverse(a) -> int:
     from app.ask import traverse
-    _print(traverse.traverse(a.id, relation=a.relation, depth=a.depth, collection=a.collection, root=a.root))
+    _print(traverse.traverse(a.id, relation=a.relation, depth=a.depth, collection=a.collection, root=a.root,
+                             resolve_in=a.resolve_in))
     return 0
 
 
@@ -3022,6 +3023,8 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("id", help="a record's uid or a canonical id")
     p.add_argument("--relation", default=None); p.add_argument("--depth", type=int, default=1)
     p.add_argument("--collection", default=None, help="the collection whose edges to follow")
+    p.add_argument("--resolve-in", dest="resolve_in", action="append", metavar="COLLECTION",
+                   help="resolve edges into another collection against this one (05 §5.5); repeatable")
     p.set_defaults(fn=cmd_ask_traverse)
     p = akverbs.add_parser("serve", help="the three tools of 05 §5.4 over MCP, on stdio")
     p.set_defaults(fn=cmd_ask_serve)

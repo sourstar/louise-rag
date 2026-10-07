@@ -310,7 +310,7 @@ louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
     filters: {<facet field>: <value> | {not: <value>}}
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
-louise_traverse(id, relation?, depth?)
+louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collections an edge into another collection is resolved against (§5.5; added 2026-10-07)
     → {edges: [{from, to, type, snapshot, collection_id,
                 resolved, needs: {collection_id, shard} | null}]}
 ```

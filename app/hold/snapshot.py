@@ -218,17 +218,31 @@ class Snapshot:
             out += [drag.vectors_member(space, sl) for sl in self.slices]
         return out
 
-    def shard_of(self, native_id: str) -> Shard | None:
-        """The shard whose id range contains this native_id (05 §5.5).
+    def shards_of(self, native_id: str, order: str = "bytes") -> list[Shard]:
+        """Every shard whose id range contains this native_id (05 §5.5),
+        compared in the collection's id order (09 §9.3 `slicing.order`).
 
-        Ranges are a partition because `hold records build` refuses a record
-        that sorts before the open shard's `first_id` (02 §2.2), so at most
-        one shard can contain it and a linear scan is honest about that.
+        A SLICE's ranges are a partition — `hold records build` refuses a
+        record that sorts before the open shard's `first_id` (02 §2.2) — so
+        at most one shard per slice; a collection of several slices holds an
+        id range in each, and which slice a record is in is its record's to
+        say, not the snapshot's. Until 2026-10-07 this compared the ids as
+        text, so in a numeric collection "1000" fell in the shard ending at
+        "999", and it returned the first slice's shard whatever the record's.
         """
-        for s in self.shards:
-            if s.first_id <= native_id <= s.last_id:
-                return s
-        return None
+        from .records import RecordsError, order_key
+        try:
+            k = order_key(native_id, order)
+            return [s for s in self.shards
+                    if order_key(s.first_id, order) <= k <= order_key(s.last_id, order)]
+        except RecordsError:
+            return []                       # an id this order cannot place: no shard holds it
+
+    def shard_of(self, native_id: str, order: str = "bytes") -> Shard | None:
+        """The ONE shard that can hold this native_id; None when none can,
+        or when shards of several slices can and only the record knows which."""
+        got = self.shards_of(native_id, order)
+        return got[0] if len(got) == 1 else None
 
 
 # --------------------------------------------------------------------------

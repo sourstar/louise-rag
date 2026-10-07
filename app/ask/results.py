@@ -147,6 +147,29 @@ def _plain(obj: Any) -> Any:
     return obj
 
 
+def _place_figures(lists, source_of, contexts, root) -> None:
+    """05 §5.3: the plates whose markers fall inside each returned chunk,
+    for a collection whose records carry figures (`record_line` 2)."""
+    from app.ask import figures as figures_mod
+    from app.hold import collection as col
+    from app.share import seeder
+    by_coll: dict[str, list[dict[str, Any]]] = {}
+    for lst in lists:
+        for h in lst["hits"]:
+            c = source_of.get(id(h))
+            if c is not None and h.get("figures") is not None:
+                by_coll.setdefault(c.name, []).append(h)
+    for name, hits in by_coll.items():
+        c = source_of[id(hits[0])]
+        root_ = Path(root) if root is not None else _root()
+        drag = col.drag_of(root_, name)
+        try:
+            snap = seeder.current_snapshot(drag)
+        except Exception:   # noqa: BLE001 — no snapshot: nothing to place from
+            continue
+        figures_mod.place(c, contexts[name]["codex"], drag, snap, hits, red=contexts[name]["red"])
+
+
 def _from_shard(c, hit) -> str | None:
     """The drag-relative shard a hit's record was read from: a fetched
     collection's locator is `<shard path>#<uid>` (app/plugins/drag.py)."""
@@ -243,6 +266,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
             if found:
                 bad[c.name] = set(found)
     dropped: dict[str, int] = {}
+    source_of: dict[int, Any] = {}
     for c in named:
         sid = contexts[c.name]["space_id"]
         if sid not in order:
@@ -260,8 +284,9 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
             excluded[c.name] = excluded.get(c.name, 0) + 1   # changed since: never answered from a later state
             continue
         ctx = contexts[c.name]
-        per_space.setdefault(ctx["space_id"], []).append(result_of(c, ctx, hit, 0, own_key=own_key,
-                                                                    reranked=reranked))
+        r = result_of(c, ctx, hit, 0, own_key=own_key, reranked=reranked)
+        source_of[id(r)] = c
+        per_space.setdefault(ctx["space_id"], []).append(r)
     for n, r in dated.items():
         if r.shards or excluded.get(n):
             withheld_as_of.append(asof_mod.withheld_entry(by_name[n], by_name[n].codex, r, day))
@@ -276,6 +301,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         for i, h in enumerate(hits, 1):
             h["rank"] = i
         lists.append({"space_id": sid, "question": "relevance", "hits": hits})
+    _place_figures(lists, source_of, contexts, root)
     facts = [_plain(f) for f in result.get("facts", [])]
     fresh_summary: dict[str, Any] | None = None
     if freshness:

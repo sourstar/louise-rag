@@ -1522,10 +1522,24 @@ files carry, `tool=louise`); Wikipedia the page the export API writes
 (the dump's shape once the export namespace is dropped), the archive
 layer refused as unavailable. Each fetch draws from the budget, one at
 a time. Results carry `certification` since step 10's first brick.
-**Owed in step 11**: figures on results and `GET /api/ask/figure` (no
-collection carries plates; built with the first that does), the
-`needs` of an edge into another collection (its plugin's id→shard
-mapping; no plugin emits relations yet). Known trade-off kept from before: a burned
+Seventh brick (2026-10-07): **figures on results** (app/ask/figures.py) —
+a chunk's plates are the entries whose `[Illustration…]` markers fall in
+it (the Nth marker is `figures[N]`; an overlapping window's markers keep
+the previous chunk's indices), `held` · `not-held` · `not-carried`, the
+record found from the snapshot's ranges and re-chunked; `GET
+/api/ask/figure` serves a held, carried plate checked against its hash
+and its sniffed type (403 red, 404 otherwise). Built against fixtures: no
+collection carries plates yet. **Edges into other collections**:
+`resolve_in` (05 §5.4 amended) names the collections to resolve against —
+nothing crosses unasked (05 §5.5); a uid there is resolved or its shard
+named, any other id names the one collection asked. And a defect fixed
+on the way: `Snapshot.shard_of` compared ids as text (in a numeric
+collection "1000" fell in the shard ending at "999") and took the first
+slice's shard; now `shards_of` compares in `slicing.order` and returns one
+candidate per slice (02 §2.2 amended), and traverse, as-of and figures use
+it. tests: ask/test_figures.py (5), ask/test_traverse.py (+1).
+**Left in step 11**: nothing of code; a collection with plates
+(Gutenberg-with-plates, decided 2026-09-08) is a build, not a step. Known trade-off kept from before: a burned
 producer's vectors are re-embedded locally rather than dropped from
 search at once (03 §3.5 says dropped) — they serve until the worker's
 delete-then-insert replaces them.

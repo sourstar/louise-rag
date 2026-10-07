@@ -91,6 +91,14 @@ def _load(drag_dir: Path, snapshot_id: str) -> sn.Snapshot:
     return sn.load(Path(drag_dir) / "snapshots" / f"{snapshot_id}.json")
 
 
+def _holds(path: Path, uid: str) -> bool:
+    from app.pack import records as pack_records
+    try:
+        return uid in pack_records.cached_index(path).uids
+    except Exception:   # noqa: BLE001 — a shard that does not read: named, not trusted
+        return True
+
+
 def resolve(codex, drag_dir: Path, day: date) -> Resolved:
     """Which held snapshot answers for `day`, and what it cannot answer."""
     target = target_id(codex, day)
@@ -123,10 +131,14 @@ def resolve(codex, drag_dir: Path, day: date) -> Resolved:
                              f"too many to answer as of {day.isoformat()} from the current index")
         previous = s
     shards: set[str] = set()
+    order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
     for uid in changed:
         native = uid.split(":", 1)[1] if ":" in uid else uid
-        s = chosen.shard_of(native)
-        if s is not None:
+        for s in chosen.shards_of(native, order):
+            # one candidate per slice: a held shard says whether it holds
+            # the record; one not held is named, since it may
+            if (Path(drag_dir) / s.path).is_file() and not _holds(Path(drag_dir) / s.path, uid):
+                continue
             shards.add(f"{s.slice}/{s.n}")
     by_key = {f"{s.slice}/{s.n}": s for s in chosen.shards}
     held = sum(1 for k in shards if (Path(drag_dir) / by_key[k].path).is_file())

@@ -49,12 +49,15 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "louise_traverse",
      "description": "The records reached from a record's uid or a canonical id along the "
                     "declared relations (05 §5.5), in both directions, `depth` hops deep; an "
-                    "edge into another collection is reported unresolved and names what it needs.",
+                    "edge into another collection is resolved only against the collections named in "
+                    "`resolve_in`, and otherwise reported unresolved, naming what it needs.",
      "inputSchema": {"type": "object", "required": ["id"], "properties": {
          "id": {"type": "string"},
          "relation": {"type": "string", "description": "one relation type, e.g. eli:amends"},
          "depth": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
-         "collection": {"type": "string", "description": "the collection whose edges to follow"}}}},
+         "collection": {"type": "string", "description": "the collection whose edges to follow"},
+         "resolve_in": {"type": "array", "items": {"type": "string"},
+                        "description": "collections to resolve edges into other collections against"}}}},
 ]
 
 
@@ -70,7 +73,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> Any:
         return lookup.lookup(str(args["id"]))
     if name == "louise_traverse":
         return traverse.traverse(str(args["id"]), relation=args.get("relation"),
-                                 depth=int(args.get("depth") or 1), collection=args.get("collection"))
+                                 depth=int(args.get("depth") or 1), collection=args.get("collection"),
+                                 resolve_in=args.get("resolve_in"))
     raise KeyError(name)
 
 

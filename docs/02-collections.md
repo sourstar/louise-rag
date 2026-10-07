@@ -276,8 +276,13 @@ already published there — true of PMIDs and Gutenberg numbers, not true
 of every identifier. `hold records build` REFUSES (exit 2) a record
 whose `native_id` sorts before the open shard's `first_id`, naming the
 record and the shard, rather than placing it out of order. Shard ranges
-therefore partition the id space, which is what 05 §5.5 needs to resolve
-a uid to a shard from a snapshot alone, and what keeps two honest peers
+therefore partition each SLICE's id space, compared in `native_id_order`
+(numerically for a numeric source: 1000 sorts after 999), which is what
+05 §5.5 needs to resolve a uid from a snapshot alone — to its shard in a
+collection of one slice, to one candidate per slice in a collection of
+several, among which the record's own slicing key decides (*amended
+2026-10-07*: the lookup compared ids as text and took the first slice's
+shard) — and what keeps two honest peers
 from cutting the same cutoff into different shards — one re-cutting the
 slice, one appending. A source that cannot promise it needs a different
 `native_id` rule or a different slicing key, not a different shard,

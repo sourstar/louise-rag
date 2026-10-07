@@ -92,6 +92,7 @@ class TraverseBody(BaseModel):
     relation: str | None = None
     depth: int = Field(1, ge=1, le=6)
     collection: str | None = None
+    resolve_in: list[str] | None = None
 
 
 @router.post("/traverse")
@@ -100,7 +101,7 @@ async def traverse(body: TraverseBody) -> JSONResponse:
     from app.ask import traverse as traverse_mod
     try:
         out = await run_in_threadpool(traverse_mod.traverse, body.id, relation=body.relation,
-                                      depth=body.depth, collection=body.collection)
+                                      depth=body.depth, collection=body.collection, resolve_in=body.resolve_in)
     except CodexError as e:
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
@@ -117,6 +118,24 @@ async def facets(collection: str, field: str | None = None, under: str | None = 
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
     return JSONResponse(out)
+
+
+@router.get("/figure")
+async def figure(collection: str, uid: str, hash: str):
+    """07 §7.4's one route that is not JSON: a plate's bytes and its
+    `Content-Type`, never base64 — a search result carries the hash, and a
+    client fetches the picture beside the chunk that cited it."""
+    from fastapi.responses import Response
+    from starlette.concurrency import run_in_threadpool
+    from app.ask import figures as figures_mod
+    try:
+        data, media = await run_in_threadpool(figures_mod.figure_bytes, collection, uid, hash)
+    except figures_mod.FigureNotServed as e:
+        return JSONResponse({"exit": 2, "error": str(e)}, status_code=e.status)
+    except CodexError as e:
+        code = int(getattr(e, "exit_code", 2))
+        return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
+    return Response(content=data, media_type=media)
 
 
 @router.post("/mcp")

@@ -11,9 +11,15 @@ snapshot's relation shards change and which `ask traverse` runs itself
 when a held shard is not indexed yet. An edge whose `to` is a uid of this
 collection present here is `resolved`; one pointing at a canonical id, or
 at a uid this peer does not hold, is reported unresolved — `needs` names
-the collection and shard where this brick can (the uid's own collection
-and the shard of the snapshot whose id range holds it), and is null where
-the target's plugin would have to say (05 §5.5).
+the collection and shard where it can: the uid's own collection and the
+shard of the snapshot whose id range holds it, for a uid of this
+collection — and, since 2026-10-07, for an edge into ANOTHER collection
+when the caller names it (`resolve_in`): "nothing is resolved across
+collections without being asked" (05 §5.5). A uid whose prefix a named
+collection's plugin owns is `resolved` where that collection holds it,
+else its shard is named; any other id, with one collection named, names
+that collection and no shard — the plugin mapping a canonical id to a uid
+is the target plugin's, and none has one yet.
 """
 from __future__ import annotations
 
@@ -94,17 +100,70 @@ def _held_uid(con, uid: str) -> bool:
     return con.execute("SELECT 1 FROM documents WHERE uid=?", (uid,)).fetchone() is not None
 
 
-def _shard_of(snapshot: sn.Snapshot | None, uid: str) -> str | None:
+def _shard_of(snapshot: sn.Snapshot | None, uid: str, order: str = "bytes") -> str | None:
+    """The one shard that can hold `uid`; None where no shard can, or where
+    several slices can and only the record knows which."""
     if snapshot is None:
         return None
     try:
-        s = snapshot.shard_of(uid.split(":", 1)[1])
+        s = snapshot.shard_of(uid.split(":", 1)[1], order)
     except Exception:   # noqa: BLE001 — a uid no shard's range holds
         return None
     return f"{s.slice}/{s.n:05d}" if s else None
 
 
-def edges_of(con, codex, snapshot, node: str, *, relation: str | None = None) -> list[dict[str, Any]]:
+class Elsewhere:
+    """The collections the caller asked edges to be resolved against
+    (05 §5.5), by the plugin that owns a uid's prefix: whether an edge into
+    one of them resolves, and the shard it needs when it does not — the
+    first by name, its current snapshot's range in its own id order.
+    `unheld`: the names asked for that this peer does not hold. Manifests
+    are opened once and closed with the walk."""
+
+    def __init__(self, root: Path, named, unheld: tuple[str, ...] = ()) -> None:
+        self.root = Path(root)
+        self.named = sorted(named, key=lambda nc: nc[0])
+        self.unheld = tuple(unheld)
+        self.by_plugin: dict[str, list[tuple[str, Any]]] = {}
+        for name, codex in self.named:
+            self.by_plugin.setdefault(codex.plugin, []).append((name, codex))
+        self._cons: dict[str, Any] = {}
+
+    def __enter__(self) -> "Elsewhere":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        for c in self._cons.values():
+            c.close()
+        self._cons.clear()
+
+    def _holds(self, name: str, uid: str) -> bool:
+        from app.share import coverage as cov
+        if name not in self._cons:
+            if not (self.root / name / "state" / "manifest.sqlite").is_file():
+                return False
+            self._cons[name] = cov.manifest(self.root, name)
+        return _held_uid(self._cons[name], uid)
+
+    def judge(self, uid: str) -> tuple[bool, dict[str, Any] | None]:
+        from app.hold import collection as col
+        from app.share import seeder
+        cands = self.by_plugin.get(uid.split(":", 1)[0], [])
+        if not cands:
+            # a canonical id, or a uid of a collection not named or not held:
+            # with ONE collection asked, the answer names it (05 §5.5)
+            asked = [c.collection_id for _, c in self.named] + list(self.unheld)
+            return False, ({"collection_id": asked[0], "shard": None} if len(asked) == 1 else None)
+        if any(self._holds(name, uid) for name, _ in cands):
+            return True, None
+        name, codex = cands[0]
+        snapshot = seeder.current_snapshot(col.drag_of(self.root, name))
+        return False, {"collection_id": codex.collection_id,
+                       "shard": _shard_of(snapshot, uid, (codex.slicing or {}).get("order", "bytes"))}
+
+
+def edges_of(con, codex, snapshot, node: str, *, relation: str | None = None,
+             elsewhere: "Elsewhere | None" = None) -> list[dict[str, Any]]:
     """The edges touching `node`, both directions, one relation type when given."""
     ensure_schema(con)
     sql = "SELECT from_uid, to_id, type, snapshot FROM relations WHERE (from_uid=? OR to_id=?)"
@@ -119,14 +178,18 @@ def edges_of(con, codex, snapshot, node: str, *, relation: str | None = None) ->
         is_uid_here = to.startswith(plugin + ":")
         resolved = bool(is_uid_here and _held_uid(con, to))
         needs = None
-        if is_uid_here and not resolved:
-            needs = {"collection_id": codex.collection_id, "shard": _shard_of(snapshot, to)}
+        if not is_uid_here and elsewhere is not None:
+            resolved, needs = elsewhere.judge(to)
+        elif is_uid_here and not resolved:
+            needs = {"collection_id": codex.collection_id,
+                     "shard": _shard_of(snapshot, to, (codex.slicing or {}).get("order", "bytes"))}
         out.append({"from": r["from_uid"], "to": to, "type": r["type"], "snapshot": r["snapshot"],
                     "collection_id": codex.collection_id, "resolved": resolved, "needs": needs})
     return out
 
 
-def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth: int = 1) -> list[dict[str, Any]]:
+def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth: int = 1,
+         elsewhere: "Elsewhere | None" = None) -> list[dict[str, Any]]:
     """Breadth-first from `start`, `depth` hops, each edge once."""
     depth = max(1, min(int(depth), MAX_DEPTH))
     seen_edges: set[tuple] = set()
@@ -136,7 +199,7 @@ def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth
     for _ in range(depth):
         nxt = []
         for node in frontier:
-            for e in edges_of(con, codex, snapshot, node, relation=relation):
+            for e in edges_of(con, codex, snapshot, node, relation=relation, elsewhere=elsewhere):
                 key = (e["from"], e["to"], e["type"])
                 if key in seen_edges:
                     continue
@@ -153,7 +216,7 @@ def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth
 
 
 def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collection: str | None = None,
-             root: Path | None = None) -> dict[str, Any]:
+             root: Path | None = None, resolve_in: list[str] | None = None) -> dict[str, Any]:
     """05 §5.4's `louise_traverse`: `{edges: [{from, to, type, snapshot,
     collection_id, resolved, needs}]}` over the collection named, or every
     held Codex collection whose plugin owns the id's prefix, or — for a
@@ -175,14 +238,22 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
         targets = owned or targets
     edges: list[dict[str, Any]] = []
     searched = []
-    for name, codex in targets:
-        drag = col.drag_of(root, name)
-        snapshot = seeder.current_snapshot(drag)
-        if not (root / name / "state" / "manifest.sqlite").is_file():
-            continue
-        with closing(cov.manifest(root, name)) as con:
-            index_edges(con, drag, snapshot)
-            edges.extend(walk(con, codex, snapshot, id_, relation=relation, depth=depth))
-        searched.append(codex.collection_id)
+    held, unheld = [], []
+    for asked in resolve_in or ():
+        try:
+            held.append(col.resolve(root, asked))
+        except CodexError:
+            unheld.append(asked)
+    with Elsewhere(root, held, tuple(unheld)) as elsewhere:
+        for name, codex in targets:
+            drag = col.drag_of(root, name)
+            snapshot = seeder.current_snapshot(drag)
+            if not (root / name / "state" / "manifest.sqlite").is_file():
+                continue
+            with closing(cov.manifest(root, name)) as con:
+                index_edges(con, drag, snapshot)
+                edges.extend(walk(con, codex, snapshot, id_, relation=relation, depth=depth,
+                                  elsewhere=elsewhere))
+            searched.append(codex.collection_id)
     return {"id": id_, "relation": relation, "depth": max(1, min(int(depth), MAX_DEPTH)),
-            "collections": searched, "edges": edges}
+            "collections": searched, "resolve_in": [c.collection_id for _, c in held] + unheld, "edges": edges}

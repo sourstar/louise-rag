@@ -75,3 +75,45 @@ def test_the_walk_goes_both_ways_depth_hops_and_names_what_is_unresolved(tmp_pat
         "a canonical id: another collection's to resolve (05 §5.5)"
     assert len({(e["from"], e["to"], e["type"]) for e in two}) == len(two), "each edge once"
     assert traverse.walk(con, codex, snap, "pubmed:404", depth=3) == []
+
+
+def test_an_edge_into_another_collection_held_here_resolves_or_names_its_shard(tmp_path):
+    from types import SimpleNamespace
+    codex, drag, snap, con, p = a_drag_with_edges(tmp_path)
+    edges_shard(p, [("pubmed:1", "wikipedia:Aspirin", "pubmed:mentions"),
+                    ("pubmed:1", "wikipedia:Zebra", "pubmed:mentions"),
+                    ("pubmed:1", "mesh:D001241", "pubmed:mentions")])
+    snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-09", previous=None, shards=snap.shards,
+                       relations=(sn.RelationShard(slice="year=2023", n=1, root=pieces_root_of(p), edges=3,
+                                                   bytes=p.stat().st_size),), delta=sn.Delta((), (), ()), files={})
+    traverse.index_edges(con, drag, snap)
+    root = tmp_path / "collections"
+    other = SimpleNamespace(plugin="wikipedia", collection_id="sha256:" + "77" * 32, slicing={"order": "bytes"})
+    (root / "wiki" / "state").mkdir(parents=True)
+    w = sqlite3.connect(root / "wiki" / "state" / "manifest.sqlite")
+    w.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY)")
+    w.execute("INSERT INTO documents(uid) VALUES ('wikipedia:Aspirin')")
+    w.commit()
+    w.close()
+    wshard = sn.Shard(slice="lang=en", n=3, root="sha256:" + "11" * 32, records_root="sha256:" + "22" * 32,
+                      first_id="T", last_id="Zz", records=1, chunks=1, chunks_root="sha256:" + "33" * 32,
+                      tokens=1, bytes=1)
+    wsnap = sn.Snapshot(collection_id=other.collection_id, snapshot_id="2026-09", previous=None, shards=(wshard,),
+                        delta=sn.Delta((), (), ()), files={})
+    (root / "wiki" / "drag" / "snapshots").mkdir(parents=True)
+    (root / "wiki" / "drag" / "snapshots" / "2026-09.json").write_bytes(wsnap.canonical())
+    with traverse.Elsewhere(root, [("wiki", other)]) as elsewhere:
+        by_to = {e["to"]: e for e in traverse.walk(con, codex, snap, "pubmed:1", elsewhere=elsewhere)}
+    assert by_to["wikipedia:Aspirin"]["resolved"] is True and by_to["wikipedia:Aspirin"]["needs"] is None
+    assert by_to["wikipedia:Zebra"]["resolved"] is False and by_to["wikipedia:Zebra"]["needs"] == {
+        "collection_id": other.collection_id, "shard": "lang=en/00003"}, "the other collection's shard, named"
+    assert by_to["mesh:D001241"]["needs"] == {"collection_id": other.collection_id, "shard": None}, \
+        "one collection asked: the answer names it; mapping a canonical id is its plugin's, and none has one"
+    # nothing is resolved across collections without being asked (05 §5.5)
+    with traverse.Elsewhere(root, []) as nobody:
+        by_to = {e["to"]: e for e in traverse.walk(con, codex, snap, "pubmed:1", elsewhere=nobody)}
+    assert all(not by_to[t]["resolved"] and by_to[t]["needs"] is None
+               for t in ("wikipedia:Aspirin", "wikipedia:Zebra", "mesh:D001241"))
+    with traverse.Elsewhere(root, [], ("wikipedia-it",)) as unheld:
+        assert unheld.judge("wikipedia:Zebra") == (False, {"collection_id": "wikipedia-it", "shard": None}), \
+            "asked for a collection not held: named as asked, unresolved"

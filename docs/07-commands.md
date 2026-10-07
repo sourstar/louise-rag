@@ -146,7 +146,8 @@ louise ask
                                                                        the collection's and not known before it is)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
   lookup <id>                                                          a fact by key, from a reference source
-  traverse <id> [--relation T] [--depth N]                             the records reached along declared relations (§5.5)
+  traverse <id> [--relation T] [--depth N] [--resolve-in C …]           the records reached along declared relations (§5.5); --resolve-in names the collections an
+                                                                       edge into another collection is resolved against, nothing else is (added 2026-10-07)
   chat <question> [--collections …] [--json]                           the model with the three tools of §5.4 and nothing else; needs CHAT_URL (§7.8)
   serve                                                                expose search, lookup and traversal as MCP tools
 
