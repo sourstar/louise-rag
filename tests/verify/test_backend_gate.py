@@ -68,7 +68,7 @@ def test_changed_backend_is_refused_and_baseline_untouched(tmp_path):
     before = backend_gate.baseline_path(collection).read_bytes()
     with pytest.raises(backend_gate.BackendGateError) as e:
         backend_gate.check(collection, _make_embed_fn("model-B"))
-    assert "rebaseline" in str(e.value)
+    assert f"removing {backend_gate.baseline_path(collection)}" in str(e.value)
     assert backend_gate.baseline_path(collection).read_bytes() == before
 
 

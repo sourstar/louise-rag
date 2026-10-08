@@ -14,7 +14,8 @@ bundle producer keys); before the worker embeds anything it re-embeds the
 probes and requires cosine >= TAU against the baseline. A changed backend
 fails closed: the embed stage pauses, rdf/fts/search continue, documents are
 never marked errored, and the operator either fixes the endpoint or accepts
-the new backend explicitly (`python -m app.cli backend rebaseline`), knowing
+the new backend explicitly (by removing the baseline file, `baseline_path`,
+which the next check records afresh), knowing
 that acceptance means the existing vectors belong to a different function.
 
 Distinct from T3: T3 verifies imported vectors against calibrated tau; the
@@ -183,9 +184,9 @@ def check(collection, embed_fn=None) -> dict:
         entry = baseline["probes"].get(name)
         if entry is None or entry["text_hash"] != _text_hash(text):
             raise BackendGateError(
-                "probe set changed since the baseline was recorded (code "
-                "upgrade) — run `python -m app.cli backend rebaseline` after "
-                "confirming the endpoint is the intended one")
+                f"probe set changed since the baseline was recorded (code "
+                f"upgrade) — remove {path} after confirming the endpoint is the "
+                f"intended one; the next check records it afresh")
         fresh = _embed_single(embed_fn, text)
         if len(fresh) != baseline["dim"]:
             raise BackendGateError(
@@ -200,7 +201,8 @@ def check(collection, embed_fn=None) -> dict:
             f"tau={TAU}). The model, build, or pooling behind the collection's "
             f"encoder changed. "
             f"Refusing to write vectors — fix the endpoint (pin its image!) or "
-            f"accept the new backend with `python -m app.cli backend rebaseline` "
+            f"accept the new backend by removing {path} (the next check records "
+            f"it afresh) "
             f"and re-embed the collection")
     _check_batch_integrity(embed_fn)
     return {"ok": True, "recorded": False, "cosines": cosines}

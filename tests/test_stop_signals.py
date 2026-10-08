@@ -4,14 +4,17 @@ rsync leads its own session (app/acquire/transport_rsync.py), so a terminal
 that goes away — a dropped ssh, a `docker exec -it` — no longer reaches it.
 Left at its default, the hangup killed the command and stranded rsync
 writing its .part, its bandwidth lease already released (review 2026-09-14).
+The command is `louise hold records fetch` (was `corpus add`, 07 §7.6).
 """
-import argparse
 import signal
 from types import SimpleNamespace
 
 import pytest
 
-from app import cli, worker
+from app import collections as collections_mod, db, louise, worker
+from app.acquire import engine
+from app.acquire.specs import ACQUIRE_REGISTRY
+from app.hold import records_fetch
 
 _SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
@@ -28,32 +31,42 @@ def handlers():
         signal.signal(s, h)
 
 
-def test_corpus_add_routes_a_hangup_to_its_stop(handlers, monkeypatch):
+@pytest.fixture
+def wired(monkeypatch):
+    c = SimpleNamespace(name="c", plugin="p", profile=None)
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: c)
+    monkeypatch.setitem(ACQUIRE_REGISTRY, "p", SimpleNamespace(terms_text_path=None))
+    monkeypatch.setattr(db, "connect", lambda collection: SimpleNamespace(close=lambda: None))
+    return c
+
+
+def test_records_fetch_routes_a_hangup_to_its_stop(handlers, wired, monkeypatch):
     seen = {}
 
     def run_acquisition(con, collection, spec, profile, stop=None):
         seen.update({s: signal.getsignal(s) for s in _SIGNALS})
         raise _Done
 
-    monkeypatch.setattr(cli, "_collection_by_name",
-                        lambda name: SimpleNamespace(name=name, plugin="p"))
-    monkeypatch.setattr(cli, "ACQUIRE_REGISTRY", {"p": SimpleNamespace(terms_text_path=None)})
-    monkeypatch.setattr(cli.db, "connect", lambda collection: None)
-    monkeypatch.setattr(cli.engine, "run_acquisition", run_acquisition)
+    monkeypatch.setattr(engine, "run_acquisition", run_acquisition)
     with pytest.raises(_Done):
-        cli.cmd_add(argparse.Namespace(collection="c", ack_terms=None,
-                                       profile="default", dry_run=False))
-    assert seen == {s: cli._handle_sigterm for s in _SIGNALS}, seen
+        louise.main(["hold", "records", "fetch", "c"])
+    assert seen == {s: records_fetch._handle_sigterm for s in _SIGNALS}, seen
 
 
-def test_a_hangup_before_any_stop_is_bound_is_a_ctrl_c(handlers, monkeypatch):
-    """`corpus status` lists without a stop: the hangup must arrive as the
+def test_a_hangup_before_any_stop_is_bound_is_a_ctrl_c(handlers, wired, monkeypatch):
+    """A dry run lists without a stop: the hangup must arrive as the
     KeyboardInterrupt the transport cleans up after, not kill the process."""
     seen = []
-    monkeypatch.setattr(cli, "cmd_status",
-                        lambda args: seen.append(signal.getsignal(signal.SIGHUP)) or 0)
-    assert cli.main(["corpus", "status"]) == 0
+    monkeypatch.setattr(engine, "plan_acquisition",
+                        lambda *a: seen.append(signal.getsignal(signal.SIGHUP)) or _Plan())
+    assert louise.main(["hold", "records", "fetch", "c", "--dry-run"]) == 0
     assert seen == [signal.default_int_handler]
+
+
+class _Plan:
+    files_pending = files_total = bytes_pending = bytes_total = 0
+    eta_seconds = 0.0
+    license_state = "not-required"
 
 
 def test_the_worker_routes_a_hangup_to_its_stop(monkeypatch):

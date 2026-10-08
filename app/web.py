@@ -13,8 +13,8 @@ which can't attach a custom header per request — stay authenticated after
 one login.
 
 Library's grow action calls app.acquire.engine.plan_acquisition/
-run_acquisition directly — the exact same functions app.cli's `corpus
-add|grow` call — so the CLI and the web UI are provably the same code path,
+run_acquisition directly — the exact same functions `louise hold records
+fetch` calls — so the CLI and the web UI are provably the same code path,
 not two implementations that happen to agree today (see
 tests/test_web_shared_cli_path.py). Actions with no real CLI verb behind
 them (pause/resume, per-collection reset, rescan) stay frictionless
@@ -1856,7 +1856,7 @@ def grow_plan(name: str, body: GrowBody):
     spec = _spec_or_400(collection)
     con = db.connect(collection)
     plan = acquire_engine.plan_acquisition(con, collection, spec, body.profile)
-    cli = f"python -m app.cli corpus grow {collection.name} --profile {body.profile} --dry-run"
+    cli = f"louise hold records fetch {collection.name} --profile {body.profile} --dry-run"
     return {"plan": asdict(plan), "cli": cli}
 
 
@@ -2036,7 +2036,7 @@ def new_collection_preview(body: NewCollectionBody):
         "instructions": "Save this as the path above, then commit it — versioned Tier-2 config, "
                          "not a DB write (CLAUDE.md invariant 10). Restart the app to pick it up, "
                          "then run the CLI command below to see real size/ETA estimates.",
-        "cli": f"python -m app.cli corpus add {body.name} --profile {body.profile} --dry-run",
+        "cli": f"louise hold records fetch {body.name} --profile {body.profile} --dry-run",
     }
 
 
@@ -2478,7 +2478,7 @@ class BundleExportBody(BaseModel):
 
 @admin_router.post("/library/{name}/bundle/export")
 def collection_bundle_export(name: str, body: BundleExportBody):
-    """Same code path as `python -m app.cli bundle export`, QUEUED FOR THE
+    """`bundles.export.export_bundle` (the retired `bundle export`), QUEUED FOR THE
     WORKER (202): a bundle is signed with the node's private key, and this
     process holds only the public half (app/identity.py; operator,
     2026-09-29). The worker builds it in the collection's export workspace

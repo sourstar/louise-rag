@@ -1,7 +1,7 @@
 """What giving a model up costs: how long it takes to come back to the card,
 from the NVMe and from RAM, on a quiet node and beside an embedding in progress.
 
-    python -m tools.load_profile --rage http://nas:30437 \
+    python -m app.louise dev load-profile --rage http://nas:30437 \
         --models-dir /state/localai-models --token-file /rage/secrets/admin_token \
         --models chat,madlad,bge-m3 --busy qwen3-embedding-4b \
         --reps 3 --out /data/load-profile.jsonl

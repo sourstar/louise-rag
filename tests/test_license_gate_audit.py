@@ -4,17 +4,18 @@ The audit mapped 129 paths that use, import or exchange a collection's
 data. Beyond those closed by the `louise health` review and its
 verification, these were still open: the reader (`/read`, the whole text,
 reachable from Ask), the book catalogue API, the worker's inline rescan,
-`snapshot delta`, the tools shipped in the image, and search's gate,
+`snapshot delta` (retired with app/cli.py: its successor writes nothing
+shareable and reads only snapshots, which a peer holds before any
+acknowledgement), the tools shipped in the image, and search's gate,
 which failed OPEN on its own error. Shared backstops now sit in the bundle
 importer and exporter, so a door that forgets cannot import or export.
 Controls prove each call is otherwise made.
 """
-import argparse
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cli, collections as collections_mod, config, db, discovery, licensing, \
+from app import collections as collections_mod, config, db, discovery, licensing, \
     spaces, web
 from app.acquire.spec import LicenseAckRequiredError
 from app.api import app
@@ -98,18 +99,6 @@ def test_the_bundle_importer_and_exporter_are_backstops(isolated_config, tmp_pat
     _free(monkeypatch)
     assert bundle_importer.import_bundle(con, c, tmp_path / "no-bundle")["ok"] is False, \
         "control: past the gate, a missing bundle is an ordinary failure"
-
-
-def test_snapshot_delta_refuses_an_unacknowledged_collection(isolated_config, capsys,
-                                                             monkeypatch):
-    name = collections_mod.load_all()[0].name
-    args = argparse.Namespace(collection=name, from_snapshot="a", to_snapshot="b")
-    _withheld(monkeypatch)
-    assert cli.cmd_snapshot_delta(args) == 1
-    assert "REFUSED" in capsys.readouterr().err
-    _free(monkeypatch)
-    with pytest.raises(SystemExit, match="no recorded manifest"):
-        cli.cmd_snapshot_delta(args)          # control: past the gate
 
 
 def test_search_is_withheld_when_the_gate_itself_fails(monkeypatch):

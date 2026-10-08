@@ -79,69 +79,15 @@ def test_calibrate_says_what_it_needs_rather_than_pretending(tmp_path):
                         "--root", str(root)]) == 2
 
 
-# ---- 07 §7.6's deprecation aliases ----------------------------------------
+# ---- 07 §7.6: the previous names, retired ------------------------------------
 
-class TestDeprecatedNames:
-    """07 §7.6: "Old names are accepted for one release as hidden aliases —
-    `louise <old …>` and `python -m app.cli <old …>` both — each dispatching
-    to the new function and printing `deprecated: use louise <new …>` on
-    stderr."
-
-    Steps 0 to 3 landed without a single one of these, and step 12's opening
-    instruction is "remove the aliases" — of which there were none. These
-    cover the `louise <old …>` half for every previous name whose new
-    command exists on this branch.
-    """
-
-    PAIRS = [
-        (["pack", "build"], "hold records build"),
-        (["corpus", "status"], "hold collection show"),
-        (["snapshot", "record"], "hold snapshot create"),
-        (["snapshot", "list"], "hold snapshot list"),
-    ]
-
-    def test_every_alias_parses(self):
-        p = louise.build_parser()
-        for old, _ in self.PAIRS:
-            assert p.parse_args(old + ["a-collection"]).fn is not None
-
-    def test_an_alias_dispatches_to_the_same_function(self):
-        """ONE function, two names — not a second implementation that can
-        drift from the first."""
-        p = louise.build_parser()
-        alias = p.parse_args(["pack", "build", "g"])
-        new = p.parse_args(["hold", "records", "build", "g"])
-        assert alias.fn is not new.fn, "the alias wraps it to warn"
-        assert alias.fn.__closure__ is not None
-        wrapped = [c.cell_contents for c in alias.fn.__closure__]
-        assert new.fn in wrapped, "and the thing it wraps IS the new function"
-
-    def test_an_alias_takes_the_same_arguments(self):
-        """Built from one argument definition, so the two cannot drift."""
-        p = louise.build_parser()
-        a = p.parse_args(["pack", "build", "g", "--corpus", "/c",
-                          "--shard-records", "7"])
-        b = p.parse_args(["hold", "records", "build", "g", "--corpus", "/c",
-                          "--shard-records", "7"])
-        for field in ("collection", "corpus", "records_per_shard", "snapshot_id"):
-            assert getattr(a, field) == getattr(b, field)
-
-    def test_an_alias_names_its_replacement_on_stderr(self, tmp_path, capsys):
-        """The line is the whole point: a user on an old name learns the new
-        one without reading a document."""
-        root = _collection(tmp_path)
-        assert louise.main(["snapshot", "list", "gutenberg",
-                            "--root", str(root)]) == 0
-        assert "deprecated: use louise hold snapshot list" in capsys.readouterr().err
-
-    def test_the_aliases_are_hidden_from_help(self, capsys):
-        """"hidden aliases" — the old names work and `--help` does not teach
-        them to anyone new. Note `argparse.SUPPRESS` does NOT do this for a
-        subparser: it prints the literal `==SUPPRESS==`. Omitting `help`
-        entirely is what leaves a subparser unlisted."""
-        with pytest.raises(SystemExit):
-            louise.build_parser().parse_args(["--help"])
-        out = capsys.readouterr().out
-        assert "hold" in out
-        for word in ("pack", "corpus", "snapshot", "SUPPRESS"):
-            assert word not in out
+def test_the_previous_names_are_retired(capsys):
+    """07 §7.6's aliases lived one release and were retired with app/cli.py
+    (2026-10-08): an old name is now an unknown command, exit 2 from
+    argparse, never a silent second implementation."""
+    for old in (["pack", "build", "g"], ["corpus", "status", "g"],
+                ["snapshot", "record", "g"], ["snapshot", "list", "g"]):
+        with pytest.raises(SystemExit) as e:
+            louise.build_parser().parse_args(old)
+        assert e.value.code == 2
+    capsys.readouterr()

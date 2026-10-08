@@ -1,7 +1,6 @@
 """This node's identity (app/identity.py): the web process recognises what
 this node signed from the PUBLIC key file alone, and never reads the seed
 (operator, 2026-09-29; docs/notes/rage.md §13, layer 2)."""
-import argparse
 import os
 
 import pytest
@@ -128,19 +127,22 @@ def test_no_key_is_not_remembered(public, monkeypatch):
     assert copy_state.own_key() == MINE
 
 
-def test_keygen_writes_the_public_half_and_public_key_writes_it_later(tmp_path,
-                                                                     monkeypatch, capsys):
-    from app import cli
+def test_key_create_writes_the_public_half_and_never_prints_the_seed(tmp_path,
+                                                                    monkeypatch, capsys):
+    """`louise hold key create` (was `bundle keygen --public`): the key at
+    NODE_KEY_PATH, its public half at NODE_PUBLIC_KEY_PATH, and on stdout the
+    PUBLIC key — the producer identity peers see — never the seed
+    (invariant 8)."""
+    from app import louise
     key = tmp_path / "private" / "node.key"
     pub = tmp_path / "public" / "node.pub"
-    assert cli.cmd_bundle_keygen(argparse.Namespace(path=str(key), public=str(pub))) == 0
     monkeypatch.setattr(config, "NODE_KEY_PATH", key)
+    monkeypatch.setattr(config, "NODE_PUBLIC_KEY_PATH", pub)
+    assert louise.main(["hold", "key", "create"]) == 0
     assert identity.read_public(pub) == identity.public_text(node_keys.load_signing_key())
-    later = tmp_path / "public" / "later.pub"
-    assert cli.cmd_bundle_public_key(argparse.Namespace(path=str(later))) == 0
-    assert later.read_text() == pub.read_text()
     out = capsys.readouterr().out
     assert key.read_bytes().hex() not in out, "the seed is never printed"
+    assert identity.read_public(pub) in out, "the public key is"
 
 
 def test_the_web_routes_that_sign_queue_and_never_read_the_seed(

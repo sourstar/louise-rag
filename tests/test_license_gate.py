@@ -74,7 +74,8 @@ def test_an_archive_shard_already_on_disk_is_not_a_bypass(pubmed_origin, tmp_pat
     imported ack-free)". What it gates is USE, not transport.
 
     So the check belongs at `import_shard`, which every path reaches:
-    `import_archive` walks through it and `app/cli.py` is the only caller
+    `import_archive` walks through it and `louise hold vectors import
+    --archive` is the only caller
     of either.
     """
     from app.bundles import genesis

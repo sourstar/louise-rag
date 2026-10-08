@@ -441,8 +441,8 @@
     that baseline. If the endpoint stops reproducing itself (model swap,
     build change, pooling change), embedding pauses — documents are never
     marked errored, search and lexical indexing continue — until an operator
-    fixes the endpoint or accepts the new backend with
-    <code>backend rebaseline</code> (which implies re-embedding).
+    fixes the endpoint or accepts the new backend by removing its baseline
+    file, which the next check records afresh (which implies re-embedding).
   </p>
   <p class="note">
     <b>EMBED_BATCH=1 is load-bearing.</b> llama-server corrupts long
@@ -566,13 +566,9 @@
     own card; vectors-for-your-documents → sub-box.
   </p>
   <pre class="cli"># NCBI MedCPT vectors into the pubmed collection (resumable):
-python -m app.cli genesis import pubmed --archive medcpt-pubmed
+louise hold vectors import pubmed --archive medcpt-pubmed
 
-# any compatible dataset: a parquet of (id, vector) rows
-python -m app.cli genesis import &lt;collection&gt; --parquet /path/data.parquet \
-    --uid-prefix "pubmed:" --archive-id "my-dataset-v1"
-
-python -m app.cli genesis status &lt;collection&gt;</pre>
+louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
   <p class="note">
     This cuts both ways: a collection filled from a genesis archive (or
     embedded locally) can be exported as a signed bundle from its Library
@@ -607,7 +603,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
   <p class="note">
     <b>A pack is a closed snapshot.</b> The procedure: the origin collection finishes
     fetching, parsing and indexing up to a cutoff date; the pack is built from it with
-    <code>pack build &lt;collection&gt; --out DIR --until YYYY-MM-DD</code> — records that
+    <code>louise hold records build &lt;collection&gt; --snapshot ID</code> — records that
     existed at the origin on that date and nothing later (Gutenberg by release date, PubMed
     by <i>DateRevised</i>, Wikipedia by the dump's date; the rule is recorded in the
     manifest, and a resume under another cutoff is refused). Later content is an <i>update</i>: derived from the
@@ -615,7 +611,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     bytes and there is nothing to reconcile (not built yet; see the design, §6.1).
   </p>
   <p class="note">
-    <b>Building one.</b> From an existing collection: <code>pack build</code> above (two
+    <b>Building one.</b> From an existing collection: <code>hold records build</code> above (two
     passes over the collection's manifest — plan the slices, then write shards — resumable,
     state in <code>DIR/.build/</code>, logs one line per 30 s). From a raw corpus folder
     without a collection: <code>python -m tools.pack_convert --plugin pubmed --corpus DIR
@@ -631,16 +627,16 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     sha256) covers corpus, pre-embeddings and pack.
   </p>
   <p class="note">
-    <b>Checking one.</b> <code>pack verify DIR [--checks roots,records,chunks,license,signature]
+    <b>Checking one.</b> <code>louise hold check &lt;collection&gt; [--checks roots,records,chunks,license,signature]
     [--sample 0.05]</code> runs the pack's validation plan with platform code — every shard's
     bytes against the manifest's hashes, every record's content hash against its own text,
     re-chunking against the declared counts, the terms text byte-for-byte, the signature.
-    Nothing shipped in a pack is ever executed. <code>pack status DIR</code>,
-    <code>pack cat DIR &lt;uid&gt;</code> (one record and its chunks as JSON) and
-    <code>pack dump &lt;shard&gt;</code> (plain JSONL) are the inspection tools.
+    Nothing shipped in a pack is ever executed. <code>louise hold collection show</code>,
+    <code>louise hold records show &lt;collection&gt; &lt;uid&gt;</code> (one record and its chunks as JSON) and
+    <code>louise hold records show &lt;collection&gt; --shard &lt;slice&gt;/&lt;n&gt;</code> (plain JSONL) are the inspection tools.
   </p>
   <p class="note">
-    <b>Sharing one.</b> <code>torrent publish &lt;collection&gt; --per-slice</code>, over a
+    <b>Sharing one.</b> <code>louise share &lt;collection&gt;</code>, over a
     collection whose folder is a pack (none while the packed plugin is boxed), hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
     publishes the torrent collection over them — a peer takes "PubMed before 1980" as the
     members of those slices (see <a href="#acquire">Fetching from peers</a>).
@@ -652,7 +648,7 @@ python -m app.cli genesis status &lt;collection&gt;</pre>
     <code>[[layers]] chunker = "verbatim" rule = "archive:&lt;id&gt;"</code> … then
     <code>[[layers]] chunker = "cdc"</code> (the last is the default) — every document
     belongs to exactly one layer by that rule, all under one encoder. Declaring more than
-    one layer changes the collection's space id (a <code>space repin</code>); one layer
+    one layer changes the collection's space id (a new collection, <code>louise hold collection derive</code>); one layer
     changes nothing.
   </p>
   <p class="note">
@@ -832,7 +828,7 @@ api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({qu
   <p class="note">
     <b>Changing it afterwards: yes, any time.</b> Use the collection card's
     <i>grow profile…</i> button (it previews files/bytes/ETA as a dry run
-    before fetching) or <code>corpus grow &lt;name&gt; --profile
+    before fetching) or <code>louise hold records fetch &lt;name&gt; --profile
     recent</code>. Acquisition is resumable and only fetches what's missing,
     so growing demo → starter → full costs no re-downloading. Also update
     <code>profile</code> in the collection's TOML — that's what the worker's
@@ -864,13 +860,11 @@ api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({qu
     torrent's own piece hashes replace the origin's checksum sidecars.
     Stored as <code>peer_source</code> in the collection's TOML. Without
     peer discovery (not built) the magnet carries a direct-peer hint,
-    <code>&amp;x.pe=host:port</code>, which <code>torrent publish
-    --peer-hint</code> prints for you.
+    <code>&amp;x.pe=host:port</code>.
   </p>
   <p class="note">
-    <b>Seeding</b> is the other direction: <code>torrent publish
-    &lt;collection&gt; [--subdir data]</code> hashes the corpus (minutes on
-    a large one) and records it; from then on the worker seeds it whenever
+    <b>Seeding</b> is the other direction: <code>louise share
+    &lt;collection&gt;</code> records that it is shared; from then on the worker seeds it whenever
     the node runs, is in <i>download/seeding only</i>, or <i>seeding only</i>
     — <i>pause</i> stands it down. Every uploaded byte is credited to the
     Network page's <i>seeding</i> class, and its Seeding table lists what
@@ -959,40 +953,37 @@ api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({qu
 <div class="panel" id="cli">
   <h2>CLI reference</h2>
   <p class="note lead"><b>In short:</b> everything the UI does has a command-line twin — same code path, scriptable.</p>
-  <pre class="cli">python -m app.cli corpus add &lt;collection&gt; [--profile P] [--dry-run] [--ack-terms FILE]
-python -m app.cli corpus grow &lt;collection&gt; --profile P
-python -m app.cli corpus status [collection]
+  <p class="note"><code>louise</code> is <code>python -m app.louise</code>; the whole tree is
+    docs/07-commands.md. The previous <code>python -m app.cli</code> names were retired on 2026-10-08.</p>
+  <pre class="cli">louise hold records fetch &lt;collection&gt; [--profile P] [--dry-run]
+louise hold collection ack &lt;collection&gt;          # record the licence acknowledgement
+louise hold collection show &lt;collection&gt;
+louise hold config show|apply [&lt;collection&gt;]
 
-python -m app.cli bundle keygen &lt;path&gt;            # node signing key (prints PUBLIC key only)
-python -m app.cli bundle export &lt;collection&gt; &lt;dest&gt; [--uid U]... [--limit N]
-python -m app.cli bundle import &lt;collection&gt; &lt;path&gt; [--no-first-use]
-python -m app.cli bundle trust &lt;collection&gt; &lt;pubkey&gt; [--quarantine --reason R]
-python -m app.cli bundle status &lt;collection&gt;
-python -m app.cli bundle resweep &lt;collection&gt;
+louise hold key create                           # this node's signing key (prints the PUBLIC key only)
+louise hold key trust &lt;key&gt; [--deny | --remove | --restore]
+louise hold key show
+louise hold vectors export &lt;collection&gt; --shard &lt;slice&gt;/&lt;n&gt; --out DIR
+louise hold vectors import &lt;collection&gt; (--bundle DIR | --archive ID [--retry])
+louise hold vectors show &lt;collection&gt;           # coverage, producers
+louise hold vectors check &lt;collection&gt; [--drop]
 
-python -m app.cli backend check &lt;collection&gt;      # gate: endpoint vs baseline
-python -m app.cli backend rebaseline &lt;collection&gt; --yes
+louise hold embedder check &lt;collection&gt;         # the calibration gate
+louise share contribute [&lt;collection&gt;] [--once]
 
-python -m app.cli contribute &lt;collection&gt; &lt;coordinator-url&gt; [--count N]
+louise hold records build &lt;collection&gt;
+louise hold check &lt;collection&gt; [--checks …] [--sample F]
+louise hold records show &lt;collection&gt; (&lt;uid&gt; | --shard &lt;slice&gt;/&lt;n&gt;) [--raw]
 
-python -m app.cli genesis status &lt;collection&gt;      # the archive ledger, per shard
-python -m app.cli genesis retry &lt;collection&gt; [--shard N]   # put a rejected shard back in line
+louise hold index build &lt;collection&gt; --vector
+louise hold index show &lt;collection&gt;
 
-python -m app.cli pack build &lt;collection&gt; --out DIR [--until YYYY-MM-DD] [--records-per-shard N] [--unsigned]
-python -m app.cli pack verify DIR [--checks roots,records,chunks,license,signature] [--sample F] [--seed N]
-python -m app.cli pack status DIR
-python -m app.cli pack cat DIR &lt;uid&gt;               # one record and its chunks, as JSON
-python -m app.cli pack dump &lt;shard.jsonl.zst&gt;      # plain JSONL (what zstd -d prints)
-python -m tools.pack_convert --plugin P --corpus DIR --out DIR [--until DATE]
+louise share &lt;collection&gt; [--stop]
+louise hold collection derive &lt;codex&gt; …         # a new space: a sister, never a re-pin
 
-python -m app.cli index vector status &lt;collection&gt;
-python -m app.cli index vector build &lt;collection&gt; [--type ivf_pq|ivf_flat] [--partitions K]
-
-python -m app.cli torrent publish &lt;collection&gt; [--per-language | --per-slice | --collection-only] [--peer-hint host:port]
-python -m app.cli space repin &lt;collection&gt; --yes
-
-python -m tools.migrate_manifest --db /data/manifest.db [--dry-run]
-python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</pre>
+louise node health [&lt;collection&gt;]
+louise dev migrate schema [&lt;collection&gt;]
+louise dev embedder-profile --url &lt;URL&gt; [--concurrency 1,2,3,4]</pre>
 </div>
 
 <div class="panel" id="api">
@@ -1022,7 +1013,7 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
     <tr><td>event log: <b>embedding PAUSED</b> (backend-gate)</td>
       <td>the embedding endpoint stopped reproducing its baseline. Check
       what changed (image tag? model file? pooling flags?). Restore it, or
-      accept the new backend with <code>backend rebaseline --yes</code> and
+      accept the new backend by removing its baseline file (the next check records it afresh) and
       plan a re-embed.</td></tr>
     <tr><td>process exits with <b>BOOT VALIDATION FAILED</b></td>
       <td>the pinned embedding space mismatches current config (invariant:
@@ -1049,8 +1040,8 @@ python -m tools.profile_embed --url &lt;EMBED_URL&gt; [--concurrency 1,2,3,4]</p
     <tr><td><b>embedding paused</b> on a Library card</td>
       <td>the backend gate stopped this collection's encoder writes because
       the endpoint no longer reproduces its recorded baseline. Fix the
-      endpoint, or accept the new backend deliberately with
-      <code>backend rebaseline</code> — knowing existing vectors came from a
+      endpoint, or accept the new backend deliberately by removing its
+      baseline file — knowing existing vectors came from a
       different function.</td></tr>
     <tr><td>a book answers with stale/odd passages</td>
       <td>ask with <code>verify: true</code> or POST its chunk ids to

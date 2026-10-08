@@ -12,7 +12,7 @@ reported as UNSAFE, not as a winner. Texts carry a per-run nonce so the
 server's prompt cache cannot serve reheated results.
 
 Usage (from the repo, no GPU imports — plain HTTP):
-  docker run --rm louise-rag:local python -m tools.profile_embed \
+  docker run --rm louise-rag:local python -m app.louise dev embedder-profile \
       --url http://192.168.178.10:30437 --texts 24 --chars 4000 \
       --concurrency 1,2,3,4
 """

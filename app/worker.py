@@ -3922,9 +3922,9 @@ def run_forever():
         _apply_tier2_embed_mode(cons[c.name], c, "restart")
         if c.embed is None:
             db.log_event(cons[c.name], "info", "worker",
-                         f"embed recipe comes from env (Tier-1 fallback) — "
-                         f"make it explicit desired state with: "
-                         f"python -m app.cli embed materialize {c.name}")
+                         f"no [encoder] in collections/{c.name}.toml — name "
+                         f"one there; `louise hold config show {c.name}` prints "
+                         f"what the node resolves")
         # An import interrupted by a previous kill left a row mid-flight. It
         # needs no compensation — the importer clears embed_done before
         # touching Lance, so _next_book re-queues the document — but the row

@@ -1,43 +1,40 @@
-"""`pack verify`, `pack cat` and `pack dump` are NOT license-gated — the
-operator's decision, 2026-09-13: reading a pack by path on local disk is
-inspection, not use (invariant 9). They take a path, not a collection;
-the data enters the node only through discovery, import or adopt, which
-are gated, and `verify` is the check a pack gets before anyone
-acknowledges its terms.
+"""`louise hold records show` — was `pack cat` / `pack dump` (07 §7.6) — is
+NOT license-gated: the operator's decision, 2026-09-13, that reading what
+is on local disk is inspection, not use (invariant 9). The data enters the
+node's use only through the doors that ARE gated (build, embed, import,
+export, check: tests/hold/test_license_gate_hold.py).
 
-This pins the decision, so a later audit that finds three "ungated doors"
-reads why before closing them: here, asking the gate at all fails.
+This pins the decision, so a later audit that finds an "ungated door"
+reads why before closing it: here, asking the gate at all fails.
+(`pack verify` had the same exemption; its successor `hold check` embeds
+sampled text and writes attestations made to be exchanged, so it asks.)
 """
-import argparse
 import json
 
 import pytest
 
-from app import cli, licensing
-from app.pack import manifest as manifest_mod
-from tests.pack.test_verify import _pack
+from app import licensing, louise
+from tests.test_louise_ported import _uids, built  # noqa: F401  (the fixture)
 
 
 def _no_gate(*a, **k):
-    raise AssertionError("reading a pack by path asks no license gate (operator, 2026-09-13)")
+    raise AssertionError("reading a record on local disk asks no license gate "
+                         "(operator, 2026-09-13)")
 
 
 @pytest.fixture
-def pack_dir(isolated_config, tmp_path, corpus_dir, monkeypatch):
-    built = _pack(tmp_path, corpus_dir)         # the build IS gated: before the patch
+def ungated(built, monkeypatch):                                  # noqa: F811
     for name in ("state_for", "require_ack", "require_ack_or_exit", "license_class_for"):
         monkeypatch.setattr(licensing, name, _no_gate)
     return built
 
 
-def test_verify_cat_and_dump_read_a_pack_without_asking_the_gate(pack_dir, capsys):
-    shard = pack_dir / manifest_mod.load(pack_dir)["shards"][0]["path"]
-
-    assert cli.cmd_pack_dump(argparse.Namespace(shard=str(shard))) == 0
-    uid = json.loads(capsys.readouterr().out.splitlines()[0])["uid"]
-
-    assert cli.cmd_pack_cat(argparse.Namespace(pack=str(pack_dir), uid=uid)) == 0
+def test_records_show_reads_a_record_and_a_shard_without_asking_the_gate(ungated, capsys):
+    root, s1 = ungated
+    uid = _uids(root, s1)[0]
+    assert louise.main(["hold", "records", "show", "gutenberg", uid, "--root", str(root)]) == 0
     assert json.loads(capsys.readouterr().out)["record"]["uid"] == uid
 
-    assert cli.cmd_pack_verify(argparse.Namespace(
-        pack=str(pack_dir), checks=None, sample=1.0, seed=0)) == 0
+    s = s1.shards[0]
+    assert louise.main(["hold", "records", "show", "gutenberg", "--shard", f"{s.slice}/{s.n}",
+                        "--root", str(root)]) == 0

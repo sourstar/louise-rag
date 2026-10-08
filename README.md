@@ -91,13 +91,14 @@ docker compose -f tests/integration/two_node/docker-compose.yml down -v
 ## Getting a corpus
 
 **Declaratively** (preferred): enable acquisition in the collection's TOML and
-use the CLI — profiles (`demo`/`starter`/`recent`/`full`) bound size, licence
+use the CLI (`louise` is `python -m app.louise`; the tree is
+[docs/07](docs/07-commands.md)) — profiles (`demo`/`starter`/`recent`/`full`) bound size, licence
 acknowledgements are recorded before any byte moves, downloads resume, and
 every transfer draws from the shared bandwidth budget:
 
 ```bash
-python -m app.cli corpus add gutenberg --profile demo --dry-run
-python -m app.cli corpus add gutenberg --profile demo
+louise hold records fetch gutenberg --profile demo --dry-run
+louise hold records fetch gutenberg --profile demo
 ```
 
 **Manually** (the original path, still fine): rsync the Gutenberg generated
@@ -141,17 +142,15 @@ mixed embedding spaces are the one unrecoverable corruption.
 ## Sharing vectors between nodes
 
 ```bash
-python -m app.cli bundle keygen /secrets/private/node.key --public /secrets/public/node.pub
-                                                        # once; NODE_KEY_PATH / NODE_PUBLIC_KEY_PATH
-python -m app.cli bundle export gutenberg /tmp/out      # sign & pack
-python -m app.cli bundle import gutenberg /path/bundle  # verify & apply
-python -m app.cli bundle status gutenberg               # producers, ledger
-python -m app.cli bundle trust  gutenberg <pubkey> [--quarantine]
-python -m app.cli contribute gutenberg http://coordinator:8750
+louise hold key create                                  # once, at NODE_KEY_PATH (+ NODE_PUBLIC_KEY_PATH)
+louise hold vectors export gutenberg --shard <slice>/<n> --out /tmp/out   # sign & pack
+louise hold vectors import gutenberg --bundle /path/bundle                # verify & apply
+louise hold vectors show gutenberg                      # coverage, producers
+louise hold key trust <key> [--deny]                    # the trust list
+louise share contribute gutenberg                       # the shards this peer leads, shared
 
 # reuse published embeddings (same-function-verified; see /help in the UI):
-python -m app.cli genesis import pubmed --archive medcpt-pubmed
-python -m app.cli genesis import mycoll --parquet data.parquet --uid-prefix "pubmed:"
+louise hold vectors import pubmed --archive medcpt-pubmed
 ```
 
 Bundles carry **no text, ever** — importing requires holding the same raw

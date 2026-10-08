@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app import chunking, cli, collections as collections_mod, config, db, discovery, spaces, worker
+from app import chunking, collections as collections_mod, config, db, discovery, spaces, worker
 from app.plugins.base import DiscoverState
 from app.plugins.pubmed import SOURCE
 
@@ -79,43 +79,3 @@ def test_only_pubmeds_space_id_moves(isolated_config, tmp_path, monkeypatch):
     # grandfathered: the book payload is unchanged (a grandfathered sibling
     # hashes identically), so no existing space re-pins
     assert spaces.compute_space_id(book) == spaces.compute_space_id(replace(book, chunker="verbatim"))
-
-
-def test_space_repin_resets_everything_the_old_chunks_touched(isolated_config, tmp_path, capsys):
-    """The operator step behind every "wipe and re-embed" refusal: drops the
-    pin, resets embed AND fts marks (the lexical index holds chunk ids cut
-    by the old chunker — same id, different text otherwise), clears the
-    verification ledger, keeps fetched archive shards (no re-download),
-    drops finished ones, removes the vector table. Refuses without --yes."""
-    c = collections_mod.default_collection()
-    con = db.connect(c)
-    for i in range(1, 6):
-        con.execute("INSERT INTO documents(uid,source,native_id,path,in_scope,rdf_done,"
-                    "fts_done,embed_done,embed_version) VALUES(?,'g',?,?,1,1,1,1,1)",
-                    (f"g:{i}", str(i), f"/x{i}"))
-    con.execute("INSERT INTO space(id,space_id,dim,components,pinned_at) VALUES(1,'old',8,'{}',0)")
-    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,bytes,updated_at) "
-                "VALUES('arc','0','final',9,0,0)")
-    con.execute("INSERT INTO genesis_imports(archive,shard,state,docs,bytes,pending,next_pass_at,updated_at) "
-                "VALUES('arc','1','applied',3,100,7,99,0)")
-    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) VALUES('arc','2','fetching',0)")
-    con.commit()
-    c.lance_dir.mkdir(parents=True, exist_ok=True)
-    (c.lance_dir / "table.lance").write_bytes(b"vectors")
-
-    assert cli.main(["space", "repin", c.name]) == 2, "no --yes: plan only"
-    assert con.execute("SELECT COUNT(*) FROM space").fetchone()[0] == 1
-    assert (c.lance_dir / "table.lance").exists()
-
-    assert cli.main(["space", "repin", c.name, "--yes"]) == 0
-    out = capsys.readouterr().out
-    assert "5 documents to re-embed" in out and "5 to re-index" in out
-    assert con.execute("SELECT COUNT(*) FROM space").fetchone()[0] == 0
-    assert con.execute("SELECT SUM(embed_done)+SUM(fts_done)+SUM(embed_version) FROM documents").fetchone()[0] == 0
-    assert con.execute("SELECT COUNT(*) FROM chunk_verification").fetchone()[0] == 0
-    rows = {r["shard"]: dict(r) for r in con.execute("SELECT * FROM genesis_imports")}
-    assert "0" not in rows, "a final shard's files are gone: the row goes with them"
-    assert rows["1"]["state"] == "fetched" and rows["1"]["docs"] == 0 \
-        and rows["1"]["pending"] is None and rows["1"]["next_pass_at"] == 0
-    assert rows["2"]["state"] == "fetching", "an in-flight download resumes"
-    assert not c.lance_dir.exists()

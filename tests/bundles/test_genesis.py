@@ -1380,7 +1380,7 @@ def test_a_non_revisit_import_never_lowers_the_ledger(collection, monkeypatch, p
 
 def test_recount_sets_the_ledger_from_provenance_and_changes_nothing_twice(
         collection, monkeypatch, capsys):
-    from app import cli
+    from app import louise
     from app.bundles import ledger
     con = db.connect(collection)
     cache = {}
@@ -1407,15 +1407,15 @@ def test_recount_sets_the_ledger_from_provenance_and_changes_nothing_twice(
     assert {(r.shard, r.held_docs, r.held_chunks) for r in dry} == {("0", 9, 10), ("1", 9, 9)}
     assert ledger_rows() == {"0": (4, 4), "1": (10, 10)}, "a dry run writes nothing"
 
-    monkeypatch.setattr(cli.collections_mod, "load_all", lambda: [collection])
-    assert cli.main(["genesis", "recount", collection.name]) == 2
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: collection)
+    assert louise.main(["dev", "genesis", "recount", collection.name]) == 2
     assert "test-arc/0: docs 4 -> 9, chunks 4 -> 10" in capsys.readouterr().out
     assert ledger_rows() == {"0": (4, 4), "1": (10, 10)}
 
-    assert cli.main(["genesis", "recount", collection.name, "--yes"]) == 0
+    assert louise.main(["dev", "genesis", "recount", collection.name, "--yes"]) == 0
     assert ledger_rows() == {"0": (9, 10), "1": (9, 9)}
     capsys.readouterr()
-    assert cli.main(["genesis", "recount", collection.name, "--yes"]) == 0
+    assert louise.main(["dev", "genesis", "recount", collection.name, "--yes"]) == 0
     assert "already match" in capsys.readouterr().out
     assert not any(r.changed for r in genesis.recount_ledger(con, write=True))
 
@@ -1520,31 +1520,3 @@ def test_a_recount_holds_the_write_lock_across_its_walk(collection, monkeypatch)
     assert outcome == ["database is locked"], outcome
     assert [(rc.held_docs, rc.held_chunks) for rc in out] == [(2, 2)]
     assert con.execute("SELECT docs FROM genesis_imports").fetchone()[0] == 2
-
-
-def test_a_space_repin_zeroes_every_ledger_row_it_keeps(collection, monkeypatch):
-    """A rejection mid-pass leaves docs on the row (counted per flush);
-    `genesis retry` makes it `fetched`, which the re-pin keeps. Its docs
-    stood for provenance the re-pin deletes, and its proof for the space
-    the re-pin drops: both go, or the re-import counts on top."""
-    from app import cli
-    con = db.connect(collection)
-    cache, archive = _twenty_held(monkeypatch)
-    cache["embeds_chunk_0.npy"][12] = 0.0          # id 13: after two flushes
-    with pytest.raises(GenesisError):
-        _pass(con, collection, archive, cache)
-    genesis.retry_rejected(con)
-    assert tuple(con.execute("SELECT state, docs FROM genesis_imports").fetchone()) \
-        == ("fetched", 10)
-    monkeypatch.setattr(cli.collections_mod, "load_all", lambda: [collection])
-    assert cli.main(["space", "repin", collection.name, "--yes"]) == 0
-    assert tuple(con.execute("SELECT state, docs, chunks, proven_at FROM genesis_imports")
-                 .fetchone()) == ("fetched", 0, 0, None)
-    # re-imported against the new space: counted from zero, and proven anew
-    cache["embeds_chunk_0.npy"][12] = _archive_vector(13)
-    for p in (collection.manifest_path.parent / "genesis" / archive.archive_id).iterdir():
-        p.unlink()
-    con.execute("UPDATE documents SET fts_done=1")
-    assert _pass(con, collection, archive, cache)["state"] == "final"
-    assert _ledger_and_what_landed(con, archive, "0") == (20, 20, 20, 20)
-    assert con.execute("SELECT proven_at FROM genesis_imports").fetchone()[0] is not None

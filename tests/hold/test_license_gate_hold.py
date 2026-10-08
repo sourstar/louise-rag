@@ -53,6 +53,38 @@ def test_a_withheld_collection_is_refused_before_anything_is_read(args, monkeypa
         getattr(louise, command)(args)
 
 
+@pytest.mark.parametrize("command", ["cmd_vectors_build", "cmd_share_contribute"])
+def test_embedding_for_a_withheld_collection_is_refused(args, monkeypatch, command):
+    """`hold vectors build` embeds the text; `share contribute` wraps it and
+    shares the bundles. The retired `snapshot vectors` and `contribute`
+    each had a test of their gate (app/cli.py, 2026-09-13); these are their
+    successors', and `share contribute` had none — the gate was left to
+    quarantine, which only reports on a node that does not enforce it."""
+    from app import copy_state, identity
+    from app.bundles import keys as node_keys
+
+    def reached(*a, **k):
+        raise _Reached()
+
+    monkeypatch.setattr(col, "resolve",
+                        lambda root, name: (name, types.SimpleNamespace(privacy="public")))
+    monkeypatch.setattr(louise, "_take_write_lock", lambda *a, **k: None)
+    monkeypatch.setattr(copy_state, "require_in_use", reached)   # the step after the gate
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda *a, **k: object())
+    monkeypatch.setattr(identity, "own", lambda: "ed25519:" + "a" * 64)
+    monkeypatch.setattr(louise.signal, "signal", lambda *a: None)
+    a = argparse.Namespace(**vars(args), delta=None, shard=None, slice=None, dry_run=False,
+                           once=True, interval=900)
+
+    monkeypatch.setattr(licensing, "state_for", lambda c: licensing.MISSING)
+    with pytest.raises(LicenseAckRequiredError, match="invariant 9"):
+        getattr(louise, command)(a)
+
+    monkeypatch.setattr(licensing, "state_for", lambda c: licensing.NOT_REQUIRED)
+    with pytest.raises(_Reached):
+        getattr(louise, command)(a)
+
+
 def test_a_codex_that_tightens_its_plugin_is_judged_by_its_codex(isolated_config, tmp_path):
     """gutenberg's plugin is green; this collection's Codex tightens it to
     yellow (04 §4.4). THE resolution read only the plugin's registry class,

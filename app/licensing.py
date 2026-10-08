@@ -193,9 +193,7 @@ def require_ack(collection, *, use: str = "use", spec=None) -> None:
             # reads (verification pass, 2026-09-13).
             how = (f"Record it with: louise hold collection ack {collection.name}")
         else:
-            how = (f"Record it in collections/{collection.name}.toml from the "
-                   f"Library, or: python -m app.cli corpus add {collection.name} "
-                   f"--ack-terms <path>")
+            how = f"Record it in collections/{collection.name}.toml from the Library."
         raise LicenseAckRequiredError(
             f"{collection.name}: license_class={cls} requires an acknowledgement "
             f"(timestamp + sha256 of {path or 'the terms text'}) before {use} — "

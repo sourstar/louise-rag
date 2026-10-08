@@ -35,7 +35,7 @@
 #   3. Start louise-rag; after discovery + fts, run the genesis import —
 #      NCBI's precomputed vectors for every PMID this node holds:
 #          docker exec ix-louise-rag-worker-1 \
-#            python -m app.cli genesis import pubmed --archive medcpt-pubmed
+#            python -m app.louise hold vectors import pubmed --archive medcpt-pubmed
 #      (resumable shard by shard; ~100 GB source but only held PMIDs land.
 #      The importer proves archive==local-encoder on a sample before a
 #      single row is written, then the worker gap-fills anything the

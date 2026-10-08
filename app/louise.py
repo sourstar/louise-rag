@@ -10,6 +10,7 @@
     louise hold collection list
     louise hold collection show <codex>
     louise hold records build <collection> [--corpus DIR] [--snapshot ID]
+    louise hold records fetch <collection> [--profile P] [--dry-run]
     louise hold records validation <collection>
     louise hold snapshot create <collection> [--snapshot ID]
     louise hold snapshot list <collection>
@@ -29,9 +30,8 @@
     louise node health [<collection>] [--errors]
     louise dev genesis recheck <collection> | recount <collection> [--yes]
 
-Only this branch of the tree exists so far. The rest arrives branch by
-branch, each with its tests, and the old `python -m app.cli` keeps working
-until Â§7.6's migration is complete.
+The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
+every name it had that is still useful is one of these.
 
 One flag of Â§7.3's tree is accepted and refused here rather than
 silently doing something else, because what it needs is not built yet:
@@ -940,7 +940,8 @@ def cmd_share_contribute(a) -> int:
     precondition stands in the way, 3 when the encoder is not there."""
     import json
     import threading
-    from app import collections as collections_mod, config, copy_state, embeddings, identity
+    from app import collections as collections_mod, config, copy_state, embeddings, identity, \
+        licensing
     from app.bundles import keys as node_keys
     from app.hold import embedder as emb, records as rec
     from app.share import contribute as contrib, coverage as cov, peers
@@ -976,7 +977,13 @@ def cmd_share_contribute(a) -> int:
             if name not in locked:
                 _take_write_lock(a.root, name, "share contribute")
                 locked.add(name)
-            local = rec.local_collection(a.root, name, codex)      # invariant 9: embedding is a use
+            local = rec.local_collection(a.root, name, codex)
+            # invariant 9: embedding is a use, and a bundle is an exchange.
+            # `vectors build` asks; this wrapper of it did not, which left
+            # the gate to quarantine — and quarantine only reports on a node
+            # that does not enforce it (found retiring app/cli.py, whose
+            # `contribute` asked: 2026-10-08)
+            licensing.require_ack(local, use="its text is embedded and shared as bundles")
             copy_state.require_in_use(a.root, name, codex, local, use="contributing vectors for it")
             embed, before_write = _embedding_callables(a.root, name, codex, stop=stop)
             now = __import__("time").time()
@@ -2574,7 +2581,7 @@ def cmd_snapshot_list(a) -> int:
 
 
 # ---- the old `python -m app.cli` commands, given their homes (step 12) -------
-# Carried over from app/cli.py, never imported from it: that module goes.
+# Carried over from app/cli.py, never imported from it; that module is gone.
 
 def cmd_snapshot_delta(a) -> int:
     """`hold snapshot delta <collection> <from> <to>` (07 §7.3): what changed
@@ -2718,11 +2725,23 @@ def _node_collections(name: str | None) -> list:
     return got[0] if isinstance(got, tuple) else got
 
 
+def cmd_records_fetch(a) -> int:
+    """`hold records fetch <collection> [--profile P] [--dry-run]` (07 §7.3):
+    the acquisition spec run for a profile — the file's, unless one is
+    named (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
+    from app import db
+    from app.hold import records_fetch
+    collection = _node_collections(a.collection)[0]
+    profile = a.profile or collection.profile or "demo"
+    with _closing(db.connect(collection)) as con:
+        return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+
+
 def cmd_node_health(a) -> int:
     """`node health [<collection>] [--errors]`: every stage's state, and
     exit 1 when a stage has work it cannot start — a CHECK, not only a page
     (app/health.py). A stage with nothing to do exits 0 whether or not it is
-    switched off: "off and finished" is not a problem. Was `app.cli health`."""
+    switched off: "off and finished" is not a problem. Was `health`."""
     from app import health
     reports, blocking = health.check(_node_collections(a.collection), errors=a.errors)
     print(health.render(reports), end="")
@@ -3017,6 +3036,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
+    p = rverbs.add_parser("fetch", help="run the acquisition spec for a profile (06 §6.2): "
+                                        "the origin's files, on the node's budget")
+    p.add_argument("collection")
+    p.add_argument("--profile", default=None,
+                   help="a profile the acquisition spec declares (default: the "
+                        "collection file's)")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="print the plan — files, bytes, the licence state — and fetch nothing")
+    p.set_defaults(fn=cmd_records_fetch)
 
     p = rverbs.add_parser("validation", help="write validation.json from the Codex")
     root_arg(p); p.add_argument("collection")
@@ -3424,77 +3452,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_ask_traverse)
     p = akverbs.add_parser("serve", help="the three tools of 05 §5.4 over MCP, on stdio")
     p.set_defaults(fn=cmd_ask_serve)
-
-    add_deprecated(surfaces, {
-        "records_build": args_records_build,
-        "snapshot_create": args_snapshot_create,
-        "collection": args_collection,
-        "show": args_show,
-    })
     return top
-
-
-# --------------------------------------------------------------------------
-# 07 Â§7.6's aliases
-
-def deprecated(fn, old: str, new: str):
-    """Wrap a command so the old name prints what to use instead.
-
-    07 Â§7.6: "Old names are accepted for one release as hidden aliases â
-    `louise <old â¦>` and `python -m app.cli <old â¦>` both â each dispatching
-    to the new function and printing `deprecated: use louise <new â¦>` on
-    stderr."
-
-    ONE function, two names. The alias calls the SAME `fn` and its parser is
-    built from the SAME argument definition, so the two cannot drift â which
-    is the whole point of an alias over a second implementation.
-    """
-    def run(a):
-        print(f"deprecated: use louise {new}", file=sys.stderr)
-        return fn(a)
-    return run
-
-
-def add_deprecated(top, args_of) -> None:
-    """The previous command tree, hidden, for the names whose new command
-    EXISTS on this branch (07 Â§7.6's table).
-
-    The rest arrive with the steps that build them: `corpus add`/`grow` need
-    `hold records fetch`, `pack verify` needs `hold check`, `pack cat`/`dump`
-    need `hold records show`, `corpus add --ack-terms` needs `hold collection
-    ack` (`pack adopt`, which needed `dev adopt`, is boxed in attic/). Each
-    is owed by its own step;
-    none is quietly forgotten here.
-
-    "Hidden" means NO `help=` at all. `argparse.SUPPRESS` does not work on a
-    subparser — argparse prints the literal string `==SUPPRESS==` in the
-    command list, which is worse than showing the name. A subparser with no
-    `help` is simply not listed, while still parsing.
-    """
-    pack = top.add_parser("pack")
-    pv = pack.add_subparsers(dest="verb", required=True)
-    p = pv.add_parser("build")
-    args_of["records_build"](p)
-    p.set_defaults(fn=deprecated(cmd_records_build, "pack build",
-                                 "hold records build"))
-
-    corpus = top.add_parser("corpus")
-    cv = corpus.add_subparsers(dest="verb", required=True)
-    p = cv.add_parser("status")
-    args_of["show"](p)
-    p.set_defaults(fn=deprecated(cmd_show, "corpus status",
-                                 "hold collection show"))
-
-    snap = top.add_parser("snapshot")
-    sv = snap.add_subparsers(dest="verb", required=True)
-    p = sv.add_parser("record")
-    args_of["snapshot_create"](p)
-    p.set_defaults(fn=deprecated(cmd_snapshot_create, "snapshot record",
-                                 "hold snapshot create"))
-    p = sv.add_parser("list")
-    args_of["collection"](p)
-    p.set_defaults(fn=deprecated(cmd_snapshot_list, "snapshot list",
-                                 "hold snapshot list"))
 
 
 def main(argv=None) -> int:

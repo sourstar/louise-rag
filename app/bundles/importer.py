@@ -188,7 +188,7 @@ def inbox_dir(collection) -> Path:
     """Where bundles wait to be imported. Per collection, beside its manifest.
 
     P1.3's coordinator will deliver here; for now an operator drops a bundle
-    directory in by hand or with `python -m app.cli bundle import`.
+    directory in by hand.
     """
     return collection.manifest_path.parent / "bundles" / "inbox"
 

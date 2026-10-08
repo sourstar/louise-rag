@@ -13,7 +13,7 @@ translating to/from the manifest's internal `uid` inside each handler.
 
 P0.6 adds server-rendered Ask/Library/Network/System pages (app/web.py,
 mounted below) over the same manifest tables and, for Library's grow
-action, the same app/acquire/engine.py functions app/cli.py calls. Mutating
+action, the same app/acquire/engine.py functions `louise hold records fetch` calls. Mutating
 endpoints here (control/scope/discover/reset/reindex/POST-summary) are
 gated by app.auth.require_admin (a single ADMIN_TOKEN, header or cookie);
 read/query endpoints (status/stats/events/books/search/chat) stay open —

@@ -269,3 +269,11 @@ def test_uid_order_is_lexicographic_not_numeric(isolated_config, tmp_path):
     uids = [e.uid for e in snapshots.read_manifest(out)]
     assert uids == ["w:1", "w:10", "w:11", "w:2", "w:9"]
     assert uids == sorted(uids), "SQL order and the verifier must agree"
+
+
+def test_the_apply_order_is_documented_where_it_bites():
+    """Applying the planes in the wrong order fails as "these vectors were
+    computed from a different revision of the text", which reads like the
+    producer's fault rather than a sequencing mistake. (Moved from
+    tests/test_snapshot_cli.py, whose commands were retired with app/cli.py.)"""
+    assert snapshots.APPLY_ORDER == ("corpus delta", "vector delta")

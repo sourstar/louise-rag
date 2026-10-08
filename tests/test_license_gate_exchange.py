@@ -1,15 +1,15 @@
-"""Invariant 9 — "not imported, not exchanged" — on three paths that never
+"""Invariant 9 — "not imported, not exchanged" — on a path that never
 asked the gate.
 
 Found by the verification pass of the `louise health` review, 2026-09-13:
-a bundle landed in an unacknowledged collection's manifest; `louise
-contribute` embedded its corpus and uploaded the vectors; `bundle resweep`
-re-embedded its text. Each test has a control that proves the same call is
-otherwise made, so the refusal is the gate's and not an ineligible input.
+a bundle landed in an unacknowledged collection's manifest. The other two
+doors that pass found open — `contribute` and `bundle resweep` — were
+retired with app/cli.py (2026-10-08); their successors, `share contribute`
+and `hold vectors check`, are tested in tests/hold/test_license_gate_hold.py.
+The test has a control that proves the same call is otherwise made, so
+the refusal is the gate's and not an ineligible input.
 """
-import argparse
-
-from app import cli, collections as collections_mod, licensing
+from app import collections as collections_mod, licensing
 
 
 def _withheld(monkeypatch):
@@ -19,51 +19,6 @@ def _withheld(monkeypatch):
 
 def _free(monkeypatch):
     monkeypatch.setattr(licensing, "state_for", lambda c: licensing.NOT_REQUIRED)
-
-
-def test_contribute_refuses_an_unacknowledged_collection(isolated_config, monkeypatch,
-                                                         capsys):
-    from app import contribute
-    called = []
-    monkeypatch.setattr(contribute, "run_round",
-                        lambda *a, **k: called.append("round") or {"ok": True})
-    monkeypatch.setattr(contribute, "report_demand",
-                        lambda *a, **k: called.append("demand") or {})
-    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
-    name = collections_mod.load_all()[0].name
-
-    def run(demand):
-        return cli.cmd_contribute(argparse.Namespace(
-            collection=name, coordinator="http://coordinator", count=1,
-            report_demand=demand))
-
-    _withheld(monkeypatch)
-    assert run(False) == 1 and run(True) == 1
-    assert called == [], "nothing embedded, nothing reported"
-    assert "REFUSED" in capsys.readouterr().err
-
-    _free(monkeypatch)
-    run(False)
-    run(True)
-    assert called == ["round", "demand"], "control: the gate is what refused"
-
-
-def test_resweep_refuses_an_unacknowledged_collection(isolated_config, monkeypatch, capsys):
-    from app.bundles import verify_on_use
-    called = []
-    monkeypatch.setattr(verify_on_use, "resweep", lambda *a, **k: called.append(1) or
-                        {"swept": 0, "promoted": 0, "failed": []})
-    name = collections_mod.load_all()[0].name
-    args = argparse.Namespace(collection=name)
-
-    _withheld(monkeypatch)
-    assert cli.cmd_bundle_resweep(args) == 1
-    assert called == []
-    assert "REFUSED" in capsys.readouterr().err
-
-    _free(monkeypatch)
-    assert cli.cmd_bundle_resweep(args) == 0
-    assert called == [1], "control: the gate is what refused"
 
 
 def test_a_bundle_in_the_inbox_waits_for_the_acknowledgement(isolated_config, monkeypatch):
@@ -88,35 +43,3 @@ def test_a_bundle_in_the_inbox_waits_for_the_acknowledgement(isolated_config, mo
     _free(monkeypatch)
     assert worker._drain_bundle_inbox(con, c) == 1
     assert imported == ["b1"], "control: the gate is what held it"
-
-
-def test_the_cli_bundle_doors_refuse_an_unacknowledged_collection(isolated_config,
-                                                                   monkeypatch, capsys):
-    """`bundle import` wrote vectors the worker's gated inbox would have
-    held; `bundle export` shipped them as a signed, shareable bundle."""
-    from app.bundles import export as bundle_export, importer as bundle_importer
-    called = []
-    monkeypatch.setattr(bundle_importer, "import_bundle",
-                        lambda *a, **k: called.append("import") or {"ok": True})
-    monkeypatch.setattr(bundle_export, "export_bundle",
-                        lambda *a, **k: called.append("export") or {})
-    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
-    name = collections_mod.load_all()[0].name
-    imp = argparse.Namespace(collection=name, path="/nowhere", no_first_use=False)
-    exp = argparse.Namespace(collection=name, uids=["g:1"], limit=1, dest="/nowhere")
-
-    _withheld(monkeypatch)
-    assert cli.cmd_bundle_import(imp) == 1
-    assert cli.cmd_bundle_export(exp) == 1
-    assert called == []
-    assert capsys.readouterr().err.count("REFUSED") == 2
-
-    _free(monkeypatch)
-    cli.cmd_bundle_import(imp)
-    try:
-        cli.cmd_bundle_export(exp)
-    except Exception:       # noqa: BLE001 — the fake's empty result; the call is what counts
-        pass
-    assert called == ["import", "export"], "control: the gate is what refused"
-
-

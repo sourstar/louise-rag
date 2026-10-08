@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import collections as collections_mod, db, licensing
+from app import collections as collections_mod, db
 from app.acquire import engine, seeding, torrent_collection, torrent_publish
 from app.acquire import transport_torrent as tt
 from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec, Endpoint, Filter,
@@ -168,69 +168,3 @@ def test_seeding_rows_carry_kind_slice_and_collection_magnet(isolated_config, tm
     assert rows["aaa"]["kind"] == "member" and rows["aaa"]["slice"] == "tr"
     assert rows["ccc"]["kind"] == "collection" and rows["ccc"]["members"] == ["aaa"]
     assert rows["ccc"]["magnet"] == "magnet:?xt=urn:btih:ccc" and rows["ccc"]["peer_hint"] == "h:1"
-
-
-def test_collection_only_rebuilds_the_index_from_recorded_members_without_hashing(
-        isolated_config, tmp_path, monkeypatch, capsys):
-    """The NAS case: eleven members already hashed and recorded; the index
-    is (re)built from the records alone and recorded as kind=collection."""
-    from app import cli
-    corpus, members = _publish_members(tmp_path)
-    c = replace(collections_mod.default_collection(), corpus_dir=corpus,
-                manifest_path=tmp_path / "m" / "manifest.db")
-    c.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    con = db.connect(c)
-    for m in members:
-        seeding.record_published(con, {**m, "peer_hint": "127.0.0.1:6881"})
-    monkeypatch.setattr(cli, "_collection_by_name", lambda name: c)
-    hashed = []
-    real = torrent_publish.publish_corpus
-
-    def counting(root, out, **kw):
-        hashed.append(Path(out).name)
-        return real(root, out, **kw)
-    monkeypatch.setattr(torrent_publish, "publish_corpus", counting)
-    assert cli.main(["torrent", "publish", c.name, "--collection-only"]) == 0
-    assert hashed == [f"{c.name}.collection.torrent"], "only the index was hashed"
-    out = capsys.readouterr().out
-    assert "TORRENT COLLECTION" in out and "x.pe=127.0.0.1:6881" in out, "the recorded hint rides the magnet"
-    entries = seeding.read_published(con)
-    index_entry = next(e for e in entries if e.get("kind") == "collection")
-    assert sorted(index_entry["members"]) == sorted(m["info_hash"] for m in members)
-    index = json.loads((c.manifest_path.parent / "collection" / torrent_collection.INDEX_FILE).read_text())
-    assert [m["slice"] for m in index["members"]] == ["tr", "it", "en"] and index["peer_hint"] == "127.0.0.1:6881"
-
-
-def test_collection_only_understands_records_written_before_the_kind_field(
-        isolated_config, tmp_path, monkeypatch):
-    """The NAS published its eleven members a day before `kind` existed:
-    a record named <collection>-<slice> IS a member, its slice is the
-    suffix, its patterns come from the spec."""
-    from app import cli
-    from app.acquire import specs as specs_mod
-    corpus, members = _publish_members(tmp_path)
-    c = replace(collections_mod.default_collection(), name="wikivec", plugin="embedded",
-                corpus_dir=corpus, manifest_path=tmp_path / "m2" / "manifest.db")
-    # `embedded` is yellow: publishing a corpus to peers is an EXCHANGE, and
-    # invariant 9 gates that too — the outbound path had no gate at all.
-    c = replace(c, license_ack=licensing.make_ack(c))
-    c.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    con = db.connect(c)
-    for m in members:
-        legacy = {k: v for k, v in m.items() if k not in ("kind", "slice", "include")}
-        seeding.record_published(con, legacy)
-    monkeypatch.setattr(cli, "_collection_by_name", lambda name: c)
-    monkeypatch.setitem(specs_mod.ACQUIRE_REGISTRY, "embedded",
-                        replace(specs_mod.ACQUIRE_REGISTRY["embedded"], profiles=_spec().profiles))
-    monkeypatch.setattr(cli, "ACQUIRE_REGISTRY", specs_mod.ACQUIRE_REGISTRY)
-    assert cli.main(["torrent", "publish", "wikivec", "--collection-only",
-                     "--peer-hint", "10.0.0.9:6881"]) == 0
-    index = json.loads((c.manifest_path.parent / "collection" / torrent_collection.INDEX_FILE).read_text())
-    assert {m["slice"]: m["include"] for m in index["members"]} == \
-        {"tr": ["data/tr/*"], "it": ["data/it/*"], "en": ["data/en/*"]}
-    assert index["peer_hint"] == "10.0.0.9:6881"
-    # the legacy records were upgraded in place: the seeding table can now
-    # label the members by slice
-    upgraded = {e["name"]: e for e in seeding.read_published(con) if e.get("kind") == "member"}
-    assert {e["slice"] for e in upgraded.values()} == {"tr", "it", "en"}
-    assert all(e["peer_hint"] == "10.0.0.9:6881" for e in upgraded.values())

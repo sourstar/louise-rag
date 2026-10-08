@@ -8,7 +8,7 @@ and syncing short-circuits unless a source's ref_version changed (bump it
 to force reprocessing).
 
 Usage:
-  python -m tools.sync_refs --src /path/to/refs-dir [--db /data/refs.db]
+  python -m app.louise dev refs-sync --src /path/to/refs-dir [--db /data/refs.db]
                              [--fetch] [--force]
 """
 import argparse

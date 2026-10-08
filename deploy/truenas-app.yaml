@@ -13,7 +13,7 @@
 # this app — it stays pristine as the offline fallback, together with the
 # stopped gutenberg-rag app. Every step below operates on the copy only.
 #
-# BEFORE FIRST START — three one-time steps, in order (NAS shell):
+# BEFORE FIRST START — two one-time steps, in order (NAS shell):
 #
 #   1. Build the image (from a checkout of this repo on the NAS):
 #        docker build -t louise-rag:local .
@@ -21,25 +21,16 @@
 #   2. Create the node key and its public half (see NODE KEY below):
 #        S=/mnt/ssd4/apps/louise-rag/secrets
 #        mkdir -p -m 700 $S/private; mkdir -p -m 755 $S/public
-#        docker run --rm -v $S:/secrets louise-rag:local python -m app.cli \
-#          bundle keygen /secrets/private/node.key --public /secrets/public/node.pub
+#        docker run --rm -v $S:/secrets \
+#          -e NODE_KEY_PATH=/secrets/private/node.key \
+#          -e NODE_PUBLIC_KEY_PATH=/secrets/public/node.pub \
+#          louise-rag:local python -m app.louise hold key create
 #        chmod 400 $S/private/node.key
 #
-#   3. Migrate the copied manifest (books -> documents; idempotent, verified
-#      against a copy of this exact manifest on 2026-08-16 — keeps all 79k
-#      discovery/FTS rows and makes a backup first), then reset the 714
-#      corrupted books so the worker re-embeds them (verified boundary
-#      2026-07-21 12:56 UTC — exactly 714 books; delete-then-insert makes
-#      the redo safe):
-#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data \
-#          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db --dry-run
-#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data \
-#          louise-rag:local python -m tools.migrate_manifest --db /data/manifest.db
-#        docker run --rm -v /mnt/ssd4/apps/louise-rag/data:/data louise-rag:local \
-#          python -c "import sqlite3; c=sqlite3.connect('/data/manifest.db'); \
-#          print(c.execute(\"UPDATE documents SET embed_done=0 WHERE embed_done=1 \
-#          AND updated_at <= strftime('%s','2026-07-21 12:56:00')\").rowcount); \
-#          c.commit()"
+#   (A third step, migrating the manifest copied in 2026-08 and resetting
+#   its 714 corrupted books, ran once on 2026-08-17; the pre-Codex manifest
+#   it migrated is gone, and `louise dev migrate schema` applies any schema
+#   change a state database still lacks.)
 #
 # VECTOR FORENSICS (verified live against the production NAS, 2026-08-16/17).
 # The stored v2 vectors are CORRECT for 9,847 of the 10,561 embedded books:
@@ -47,7 +38,7 @@
 # cos >= 0.9999. The first 714 books (embedded 2026-07-20 20:12 ->
 # 2026-07-21 12:53 UTC, before a 12:58 restart) are degenerate — an entire
 # book collapses into one cone (pairwise cos ~0.97) — and must be redone
-# (step 3's reset). Root cause, reproduced on demand: llama-server corrupts long
+# (reset once, 2026-08-17). Root cause, reproduced on demand: llama-server corrupts long
 # sequences when a single /v1/embeddings request carries MULTIPLE texts
 # (batch of 8 -> cos 0.32 vs the same text alone; deterministic per batch
 # shape), and its prompt cache can then replay the corrupted result even for
@@ -92,17 +83,18 @@
 # config/). MOVE it, never regenerate it: a new key is a new identity —
 # peers stop recognising this node's bundles and packs, and every validation
 # it signed is ignored, so every encoder is gated again. In this order:
-#   1. build the image (step 1 above: `bundle public-key` is new), stop the app;
+#   1. build the image (step 1 above), stop the app;
 #   2. S=/mnt/ssd4/apps/louise-rag/secrets
 #      mkdir -p -m 700 $S/private; mkdir -p -m 755 $S/public
 #      mv /mnt/ssd4/apps/louise-rag/config/node.key $S/private/
 #      chown root:root $S/private/node.key; chmod 400 $S/private/node.key
 #      docker run --rm -v $S:/secrets -e NODE_KEY_PATH=/secrets/private/node.key \
-#        louise-rag:local python -m app.cli bundle public-key /secrets/public/node.pub
+#        louise-rag:local python -m app.louise hold key show
+#      and write its `key` value, one line, to $S/public/node.pub (chmod 444);
 #   3. install this YAML (its mounts name secrets/), then start the app.
 # Keep a copy of node.key offline: losing it is the same as regenerating it.
 # Signing from the command line runs in the worker container
-# (`docker exec <worker> python -m app.cli …`): the web holds no key.
+# (`docker exec <worker> python -m app.louise …`): the web holds no key.
 #
 # Set ADMIN_TOKEN before installing: it gates the Library/Network/System
 # pages and the mutating API. Unset = those areas are locked out entirely
@@ -160,7 +152,7 @@ services:
       CHUNK_OVERLAP: '120'
       CHUNK_VERSION: '1'
       FTS_VERSION: '1'
-      EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset in step 3 re-embed
+      EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset on 2026-08-17 re-embedded
       DISCOVER_INTERVAL_MIN: '360'
       # ── platform ──
       ADMIN_TOKEN: 'CHANGE-ME-BEFORE-INSTALL'

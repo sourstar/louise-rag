@@ -1,35 +1,37 @@
-"""`app.cli embed materialize` wrote a collection's env-fallback recipe
-into its TOML. There is no fallback now — a collection names its own
-encoder or is refused (operator, 2026-09-18) — so the command has nothing
-to write, and says so; the writer still round-trips an explicit block.
+"""`hold config apply` — was `embed materialize`, which wrote a collection's
+env-fallback recipe into its TOML. There is no fallback now — a collection
+names its own encoder or is refused (operator, 2026-09-18) — so applying
+the files writes no encoder into one, and names the file the node refuses;
+the writer still round-trips an explicit block.
 """
 import dataclasses
+import json
 
 import pytest
 
-from app import cli, collections as collections_mod
+from app import collections as collections_mod, louise
 from app.web import _write_collection_toml
 from tests.conftest import codex_collection
 
 
-def test_materialize_has_nothing_to_write_for_a_file_that_names_its_encoder(
+def test_apply_leaves_a_file_that_names_its_encoder_as_it_is(
         isolated_config, config_dir, capsys):
     path = config_dir / "collections" / "gutenberg.toml"
     path.write_text(path.read_text(encoding="utf-8")
                     + '[encoder]\nurl = "http://e:1"\napi = "openai"\n', encoding="utf-8")
     before = path.read_text(encoding="utf-8")
-    assert cli.main(["embed", "materialize", "gutenberg"]) == 0
-    assert "nothing to do" in capsys.readouterr().out
+    assert louise.main(["hold", "config", "apply", "gutenberg"]) == 0
+    assert json.loads(capsys.readouterr().out)["applied"][0]["name"] == "gutenberg"
     assert path.read_text(encoding="utf-8") == before
 
 
 @pytest.mark.strict_encoder
-def test_a_file_that_names_no_encoder_is_not_given_one(isolated_config, config_dir):
+def test_a_file_that_names_no_encoder_is_not_given_one(isolated_config, config_dir, capsys):
     """The collection is refused at load, and no default is invented for it."""
     path = config_dir / "collections" / "gutenberg.toml"
     assert "[encoder]" not in path.read_text(encoding="utf-8")
-    with pytest.raises(SystemExit):
-        cli.main(["embed", "materialize", "gutenberg"])
+    assert louise.main(["hold", "config", "apply", "gutenberg"]) != 0
+    capsys.readouterr()
     assert "[encoder]" not in path.read_text(encoding="utf-8")
 
 

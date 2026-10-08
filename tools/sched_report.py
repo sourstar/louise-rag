@@ -4,16 +4,16 @@ Everything here is READ-ONLY and safe on a live node. It exists because
 six reworks of the scheduler were made by inspection instead of by
 measurement, and each one missed what the next had to fix:
 
-    python -m tools.sched_report --queries              plan + timing, hot queries
-    python -m tools.sched_report --phases wikivec       where an archive pass goes
-    python -m tools.sched_report --rates --seconds 120  documents/s per stage
-    python -m tools.sched_report --pool                 parse pool health
-    python -m tools.sched_report --shares               fair-share accounting
-    python -m tools.sched_report --all                  all of the above
+    python -m app.louise dev schedule-report --queries              plan + timing, hot queries
+    python -m app.louise dev schedule-report --phases wikivec       where an archive pass goes
+    python -m app.louise dev schedule-report --rates --seconds 120  documents/s per stage
+    python -m app.louise dev schedule-report --pool                 parse pool health
+    python -m app.louise dev schedule-report --shares               fair-share accounting
+    python -m app.louise dev schedule-report --all                  all of the above
 
 Run it INSIDE the worker container (it needs the manifests and the app):
 
-    docker exec ix-louise-rag-worker-1 python -m tools.sched_report --all
+    docker exec ix-louise-rag-worker-1 python -m app.louise dev schedule-report --all
 """
 import argparse
 import sys

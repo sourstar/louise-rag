@@ -1,6 +1,6 @@
 """Advisory single-writer claim for acquisition.
 
-`python -m app.cli corpus add` and the background worker can both call
+`louise hold records fetch` and the background worker can both call
 run_acquisition on the same collection with nothing preventing overlap. Two
 processes would then race on the same `.part` files and on os.replace, and
 both would burn origin bandwidth fetching identical bytes — the opposite of

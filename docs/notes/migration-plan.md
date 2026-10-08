@@ -1614,6 +1614,26 @@ fixtures is the bulk of the work, then `backend_gate` (the worker calls
 `codex is None` branches in app/. Decisions 1–3 of the same day are
 made (08a4c23).
 
+**Operator, 2026-10-08: retire the old names — DONE the same day.** The
+homes came first (cf54afa); then `app/cli.py` was deleted and the four
+`louise <old …>` aliases with it (07 §7.6 says retired). Nothing in app/
+or tools/ imported a helper from it. The one useful command still
+without a home, `corpus add|grow`, became `hold records fetch
+[--profile P] [--dry-run]` (`app/hold/records_fetch.py`, the old code
+wrapped); its licence refusal is now exit 2. Found on the way:
+`share contribute` asked no licence gate of its own (the old
+`contribute` did) — it now calls `licensing.require_ack` as `vectors
+build` does, with a test. The tests that drove app/cli.py were pointed
+at their successors (licence gates and stop signals kept) or deleted
+with the commands they covered. README, /help, the deploy YAMLs and
+every message naming `python -m app.cli` now name `louise`; the tools'
+own usage lines name `louise dev`. **What remains:** `backend_gate`
+stays for Codex v1/v2 (a changed backend is accepted by removing its
+baseline file, `rebaseline` having gone); the per-collection
+`providers` ledger of the legacy bundle inbox has no command since
+`bundle trust` went; `app/snapshots.py` and `bundles/verify_on_use.resweep`
+are now used by tests only; deleting this file is the operator's.
+
 ### Step 13 — The engine in the Codex, the run in the answer, RAGE
 *02 §2.4, 03 §3.3, 07 §7.8, 09 §9.3, 09 §9.12 (0d85f7f, dd9bef4,
 8bbc66a). The design is [`rage.md`](rage.md); the review that shaped it

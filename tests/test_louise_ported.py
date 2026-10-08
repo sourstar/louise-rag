@@ -31,6 +31,13 @@ def test_no_new_command_reaches_into_app_cli():
                 assert "app.cli" not in [a.name for a in node.names], f"{mod.__name__} imports app.cli"
 
 
+def test_the_old_tree_is_gone():
+    """07 §7.6: retired 2026-10-08. Nothing in app/ or tools/ may bring it
+    back by importing it."""
+    import importlib.util
+    assert importlib.util.find_spec("app.cli") is None
+
+
 # ---- node health ------------------------------------------------------------
 
 def test_node_health_is_a_check_exit_1_when_blocked(isolated_config, monkeypatch, capsys):

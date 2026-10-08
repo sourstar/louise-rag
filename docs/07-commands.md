@@ -246,7 +246,11 @@ reader needs at the command line:
   named slices — by default the slices of the collection's file (§7.8),
   `all` for everything — drawing from the peer's one budget (04 §4.3).
   A slice fetched once is recorded in the file so the monthly cycle
-  continues it.
+  continues it. *As built (2026-10-08, step 12):* the old `corpus
+  add|grow`, wrapped — `--profile P` (default: the file's `profile`) and
+  `--dry-run`; `--slice` and recording what was fetched in the file are
+  not built yet. A missing acknowledgement is exit 2, naming `hold
+  collection ack`.
 - **`records build`.** Refuses (exit 2) a record without `origin_hash`
   (02 §2.3), refuses one whose `native_id` sorts before the open shard's
   `first_id` (02 §2.2), and writes a tombstone for a document the origin
@@ -678,14 +682,14 @@ never waits on the encoder.
 ## 7.6 Migration from the previous names
 
 The previous command tree was organised by internal artefact. The
-command is `louise`; `python -m app.louise` is the same parser. Old
-names are accepted for one release as hidden aliases — `louise <old …>`
-and `python -m app.cli <old …>` both — each dispatching to the new
-function and printing `deprecated: use louise <new …>` on stderr.
+command is `louise`; `python -m app.louise` is the same parser. The old
+names lived one release as hidden aliases and are **retired
+(2026-10-08)**: `python -m app.cli` is gone and `louise <old …>` is an
+unknown command. The table says where each went.
 
 | previous | now |
 |---|---|
-| `corpus add` / `grow` (`--profile P`) | `hold records fetch --slice P` — both fetched; neither created |
+| `corpus add` / `grow` (`--profile P`) | `hold records fetch --profile P` — both fetched; neither created |
 | `corpus add --ack-terms FILE` | `hold collection ack` |
 | the web interface's *new collection* | `hold collection create --recipe FILE` |
 | `corpus status` | `hold collection show` |
@@ -696,7 +700,7 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
-| `backend check` / `rebaseline` | `hold embedder check`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant` |
+| `backend check` / `rebaseline` | `hold embedder check`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant`. A Codex below version 3 keeps the probe baseline (`app/verify/backend_gate.py`); its changed backend is accepted by removing the baseline file, which the next check records afresh (*2026-10-08*) |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
@@ -876,8 +880,8 @@ signs nothing — the web process, which is given it INSTEAD of
 replaces it decides which signatures count as this peer's — so it is kept
 beside the key, read-only, never under `state/` or the files; one writable
 by group or others is refused, and a process given both refuses to start
-when they disagree. `louise`'s `bundle keygen --public` writes it with the
-key, and `bundle public-key` for a key that has none.
+when they disagree. `hold key create` writes it with the key when
+`NODE_PUBLIC_KEY_PATH` is set; for a key that has none, `hold key show` prints the line to put there.
 `NODE_KEY_PATH` unset means this peer cannot sign — no bundles, no
 attestations, no `share` of its own work; import, check and search work
 without it. `ADMIN_TOKEN_FILE` unset means the `hold` and `node` routes

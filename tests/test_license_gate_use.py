@@ -127,15 +127,3 @@ def test_seeding_withholds_an_unacknowledged_collection(tmp_path, monkeypatch):
 
     assert retained == [{"ok"}], "the withheld collection must not be retained"
     assert started == ["ok"], "and must never be started"
-
-
-def test_the_cli_refuses_to_publish_or_seed_without_an_ack(tmp_path, capsys):
-    """`torrent publish` and `torrent seed` run without the worker, so
-    gating seeding.tick alone left them open."""
-    from app import cli
-    withheld = _yellow(tmp_path, "pm", acked=False)
-    assert cli._refuse_unacknowledged(withheld, "a corpus is published") is True
-    assert "REFUSED" in capsys.readouterr().err
-
-    ok = _yellow(tmp_path, "ok", acked=True)
-    assert cli._refuse_unacknowledged(ok, "a corpus is published") is False

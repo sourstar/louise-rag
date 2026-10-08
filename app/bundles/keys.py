@@ -87,8 +87,8 @@ def load_signing_key(path: Path | None = None) -> signing.SigningKey:
     if key_path is None:
         raise NodeKeyError(
             "NODE_KEY_PATH is not set — this node cannot export bundles "
-            "(importing needs only public keys). Generate one with "
-            "`python -m app.cli bundle keygen <path>`")
+            "(importing needs only public keys). Set it to a path and run "
+            "`louise hold key create`")
     key_path = Path(key_path)
     if not key_path.is_file():
         raise NodeKeyError(f"no node key at {key_path}")

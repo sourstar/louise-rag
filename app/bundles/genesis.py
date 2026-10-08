@@ -1159,7 +1159,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     # indexed and imported ack-free"), and USE is what it gates, not
     # transport. So the check belongs here too, at the chokepoint every
     # path reaches: `import_archive` walks through this function and
-    # `app/cli.py` is the only caller of either.
+    # `louise hold vectors import --archive` is the only caller of either.
     licensing.require_ack(collection, use="an archive's vectors are imported")
 
     existing = con.execute(

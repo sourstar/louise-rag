@@ -9,8 +9,8 @@ conversion script for gutenberg, pubmed, wikipedia (and the pre-embedded
 It discovers the corpus into a build-local manifest (`<out>/.build/`), so
 the plugin's own dedup/tombstone logic applies (a revised PubMed record,
 a DeleteCitation), then runs `pack build`. Resumable: re-run to continue.
-An existing collection can be packed instead with
-`python -m app.cli pack build <collection> --out DIR`.
+A held collection is built into its drag instead with
+`louise hold records build <collection>`.
 
 Only the useful data is packed: parsed text and metadata. Nothing else
 from the corpus (epubs, XML markup, dump indexes) enters the pack.

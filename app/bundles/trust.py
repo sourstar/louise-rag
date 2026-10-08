@@ -80,7 +80,9 @@ def check_admission(con, pubkey: str, *, allow_first_use: bool = True) -> str:
         raise BundleUntrusted(
             f"producer {pubkey[:16]}… is quarantined "
             f"({provider['quarantine_reason'] or 'no reason recorded'}). "
-            f"Clear it deliberately with `bundle trust {pubkey}` if that was wrong.")
+            f"Clear it deliberately in this collection's `providers` table if that "
+            f"was wrong (`bundle trust` was retired on 2026-10-08; the peer-wide "
+            f"list, `louise hold key trust`, governs what arrives by `share`).")
     if provider and provider["trusted"]:
         return "trusted"
 
@@ -88,12 +90,14 @@ def check_admission(con, pubkey: str, *, allow_first_use: bool = True) -> str:
     if existing:
         raise BundleUntrusted(
             f"producer {pubkey[:16]}… is not trusted by this node, which already "
-            f"trusts {len(existing)} other key(s). Run "
-            f"`python -m app.cli bundle trust {pubkey}` to accept it.")
+            f"trusts {len(existing)} other key(s). To accept it, mark it trusted "
+            f"in this collection's `providers` table (`bundle trust` was retired "
+            f"on 2026-10-08).")
     if not allow_first_use:
         raise BundleUntrusted(
             f"producer {pubkey[:16]}… is not trusted and first-use trust is "
-            f"disabled. Run `python -m app.cli bundle trust {pubkey}` to accept it.")
+            f"disabled. To accept it, mark it trusted in this collection's "
+            f"`providers` table (`bundle trust` was retired on 2026-10-08).")
 
     # Trust on first use: nothing is trusted yet, so this key becomes the
     # anchor. Recorded explicitly rather than implied, so the operator can see
