@@ -127,7 +127,8 @@ To write when §6 passes, before the code ships:
 
 ## 9. What was built (2026-10-08, §8 step 2)
 
-Not deployed; nothing on the node. Not wired into `app/embeddings.py` yet.
+Not deployed; nothing on the node. Wired into `app/embeddings.py` on
+2026-10-08 (below, **Louise's path**).
 
 | file | what |
 |---|---|
@@ -180,12 +181,37 @@ refuses the load; `device` read from the child's DRM clients (`vega.json`
 - LocalAI's Go-side pooling (a per-token layout) computes a vector no
   receipt names: the wrapper refuses such an answer.
 
+**Louise's path (2026-10-08).** An encoder opts in with `api = "vega"` in
+its collection's `[encoder]` (it holds for `query_url` too) and `model =
+"vega-…"`; where receipts are read is node identity, `VEGA_URL` (07 §7.8,
+amended). RAGE's `api = "openai"` + `Louise-Run` path is unchanged.
+`embeddings._request_vouched`, under the one entry point, so chunks,
+queries, the gate, probes and calibration all take it: every input tagged
+(a pair as the tagged pair, never `input_pairs`), `encoding_format:
+"base64"`, a JSON body read by `parse_response`, NaN first (handed back
+unverified to the NaN retry), then the batch's receipts read after the
+dispatch gate is left. The receipts' run replaces `Louise-Run` and meets
+the same check before a write or a query (two runs in a batch: each held
+to it); `run_check.stated_run` reads the run's description from
+`<VEGA_URL>/vega/runs/<run_id>`. `ReceiptDeferred` (VeGa away, `VEGA_URL`
+unset, a receipt missing, the wrapper's `VeGa unavailable`) is a
+`ConnectionError`, so the worker defers as for an unreachable encoder and a
+search falls back to its text leg; `ReceiptRefused` (a digest that does
+not match, a malformed receipt or body) is a `RunRefused`: no write, the
+document deferred untouched, the verdict forgotten so the next look pauses
+the embedding with the reason, and a search withholds its vector leg and
+says why. `hold embedder calibrate` takes `api = "vega"`. Tests:
+`tests/vega/test_embedding_path.py`.
+
 **Open.**
 - The package build (stubs from the release's `backend.proto`, LocalAI's
   `grpc_auth.py`/`parent_watch.py`, the `app/` files, the venv) and its
   install beside LocalAI's backends; `metadata.json`'s `digest` as the
   gallery writes it, read on the node (§6).
 - Mounting `service.router` and an `Intake` in the louise-rage app.
-- Wiring the client: verify the raw body before normalising, NaN first.
+- An asymmetric space under `vega`: the query side takes its model from
+  `query_url`'s `/upstream/<model>` (`embeddings._side`), which LocalAI's
+  URL does not carry; naming it needs a key (`query_model`?) — a schema
+  addition, not made.
 - `args` names the program under LocalAI's backends path; relative to the
   backend image's root is the alternative — for the §4 amendment.

@@ -56,6 +56,13 @@ if CHAT_API not in ("ollama", "openai"):
 # gets — which is enough to check every one of them. Every model is still
 # reached by its own URL (`<RAGE_URL>/upstream/<model>`), never through this.
 RAGE_URL = os.getenv("RAGE_URL", "").rstrip("/")
+# VeGa, the Vector Gate (docs/notes/vega.md): where this node READS the
+# receipts of an encoder its collection file declares `api = "vega"` —
+# `GET <VEGA_URL>/vega/receipts`, and `/vega/runs/<run_id>` for what a run
+# stands for. Identity, so tier 1 (invariant 10). Unset, no answer of a
+# `vega` encoder can be vouched for: each one is a deferral and nothing is
+# written or searched through it.
+VEGA_URL = os.getenv("VEGA_URL", "").rstrip("/")
 # The node's translation model (app/translate.py; MADLAD under LocalAI, spoken
 # to in the completion shape):
 # every query translation and every translation on the Ask page. Unset, the

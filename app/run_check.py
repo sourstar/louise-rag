@@ -167,9 +167,14 @@ def answering_run(recipe, *, query: bool = False, probe_item=PROBE) -> str:
 
 def stated_run(recipe, *, query: bool = False, probe_item=PROBE) -> emb.StatedRun:
     """The run that answers now AND what it stands for — the platform's own
-    description, verified against the id (runs.describe)."""
-    return runs_mod.describe(_endpoint(recipe, query),
-                             answering_run(recipe, query=query, probe_item=probe_item),
+    description, verified against the id (runs.describe). An encoder declared
+    `api = "vega"` has its runs described by VeGa, where its receipts are
+    read: `<VEGA_URL>/vega/runs/<run_id>` (docs/notes/vega.md §9)."""
+    run_id = answering_run(recipe, query=query, probe_item=probe_item)
+    if getattr(recipe, "api", None) == embeddings.VEGA:
+        return runs_mod.describe(_endpoint(recipe, query), run_id, get=httpx.get,
+                                 at=f"{config.VEGA_URL}/vega/runs/{run_id}")
+    return runs_mod.describe(_endpoint(recipe, query), run_id,
                              get=httpx.get, fallback=config.RAGE_URL)
 
 
@@ -604,6 +609,16 @@ def check_write(collection, recipe, answered: set) -> None:
     except (runs_mod.RunUnvalidated, runs_mod.RunRefused):
         _verdicts.pop(_where(collection), None)
         raise
+
+
+def forget(collection) -> None:
+    """An answer refused before its run could be checked — VeGa's receipt
+    did not fit it (`embeddings.ReceiptRefused`): the verdict is forgotten as
+    `check_write` forgets one, so the stage's next `embed_allowed` asks the
+    endpoint again, and pauses with the refusal as its reason if it refuses
+    again."""
+    if applies(collection):
+        _verdicts.pop(_where(collection), None)
 
 
 def check_query(collection, recipe, answered: set) -> None:

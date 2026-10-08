@@ -872,7 +872,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
@@ -916,7 +916,10 @@ panel empty and says why, and nothing else changes; `RAGE_URL` — the
 node's model container (03 §3.3) — unset leaves the System page without
 the container's models and their controls, and the node then learns a
 run only from the answers it gets, which is enough to check every one
-of them. Secrets are named
+of them. `VEGA_URL` is where the receipts of an `api = "vega"` encoder
+are read (`/vega/receipts`, `/vega/runs/<run_id>`); unset, every answer of
+such an encoder is a deferral and nothing is written or searched through
+it (amended 2026-10-08, docs/notes/vega.md). Secrets are named
 by path only — the key, the token — never by value in an environment
 variable, a file, a log line or a message.
 
@@ -972,6 +975,9 @@ source = "origin"                              # origin | drag: where the docume
                                                # states the run, device included, with every answer (03 §3.3)
 url = "http://nas:30450/upstream/medcpt-article"
 query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side; absent when symmetric
+api = "openai"                                 # openai (default) · ollama · vega: LocalAI's /v1/embeddings with a `vega-` model
+                                               # and `model = "vega-…"`; every vector, a query's too, taken only with its VeGa
+                                               # receipt, whose run is the answer's (amended 2026-10-08, docs/notes/vega.md)
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint

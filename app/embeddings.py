@@ -24,6 +24,8 @@ import pyarrow as pa
 from . import collections as collections_mod
 from . import config, dispatch, httpc
 from . import layers as layers_mod
+from .hold import runs as hold_runs
+from .vega import client as vclient
 
 TABLE = "chunks"
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
@@ -64,6 +66,37 @@ class InputFormError(ValueError):
     another form are another function (02 §2.4)."""
 
 
+#: `api = "vega"` in a collection's `[encoder]` (docs/notes/vega.md): an
+#: OpenAI-style embeddings endpoint — LocalAI's — whose model is a `vega-`
+#: one, every answer vouched for by receipts read from VEGA_URL. Declared,
+#: never guessed from a model's name.
+VEGA = "vega"
+#: The APIs whose body can say a text pair: `input_pairs` (openai), the
+#: tagged pair (vega).
+PAIR_APIS = ("openai", VEGA)
+#: The bound on one receipts read. VeGa answers from memory.
+RECEIPTS_TIMEOUT_S = 10.0
+
+
+class ReceiptDeferred(vclient.Deferral, ConnectionError):
+    """VeGa cannot vouch for an answer YET: VEGA_URL unset, VeGa unreachable,
+    a receipt missing, or the wrapper saying it could not deliver one. A
+    DEFERRAL, never an error on a document — and a ConnectionError, so every
+    path that reads an unreachable encoder as "not now"
+    (`worker.endpoint_unavailable`, a search falling back to its text leg)
+    reads this one the same way."""
+
+
+class ReceiptRefused(vclient.Refusal, hold_runs.RunRefused):
+    """An answer that is not what a run produced for what was sent — an input
+    or a vector changed on the way, a receipt that does not fit, a body that
+    is not an embeddings list. Nothing from it is written (03 §3.3), and it
+    surfaces as the run check's refusal does: the worker defers the document
+    untouched and its next look at the endpoint pauses the collection's
+    embedding with the reason; a search withholds its vector leg and says
+    why."""
+
+
 def _request_vectors(batch: list[Item], timeout: float,
                      recipe: "collections_mod.EmbedRecipe",
                      runs: set | None = None) -> list[list[float]]:
@@ -74,6 +107,8 @@ def _request_vectors(batch: list[Item], timeout: float,
     # the caller's level, for the model container's clock (09 §9.12): CORPUS
     # from the worker, QUERY from a search — whatever this thread works as
     level = dispatch.level_headers()
+    if recipe.api == VEGA:
+        return _request_vouched(batch, timeout, recipe, runs, g, level)
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
             r = httpc.post(f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
@@ -87,6 +122,68 @@ def _request_vectors(batch: list[Item], timeout: float,
         r.raise_for_status()
         _note_run(r, runs)
         return r.json()["embeddings"]
+
+
+def _request_vouched(batch: list[Item], timeout: float,
+                     recipe: "collections_mod.EmbedRecipe", runs: set | None,
+                     g, level: dict) -> list[list[float]]:
+    """`api = "vega"`: two requests, the embedding and its receipts, and the
+    vectors only if both agree (docs/notes/vega.md §2).
+
+    Every input is TAGGED (app/vega/tag.py): a text in the `text` form, a
+    pair in the `pair` form — never as `input_pairs`, the tag says the form.
+    The vectors are asked as base64, the float32 bytes the backend produced;
+    a body that is not base64 is read by `vclient.parse_response`, never by
+    `response.json()`, which loses `-0` and two float32 values. A vector that
+    is not finite is handed back UNVERIFIED, for `_embed_batch` to ask again
+    (its NaN retry, which never returns one): no digest is asked to carry a
+    NaN. Then the batch's receipts, from VEGA_URL and after the dispatch gate
+    is left (they cost VeGa, not the encoder): every id present, the input
+    digest equal, the vector digest recomputed from the bytes returned equal.
+
+    THE RUN EACH RECEIPT NAMES IS THE ANSWER'S RUN, in place of `Louise-Run`:
+    collected in `runs`, it meets the check before a write (and before a
+    query vector is used) that the header path's runs meet — two runs in one
+    batch are two runs, each held to it."""
+    if not config.VEGA_URL:
+        raise ReceiptDeferred(
+            f"{recipe.url}: the encoder is declared api = \"vega\" and VEGA_URL is "
+            f"unset, so no receipt can be read and nothing is embedded through it "
+            f"(docs/notes/vega.md)")
+    tagged = vclient.tag_batch(batch)
+    body: dict = {"input": list(tagged.inputs), "encoding_format": "base64"}
+    if recipe.model:
+        body["model"] = recipe.model
+    with g.admit(timeout=timeout):
+        r = httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=timeout,
+                       headers=level)
+    if r.status_code >= 500 and vclient.is_deferral(r.status_code, r.text):
+        raise ReceiptDeferred(
+            f"{recipe.url}: VeGa's wrapper could not deliver a receipt (HTTP "
+            f"{r.status_code}); the answer is not taken")
+    r.raise_for_status()
+    try:
+        vectors = vclient.parse_response(r.content)
+        floats = [vclient.as_floats(v) for v in vectors]
+    except vclient.Refusal as e:
+        raise ReceiptRefused(f"{recipe.url}: {e}") from None
+    except ValueError as e:     # bytes that are not whole float32, a value beyond one
+        raise ReceiptRefused(f"{recipe.url}: a vector is not float32: {e}") from None
+    if any(_invalid(v) for v in floats):
+        return floats
+    try:
+        receipts = vclient.fetch_receipts(config.VEGA_URL, tagged.ids,
+                                          timeout=min(timeout, RECEIPTS_TIMEOUT_S),
+                                          get=httpc.get)
+        answered = vclient.verify(tagged, vectors, receipts)
+    except vclient.Deferral as e:
+        raise ReceiptDeferred(f"{recipe.url}: {e}") from None
+    except vclient.Refusal as e:
+        raise ReceiptRefused(f"{recipe.url}: {e}") from None
+    if runs is not None:
+        runs.update(answered)
+    return floats
+
 
 def _invalid(v) -> bool:
     return not v or any(x is None or not math.isfinite(x) for x in v)
@@ -434,8 +531,8 @@ def embed_chunks(collection, chunks: list[ChunkLike], *,
                  raw: bool = False) -> list[list[float]]:
     """THE way a chunk reaches the encoder: its input built from its layer's
     form (09 §9.3, docs/notes/input-forms.md) — the text for a `text` layer,
-    `(first, second)` sent as `input_pairs` for a `pair` one. One vector per
-    chunk, in order.
+    `(first, second)` sent as `input_pairs` for a `pair` one (as the tagged
+    pair on a `vega` endpoint). One vector per chunk, in order.
 
     `collection` is anything `layers.layers_for` reads: a live collection or
     a Codex. `recipe` is its encoder, `collections.recipe_for(collection)`
@@ -443,8 +540,8 @@ def embed_chunks(collection, chunks: list[ChunkLike], *,
     test, a recipe built from a Codex). `runs` collects the run each answer
     named (03 §3.3); `raw` returns vectors as the endpoint sent them.
 
-    A pair layer on an endpoint whose api is not `openai` is refused: no
-    other body this client speaks can say a pair."""
+    A pair layer on an endpoint whose api is neither `openai` nor `vega` is
+    refused: no other body this client speaks can say a pair."""
     if not chunks:
         return []
     if collection is None:                 # the node's default, as `_conn` reads it
@@ -453,7 +550,7 @@ def embed_chunks(collection, chunks: list[ChunkLike], *,
         recipe = collections_mod.recipe_for(collection)
     items = _inputs(collection, list(chunks))
     pairs_at = [i for i, x in enumerate(items) if not isinstance(x, str)]
-    if pairs_at and recipe.api != "openai":
+    if pairs_at and recipe.api not in PAIR_APIS:
         raise InputFormError(
             f"{getattr(collection, 'name', 'the collection')}: a pair layer is fed "
             f"as `input_pairs` in the OpenAI-style body, and this encoder's api is "
@@ -857,7 +954,13 @@ def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
     if fresh and _by_run(collection):
         from . import run_check                  # it imports this module
         seen: set = set()
-        vectors = embed_chunks(collection, fresh, recipe=recipe, runs=seen)
+        try:
+            vectors = embed_chunks(collection, fresh, recipe=recipe, runs=seen)
+        except ReceiptRefused:
+            # refused before its run could be checked (VeGa): forgotten as
+            # `check_write` forgets a refusal, so the endpoint is asked again
+            run_check.forget(collection)
+            raise
         run_check.check_write(collection, recipe, seen)
     else:
         vectors = embed_chunks(collection, fresh, recipe=recipe) if fresh else []

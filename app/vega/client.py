@@ -28,7 +28,8 @@ embedding client retries (`embeddings._numeric_failure`); it is never
 verified, since a NaN's payload is not something a digest should be asked to
 carry across two languages.
 
-Not wired into app/embeddings.py yet (docs/notes/vega.md §8).
+Wired into app/embeddings.py for an encoder declared `api = "vega"`
+(`_request_vouched`), which reads receipts from `VEGA_URL`.
 """
 from __future__ import annotations
 
@@ -115,6 +116,11 @@ def as_floats(vector: list[float] | bytes) -> list[float]:
     return list(struct.unpack(f"<{len(raw) // 4}f", raw))
 
 
+#: Most ids one read asks for: the receipts service's own bound
+#: (`service.MAX_IDS`, held equal by a test). A longer batch is read in parts.
+READ_IDS = 1024
+
+
 def fetch_receipts(base_url: str, ids: Sequence[str], *, timeout: float = 10.0,
                    get: Callable[..., Any] | None = None) -> dict[str, dict[str, str]]:
     """The receipts VeGa holds for these ids, by id. Unreachable, or an
@@ -122,20 +128,23 @@ def fetch_receipts(base_url: str, ids: Sequence[str], *, timeout: float = 10.0,
     if get is None:
         from .. import httpc
         get = httpc.get
-    try:
-        r = get(f"{base_url.rstrip('/')}/vega/receipts", params={"ids": ",".join(ids)},
-                timeout=timeout)
-    except Exception as e:                             # noqa: BLE001 — any transport failure
-        raise Deferral(f"VeGa is unreachable: {type(e).__name__}") from None
-    if r.status_code >= 500:
-        raise Deferral(f"VeGa answered HTTP {r.status_code}")
-    if r.status_code != 200:
-        raise Refusal(f"VeGa refused the receipts request: HTTP {r.status_code}")
-    try:
-        found = r.json()["receipts"]
-        return {x["id"]: x for x in found}
-    except (ValueError, KeyError, TypeError):
-        raise Deferral("VeGa's answer is not a receipts list") from None
+    out: dict[str, dict[str, str]] = {}
+    for i in range(0, len(ids), READ_IDS):
+        part = list(ids[i:i + READ_IDS])
+        try:
+            r = get(f"{base_url.rstrip('/')}/vega/receipts", params={"ids": ",".join(part)},
+                    timeout=timeout)
+        except Exception as e:                         # noqa: BLE001 — any transport failure
+            raise Deferral(f"VeGa is unreachable: {type(e).__name__}") from None
+        if r.status_code >= 500:
+            raise Deferral(f"VeGa answered HTTP {r.status_code}")
+        if r.status_code != 200:
+            raise Refusal(f"VeGa refused the receipts request: HTTP {r.status_code}")
+        try:
+            out.update({x["id"]: x for x in r.json()["receipts"]})
+        except (ValueError, KeyError, TypeError):
+            raise Deferral("VeGa's answer is not a receipts list") from None
+    return out
 
 
 def verify(batch: TaggedBatch, vectors: Sequence[list[float] | bytes],

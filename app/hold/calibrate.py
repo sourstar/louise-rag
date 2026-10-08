@@ -41,7 +41,9 @@ from .template import _engine_from_recipe
 #: The keys an engine file may carry at top level; anything else is a typo
 #: that would otherwise be silently ignored.
 FILE_KEYS = frozenset({"url", "api", "model", "weights", "engine"})
-APIS = ("openai", "ollama")
+#: "vega": LocalAI's OpenAI-style endpoint with a `vega-` model, every
+#: answer vouched for by VeGa's receipts (docs/notes/vega.md; VEGA_URL)
+APIS = ("openai", "ollama", "vega")
 
 #: The tolerance is written in the recipe as a decimal string (09 §9.3),
 #: rounded DOWN so that it stays at or below what was measured (03 §3.3).
@@ -169,6 +171,11 @@ def http_embed(ctx: int) -> Embed:
             raise CalibrateUnreachable(
                 f"{ep.file}: the encoder at {ep.url} is unreachable ({e}); "
                 f"nothing was measured, retry when it answers") from e
+        except embeddings.ReceiptDeferred as e:
+            # api = "vega": no receipt to vouch for the answers yet — VeGa
+            # away or VEGA_URL unset — so nothing measured (docs/notes/vega.md)
+            raise CalibrateUnreachable(
+                f"{ep.file}: {e}; nothing was measured, retry when it answers") from e
         except RuntimeError as e:
             status = getattr(getattr(e.__cause__, "response", None), "status_code", 0)
             if status in (502, 503, 504):

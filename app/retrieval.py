@@ -363,8 +363,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 if vector_leg is None:
                     lists.append(embeddings.search(core, k=limit, collection=collection,
                                                    langs=list(plan.only) or None, **restrict))
-        except hold_runs.RunUnvalidated as e:
-            # the answer named a run not yet tested, or one that failed: its
+        except (hold_runs.RunUnvalidated, hold_runs.RunRefused) as e:
+            # the answer named a run not yet tested, or one that failed — or
+            # VeGa's receipt did not fit it (embeddings.ReceiptRefused): its
             # vector is discarded, and the response says so (05 §5.3: never
             # a silent drop)
             vector_leg = str(e)

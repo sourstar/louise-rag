@@ -287,17 +287,25 @@ def base_url(encoder_url: str, fallback: str = "") -> str | None:
 
 
 def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
-             fallback: str = "", timeout: float = 10.0) -> emb.StatedRun:
+             fallback: str = "", timeout: float = 10.0,
+             at: str | None = None) -> emb.StatedRun:
     """`GET /louise/runs/<run_id>` → what the identity stands for, VERIFIED:
     09 §9.12 defines `run_id` as `H` of that very object, so a description
-    that does not hash to the id it was asked for is not that run's."""
-    base = base_url(encoder_url, fallback)
-    if base is None:
-        raise RunRefused(
-            f"{encoder_url} names a run ({run_id[:23]}…) and nothing says where to ask "
-            f"what it stands for: the URL is not `…/upstream/<model>` and RAGE_URL is "
-            f"unset (07 §7.8)")
-    r = get(f"{base}/louise/runs/{run_id}", timeout=timeout)
+    that does not hash to the id it was asked for is not that run's.
+
+    `at`: the description's URL where the platform is not found from the
+    encoder's — VeGa's `<VEGA_URL>/vega/runs/<run_id>` (docs/notes/vega.md)."""
+    if at is None:
+        base = base_url(encoder_url, fallback)
+        if base is None:
+            raise RunRefused(
+                f"{encoder_url} names a run ({run_id[:23]}…) and nothing says where to ask "
+                f"what it stands for: the URL is not `…/upstream/<model>` and RAGE_URL is "
+                f"unset (07 §7.8)")
+        at = f"{base}/louise/runs/{run_id}"
+    else:
+        base = at.rsplit("/", 1)[0]
+    r = get(at, timeout=timeout)
     r.raise_for_status()
     obj = r.json()
     if not isinstance(obj, dict) or set(obj) != {"driver", "engine", "weights"}:
@@ -318,7 +326,9 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
           signer: str | None, role: str = "document", batched: bool = True) -> None:
     """May vectors from answers naming `answered` be written? Silent when
     they may. `answered` is the set of `Louise-Run` values seen on the
-    answers that carried them; `None` in it is an answer that stated none.
+    answers that carried them — or, for an `api = "vega"` encoder, the runs
+    their receipts named (docs/notes/vega.md); `None` in it is an answer that
+    stated none.
 
     `batched`: the vectors came the way this peer contributes — several
     texts a request, or several requests at once — and not strictly one text
