@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from app import collections as collections_mod, db, discovery, worker
+from tests.conftest import codex_collection
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
 
@@ -106,12 +107,17 @@ def test_a_toml_edit_applies_within_a_round(tmp_path, monkeypatch):
     assert any("on TOML edit" in m for m in _events(con)), _events(con)
 
 
-def test_an_invalid_toml_value_is_refused_at_load(tmp_path, monkeypatch):
+def test_an_invalid_toml_value_is_refused_at_load(isolated_config, data_dir, config_dir):
     """A typo must not silently become the default."""
-    cfg = tmp_path / "cfg"
-    (cfg / "collections").mkdir(parents=True)
-    (cfg / "collections" / "bad.toml").write_text(
-        'plugin = "gutenberg"\nembed_mode = "always"\n', encoding="utf-8")
-    monkeypatch.setenv("CONFIG_DIR", str(cfg))
-    with pytest.raises(ValueError, match="embed_mode must be one of"):
+    codex_collection("bad", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='embed = "always"\n')
+    with pytest.raises(ValueError, match="embed must be one of"):
         collections_mod.load_all()
+
+
+def test_the_documents_word_for_a_mode_is_read(isolated_config, data_dir, config_dir):
+    """07 §7.8 spells the middle mode `on-demand`; the file is written in
+    the documents' word and read as `lazy`."""
+    codex_collection("od", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='embed = "on-demand"\n')
+    assert collections_mod.by_name("od").embed_mode_default == "lazy"

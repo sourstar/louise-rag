@@ -41,103 +41,14 @@ def write(path, c):
         share_slices=c.share_slices, share_kinds=c.share_kinds)
 
 
-@pytest.fixture
-def loaded(tmp_path, isolated_config, monkeypatch):
-    """Build a TOML with every field populated, then load it back."""
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    (tmp_path / "collections").mkdir(parents=True, exist_ok=True)
-    path = tmp_path / "collections" / "rich.toml"
-    path.write_text(
-        'plugin = "wikipedia"\n'
-        'profile = "all"\n'
-        'embed_mode = "all"\n'
-        'snapshot = "20260801"\n'
-        'acquire_enabled = true\n'
-        'license_ack = "2026-08-01T00:00:00Z/' + "a" * 64 + '"\n'
-        'genesis_archive = "upstash-wikipedia-2024-06"\n'
-        'extras = ["epub"]\n'
-        'peer_source = "magnet:?xt=urn:btih:abc"\n'
-        'corpus_dir = "/corpora/wikipedia"\n'
-        '\n[embed]\n'
-        'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
-        'dtype = "f16"\nctx = 1024\nconcurrency = 4\n'
-        '\n[[layers]]\nchunker = "verbatim"\nrule = "archive:upstash-wikipedia-2024-06"\n'
-        # params carried on a layer: they are inside space_id exactly as the
-        # chunker id is, and the writer used to drop them. With both layers
-        # params-less the round-trip asserted nothing about them.
-        '\n[[layers]]\nchunker = "cdc"\nrule = "default"\n'
-        'params = { tokens = 1000, overlap = 120 }\n'
-        '\n[reranker]\nurl = "http://rr:8080/rerank"\napi = "tei"\n'
-        'model = "ncbi/MedCPT-Cross-Encoder"\n'
-        '\n[paths]\n'
-        'manifest = "/data/w/manifest.db"\nfts = "/data/w/fts"\n'
-        'lancedb = "/data/w/lancedb"\n', encoding="utf-8")
-    return path, collections_mod._load_one(path)
-
-
-def test_a_rewrite_changes_nothing(loaded):
-    """The whole property, in one assertion."""
-    path, before = loaded
-    write(path, before)
-    assert collections_mod._load_one(path) == before
-
-
-def test_layers_survive_a_rewrite(loaded):
-    """Layers are part of space_id: dropping them redefines the space and
-    orphans every vector stored under it."""
-    path, before = loaded
-    assert before.layers is not None and len(before.layers) == 2
-    write(path, before)
-    after = collections_mod._load_one(path)
-    assert after.layers == before.layers
-    assert [l.chunker for l in after.layers] == ["verbatim", "cdc"]
-    assert [l.rule for l in after.layers] == \
-        ["archive:upstash-wikipedia-2024-06", "default"]
-    assert [l.params for l in after.layers] == \
-        [{}, {"tokens": 1000, "overlap": 120}], \
-        "layer params are inside space_id; a rewrite that drops them " \
-        "redefines the cut without changing the name"
-
-
-def test_the_layer_version_is_derived_not_written(loaded):
-    """`version` comes from the chunker, so writing it back would let a
-    stale number outlive a chunker bump."""
-    path, before = loaded
-    write(path, before)
-    assert "version" not in path.read_text(encoding="utf-8")
-
-
-def test_repeated_rewrites_are_idempotent(loaded):
-    path, before = loaded
-    write(path, before)
-    once = path.read_text(encoding="utf-8")
-    write(path, collections_mod._load_one(path))
-    assert path.read_text(encoding="utf-8") == once
-
-
-@pytest.mark.parametrize("field", [
-    f.name for f in dataclasses.fields(collections_mod.Collection)
-    if f.name not in ("name",)          # name comes from the file's stem
-])
-def test_every_collection_field_survives(loaded, field):
-    """The guard against the NEXT amendment. A field added to Collection
-    that the writer does not emit fails here, instead of being discovered
-    when a licence acknowledgement silently un-declares a collection."""
-    path, before = loaded
-    write(path, before)
-    after = collections_mod._load_one(path)
-    assert getattr(after, field) == getattr(before, field), (
-        f"{field!r} did not survive a TOML rewrite — add it to "
-        f"_write_collection_toml and to every call site that rewrites an "
-        f"existing collection")
-
-
 # ---- the Codex half -------------------------------------------------------
 #
-# Everything above used a legacy collection, so `codex` was None on both
-# sides of every assertion and the parametrized guard passed on it
-# vacuously. That is precisely how the live failure got through: the guard
-# existed, named the right field, and never exercised it.
+# Until 2026-10-08 a legacy (pre-Codex) collection was round-tripped here
+# too; with that shape gone, a node's every file names a Codex, so the
+# Codex collection is the only one a rewrite can meet. It was also the one
+# the legacy half left untested: there `codex` was None on both sides of
+# every assertion and the parametrized guard passed on it vacuously — how
+# the live failure got through.
 
 @pytest.fixture
 def codex_loaded(tmp_path, isolated_config, monkeypatch):
@@ -153,7 +64,7 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
 
     cfg = tmp_path / "config"
-    (cfg / "collections").mkdir(parents=True)
+    (cfg / "collections").mkdir(parents=True, exist_ok=True)
     path = cfg / "collections" / "gutenberg.toml"
     path.write_text(
         f'codex = "{cx.collection_id}"\n'
@@ -166,8 +77,7 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         'embed = "on-demand"\n'
         # no `acquire_enabled = true`: with `source = "drag"` the drag IS the
         # corpus and the loader refuses acquiring into it (2026-10-07: the
-        # second peer's worker began listing the Gutenberg mirror). The
-        # legacy fixture keeps the key away from its default.
+        # second peer's worker began listing the Gutenberg mirror).
         'corpus_dir = "/corpus"\n'
         # 07 §7.8 `source` (2026-10-07): away from its default too, so the
         # guards exercise it — a fetched collection reads its drag
@@ -186,6 +96,21 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
     monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)
+    return path, collections_mod._load_one(path), cx
+
+
+@pytest.fixture
+def origin_loaded(codex_loaded):
+    """The same collection read from its origin, so the keys `source =
+    "drag"` refuses are away from their defaults too: acquisition on, an
+    extra format fetched beside the text."""
+    path, _, cx = codex_loaded
+    path.write_text(
+        f'codex = "{cx.collection_id}"\n'
+        'acquire_enabled = true\n'
+        'extras = ["epub"]\n'
+        'corpus_dir = "/corpus"\n'
+        '\n[encoder]\nurl = "http://enc:8080"\napi = "openai"\n', encoding="utf-8")
     return path, collections_mod._load_one(path), cx
 
 
@@ -266,20 +191,41 @@ def test_every_field_survives_a_codex_rewrite(codex_loaded, field):
         f"{field!r} did not survive a Codex TOML rewrite")
 
 
+@pytest.mark.parametrize("field", [
+    f.name for f in dataclasses.fields(collections_mod.Collection)
+    if f.name not in ("name",)
+])
+def test_every_field_survives_an_origin_rewrite(origin_loaded, field):
+    path, before, _ = origin_loaded
+    write(path, before)
+    after = collections_mod._load_one(path)
+    assert getattr(after, field) == getattr(before, field), (
+        f"{field!r} did not survive a Codex TOML rewrite")
+
+
 # ---- the guards themselves ------------------------------------------------
 #
-# Both parametrized guards compare a field before and after a rewrite, so a
-# field BOTH fixtures leave at its default passes them however the writer
+# The parametrized guards compare a field before and after a rewrite, so a
+# field both fixtures leave at its default passes them however the writer
 # treats it. `reranker` did exactly that from the day it was added until
 # 2026-09-15, when an ordinary rewrite dropped pubmed's.
 
 # fields no fixture can populate, each with the reason
-_UNPOPULATED: dict[str, str] = {}
+_UNPOPULATED: dict[str, str] = {
+    "license_ack": "the test Codex is green, and a green collection records no "
+                   "acknowledgement (`_codex_ack`); an ack is state/ack.json, not the file",
+    "genesis_archive": "the test Codex credits no archive, and the loader refuses one "
+                       "it does not credit (03 §3.5)",
+    "snapshot": "the test Codex's origin pins no dump (09 §9.17), and the loader "
+                "refuses a snapshot the Codex does not pin",
+    "peer_source": "`_codex_collection` never reads it: 07 §7.8's file has no "
+                   "such key, and since 2026-10-08 every file is a Codex file",
+}
 
 
-def test_the_guards_are_not_vacuous(loaded, codex_loaded):
-    _, legacy = loaded
+def test_the_guards_are_not_vacuous(codex_loaded, origin_loaded):
     _, codexed, _ = codex_loaded
+    _, origin, _ = origin_loaded
     vacuous = []
     for f in dataclasses.fields(collections_mod.Collection):
         if f.default is not dataclasses.MISSING:
@@ -288,8 +234,7 @@ def test_the_guards_are_not_vacuous(loaded, codex_loaded):
             default = f.default_factory()
         else:
             continue                    # required: always populated
-        if getattr(legacy, f.name) == default and getattr(codexed, f.name) == default \
-                and f.name not in _UNPOPULATED:
+        if getattr(codexed, f.name) == default and getattr(origin, f.name) == default                 and f.name not in _UNPOPULATED:
             vacuous.append(f.name)
     assert not vacuous, (
         f"{vacuous} sit at their defaults in both fixtures, so the round-trip "

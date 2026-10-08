@@ -132,33 +132,25 @@ def test_a_bi_encoder_pair_is_two_recordings_each_from_its_own_endpoint(
 
 
 def test_another_engine_is_judged_by_its_cosines(monkeypatch, isolated_config, tmp_path, capsys):
-    _fake_encoder(monkeypatch)
+    """Judged by the Codex's own `space.tolerance` (03 §3.1), which wins over
+    any `--tolerance`."""
+    calls = _fake_encoder(monkeypatch)
     out = tmp_path / "rec"
     tool.main(["record", "--out", str(out), "--texts", "8"])
-    _set_id, texts = cal.load("text")
-    longest = texts[fingerprint.indices(texts)[-1]]
+    # the full window: the longest text as truncated to the Codex's ctx
+    window = max(len(text) for _url, batch in calls for text in batch)
 
     # the same function at another scale: not bit-equal, and within tolerance
     _fake_encoder(monkeypatch, scale=2.0)
-    assert tool.main(["compare", "--against", str(out), "--tolerance", "0.999"]) == 0
-    assert "different" in capsys.readouterr().out
+    assert tool.main(["compare", "--against", str(out)]) == 0
+    said = capsys.readouterr().out
+    assert "different" in said and "tolerance    0.95" in said
 
     # wrong on the full window only — what a short check never sees
-    assert len(longest) > 20_000
-    _fake_encoder(monkeypatch, wrong_beyond=20_000)
-    assert tool.main(["compare", "--against", str(out), "--tolerance", "0.999"]) == 1
+    assert window > 1_000
+    _fake_encoder(monkeypatch, wrong_beyond=window - 1)
+    assert tool.main(["compare", "--against", str(out)]) == 1
     assert "below it" in capsys.readouterr().out
-
-
-def test_with_no_codex_and_no_tolerance_there_is_no_verdict(monkeypatch, isolated_config,
-                                                           tmp_path, capsys):
-    """03 §3.1 allows no constant: the numbers are shown and nothing is judged."""
-    _fake_encoder(monkeypatch)
-    out = tmp_path / "rec"
-    tool.main(["record", "--out", str(out), "--texts", "8"])
-    _fake_encoder(monkeypatch, scale=2.0)
-    assert tool.main(["compare", "--against", str(out)]) == 0
-    assert "no verdict" in capsys.readouterr().out
 
 
 def test_an_endpoint_that_does_not_answer_is_a_deferral(monkeypatch, isolated_config,

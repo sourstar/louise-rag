@@ -92,13 +92,13 @@ def test_listing_record_counts_extras_apart(tmp_path, mock_server):
 
 # ---------------- TOML round-trip (desired state survives) ----------------
 
-def test_collection_toml_round_trips_extras(tmp_path, monkeypatch):
+def test_collection_toml_round_trips_extras(isolated_config, data_dir, config_dir, tmp_path):
     from app.web import _write_collection_toml
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    (tmp_path / "collections").mkdir()
-    path = tmp_path / "collections" / "gut.toml"
+    from tests.conftest import codex_collection
+    codex = codex_collection("gut", louise_root=data_dir, config_dir=config_dir)
+    path = config_dir / "collections" / "gut.toml"
     _write_collection_toml(
-        path, codex=None, plugin="gutenberg", profile="full", acquire_enabled=True,
+        path, codex=codex, plugin="gutenberg", profile="full", acquire_enabled=True,
         corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
         fts=tmp_path / "fts", lancedb=tmp_path / "lance",
         extras=("epub",))
@@ -107,7 +107,8 @@ def test_collection_toml_round_trips_extras(tmp_path, monkeypatch):
     # and a rewrite WITHOUT extras drops them — the writer carries desired
     # state explicitly, so every caller passes the collection's current value
     _write_collection_toml(
-        path, codex=None, plugin="gutenberg", profile="full", acquire_enabled=True,
+        path, codex=codex, plugin="gutenberg", profile="full", acquire_enabled=True,
         corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
         fts=tmp_path / "fts", lancedb=tmp_path / "lance")
     assert collections_mod._load_one(path).extras == ()
+

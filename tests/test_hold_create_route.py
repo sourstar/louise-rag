@@ -18,7 +18,9 @@ ROUTE = "/api/hold/collection/create"
 def client(tmp_path, isolated_config, monkeypatch):
     root = tmp_path / "louise"
     root.mkdir()
-    cfg = tmp_path / "config"
+    # a node of its own, holding nothing yet: not `isolated_config`'s, whose
+    # default collection is already named gutenberg
+    cfg = tmp_path / "hold-config"
     (cfg / "collections").mkdir(parents=True)
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
@@ -109,7 +111,20 @@ def test_the_librarys_form_is_this_route(client):
     assert ROUTE in page and 'id="nc_recipe"' in page
     assert "louise hold collection create" in page
     assert "/admin/library/new/create" not in page, \
-        "the deprecated route writes a file naming no Codex"
+        "the old route is gone: its files named no Codex"
+
+
+def test_the_old_route_is_gone_and_points_here(client):
+    """The form before this one wrote a file naming no Codex, refused at
+    load since 2026-10-08. It answers 410 before reading the body — valid,
+    invalid or absent — writes nothing, and names this route."""
+    for body in ({"name": "g", "plugin": "gutenberg", "profile": "hand-populated",
+                  "corpus_dir": "/nowhere"}, {"nonsense": 1}, None):
+        r = client.post("/admin/library/new/create", json=body)
+        assert r.status_code == 410, r.text
+        detail = r.json()["detail"]
+        assert ROUTE in detail and "hold collection create" in detail
+    assert not collections_mod.config_toml_path("g").exists(), "nothing written"
 
 
 def test_the_route_needs_the_admin_token(client):

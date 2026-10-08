@@ -434,11 +434,10 @@ def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
     nothing on the way (the report used to fill in the pinned width and log
     events)."""
     from app import collections as collections_mod, db, spaces
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("model-a", False))
     c = collections_mod.default_collection()
-    spaces.validate_boot([c])                   # the worker's boot pins model-a
-    monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("model-b", False))
-    monkeypatch.setattr(spaces, "known_lance_dim", lambda d: 768)
+    spaces.validate_boot([c])                   # the worker's boot pins the Codex's space
+    wrong = c.codex.space.dim + 1               # and then the table is another width
+    monkeypatch.setattr(spaces, "known_lance_dim", lambda d: wrong)
     con = db.connect(c)
 
     def snapshot():
@@ -449,7 +448,7 @@ def test_a_real_boot_refusal_reaches_the_report_and_the_check_writes_nothing(
     reports, blocking = health.check([c])
     assert [s.name for s in reports[0].stages] == ["boot"]
     assert reports[0].stages[0].state == health.BLOCKED
-    assert any("fails the boot check" in b and "model-a" in b for b in blocking), blocking
+    assert any("fails the boot check" in b and f"{wrong}-dimensional" in b for b in blocking), blocking
     assert snapshot() == before, "a check writes nothing"
 
 

@@ -4,29 +4,25 @@ missing drag before checking anything), and its own fault still raises."""
 import pytest
 
 from app import collections as collections_mod
-
-GOOD = ('plugin = "gutenberg"\ncorpus_dir = "{corpus}"\n\n[encoder]\n'
-        'url = "http://enc.invalid:8080"\napi = "openai"\nmodel = "m"\n'
-        'dtype = "f16"\nctx = 512\n')
+from tests.conftest import codex_collection
 
 
-def _config(tmp_path, monkeypatch, **files):
-    cfg = tmp_path / "cfg"
-    (cfg / "collections").mkdir(parents=True)
-    for name, body in files.items():
-        (cfg / "collections" / f"{name}.toml").write_text(body, encoding="utf-8")
-    monkeypatch.setenv("CONFIG_DIR", str(cfg))
-
-
-def test_another_files_fault_does_not_hide_this_collection(tmp_path, monkeypatch):
-    corpus = tmp_path / "corpus"
-    corpus.mkdir()
-    _config(tmp_path, monkeypatch,
-            good=GOOD.format(corpus=corpus.as_posix()),
-            bad='plugin = "gutenberg"\nembed_mode = "always"\n')
+def test_another_files_fault_does_not_hide_this_collection(isolated_config, data_dir, config_dir):
+    codex_collection("good", louise_root=data_dir, config_dir=config_dir)
+    codex_collection("bad", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='embed = "always"\n')
     assert collections_mod.by_name("good").name == "good"
     assert collections_mod.by_name("nowhere") is None
-    with pytest.raises(ValueError, match="embed_mode must be one of"):
+    with pytest.raises(ValueError, match="embed must be one of"):
         collections_mod.by_name("bad")
-    with pytest.raises(ValueError, match="embed_mode must be one of"):
+    with pytest.raises(ValueError, match="embed must be one of"):
         collections_mod.load_all()      # everything else still wants the raise
+
+
+def test_a_codex_less_file_is_refused_not_raised(isolated_config, config_dir):
+    """A file naming no Codex is a refusal, not a fault: the lookup of it
+    says "no such collection" and the others are found."""
+    (config_dir / "collections" / "old.toml").write_text('plugin = "gutenberg"\n', encoding="utf-8")
+    assert collections_mod.by_name("old") is None
+    assert collections_mod.by_name("gutenberg").name == "gutenberg"
+    assert [r.name for r in collections_mod.refusals()] == ["old"]

@@ -1,13 +1,12 @@
-"""Collection management from the admin UI: create writes the Tier-2 TOML
-(with per-collection path isolation), remove retires it without touching
-data, and bundle export/import ride the exact same code paths as the CLI —
-the upload is delivery, admission stays the importer's job.
+"""Collection management from the admin UI: remove retires the Tier-2 file
+without touching data, and bundle export/import ride the exact same code
+paths as the CLI — the upload is delivery, admission stays the importer's
+job. Creating a collection is `POST /api/hold/collection/create`
+(tests/test_hold_create_route.py); the old create route is gone.
 """
-import re
 import io
 import tarfile
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +14,7 @@ from fastapi.testclient import TestClient
 from app import collections as collections_mod, config, db, spaces, web
 from app.api import app
 from app.bundles import importer as bundle_importer
+from tests.conftest import codex_collection
 
 
 @pytest.fixture
@@ -22,8 +22,6 @@ def client(isolated_config, monkeypatch, tmp_path):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
-    # every test here creates collections, and a collection now requires a
-    # real mounted corpus folder — give the module a mounts root to draw from
     monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", tmp_path / "corpora")
     (tmp_path / "corpora").mkdir(exist_ok=True)
     with TestClient(app) as c:
@@ -31,126 +29,35 @@ def client(isolated_config, monkeypatch, tmp_path):
         yield c
 
 
-# a collection names its own encoder; there is no default one (operator,
-# 2026-09-18), so every create here names one
-ENC = {"url": "http://enc.invalid:8080", "api": "openai", "model": "m",
-       "dtype": "f16", "ctx": 512}
+def test_the_old_create_route_is_gone(client):
+    """It wrote a file naming no Codex, refused at load since 2026-10-08:
+    a 410 that names the route that creates one, and nothing written."""
+    r = client.post("/admin/library/new/create",
+                    json={"name": "pubmed2", "plugin": "pubmed"})
+    assert r.status_code == 410
+    assert "/api/hold/collection/create" in r.json()["detail"]
+    assert not collections_mod.config_toml_path("pubmed2").exists()
+    assert [c.name for c in collections_mod.load_all()] == ["gutenberg"]
 
 
-def create(client, name, plugin="pubmed", *, corpus=None, **body):
-    """POST /library/new/create with a corpus folder filled in.
-
-    Choosing one is mandatory (test_create_requires_a_chosen_corpus_folder
-    pins that); every OTHER test here is about something else, so the helper
-    mints a fresh mount per collection rather than repeating the setup."""
-    if corpus is None:
-        safe = re.sub(r"[^a-z0-9_-]", "_", name.lower()) or "mount"
-        folder = config.CORPUS_MOUNTS_DIR / safe
-        folder.mkdir(parents=True, exist_ok=True)
-        corpus = folder.as_posix()
-    # pubmed is YELLOW, and invariant 9 requires the acknowledgement before
-    # its data is USED "however the data arrived" — not only when this node
-    # acquires it. The gate used to key on `acquire_enabled`, so creating a
-    # yellow collection with acquisition off skipped it entirely; now it
-    # does not, and every test here that is about something ELSE has to
-    # acknowledge. The tests that are about the GATE pass it explicitly.
-    body.setdefault("acknowledge_terms", True)
-    body.setdefault("encoder", ENC)
-    return client.post("/admin/library/new/create",
-                       json={"name": name, "plugin": plugin,
-                             "corpus_dir": corpus, **body})
-
-
-def test_create_writes_isolated_toml_and_collection_appears(client, isolated_config):
-    r = create(client, "pubmed2", "pubmed")
-    assert r.status_code == 200
-    toml_path = collections_mod.config_toml_path("pubmed2")
-    assert toml_path.is_file()
-    text = toml_path.read_text()
-    # the shared-path trap: a second collection MUST NOT inherit the first
-    # collection's manifest/fts/lance defaults
-    assert "pubmed2/manifest.db" in text
-    assert "pubmed2/fts" in text and "pubmed2/lancedb" in text
-    assert "no restart" in r.json()["note"]
-
-    names = [c.name for c in collections_mod.load_all()]
-    assert "pubmed2" in names
-    # creating the FIRST TOML must not disown the synthesized default: its
-    # definition gets materialized alongside (observed live: a test TOML
-    # silently hid 79k books)
-    assert "gutenberg" in names
-    assert collections_mod.config_toml_path("gutenberg").is_file()
-    gutenberg = collections_mod.by_name("gutenberg")
-    assert gutenberg.manifest_path == isolated_config.DATA_DIR / "manifest.db"
-
-
-def test_create_with_dedicated_corpus_mount(client, tmp_path, monkeypatch):
-    mounts_root = tmp_path / "corpora"
+def test_a_collection_holds_the_mount_it_reads(client, tmp_path):
+    """A collection the node serves holds the mount it reads, and the
+    Library's mount list says which collection uses it."""
+    mounts_root = config.CORPUS_MOUNTS_DIR
     (mounts_root / "pubmed").mkdir(parents=True)
     (mounts_root / "spare").mkdir()
-    monkeypatch.setattr(config, "CORPUS_MOUNTS_DIR", mounts_root)
-
     chosen = (mounts_root / "pubmed").as_posix()
-    r = client.post("/admin/library/new/create",
-                    json={"name": "withdir", "plugin": "pubmed", "encoder": ENC,
-                           "corpus_dir": chosen, "acknowledge_terms": True})
-    assert r.status_code == 200
-    assert r.json()["corpus_mounted"] is True
+    codex_collection("withdir", louise_root=config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent,
+                     corpus_dir=mounts_root / "pubmed")
     assert collections_mod.by_name("withdir").corpus_dir.as_posix() == chosen
-
-    # one corpus, one collection: the claimed mount is refused for another
-    r = client.post("/admin/library/new/create",
-                    json={"name": "second", "plugin": "pubmed",
-                           "corpus_dir": chosen, "acknowledge_terms": True})
-    assert r.status_code == 409
-    assert "withdir" in r.json()["detail"]
-
-    # arbitrary container paths are NOT accepted — mounts-root entries only
-    for bad in ("/somewhere/else", "../etc", str(tmp_path / "outside")):
-        r = client.post("/admin/library/new/create",
-                        json={"name": "bad", "plugin": "pubmed", "corpus_dir": bad,
-                               "acknowledge_terms": True})
-        assert r.status_code == 400, bad
-        assert "available" in r.json()["detail"]
-    # (The Library page no longer offers a corpus folder: its form is
-    # `hold collection create --recipe` since 2026-09-15, and a collection's
-    # origin is <LOUISE_ROOT>/collections/<name>/origin — 07 §7.6, §7.8.
-    # This deprecated route keeps its own checks for one release.)
-
-
-def test_create_requires_a_chosen_corpus_folder(client, tmp_path):
-    """There is no default corpus folder any more.
-
-    The old fallback (CORPUS_DIR/<name>) invented a path that existed in no
-    container: the collection was born pointing at nothing and only said so
-    one discovery round later, as "corpus dir not found". A collection that
-    cannot see a corpus is not a state worth being able to create."""
-    (config.CORPUS_MOUNTS_DIR / "free").mkdir(parents=True, exist_ok=True)
-
-    r = client.post("/admin/library/new/create",
-                    json={"name": "nodir", "plugin": "pubmed"})
-    assert r.status_code == 400
-    detail = r.json()["detail"]
-    assert "choose a corpus folder" in detail
-    assert "free" in detail, "the refusal must name what IS available"
-    assert collections_mod.by_name("nodir") is None
-    assert not collections_mod.config_toml_path("nodir").exists()
-
-    # an explicitly blank one is the same refusal, not an empty-string path
-    assert client.post("/admin/library/new/create",
-                       json={"name": "nodir", "plugin": "pubmed",
-                              "corpus_dir": "   "}).status_code == 400
-
-
-def test_create_rejects_bad_names_dup_and_unknown_plugin(client):
-    assert create(client, "../evil", "pubmed").status_code == 400
-    assert create(client, "x", "nope").status_code == 400
-    assert create(client, "twice", "pubmed").status_code == 200
-    assert create(client, "twice", "pubmed").status_code == 409
+    used = {m["path"]: m["used_by"] for m in web._corpus_mounts()}
+    assert used == {chosen: "withdir", (mounts_root / "spare").as_posix(): None}
 
 
 def test_remove_retires_toml_and_keeps_data(client):
-    create(client, "temp1", "pubmed")
+    codex_collection("temp1", louise_root=config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent)
     collection = collections_mod.by_name("temp1")
     con = db.connect(collection)   # materialize the manifest
     con.close()
@@ -166,29 +73,23 @@ def test_remove_retires_toml_and_keeps_data(client):
     assert collections_mod.by_name("temp1") is None
 
 
-def test_removing_the_synthesized_default_leaves_zero_collections(client):
-    """Louise2, 2026-08-26: the operator could not delete every collection
-    — removing the last TOML made the synthesized default reappear, and
-    it had no file to retire. Removing it now creates the empty
-    collections/ directory: TOML mode, zero collections, data kept."""
-    # no collections/ directory -> the default gutenberg collection is synthesized
+def test_removing_the_last_collection_leaves_zero_collections(client):
+    """Louise2, 2026-08-26: the operator could not delete every collection.
+    Removing the last file retires it: zero collections, data kept, and
+    nothing is synthesized in its place."""
     assert [c.name for c in collections_mod.load_all()] == ["gutenberg"]
     r = client.post("/admin/library/gutenberg/remove")
     assert r.status_code == 200, r.text
-    assert r.json()["retired_toml"] is None and "zero collections" in r.json()["note"]
+    assert "removed-" in r.json()["retired_toml"]
     assert collections_mod.collections_dir().is_dir()
     assert collections_mod.load_all() == []
     assert collections_mod.by_name("gutenberg") is None
     # the node keeps working with none: the Library renders, control state resolves
     assert client.get("/admin/library").status_code == 200
     assert db.worker_state(db.connect()) in ("paused", "running", "seed-only", "acquire-only")
-    # a second remove is a 404, not a crash; the default never comes back
+    # a second remove is a 404, not a crash; nothing comes back
     assert client.post("/admin/library/gutenberg/remove").status_code == 404
-    # the next collection is declared explicitly and is the only one
-    assert create(client, "fresh", "pubmed").status_code == 200
-    assert [c.name for c in collections_mod.load_all()] == ["fresh"]
-    r = client.post("/admin/library/fresh/remove")
-    assert r.status_code == 200 and collections_mod.load_all() == []
+    assert collections_mod.load_all() == []
 
 
 def test_bundle_import_upload_lands_in_inbox_unwrapped(client):
@@ -264,9 +165,12 @@ def test_library_page_offers_profile_dropdowns_with_estimates(client):
 
 
 def test_grow_options_never_offer_a_rollback(client):
-    create(client, "pm-recent", "pubmed", profile="recent")
     from app import web as web_mod
-    collection = collections_mod.by_name("pm-recent")
+    base = collections_mod.default_collection()
+    collection = collections_mod.Collection(
+        name="pm-recent", plugin="pubmed", profile="recent", embed_mode_default=None,
+        corpus_dir=base.corpus_dir, manifest_path=base.manifest_path,
+        fts_dir=base.fts_dir, lance_dir=base.lance_dir)
     names = [o["name"] for o in web_mod._grow_options(collection)]
     assert names == ["recent", "full"], "smaller profiles must not be offered"
     assert "current" in web_mod._grow_options(collection)[0]["label"]
@@ -281,86 +185,38 @@ def test_grow_options_never_offer_a_rollback(client):
         ["demo", "starter", "recent", "full"]
 
 
-def test_yellow_source_acquisition_requires_ack_from_the_ui(client):
-    # pubmed is yellow-class: create with acquisition but WITHOUT
-    # acknowledgement must refuse with the retry marker
-    r = create(client, "pm", "pubmed", acquire_enabled=True,
-               acknowledge_terms=False)
-    assert r.status_code == 409
-    assert r.json()["detail"].startswith("terms-acknowledgement-required")
-
-    # with explicit consent, the ack is computed server-side into the TOML
-    r = create(client, "pm", "pubmed", acquire_enabled=True,
-               acknowledge_terms=True)
-    assert r.status_code == 200
-    text = collections_mod.config_toml_path("pm").read_text()
-    assert "acquire_enabled = true" in text
-    assert 'license_ack = "' in text
-    assert collections_mod.by_name("pm").license_ack
-
-    # green sources (gutenberg) need no acknowledgement
-    r = create(client, "gb2", "gutenberg", acquire_enabled=True)
-    assert r.status_code == 200
-
-
-def test_ack_endpoint_records_license_for_existing_collection(client):
-    # An unacknowledged yellow collection can no longer be CREATED through
-    # the UI — that is the point of the gate — but it can still exist: a
-    # hand-written TOML, a config restored from backup, one that predates
-    # the gate. That is the state this endpoint is for, so build it the way
-    # it actually arises rather than through a route that now refuses.
-    create(client, "pm2", "pubmed")
-    path = collections_mod.config_toml_path("pm2")
-    path.write_text(
-        "\n".join(line for line in path.read_text().splitlines()
-                  if not line.startswith("license_ack")) + "\n",
-        encoding="utf-8")
-    assert collections_mod.by_name("pm2").license_ack is None
-
-    r = client.get("/admin/library/pm2/terms")
-    assert r.status_code == 200
-    assert r.json()["license_class"] == "yellow"
-    assert r.json()["terms_text"]
-
-    r = client.post("/admin/library/pm2/ack")
-    assert r.status_code == 200
-    refreshed = collections_mod.by_name("pm2")
-    assert refreshed.license_ack and refreshed.acquire_enabled
-    # the ack format matches what the acquisition engine verifies
-    stamp, _, digest = refreshed.license_ack.partition("/")
-    assert stamp.endswith("Z") and len(digest) == 64
-
-
 def test_grow_run_declares_the_profile_and_preserves_the_whole_toml(client):
     """Growing must NOT download inside the web request (a multi-GB fetch
-    hung the modal live) — it declares the profile in the TOML and the
+    hung the modal live) — it declares the selection in the file and the
     worker's hot-reload acquires. The rewrite must carry every field:
-    dropping [embed] would flip the collection back to the env recipe."""
-    create(client, "pm", "pubmed", acquire_enabled=True, acknowledge_terms=True)
-    created = collections_mod.by_name("pm")
-    toml_path = collections_mod.config_toml_path("pm")
-    toml_path.write_text(
-        f'plugin = "pubmed"\nprofile = "demo"\nacquire_enabled = true\n'
-        f'license_ack = "{created.license_ack}"\n'
-        f'genesis_archive = "medcpt-pubmed"\n'
-        f'corpus_dir = "{created.corpus_dir.as_posix()}"\n\n'
-        f'[embed]\nurl = "http://enc:1"\nmodel = "medcpt"\ndim = 768\n'
-        f'query_url = "http://enc:2"\n\n'
-        f'[paths]\nmanifest = "{created.manifest_path.as_posix()}"\n'
-        f'fts = "{created.fts_dir.as_posix()}"\n'
-        f'lancedb = "{created.lance_dir.as_posix()}"\n', encoding="utf-8")
+    dropping [encoder] would leave the collection with no encoder. A Codex
+    collection holds every slice or none (07 §7.8), so growing it means
+    everything and anything smaller is a 409."""
+    from app.acquire import spec as acquire_spec
+    from app.acquire.specs import ACQUIRE_REGISTRY
+    everything = acquire_spec.everything_profile(ACQUIRE_REGISTRY["gutenberg"])
+    toml_path = collections_mod.config_toml_path("gutenberg")
+    toml_path.write_text(toml_path.read_text(encoding="utf-8")
+                         + 'embed = "all"\n\n[encoder]\nurl = "http://enc:1"\n'
+                           'query_url = "http://enc:2"\n', encoding="utf-8")
+    before = collections_mod.by_name("gutenberg")
 
-    r = client.post("/admin/library/pm/grow/run", json={"profile": "recent"})
-    assert r.status_code == 200
+    r = client.post("/admin/library/gutenberg/grow/run", json={"profile": everything})
+    assert r.status_code == 200, r.text
     assert "worker" in r.json()["note"]
 
-    refreshed = collections_mod.by_name("pm")
-    assert refreshed.profile == "recent"
-    assert refreshed.acquire_enabled and refreshed.license_ack
-    assert refreshed.genesis_archive == "medcpt-pubmed"
-    assert refreshed.embed is not None and refreshed.embed.query_url == "http://enc:2"
+    refreshed = collections_mod.by_name("gutenberg")
+    assert refreshed.codex.collection_id == before.codex.collection_id
+    assert refreshed.slices == "all" and refreshed.acquire_enabled
+    assert refreshed.corpus_dir == before.corpus_dir
+    assert refreshed.embed_mode_default == "all"
+    assert refreshed.embed is not None and refreshed.embed.url == "http://enc:1"
+    assert refreshed.embed.query_url == "http://enc:2"
 
-    assert client.post("/admin/library/pm/grow/run",
+    smaller = next(p for p in ACQUIRE_REGISTRY["gutenberg"].profiles if p != everything)
+    assert client.post("/admin/library/gutenberg/grow/run",
+                       json={"profile": smaller}).status_code == 409
+    assert client.post("/admin/library/gutenberg/grow/run",
                        json={"profile": "gigantic"}).status_code == 400
 
 
@@ -384,7 +240,8 @@ def test_embed_mode_is_a_per_collection_control(client):
         "a restart must keep the operator's choice"
 
     # another collection keeps its own default — no cross-talk
-    create(client, "other", "pubmed")
+    codex_collection("other", louise_root=config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent)
     other = collections_mod.by_name("other")
     assert db.get_scope(db.connect(other))["embed_mode"] == "lazy"
 

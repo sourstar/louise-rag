@@ -348,20 +348,6 @@ def test_an_answer_from_an_untested_run_answers_no_query(node, rage, tmp_path):
     assert recipe.query_url == QUERY_URL
 
 
-# ---- everything older ----------------------------------------------------------------------------
-
-def test_a_legacy_collection_is_always_in_use(isolated_config, tmp_path, monkeypatch):
-    legacy = collections_mod.default_collection()
-    assert legacy.codex is None
-    assert copy_state.of(legacy) is copy_state.ALWAYS_IN_USE
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    (tmp_path / "platform.toml").write_text('[node]\nquarantine = "enforce"\n',
-                                            encoding="utf-8")
-    assert copy_state.enforced() is True
-    assert copy_state.withholds(legacy) is None
-    assert query_service.withheld_reason(legacy) is None
-
-
 # ---- what quarantine withholds, and when ----------------------------------------------------------
 
 def test_in_the_reporting_deploy_nothing_is_withheld(node, rage):

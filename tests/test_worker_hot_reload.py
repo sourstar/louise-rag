@@ -4,13 +4,21 @@ runs take effect within one round, no restart.
 import pytest
 
 from app import collections as collections_mod, config, db, spaces, worker
+from tests.conftest import codex_collection
 
 
 def _write_toml(config_dir, name, extra=""):
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{name}.toml").write_text(
-        f'plugin = "gutenberg"\nprofile = "demo"\n{extra}', encoding="utf-8")
+    """A Codex collection `name` (the test Codex) whose file also says
+    `profile = "demo"` and `extra`. Returns the file's `codex` line."""
+    cid = codex_collection(name, louise_root=config.DATA_DIR, config_dir=config_dir,
+                           toml_extra=f'profile = "demo"\n{extra}')
+    return f'codex = "{cid}"\n'
+
+
+def _without_the_default(config_dir):
+    """The tests that count collections start from none: the default
+    gutenberg every test is given is retired first."""
+    (config_dir / "collections" / "gutenberg.toml").unlink()
 
 
 @pytest.fixture
@@ -43,6 +51,7 @@ def test_added_collection_joins_within_one_sync(isolated_config, config_dir,
 def test_removed_collection_leaves_and_its_con_closes(isolated_config, config_dir,
                                                        quiet_discover, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
+    _without_the_default(config_dir)
     _write_toml(config_dir, "a")
     _write_toml(config_dir, "b")
     start = collections_mod.load_all()
@@ -117,8 +126,7 @@ def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir
     result = worker._sync_collections(start, cons, last_discover)
     assert quiet_discover == []
 
-    _write_toml(config_dir, "pm",
-                 extra='acquire_enabled = true\nlicense_ack = "2026-01-01T00:00:00Z/abc"\n')
+    _write_toml(config_dir, "pm", extra='acquire_enabled = true\n')
     result = worker._sync_collections(result, cons, last_discover)
     assert ("pm", "config-changed") in quiet_discover
     assert last_discover["pm"] > 0
@@ -127,6 +135,7 @@ def test_config_change_triggers_immediate_rediscover(isolated_config, config_dir
 def test_invalid_new_collection_is_skipped_not_fatal(isolated_config, config_dir,
                                                       quiet_discover, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
+    _without_the_default(config_dir)
     _write_toml(config_dir, "good")
     start = collections_mod.load_all()
     cons = {c.name: db.connect(c) for c in start}
@@ -165,16 +174,14 @@ def test_a_pipeline_thread_sees_the_edit_and_not_its_startup_object(
     round and re-read at the top of the loop instead.
     """
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
-    _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
+    codex = _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
     start = worker._sync_collections([], {}, {})
     stale = next(c for c in start if c.name == "growing")
     assert stale.profile == "demo"
 
     # what a running pipeline thread holds is `stale`; the TOML moves on
-    _write_toml(config_dir, "growing", 'acquire_enabled = true\n')
     (config_dir / "collections" / "growing.toml").write_text(
-        'plugin = "gutenberg"\nprofile = "full"\nacquire_enabled = true\n',
-        encoding="utf-8")
+        codex + 'profile = "full"\nacquire_enabled = true\n', encoding="utf-8")
     worker._sync_collections(start, {c.name: db.connect(c) for c in start},
                              {c.name: 0.0 for c in start})
 
@@ -216,14 +223,15 @@ def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
     NOTHING. pubmed's archive import stopped with it.
     """
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
+    _without_the_default(config_dir)
     _write_toml(config_dir, "fine")
-    _write_toml(config_dir, "broken")
+    codex = _write_toml(config_dir, "broken")
     start = worker._sync_collections([], {}, {})
     assert {c.name for c in start} == {"fine", "broken"}
     cons = {c.name: db.connect(c) for c in start}
 
     (config_dir / "collections" / "broken.toml").write_text(
-        'plugin = "gutenberg"\nembed_mode = "always"\n', encoding="utf-8")
+        codex + 'embed = "always"\n', encoding="utf-8")
     with pytest.raises(Exception):
         collections_mod.load_all()          # the raise is still the default
 
@@ -231,7 +239,8 @@ def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
     assert [c.name for c in result] == ["fine"], \
         "the good collection keeps running"
 
-    messages = [r["message"] for c in cons.values()
+    # each collection keeps its own events: the refusal is in its own manifest
+    messages = [r["message"] for c in (db.connect(x) for x in start)
                 for r in c.execute("SELECT message FROM events WHERE stage='worker'")]
     assert any("'broken' is not served" in m for m in messages), \
         "and the operator is told which file, and why"
@@ -241,14 +250,14 @@ def test_the_broken_file_is_reported_once_not_every_round(
         isolated_config, config_dir, quiet_discover, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     _write_toml(config_dir, "fine")
-    _write_toml(config_dir, "broken")
+    codex = _write_toml(config_dir, "broken")
     start = worker._sync_collections([], {}, {})
     cons = {c.name: db.connect(c) for c in start}
     (config_dir / "collections" / "broken.toml").write_text(
-        'plugin = "gutenberg"\nembed_mode = "always"\n', encoding="utf-8")
+        codex + 'embed = "always"\n', encoding="utf-8")
 
     def rounds():
-        return sum(1 for c in cons.values()
+        return sum(1 for c in (db.connect(x) for x in start)
                    for r in c.execute("SELECT message FROM events "
                                        "WHERE stage='worker'")
                    if "not served" in r["message"])

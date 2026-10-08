@@ -21,6 +21,18 @@ from app.coordinator import leases, service, store
 from tests.integration.conftest import (ATTACKER_KEY, PRODUCER_KEY, mirror_corpus,
                                          model_embed, seed_node)
 
+
+# Both nodes are Collections built in Python, with no file, and the
+# fixtures pin their space from the DEFAULT collection
+# (`spaces.gather_components()` with none named) while the importer computes
+# it from the node itself — so the node holds no collection file, and the
+# default is the same file-less shape. Never whatever `collections/` the
+# working directory holds.
+@pytest.fixture(autouse=True)
+def _no_collection_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-collection-files"))
+
+
 DOCS = {"gutenberg:1": 1, "gutenberg:2": 2, "gutenberg:3": 3}
 
 

@@ -16,6 +16,14 @@ from app.bundles.keys import NodeKeyError
 from tests.bundles.helpers import DIM, seed_document
 
 
+@pytest.fixture(autouse=True)
+def no_collection_files(tmp_path, monkeypatch):
+    """The hand-built `collection` is the only one: CONFIG_DIR names an
+    empty folder, so nothing outside the test (the checkout's own
+    collections/, a pre-Codex file now refused) becomes the default."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config"))
+
+
 def _export(con, collection, key, tmp_path, uids=None, name="bundle"):
     if uids is None:
         uids = ["gutenberg:1"]

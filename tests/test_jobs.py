@@ -75,6 +75,7 @@ def test_a_job_the_last_worker_left_running_is_queued_again(con, isolated_config
     an export's scratch — and only its own — is discarded."""
     c = collections_mod.default_collection()
     where = bundle_export.workspace(c)
+    where.mkdir(parents=True, exist_ok=True)     # a Codex collection's state/, made on first use
     job_id = jobs.submit(jobs.EXPORT, {"collection": c.name, "uids": ["g:1"]})
     other = where / "bundle-export-job999-keep"
     other.mkdir()

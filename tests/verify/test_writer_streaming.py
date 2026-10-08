@@ -13,6 +13,11 @@ from app.verify import artifact as artifact_mod
 from tests.bundles.helpers import seed_document
 from tools import build_space_artifact
 
+# The space these bundles are cut in is the default collection's
+# (`spaces.gather_components()` with no collection): the test node's Codex
+# gutenberg, never whatever `collections/` the working directory holds.
+pytestmark = pytest.mark.usefixtures("isolated_config")
+
 KEY = signing.SigningKey(bytes(range(32)))
 
 

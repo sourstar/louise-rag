@@ -56,19 +56,6 @@ def test_peer_source_redirects_the_spec_to_the_torrent_transport(tmp_path):
     assert eff.source_id == spec.source_id
 
 
-def test_peer_source_round_trips_through_the_toml(tmp_path, monkeypatch):
-    from app.web import _write_collection_toml
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    (tmp_path / "collections").mkdir()
-    path = tmp_path / "collections" / "peer.toml"
-    _write_collection_toml(
-        path, codex=None, plugin="embedded", profile="tr", acquire_enabled=True,
-        corpus_dir=tmp_path / "corpus", manifest=tmp_path / "m.db",
-        fts=tmp_path / "fts", lancedb=tmp_path / "lance",
-        peer_source="magnet:?xt=urn:btih:abc")
-    assert collections_mod._load_one(path).peer_source == "magnet:?xt=urn:btih:abc"
-
-
 # ---------------- seeding + upload accounting ----------------
 
 def _quiet_session():

@@ -17,6 +17,14 @@ from app.verify import t2, t3
 from tests.bundles.helpers import seed_document, unit_vectors
 
 
+@pytest.fixture(autouse=True)
+def no_collection_files(tmp_path, monkeypatch):
+    """The hand-built `collection` is the only one: CONFIG_DIR names an
+    empty folder, so nothing outside the test (the checkout's own
+    collections/, a pre-Codex file now refused) becomes the default."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config"))
+
+
 class _Artifact:
     def __init__(self, calibration, trusted=False):
         self.raw = {"calibration": calibration}

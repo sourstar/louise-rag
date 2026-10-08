@@ -191,7 +191,7 @@ def test_network_page_honest_empty_state(client):
     assert "not yet available" in r.text
 
 
-def test_bandwidth_payload_reports_real_per_class_rates():
+def test_bandwidth_payload_reports_real_per_class_rates(isolated_config):
     # Not driving the live /admin/network/bandwidth/stream endpoint here: its
     # generator runs forever (by design — a real SSE feed), and a sync
     # generator blocked in time.sleep() inside a worker thread can't be

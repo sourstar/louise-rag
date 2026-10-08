@@ -188,7 +188,10 @@ class PlatformConfig:
     # (`embed = "on-demand"`) sitting beside it. Both are read; the spec
     # name wins where a file declares both, and the alias is deprecated.
     embed_defaults: dict[str, dict] = field(default_factory=dict)
-    # [node] codex_only — serve ONLY collections whose file names a Codex.
+    # [node] codex_only — OBSOLETE since 2026-10-08: a node serves only Codex
+    # collections, always (the pre-Codex shape is gone). Still accepted, so
+    # a platform.toml that sets it loads; read by nothing.
+    # Was: serve ONLY collections whose file names a Codex.
     # A node mid-migration holds both shapes; this is how an operator says
     # "a collection appears in Louise once it is converted, and not
     # before". Default False so nothing changes for a node that predates

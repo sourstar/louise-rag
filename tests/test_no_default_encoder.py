@@ -2,11 +2,11 @@
 remove EMBED_URL. A collection that does not specify an embedder is a non
 compliant collection."
 
-A collection's encoder is its own file's `[encoder]` (a legacy file's
-`[embed]`) and nothing else. EMBED_URL, EMBED_MODEL, EMBED_API, EMBED_DTYPE,
-EMBED_CTX and platform.toml's `[encoder_defaults.<plugin>]` are gone as
-fallbacks; a file that names no encoder is refused at load, and the node
-keeps its other collections and names the reason where the operator looks.
+A collection's encoder is its own file's `[encoder]` and nothing else.
+EMBED_URL, EMBED_MODEL, EMBED_API, EMBED_DTYPE, EMBED_CTX and
+platform.toml's `[encoder_defaults.<plugin>]` are gone as fallbacks; a file
+that names no encoder is refused at load, and the node keeps its other
+collections and names the reason where the operator looks.
 
 Every test here loads files as the node does (`strict_encoder`): the rest
 of the suite's collection files predate the rule and are given a TEST
@@ -16,18 +16,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import collections as collections_mod, config, platform_config, spaces, web
+from tests.conftest import codex_collection
 
 pytestmark = pytest.mark.strict_encoder
 
-NAMED = ('plugin = "gutenberg"\n'
-         '[embed]\nurl = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
-         'dtype = "f16"\nctx = 512\n')
+#: where this node reaches the Codex's encoder (07 §7.8); the model and the
+#: space are the Codex's
+NAMED = '[encoder]\nurl = "http://enc:8080"\napi = "openai"\n'
 
 
-def _write(config_dir, name, body):
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{name}.toml").write_text(body, encoding="utf-8")
+def _named_and_bare(data_dir, config_dir):
+    """`named` names its encoder; `bare` and the fixture's `gutenberg` name
+    none."""
+    codex_collection("named", louise_root=data_dir, config_dir=config_dir, toml_extra=NAMED)
+    codex_collection("bare", louise_root=data_dir, config_dir=config_dir)
 
 
 def test_the_env_settings_are_gone():
@@ -38,13 +40,13 @@ def test_the_env_settings_are_gone():
 
 
 def test_a_file_naming_no_encoder_is_refused_and_the_others_are_served(
-        isolated_config, config_dir):
-    _write(config_dir, "named", NAMED)
-    _write(config_dir, "bare", 'plugin = "gutenberg"\n')
+        isolated_config, data_dir, config_dir):
+    _named_and_bare(data_dir, config_dir)
     assert [c.name for c in collections_mod.load_all()] == ["named"]
-    (refused,) = collections_mod.refusals()
-    assert refused.name == "bare" and "non-compliant" in refused.reason
-    assert "[encoder]" in refused.reason, "it says what to add"
+    refused = {r.name: r for r in collections_mod.refusals()}
+    assert set(refused) == {"bare", "gutenberg"}
+    assert "non-compliant" in refused["bare"].reason
+    assert "[encoder]" in refused["bare"].reason, "it says what to add"
 
 
 def test_a_collection_without_an_encoder_has_none(isolated_config, tmp_path):
@@ -72,15 +74,14 @@ def test_the_boot_refuses_that_collection_and_never_the_node(isolated_config, tm
         "a verdict, not 'cannot be checked'"
 
 
-def test_platform_encoder_defaults_are_ignored_and_said_to_be(isolated_config, config_dir,
-                                                              monkeypatch, tmp_path):
+def test_platform_encoder_defaults_are_ignored_and_said_to_be(isolated_config, data_dir,
+                                                              config_dir, monkeypatch):
     """Still parsed — an older platform.toml must load — but decides nothing,
     and the System page says so rather than let anyone believe it does."""
     (config_dir / "platform.toml").write_text(
         '[encoder_defaults.gutenberg]\nurl = "http://default:1"\nmodel = "d"\n',
         encoding="utf-8")
-    _write(config_dir, "bare", 'plugin = "gutenberg"\n')
-    _write(config_dir, "named", NAMED)
+    _named_and_bare(data_dir, config_dir)
     assert [c.name for c in collections_mod.load_all()] == ["named"], \
         "no default stands in for the encoder bare did not name"
     monkeypatch.setattr(web, "_ping", lambda url: True)
@@ -89,9 +90,9 @@ def test_platform_encoder_defaults_are_ignored_and_said_to_be(isolated_config, c
     assert "EMBED_URL" not in eff["tier1"]
 
 
-def test_the_system_page_lists_what_was_refused(isolated_config, config_dir, monkeypatch):
-    _write(config_dir, "named", NAMED)
-    _write(config_dir, "bare", 'plugin = "gutenberg"\n')
+def test_the_system_page_lists_what_was_refused(isolated_config, data_dir, config_dir,
+                                                monkeypatch):
+    _named_and_bare(data_dir, config_dir)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("h", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
@@ -99,27 +100,6 @@ def test_the_system_page_lists_what_was_refused(isolated_config, config_dir, mon
     with TestClient(app) as c:
         page = c.get("/admin/system", headers={"X-Admin-Token": "sekrit"}).text
     assert "Refused collections" in page and "bare" in page and "non-compliant" in page
-
-
-def test_the_old_create_route_refuses_a_collection_naming_no_encoder(
-        isolated_config, config_dir, monkeypatch):
-    (config_dir / "collections").mkdir(parents=True, exist_ok=True)
-    (config.CORPUS_MOUNTS_DIR / "g").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
-    from app.api import app
-    body = {"name": "g", "plugin": "gutenberg", "profile": "hand-populated",
-            "corpus_dir": (config.CORPUS_MOUNTS_DIR / "g").as_posix()}
-    with TestClient(app) as c:
-        c.headers["X-Admin-Token"] = "sekrit"
-        r = c.post("/admin/library/new/create", json=body)
-        assert r.status_code == 400 and "non-compliant" in r.json()["detail"]
-        assert not collections_mod.config_toml_path("g").exists(), "nothing written"
-        r = c.post("/admin/library/new/create", json={**body, "encoder": {
-            "url": "http://enc:8080", "api": "openai", "model": "m",
-            "dtype": "f16", "ctx": 512}})
-        assert r.status_code == 200, r.text
-    assert collections_mod.by_name("g").embed.url == "http://enc:8080", \
-        "the file names the encoder it was created with"
 
 
 # ---- what survives of the old parser tests --------------------------------

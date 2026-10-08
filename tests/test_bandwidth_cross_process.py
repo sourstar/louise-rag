@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from app import config, db, spaces, web
 from app.api import app
+from tests.conftest import codex_collection
 
 
 @pytest.fixture
@@ -158,11 +159,9 @@ def test_the_page_gets_totals_and_a_download_split_by_collection(isolated_config
     # after it had left the Library. So the two whose stats are published
     # below have to be collections, not just names in a sample.
     from app import collections as collections_mod
-    cfg = collections_mod.collections_dir()
-    cfg.mkdir(parents=True, exist_ok=True)
-    for name in ("gutenberg", "wikipedia"):
-        (cfg / f"{name}.toml").write_text(
-            f'plugin = "{name}"\n', encoding="utf-8")
+    # gutenberg is the test's default collection; wikipedia is a second
+    codex_collection("wikipedia", louise_root=config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent)
 
     con = db.connect()
     db.publish_worker_rates(con, {"down": {"backfill": 40.0, "delta": 2.0},

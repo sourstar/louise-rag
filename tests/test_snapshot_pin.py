@@ -17,6 +17,7 @@ import pytest
 from app import collections as collections_mod
 from app.acquire import engine, specs
 from app.acquire.specs import WIKIPEDIA_SPEC
+from tests.conftest import codex_collection
 
 
 def test_dated_paths_are_immutable_and_latest_is_not():
@@ -89,28 +90,25 @@ def test_a_source_without_snapshots_ignores_the_pin(isolated_config):
 
 # ---------------- the TOML field ----------------
 
-def test_the_pin_is_tier_two_desired_state(isolated_config, tmp_path):
-    path = collections_mod.config_toml_path("wp")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('plugin = "wikipedia"\nprofile = "demo"\n'
-                    'snapshot = "20260801"\n', encoding="utf-8")
-    assert collections_mod.by_name("wp").snapshot == "20260801"
+def _pinned(data_dir, config_dir, name: str, toml_extra: str = ""):
+    """A Codex collection (the test gutenberg, whose Codex pins no dump) and
+    the file's `snapshot` line, if any."""
+    codex_collection(name, louise_root=data_dir, config_dir=config_dir, toml_extra=toml_extra)
+    return collections_mod.by_name(name)
 
 
-def test_an_unpinned_collection_reports_none(isolated_config, tmp_path):
-    path = collections_mod.config_toml_path("wp2")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('plugin = "wikipedia"\nprofile = "demo"\n', encoding="utf-8")
-    assert collections_mod.by_name("wp2").snapshot is None
+def test_the_pin_is_tier_two_desired_state(isolated_config, data_dir, config_dir):
+    assert _pinned(data_dir, config_dir, "wp", 'snapshot = "20260801"\n').snapshot == "20260801"
 
 
-def test_a_numeric_snapshot_survives_toml_typing(isolated_config, tmp_path):
+def test_an_unpinned_collection_reports_none(isolated_config, data_dir, config_dir):
+    assert _pinned(data_dir, config_dir, "wp2").snapshot is None
+
+
+def test_a_numeric_snapshot_survives_toml_typing(isolated_config, data_dir, config_dir):
     """`snapshot = 20260801` without quotes parses as an int; a date that
     silently became a number would build a nonsense URL."""
-    path = collections_mod.config_toml_path("wp3")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('plugin = "wikipedia"\nsnapshot = 20260801\n', encoding="utf-8")
-    assert collections_mod.by_name("wp3").snapshot == "20260801"
+    assert _pinned(data_dir, config_dir, "wp3", "snapshot = 20260801\n").snapshot == "20260801"
 
 
 # ---------------- listing what the origin offers ----------------

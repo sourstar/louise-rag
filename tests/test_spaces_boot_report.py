@@ -3,7 +3,7 @@ process startup, but caught and returned as pass/fail rows instead of
 exiting the process (CLAUDE.md invariant 1 stays enforced at real startup —
 this is purely a read-only status view for the UI).
 """
-from app import collections as collections_mod, spaces
+from app import collections as collections_mod, db, spaces
 
 
 def _patch_hash(monkeypatch, value="abc123", weak=False):
@@ -14,7 +14,6 @@ def test_report_is_read_only_and_never_pins(isolated_config, monkeypatch):
     """Observed live: an operator legitimately reset a pin (zero vectors) to
     switch recipes, opened the UI, and the report re-pinned the half-edited
     recipe — the next boot refused. A status view must never mutate."""
-    from app import db
     _patch_hash(monkeypatch)
     collection = collections_mod.default_collection()
 
@@ -37,12 +36,14 @@ def test_report_boot_status_reports_failure_without_raising(isolated_config, mon
     collection = collections_mod.default_collection()
     spaces.validate_boot([collection])   # pin
 
-    _patch_hash(monkeypatch, value="model-b")   # confirmed change
+    con = db.connect(collection)               # pinned to another space
+    con.execute("UPDATE space SET space_id='sha256:' || hex(randomblob(32)) WHERE id=1")
+    con.close()
     report = spaces.report_boot_status([collection])   # must not raise
     assert len(report) == 1
     assert report[0]["collection"] == collection.name
     assert report[0]["ok"] is False
-    assert "model-a" in report[0]["message"] or "model-b" in report[0]["message"]
+    assert "its Codex says" in report[0]["message"]
 
     # the real startup check still enforces the invariant — the report is a
     # non-raising view, not a weakening of validate_boot() itself

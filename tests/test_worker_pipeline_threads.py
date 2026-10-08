@@ -170,11 +170,10 @@ def test_removed_collection_drops_its_pending_scan(isolated_config, config_dir,
     from app import collections as collections_mod, spaces
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc", False))
     monkeypatch.setattr(worker, "_discover", lambda con, c, reason: None)
+    from tests.conftest import codex_collection
     d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
     for name in ("keep", "drop"):
-        (d / f"{name}.toml").write_text('plugin = "gutenberg"\nprofile = "demo"\n',
-                                         encoding="utf-8")
+        codex_collection(name, louise_root=config.DATA_DIR, config_dir=config_dir)
     start = collections_mod.load_all()
     cons = {c.name: db.connect(c) for c in start}
 

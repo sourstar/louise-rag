@@ -14,8 +14,10 @@ def test_a_show_on_a_node_that_never_booted_creates_nothing(isolated_config):
     assert out["mode"] == "paused" and out["overrides"] == {"mode": "paused", "paused_collections": [],
                                                             "bandwidth_bps": None}
     (row,) = out["collections"]
-    assert row["name"] == "gutenberg" and row["state"] == "in-use" and row["collection_id"] is None, \
-        "a legacy collection is always in use"
+    from app import copy_state
+    c = collections_mod.by_name("gutenberg")
+    assert row["name"] == "gutenberg" and row["collection_id"] == c.codex.collection_id
+    assert row["state"] == copy_state.of(c).state, "the state is the copy's own (07 §7.8)"
     assert row["paused"] is False and row["integrity_violated"] == [] and out["jobs"] == []
 
 

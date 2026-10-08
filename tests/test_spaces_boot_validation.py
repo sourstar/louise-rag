@@ -1,11 +1,11 @@
-"""Boot validation: pinned space_id/dim mismatches must refuse to boot
+"""Boot validation of a Codex collection: pinned space_id/dim mismatches must refuse to boot
 (CLAUDE.md invariant 1) rather than warn or auto-migrate. The embed-model hash
 resolution is monkeypatched throughout so these tests never depend on a live
 embed endpoint.
 """
 import pytest
 
-from app import collections as collections_mod, config, db, spaces
+from app import collections as collections_mod, db, spaces
 
 
 def _patch_hash(monkeypatch, value="abc123", weak=False):
@@ -29,46 +29,30 @@ def test_unchanged_config_boots_silently(isolated_config, monkeypatch):
     spaces.validate_boot([collection])  # second boot, identical config: no raise
 
 
-def test_confirmed_model_hash_mismatch_refuses_to_boot(isolated_config, monkeypatch):
-    _patch_hash(monkeypatch, value="model-a")
-    collection = collections_mod.default_collection()
-    spaces.validate_boot([collection])
-
-    _patch_hash(monkeypatch, value="model-b")  # confirmed (non-weak) change
-    with pytest.raises(spaces.BootValidationError):
-        spaces.validate_boot([collection])
-
-
-def test_weak_hash_mismatch_does_not_refuse(isolated_config, monkeypatch):
-    _patch_hash(monkeypatch, value="model-a")
-    collection = collections_mod.default_collection()
-    spaces.validate_boot([collection])
-
-    _patch_hash(monkeypatch, value="model-b", weak=True)
-    spaces.validate_boot([collection])  # unconfirmable: warn, don't refuse
-
-
-def test_chunk_version_change_refuses_to_boot(isolated_config, monkeypatch):
+def test_a_table_pinned_to_another_space_refuses_to_boot(isolated_config, monkeypatch):
+    """The Codex collection's pin is `codex.space_id` (09 §9.3): a vector
+    table pinned to any other space is refused, never re-pinned."""
     _patch_hash(monkeypatch)
     collection = collections_mod.default_collection()
     spaces.validate_boot([collection])
 
-    monkeypatch.setattr(config, "CHUNK_VERSION", config.CHUNK_VERSION + 1)
-    with pytest.raises(spaces.BootValidationError):
+    con = db.connect(collection)
+    con.execute("UPDATE space SET space_id='sha256:' || hex(randomblob(32)) WHERE id=1")
+    con.close()
+    with pytest.raises(spaces.BootValidationError, match="its Codex says"):
         spaces.validate_boot([collection])
 
 
-def test_config_change_refuses_even_with_weak_hash(isolated_config, monkeypatch):
-    """A weak (unconfirmed) embed-model hash must never mask a real,
-    fully-local config mismatch — e.g. an unreachable embed endpoint must not
-    let a CHUNK_VERSION bump silently through."""
-    _patch_hash(monkeypatch, weak=True)  # simulates an unreachable embed endpoint
+@pytest.mark.parametrize("weak", [False, True])
+def test_the_endpoint_model_hash_plays_no_part(isolated_config, monkeypatch, weak):
+    """A Codex names its encoder BY DIGEST: what an endpoint reports about
+    its weights, confirmed or not, neither refuses nor softens the boot."""
+    _patch_hash(monkeypatch, value="model-a")
     collection = collections_mod.default_collection()
     spaces.validate_boot([collection])
 
-    monkeypatch.setattr(config, "CHUNK_VERSION", config.CHUNK_VERSION + 1)
-    with pytest.raises(spaces.BootValidationError):
-        spaces.validate_boot([collection])
+    _patch_hash(monkeypatch, value="model-b", weak=weak)
+    spaces.validate_boot([collection])
 
 
 def test_dim_mismatch_refuses_to_boot(isolated_config, monkeypatch):

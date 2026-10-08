@@ -1,46 +1,43 @@
 """Per-collection embedding recipes — architecture-v2.md §14 amendment 9.
 
-A collection's [embed] block selects its own backend (URL, api, model,
-dtype, ctx, and a bi-encoder query_url); collections without one keep the
-Tier-1 env recipe, byte-for-byte the pre-multi-space behavior.
+A collection's `[encoder]` table names where this node reaches its Codex's
+encoder (URL, api, model, and a bi-encoder query_url); dtype, ctx and dim
+are the Codex's space (02 §2.4, 07 §7.8). There is no default encoder.
 """
 import numpy as np
 import pytest
 
 from app import collections as collections_mod, config, embeddings, spaces
+from tests.conftest import codex_collection
 
-
-def _write_toml(config_dir, name, body):
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{name}.toml").write_text(body, encoding="utf-8")
-
-
-MEDCPT_TOML = """\
-plugin = "pubmed"
-
-[embed]
+#: the test Codex's space is MedCPT's: f16, ctx 512, dim 768
+MEDCPT_ENCODER = """\
+[encoder]
 url = "http://nas:30440"
 api = "openai"
 model = "medcpt-article"
-dtype = "f16"
-ctx = 512
-dim = 768
 query_url = "http://nas:30441"
 """
 
 
-def test_embed_block_parses_into_recipe(isolated_config, config_dir):
-    _write_toml(config_dir, "medcpt", MEDCPT_TOML)
-    c = collections_mod.by_name("medcpt")
+def _medcpt(data_dir, config_dir):
+    codex_collection("medcpt", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra=MEDCPT_ENCODER)
+    return collections_mod.by_name("medcpt")
+
+
+def test_encoder_table_parses_into_recipe(isolated_config, data_dir, config_dir):
+    c = _medcpt(data_dir, config_dir)
     r = c.embed
+    space = c.codex.space
     assert r.url == "http://nas:30440" and r.model == "medcpt-article"
-    assert r.api == "openai" and r.dtype == "f16" and r.ctx == 512
-    assert r.dim == 768 and r.query_url == "http://nas:30441"
+    assert r.api == "openai" and r.query_url == "http://nas:30441"
+    assert (r.dtype, r.ctx, r.dim) == (space.dtype, space.ctx, space.dim) == ("f16", 512, 768)
 
 
-def test_embed_block_requires_url_and_model(isolated_config, config_dir):
-    _write_toml(config_dir, "broken", 'plugin = "pubmed"\n[embed]\nurl = "http://x"\n')
+def test_encoder_table_requires_url(isolated_config, data_dir, config_dir):
+    codex_collection("broken", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='[encoder]\nmodel = "m"\n')
     with pytest.raises(ValueError, match="url and model"):
         collections_mod.load_all()
 
@@ -306,9 +303,8 @@ def test_localais_nan_500_that_never_clears_is_the_numeric_failure_it_is(
         embeddings.embed_texts(["a sentence"], recipe=recipe)
 
 
-def test_space_components_come_from_the_recipe(isolated_config, config_dir):
-    _write_toml(config_dir, "medcpt", MEDCPT_TOML)
-    c = collections_mod.by_name("medcpt")
+def test_space_components_come_from_the_recipe(isolated_config, data_dir, config_dir):
+    c = _medcpt(data_dir, config_dir)
     comp = spaces.gather_components(c)
     assert comp.dtype == "f16"
     assert comp.truncation_policy == "ctx=512"
@@ -328,23 +324,35 @@ def test_space_components_come_from_the_recipe(isolated_config, config_dir):
     assert comp2.dtype == "f32"
 
 
-def test_two_collections_two_spaces_distinct_ids(isolated_config, config_dir):
-    _write_toml(config_dir, "medcpt", MEDCPT_TOML)
-    _write_toml(config_dir, "plain", 'plugin = "gutenberg"\n')
-    medcpt = collections_mod.by_name("medcpt")
-    plain = collections_mod.by_name("plain")
+def test_two_collections_two_spaces_distinct_ids(isolated_config, tmp_path):
+    def col(name, plugin, recipe):
+        return collections_mod.Collection(
+            name=name, plugin=plugin, profile=None, embed_mode_default=None,
+            corpus_dir=tmp_path, manifest_path=tmp_path / name / "m.db",
+            fts_dir=tmp_path / name / "fts", lance_dir=tmp_path / name / "lance",
+            embed=recipe)
+    medcpt = col("medcpt", "pubmed", collections_mod.EmbedRecipe(
+        url="http://nas:30440", api="openai", model="medcpt-article", dtype="f16",
+        ctx=512, dim=768, query_url="http://nas:30441"))
+    plain = col("plain", "gutenberg", collections_mod.EmbedRecipe(
+        url="http://s:1", api="openai", model="s", dtype="f32", ctx=8192))
     id_a = spaces.compute_space_id(spaces.gather_components(medcpt))
     id_b = spaces.compute_space_id(spaces.gather_components(plain))
     assert id_a != id_b
 
 
-def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, config_dir,
-                                                 monkeypatch, tmp_path):
-    _write_toml(config_dir, "medcpt", MEDCPT_TOML)
-    collection = collections_mod.by_name("medcpt")
+def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, monkeypatch, tmp_path):
+    # built by hand: a Codex collection writes only through a validated run
+    # (03 §3.3, tests/hold), and this is about the table's dtype
+    collection = collections_mod.Collection(
+        name="medcpt", plugin="pubmed", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance",
+        embed=collections_mod.EmbedRecipe(url="http://nas:30440", api="openai",
+                                          model="medcpt-article", dtype="f16", ctx=512))
     monkeypatch.setattr(
         embeddings, "embed_texts",
-        lambda texts, timeout=300, recipe=None, query=False:
+        lambda texts, timeout=300, recipe=None, query=False, **kw:
             [[1.0, 0.0, 0.0] for _ in texts])
     chunks = [{"id": "pubmed:1:0:1", "book_id": 1, "seq": 0,
                 "chapter": "", "text": "abstract text", "tokens": 2}]
@@ -355,10 +363,9 @@ def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, config_dir,
     assert pa.types.is_float16(tbl.schema.field("vector").type.value_type)
 
 
-def test_gate_baseline_records_the_collection_recipe(isolated_config, config_dir):
+def test_gate_baseline_records_the_collection_recipe(isolated_config, data_dir, config_dir):
     from app.verify import backend_gate
-    _write_toml(config_dir, "medcpt", MEDCPT_TOML)
-    collection = collections_mod.by_name("medcpt")
+    collection = _medcpt(data_dir, config_dir)
 
     def fake_embed(texts):
         return [[1.0, 0.0] for _ in texts]

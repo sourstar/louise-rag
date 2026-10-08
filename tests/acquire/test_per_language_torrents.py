@@ -80,22 +80,13 @@ def test_peer_sources_accept_one_or_several_in_order():
     assert engine.peer_sources(_Peer(["magnet:?xt=a", "magnet:?xt=b"])) == ("magnet:?xt=a", "magnet:?xt=b")
 
 
-def test_a_toml_array_of_peer_sources_round_trips(isolated_config, tmp_path, monkeypatch):
-    from app import config
-    from app.web import _write_collection_toml
-    path = config.CONFIG_DIR / "collections" / "wv.toml" if hasattr(config, "CONFIG_DIR") \
-        else collections_mod.config_toml_path("wv")
-    path = collections_mod.config_toml_path("wv")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _write_collection_toml(path, codex=None, plugin="embedded", profile="tr", acquire_enabled=True,
-                           corpus_dir=tmp_path / "wv", manifest=tmp_path / "m.db",
-                           fts=tmp_path / "fts", lancedb=tmp_path / "lance", license_ack=None,
-                           genesis_archive=None, embed=None,
-                           peer_source="magnet:?xt=urn:btih:aaa\nmagnet:?xt=urn:btih:bbb")
-    text = path.read_text(encoding="utf-8")
-    assert "peer_source = [" in text
-    loaded = collections_mod._load_one(path)
+def test_several_peer_sources_are_fetched_as_torrents_in_order(isolated_config, tmp_path):
+    """No collection file carries `peer_source` since the pre-Codex shape
+    left (2026-10-08); the collection is built here with one."""
+    loaded = replace(collections_mod.default_collection(), acquire_enabled=True,
+                     peer_source="magnet:?xt=urn:btih:aaa\nmagnet:?xt=urn:btih:bbb")
     assert engine.peer_sources(loaded) == ("magnet:?xt=urn:btih:aaa", "magnet:?xt=urn:btih:bbb")
+
     spec = AcquisitionSpec(
         source_id="embedded", transport=Transport.HTTPS,
         endpoints=(Endpoint(transport=Transport.HTTPS, url="http://origin"),),

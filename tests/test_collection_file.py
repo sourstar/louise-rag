@@ -34,7 +34,10 @@ def node(tmp_path, isolated_config, monkeypatch):
     root = tmp_path / "louise"
     (root / "collections").mkdir(parents=True)
     cfg = tmp_path / "config"
-    (cfg / "collections").mkdir(parents=True)
+    (cfg / "collections").mkdir(parents=True, exist_ok=True)
+    # isolated_config's own gutenberg file names this same Codex; each test
+    # here writes the file it is about
+    (cfg / "collections" / "gutenberg.toml").unlink()
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
     monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)

@@ -652,7 +652,10 @@ def test_the_command_line_gates_a_new_run_inline(node, rage):
 # ---- everything older is untouched ---------------------------------------------------------
 
 def test_a_collection_older_than_version_3_is_not_touched(isolated_config, monkeypatch):
-    collection = collections_mod.default_collection()
+    import dataclasses
+    from tests.hold.conftest import pubmed_v2
+    # a Codex written before the engine amendment (version 2), read for ever
+    collection = dataclasses.replace(collections_mod.default_collection(), codex=pubmed_v2())
     assert run_check.applies(collection) is False and embeddings._by_run(collection) is False
 
     def three_arguments(batch, timeout, recipe):       # the shape it always had

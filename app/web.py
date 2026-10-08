@@ -1900,8 +1900,8 @@ def grow_run(name: str, body: GrowBody):
         slices = "all"
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
-        raise HTTPException(400, f"{name!r} has no TOML file (synthesized "
-                                  f"default) — declare it before growing")
+        raise HTTPException(400, f"{name!r} has no collection file to "
+                                  f"declare the profile in")
     _write_collection_toml(
         toml_path, codex=_codex_id(collection),
         plugin=collection.plugin, profile=body.profile,
@@ -2041,8 +2041,6 @@ def new_collection_preview(body: NewCollectionBody):
 
 
 # ---------------- collection management (create / remove / bundle I/O) ----
-
-_COLLECTION_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def _codex_id(collection) -> str | None:
@@ -2337,324 +2335,20 @@ def _corpus_mounts() -> list[dict]:
     return mounts
 
 
-class CreateCollectionBody(BaseModel):
-    name: str
-    plugin: str
-    profile: str = "demo"
-    acquire_enabled: bool = False
-    corpus_dir: str = ""     # a CORPUS_MOUNTS_DIR entry; empty = CORPUS_DIR/<name>
-    acknowledge_terms: bool = False   # yellow-class sources: explicit consent
-    # Optional pre-embedded COMPANION at install time (wikipedia only): a
-    # second collection <name>-vec on the `embedded` plugin, acquiring the
-    # published frozen snapshot whose vectors travel with it — dense search
-    # works from day one while the live collection's own embeddings grow
-    # lazily. Needs its own corpus mount and its own terms acknowledgement.
-    companion_corpus_dir: str = ""
-    acknowledge_companion_terms: bool = False
-    # opted-in EXTRA formats (spec.extras) — local-only downloads beside
-    # the Louise data, never part of the p2p exchange
-    extras: list[str] = []
-    # WHERE the corpus comes from: "source" (the origin, today's default),
-    # "peers" (a peer's torrent — peer_source holds the magnet/.torrent),
-    # or "off" (hand-populated: no acquisition). acquire_enabled stays for
-    # older clients; the dropdown value wins when given.
-    acquire_source: str = ""
-    peer_source: str = ""
-    # THE ENCODER, an [encoder]-shaped table ({url, api, model, dtype, ctx}):
-    # a collection names its own and there is no default one (operator,
-    # 2026-09-18) — this route used to take the plugin default or EMBED_URL
-    encoder: dict | None = None
-    companion_encoder: dict | None = None
-
-
-def _requested_encoder(raw, what: str):
-    """The request's own encoder table, or a 400 saying it must name one."""
-    try:
-        recipe = collections_mod.parse_recipe(raw, where=f"the {what}'s encoder")
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from None
-    if recipe is None:
-        raise HTTPException(400, f"the {what}: {collections_mod.NO_ENCODER}")
-    return recipe
-
-
-def _resolve_corpus_mount(raw: str, mounts, *, what: str = "collection") -> Path:
-    """The chosen corpus folder must be a real, unused mounted dataset —
-    shared by the main collection and the companion (each needs its own)."""
-    if not raw.strip():
-        free = [m["path"] for m in mounts if not m["used_by"]]
-        raise HTTPException(
-            400, f"choose a corpus folder for the {what}: it must point at a "
-                 f"real mounted dataset. Free folders under "
-                 f"{config.CORPUS_MOUNTS_DIR}: {', '.join(free) or '(none — map one first)'}. "
-                 f"Map a folder by adding '- <host folder>:"
-                 f"{config.CORPUS_MOUNTS_DIR}/<name>' to BOTH services, web and worker "
-                 f"(TrueNAS: the app YAML; any Docker host: deploy/docker/compose.yaml, "
-                 f"or LOUISE_CORPORA in its env file), then re-open this page")
-    chosen = next((m for m in mounts if m["path"] == raw.strip()), None)
-    if chosen is None:
-        available = ", ".join(m["path"] for m in mounts) or "(none)"
-        raise HTTPException(
-            400, f"the {what}'s corpus folder must be one of the mounted "
-                 f"entries under {config.CORPUS_MOUNTS_DIR} — available: "
-                 f"{available}. Map your folder there first: '- <host folder>:"
-                 f"{config.CORPUS_MOUNTS_DIR}/<name>' on both services (TrueNAS: the "
-                 f"app YAML; any Docker host: deploy/docker/compose.yaml)")
-    if chosen["used_by"]:
-        raise HTTPException(
-            409, f"{chosen['path']} already belongs to collection "
-                 f"{chosen['used_by']!r} — a corpus folder can serve only "
-                 f"one collection")
-    return Path(chosen["path"])
-
-
-def _ack_for_acquisition(plugin: str, acquire_enabled: bool,
-                          acknowledged: bool) -> str | None:
-    """Returns the license_ack to record, None when none is needed, or
-    raises 409 when acquisition of a yellow-class source was requested
-    without explicit acknowledgement — the client then shows the terms and
-    retries with acknowledge_terms=true. The ack itself is computed
-    server-side from the shipped terms text, identical to
-    `corpus add --ack-terms`."""
-    spec = ACQUIRE_REGISTRY.get(plugin)
-    if spec is None:
-        return None
-    # NOT keyed on `acquire_enabled`. Invariant 9 requires the ack before the
-    # data is USED, "however the data arrived", and names hand-populated
-    # folders as explicitly not a bypass — so a yellow source declared with
-    # acquisition off still needs one. Keying this on acquisition meant
-    # `acquire_source = "off"` created an unacknowledged yellow collection
-    # and the gate never ran.
-    if spec.license_class.value not in ("yellow", "red"):
-        return None
-    if spec.terms_text_path is None or not spec.terms_text_path.is_file():
-        raise HTTPException(500, f"{plugin}: yellow-class source ships no terms text")
-    if not acknowledged:
-        raise HTTPException(
-            409, "terms-acknowledgement-required: this source's license "
-                 "requires explicit acknowledgement before acquisition "
-                 "(license gate, never bypassed)")
-    return acquire_engine.make_ack(spec.terms_text_path)
-
-
 @admin_router.post("/library/new/create")
-def new_collection_create(body: CreateCollectionBody):
-    """DEPRECATED (07 §7.6): the web interface's new collection is
-    `POST /api/hold/collection/create` — `hold collection create --recipe
-    FILE`, which writes a Codex and 07 §7.8's file. The Library no longer
-    calls this; it stays for one release, as the migration keeps every old
-    name, and it writes a file that names no Codex.
-
-    Writes the collection's Tier-2 TOML — the same file an operator would
-    save by hand from the preview. Paths are auto-isolated per collection
-    (DATA_DIR/<name>/...) because the TOML defaults deliberately point at the
-    FIRST collection's paths, and two collections must never share a
-    manifest or vector table (one embedding space per table, invariant 1)."""
-    if not _COLLECTION_NAME.match(body.name):
-        raise HTTPException(400, "collection name must be [a-z0-9][a-z0-9_-]{0,63}")
-    if body.plugin not in collections_mod.PLUGIN_REGISTRY:
-        raise HTTPException(400, f"unknown plugin: {body.plugin!r}")
-    if collections_mod.by_name(body.name) is not None:
-        raise HTTPException(409, f"collection {body.name!r} already exists")
-    # "(hand-populated)": no profile, no acquisition — the operator fills
-    # the corpus folder themselves (rsync, zfs send, files staged by hand)
-    # and discovery simply indexes what appears. Selecting it forces
-    # acquisition off: a profile is what acquisition fetches BY.
-    hand_populated = body.profile in ("", "hand-populated")
-    if hand_populated:
-        body.profile = ""
-        body.acquire_enabled = False
-    create_spec = ACQUIRE_REGISTRY.get(body.plugin)
-    if body.extras:
-        offered = create_spec.extras if create_spec is not None else {}
-        unknown = [e for e in body.extras if e not in offered]
-        if unknown:
-            raise HTTPException(400, f"unknown extra format(s) "
-                                      f"{', '.join(unknown)} — this source "
-                                      f"offers: {', '.join(sorted(offered)) or 'none'}")
-        if hand_populated:
-            raise HTTPException(400, "extras need acquisition — a "
-                                      "hand-populated collection fetches nothing")
-    # acquisition SOURCE (the create form's drop-down): the origin, a
-    # peer's torrent, or nothing (hand-populated)
-    if body.acquire_source:
-        if body.acquire_source not in ("source", "peers", "off"):
-            raise HTTPException(400, "acquire_source must be source | peers | off")
-        if hand_populated and body.acquire_source != "off":
-            raise HTTPException(400, "a hand-populated collection acquires nothing")
-        body.acquire_enabled = body.acquire_source != "off"
-        if body.acquire_source != "peers":
-            body.peer_source = ""
-    peer = body.peer_source.strip()
-    if body.acquire_source == "peers" and not peer:
-        raise HTTPException(400, "fetching from peers needs a magnet URI or a "
-                                  ".torrent path (peer_source)")
-    # one source, or several one per line / comma-separated (the per-
-    # language torrents of a pre-embedded corpus, fetched in this order)
-    from .acquire.engine import peer_sources as _peer_sources
-    for src in _peer_sources(type("_P", (), {"peer_source": peer})()):
-        if not (src.startswith("magnet:") or src.endswith(".torrent")):
-            raise HTTPException(400, f"peer_source entry is neither a magnet: URI nor a "
-                                      f".torrent path: {src[:60]}")
-    toml_path = collections_mod.config_toml_path(body.name)
-    if toml_path.exists():
-        raise HTTPException(409, f"{toml_path} already exists")
-
-    # The collections/ directory EXISTING is what flips load_all() from
-    # synthesized-default mode to TOML mode — without this, creating an
-    # empty new collection would silently disown the default collection
-    # and everything in it (observed live: 79k books vanished behind a
-    # test 'pubmed' TOML). Capture the synthesized default BEFORE the
-    # directory is created and materialize it, so what exists keeps
-    # existing. (An operator who removed the default on purpose has an
-    # existing, empty directory: nothing is synthesized, nothing comes back.)
-    legacy = [c for c in collections_mod.load_all() if collections_mod.is_synthesized(c)]
-    toml_path.parent.mkdir(parents=True, exist_ok=True)
-    if legacy:
-        for existing in legacy:
-            _write_collection_toml(
-                collections_mod.config_toml_path(existing.name),
-                codex=_codex_id(existing),
-                plugin=existing.plugin, profile=existing.profile,
-                acquire_enabled=existing.acquire_enabled,
-                corpus_dir=existing.corpus_dir,
-                manifest=existing.manifest_path, fts=existing.fts_dir,
-                lancedb=existing.lance_dir, license_ack=existing.license_ack,
-                genesis_archive=existing.genesis_archive,
-                embed=collections_mod.recipe_for(existing),
-                embed_mode=existing.embed_mode_default,
-                layers=existing.layers,
-                snapshot=existing.snapshot, extras=existing.extras,
-                peer_source=existing.peer_source, title=existing.title,
-                slices=existing.slices, kinds=existing.kinds,
-                share=existing.share, reranker=existing.reranker, source=existing.source)
-
-    # A corpus folder is CHOSEN, never defaulted. The old fallback
-    # (CORPUS_DIR/<name>) silently invented a path that existed in no
-    # container, so the collection was born pointing at nothing and only
-    # said so as "corpus dir not found" on the next discovery round. An
-    # unmounted corpus is not a state worth being able to create.
-    #
-    # EVERYTHING is validated before ANYTHING is written: a companion that
-    # fails validation must not leave the main collection half-created.
-    mounts = _corpus_mounts()
-    corpus_dir = _resolve_corpus_mount(body.corpus_dir, mounts)
-
-    ack = _ack_for_acquisition(body.plugin, body.acquire_enabled,
-                                body.acknowledge_terms)
-
-    companion = None
-    if body.companion_corpus_dir.strip():
-        if body.plugin != "wikipedia":
-            raise HTTPException(400, "the pre-embedded companion is offered "
-                                     "for the wikipedia plugin only")
-        companion_name = f"{body.name}-vec"
-        if collections_mod.by_name(companion_name) is not None or \
-                collections_mod.config_toml_path(companion_name).exists():
-            raise HTTPException(409, f"companion collection {companion_name!r} "
-                                     f"already exists")
-        companion_dir = _resolve_corpus_mount(body.companion_corpus_dir, mounts,
-                                              what="companion")
-        if companion_dir == corpus_dir:
-            raise HTTPException(409, "the companion needs its OWN corpus "
-                                     "folder — the frozen parquet snapshot and "
-                                     "the live dumps cannot share one")
-        # the embedded plugin is yellow-class with its own terms text: its
-        # acknowledgement is separate from the main plugin's, never implied
-        try:
-            companion_ack = _ack_for_acquisition("embedded", True,
-                                                 body.acknowledge_companion_terms)
-        except HTTPException as e:
-            if "terms-acknowledgement-required" in str(e.detail):
-                raise HTTPException(
-                    409, "companion-terms-acknowledgement-required: the "
-                         "pre-embedded companion carries its own license "
-                         "terms (embedded plugin)") from None
-            raise
-        # its encoder too, BEFORE either file is written: no half a creation
-        companion = (companion_name, companion_dir, companion_ack,
-                     _requested_encoder(body.companion_encoder, "companion"))
-
-    # default ON: a plugin with a known published-embeddings archive gets it
-    # declared, so the worker reuses pre-embedded data before spending GPU.
-    # Operators opt out by deleting the line from the TOML.
-    from .bundles.genesis import DEFAULT_ARCHIVE_BY_PLUGIN
-    genesis_archive = DEFAULT_ARCHIVE_BY_PLUGIN.get(body.plugin)
-
-    # the last check before anything is written: its own encoder
-    embed = _requested_encoder(body.encoder, "collection")
-    base = config.DATA_DIR / body.name
-    _write_collection_toml(
-        toml_path, codex=None,
-        plugin=body.plugin, profile=body.profile,
-        acquire_enabled=body.acquire_enabled,
-        corpus_dir=corpus_dir,
-        manifest=base / "manifest.db", fts=base / "fts",
-        lancedb=base / "lancedb", license_ack=ack,
-        genesis_archive=genesis_archive,
-        # Explicit from birth: the space this collection will pin at its
-        # first validation is written down, not implied by env. Switching
-        # encoders before anything embeds stays a pin reset + TOML edit,
-        # exactly as before — just visible now.
-        #
-        # The node's per-plugin default wins over the env recipe, because
-        # env is the TEXT encoder and some plugins are not text. Two genome
-        # collections were created here against the node default and pinned
-        # a Qwen3 text space over DNA before anyone noticed; a genome
-        # collection embedded with a language model is not a worse choice,
-        # it is a wrong one.
-        embed=embed,
-        extras=tuple(body.extras),
-        peer_source=(body.peer_source.strip() or None))
-
-    companion_note = ""
-    if companion is not None:
-        companion_name, companion_dir, companion_ack, companion_embed = companion
-        companion_base = config.DATA_DIR / companion_name
-        _write_collection_toml(
-            collections_mod.config_toml_path(companion_name),
-            codex=None,
-            plugin="embedded", profile="all", acquire_enabled=True,
-            corpus_dir=companion_dir,
-            manifest=companion_base / "manifest.db",
-            fts=companion_base / "fts", lancedb=companion_base / "lancedb",
-            license_ack=companion_ack,
-            genesis_archive=DEFAULT_ARCHIVE_BY_PLUGIN.get("embedded"),
-            embed=companion_embed,
-            # 'fix' from birth: everything arrives pre-embedded via genesis;
-            # the local encoder only mops up what the archive cannot cover
-            # (shard-boundary straddlers), which is minutes of CPU, once
-            embed_mode="all")
-        companion_note = (
-            f" Companion {companion_name!r} created beside it: it acquires "
-            f"the published pre-embedded snapshot and imports its vectors "
-            f"(no GPU work), so dense search answers from day one while "
-            f"{body.name!r} embeds lazily where queries lead.")
-
-    con = db.connect()
-    db.log_event(con, "info", "control",
-                 f"collection {body.name!r} created via admin UI ({toml_path})"
-                 + (f"; companion {companion[0]!r} created" if companion else ""))
-    note = ("Live now: the web process sees it immediately and the worker "
-            "picks it up within one round (no restart). If your config dir "
-            "is versioned, commit the new file. A yellow-class source still "
-            "needs its license ack before acquisition (corpus add --ack-terms)."
-            + companion_note)
-    # Always true now: the corpus is picked from _corpus_mounts(), which
-    # lists directories that exist. Kept in the response because callers
-    # (and the tests) read it as the "this collection can actually see its
-    # data" flag, and a mount can still vanish between listing and create.
-    corpus_mounted = corpus_dir.is_dir()
-    if not corpus_mounted:
-        note = (f"CORPUS PATH DISAPPEARED BETWEEN LISTING AND CREATE: "
-                 f"{corpus_dir} is no longer present in the container. Check "
-                 f"the mount is still declared for BOTH services in the app "
-                 f"YAML. Until then discovery reports 'corpus dir not "
-                 f"found'. ") + note
-    return {"ok": True, "toml_path": str(toml_path),
-            "corpus_dir": corpus_dir.as_posix(), "corpus_mounted": corpus_mounted,
-            "companion": (companion[0] if companion else None),
-            "note": note}
+def new_collection_create():
+    """GONE (07 §7.6). This wrote a collection file that named no Codex,
+    and since the legacy shape was removed (2026-10-08) every such file is
+    refused at load (collections.load_all), so whatever it created could
+    never run. A new collection is `POST /api/hold/collection/create` —
+    `hold collection create --recipe FILE` — which writes a Codex and
+    07 §7.8's file. Answers 410 before reading the request, so no body,
+    valid or not, writes anything."""
+    raise HTTPException(
+        410, "gone: /admin/library/new/create wrote collection files that name "
+             "no Codex, which are now refused at load. Create a collection with "
+             "POST /api/hold/collection/create (`louise hold collection create "
+             "--recipe FILE`, 07 §7.6)")
 
 
 @admin_router.post("/library/{name}/remove")
@@ -2666,25 +2360,7 @@ def collection_remove(name: str):
     collection = _collection_or_404(name)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
-        if not collections_mod.is_synthesized(collection):
-            raise HTTPException(400, f"{name!r} has no TOML file to retire")
-        # The synthesized default (legacy mode: no collections/ directory).
-        # Creating the EMPTY directory switches the node to TOML mode with
-        # zero collections — the default is gone, its data stays on disk,
-        # and the create flow declares the next collection explicitly.
-        toml_path.parent.mkdir(parents=True, exist_ok=True)
-        con = db.connect()
-        db.log_event(con, "info", "control",
-                     f"synthesized default collection {name!r} removed via admin UI "
-                     f"({toml_path.parent} created empty: TOML mode, zero collections; "
-                     f"data kept on disk)")
-        return {"ok": True, "retired_toml": None,
-                "data_kept": {"manifest": str(collection.manifest_path),
-                               "fts": str(collection.fts_dir),
-                               "lancedb": str(collection.lance_dir)},
-                "note": "This was the synthesized default (no TOML). The node now has "
-                         "zero collections; create one from the Library. Its data "
-                         "stays on disk."}
+        raise HTTPException(400, f"{name!r} has no TOML file to retire")
     retired = toml_path.with_name(f"{name}.toml.removed-{int(time.time())}")
     toml_path.rename(retired)
     con = db.connect()
@@ -2712,8 +2388,8 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     scope every round.
 
     PERSISTENT: this writes BOTH the runtime scope (immediate effect) and
-    `embed_mode` in the collection's TOML — a Tier-2 edit through the UI,
-    exactly like collection-create and the license ack. The first cut made
+    `embed` in the collection's file — a Tier-2 edit through the UI. The
+    first cut made
     this a runtime-only override that a restart reverted to the TOML, which
     was invariant-10-correct and operationally wrong: the operator set a
     mode seven restarts in a day set back seven times. Invariant 10 holds
@@ -2729,28 +2405,6 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     # ever written: the 500 reloaded the page and the mode reverted
     # (operator report: wikipedia off -> refresh -> on-demand again).
     toml_path = collections_mod.config_toml_path(name)
-    toml_path.parent.mkdir(parents=True, exist_ok=True)
-    if not toml_path.exists():
-        # a synthesized collection (no TOMLs at all yet): materialize what
-        # exists first, or writing this one file would disown the rest —
-        # the same guard collection-create applies
-        for existing in collections_mod.load_all():
-            _write_collection_toml(
-                collections_mod.config_toml_path(existing.name),
-                codex=_codex_id(existing),
-                plugin=existing.plugin, profile=existing.profile,
-                acquire_enabled=existing.acquire_enabled,
-                corpus_dir=existing.corpus_dir,
-                manifest=existing.manifest_path, fts=existing.fts_dir,
-                lancedb=existing.lance_dir, license_ack=existing.license_ack,
-                genesis_archive=existing.genesis_archive,
-                embed=collections_mod.recipe_for(existing),
-                embed_mode=existing.embed_mode_default,
-                layers=existing.layers,
-                snapshot=existing.snapshot, extras=existing.extras,
-                peer_source=existing.peer_source, title=existing.title,
-                slices=existing.slices, kinds=existing.kinds,
-                share=existing.share, reranker=existing.reranker, source=existing.source)
     _write_collection_toml(
         toml_path, codex=_codex_id(collection),
         plugin=collection.plugin, profile=collection.profile,
@@ -2804,55 +2458,17 @@ def collection_terms(name: str):
 
 @admin_router.post("/library/{name}/ack")
 def collection_ack(name: str):
-    """Record the license acknowledgement for an EXISTING collection and
-    enable acquisition — the UI path to what `corpus add --ack-terms` +
-    hand-editing the TOML does. Rewrites the collection's TOML with
-    license_ack and acquire_enabled=true; the worker hot-reloads it."""
-    from . import licensing
-    collection = _collection_or_404(name)
-    if getattr(collection, "codex", None) is not None:
-        # A Codex collection's acknowledgement is state/ack.json, recorded
-        # by `louise hold collection ack` after it checks the terms against
-        # the Codex's pin (09 §9.13). This wrote `license_ack` into a TOML
-        # the Codex loader never reads and answered "ok" — the gate stayed
-        # shut while the page said it was open (verification pass).
-        raise HTTPException(
-            400, f"{name} is run from its Codex: record the acknowledgement with "
-                 f"`louise hold collection ack {name}` — it checks the terms "
-                 f"against the Codex's pin first")
-    toml_path = collections_mod.config_toml_path(name)
-    if not toml_path.exists():
-        raise HTTPException(400, f"{name!r} has no TOML file to record the ack in")
-    if licensing.terms_path_for(collection) is None:
-        raise HTTPException(400, f"{collection.plugin}: no terms text shipped — "
-                                  f"nothing to acknowledge")
-    ack = licensing.make_ack(collection)
-    # acquisition follows the ack only where there is an origin to acquire
-    # from; a packed collection is fed by a folder or a torrent, not a spec
-    acquire = True if ACQUIRE_REGISTRY.get(collection.plugin) else collection.acquire_enabled
-    _write_collection_toml(
-        toml_path, codex=_codex_id(collection),
-        plugin=collection.plugin, profile=collection.profile,
-        acquire_enabled=acquire, corpus_dir=collection.corpus_dir,
-        manifest=collection.manifest_path, fts=collection.fts_dir,
-        lancedb=collection.lance_dir, license_ack=ack,
-        genesis_archive=collection.genesis_archive,
-        embed=collections_mod.recipe_for(collection),
-        embed_mode=collection.embed_mode_default, layers=collection.layers,
-        snapshot=collection.snapshot, extras=collection.extras,
-        # peer_source was missing here: acknowledging a licence would
-        # silently un-declare a collection fed from a peer torrent
-        peer_source=collection.peer_source, title=collection.title,
-        slices=collection.slices, kinds=collection.kinds,
-        share=collection.share, reranker=collection.reranker, source=collection.source,
-        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
-    con = db.connect(collection)
-    db.log_event(con, "info", "control",
-                 f"license terms acknowledged for {name!r} via admin UI "
-                 f"({ack.split('/')[0]}); acquisition enabled")
-    return {"ok": True, "license_ack": ack,
-            "note": "Recorded in the TOML; acquisition is enabled and the "
-                     "worker picks it up within one round."}
+    """Every collection is run from its Codex, whose acknowledgement is
+    state/ack.json, recorded by `louise hold collection ack` after it
+    checks the terms against the Codex's pin (09 §9.13). This route once
+    wrote `license_ack` into a TOML the Codex loader never reads and
+    answered "ok" — the gate stayed shut while the page said it was open
+    (verification pass). It now only says where the ack is recorded."""
+    _collection_or_404(name)
+    raise HTTPException(
+        400, f"{name} is run from its Codex: record the acknowledgement with "
+             f"`louise hold collection ack {name}` — it checks the terms "
+             f"against the Codex's pin first")
 
 
 class BundleExportBody(BaseModel):

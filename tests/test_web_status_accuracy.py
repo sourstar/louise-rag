@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app import collections as collections_mod, config, db, spaces, web
 from app.api import app
 from app.verify import backend_gate
+from tests.conftest import codex_collection
 
 
 @pytest.fixture
@@ -114,14 +115,11 @@ def test_embed_mode_names_the_processor_it_spends(client, isolated_config,
     """"Embed mode (GPU spending)" was hardcoded, but three of five
     collections run CPU encoder containers — flipping them on costs
     nothing on the contended GPU, and the card said otherwise."""
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "gpuone.toml").write_text(
-        'plugin = "gutenberg"\n\n[embed]\nurl = "http://gpu:1"\n'
-        'model = "qwen3"\nctx = 8192\n', encoding="utf-8")
-    (d / "cputwo.toml").write_text(
-        'plugin = "gutenberg"\n\n[embed]\nurl = "http://tei:2"\n'
-        'model = "bge-m3"\nctx = 2048\nconcurrency = 4\n', encoding="utf-8")
+    root = isolated_config.DATA_DIR
+    codex_collection("gpuone", louise_root=root, config_dir=config_dir,
+                     toml_extra='\n[encoder]\nurl = "http://gpu:1"\n')
+    codex_collection("cputwo", louise_root=root, config_dir=config_dir,
+                     toml_extra='\n[encoder]\nurl = "http://tei:2"\nconcurrency = 4\n')
 
     import re
     page = re.sub(r"\s+", " ", client.get("/admin/library").text)
@@ -136,11 +134,8 @@ def test_device_can_be_declared_explicitly(isolated_config, config_dir):
     """Inference from concurrency is a default, not a straitjacket: a
     CPU encoder run serially must still be labelled CPU."""
     from app import collections as cm
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "serialcpu.toml").write_text(
-        'plugin = "gutenberg"\n\n[embed]\nurl = "http://tei:2"\n'
-        'model = "bge-m3"\nctx = 2048\ndevice = "cpu"\n', encoding="utf-8")
+    codex_collection("serialcpu", louise_root=isolated_config.DATA_DIR, config_dir=config_dir,
+                     toml_extra='\n[encoder]\nurl = "http://tei:2"\ndevice = "cpu"\n')
     c = [x for x in cm.load_all() if x.name == "serialcpu"][0]
     assert c.embed.concurrency == 1 and c.embed.spends == "cpu"
     # and the inference still applies when nothing is declared
@@ -156,21 +151,8 @@ def test_system_log_merges_every_collection(client, isolated_config, tmp_path):
     first = collections_mod.default_collection()
     db.log_event(db.connect(first), "info", "worker", "hello from gutenberg")
 
-    def _declare(name: str, base):
-        path = collections_mod.config_toml_path(name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            'plugin = "gutenberg"\n'
-            f'corpus_dir = "{base.as_posix()}"\n\n[paths]\n'
-            f'manifest = "{(base / "manifest.db").as_posix()}"\n'
-            f'fts = "{(base / "fts").as_posix()}"\n'
-            f'lancedb = "{(base / "lancedb").as_posix()}"\n',
-            encoding="utf-8")
-
-    # declaring ANY toml hides the synthesized default, so materialize the
-    # first collection alongside — the same rule the create flow follows
-    _declare("gutenberg", first.manifest_path.parent)
-    _declare("second", tmp_path / "c2")
+    codex_collection("second", louise_root=isolated_config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent)
     other = [c for c in collections_mod.load_all() if c.name == "second"][0]
     db.log_event(db.connect(other), "error", "genesis", "shard REJECTED here")
 

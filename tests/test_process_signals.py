@@ -26,21 +26,19 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _env(tmp_path: Path, corpus_dir: Path) -> dict:
-    """A node of its own: one gutenberg collection over CORPUS_DIR
+    """A node of its own: one Codex gutenberg collection over CORPUS_DIR
     (acquisition off), naming an encoder no one answers, nothing shared
     with the test process. Its file names the encoder because a collection
     that names none is refused (no default encoder, operator 2026-09-18) —
     and this child process is beyond tests/conftest.py's test encoder."""
+    from tests.conftest import codex_collection
     (tmp_path / "data").mkdir(exist_ok=True)
-    (tmp_path / "config" / "collections").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "config" / "collections" / "gutenberg.toml").write_text(
-        f'plugin = "gutenberg"\ncorpus_dir = "{corpus_dir.as_posix()}"\n'
-        '[embed]\nurl = "http://127.0.0.1:9"\napi = "ollama"\n'
-        'model = "qwen3-embedding-8k:latest"\ndtype = "f32"\nctx = 8192\n',
-        encoding="utf-8")
+    codex_collection("gutenberg", louise_root=tmp_path / "data", config_dir=tmp_path / "config",
+                     corpus_dir=corpus_dir, toml_extra='\n[encoder]\nurl = "http://127.0.0.1:9"\n')
     return {
         "PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path), "PYTHONPATH": str(ROOT),
         "DATA_DIR": str(tmp_path / "data"), "CONFIG_DIR": str(tmp_path / "config"),
+        "LOUISE_ROOT": str(tmp_path / "data"),
         "CORPUS_DIR": str(corpus_dir), "PARSE_PROCESSES": "1",
         "WORKER_IDLE_SLEEP": "0.2",
     }

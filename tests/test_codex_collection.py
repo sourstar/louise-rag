@@ -94,18 +94,17 @@ def test_a_missing_drag_says_so(node):
         collections_mod.load_all()
 
 
-def test_a_legacy_toml_is_untouched(tmp_path, monkeypatch):
-    """Everything that does not name a Codex behaves exactly as before —
-    which is every collection that predates step 8."""
-    cfg = tmp_path / "config" / "collections"
-    cfg.mkdir(parents=True)
+def test_a_toml_naming_no_codex_is_refused(node):
+    """Since 2026-10-08 a file that names no Codex is not served — refused
+    beside the Codex collections, never fatal to them."""
+    root, cfg, codex = node
     (cfg / "legacy.toml").write_text(
         'plugin = "gutenberg"\nembed_mode = "off"\n'
-        f'[paths]\nmanifest = "{tmp_path / "m.db"}"\n', encoding="utf-8")
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
-    c = next(x for x in collections_mod.load_all() if x.name == "legacy")
-    assert c.codex is None
-    assert c.manifest_path == tmp_path / "m.db"
+        f'[paths]\nmanifest = "{(root / "m.db").as_posix()}"\n', encoding="utf-8")
+    assert [c.name for c in collections_mod.load_all()] == ["gutenberg"]
+    assert [r.name for r in collections_mod.refusals()] == ["legacy"]
+    with pytest.raises(collections_mod.NotConverted):
+        collections_mod._load_one(cfg / "legacy.toml")
 
 
 # ---- invariant 1, against the Codex's own space id -----------------------

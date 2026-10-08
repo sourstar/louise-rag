@@ -40,6 +40,16 @@ def fresh_worker_state():
 
 
 @pytest.fixture(autouse=True)
+def no_checkout_config(tmp_path_factory, monkeypatch):
+    """No test reads the checkout's own config: CONFIG_DIR is an empty
+    directory unless the test (or `isolated_config`) points it elsewhere.
+    It used to fall back to `.`, and with the repo's pre-Codex
+    `collections/gutenberg.toml` gone (2026-10-08) a test that never chose
+    a config would otherwise have read whatever the working tree held."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("no-config")))
+
+
+@pytest.fixture(autouse=True)
 def the_real_node_store_is_never_touched():
     """app/node_state.py resolves `<LOUISE_ROOT or DATA_DIR>/state/node.sqlite`
     — on a node's volume, that node's LIVE mode. Two tests without
@@ -117,19 +127,60 @@ def isolated_config(request, monkeypatch, corpus_dir, data_dir, config_dir):
     # other test runs the in-process serial path — same results, no children
     monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
-    # NO DEFAULT ENCODER (operator, 2026-09-18): the synthesized legacy
-    # collection names none, and a collection that names none is refused.
-    # The tests that embed with it name one HERE, explicitly — the values
-    # the removed env defaults had, so what those tests assert still holds.
-    import dataclasses
-    from app import collections as collections_mod
-    if not request.node.get_closest_marker("strict_encoder"):
-        synthesized = collections_mod._default_gutenberg_collection
-        monkeypatch.setattr(collections_mod, "_default_gutenberg_collection",
-                            lambda: dataclasses.replace(synthesized(), embed=TEST_ENCODER))
+    # THE DEFAULT COLLECTION IS A CODEX COLLECTION (2026-10-08: the pre-Codex
+    # shape and its synthesized default are gone): gutenberg from the test
+    # recipe over this test's corpus, its encoder the Codex's own.
+    _codex_default(request, monkeypatch, corpus_dir, data_dir, config_dir)
     config.ensure_dirs()
     return config
 
+
+_CODEX_TEMPLATE: dict = {}
+
+
+def _codex_template():
+    """gutenberg from the test recipe, created ONCE per session (a Codex,
+    its calibration member, its drag) and copied wherever a test wants a
+    Codex collection: the tree is content-addressed, so every copy is the
+    same collection."""
+    import tempfile
+    from app.hold import collection as col
+    from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed, fake_query_embed
+    from tests.hold.test_template import recipe
+    if "root" not in _CODEX_TEMPLATE:
+        tmpl = Path(tempfile.mkdtemp(prefix="codex-default-"))
+        (tmpl / "collections").mkdir()
+        codex = col.create_from_recipe(tmpl / "collections", "gutenberg", recipe(), platform_image=PLATFORM,
+                                       embed=fake_embed, embed_query=fake_query_embed, name="gutenberg",
+                                       key=KEY, now=NOW)
+        _CODEX_TEMPLATE.update(root=tmpl, id=codex.collection_id)
+    return _CODEX_TEMPLATE
+
+
+def codex_collection(name: str = "gutenberg", *, louise_root: Path, config_dir: Path, corpus_dir: Path | None = None,
+                     toml_extra: str = "") -> str:
+    """A Codex collection named `name` (gutenberg's test Codex) on this
+    test's node: its tree under `<louise_root>/collections/<name>/`, its
+    file `<config_dir>/collections/<name>.toml` naming the Codex, the
+    corpus when given, and `toml_extra` (more file keys, as TOML text).
+    Returns the collection_id. THE way a test makes a collection since the
+    pre-Codex shape left (2026-10-08)."""
+    t = _codex_template()
+    shutil.copytree(t["root"] / "collections" / "gutenberg", Path(louise_root) / "collections" / name,
+                    dirs_exist_ok=True)
+    (Path(config_dir) / "collections").mkdir(parents=True, exist_ok=True)
+    body = f'codex = "{t["id"]}"\n'
+    if corpus_dir is not None:
+        body += f'corpus_dir = "{Path(corpus_dir).as_posix()}"\n'
+    (Path(config_dir) / "collections" / f"{name}.toml").write_text(body + toml_extra, encoding="utf-8")
+    return t["id"]
+
+
+def _codex_default(request, monkeypatch, corpus_dir, data_dir, config_dir):
+    """The default collection: `codex_collection("gutenberg")` over this
+    test's corpus, LOUISE_ROOT pointed at the test's data dir."""
+    codex_collection("gutenberg", louise_root=data_dir, config_dir=config_dir, corpus_dir=corpus_dir)
+    monkeypatch.setenv("LOUISE_ROOT", str(data_dir))
 
 def pytest_configure(config):
     config.addinivalue_line(

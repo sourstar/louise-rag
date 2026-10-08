@@ -288,9 +288,13 @@ class Collection:
         return inner
 
 
-def _default_gutenberg_collection() -> Collection:
+def _control_fallback() -> Collection:
+    """Where `db.connect()` writes when the node holds NO collection — never
+    listed, never run, never served. Not a collection: the legacy
+    single-collection default it was, gutenberg over CORPUS_DIR/DATA_DIR,
+    left with the pre-Codex shape on 2026-10-08 (operator)."""
     return Collection(
-        name="gutenberg",
+        name="control",
         plugin="gutenberg",
         profile=None,
         embed_mode_default=None,
@@ -671,52 +675,22 @@ def _codex_ack(codex, state_dir: Path) -> str | None:
         return None
 
 
+NOT_CONVERTED = ("not converted: the file declares no `codex`, and a node serves only Codex "
+                 "collections (07 §7.8; the pre-Codex shape left on 2026-10-08). It is served "
+                 "once migrated and its file names its collection_id")
+
+
+class NotConverted(ValueError):
+    """A collection file that names no Codex: refused, never fatal."""
+
+
 def _load_one(path: Path) -> Collection:
     with open(path, "rb") as f:
         raw: dict[str, Any] = tomllib.load(f)
     name = raw.get("name") or path.stem
-    if raw.get("codex"):
-        return _codex_collection(path, raw, name)
-    plugin = raw.get("plugin", name)
-    paths = raw.get("paths", {})
-
-    def _resolve(key: str, default: Path) -> Path:
-        value = paths.get(key)
-        return Path(value) if value else default
-
-    corpus_dir = Path(raw["corpus_dir"]) if raw.get("corpus_dir") else config.CORPUS_DIR
-
-    embed = parse_recipe(raw.get("embed"), where=str(path))
-    from . import layers as layers_mod
-    layers = layers_mod.parse_layers(raw.get("layers"), where=str(path))
-    embed_mode = raw.get("embed_mode")
-    if embed_mode is not None and embed_mode not in EMBED_MODES:
-        raise ValueError(f"{path}: embed_mode must be one of "
-                         f"{' | '.join(EMBED_MODES)}, got {embed_mode!r}")
-
-    return Collection(
-        name=name,
-        plugin=plugin,
-        profile=raw.get("profile"),
-        embed_mode_default=embed_mode,
-        corpus_dir=corpus_dir,
-        manifest_path=_resolve("manifest", config.DATA_DIR / "manifest.db"),
-        fts_dir=_resolve("fts", config.DATA_DIR / "fts"),
-        lance_dir=_resolve("lancedb", config.DATA_DIR / "lancedb"),
-        acquire_enabled=bool(raw.get("acquire_enabled", False)),
-        license_ack=raw.get("license_ack"),
-        embed=embed,
-        reranker=parse_reranker(raw.get("reranker"), where=str(path)),
-        genesis_archive=raw.get("genesis_archive"),
-        extras=tuple(raw.get("extras") or ()),
-        # one magnet/.torrent, or several (a TOML array, or one per line):
-        # the per-language torrents of a pre-embedded corpus (STATUS 5h)
-        peer_source=(("\n".join(str(x) for x in raw["peer_source"])
-                      if isinstance(raw.get("peer_source"), list)
-                      else str(raw["peer_source"])) if raw.get("peer_source") else None),
-        snapshot=(str(raw["snapshot"]) if raw.get("snapshot") else None),
-        layers=layers,
-    )
+    if not raw.get("codex"):
+        raise NotConverted(NOT_CONVERTED)
+    return _codex_collection(path, raw, name)
 
 
 def config_toml_path(name: str) -> Path:
@@ -761,40 +735,12 @@ def refusals() -> tuple[Refusal, ...]:
     return _REFUSALS
 
 
-def codex_only() -> bool:
-    """Node policy: serve ONLY collections that name a Codex.
-
-    Tier 2, because it is desired state rather than identity (07 §7.8):
-    `platform.toml`'s `[node] codex_only = true`. Default FALSE, so a node
-    that predates the migration is unaffected and every legacy deployment
-    keeps working until step 12 retires the old shape for good.
-
-    Read lazily rather than at import: `platform.toml` is a file an
-    operator edits, and a module-level constant would freeze it until the
-    process restarted — the same defect this module fixes elsewhere.
-    """
-    try:
-        from . import platform_config
-        return bool(getattr(platform_config.load(), "codex_only", False))
-    except Exception:
-        # A malformed platform.toml must not decide policy by accident.
-        # False is the safe default in both directions: it serves what the
-        # node already served, and it never hides a collection silently.
-        return False
-
-
 def load_all(*, skip_unreadable: bool = False):
-    """The collections this node has. TWO modes, decided by whether the
-    `collections/` directory EXISTS:
-
-      absent   — the legacy single-collection deployment: one synthesized
-                 default (gutenberg over CORPUS_DIR/DATA_DIR), no TOML.
-      present  — TOML mode: exactly the TOMLs in it, possibly NONE. An
-                 empty directory is a node with zero collections, not a
-                 legacy node: the synthesized default used to reappear the
-                 moment the last TOML was removed (Louise2, 2026-08-26 —
-                 "cannot delete all collections") and could not be removed
-                 again from the UI, because it has no file to retire.
+    """The collections this node has: exactly the Codex collections whose
+    files are in `collections/`, possibly none — and none when the
+    directory is absent. (Until 2026-10-08 an absent directory meant one
+    synthesized legacy gutenberg; the pre-Codex shape is gone.) A file that
+    names no Codex is refused, said in `refusals()`, never served.
 
     `skip_unreadable` is THE WORKER'S round loop and nothing else: it
     returns `(served, [(name, reason)…])` instead of raising, so one bad
@@ -803,13 +749,13 @@ def load_all(*, skip_unreadable: bool = False):
     unrunnable). Every other caller wants the raise — see below.
     """
     cfg_dir = collections_dir()
+    global _REFUSALS
     if not cfg_dir.is_dir():
-        default = [_default_gutenberg_collection()]
-        return (default, []) if skip_unreadable else default
+        _REFUSALS = ()                  # as fresh as the listing: nothing there, nothing refused
+        return ([], []) if skip_unreadable else []
     served: list[Collection] = []
     refused: list[Refusal] = []
     unreadable: list[tuple[str, str]] = []
-    only_codex = codex_only()
     for p in sorted(cfg_dir.glob("*.toml")):
         name = p.stem
         # A MALFORMED file still raises, and that is deliberate. "A typo
@@ -821,6 +767,9 @@ def load_all(*, skip_unreadable: bool = False):
         # must not be reported the same way.
         try:
             c = _load_one(p)
+        except NotConverted as e:
+            refused.append(Refusal(name, p, str(e)))
+            continue
         except Exception as e:                          # noqa: BLE001
             if not skip_unreadable:
                 raise
@@ -832,16 +781,7 @@ def load_all(*, skip_unreadable: bool = False):
             # default quietly standing in for the encoder it did not name
             refused.append(Refusal(name, p, NO_ENCODER))
             continue
-        if only_codex and c.codex is None:
-            refused.append(Refusal(
-                name, p,
-                "not converted: the file declares no `codex`, and this node "
-                "serves only Codex collections (platform.toml [node] "
-                "codex_only). A collection is shown again once it has been "
-                "migrated and its file names its collection_id (07 §7.8)"))
-            continue
         served.append(c)
-    global _REFUSALS
     _REFUSALS = tuple(refused)
     return (served, unreadable) if skip_unreadable else served
 
@@ -860,18 +800,13 @@ def load_public() -> list:
     return [c for c in load_all() if not is_private(c)]
 
 
-def is_synthesized(collection) -> bool:
-    """True for the legacy default: no TOML, no collections/ directory."""
-    return not collections_dir().is_dir() and not config_toml_path(collection.name).exists()
-
-
 def default_collection() -> Collection:
     """The first collection load_all() returns — used wherever no explicit
     collection is given (single-collection call sites predating P0.5's
     federation), and as the CONTROL manifest (worker state, seeding table).
-    With zero collections the control manifest falls back to the legacy
-    default's path (DATA_DIR/manifest.db) so the node keeps running; that
-    collection is NOT listed anywhere and no pipeline runs on it."""
+    With zero collections the control manifest falls back to
+    DATA_DIR/manifest.db (`_control_fallback`) so the node keeps running;
+    it is NOT listed anywhere and no pipeline runs on it."""
     collections = load_all()
     if collections:
         return collections[0]
@@ -888,7 +823,7 @@ def default_collection() -> Collection:
             "every collection file was refused, so this node has nothing to "
             "run and no collection to hold its control state: "
             + "; ".join(f"{r.name} ({r.reason})" for r in _REFUSALS))
-    return _default_gutenberg_collection()
+    return _control_fallback()
 
 
 def by_name(name: str) -> Collection | None:

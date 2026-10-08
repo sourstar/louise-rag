@@ -86,19 +86,17 @@ def test_space_id_is_unchanged_with_one_layer_and_moves_with_two(isolated_config
     assert spaces.SpaceComponents(**{k: v for k, v in comps.__dict__.items() if k != "layers"}).layers is None
 
 
-def test_toml_layers_are_loaded_into_the_collection(isolated_config, config_dir):
-    (config_dir / "collections").mkdir()
-    (config_dir / "collections" / "wv.toml").write_text(
-        'name = "wv"\nplugin = "embedded"\n'
+def test_a_files_layers_never_override_the_codexs(isolated_config, data_dir, config_dir):
+    """The layer list is inside `collection_id` (invariant 1): a collection
+    file's `[[layers]]` is not read, the Codex's are the collection's."""
+    from tests.conftest import codex_collection
+    codex_collection("wv", louise_root=data_dir, config_dir=config_dir, toml_extra=(
         '[[layers]]\nchunker = "verbatim"\nrule = "archive:upstash-wikipedia-2024-06"\n'
-        '[[layers]]\nchunker = "cdc"\n', encoding="utf-8")
+        '[[layers]]\nchunker = "cdc"\n'))
     c = collections_mod.by_name("wv")
-    assert c is not None and [l.chunker for l in c.layers] == ["verbatim", "cdc"]
-    (config_dir / "collections" / "bad.toml").write_text(
-        'name = "bad"\nplugin = "embedded"\n[[layers]]\nchunker = "cdc"\nrule = "archive:x"\n',
-        encoding="utf-8")
-    with pytest.raises(layers.LayerError):
-        collections_mod.load_all()
+    assert c is not None
+    assert [l.chunker for l in c.layers] == [l.chunker.id for l in c.codex.layers]
+    assert [l.chunker for l in c.layers] != ["verbatim", "cdc"]
 
 
 # ---- 06 §6.3's third rule form -------------------------------------------

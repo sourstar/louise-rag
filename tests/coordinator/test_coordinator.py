@@ -22,6 +22,11 @@ from app.bundles import export as bundle_export
 from app.coordinator import leases, service, store
 from tests.bundles.helpers import DIM, seed_document
 
+# The space these bundles are cut in is the default collection's
+# (`spaces.gather_components()` with no collection): the test node's Codex
+# gutenberg, never whatever `collections/` the working directory holds.
+pytestmark = pytest.mark.usefixtures("isolated_config")
+
 PRODUCER_A = signing.SigningKey(bytes(range(32)))
 PRODUCER_B = signing.SigningKey(bytes(range(32, 64)))
 KEY_A = bytes(PRODUCER_A.verify_key).hex()

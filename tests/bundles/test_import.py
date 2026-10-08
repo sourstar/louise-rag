@@ -15,6 +15,15 @@ from app.bundles import checks, export as exp, importer, ledger, trust
 from app.bundles.format import BundleFormatError, BundleSignatureError
 from tests.bundles.helpers import DIM, seed_document, unit_vectors
 
+
+@pytest.fixture(autouse=True)
+def no_collection_files(tmp_path, monkeypatch):
+    """The hand-built `collection` is the only one: CONFIG_DIR names an
+    empty folder, so nothing outside the test (the checkout's own
+    collections/, a pre-Codex file now refused) becomes the default."""
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config"))
+
+
 UID = "gutenberg:1"
 
 

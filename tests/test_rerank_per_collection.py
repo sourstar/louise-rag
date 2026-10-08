@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from app import collections as collections_mod, config, db, platform_config, retrieval
+from tests.conftest import codex_collection
 
 
 def _col(tmp_path, name, reranker=None):
@@ -118,20 +119,16 @@ def test_a_collection_file_reranker_wins_over_RERANK_URL(monkeypatch, tmp_path):
     assert collections_mod.reranker_for(dataclasses.replace(c, reranker=JINA)) is JINA
 
 
-def test_the_collection_file_declares_its_reranker(isolated_config, config_dir):
-    d = config_dir / "collections"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "r.toml").write_text(
-        'plugin = "gutenberg"\n[reranker]\nurl = "http://gpu:30447/v1/rerank"\n'
-        'api = "jina"\nmodel = "bge-reranker-v2-m3"\n', encoding="utf-8")
+def test_the_collection_file_declares_its_reranker(isolated_config, data_dir, config_dir):
+    def r(table):
+        codex_collection("r", louise_root=data_dir, config_dir=config_dir,
+                         toml_extra="[reranker]\n" + table)
+    r('url = "http://gpu:30447/v1/rerank"\napi = "jina"\nmodel = "bge-reranker-v2-m3"\n')
     assert collections_mod.by_name("r").reranker == JINA
-    (d / "r.toml").write_text(
-        'plugin = "gutenberg"\n[reranker]\nurl = "http://x"\napi = "cohere"\n',
-        encoding="utf-8")
+    r('url = "http://x"\napi = "cohere"\n')
     with pytest.raises(ValueError, match="api must be one of"):
         collections_mod.load_all()
-    (d / "r.toml").write_text('plugin = "gutenberg"\n[reranker]\napi = "jina"\n',
-                              encoding="utf-8")
+    r('api = "jina"\n')
     with pytest.raises(ValueError, match="needs a url"):
         collections_mod.load_all()
 
