@@ -22,6 +22,12 @@
                                     [--budget]
     louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
     louise hold check <collection> [--checks A,B] [--sample F] [--seed HEX] [--snapshot ID] [--json]
+    louise hold records show <collection> (<record-id> | --shard <slice>/<n>) [--raw]
+    louise hold snapshot delta <collection> <from> <to>
+    louise hold index build <collection> --vector | show <collection>
+    louise hold config show|apply [<collection>]
+    louise node health [<collection>] [--errors]
+    louise dev genesis recheck <collection> | recount <collection> [--yes]
 
 Only this branch of the tree exists so far. The rest arrives branch by
 branch, each with its tests, and the old `python -m app.cli` keeps working
@@ -1635,6 +1641,11 @@ def cmd_vectors_import(a) -> int:
     from app.hold import admission as adms, admit as adm, collection as col, \
         drag, embedder as emb, land as landing, records as rec, vectors as vec
 
+    if getattr(a, "retry", False):
+        if not getattr(a, "archive", None):
+            raise CodexError("--retry puts an ARCHIVE's rejected shards back in line; "
+                             "it needs --archive ID")
+        return cmd_vectors_archive_retry(a)
     if getattr(a, "archive", None):
         return cmd_vectors_archive_import(a)
 
@@ -2562,6 +2573,251 @@ def cmd_snapshot_list(a) -> int:
     return 0
 
 
+# ---- the old `python -m app.cli` commands, given their homes (step 12) -------
+# Carried over from app/cli.py, never imported from it: that module goes.
+
+def cmd_snapshot_delta(a) -> int:
+    """`hold snapshot delta <collection> <from> <to>` (07 §7.3): what changed
+    between two held snapshots — their own deltas composed along the chain
+    (app/hold/chain.py). A gap in the chain is exit 2. Read-only: it writes
+    no delta file, since every snapshot already carries its own."""
+    from app.hold import chain
+    name, _ = col.resolve(a.root, a.collection)
+    _print(chain.delta(a.root, name, a.from_snapshot, a.to_snapshot))
+    return 0
+
+
+def cmd_records_show(a) -> int:
+    """`hold records show <collection> (<record-id> | --shard <slice>/<n>)
+    [--raw]` (07 §7.3): one record of the current snapshot with the layer
+    and chunker derived for it and its chunks (02 §2.3), or `--shard` the
+    whole shard as stored, as JSON Lines (09 §9.5). Was `pack cat` / `pack
+    dump`."""
+    from app import layers as layers_mod
+    from app.ask import figures
+    from app.hold import drag as drag_mod, export as exp
+    from app.pack import records as pack_records
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = _latest_snapshot(a.root, name)
+    drag_dir = col.drag_of(Path(a.root), name)
+    if a.shard:
+        entry = exp._shard_of(snapshot, a.shard)
+        path = drag_dir / entry.path
+        if not path.is_file():
+            raise CodexError(f"{entry.path} is in snapshot {snapshot.snapshot_id} "
+                             f"but not in this copy")
+        sys.stdout.flush()
+        n = pack_records.dump_jsonl(path, sys.stdout.buffer)
+        sys.stdout.buffer.flush()
+        print(f"{n} records", file=sys.stderr)
+        return 0
+    if not a.record_id:
+        raise CodexError("name a record id (e.g. pubmed:38112034) or --shard <slice>/<n>")
+    order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
+    got = figures.record_of(drag_dir, snapshot, a.record_id, order)
+    if got is None:
+        print(f"louise: {a.record_id}: in no shard of snapshot "
+              f"{snapshot.snapshot_id} this copy holds", file=sys.stderr)
+        return 1
+    record, shard = got
+    if a.raw:
+        _print(record)
+        return 0
+    row = {"uid": record["uid"], "native_id": record.get("native_id", 0)}
+    i = layers_mod.layer_index(codex, row["native_id"], row)
+    layer = layers_mod.layers_for(codex)[i]
+    sections = [tuple(s) for s in record.get("sections") or []]
+    _print({"snapshot": snapshot.snapshot_id,
+            "shard": drag_mod.shard_path(shard.slice, shard.n),
+            "layer": {"index": i, **layer.as_manifest()},
+            "record": record,
+            "chunks": layers_mod.chunks_for_document(codex, row, sections)})
+    return 0
+
+
+def cmd_index_build(a) -> int:
+    """`hold index build <collection> [--text | --vector]` (07 §7.3): the
+    vector table's indexes now — the book_id index every delete-then-insert
+    write filters on, then the vector index queries probe (app/vector_index.py,
+    as `index vector build` built them). The text index is the worker's fts
+    stage's, shard by shard as documents land; nothing rebuilds it on
+    demand, so `--text` says so (exit 2) rather than pretending."""
+    from app import vector_index
+    from app.hold import records as rec
+    if not a.vector:
+        raise CodexError("the text index is built by the node's fts stage as documents "
+                         "land; there is no on-demand build. `hold index build "
+                         f"{a.collection} --vector` builds the vector table's indexes")
+    name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold index build")
+    local = rec.local_collection(a.root, name, codex)
+    if a.dry_run:
+        _print({"collection": name, "would_build": ["book_id", "vector"],
+                "stats": vector_index.stats(local)})
+        return 0
+    log = lambda *x: print(*x, file=sys.stderr)       # noqa: E731
+    out = vector_index.build_scalar(local, log=log)
+    if not out.get("built"):
+        print(f"louise: book_id index not built: {out.get('reason')}", file=sys.stderr)
+        return 1
+    out = vector_index.build(local, index_type=a.type, partitions=a.partitions, log=log)
+    if not out.get("built"):
+        print(f"louise: vector index not built: {out.get('reason')}", file=sys.stderr)
+        return 1
+    _print({"collection": name, "vector_index": out})
+    return 0
+
+
+def cmd_index_show(a) -> int:
+    """`hold index show <collection>`: the vector table's rows, its vector
+    index and the rows not yet folded in, and whether the book_id index
+    exists. Read-only; takes no lock (07 §7.7)."""
+    from app import config, vector_index
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    st = vector_index.stats(rec._local_collection(a.root, name, codex))
+    out: dict = {"collection": name, "vector_table": st is not None}
+    if st is not None:
+        out.update(rows=st["rows"], vector_index=(
+            {"name": st["name"], "type": st["type"], "unindexed_rows": st["unindexed_rows"]}
+            if st["indexed"] else None),
+            book_id_index=bool(st.get("book_id_indexed")),
+            auto_build_at_rows=config.VECTOR_INDEX_MIN_ROWS)
+    _print(out)
+    return 0
+
+
+def cmd_config_show(a) -> int:
+    """`hold config show [<collection>]` (07 §7.8): the effective
+    configuration, each value with its tier, from the resolution the node
+    itself uses (app/effective_config.py)."""
+    from app import effective_config
+    _print(effective_config.show(a.collection))
+    return 0
+
+
+def cmd_config_apply(a) -> int:
+    """`hold config apply [<collection>]` (07 §7.8): the files applied now,
+    as the node applies them at start — a runtime embed-mode override gives
+    way to the file's value. Exit 1 when a named file is refused (an
+    `[encoder]` it does not name: what `embed materialize` reported)."""
+    from app import effective_config
+    out = effective_config.apply(a.collection)
+    _print(out)
+    return 1 if out["refused"] else 0
+
+
+def _node_collections(name: str | None) -> list:
+    from app import collections as collections_mod
+    if name:
+        c = collections_mod.by_name(name)
+        if c is None:
+            raise CodexError(f"{name}: no such collection on this node")
+        return [c]
+    got = collections_mod.load_all(skip_unreadable=True)
+    return got[0] if isinstance(got, tuple) else got
+
+
+def cmd_node_health(a) -> int:
+    """`node health [<collection>] [--errors]`: every stage's state, and
+    exit 1 when a stage has work it cannot start — a CHECK, not only a page
+    (app/health.py). A stage with nothing to do exits 0 whether or not it is
+    switched off: "off and finished" is not a problem. Was `app.cli health`."""
+    from app import health
+    reports, blocking = health.check(_node_collections(a.collection), errors=a.errors)
+    print(health.render(reports), end="")
+    if not blocking:
+        return 0
+    print("\nBLOCKED:", file=sys.stderr)
+    for line in blocking:
+        print(f"  {line}", file=sys.stderr)
+    return 1
+
+
+def cmd_dev_genesis_recheck(a) -> int:
+    """`dev genesis recheck <collection>`: reopen FINAL archive shards that
+    still have documents the archive could serve (genesis.reopen_finals_
+    with_unserved). Writes; one indexed range count per final shard, which
+    is why it is a command and not a round."""
+    from app import db
+    from app.bundles import genesis
+    collection = _node_collections(a.collection)[0]
+    with _closing(db.connect(collection)) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            found = genesis.reopen_finals_with_unserved(con, collection)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    if not found:
+        print("every final shard has served every document in its range")
+        return 0
+    for shard, n in sorted(found.items(), key=lambda kv: -kv[1]):
+        print(f"shard {shard}: {n:,} unserved -> reopened")
+    print(f"{len(found)} shard(s) reopened, {sum(found.values()):,} documents; "
+          f"the fetcher re-fetches them and the worker imports their vectors")
+    return 0
+
+
+def cmd_dev_genesis_recount(a) -> int:
+    """`dev genesis recount <collection> [--yes]`: the archive ledger's
+    docs/chunks recomputed from chunk_verification (genesis.recount_ledger).
+    A dry run that measures the walk unless --yes; with --yes, stop the
+    worker first. Exit 2 when rows differ and nothing was written."""
+    import time
+    from app import db
+    from app.bundles import genesis
+    collection = _node_collections(a.collection)[0]
+    with _closing(db.connect(collection)) as con:
+        t0 = time.monotonic()
+        out = genesis.recount_ledger(con, write=a.yes)
+    print(f"walked chunk_verification in {time.monotonic() - t0:.1f} s")
+    changed = [rc for rc in out if rc.changed]
+    if not changed:
+        print(f"{len(out)} ledger row(s) already match chunk_verification")
+        return 0
+    for rc in changed:
+        print(f"{rc.archive}/{rc.shard}: docs {rc.docs:,} -> {rc.held_docs:,}, "
+              f"chunks {rc.chunks:,} -> {rc.held_chunks:,}")
+    if not a.yes:
+        print(f"{len(changed)} row(s) differ; nothing written. Re-run with --yes "
+              f"(worker stopped) to set them.")
+        return 2
+    print(f"{len(changed)} row(s) set from chunk_verification")
+    return 0
+
+
+def cmd_vectors_archive_retry(a) -> int:
+    """`hold vectors import <collection> --archive ID --retry` (07 §7.3):
+    the archive's REJECTED shards put back in line — state `fetched`, the
+    verdict cleared — for the worker to retry on real evidence
+    (genesis.retry_rejected). Was `genesis retry`."""
+    from app import db
+    from app.bundles import genesis
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold vectors import --retry")
+    local = rec.local_collection(a.root, name, codex)
+    reset: list = []
+    with _closing(db.connect(local)) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            for shard in (a.shards or [None]):
+                reset += genesis.retry_rejected(con, archive_id=a.archive, shard=shard)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    if not reset:
+        print(f"{a.archive}: nothing rejected"
+              + (f" among shards {', '.join(a.shards)}" if a.shards else ""))
+        return 0
+    for archive_id, shard in reset:
+        print(f"{archive_id}/{shard}: rejected -> fetched (the worker retries it)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node")
@@ -2580,6 +2836,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = nverbs.add_parser("resume", help="the node, or one collection")
     p.add_argument("collection", nargs="?", default=None)
     p.set_defaults(fn=cmd_node_resume)
+    p = nverbs.add_parser("health", help="every stage's state per collection; exit 1 when a stage has "
+                                        "work it cannot start")
+    p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--errors", action="store_true", help="also count errored documents (43 s on a 40M manifest: `error` is in "
+                        "no index, so proving there are none walks the whole scope range)")
+    p.set_defaults(fn=cmd_node_health)
 
     hold = surfaces.add_parser("hold", help="your own copy: complete, current, checked")
     nouns = hold.add_subparsers(dest="noun", required=True)
@@ -2801,6 +3063,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_records_check)
 
+    p = rverbs.add_parser("show", help="one record of the current snapshot with its layer and chunks, "
+                                       "or a whole shard as JSON Lines")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("record_id", nargs="?", default=None, help="a uid, e.g. pubmed:38112034")
+    p.add_argument("--shard", default=None, metavar="SLICE/N", help="the whole shard, as stored (09 §9.5)")
+    p.add_argument("--raw", action="store_true", help="the record without its chunks")
+    p.set_defaults(fn=cmd_records_show)
+
+    # ---- hold config ----------------------------------------------------
+    cfg = nouns.add_parser("config", help="the effective configuration, each value with its tier (07 §7.8)")
+    cverbs = cfg.add_subparsers(dest="verb", required=True)
+    p = cverbs.add_parser("show", help="each collection's effective values and the tier each comes from")
+    p.add_argument("collection", nargs="?", default=None)
+    p.set_defaults(fn=cmd_config_show)
+    p = cverbs.add_parser("apply", help="apply the files now, as the node does at start: a runtime "
+                                        "override gives way to the file's value")
+    p.add_argument("collection", nargs="?", default=None)
+    p.set_defaults(fn=cmd_config_apply)
+
     # ---- hold snapshot --------------------------------------------------
     snaps = nouns.add_parser("snapshot", help="a collection's records at one cutoff")
     sverbs = snaps.add_subparsers(dest="verb", required=True)
@@ -2820,6 +3101,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sverbs.add_parser("list", help="the chain this peer holds")
     args_collection(p); p.set_defaults(fn=cmd_snapshot_list)
+
+    p = sverbs.add_parser("delta", help="what changed between two held snapshots of the chain")
+    args_collection(p)
+    p.add_argument("from_snapshot", metavar="from"); p.add_argument("to_snapshot", metavar="to")
+    p.set_defaults(fn=cmd_snapshot_delta)
+
+    # ---- hold index -----------------------------------------------------
+    idx = nouns.add_parser("index", help="the vector table's indexes")
+    iverbs = idx.add_subparsers(dest="verb", required=True)
+    p = iverbs.add_parser("build", help="the book_id and vector indexes of the vector table, now")
+    args_collection(p)
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--text", action="store_true",
+                       help="refused: the node's fts stage builds the text index")
+    which.add_argument("--vector", action="store_true", help="the vector table's indexes")
+    p.add_argument("--type", default=None, help="the vector index type (default: VECTOR_INDEX_TYPE)")
+    p.add_argument("--partitions", type=int, default=None,
+                   help="IVF partitions (default: from the row count)")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run")
+    p.set_defaults(fn=cmd_index_build)
+    p = iverbs.add_parser("show", help="rows, the vector index and what it has not folded in, "
+                                       "the book_id index")
+    args_collection(p); p.set_defaults(fn=cmd_index_show)
 
     # ---- hold embedder --------------------------------------------------
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
@@ -2918,6 +3222,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "for keys whose work this peer has not seen "
                         "reproduced. Off by default: an operator naming a "
                         "path is not material arriving from a stranger")
+    p.add_argument("--retry", action="store_true",
+                   help="with --archive: put the archive's rejected shards (or "
+                        "those of --shards) back in line for the worker; "
+                        "imports nothing now")
     p.set_defaults(fn=cmd_vectors_import)
 
     p = vverbs.add_parser("show", help="the coverage map: covered chunks per shard, leaders, "
@@ -3014,6 +3322,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", dest="dry_run", help="report the changes, write nothing")
     p.add_argument("--no-backup", action="store_true", dest="no_backup", help="no .bak copy of the file first")
     p.set_defaults(fn=cmd_dev_migrate_schema)
+    p = dverbs.add_parser("genesis", help="one-shot repairs of an archive's ledger; writes")
+    gverbs = p.add_subparsers(dest="what", required=True)
+    p = gverbs.add_parser("recheck", help="reopen final shards that still have documents the archive "
+                                          "could serve")
+    p.add_argument("collection")
+    p.set_defaults(fn=cmd_dev_genesis_recheck)
+    p = gverbs.add_parser("recount", help="the ledger's docs and chunks from chunk_verification; a dry "
+                                          "run unless --yes (worker stopped)")
+    p.add_argument("collection")
+    p.add_argument("--yes", action="store_true", help="write the recounted rows")
+    p.set_defaults(fn=cmd_dev_genesis_recount)
 
     share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
     shverbs = share.add_subparsers(dest="verb", required=True)

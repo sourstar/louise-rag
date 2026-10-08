@@ -157,6 +157,7 @@ louise node
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
   pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]
+  health [<collection>] [--errors]                                     every stage's state per collection; exit 1 when a stage has work it cannot start (added 2026-10-08)
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
   schedule-report      what the worker spent its rounds on
@@ -165,6 +166,8 @@ louise dev                                                             operator 
                        idle and beside an embedding; loads and unloads models, and puts back what it found
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
+  genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
+  genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which
@@ -318,6 +321,23 @@ reader needs at the command line:
   that lacks one. `--vector` trains the centres when the space has none
   and ships them as a member (02 §2.4); when it has, it labels every
   held vector against the newest version held and never moves a centre.
+  *As built (2026-10-08, step 12):* `--vector` builds the local vector
+  table's book_id and vector indexes (what `index vector build` did); the
+  centres member is not built yet. `--text`, and no flag, exit 2: the
+  node's fts stage builds the text index as documents land, and nothing
+  rebuilds it on demand. `index vector prune` has no successor: the node
+  prunes superseded Lance versions hourly.
+- **`records show`, `snapshot delta`.** `records show` reads the current
+  snapshot. `snapshot delta` composes the deltas the snapshots after
+  `<from>` up to `<to>` already carry (09 §9.4) and prints them as one
+  `delta` object; a period between the two not held, or a broken
+  `previous` link, is exit 2.
+- **`config show`, `config apply`.** `show` prints, per collection, the
+  embed mode, the encoder, the reranker and the share settings, each
+  labelled `environment`, `files`, `state database` — or `codex` for what
+  the space fixes. `apply` replaces each runtime embed-mode override by
+  the file's value, as the node does at start, and names (exit 1) a file
+  the node refuses. `--set` is not built yet (2026-10-08).
 - **`check`.** Runs the plan (03 §3.2) with the seed given or a fresh
   one. A check's outcome is `pass`, `fail` or `inconclusive` (03 §3.1);
   the first two yield an attestation (09 §9.8), signed when this peer
@@ -683,7 +703,11 @@ function and printing `deprecated: use louise <new …>` on stderr.
 | `bundle resweep`, `tools/vector_compliance`, `vector_sweep` | `hold vectors check [--drop]` |
 | `genesis import` / `status` | `hold vectors import <collection> --archive ID` / `hold vectors show` |
 | `genesis retry` | `hold vectors import <collection> --archive ID --retry` |
-| `index vector build` / `status` | `hold index build` / `show` |
+| `index vector build` / `status` | `hold index build --vector` / `show` |
+| `index vector prune` | none: the node prunes hourly |
+| `health` | `node health` |
+| `genesis recheck` / `recount` | `dev genesis recheck` / `recount` |
+| `pack status`, `bundle public-key` | none: `hold collection show`, `hold key show` |
 | `embed materialize` | `hold config apply` (it writes; `hold config show` displays) |
 | `contribute` | `share contribute` |
 | `torrent publish`, `torrent seed` | `share <collection>`; serving is the node's |
