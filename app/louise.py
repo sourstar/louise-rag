@@ -1216,7 +1216,17 @@ def _show_drag(root, name: str) -> dict:
             "anchor": anchor.status(Path(root), name, codex),
             # 03 §3.8: the record shards no certifier-signed snapshot lists —
             # non-empty, the copy is integrity violated on this peer
-            "integrity_violated": list(_integrity_violations(Path(root), name, codex))}
+            "integrity_violated": list(_integrity_violations(Path(root), name, codex)),
+            # 03 §3.2: the last plan the worker ran in the background
+            "scheduled_check": _scheduled_check(Path(root), name)}
+
+
+def _scheduled_check(root, name):
+    from app import scheduled_checks
+    got = scheduled_checks.last(root, name)
+    if got is None:
+        return None
+    return {k: got.get(k) for k in ("time", "snapshot_id", "outcome", "exit", "secs")}
 
 
 def _integrity_violations(root, name, codex):

@@ -3643,6 +3643,14 @@ def holds_vectors(collection) -> bool:
     return bool(lance) and (Path(lance) / "chunks.lance").is_dir()
 
 
+def _node_line(stage: str):
+    """A logger for a node-level thread with no manifest of its own: the
+    line on stdout, naming the collection in its message."""
+    def log(m: str) -> None:
+        print(f"{time.strftime('%H:%M:%S')} [node info:{stage}] {m[:500]}", flush=True)
+    return log
+
+
 def _settle_runs_for_search() -> None:
     """03 §3.3: a kept statement is re-checked once per process before the
     vector leg relies on it, and the re-check ran only inside the embed
@@ -3973,6 +3981,11 @@ def run_forever():
     # the runs of collections that hold vectors and do not embed here,
     # settled for search (03 §3.3; `_settle_runs_for_search`)
     threading.Thread(target=_settle_runs_for_search, name="settle-runs", daemon=True).start()
+    # 03 §3.2: the plan, once per cadence per collection, in a child process,
+    # one at a time (app/scheduled_checks.py)
+    from . import scheduled_checks
+    threading.Thread(target=scheduled_checks.loop, args=(_stop, _node_line("check")),
+                     name="scheduled-checks", daemon=True).start()
     from .share import transport as share_transport
     threading.Thread(target=share_transport.loop, args=(_stop,),
                      kwargs={"log": lambda m: print(f"{time.strftime('%H:%M:%S')} [node info:share] {m}", flush=True),

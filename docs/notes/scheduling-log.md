@@ -370,3 +370,40 @@ proxy is what this row is about.
 >1140 %. The efficiency gain is real and idleness is now the whole problem:
 52 % of wall outside any batch, and inside a batch one part holds the rest.
 Neither is an admission or a partitioning question any more.
+
+### 2026-10-08 — scheduled checks: the plan in the background (03 §3.2)
+
+**The change.** A new worker thread, `scheduled-checks`
+(`app/scheduled_checks.py`), runs `louise hold check <name> --origin
+<corpus> --json` as a CHILD PROCESS at nice 10, one at a time on the node,
+for each Codex collection whose snapshot has no scheduled check yet or whose
+last one is a cadence old; only in a mode that parses. Nothing in the round
+loop, a stage's selection or the pools changes.
+
+**Before (measured on the node the same day, `hold check` by hand inside the
+running worker; node `running`, gutenberg scanning its new snapshot,
+pubmed and wikipedia embed off, RAGE serving).** Per collection, the whole
+plan with its origin:
+
+| collection | wall | peak RSS | result |
+|---|---|---|---|
+| gutenberg-mini-open, -certified | 1–2 s | 0.14–0.18 GB | pass |
+| pubmed, before the fixes | 1,532 s | **18.7 GB** | pass |
+| pubmed, after the fixes (6928c2c) | **816 s** | **2.0 GB** | pass |
+| gutenberg (before the fixes) | 1,534 s | 2.6 GB | fail: 1 record changed at the origin since the build |
+| wikipedia, louise-stop, deposit-granite | — | — | no snapshot: not checked |
+
+The 18.7 GB was two defects, fixed first (6928c2c): loading pubmed's first
+snapshot materialised its 39,994,988-uid delta (4.3 GB → 16 MB), and
+`records-vs-origin` held every sampled line before the origin bound
+(~13 GB → streamed). Worker RSS: 4.2 GB at 55 min uptime before; 2.2 GB at
+15 min after (to be read again at a comparable uptime).
+
+**Expected after.** At deploy, every Codex collection with a snapshot is due
+once (none has a scheduled check yet): pubmed (~14 min, 2 GB), gutenberg
+(~25 min, ≤2.6 GB), the minis (seconds), back to back, then nothing until a
+new snapshot or a month. The pipeline threads keep their CPU (nice 10, a
+separate process: no GIL taken).
+
+**After.** *(to complete after the deploy: the first turns' wall, peak
+RSS, the worker's own docs/s during them, and the worker RSS at ~1 h.)*
