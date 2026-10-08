@@ -1077,13 +1077,15 @@ def _local_chunk_texts(collection, row) -> list[tuple[str, str]]:
             for c in layers_mod.chunks_for_document(collection, row, sections)]
 
 
-def _sample_re_encode(collection, sampled: list[tuple[str, str, np.ndarray]],
+def _sample_re_encode(collection, sampled: list[tuple[str, "embeddings.ChunkLike", np.ndarray]],
                       embed_fn, *, proven: bool = False) -> list[str]:
     """The same-function proof: the collection's own encoder must reproduce
     the archive's vectors on held texts. This is what makes later gap-filling
     coherent — and what keeps an INCOMPATIBLE dataset out, however well-formed.
 
-    `sampled` is [(uid, text, archived vector)]. Passes by QUORUM (see the
+    `sampled` is [(uid, chunk, archived vector)], the chunk as
+    `embeddings.chunk_input` gives it: its text, or the dict a pair layer
+    feeds by its `fields` (input forms). Passes by QUORUM (see the
     constants) and returns the uids of the samples below tau — stale
     documents the caller must not import.
 
@@ -1181,7 +1183,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
 
     recipe = recipe_for(collection)
     if embed_fn is None:
-        embed_fn = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        embed_fn = lambda chunks: embeddings.embed_chunks(collection, chunks, recipe=recipe)  # noqa: E731
     fetch = fetch or _https_fetcher(archive)
     cache_dir = collection.manifest_path.parent / "genesis" / archive.archive_id
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1231,7 +1233,7 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     # candidates this read was asked for and could not cover — reported so
     # drain_next_shard stops re-reading the shard on their account
     residual_uids: list[str] = []
-    sample: list[tuple[str, str, np.ndarray]] = []      # (uid, text, archived vector)
+    sample: list[tuple] = []      # (uid, the chunk as the encoder needs it, archived vector)
     batch_rows: list[dict] = []
     batch_native: list[int] = []
     batch_uids: list[str] = []
@@ -1406,7 +1408,9 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                     skipped_absent += 1
                     residual_uids.append(uid)
                     continue
-                chunk_texts = [(c["id"], c["text"]) for c in chunks]
+                # the chunk itself rides along: a pair layer's sample is fed
+                # its `fields` (input forms, 09 §9.3)
+                chunk_texts = [(c["id"], c["text"], c) for c in chunks]
                 if len(chunk_texts) != len(vecs):
                     # vectors bind to chunks 1:1; a count mismatch would leave
                     # the document half-embedded (or mis-attached) — skip it,
@@ -1420,14 +1424,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         def _append_document(row, chunk_texts, vecs, units):
             nonlocal chunks_written, docs, checked_structural
             uid = row["uid"]
-            for seq, ((chunk_id, text), vec, unit) in enumerate(
+            for seq, ((chunk_id, text, chunk), vec, unit) in enumerate(
                     zip(chunk_texts, vecs, units)):
                 if not proven and len(sample) < RE_ENCODE_SAMPLE \
                         and len(text) <= sample_char_budget:
                     # the proof itself runs at the first flush, over the
                     # whole sample: stale samples are then evicted from
                     # the batch before anything is written
-                    sample.append((uid, text, np.asarray(vec, dtype=np.float64)))
+                    sample.append((uid, embeddings.chunk_input(chunk),
+                                   np.asarray(vec, dtype=np.float64)))
                 batch_rows.append({
                     "id": chunk_id, "book_id": int(row["native_id"]),
                     "lang": row["lang"] or "en", "seq": seq, "chapter": "",

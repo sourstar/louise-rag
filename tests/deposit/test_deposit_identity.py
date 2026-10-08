@@ -307,11 +307,14 @@ def test_a_space_whose_engine_is_a_localai_run_makes_a_version_4_codex_the_other
     }
     first = make(node, "deposit-granite", embed=embed384, space=space)
     cx.validate(first)
-    assert first.version == 4 and first.space.encoder.engine.options["ContextSize"] == 512
+    # options need version 4 at least (09 §9.3); a new Codex is written at 5
+    assert first.version == cx.CODEX_VERSION >= cx.OPTIONS_VERSION
+    assert first.space.encoder.engine.options["ContextSize"] == 512
     assert first.space.dim == 384 and first.space.ctx == 512 and first.space.query.encoder is None
     second = make(node, "alice")                   # no space given: copies the first's
     assert second.space_id == first.space_id and second.collection_id != first.collection_id
-    assert second.space.encoder.engine.options == engine["options"] and second.version == 4
+    assert second.space.encoder.engine.options == engine["options"]
+    assert second.version == first.version
 
 
 # ---- the copy state follows the plan (03 §3.6 on a never-share collection) --

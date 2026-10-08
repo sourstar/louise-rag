@@ -78,7 +78,7 @@ def reads(monkeypatch):
 
 @pytest.fixture
 def collection(isolated_config, tmp_path, monkeypatch):
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     wsrc._stream_cache.clear()
     warchive._groups.clear()
     warchive._layouts.clear()

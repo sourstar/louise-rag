@@ -102,7 +102,7 @@ def check_stored(collection, *, books: int, chunks: int, tau: float) -> dict:
             sv = stored.get(ch["id"])
             if sv is None:
                 continue
-            fresh = embeddings._embed_batch([ch["text"]], 180, recipe)[0]
+            fresh = embeddings.embed_chunks(collection, [ch], recipe=recipe, timeout=180)[0]
             s = cosine(list(sv), fresh)
             sims.append(s)
             if s < tau:
@@ -142,10 +142,10 @@ def check_repeat(collection, *, repeats: int, tau: float,
         if concurrency > 1:
             with ThreadPoolExecutor(max_workers=concurrency) as ex:
                 vecs = list(ex.map(
-                    lambda _: embeddings._embed_batch([text], 180, recipe)[0],
+                    lambda _: embeddings.embed_calibration(recipe, [text], timeout=180)[0],
                     range(repeats)))
         else:
-            vecs = [embeddings._embed_batch([text], 180, recipe)[0]
+            vecs = [embeddings.embed_calibration(recipe, [text], timeout=180)[0]
                     for _ in range(repeats)]
         # every pair, not just against the first: one bad draw among many
         # should not be hidden by which draw happened to be the reference

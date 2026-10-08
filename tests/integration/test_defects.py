@@ -38,7 +38,7 @@ def imported_pair(producer, consumer, tmp_path, monkeypatch):
     consumer_con, consumer_col = consumer
     rows = seed_node(producer_con, producer_col, DOCS)
     mirror_corpus(producer_col, consumer_con, consumer_col, DOCS)
-    monkeypatch.setattr(embeddings, "embed_texts", model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     bundle_export.export_bundle(producer_con, producer_col, list(DOCS),
                                  tmp_path / "b", signing_key=PRODUCER_KEY)
     result = importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")
@@ -204,7 +204,7 @@ def test_imported_vectors_are_searchable_with_embed_mode_off(producer, consumer,
     consumer_con, consumer_col = consumer
     rows = seed_node(producer_con, producer_col, DOCS)
     mirror_corpus(producer_col, consumer_con, consumer_col, DOCS)
-    monkeypatch.setattr(embeddings, "embed_texts", model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     bundle_export.export_bundle(producer_con, producer_col, list(DOCS),
                                  tmp_path / "b", signing_key=PRODUCER_KEY)
     assert importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")["ok"]
@@ -235,7 +235,7 @@ def test_import_clears_the_lazy_queue_entries_it_satisfies(producer, consumer,
     consumer_con, consumer_col = consumer
     seed_node(producer_con, producer_col, DOCS)
     mirror_corpus(producer_col, consumer_con, consumer_col, DOCS)
-    monkeypatch.setattr(embeddings, "embed_texts", model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     for uid in DOCS:                                   # demand exists BEFORE import
         consumer_con.execute("INSERT OR REPLACE INTO embed_queue(uid,priority,ts) "
                              "VALUES(?,100,0)", (uid,))

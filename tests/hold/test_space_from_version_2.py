@@ -48,7 +48,9 @@ def test_a_version_3_space_copied_is_written_at_version_4_in_the_same_space(
     moves, and its space is the source's."""
     from tests.hold.conftest import pubmed
     source, codex = _create(tmp_path, monkeypatch, pubmed(version=3))
-    assert source.version == 3 and codex.version == cx.CODEX_VERSION == 4
+    # version 4, not CODEX_VERSION: at 5 the layers would carry `input` and
+    # the copy would be another space (09 §9.3, amended 2026-10-08)
+    assert source.version == 3 and codex.version == 4 == cx.INPUT_VERSION - 1
     assert codex.space.to_dict()["encoder"] == source.space.to_dict()["encoder"]
     assert codex.space_id == source.space_id
 
@@ -64,3 +66,24 @@ def test_a_recipe_cannot_state_a_version_2_space_itself():
         template.from_recipe("pubmed", a_recipe(space=v2), platform_image=PLATFORM,
                              calibration=("sha256:" + "a" * 64, "sha256:" + "b" * 64,
                                           "sha256:" + "c" * 64))
+
+
+def test_a_version_4_space_copied_stays_version_4_in_the_same_space(tmp_path, monkeypatch):
+    """The input-forms amendment (09 §9.3, 2026-10-08): a version-4 source's
+    layers carry no `input`, so a version-5 copy would add one and be
+    another space. The copy is written at 4, and is the source's space."""
+    from tests.hold.conftest import pubmed
+    source, codex = _create(tmp_path, monkeypatch, pubmed())
+    assert source.version == 4 and codex.version == 4
+    assert "input" not in codex.to_dict()["layers"][0]
+    assert codex.space_id == source.space_id
+
+
+def test_a_version_5_space_copied_is_version_5_with_its_form(tmp_path, monkeypatch):
+    from app.hold.codex import Chunker, Layer
+    from tests.hold.conftest import pubmed
+    pair = {"form": "pair", "split": "first-section"}
+    source, codex = _create(tmp_path, monkeypatch, pubmed(
+        version=5, layers=(Layer(Chunker("abstract", 1, {}), "default", pair),)))
+    assert codex.version == 5 and codex.layers[0].input == pair
+    assert codex.space_id == source.space_id

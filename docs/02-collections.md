@@ -447,7 +447,13 @@ which.
 to vectors, and vectors from different functions cannot be compared.
 The function is the model — its weights, by digest — with `dim`,
 `dtype`, `ctx`, `pooling`, `normalise`, the query side, and the layers
-and cleaning that produce the text it reads:
+and cleaning that produce the text it reads — each layer with its
+INPUT FORM, the model's documented input format: the chunk's text as it
+stands, or a tokenizer text pair (title, abstract) for a chunker that
+makes one chunk per record (09 §9.3; *amended 2026-10-08*,
+docs/notes/input-forms.md). The same weights fed another form are
+another function: the tolerance absorbs an engine's noise, never a
+different input:
 
 ```
 space_id = H(canonical-json({encoder: {weights}, layers, cleaning_version,

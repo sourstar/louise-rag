@@ -48,7 +48,7 @@ def encoder(monkeypatch):
         calls["texts"].extend(texts)
         return [[float(len(t)), 1.0, 2.0, 3.0] for t in texts]
 
-    monkeypatch.setattr(embeddings, "embed_texts", fake)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake)
     return calls
 
 

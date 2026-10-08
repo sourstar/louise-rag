@@ -69,7 +69,8 @@ def _stopping(stop: Callable[[], bool] | None, name: str) -> None:
 
 
 def answers(recipe, *, query: bool = False, how: str = "normalised",
-            stop: Callable[[], bool] | None = None, name: str = "") -> runs_mod.Answers:
+            stop: Callable[[], bool] | None = None, name: str = "",
+            collection: Any = None) -> runs_mod.Answers:
     """The node's embedding client as an `Answers`.
 
     `how`: "normalised" — what a write stores; "one" — each text alone, as
@@ -77,35 +78,44 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
     vectors, sent the way THIS peer contributes: its EMBED_BATCH, its
     EMBED_CONCURRENCY, and as many requests at once as its worker keeps
     documents in flight (`recipe.concurrency`). That last one is the setting
-    the batching fault of 2026-07 lived in, so it is reproduced, not assumed."""
+    the batching fault of 2026-07 lived in, so it is reproduced, not assumed.
+
+    `collection`, for "normalised" on the document side only: the texts are
+    that collection's CHUNKS (a check re-embedding what it holds), fed in
+    their layer's form through `embeddings.embed_chunks`. Without it they
+    are the calibration set, a probe or the gate's: text, by design
+    (`embeddings.embed_calibration`)."""
     def normalised(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), SLICE):
             _stopping(stop, name)
-            out += embeddings.embed_texts(texts[i:i + SLICE], recipe=recipe,
-                                          query=query, runs=seen)
+            part = texts[i:i + SLICE]
+            if collection is not None and not query:
+                out += embeddings.embed_chunks(collection, part, recipe=recipe, runs=seen)
+            else:
+                out += embeddings.embed_calibration(recipe, part, query=query, runs=seen)
         return out
 
     def one(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for text in texts:
             _stopping(stop, name)
-            out += embeddings.embed_one_at_a_time([text], recipe=recipe, query=query,
-                                                  runs=seen)
+            out += embeddings.embed_calibration(recipe, [text], query=query, runs=seen,
+                                                one_at_a_time=True)
         return out
 
     def contribute(texts: list[str], seen: set) -> list[list[float]]:
         _stopping(stop, name)
         lanes = max(1, min(int(getattr(recipe, "concurrency", 1) or 1), len(texts)))
         if lanes == 1:
-            return embeddings.embed_texts(texts, recipe=recipe, query=query,
-                                          raw=True, runs=seen)
+            return embeddings.embed_calibration(recipe, texts, query=query,
+                                                raw=True, runs=seen)
         # as the worker does it: `lanes` documents in flight, each its own call
         groups = [list(range(k, len(texts), lanes)) for k in range(lanes)]
         with ThreadPoolExecutor(max_workers=lanes) as ex:
             parts = list(ex.map(
-                lambda idx: embeddings.embed_texts([texts[i] for i in idx], recipe=recipe,
-                                                   query=query, raw=True, runs=seen),
+                lambda idx: embeddings.embed_calibration(recipe, [texts[i] for i in idx],
+                                                         query=query, raw=True, runs=seen),
                 groups))
         out: list[Any] = [None] * len(texts)
         for idx, vectors in zip(groups, parts):
@@ -442,10 +452,13 @@ def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
     INCONCLUSIVE — `GateDeferred`, exit 3 — and never a verdict about the
     collection: an encoder that is not the space's says nothing about vectors
     that are. Older collections embed as they always did."""
+    # the texts a check embeds are the collection's chunks (document side, in
+    # their layer's form) or its queries (the query side, text)
     if not runs_mod.applies(codex):
-        return lambda texts: embeddings.embed_texts(texts, recipe=recipe,
-                                                    query=role == "query")
-    embed = answers(recipe, query=role == "query")
+        if role == "query":
+            return lambda texts: embeddings.embed_calibration(recipe, texts, query=True)
+        return lambda texts: embeddings.embed_chunks(codex, texts, recipe=recipe)
+    embed = answers(recipe, query=role == "query", collection=codex)
 
     def fn(texts: list[str]) -> list[list[float]]:
         vectors = embed(texts)

@@ -64,7 +64,7 @@ def _concurrent_embed(monkeypatch, observed):
             active["now"] -= 1
         observed.append(texts[0])
         return [[1.0] + [0.0] * 7 for _ in texts]
-    monkeypatch.setattr(embeddings, "embed_texts", fake)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake)
     return active
 
 
@@ -95,7 +95,7 @@ def test_one_bad_document_is_isolated(collection, monkeypatch):
         if "abstract of 2" in texts[0]:
             raise RuntimeError("encoder hiccup")
         return [[1.0] + [0.0] * 7 for _ in texts]
-    monkeypatch.setattr(embeddings, "embed_texts", flaky)
+    monkeypatch.setattr(embeddings, "_embed_texts", flaky)
     recipe = collections_mod.recipe_for(collection)
 
     worker._embed_parallel(con, collection, recipe)
@@ -112,7 +112,7 @@ def _chunks_of(n, parts=1):
 
 
 def _fixed_vectors(monkeypatch):
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             [[1.0] + [0.0] * 7 for _ in texts])
 
@@ -227,7 +227,7 @@ def test_transient_failures_leave_documents_untouched_in_the_parallel_path(
                                         response=httpx.Response(503, request=req))
         except httpx.HTTPStatusError as e:
             raise RuntimeError("embed server HTTP 503: Loading model") from e
-    monkeypatch.setattr(embeddings, "embed_texts", fail)
+    monkeypatch.setattr(embeddings, "_embed_texts", fail)
 
     assert worker._embed_parallel(con, collection, collections_mod.recipe_for(collection)) is False
     rows = con.execute("SELECT error, retries, embed_done FROM documents").fetchall()
@@ -246,7 +246,7 @@ def _counting_vectors(monkeypatch, texts):
     def fake(batch, timeout=300, recipe=None, query=False):
         texts.extend(batch)
         return [[1.0] + [0.0] * 7 for _ in batch]
-    monkeypatch.setattr(embeddings, "embed_texts", fake)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake)
 
 
 def _stored_ids(collection):

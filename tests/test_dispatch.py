@@ -194,7 +194,7 @@ def test_a_level_crosses_into_embed_texts_pool_threads(monkeypatch):
     recipe = collections_mod.EmbedRecipe(url="http://enc", api="openai", model="m",
                                          dtype="f16", ctx=512)
     with dispatch.working_as(Level.CORPUS, "gutenberg"):
-        embeddings.embed_texts(["a", "b", "c", "d"], recipe=recipe)
+        embeddings._embed_texts(["a", "b", "c", "d"], recipe=recipe)
     assert seen and set(seen) == {(Level.CORPUS, "gutenberg")}
 
 

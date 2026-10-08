@@ -65,7 +65,7 @@ def two_nodes(producer, consumer, monkeypatch):
     consumer_con, consumer_col = consumer
     rows = seed_node(producer_con, producer_col, DOCS)
     mirror_corpus(producer_col, consumer_con, consumer_col, DOCS)
-    monkeypatch.setattr(embeddings, "embed_texts", model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     return producer_con, producer_col, consumer_con, consumer_col, rows
 
 
@@ -271,7 +271,7 @@ def test_worker_restart_after_crash_mid_import_recovers(two_nodes, tmp_path,
         "SELECT embed_done FROM documents WHERE uid='gutenberg:1'").fetchone()
     assert doc["embed_done"] == 0                  # _next_book will re-embed locally
 
-    monkeypatch.setattr(embeddings, "embed_texts", model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", model_embed)
     retry = importer.import_bundle(consumer_con, consumer_col, tmp_path / "b")
     assert retry["ok"], retry.get("error")
 

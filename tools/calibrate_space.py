@@ -37,6 +37,7 @@ and a plot that regenerates from the committed fixtures with zero setup is
 worth more than a prettier one that does not.
 """
 import argparse
+import dataclasses
 import json
 import sys
 import time
@@ -140,7 +141,11 @@ def record_live(urls: list[str], collection_name: str, out_dir: Path) -> dict:
     backends: dict[str, np.ndarray] = {}
     for url in urls:
         config.EMBED_URL = url.rstrip("/")
-        vectors = np.asarray(embeddings.embed_texts(texts), dtype=np.float32)
+        # stored chunk texts, in their layer's form, through the endpoint named
+        recipe = dataclasses.replace(collections_mod.recipe_for(collection),
+                                     url=url.rstrip("/"))
+        vectors = np.asarray(embeddings.embed_chunks(collection, texts, recipe=recipe),
+                             dtype=np.float32)
         backends[url] = vectors
         print(f"recorded {vectors.shape} from {url}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)

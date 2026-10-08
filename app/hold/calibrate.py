@@ -148,7 +148,8 @@ def http_embed(ctx: int) -> Embed:
             dtype="f32", ctx=ctx)
         runs: set = set()
         try:
-            return embeddings.embed_texts(texts, recipe=recipe, runs=runs), runs
+            # the calibration set: text, by design (input forms)
+            return embeddings.embed_calibration(recipe, texts, runs=runs), runs
         except httpx.TransportError as e:
             raise CalibrateUnreachable(
                 f"{ep.file}: the encoder at {ep.url} is unreachable ({e}); "

@@ -125,7 +125,7 @@ def test_ensure_asks_before_each_step_and_stops_when_told(collection, monkeypatc
 
 def test_search_falls_back_to_the_flat_scan_without_an_index(collection, monkeypatch):
     vecs = _fill(collection, 50)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False: [vecs[7].tolist()])
     hits = embeddings.search("anything", k=3, collection=collection)
     assert hits and hits[0]["chunk_id"] == "c7"
@@ -159,7 +159,7 @@ def test_the_book_id_index_is_built_first_and_writes_still_agree(collection, mon
     assert second["built"] and second["type"] == "ivf_flat"
     assert vector_index.ensure(collection) is None
     # writes still delete-then-insert correctly under the index
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False: [vecs[0].tolist()])
     embeddings.upsert_book(7, "en", [{"id": "c7", "seq": 0, "chapter": "", "text": "t7"}], collection)
     tbl = embeddings._conn(collection).open_table(embeddings.TABLE)

@@ -108,7 +108,7 @@ def level_headers() -> dict[str, str]:
 def working_as(level: Level, plugin: str = ""):
     """Declare the level and plugin of the requests made inside the block,
     on this thread (and on the threads the block hands context to — see
-    `embeddings.embed_texts`)."""
+    `embeddings._embed_texts`)."""
     token = _ctx.set((Level(level), plugin))
     try:
         yield

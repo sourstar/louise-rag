@@ -61,9 +61,9 @@ def _level(call):
 
 def test_an_embedding_carries_the_level_of_whoever_asks(posts, isolated_config):
     recipe = collections_mod.recipe_for(collections_mod.default_collection())
-    embeddings.embed_texts(["a question"], recipe=recipe)
+    embeddings._embed_texts(["a question"], recipe=recipe)
     with dispatch.working_as(Level.CORPUS, "gutenberg"):
-        embeddings.embed_texts(["a chunk"], recipe=recipe)
+        embeddings._embed_texts(["a chunk"], recipe=recipe)
     assert [_level(c) for c in posts] == ["query", "corpus"], \
         "the web's unmarked call has a person behind it; the worker's is background"
 
@@ -73,7 +73,7 @@ def test_the_openai_embedding_path_carries_it_too(posts, isolated_config):
     recipe = dataclasses.replace(
         collections_mod.recipe_for(collections_mod.default_collection()),
         url="http://nas:30437/upstream/bge-m3", api="openai")
-    embeddings.embed_texts(["x"], recipe=recipe)
+    embeddings._embed_texts(["x"], recipe=recipe)
     assert posts[0][0] == "http://nas:30437/upstream/bge-m3/v1/embeddings"
     assert _level(posts[0]) == "query"
 

@@ -26,8 +26,20 @@ Rules:
                        or `extra.<key>` — has that value (06 §6.3)
 """
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import chunking
+
+#: 09 §9.3, a layer's `input` (amended 2026-10-08, docs/notes/input-forms.md):
+#: the FORM the encoder is fed. `text` is the chunk's text as it stands, and
+#: every layer of a Codex before version 5 reads as it.
+INPUT_TEXT: dict[str, str] = {"form": "text"}
+#: A tokenizer text pair: the record's first section's body and the rest of
+#: its sections' bodies joined by "\n\n" (title, abstract).
+INPUT_PAIR: dict[str, str] = {"form": "pair", "split": "first-section"}
+#: The chunkers a pair is admitted on: ONE chunk per record, because a pair
+#: is a record's, not a window's.
+PAIR_CHUNKERS = (chunking.ABSTRACT,)
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,12 @@ class Layer:
     #: chunkers that take none, and empty for `book`, which is
     #: grandfathered and reads the environment (chunking.chunk_book).
     params: dict = field(default_factory=dict)
+    #: 09 §9.3's `input`: what the encoder is fed for this layer's chunks.
+    input: dict = field(default_factory=lambda: dict(INPUT_TEXT))
+
+    @property
+    def form(self) -> str:
+        return str((self.input or INPUT_TEXT)["form"])
 
     def as_manifest(self) -> dict:
         c = {"id": self.chunker, "version": self.version}
@@ -49,7 +67,12 @@ class Layer:
         # from the bytes already on disk for no reason.
         if self.params:
             c["params"] = self.params
-        return {"chunker": c, "rule": self.rule}
+        out: dict = {"chunker": c, "rule": self.rule}
+        # Only when not text, for the same reason: every manifest already on
+        # disk was written without it and is text.
+        if self.form != "text":
+            out["input"] = dict(self.input)
+        return out
 
 
 class LayerError(ValueError):
@@ -81,6 +104,35 @@ def check_rule(rule: str, *, where: str) -> None:
         return
     raise LayerError(f"{where}: unknown rule {rule!r} "
                      f"(known: {', '.join(RULE_FORMS)})")
+
+
+def check_input(value: Any, *, chunker: str, where: str) -> None:
+    """Refuse an input form this platform cannot build (09 §9.3, amended
+    2026-10-08). Exactly two forms, each with exactly its keys: an unknown
+    form, an unknown split or a stray key is refused, never read as text —
+    the form is inside `space_id`, and a form read otherwise than it was
+    declared is vectors under an id that promises another function."""
+    if not isinstance(value, dict):
+        raise LayerError(f"{where}: input must be an object, got {value!r}")
+    form = value.get("form")
+    if form == "text":
+        want = INPUT_TEXT
+    elif form == "pair":
+        want = INPUT_PAIR
+    else:
+        raise LayerError(f"{where}: unknown input form {form!r} (known: text, pair)")
+    if set(value) != set(want):
+        raise LayerError(f"{where}: input form {form!r} carries exactly "
+                         f"{', '.join(sorted(want))}, got {', '.join(sorted(value))}")
+    if form == "pair":
+        if value["split"] != INPUT_PAIR["split"]:
+            raise LayerError(f"{where}: unknown pair split {value['split']!r} "
+                             f"(known: {INPUT_PAIR['split']})")
+        if chunker not in PAIR_CHUNKERS:
+            raise LayerError(
+                f"{where}: a pair is a record's, not a window's — admitted only on a "
+                f"chunker that makes one chunk per record "
+                f"({', '.join(PAIR_CHUNKERS)}), not on {chunker!r}")
 
 
 def _field_value(row, name: str):
@@ -125,8 +177,10 @@ def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
         params = entry.get("params", {})
         if not isinstance(params, dict):
             raise LayerError(f"{where}: layers[{i}]: params is a table")
+        form = entry.get("input", INPUT_TEXT)
+        check_input(form, chunker=name, where=f"{where}: layers[{i}]")
         out.append(Layer(chunker=name, version=chunking.chunk_version_for(name),
-                         rule=rule, params=params))
+                         rule=rule, params=params, input=dict(form)))
     if out[-1].rule != "default":
         raise LayerError(f"{where}: the last layer must have rule = \"default\"")
     if any(l.rule == "default" for l in out[:-1]):
@@ -158,8 +212,11 @@ def _normalise(layer) -> Layer:
     if isinstance(getattr(layer, "chunker", None), str):
         return layer
     c = layer.chunker                      # 09 §9.3's {id, version, params}
+    # `input` is absent below Codex version 5 (None), and such a layer reads
+    # as text (09 §9.3)
     return Layer(chunker=c.id, version=c.version, rule=layer.rule,
-                 params=dict(c.params or {}))
+                 params=dict(c.params or {}),
+                 input=dict(getattr(layer, "input", None) or INPUT_TEXT))
 
 
 def _codex_coverage(collection, archive_id: str):
@@ -302,10 +359,27 @@ def chunker_for_document(collection, native_id, row=None):
     fn = chunking._CHUNKERS[layer.chunker]
     version = layer.version
     params = layer.params
+    pair = layer.form == "pair"
 
     def _chunk(uid, nid, sections):
-        return fn(uid, nid, sections, version, params)
+        # `fields` (the pair form's two segments) stay on a PAIR layer's
+        # chunks only, so a chunk carries them exactly when its layer feeds
+        # the encoder a pair (09 §9.3, input forms) — a text layer's chunks
+        # are the dicts they always were
+        for c in fn(uid, nid, sections, version, params):
+            if not pair:
+                c.pop("fields", None)
+            yield c
     return _chunk
+
+
+def chunk_input(chunk: dict) -> "dict | str":
+    """A chunk in the least form `embeddings.embed_chunks` needs: the dict
+    when it carries a pair's `fields` (only a pair layer's do,
+    `chunker_for_document`), its text otherwise. For a caller that keeps a
+    chunk beside other things (a sample, a batch) and hands an injected
+    embed function what it always handed it — a text, for every text layer."""
+    return chunk if chunk.get("fields") is not None else chunk["text"]
 
 
 def chunks_for_document(collection, row, sections) -> list[dict]:

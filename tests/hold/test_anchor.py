@@ -91,12 +91,14 @@ def test_fetched_kept_and_judged(node, monkeypatch):  # noqa: F811
     assert anchor.state_path(node, name, codex).is_file()
     assert not anchor.due(node, name, codex, now=T0 + 3600)
     assert anchor.due(node, name, codex, now=T0 + anchor.REFRESH_S + anchor.JITTER_S), "a day plus jitter later"
+    # past this collection's own jitter, whatever its id hashes to
+    late = T0 + anchor.REFRESH_S + anchor.JITTER_S
     # unreachable: the last document stands, the try is noted, an hour later it is due again
-    out = anchor.refresh(node, name, codex, now=T0 + 90_000, client=_Client(error=httpx.ConnectError("down")))
+    out = anchor.refresh(node, name, codex, now=late, client=_Client(error=httpx.ConnectError("down")))
     assert out["state"] == "anchored" and out["fetched_at"] == T0
     assert anchor.read_state(node, name, codex)["error"].startswith(URL)
-    assert not anchor.due(node, name, codex, now=T0 + 90_000 + 60)
-    assert anchor.due(node, name, codex, now=T0 + 90_000 + anchor.RETRY_S)
+    assert not anchor.due(node, name, codex, now=late + 60)
+    assert anchor.due(node, name, codex, now=late + anchor.RETRY_S)
     assert anchor.status(node, name, codex, now=T0 + anchor.STALE_S + 1)["state"] == "stale"
     # a document that does not list the key, or the collection: mismatch
     anchor.refresh(node, name, codex, now=T0, client=_Client(

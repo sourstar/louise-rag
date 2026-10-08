@@ -33,7 +33,7 @@ def inbox_bundle(con, collection, producer_key, monkeypatch):
 
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
     from app import embeddings
-    monkeypatch.setattr(embeddings, "embed_texts", lambda batch, **kw: [by_text[t] for t in batch])
+    monkeypatch.setattr(embeddings, "_embed_texts", lambda batch, **kw: [by_text[t] for t in batch])
     return inbox, rows
 
 
@@ -84,7 +84,7 @@ def test_a_retryable_failure_stays_in_the_inbox(inbox_bundle, con, collection,
     from app import embeddings
     def down(_batch, **kwargs):
         raise ConnectionError("endpoint down")
-    monkeypatch.setattr(embeddings, "embed_texts", down)
+    monkeypatch.setattr(embeddings, "_embed_texts", down)
 
     inbox, _ = inbox_bundle
     assert worker._drain_bundle_inbox(con, collection) == 0

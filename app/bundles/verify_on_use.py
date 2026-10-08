@@ -185,7 +185,9 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
     else:
         from ..collections import recipe_for
         recipe = recipe_for(collection)
-        embed = lambda texts: embeddings.embed_texts(texts, recipe=recipe)  # noqa: E731
+        # stored chunk texts, in their layer's form (`embed_chunks` refuses a
+        # pair layer's: a text alone carries no `fields`)
+        embed = lambda texts: embeddings.embed_chunks(collection, texts, recipe=recipe)  # noqa: E731
     try:
         recomputed = embed([stored[cid][0] for cid in targets])
     except Exception:

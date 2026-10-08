@@ -48,7 +48,7 @@ def run_pool(items: Iterable[T],
     """
     if max_workers <= 1:
         # Serial fallback with no executor at all, matching
-        # embeddings.embed_texts()'s convention for a single worker.
+        # embeddings._embed_texts()'s convention for a single worker.
         processed = 0
         for item in items:
             if stop is not None and stop.is_set():

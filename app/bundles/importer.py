@@ -81,7 +81,18 @@ def _collection_embed_fn(collection):
     Qwen3 endpoint would fail every honest bundle."""
     from ..collections import recipe_for
     recipe = recipe_for(collection)
-    return lambda texts: embeddings.embed_texts(texts, recipe=recipe)
+    # stored chunk texts: `embed_chunks` feeds them in their layer's form,
+    # and refuses a pair layer's, whose `fields` a text alone does not carry
+    return lambda texts: embeddings.embed_chunks(collection, texts, recipe=recipe)
+
+
+def _probe_fn(collection):
+    """The liveness probe's embed: the collection's recipe, a fixed text,
+    as text (`embeddings.embed_calibration`) — it asks whether the encoder
+    answers, in any layer's form."""
+    from ..collections import recipe_for
+    recipe = recipe_for(collection)
+    return lambda texts: embeddings.embed_calibration(recipe, texts)
 
 
 def _local_space(con, collection=None) -> tuple[str, int | None, bool]:
@@ -111,7 +122,8 @@ def _check_space(con, collection, header, embed_fn=None) -> bool:
     """
     local_space_id, _, weak = _local_space(con, collection)
     if weak:
-        probe = embed_fn if embed_fn is not None else _collection_embed_fn(collection)
+        # a liveness probe is no chunk: one fixed text, as text
+        probe = embed_fn if embed_fn is not None else _probe_fn(collection)
         try:
             probe(["louise-rag: embedding-space liveness probe"])
         except Exception as e:   # noqa: BLE001 — any failure means "not live"

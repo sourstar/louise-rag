@@ -483,12 +483,12 @@ def test_concurrent_import_and_local_embed_leave_one_consistent_copy(
             barrier.wait()
             embeddings.upsert_book.__wrapped__ if False else None
             from app import embeddings as em
-            original = em.embed_texts
-            em.embed_texts = lambda texts, **kw: monkeypatch_free_vectors[:len(texts)]
+            original = em._embed_texts
+            em._embed_texts = lambda texts, **kw: monkeypatch_free_vectors[:len(texts)]
             try:
                 em.upsert_book(1, "en", chunks, collection, lock_con=connection)
             finally:
-                em.embed_texts = original
+                em._embed_texts = original
         except Exception as e:      # noqa: BLE001
             errors.append(e)
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Iterator
 
 CODEX_KIND = "louise-codex"
@@ -31,15 +31,16 @@ CODEX_KIND = "louise-codex"
 #: What a NEW Codex is written at. 09 §9.3: "`version` tracks what wrote
 #: the Codex, `record_line` tracks what is in the shards, and a figureless
 #: collection created under a later format writes `version` 3 with
-#: `record_line` 1" — and 4 since the options amendment (OPTIONS_VERSION).
-CODEX_VERSION = 4
+#: `record_line` 1" — 4 since the options amendment (OPTIONS_VERSION), and 5
+#: since the input-forms amendment (INPUT_VERSION).
+CODEX_VERSION = 5
 
 #: What this build can READ. "A Codex already written stays at its version
 #: and cannot be moved, because `version` is inside the canonical bytes and
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4)
+CODEX_VERSIONS = (1, 2, 3, 4, 5)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -59,6 +60,18 @@ ENGINE_VERSION = 3
 #: bytes and the `engine_id` it had at version 3, and a version-3 `space` is
 #: a valid version-4 one. Below this version `options` is an unknown key.
 OPTIONS_VERSION = 4
+
+#: THE INPUT-FORMS AMENDMENT (operator, 2026-10-08; 02 §2.4, 09 §9.3,
+#: docs/notes/input-forms.md). From this version every layer carries
+#: `input`: the FORM its chunks reach the encoder in, the model's documented
+#: input format — `{"form": "text"}` or `{"form": "pair", "split":
+#: "first-section"}`. `layers` is hashed whole into `space_id`, so the form
+#: is inside it. Below this version `input` is an unknown key and a layer
+#: reads as text — a version-4 Codex keeps its bytes and both its ids.
+INPUT_VERSION = 5
+#: The two forms (09 §9.3), as written into a layer.
+INPUT_TEXT: dict[str, str] = {"form": "text"}
+INPUT_PAIR: dict[str, str] = {"form": "pair", "split": "first-section"}
 
 #: The engine's fields (§9.3). `options` is the one that may be absent.
 ENGINE_FIELDS = ("name", "build", "variant", "image", "args", "env", "device")
@@ -233,12 +246,27 @@ class Chunker:
 @dataclass(frozen=True)
 class Layer:
     """One chunker and the rule that decides which documents it cuts. The
-    last rule is "default" (06 §6.3)."""
+    last rule is "default" (06 §6.3).
+
+    `input` (Codex version 5, INPUT_VERSION): the form the layer's chunks
+    reach the encoder in. `None` means ABSENT from the object — a layer of a
+    Codex below version 5, which reads as `{"form": "text"}` and hashes as
+    it always did. `Codex.__post_init__` sets it from the version, so no
+    construction has to spell it."""
     chunker: Chunker
     rule: str = "default"
+    input: dict[str, str] | None = None
+
+    @property
+    def form(self) -> str:
+        """`text` or `pair`: what `embeddings.embed_chunks` builds."""
+        return (self.input or INPUT_TEXT)["form"]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"chunker": self.chunker.to_dict(), "rule": self.rule}
+        out: dict[str, Any] = {"chunker": self.chunker.to_dict(), "rule": self.rule}
+        if self.input is not None:
+            out["input"] = dict(self.input)
+        return out
 
 
 @dataclass(frozen=True)
@@ -641,6 +669,7 @@ class Codex:
             raise CodexError(f"unsupported Codex version {self.version!r}; "
                              f"this build reads "
                              f"{', '.join(str(v) for v in CODEX_VERSIONS)}")
+        object.__setattr__(self, "layers", _layers_at(self.layers, self.version))
 
     # ---- the object ---------------------------------------------------------
 
@@ -768,6 +797,31 @@ class Codex:
         return "root"
 
 
+def _layers_at(layers: Iterable[Layer], version: int) -> tuple[Layer, ...]:
+    """`input` follows `version`, as `record_line` does: one fact.
+
+    From INPUT_VERSION every layer carries it — `{"form": "text"}` where a
+    construction named none. Below it the key is ABSENT: a text form is
+    dropped (that is what the layer reads as), and any other form is
+    refused, because a version-4 Codex cannot say it — writing it would be
+    a shape nobody else hashes, and dropping it would put pair vectors under
+    a text space's id."""
+    out = []
+    for i, l in enumerate(layers):
+        if version >= INPUT_VERSION:
+            if l.input is None:
+                l = replace(l, input=dict(INPUT_TEXT))
+        elif l.input is not None:
+            if l.input != INPUT_TEXT:
+                raise CodexError(
+                    f"layers[{i}]: a version {version} Codex has no `input` (09 §9.3) "
+                    f"and its layers are text; the form {l.input!r} needs version "
+                    f"{INPUT_VERSION}")
+            l = replace(l, input=None)
+        out.append(l)
+    return tuple(out)
+
+
 def encoder_field(codex: "Codex", *, query: bool = False) -> tuple[str, str | None]:
     """How an artefact written FOR this collection names the Codex's own
     engine, beside the weights: `("encoder_engine", <engine_id>)` from Codex
@@ -879,10 +933,14 @@ def _validate_layers(codex: Codex) -> None:
     # list is inside `space_id`, so that silence produces vectors under an
     # id promising a different cut, which is invariant 1's failure mode and
     # undetectable from outside.
-    from ..layers import LayerError, check_rule
+    from ..layers import LayerError, check_input, check_rule
     for i, l in enumerate(codex.layers):
         try:
             check_rule(l.rule, where=f"layers[{i}]")
+            # the form, as strictly as the rule and for the same reason: it
+            # is inside `space_id` (09 §9.3, amended 2026-10-08)
+            if codex.version >= INPUT_VERSION:
+                check_input(l.input, chunker=l.chunker.id, where=f"layers[{i}]")
         except LayerError as e:
             raise CodexError(str(e)) from None
     seen = [l.chunker.id for l in codex.layers]
@@ -1450,7 +1508,7 @@ def from_dict(d: dict[str, Any]) -> Codex:
         parser=Parser(pa["id"], pa["version"]),
         cleaning_version=d["cleaning_version"],
         protocol_version=d["protocol_version"],
-        layers=tuple(_layer(l, i) for i, l in enumerate(d["layers"])),
+        layers=tuple(_layer(l, i, version) for i, l in enumerate(d["layers"])),
         slicing=d["slicing"],
         space=_space(sp),
         work=Work(wk["tokens"], wk["per"]),
@@ -1481,10 +1539,20 @@ def from_dict(d: dict[str, Any]) -> Codex:
     )
 
 
-def _layer(l: dict[str, Any], i: int) -> Layer:
-    l = _only(l, ("chunker", "rule"), f"layers[{i}]")
+def _layer(l: dict[str, Any], i: int, version: int = CODEX_VERSION) -> Layer:
+    """A layer as written. `input` is REQUIRED from INPUT_VERSION and an
+    unknown key below it (09 §9.3): the key's presence is part of the bytes
+    the version names, so a version-4 file carrying it, or a version-5 one
+    without it, is not that version's Codex. The form's VALUE is
+    `validate`'s to check, with the chunker it rides on."""
+    keys = ("chunker", "rule", "input") if version >= INPUT_VERSION else ("chunker", "rule")
+    l = _only(l, keys, f"layers[{i}]")
     ch = _only(l["chunker"], ("id", "version", "params"), f"layers[{i}].chunker")
-    return Layer(Chunker(ch["id"], ch["version"], ch["params"]), l["rule"])
+    form = l.get("input")
+    if form is not None and not isinstance(form, dict):
+        raise CodexError(f"layers[{i}].input must be an object (09 §9.3), got {form!r}")
+    return Layer(Chunker(ch["id"], ch["version"], ch["params"]), l["rule"],
+                 None if form is None else dict(form))
 
 
 def engine_from_dict(e: Any, where: str = "engine") -> Engine:
@@ -1617,7 +1685,13 @@ def dumps(codex: Codex) -> bytes:
 # forms stay private to `from_dict`, which is the only place a whole Codex
 # is read.
 space_from_dict = _space
-layer_from_dict = _layer
+
+
+def layer_from_dict(l: dict[str, Any], i: int = 0) -> Layer:
+    """A layer given on the command line (`derive --layers`). `input` MAY be
+    omitted there: the Codex it lands in sets it from its version, which
+    `derive` decides from the space."""
+    return _layer(l, i, INPUT_VERSION if "input" in l else INPUT_VERSION - 1)
 
 
 # --------------------------------------------------------------------------

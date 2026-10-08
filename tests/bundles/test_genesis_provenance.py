@@ -118,7 +118,7 @@ def test_local_reembed_clears_imported_provenance(collection, monkeypatch):
     assert con.execute(
         "SELECT COUNT(*) FROM chunk_verification WHERE uid='fake:1'").fetchone()[0] == 1
 
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, **kw: [_unit(t).tolist() for t in texts])
     row = con.execute("SELECT * FROM documents WHERE uid='fake:1'").fetchone()
     worker.stage_embed(con, row, collection)

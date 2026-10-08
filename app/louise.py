@@ -420,7 +420,8 @@ def _embed_for_recipe(space: dict, url: str | None):
 
     def embed(texts):
         try:
-            return embeddings.embed_texts(texts, recipe=recipe)
+            # the calibration set is no collection's chunks: text, by design
+            return embeddings.embed_calibration(recipe, texts)
         except Exception as e:                      # noqa: BLE001
             raise CodexError(
                 f"the encoder at {url} could not embed the calibration "
@@ -912,12 +913,13 @@ def _embedding_callables(root, name: str, codex, *, stop):
     recipe = _recipe_for(codex, name)
     seen: set = set()
 
-    def embed(texts):
+    def embed(chunks):
         seen.clear()
         try:
+            # each chunk in its layer's form (input forms, 09 §9.3)
             if by_run:
-                return embeddings.embed_texts(texts, recipe=recipe, runs=seen)
-            return embeddings.embed_texts(texts, recipe=recipe)
+                return embeddings.embed_chunks(codex, chunks, recipe=recipe, runs=seen)
+            return embeddings.embed_chunks(codex, chunks, recipe=recipe)
         except Exception as e:                   # noqa: BLE001
             raise emb.GateDeferred(f"the encoder at {recipe.url} could not embed: {e}") from e
 
@@ -1907,12 +1909,13 @@ def cmd_vectors_build(a) -> int:
 
         seen: set = set()
 
-        def embed(texts):                            # noqa: F811
+        def embed(chunks):                           # noqa: F811
             seen.clear()
             try:
+                # each chunk in its layer's form (input forms, 09 §9.3)
                 if by_run:
-                    return embeddings.embed_texts(texts, recipe=recipe, runs=seen)
-                return embeddings.embed_texts(texts, recipe=recipe)
+                    return embeddings.embed_chunks(codex, chunks, recipe=recipe, runs=seen)
+                return embeddings.embed_chunks(codex, chunks, recipe=recipe)
             except Exception as e:                   # noqa: BLE001
                 raise emb.GateDeferred(
                     f"the encoder at {recipe.url} could not embed: {e}") from e
@@ -2522,7 +2525,8 @@ def _gate(a):
 
     def embed(texts):
         try:
-            return embeddings.embed_texts(texts, recipe=recipe)
+            # the gate embeds the calibration set: text, by design
+            return embeddings.embed_calibration(recipe, texts)
         except emb.GateDeferred:
             raise
         except Exception as e:                      # noqa: BLE001

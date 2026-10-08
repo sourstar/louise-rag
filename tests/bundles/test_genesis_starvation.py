@@ -116,7 +116,7 @@ def reads(monkeypatch):
 
 @pytest.fixture
 def collection(isolated_config, tmp_path, monkeypatch):
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     c = _collection(tmp_path)
     # article 12 STRADDLES the two shards: each shard yields a partial
     # vector list, so the chunk-shape gate refuses it — a residual candidate
@@ -142,7 +142,7 @@ def test_drain_reads_only_the_shards_its_candidates_name(isolated_config, tmp_pa
     """The live failure: hundreds of shards, candidates in one. Before the
     fix every round opened the next shard in oldest-first order and
     imported nothing; now the shard list's size is irrelevant."""
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     c = _collection(tmp_path)
     shards = 24
     for i in range(shards):
@@ -216,7 +216,7 @@ def test_a_new_candidate_reopens_a_residual_shard(collection, reads):
 
 def test_a_residual_shard_is_not_reread_until_it_has_a_new_candidate(
         isolated_config, tmp_path, monkeypatch, reads):
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     c = _collection(tmp_path)
     _write_shard(c.corpus_dir / "data" / "tr" / "000.parquet", [
         ("10", 0, "A", "alpha one"),
@@ -259,7 +259,7 @@ def test_an_unloadable_candidate_is_residual_after_one_read(
     """The other residual class — a candidate whose chunk text will not
     load — cannot be known from the locator, so it costs exactly one read
     and is then remembered for its shard."""
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     c = _collection(tmp_path)
     _write_shard(c.corpus_dir / "data" / "tr" / "000.parquet", [
         ("10", 0, "A", "alpha one")])
@@ -283,7 +283,7 @@ def test_residual_state_is_keyed_on_the_manifest_not_the_name(isolated_config, t
     """Two collections may share a name and point at different files; the
     residual record must not leak across them (the counts cache, fts index
     cache and scan cursor each learned this separately)."""
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     a = _collection(tmp_path / "a")
     b = _collection(tmp_path / "b")
     for c in (a, b):
@@ -317,7 +317,7 @@ def test_residual_state_is_keyed_on_the_manifest_not_the_name(isolated_config, t
 
 def test_with_ingest_pending_a_read_waits_for_a_batch_or_the_age_cap(
         isolated_config, tmp_path, monkeypatch, reads):
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     monkeypatch.setattr(config, "GENESIS_MIN_CANDIDATES", 3)
     monkeypatch.setattr(config, "GENESIS_MAX_WAIT_SEC", 600)
     c = _collection(tmp_path)
@@ -350,7 +350,7 @@ def test_with_ingest_pending_a_read_waits_for_a_batch_or_the_age_cap(
 
 def test_with_nothing_else_to_do_every_candidate_is_taken_at_once(
         isolated_config, tmp_path, monkeypatch, reads):
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     monkeypatch.setattr(config, "GENESIS_MIN_CANDIDATES", 1000)
     c = _collection(tmp_path)
     _write_shard(c.corpus_dir / "data" / "tr" / "000.parquet", [
@@ -382,7 +382,7 @@ def test_a_pipeline_thread_that_owns_genesis_still_ingests(isolated_config, tmp_
     at first, so rdf and fts must run — genesis has no business opening a
     shard — and once fts commits, genesis imports; the total number of
     shard reads is bounded by the shards that hold candidates."""
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     monkeypatch.setattr(config, "FTS_BATCH_DOCS", 2)
     monkeypatch.setattr(config, "RDF_BATCH_DOCS", 2)
     c = _collection(tmp_path)

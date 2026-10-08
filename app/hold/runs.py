@@ -355,7 +355,7 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
 class Answers:
     """An embed function that remembers which runs answered its last call.
 
-        embed = Answers(lambda texts, runs: embeddings.embed_texts(texts, …, runs=runs))
+        embed = Answers(lambda texts, runs: embeddings.embed_calibration(recipe, texts, runs=runs))
         vectors = embed(texts);  runs.check(…, embed.runs)
 
     `runs` is fresh per call, so a check is about THESE vectors and no others."""

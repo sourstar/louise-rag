@@ -33,7 +33,7 @@ def imported(con, collection, producer_key, monkeypatch):
     exp.export_bundle(con, collection, [UID], inbox / "b1", signing_key=producer_key)
 
     by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda batch, **kw: [by_text[t] for t in batch])
     assert worker._drain_bundle_inbox(con, collection) == 1
     return rows, by_text
@@ -252,7 +252,7 @@ def test_the_worker_verifies_cited_chunks_only_in_a_mode_that_embeds(imported, c
     monkeypatch.setattr(worker.node_state, "worker_state", lambda: "acquire-only")
     assert worker._verify_cited(con, collection) is False and len(verify_on_use.queued(con, 10)) == len(rows)
     monkeypatch.setattr(worker.node_state, "worker_state", lambda: "running")
-    monkeypatch.setattr(embeddings, "embed_texts", lambda batch, **kw: [by_text[t] for t in batch])
+    monkeypatch.setattr(embeddings, "_embed_texts", lambda batch, **kw: [by_text[t] for t in batch])
     assert worker._verify_cited(con, collection) is True
     assert verify_on_use.queued(con, 10) == []
     assert worker._verify_cited(con, collection) is False, "nothing queued: nothing done"
@@ -267,7 +267,7 @@ def test_a_reproduced_miss_burns_the_key_in_the_trust_file(imported, con, collec
     root = tmp_path / "louise"
     monkeypatch.setattr(collections_mod, "louise_root", lambda: root)
     monkeypatch.setattr(worker.node_state, "worker_state", lambda: "running")
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda batch, **kw: [bad if t == rows[0]["text"] else by_text[t] for t in batch])
     verify_on_use.cite(con, _chunk_ids(rows))
     assert worker._verify_cited(con, collection) is True

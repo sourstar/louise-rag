@@ -179,7 +179,7 @@ def _embed_sharded(texts: list[str], where: Path, recipe, *,
             continue
         batch = texts[s * SHARD:(s + 1) * SHARD]
         from app import embeddings
-        vectors = embeddings.embed_texts(batch, recipe=recipe, query=query)
+        vectors = embeddings.embed_calibration(recipe, batch, query=query)
         np.save(shard, np.asarray(vectors, dtype=np.float32))
         done = min((s + 1) * SHARD, len(texts))
         print(f"  {where.name}: {done}/{len(texts)}", flush=True)

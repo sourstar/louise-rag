@@ -88,3 +88,48 @@ def test_log_lines_name_their_collection(tmp_path, capsys):
     db.log_event(con, "info", "fts", "indexed 200 documents")
     out = capsys.readouterr().out
     assert re.search(r"\[beta info:fts\] indexed 200 documents", out), out
+
+
+# ONE entry point to the encoder (docs/notes/input-forms.md, operator
+# 2026-10-08): a chunk's input is built from its layer's form by
+# `embeddings.embed_chunks`, and the low-level client is private to
+# app/embeddings.py. A caller that fed it a text directly could feed a pair
+# layer's chunk as text — the very drift the 0.95 tolerance hid on pubmed.
+# Non-chunk texts go through `embed_query` / `embed_calibration`.
+_PRIVATE_CLIENT = {"_embed_texts", "_embed_batch", "_embed_one_at_a_time",
+                   "_request_vectors",
+                   # the public names they had, so neither comes back
+                   "embed_texts", "embed_one_at_a_time"}
+TOOLS = APP.parent / "tools"
+
+
+def _names_used(path: Path) -> set[str]:
+    """Every NAME token of the file — code only: comments and strings are
+    not tokens of this kind, so a docstring may still name the client."""
+    import io
+    import tokenize
+    src = path.read_text(encoding="utf-8")
+    return {tok.string for tok in tokenize.generate_tokens(io.StringIO(src).readline)
+            if tok.type == tokenize.NAME}
+
+
+def test_the_embedding_client_is_private_to_embeddings():
+    own = APP / "embeddings.py"
+    offenders = sorted(
+        f"{p.relative_to(APP.parent).as_posix()}: {', '.join(sorted(used))}"
+        for root in (APP, TOOLS) for p in root.rglob("*.py")
+        if p != own and (used := _names_used(p) & _PRIVATE_CLIENT))
+    assert offenders == [], (
+        "the encoder is reached through embeddings.embed_chunks (a chunk, in its "
+        "layer's form) or embed_query / embed_calibration (not a chunk, by design); "
+        f"these call the client directly: {offenders}")
+
+
+def test_the_guard_sees_a_call_and_not_a_comment(tmp_path):
+    p = tmp_path / "x.py"
+    p.write_text("# embeddings._embed_texts in a comment\n'_embed_batch in a string'\n",
+                 encoding="utf-8")
+    assert _names_used(p) & _PRIVATE_CLIENT == set()
+    p.write_text("from app import embeddings\nembeddings._embed_texts(['t'])\n",
+                 encoding="utf-8")
+    assert _names_used(p) & _PRIVATE_CLIENT == {"_embed_texts"}

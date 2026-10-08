@@ -136,7 +136,17 @@ def chunk_abstract(uid: str, native_id, sections: list[tuple[str, str]],
     text = "\n\n".join(body for _, body in sections if body).strip()
     if not text:
         return
-    yield _mk(uid, native_id, 0, "", text, version)
+    chunk = _mk(uid, native_id, 0, "", text, version)
+    # 09 §9.3's pair form (amended 2026-10-08, docs/notes/input-forms.md):
+    # the record's first section's body (the title) and the rest of its
+    # sections' bodies joined by "\n\n" (the abstract) — what a layer whose
+    # `input` is `pair` feeds the encoder (`embeddings.embed_chunks`). BESIDE
+    # the text: neither the chunk id, nor its text, nor `chunks_root` covers
+    # it, so a text-form layer's chunks are what they always were.
+    first = (sections[0][1] or "").strip() if sections else ""
+    rest = "\n\n".join(body for _, body in sections[1:] if body).strip()
+    chunk["fields"] = (first, rest)
+    yield chunk
 
 def chunk_verbatim(uid: str, native_id, sections: list[tuple[str, str]],
                     version=None, params=None):

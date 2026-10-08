@@ -152,7 +152,7 @@ def test_query_prefix_reaches_queries_and_never_documents(tmp_path, monkeypatch)
         seen.append(list(texts))
         return [[1.0, 0.0] for _ in texts]
 
-    monkeypatch.setattr("app.embeddings.embed_texts", fake_embed_texts)
+    monkeypatch.setattr("app.embeddings._embed_texts", fake_embed_texts)
 
     bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1,
                20_000, query_prefix="Instruct: legal\nQuery: ")
@@ -182,7 +182,7 @@ def test_variants_of_one_model_share_the_corpus_vectors(tmp_path, monkeypatch) -
         calls.append(len(texts))
         return [[1.0, 0.0] for _ in texts]
 
-    monkeypatch.setattr("app.embeddings.embed_texts", fake_embed_texts)
+    monkeypatch.setattr("app.embeddings._embed_texts", fake_embed_texts)
 
     args = (tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1, 20_000)
     bake.embed(*args, query_prefix="")
@@ -203,7 +203,7 @@ def test_a_limited_run_is_marked_and_refused_by_score(tmp_path, monkeypatch, cap
     corpus = bake.Corpus(ids=[1, 2, 3, 4], texts=["a", "b", "c", "d"])
     queries = bake.Queries(texts=["q"], relevant=[[1]])
     monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
-    monkeypatch.setattr("app.embeddings.embed_texts",
+    monkeypatch.setattr("app.embeddings._embed_texts",
                         lambda texts, **kw: [[1.0, 0.0] for _ in texts])
 
     bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1,
@@ -223,7 +223,7 @@ def test_an_unlimited_run_is_scored_normally(tmp_path, monkeypatch) -> None:
     corpus = bake.Corpus(ids=[1, 2], texts=["a", "b"])
     queries = bake.Queries(texts=["q"], relevant=[[1]])
     monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
-    monkeypatch.setattr("app.embeddings.embed_texts",
+    monkeypatch.setattr("app.embeddings._embed_texts",
                         lambda texts, **kw: [[1.0, 0.0] for _ in texts])
 
     bake.embed(tmp_path, "m", "http://x/upstream/m", "m", None, 8192, 1, 20_000)

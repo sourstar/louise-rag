@@ -38,8 +38,10 @@ def good_vec(text):
 @pytest.fixture
 def seeded(collection, monkeypatch):
     """Every book embedded with the honest function."""
-    monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda texts, timeout=300, **kw: [good_vec(t) for t in texts])
+    # at the client's lowest level, which `sweeper` patches again with its
+    # draws: a patch above it would answer for the sweep too
+    monkeypatch.setattr(embeddings, "_embed_batch",
+                        lambda batch, timeout, recipe, **kw: [good_vec(t) for t in batch])
     con = db.connect(collection)
     for row in con.execute("SELECT * FROM documents").fetchall():
         embeddings.upsert_book(int(row["native_id"]), row["lang"],

@@ -212,7 +212,7 @@ def test_a_document_in_flight_stops_at_its_next_slice_when_the_mode_changes(coll
             worker._acquire_only.set()          # the operator presses the button
         return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
 
-    monkeypatch.setattr(embeddings, "embed_texts", embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", embed)
     chunks = [{"id": f"g:1:{i}", "seq": i, "chapter": "", "text": f"chunk {i}"}
               for i in range(8)]
     assert worker._embed_stop.is_set() is False

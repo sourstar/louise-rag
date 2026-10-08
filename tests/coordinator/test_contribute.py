@@ -77,7 +77,7 @@ def node(con, collection, monkeypatch):
     def fake_embed(texts, **kwargs):
         counter["calls"] += 1
         return unit_vectors(len(texts), seed=len(texts))
-    monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake_embed)
     return con, collection, counter
 
 

@@ -561,7 +561,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
     hybrid search runs in parallel (ThreadPoolExecutor, matching
-    embeddings.py's embed_texts()'s own parallelism idiom — this codebase is
+    embeddings.py's _embed_texts()'s own parallelism idiom — this codebase is
     synchronous throughout, no asyncio); a collection whose connection or
     search fails is isolated (logged, contributes no candidates) rather than
     failing the whole query. With exactly one collection this degenerates to

@@ -528,6 +528,12 @@ def derive(root: Path, mother_id: str, *,
                             and _replace(mother, space=new_space,
                                          layers=new_layers).space_id == mother.space_id)
         version = mother.version if in_mothers_space else cx.CODEX_VERSION
+        if (not in_mothers_space and space_from is not None
+                and space_from.version < cx.INPUT_VERSION):
+            # the source's layers carry no `input`; at version 5 they would,
+            # and her space_id could not equal the source's (09 §9.3,
+            # amended 2026-10-08) — the last version without it
+            version = cx.INPUT_VERSION - 1
         if new_space.has_options:
             version = max(version, cx.OPTIONS_VERSION)
     elif mother.version >= cx.ENGINE_VERSION:

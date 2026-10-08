@@ -73,11 +73,11 @@ def _fake_encoder(monkeypatch, *, scale=3.0, wrong_beyond=None):
 def test_each_text_goes_alone_and_comes_back_unnormalised(monkeypatch, isolated_config):
     calls = _fake_encoder(monkeypatch)
     recipe = collections_mod.recipe_for(collections_mod.default_collection())
-    vectors = embeddings.embed_one_at_a_time(["one", "two", "three"], recipe=recipe)
+    vectors = embeddings._embed_one_at_a_time(["one", "two", "three"], recipe=recipe)
     assert [batch for _url, batch in calls] == [["one"], ["two"], ["three"]]
     norm = math.sqrt(sum(x * x for x in vectors[0]))
     assert abs(norm - 1.0) > 0.1, "as the endpoint returned it"
-    unit = embeddings.embed_texts(["one"], recipe=recipe)[0]
+    unit = embeddings._embed_texts(["one"], recipe=recipe)[0]
     assert abs(math.sqrt(sum(x * x for x in unit)) - 1.0) < 1e-6, "the worker's path still normalises"
 
 

@@ -105,7 +105,7 @@ def test_search_sends_exactly_what_calibration_embedded(monkeypatch):
         return Answer(len(json["input"]))
 
     monkeypatch.setattr(embeddings.httpc, "post", post)
-    embeddings.embed_texts(texts, recipe=_recipe(codex), query=True)
+    embeddings._embed_texts(texts, recipe=_recipe(codex), query=True)
 
     assert sent == calibrated
     assert sent[0] == "Instruct: find statutes\nQuery: domanda 0"

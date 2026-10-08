@@ -22,7 +22,7 @@ MedCPT's has a document side and a query side):
   window is exactly what happened here;
 - an even spread of the calibration set beside them (`--texts`, 64);
 each ALONE in its request, in order, as the endpoint returned it
-(embeddings.embed_one_at_a_time). One safetensors file and one JSON beside it.
+(embeddings.embed_calibration, one_at_a_time). One safetensors file and one JSON beside it.
 
 WHAT COMPARE SAYS. For each side: whether the fingerprint is the same BIT FOR
 BIT — the same engine on the same card reproduces it, and that is stronger
@@ -104,8 +104,9 @@ def record(out: Path, names: list[str], spread: int) -> int:
             url = recipe.query_url if side == "query" else recipe.url
             t0 = time.monotonic()
             try:
-                vectors = embeddings.embed_one_at_a_time(
-                    [texts[i] for i in picked], recipe=recipe, query=side == "query")
+                vectors = embeddings.embed_calibration(
+                    recipe, [texts[i] for i in picked], query=side == "query",
+                    one_at_a_time=True)
             except Exception as e:                          # noqa: BLE001
                 print(f"{collection.name}.{side}: deferred — {url} did not answer: "
                       f"{type(e).__name__}: {e}", file=sys.stderr)
@@ -157,8 +158,9 @@ def compare(against: Path, names: list[str], urls: dict[str, str],
                 now = dataclasses.replace(recipe, **{field: urls[key].rstrip("/")})
             url = now.query_url if side == "query" else now.url
             try:
-                vectors = embeddings.embed_one_at_a_time(
-                    [texts[i] for i in meta["indices"]], recipe=now, query=side == "query")
+                vectors = embeddings.embed_calibration(
+                    now, [texts[i] for i in meta["indices"]], query=side == "query",
+                    one_at_a_time=True)
             except Exception as e:                          # noqa: BLE001
                 print(f"{label}: deferred — {url} did not answer: "
                       f"{type(e).__name__}: {e}", file=sys.stderr)

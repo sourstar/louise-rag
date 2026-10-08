@@ -356,7 +356,7 @@ def test_a_runless_endpoint_serves_a_query_and_refuses_a_write(node, rage):
     rage.run = None
     recipe = collections_mod.recipe_for(collection)
 
-    vector = embeddings.embed_texts(["what is a lighthouse"], recipe=recipe, query=True)
+    vector = embeddings._embed_texts(["what is a lighthouse"], recipe=recipe, query=True)
     assert len(vector) == 1 and len(vector[0]) == codex.space.dim
 
     with pytest.raises(hold_runs.RunRefused, match="states no run identity"):
@@ -693,11 +693,12 @@ def test_a_check_runs_under_a_validated_run_or_is_inconclusive(node, rage):
 def test_an_older_collections_check_embeds_as_it_always_did(monkeypatch):
     from tests.hold.conftest import pubmed_v2
     asked = []
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, **kw: asked.append(kw) or [[0.0] for _ in texts])
     embed = run_check.checking("/nowhere", "pubmed", pubmed_v2(), "a recipe")
     assert embed(["x", "y"]) == [[0.0], [0.0]]
-    assert asked == [{"recipe": "a recipe", "query": False}], "no run is asked of it"
+    # a check's texts are the collection's chunks: `embed_chunks`, text form
+    assert asked == [{"recipe": "a recipe"}], "no run is asked of it"
 
 
 def test_t3_that_cannot_run_under_a_validated_run_is_skipped_never_failed():

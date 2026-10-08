@@ -141,6 +141,10 @@ def pubmed(**over) -> Codex:
         continues=None, continues_through=None, origin_reachable_until=None,
         derived_from=None, space_from=None, replaces=None,
         facets=(), credits=BASE_CREDITS, profile=None,
+        # 09 §9.3's worked example is a version-4 Codex: one ALREADY WRITTEN,
+        # whose ids the input-forms amendment (version 5, 2026-10-08) must not
+        # move — test_codex pins them byte for byte
+        version=4,
     )
     base.update(over)
     # The community credit is DERIVED from `embedding` (02 §2.7), so a test

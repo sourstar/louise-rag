@@ -72,14 +72,14 @@ def test_embed_texts_routes_through_the_recipe(isolated_config, monkeypatch):
     recipe = collections_mod.EmbedRecipe(
         url="http://medcpt:8080", api="openai", model="medcpt-article",
         dtype="f16", ctx=512)
-    embeddings.embed_texts(["hello"], recipe=recipe)
+    embeddings._embed_texts(["hello"], recipe=recipe)
     assert calls[0]["url"] == "http://medcpt:8080/v1/embeddings"
     assert calls[0]["json"]["model"] == "medcpt-article"
 
     # no recipe -> no default to fall back on: refused, nothing sent
     calls.clear()
     with pytest.raises(collections_mod.NoEncoder):
-        embeddings.embed_texts(["hello"])
+        embeddings._embed_texts(["hello"])
     assert calls == []
 
 
@@ -88,19 +88,19 @@ def test_query_routing_uses_the_query_encoder(isolated_config, monkeypatch):
     recipe = collections_mod.EmbedRecipe(
         url="http://article:1", api="openai", model="medcpt", dtype="f16",
         ctx=512, query_url="http://query:2")
-    embeddings.embed_texts(["what is BRCA2"], recipe=recipe, query=True)
+    embeddings._embed_texts(["what is BRCA2"], recipe=recipe, query=True)
     assert calls[0]["url"] == "http://query:2/v1/embeddings"
 
     # documents keep going to the article encoder
     calls.clear()
-    embeddings.embed_texts(["an abstract"], recipe=recipe)
+    embeddings._embed_texts(["an abstract"], recipe=recipe)
     assert calls[0]["url"] == "http://article:1/v1/embeddings"
 
     # symmetric recipes: query=True is a no-op
     calls.clear()
     symmetric = collections_mod.EmbedRecipe(
         url="http://sym:3", api="openai", model="m", dtype="f16", ctx=512)
-    embeddings.embed_texts(["q"], recipe=symmetric, query=True)
+    embeddings._embed_texts(["q"], recipe=symmetric, query=True)
     assert calls[0]["url"] == "http://sym:3/v1/embeddings"
 
 
@@ -115,18 +115,18 @@ def test_a_query_names_the_query_encoder_its_url_names_never_the_documents(
         url="http://nas:30450/upstream/medcpt-article", api=api,
         model="MedCPT-Article-Encoder", dtype="f16", ctx=512,
         query_url="http://nas:30450/upstream/medcpt-query")
-    embeddings.embed_texts(["is aspirin safe?"], recipe=rage, query=True)
+    embeddings._embed_texts(["is aspirin safe?"], recipe=rage, query=True)
     assert calls[0]["url"] == f"http://nas:30450/upstream/medcpt-query{path}"
     assert calls[0]["json"]["model"] == "medcpt-query"
     calls.clear()
-    embeddings.embed_texts(["an abstract"], recipe=rage)
+    embeddings._embed_texts(["an abstract"], recipe=rage)
     assert calls[0]["json"]["model"] == "MedCPT-Article-Encoder", "documents unchanged"
 
     calls.clear()
     elsewhere = collections_mod.EmbedRecipe(
         url="http://article:1", api=api, model="medcpt", dtype="f16", ctx=512,
         query_url="http://query:2")
-    embeddings.embed_texts(["q"], recipe=elsewhere, query=True)
+    embeddings._embed_texts(["q"], recipe=elsewhere, query=True)
     assert "model" not in calls[0]["json"], \
         "no name rather than the wrong one: an endpoint that needs one refuses"
 
@@ -142,7 +142,7 @@ def test_recipe_ctx_bounds_the_char_budget(isolated_config, monkeypatch):
     calls = _capture_posts(monkeypatch)
     recipe = collections_mod.EmbedRecipe(
         url="http://x:1", api="openai", model="m", dtype="f16", ctx=512)
-    embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    embeddings._embed_texts(["A" * 10_000], recipe=recipe)
     assert len(calls[0]["json"]["input"][0]) == 512 * 4
 
 
@@ -173,7 +173,7 @@ def test_413_from_bert_class_servers_shrinks_the_budget_gently(isolated_config, 
 
     recipe = collections_mod.EmbedRecipe(
         url="http://tei:1", api="openai", model="medcpt", dtype="f16", ctx=512)
-    out = embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    out = embeddings._embed_texts(["A" * 10_000], recipe=recipe)
     assert len(out) == 1
     assert attempts[0] == 2048 and attempts[-1] <= 1000, \
         "budget must shrink until the server accepts"
@@ -219,9 +219,9 @@ def test_llama_servers_500_too_large_shrinks_the_budget_as_teis_413_does(
         monkeypatch, 500, '{"error":{"code":500,"message":"input (774 tokens) '
         'is too large to process. increase the physical batch size (current '
         'batch size: 512)","type":"server_error"}}')
-    assert len(embeddings.embed_texts(["A" * 10_000], recipe=recipe)) == 1
+    assert len(embeddings._embed_texts(["A" * 10_000], recipe=recipe)) == 1
     tei = _refusing_server(monkeypatch, 413, "Input validation error")
-    embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    embeddings._embed_texts(["A" * 10_000], recipe=recipe)
     assert llama == tei, "the same cuts, step for step, on either server"
     assert llama[-1] <= 1000
 
@@ -238,9 +238,9 @@ def test_localais_500_over_the_context_shrinks_the_budget_too(isolated_config, m
         monkeypatch, 500, '{"error":{"code":500,"message":"rpc error: code = Internal '
         'desc = request (11187 tokens) exceeds the available context size (8192 '
         'tokens), try increasing it","type":""}}')
-    assert len(embeddings.embed_texts(["A" * 10_000], recipe=recipe)) == 1
+    assert len(embeddings._embed_texts(["A" * 10_000], recipe=recipe)) == 1
     tei = _refusing_server(monkeypatch, 413, "Input validation error")
-    embeddings.embed_texts(["A" * 10_000], recipe=recipe)
+    embeddings._embed_texts(["A" * 10_000], recipe=recipe)
     assert localai == tei, "the same cuts, step for step, on either server"
 
 
@@ -253,7 +253,7 @@ def test_any_other_500_is_still_an_error(isolated_config, monkeypatch):
     recipe = collections_mod.EmbedRecipe(
         url="http://gguf:1", api="openai", model="medcpt", dtype="f16", ctx=512)
     with pytest.raises(RuntimeError, match="HTTP 500: .*out of memory"):
-        embeddings.embed_texts(["an abstract"], recipe=recipe)
+        embeddings._embed_texts(["an abstract"], recipe=recipe)
 
 
 LOCALAI_NAN = ('{"error":{"code":500,"message":"json: error calling MarshalJSON for type '
@@ -288,7 +288,7 @@ def test_localais_nan_500_is_retried_as_a_nan_vector_is(isolated_config, monkeyp
     recipe = collections_mod.EmbedRecipe(
         url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
         ctx=8192)
-    assert embeddings.embed_texts(["a sentence"], recipe=recipe) == [[0.6, 0.8]]
+    assert embeddings._embed_texts(["a sentence"], recipe=recipe) == [[0.6, 0.8]]
     assert sent == ["a sentence"] * 3, "retried whole, never cut"
 
 
@@ -300,7 +300,7 @@ def test_localais_nan_500_that_never_clears_is_the_numeric_failure_it_is(
         url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
         ctx=8192)
     with pytest.raises(RuntimeError, match="null/NaN vectors even after retries"):
-        embeddings.embed_texts(["a sentence"], recipe=recipe)
+        embeddings._embed_texts(["a sentence"], recipe=recipe)
 
 
 def test_space_components_come_from_the_recipe(isolated_config, data_dir, config_dir):
@@ -351,7 +351,7 @@ def test_upsert_uses_recipe_dtype_for_new_table(isolated_config, monkeypatch, tm
         embed=collections_mod.EmbedRecipe(url="http://nas:30440", api="openai",
                                           model="medcpt-article", dtype="f16", ctx=512))
     monkeypatch.setattr(
-        embeddings, "embed_texts",
+        embeddings, "_embed_texts",
         lambda texts, timeout=300, recipe=None, query=False, **kw:
             [[1.0, 0.0, 0.0] for _ in texts])
     chunks = [{"id": "pubmed:1:0:1", "book_id": 1, "seq": 0,
@@ -406,19 +406,19 @@ def _instructed(**kw):
 
 def test_the_instruction_reaches_queries_and_never_documents(isolated_config, monkeypatch):
     calls = _capture_posts(monkeypatch)
-    embeddings.embed_texts(["chi paga l'IMU?"], recipe=_instructed(), query=True)
+    embeddings._embed_texts(["chi paga l'IMU?"], recipe=_instructed(), query=True)
     assert calls[0]["json"]["input"] == ["query: chi paga l'IMU?"]
 
     # "a document is embedded by space.encoder and never prefixed" (02 §2.4)
     calls.clear()
-    embeddings.embed_texts(["Art. 1. Oggetto."], recipe=_instructed())
+    embeddings._embed_texts(["Art. 1. Oggetto."], recipe=_instructed())
     assert calls[0]["json"]["input"] == ["Art. 1. Oggetto."]
 
     # no instruction: the untouched path, queries included
     calls.clear()
     bare = collections_mod.EmbedRecipe(
         url="http://rage:30437", api="openai", model="m", dtype="f16", ctx=8192)
-    embeddings.embed_texts(["q"], recipe=bare, query=True)
+    embeddings._embed_texts(["q"], recipe=bare, query=True)
     assert calls[0]["json"]["input"] == ["q"]
 
 
@@ -436,10 +436,10 @@ def test_the_instruction_applies_on_the_fingerprint_path_too(isolated_config, mo
     and prefixed in search would put two kinds of query vector in one
     collection, both honest, both the right width."""
     calls = _capture_posts(monkeypatch)
-    embeddings.embed_one_at_a_time(["una domanda"], recipe=_instructed(), query=True)
+    embeddings._embed_one_at_a_time(["una domanda"], recipe=_instructed(), query=True)
     assert calls[0]["json"]["input"] == ["query: una domanda"]
     calls.clear()
-    embeddings.embed_one_at_a_time(["un documento"], recipe=_instructed())
+    embeddings._embed_one_at_a_time(["un documento"], recipe=_instructed())
     assert calls[0]["json"]["input"] == ["un documento"]
 
 
@@ -448,6 +448,6 @@ def test_the_instruction_survives_a_declared_query_encoder(isolated_config, monk
     recipe for the query URL field by field, and a field it forgets to carry
     is a field silently dropped."""
     calls = _capture_posts(monkeypatch)
-    embeddings.embed_texts(["q"], recipe=_instructed(query_url="http://query:2"), query=True)
+    embeddings._embed_texts(["q"], recipe=_instructed(query_url="http://query:2"), query=True)
     assert calls[0]["url"] == "http://query:2/v1/embeddings"
     assert calls[0]["json"]["input"] == ["query: q"]

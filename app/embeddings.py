@@ -23,6 +23,7 @@ import pyarrow as pa
 
 from . import collections as collections_mod
 from . import config, dispatch, httpc
+from . import layers as layers_mod
 
 TABLE = "chunks"
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
@@ -51,7 +52,19 @@ def _note_run(response, runs: set | None) -> None:
         runs.add(headers.get(RUN_HEADER) or None)
 
 
-def _request_vectors(batch: list[str], timeout: float,
+#: One encoder input: a text, or a tokenizer text pair (09 §9.3's `pair`
+#: form, amended 2026-10-08 — docs/notes/input-forms.md).
+Item = str | tuple[str, str]
+
+
+class InputFormError(ValueError):
+    """A chunk cannot be fed in its layer's form: a pair layer's chunk that
+    carries no `fields`, or a pair asked of an endpoint whose API has no way
+    to say one. Refused, never flattened into a string — the same weights fed
+    another form are another function (02 §2.4)."""
+
+
+def _request_vectors(batch: list[Item], timeout: float,
                      recipe: "collections_mod.EmbedRecipe",
                      runs: set | None = None) -> list[list[float]]:
     # Every request passes its server's gate (app/dispatch.py): at most the
@@ -126,7 +139,22 @@ def _numeric_failure(response) -> bool:
         f"unsupported value: {v}" in response.text for v in ("NaN", "+Inf", "-Inf"))
 
 
-def _embed_batch(batch: list[str], timeout: float,
+def _flat(item: Item) -> str:
+    """The characters an input sends, for the budget's estimate."""
+    return item if isinstance(item, str) else item[0] + item[1]
+
+
+def _cut(item: Item, budget: int) -> Item:
+    """An input truncated to `budget` characters, as a chunk always was. A
+    pair keeps its first segment and gives the second what is left — the
+    title is short and whole, the abstract is what runs long."""
+    if isinstance(item, str):
+        return item[:budget]
+    first, second = item
+    return (first[:budget], second[:max(0, budget - len(first))])
+
+
+def _embed_batch(batch: list[Item], timeout: float,
                  recipe: "collections_mod.EmbedRecipe", *,
                  raw: bool = False, runs: set | None = None) -> list[list[float]]:
     """Request embeddings with two self-healing behaviours:
@@ -138,7 +166,7 @@ def _embed_batch(batch: list[str], timeout: float,
     Other HTTP errors surface with the server's actual message.
 
     `raw`: the vectors as the endpoint returned them, not unit-normalised —
-    what 09 §9.12's fingerprint is taken over (`embed_one_at_a_time`).
+    what 09 §9.12's fingerprint is taken over (`_embed_one_at_a_time`).
     `runs`: a set that collects the run each answer named (`_note_run`)."""
     budget = recipe.ctx * 4
     n_bad = 0
@@ -157,13 +185,13 @@ def _embed_batch(batch: list[str], timeout: float,
     # vocabulary, not a script, and the platform holds no tokenizer
     # (invariant 7). Shrink-on-refusal is therefore the mechanism that fits
     # every case, and this only decides how often it has to run.
-    dense = sum(1 for t in batch for ch in t if _dense_script(ch))
-    chars = sum(len(t) for t in batch)
+    dense = sum(1 for t in batch for ch in _flat(t) if _dense_script(ch))
+    chars = sum(len(_flat(t)) for t in batch)
     if dense and chars:
         per_char = (dense / 1.0 + (chars - dense) / 4.0) / chars
         budget = max(256, int(recipe.ctx / per_char))
     for attempt in range(10):
-        cut = [t[:budget] for t in batch]
+        cut = [_cut(t, budget) for t in batch]
         try:
             # `runs` only where asked for: a test's stand-in for this function
             # takes the three arguments it always took
@@ -201,9 +229,21 @@ def _embed_batch(batch: list[str], timeout: float,
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
 
-def _body(recipe: "collections_mod.EmbedRecipe", batch: list[str]) -> dict:
-    """The request: the texts, and the model's name where the side has one."""
-    return {"input": batch, **({"model": recipe.model} if recipe.model else {})}
+def _body(recipe: "collections_mod.EmbedRecipe", batch: list[Item]) -> dict:
+    """The request: the texts, and the model's name where the side has one.
+
+    PAIRS travel as `input_pairs: [[first, second], …]` in place of `input`
+    (docs/notes/input-forms.md): a list of two strings already means two
+    texts in the OpenAI style, so a separate field is the unambiguous one.
+    Only the OpenAI-style body has it; a batch is all texts or all pairs."""
+    model = {"model": recipe.model} if recipe.model else {}
+    if batch and not isinstance(batch[0], str):
+        if recipe.api != "openai" or any(isinstance(t, str) for t in batch):
+            raise InputFormError(
+                f"a text pair is sent only as the OpenAI-style `input_pairs`, never "
+                f"mixed with texts; the endpoint's api is {recipe.api!r}")
+        return {"input_pairs": [[a, b] for a, b in batch], **model}
+    return {"input": batch, **model}
 
 
 def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
@@ -250,9 +290,9 @@ def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
     return [f"{recipe.query_instruction}{t}" for t in texts]
 
 
-def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecipe",
-                        query: bool = False, timeout: float = 300,
-                        runs: set | None = None) -> list[list[float]]:
+def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRecipe",
+                         query: bool = False, timeout: float = 300,
+                         runs: set | None = None) -> list[list[float]]:
     """Each text ALONE in its request, in order, truncated as a chunk is, and
     the vectors AS THE ENDPOINT RETURNED THEM — not unit-normalised.
 
@@ -268,10 +308,10 @@ def embed_one_at_a_time(texts: list[str], *, recipe: "collections_mod.EmbedRecip
             for text in _asked(texts, side, query)]
 
 
-def embed_texts(texts: list[str], timeout: float = 300, *,
-                recipe: "collections_mod.EmbedRecipe | None" = None,
-                query: bool = False, runs: set | None = None,
-                raw: bool = False) -> list[list[float]]:
+def _embed_texts(texts: list[Item], timeout: float = 300, *,
+                 recipe: "collections_mod.EmbedRecipe | None" = None,
+                 query: bool = False, runs: set | None = None,
+                 raw: bool = False) -> list[list[float]]:
     """EMBED_CONCURRENCY sub-batches in flight; result order matches input.
 
     `recipe` is the collection's encoder (collections.recipe_for()), and it
@@ -284,12 +324,12 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
     knobs, deliberately not part of the recipe (they change no vector)."""
     if recipe is None:
         raise collections_mod.NoEncoder(
-            "embed_texts: no encoder recipe — a collection names its own, and "
+            "_embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
     texts = _asked(texts, recipe, query)
 
-    def one(b: list[str]) -> list[list[float]]:
+    def one(b: list[Item]) -> list[list[float]]:
         # the two keywords only where asked for: a test's stand-in for
         # `_embed_batch` takes the three arguments it always took
         if raw or runs is not None:
@@ -310,6 +350,145 @@ def embed_texts(texts: list[str], timeout: float = 300, *,
     else:
         results = [one(b) for b in batches]
     return [v for part in results for v in part]
+
+
+# ---- the public entry points ------------------------------------------------
+#
+# docs/notes/input-forms.md (operator, 2026-10-08): ONE entry point builds the
+# encoder's input for a chunk from its layer's form, and the client above is
+# private to this module — tests/test_invariant_guards.py fails on any other
+# caller. The two helpers after it are for what is NOT a chunk by design: a
+# query, and the texts a calibration, a gate or a probe embeds.
+
+#: A chunk as `embed_chunks` takes it: the dict its chunker yields, or its
+#: text alone where only the text is held (a stored chunk being re-embedded).
+ChunkLike = dict | str
+
+
+#: `layers.chunk_input`, here too: what a caller of `embed_chunks` hands it.
+chunk_input = layers_mod.chunk_input
+
+
+def _kw(timeout: float, runs: set | None, raw: bool) -> dict:
+    """The keywords for `_embed_texts`, only where they differ from its
+    defaults — a test's stand-in takes the ones it always took."""
+    kw: dict = {}
+    if timeout != 300:
+        kw["timeout"] = timeout
+    if runs is not None:
+        kw["runs"] = runs
+    if raw:
+        kw["raw"] = True
+    return kw
+
+
+def _inputs(collection, chunks: list[ChunkLike]) -> list[Item]:
+    """Each chunk's encoder input, by its layer's form (09 §9.3).
+
+    A collection with no `pair` layer feeds every chunk its text — every
+    collection before version 5, and every text one after. With one, a chunk
+    carrying `fields` is the pair layer's: only the `abstract` chunker yields
+    them, a pair is admitted only on `abstract`, and a Codex has one chunker
+    per layer. A chunk WITHOUT them is refused when the pair layer is the
+    only layer, and when it is a bare text: neither can be split back into
+    the record's sections, and feeding it as text would put another form's
+    vector under the space's id. In a collection of several layers a chunk
+    dict without them is another layer's, which is text."""
+    layers = layers_mod.layers_for(collection)
+    if not any(l.form == "pair" for l in layers):
+        return [c if isinstance(c, str) else c["text"] for c in chunks]
+    out: list[Item] = []
+    for c in chunks:
+        fields = None if isinstance(c, str) else c.get("fields")
+        if fields is not None:
+            first, second = fields
+            out.append((str(first), str(second)))
+        elif isinstance(c, str) or len(layers) == 1:
+            raise InputFormError(
+                f"{getattr(collection, 'name', 'the collection')}: a chunk of a pair "
+                f"layer carries its `fields` (the record's first section, the rest), "
+                f"and this one {'is its text alone' if isinstance(c, str) else 'has none'} "
+                f"— it cannot be fed in its layer's form (09 §9.3, input forms)")
+        else:
+            out.append(c["text"])
+    return out
+
+
+def embed_chunks(collection, chunks: list[ChunkLike], *,
+                 recipe: "collections_mod.EmbedRecipe | None" = None,
+                 timeout: float = 300, runs: set | None = None,
+                 raw: bool = False) -> list[list[float]]:
+    """THE way a chunk reaches the encoder: its input built from its layer's
+    form (09 §9.3, docs/notes/input-forms.md) — the text for a `text` layer,
+    `(first, second)` sent as `input_pairs` for a `pair` one. One vector per
+    chunk, in order.
+
+    `collection` is anything `layers.layers_for` reads: a live collection or
+    a Codex. `recipe` is its encoder, `collections.recipe_for(collection)`
+    unless the caller holds another for the same space (an endpoint under
+    test, a recipe built from a Codex). `runs` collects the run each answer
+    named (03 §3.3); `raw` returns vectors as the endpoint sent them.
+
+    A pair layer on an endpoint whose api is not `openai` is refused: no
+    other body this client speaks can say a pair."""
+    if not chunks:
+        return []
+    if collection is None:                 # the node's default, as `_conn` reads it
+        collection = collections_mod.default_collection()
+    if recipe is None:
+        recipe = collections_mod.recipe_for(collection)
+    items = _inputs(collection, list(chunks))
+    pairs_at = [i for i, x in enumerate(items) if not isinstance(x, str)]
+    if pairs_at and recipe.api != "openai":
+        raise InputFormError(
+            f"{getattr(collection, 'name', 'the collection')}: a pair layer is fed "
+            f"as `input_pairs` in the OpenAI-style body, and this encoder's api is "
+            f"{recipe.api!r}")
+    kw = _kw(timeout, runs, raw)
+    if not pairs_at:
+        return _embed_texts(items, recipe=recipe, **kw)
+    out: list = [None] * len(items)
+    texts_at = [i for i, x in enumerate(items) if isinstance(x, str)]
+    for group in (pairs_at, texts_at):     # never one batch of both (`_body`)
+        if group:
+            vectors = _embed_texts([items[i] for i in group], recipe=recipe, **kw)
+            for i, v in zip(group, vectors):
+                out[i] = v
+    return out
+
+
+def embed_query(collection, text: str, *,
+                recipe: "collections_mod.EmbedRecipe | None" = None,
+                timeout: float = 300, runs: set | None = None) -> list[float]:
+    """A search's query vector: ONE text through the query side — the query
+    encoder where the collection declares one, `space.query.instruction`
+    prepended (`_asked`). Queries stay single text in every space: MedCPT's
+    query encoder takes one text, and no form a layer declares is a query's."""
+    if recipe is None:
+        recipe = collections_mod.recipe_for(collection)
+    kw = _kw(timeout, runs, False)
+    return _embed_texts([text], recipe=recipe, query=True, **kw)[0]
+
+
+def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[str], *,
+                      query: bool = False, timeout: float = 300,
+                      runs: set | None = None, raw: bool = False,
+                      one_at_a_time: bool = False) -> list[list[float]]:
+    """Texts that are NOT a collection's chunks, by design, as text: the
+    calibration set (09 §9.12) and its query vectors, the gate's batches and
+    fingerprint, a backend's probes, a tool's sample. There is no layer to
+    read a form from — the encoder is often not yet any collection's.
+
+    `query` routes through the query side as a search does; `one_at_a_time`
+    sends each text alone and returns it as the endpoint did (the fingerprint,
+    09 §9.12); `raw` skips unit normalisation."""
+    if one_at_a_time:
+        return _embed_one_at_a_time(texts, recipe=recipe, query=query,
+                                    timeout=timeout, runs=runs)
+    kw = _kw(timeout, runs, raw)
+    if query:
+        kw["query"] = True
+    return _embed_texts(texts, recipe=recipe, **kw)
 
 # A document with more chunks than this is not resumed by reading its text
 # back — the read would cost more than the re-embedding it saves.
@@ -657,10 +836,10 @@ def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
     if fresh and _by_run(collection):
         from . import run_check                  # it imports this module
         seen: set = set()
-        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe, runs=seen)
+        vectors = embed_chunks(collection, fresh, recipe=recipe, runs=seen)
         run_check.check_write(collection, recipe, seen)
     else:
-        vectors = embed_texts([c["text"] for c in fresh], recipe=recipe) if fresh else []
+        vectors = embed_chunks(collection, fresh, recipe=recipe) if fresh else []
     embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
     return [{
         "id": c["id"], "book_id": book_id, "lang": lang or "und",
@@ -1043,10 +1222,10 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         # raises, and retrieval.search degrades to the text leg and says so.
         from . import run_check
         seen: set = set()
-        vector = embed_texts([query], recipe=recipe, query=True, runs=seen)[0]
+        vector = embed_query(collection, query, recipe=recipe, runs=seen)
         run_check.check_query(collection, recipe, seen)
     else:
-        vector = embed_texts([query], recipe=recipe, query=True)[0]
+        vector = embed_query(collection, query, recipe=recipe)
     qvec = np.asarray(vector, dtype=_np_dtype_of_table(tbl))
     from . import vector_index
     # probe the local IVF index when the collection has one (nprobes /

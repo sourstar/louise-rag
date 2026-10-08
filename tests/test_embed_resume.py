@@ -41,7 +41,7 @@ def calls(monkeypatch):
         seen.extend(texts)
         return [[float(len(t)), 1.0, 0.0, 0.0] for t in texts]
 
-    monkeypatch.setattr(embeddings, "embed_texts", fake)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake)
     return seen
 
 
@@ -88,7 +88,7 @@ def test_an_interrupted_document_resumes_where_it_stopped(collection, calls,
     monkeypatch.setattr(config, "EMBED_SLICE_CHUNKS", 4)
     stop = threading.Event()
 
-    real = embeddings.embed_texts
+    real = embeddings._embed_texts
     written = {"slices": 0}
 
     def counting(texts, timeout=300, *, recipe=None, query=False):
@@ -97,7 +97,7 @@ def test_an_interrupted_document_resumes_where_it_stopped(collection, calls,
             stop.set()                      # SIGTERM arrives mid-document
         return real(texts, timeout, recipe=recipe, query=query)
 
-    monkeypatch.setattr(embeddings, "embed_texts", counting)
+    monkeypatch.setattr(embeddings, "_embed_texts", counting)
     with pytest.raises(embeddings.EmbedInterrupted):
         embeddings.upsert_book(1, "en", chunks(12), collection, stop=stop)
     part = stored(collection)
@@ -105,7 +105,7 @@ def test_an_interrupted_document_resumes_where_it_stopped(collection, calls,
 
     # the next run embeds only what is missing
     calls.clear()
-    monkeypatch.setattr(embeddings, "embed_texts", real)
+    monkeypatch.setattr(embeddings, "_embed_texts", real)
     n = embeddings.upsert_book(1, "en", chunks(12), collection)
     assert len(calls) == 4, f"re-embedded {len(calls)} chunks, expected the 4 missing"
     assert n == 12

@@ -93,7 +93,8 @@ class Sweeper:
 
     def _fresh(self, text: str) -> list[float]:
         self.checked += 1
-        return embeddings._embed_batch([text], 180, self.recipe)[0]
+        # a stored chunk's text, in its layer's form
+        return embeddings.embed_chunks(self.c, [text], recipe=self.recipe, timeout=180)[0]
 
     def _fresh_many(self, texts: list[str]) -> list[list[float]]:
         """One request per text, several in flight. Never one request with
@@ -106,7 +107,8 @@ class Sweeper:
         self.checked += len(texts)
         with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
             return list(ex.map(
-                lambda t: embeddings._embed_batch([t], 180, self.recipe)[0], texts))
+                lambda t: embeddings.embed_chunks(self.c, [t], recipe=self.recipe,
+                                                 timeout=180)[0], texts))
 
     def test(self, book_id: int) -> dict:
         """GOOD/BAD for one book, stopping at the first corrupt vector."""

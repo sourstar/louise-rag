@@ -252,7 +252,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `4` | yes | the Codex format version (§9.18). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `5` | yes | the Codex format version (§9.18). Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -261,7 +261,7 @@ number written as a decimal string is marked *decimal*.
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
 | `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the shards, and a figureless collection created under a later format writes `version` 3 with `record_line` 1 |
-| `layers` | list of layer | yes | `{chunker: {id, version, params}, rule}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none |
+| `layers` | list of layer | yes | `{chunker: {id, version, params}, rule, input}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none. `input` is the encoder's input FORM for the layer's chunks — the model's documented input format, inside `space_id` with the rest of the layer (*amended 2026-10-08*, docs/notes/input-forms.md): `{"form": "text"}`, the chunk's text as it stands; or `{"form": "pair", "split": "first-section"}`, a tokenizer text pair — the record's first section's body and the rest of its sections' bodies joined by `"\n\n"` — admitted only on a chunker that makes one chunk per record (`abstract`). Any other form or split is refused. From version 5, required on every layer; below it, absent |
 | `slicing` | object | yes | below |
 | `space` | object | yes | below |
 | `work` | object | yes | `{tokens: integer, per: duration}` — the work parameter (02 §2.4): tokens of the encoder's tokenizer per `per`; `per` defaults to the update cadence when the recipe omits it, and is always written out |
@@ -404,7 +404,9 @@ space_id = H( canonical JSON of
 ```
 
 `query` enters as the Codex writes it, except that a non-null
-`query.encoder` is reduced to `{"weights"}`.
+`query.encoder` is reduced to `{"weights"}`. `layers` carries each
+layer's `input` from version 5, so the form the encoder is fed is inside
+`space_id` (*amended 2026-10-08*).
 
 Not `tolerance`, not `calibration`, not `envelope`, not `evaluation`,
 not `work`: those are the contract around the function, not the
@@ -1878,7 +1880,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 4 | §9.3 |
+| `louise-codex` | 5 | §9.3 (5 since 2026-10-08: a layer's `input`) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |

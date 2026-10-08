@@ -200,7 +200,7 @@ def test_worker_drains_a_declared_archive_automatically(collection, monkeypatch)
     def fake_embed(texts, timeout=300, recipe=None, query=False):
         calls.append(len(texts))
         return _same_function_embed(texts)
-    monkeypatch.setattr(embeddings, "embed_texts", fake_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", fake_embed)
 
     # amendment 38: the embed thread NEVER downloads — a shard that is not
     # on disk is not drained (the fetcher's thread lands it first)
@@ -228,7 +228,7 @@ def test_drain_never_retries_a_rejected_archive(collection, monkeypatch):
     archive = _archive(["0", "1"])
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
     monkeypatch.setattr(
-        embeddings, "embed_texts",
+        embeddings, "_embed_texts",
         lambda texts, timeout=300, recipe=None, query=False:
             _different_model_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
@@ -419,7 +419,7 @@ def test_a_fetched_shard_applies_now_revisits_and_finalises(collection, monkeypa
     _write_medcpt_shard(cache, "1", range(10, 20))
     archive = _declared_archive(["0", "1"])
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _same_function_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
@@ -487,7 +487,7 @@ def test_a_remote_shard_without_declared_coverage_counts_pending_by_probe(
     _write_medcpt_shard(cache, "0", range(1, 11))
     archive = _archive(["0"])          # no ids_per_shard
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _same_function_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
@@ -557,7 +557,7 @@ def test_a_budgeted_pass_pauses_commits_and_resumes(collection, monkeypatch):
     _write_medcpt_shard(cache, "0", range(1, 21))          # all 20 held and indexed
     archive = _declared_archive(["0"], ids_per_shard=100)
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _same_function_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
@@ -605,7 +605,7 @@ def test_a_pass_interrupted_by_a_restart_resumes(collection, monkeypatch):
     _write_medcpt_shard(cache, "0", range(1, 11))
     archive = _declared_archive(["0"], ids_per_shard=100)
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _same_function_embed(texts))
     declared = replace(collection, genesis_archive="test-arc")
@@ -699,7 +699,7 @@ def test_a_proven_archive_survives_one_rejected_shard(collection, monkeypatch):
     declared = replace(collection, genesis_archive="test-arc")
     db.ensure_browse_index(con)
     # shard 0 proves; shard 1's documents ALL changed since the snapshot
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _stale_embed({str(i) for i in range(10, 20)})(texts))
     genesis_fetch.run_fetcher(con, declared, fetch=_fake_fetch(cache))
@@ -1206,7 +1206,7 @@ def test_reopened_final_shards_are_fetched_again_not_counted_as_on_disk(
     _write_medcpt_shard(cache, "2", range(20, 21))
     archive = _declared_archive(["0", "1", "2"], shard_bytes=1000)
     monkeypatch.setitem(genesis.ARCHIVES, "test-arc", archive)
-    monkeypatch.setattr(embeddings, "embed_texts",
+    monkeypatch.setattr(embeddings, "_embed_texts",
                         lambda texts, timeout=300, recipe=None, query=False:
                             _same_function_embed(texts))
     monkeypatch.setattr(config_mod, "GENESIS_CACHE_BYTES", 1500)   # one shard at a time

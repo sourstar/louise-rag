@@ -163,7 +163,7 @@ def delta_shards(previous: snap.Snapshot | None,
 def build(codex, *, shards: Iterable[snap.Shard],
           records_for: Callable[[snap.Shard], Sequence[dict]],
           vectors_for: Callable[[list[str]], dict[str, list]],
-          embed: Callable[[list[str]], list[list[float]]],
+          embed: Callable[[list[Any]], list[list[float]]],
           write: Callable[[list[dict]], Any],
           batch: int = 64, stop=None, log=None, dry_run: bool = False,
           before_write: Callable[[], None] | None = None) -> Built:
@@ -203,7 +203,9 @@ def build(codex, *, shards: Iterable[snap.Shard],
                 interrupted = True
                 break
             part = todo[i:i + max(1, batch)]
-            vectors = embed([c["text"] for c in part])
+            # each chunk as the encoder needs it: its text, or a pair layer's
+            # dict with its `fields` (input forms, 09 §9.3)
+            vectors = embed([layers_mod.chunk_input(c) for c in part])
             if before_write is not None:
                 before_write()
             rows = [{"id": c["id"], "book_id": int(c["book_id"]),

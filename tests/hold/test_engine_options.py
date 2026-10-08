@@ -65,10 +65,10 @@ def test_a_version_3_codex_reads_and_writes_back_unchanged():
     assert again.space.encoder.engine.engine_id == ENGINE.engine_id
 
 
-def test_a_new_codex_is_written_at_version_4_and_its_space_is_the_same():
+def test_a_version_4_codex_and_a_version_3_one_share_a_space():
     """`version` is inside `collection_id`, so the same recipe at 4 is
     another collection; the space — the function — is the same one."""
-    assert cx.CODEX_VERSION == cx.OPTIONS_VERSION == 4
+    assert cx.OPTIONS_VERSION == 4
     v4, v3 = pubmed(), pubmed(version=3)
     assert v4.version == 4
     assert v4.space_id == v3.space_id

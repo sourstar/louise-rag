@@ -85,7 +85,8 @@ def _default_embed_fn(collection=None):
     from .. import embeddings
     from ..collections import recipe_for
     recipe = recipe_for(collection)
-    return lambda texts: embeddings.embed_texts(texts, recipe=recipe)
+    # the probes are not chunks: fixed texts, as text (`embed_calibration`)
+    return lambda texts: embeddings.embed_calibration(recipe, texts)
 
 
 def baseline_path(collection) -> Path:
@@ -104,7 +105,7 @@ def _cos(a: list[float], b: list[float]) -> float:
 
 
 def _embed_single(embed_fn, text: str) -> list[float]:
-    """One text per call: embed_texts turns this into a single-sequence
+    """One text per call: the client turns this into a single-sequence
     request regardless of EMBED_BATCH, which is the shape verified safe."""
     try:
         return [float(x) for x in embed_fn([text])[0]]

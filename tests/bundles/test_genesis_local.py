@@ -86,7 +86,7 @@ def _make_eligible(con, uids=None):
 
 def test_drain_imports_revisits_and_keeps_corpus_files(collection, monkeypatch):
     con = db.connect(collection)
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
 
     uids = [r["uid"] for r in con.execute(
         "SELECT uid FROM documents ORDER BY CAST(native_id AS INTEGER)")]
@@ -136,7 +136,7 @@ def test_wrong_model_archive_rejected_whole_and_never_retried(collection, monkey
                  [(str(a), 0, f"Title {a}", f"text {a}") for a in range(20, 30)])
     discovery.sync_collection(con, collection)
     _make_eligible(con)
-    monkeypatch.setattr(embeddings, "embed_texts", _different_model_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _different_model_embed)
 
     for _ in range(6):
         genesis.drain_next_shard(con, collection)
@@ -149,7 +149,7 @@ def test_wrong_model_archive_rejected_whole_and_never_retried(collection, monkey
         assert rows[small]["state"] == "skipped" and "inconclusive" in rows[small]["detail"], rows[small]
     assert embeddings.TABLE not in embeddings._conn(collection).table_names()
 
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     assert genesis.drain_next_shard(con, collection) is None, \
         "a rejected archive must never be retried"
 
@@ -210,7 +210,7 @@ def test_a_candidate_read_touches_only_the_candidates_row_groups(collection, mon
     }), shard, row_group_size=2)
     discovery.sync_collection(con, collection)
     assert pq.ParquetFile(shard).num_row_groups == 3
-    monkeypatch.setattr(embeddings, "embed_texts", _same_function_embed)
+    monkeypatch.setattr(embeddings, "_embed_texts", _same_function_embed)
     # only article 34 (row 4 -> row group 2) is eligible
     uid = f"embedded:{10 * 10_000_000_000 + 34}"
     _make_eligible(con, [uid])

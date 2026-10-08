@@ -197,7 +197,7 @@ def default_facets(source) -> tuple[Facet, ...]:
 
 
 #: What a recipe's layer and its chunker may carry (09 §9.3).
-_LAYER_KEYS = ("chunker", "rule")
+_LAYER_KEYS = ("chunker", "rule", "input")
 _CHUNKER_KEYS = ("id", "version", "params")
 
 
@@ -219,11 +219,18 @@ def _layer(d: dict[str, Any], i: int) -> Layer:
     never declared, which `hold vectors import --archive` then correctly
     refuses. Cost one `create` on 2026-09-10 taking pubmed through step 8.
     """
-    d = _only(d, _LAYER_KEYS, f"layers[{i}]", optional=("rule",))
+    d = _only(d, _LAYER_KEYS, f"layers[{i}]", optional=("rule", "input"))
     ch = _only(d["chunker"], _CHUNKER_KEYS, f"layers[{i}].chunker",
                optional=("params",))
+    # `input` (09 §9.3, amended 2026-10-08): the form the encoder is fed.
+    # A recipe that names none gets text — the Codex fills it from its
+    # version, and `validate` refuses a form the chunker cannot carry.
+    form = d.get("input")
+    if form is not None and not isinstance(form, dict):
+        raise TemplateError(f"layers[{i}].input is a table, got {form!r}")
     return Layer(Chunker(ch["id"], ch["version"], ch.get("params") or {}),
-                 d.get("rule", "default" if i == 0 else ""))
+                 d.get("rule", "default" if i == 0 else ""),
+                 None if form is None else dict(form))
 
 
 def _only(d: dict[str, Any], allowed: tuple[str, ...], where: str,
@@ -524,11 +531,28 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
-        version=space_version if image_shaped else codex_mod.CODEX_VERSION,
+        version=_version_for(space_version, image_shaped),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)
     return codex
+
+
+def _version_for(space_version: int | None, image_shaped: bool) -> int:
+    """The version a new Codex is written at. CODEX_VERSION, except where
+    `--space-from` copied a space from an older Codex: that copy must hash
+    to the SOURCE's `space_id` (02 §2.7, one space by construction).
+    Below the engine amendment the image is inside it, so the source's own
+    version is kept; below the input-forms amendment (09 §9.3, 2026-10-08)
+    its layers carry no `input` and a version-5 copy would add one — another
+    space, every vector of the source inadmissible to it — so the copy is
+    written at the last version without it."""
+    if image_shaped:
+        assert space_version is not None
+        return space_version
+    if space_version is not None and space_version < codex_mod.INPUT_VERSION:
+        return codex_mod.INPUT_VERSION - 1
+    return codex_mod.CODEX_VERSION
 
 
 def _record_line(recipe: dict[str, Any]) -> int:
