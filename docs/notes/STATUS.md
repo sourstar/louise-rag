@@ -244,6 +244,21 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-08, ~10:00Z (UTC): step 12 DONE — the old names retired; 71d8df9
+DEPLOYED.** `app/cli.py` and the deprecated aliases are gone; what was still
+useful has a `louise` home (cf54afa: `node health`, `dev genesis
+recheck|recount`, `hold records show`, `hold snapshot delta`, `hold index
+build|show`, `vectors import --retry`, `hold config show|apply`; 71d8df9:
+`hold records fetch`), the README, help page and messages name them, and a
+defect found on the way is fixed: `share contribute` never asked the licence
+gate. Full suite 3,774 passed; on the node no error, nine collections in
+use. `louise node health` exits 1 for the five collections whose embed is
+off by the operator's choice — what the old `health` said too. Left for the
+operator: the legacy bundle inbox's own trusted-key list has no command;
+`backend_gate` (Codex v1/v2) has no `rebaseline` (remove the baseline file);
+`app/snapshots.py` and `verify_on_use.resweep` look dead;
+`migration-plan.md`'s own deletion (CLAUDE.md points at it).
+
 **2026-10-08, ~07:20Z (UTC): the genome collections DELETED; step 13f
 found done.** At the operator's yes on the named list: genome-hg38, dm6 and
 sacCer3's data (2.2 GB, 190 MB, 19 MB) and origins (860 MB, 40 MB, 3.4 MB)
